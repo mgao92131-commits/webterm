@@ -1,0 +1,326 @@
+:root {
+  color-scheme: dark;
+  --bg: #101214;
+  --panel: #171a1d;
+  --line: #2f363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #2f81f7;
+  --danger: #da3633;
+  --terminal: #101214;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --line: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #0969da;
+  --danger: #cf222e;
+  --terminal: #fbfbfa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+}
+
+body.terminal-mode {
+  width: 100dvw;
+  height: 100dvh;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+}
+
+button,
+.button,
+input {
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font: inherit;
+}
+
+button,
+.button {
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+button:hover,
+.button:hover {
+  border-color: var(--accent);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.login-card h1,
+.topbar h1 {
+  margin: 0;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+
+input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.error,
+.fatal {
+  color: var(--danger);
+}
+
+#managerError {
+  margin: 0 0 14px;
+}
+
+.manager {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.topbar,
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.topbar span,
+.terminal-bar span,
+.session-card small,
+.session-card p {
+  color: var(--muted);
+}
+
+.actions,
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-list {
+  display: grid;
+  gap: 12px;
+}
+
+.session-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.session-card h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.session-card p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.dialog {
+  width: min(420px, calc(100vw - 28px));
+  max-width: calc(100dvw - 28px);
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  inset: 16px 0 auto;
+  margin: 0 auto;
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.terminal-page {
+  position: fixed;
+  inset: 0;
+  width: 100dvw;
+  max-width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--terminal);
+}
+
+.terminal-bar {
+  padding: 10px 12px;
+  margin: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+#terminal {
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px;
+}
+
+#terminal .xterm {
+  height: 100%;
+  max-width: 100%;
+}
+
+#terminal .xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+#terminal .xterm-screen {
+  touch-action: none;
+}
+
+.quickbar {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.quickbar button {
+  min-width: 0;
+  padding: 10px 6px;
+}
+
+@media (max-width: 720px) {
+  body {
+    width: 100dvw;
+  }
+
+  .manager {
+    padding: 14px;
+  }
+
+  .topbar,
+  .session-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions,
+  .card-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .terminal-bar {
+    align-items: center;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    padding: 8px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .terminal-bar > div {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  #sessionName,
+  #conn {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dialog {
+    inset-block-start: max(10px, env(safe-area-inset-top));
+    width: calc(100dvw - 20px);
+    max-width: calc(100dvw - 20px);
+  }
+
+  .quickbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
