@@ -1,9 +1,64 @@
 (function () {
   const app = document.getElementById("app");
+  const THEMES = {
+    solarized: {
+      label: "Solarized",
+      next: "dracula",
+      terminal: {
+        background: "#002b36",
+        foreground: "#839496",
+        cursor: "#93a1a1",
+        selectionBackground: "#073642",
+        black: "#073642",
+        red: "#dc322f",
+        green: "#859900",
+        yellow: "#b58900",
+        blue: "#268bd2",
+        magenta: "#d33682",
+        cyan: "#2aa198",
+        white: "#eee8d5",
+        brightBlack: "#002b36",
+        brightRed: "#cb4b16",
+        brightGreen: "#586e75",
+        brightYellow: "#657b83",
+        brightBlue: "#839496",
+        brightMagenta: "#6c71c4",
+        brightCyan: "#93a1a1",
+        brightWhite: "#fdf6e3",
+      },
+    },
+    dracula: {
+      label: "Dracula",
+      next: "solarized",
+      terminal: {
+        background: "#282a36",
+        foreground: "#f8f8f2",
+        cursor: "#f8f8f2",
+        selectionBackground: "#44475a",
+        black: "#21222c",
+        red: "#ff5555",
+        green: "#50fa7b",
+        yellow: "#f1fa8c",
+        blue: "#bd93f9",
+        magenta: "#ff79c6",
+        cyan: "#8be9fd",
+        white: "#f8f8f2",
+        brightBlack: "#6272a4",
+        brightRed: "#ff6e6e",
+        brightGreen: "#69ff94",
+        brightYellow: "#ffffa5",
+        brightBlue: "#d6acff",
+        brightMagenta: "#ff92df",
+        brightCyan: "#a4ffff",
+        brightWhite: "#ffffff",
+      },
+    },
+  };
+  const storedTheme = localStorage.getItem("webterm-theme");
   const state = {
     user: null,
     sessions: [],
-    theme: localStorage.getItem("webterm-theme") || "dark",
+    theme: THEMES[storedTheme] ? storedTheme : "solarized",
     ws: null,
     term: null,
     fit: null,
@@ -14,6 +69,9 @@
     manualClose: false,
     lastSeq: 0,
     restored: false,
+    selectionMode: false,
+    selectionAnchor: null,
+    pendingModifier: null,
   };
 
   document.documentElement.dataset.theme = state.theme;
@@ -122,7 +180,7 @@
             <span>${escapeHTML(state.user.username)}</span>
           </div>
           <div class="actions">
-            <button id="theme">${state.theme === "dark" ? "浅色" : "深色"}</button>
+            <button id="theme">${themeButtonLabel()}</button>
             <button id="new">新建终端</button>
           </div>
         </header>
@@ -286,17 +344,13 @@
             <strong id="sessionName">Terminal</strong>
             <span id="conn">连接中</span>
           </div>
-          <button id="theme">${state.theme === "dark" ? "浅色" : "深色"}</button>
+          <button id="selectMode" type="button">选择</button>
         </header>
         <div id="terminal"></div>
         <nav class="quickbar">
-          ${["Esc", "Tab", "Ctrl+C", "Ctrl+D", "↑", "↓", "←", "→"].map((k) => `<button data-key="${k}">${k}</button>`).join("")}
+          ${["Ctrl", "Alt", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button data-key="${k}">${k}</button>`).join("")}
         </nav>
       </section>`;
-    app.querySelector("#theme").addEventListener("click", () => {
-      toggleTheme();
-      applyTermTheme();
-    });
     setupTerminal(id);
   }
 
@@ -317,10 +371,13 @@
     state.term.loadAddon(state.fit);
     state.term.open(document.getElementById("terminal"));
     setupTerminalTouchScroll();
+    setupTerminalSelection();
+    setupViewportTracking();
     state.fit.fit();
     connectWS(id);
-    state.term.onData((data) => sendInput(data));
+    state.term.onData(handleTerminalData);
     window.addEventListener("resize", debounce(() => {
+      updateViewportMetrics();
       sendResize();
     }, 120));
     document.addEventListener("visibilitychange", () => {
@@ -332,7 +389,29 @@
     app.querySelectorAll("[data-key]").forEach((btn) => {
       btn.addEventListener("click", () => sendKey(btn.dataset.key));
     });
+    app.querySelector("#selectMode").addEventListener("click", toggleSelectionMode);
     setTimeout(sendResize, 100);
+  }
+
+  function setupViewportTracking() {
+    updateViewportMetrics();
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = debounce(() => {
+      updateViewportMetrics();
+      sendResize();
+    }, 60);
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+  }
+
+  function updateViewportMetrics() {
+    const viewport = window.visualViewport;
+    const height = viewport?.height || window.innerHeight;
+    const offsetTop = viewport?.offsetTop || 0;
+    const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
+    document.documentElement.style.setProperty("--viewport-height", `${height}px`);
+    document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
   }
 
   function setupTerminalTouchScroll() {
@@ -344,7 +423,7 @@
     let active = false;
 
     terminal.addEventListener("touchstart", (event) => {
-      if (!shouldUseTouchScroll() || event.touches.length !== 1) {
+      if (state.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
         active = false;
         return;
       }
@@ -390,8 +469,72 @@
       || Math.max(10, Number(state.term?.options?.fontSize || 10) * 1.4);
   }
 
+  function getTerminalCellWidth() {
+    return state.term?._core?._renderService?.dimensions?.css?.cell?.width
+      || Math.max(5, Number(state.term?.options?.fontSize || 10) * 0.6);
+  }
+
   function shouldUseTouchScroll() {
     return window.matchMedia("(pointer: coarse), (max-width: 720px)").matches;
+  }
+
+  function setupTerminalSelection() {
+    const terminal = document.getElementById("terminal");
+    if (!terminal || !state.term) return;
+
+    terminal.addEventListener("pointerdown", (event) => {
+      if (!state.selectionMode || event.button !== 0) return;
+      const cell = terminalCellFromEvent(event);
+      if (!cell) return;
+      event.preventDefault();
+      terminal.setPointerCapture?.(event.pointerId);
+      state.selectionAnchor = cell;
+      state.term.clearSelection();
+      state.term.select(cell.col, cell.row, 1);
+    });
+
+    terminal.addEventListener("pointermove", (event) => {
+      if (!state.selectionMode || !state.selectionAnchor) return;
+      const cell = terminalCellFromEvent(event);
+      if (!cell) return;
+      event.preventDefault();
+      selectTerminalRange(state.selectionAnchor, cell);
+    });
+
+    terminal.addEventListener("pointerup", (event) => {
+      if (!state.selectionMode) return;
+      event.preventDefault();
+      state.selectionAnchor = null;
+    });
+
+    terminal.addEventListener("pointercancel", () => {
+      state.selectionAnchor = null;
+    });
+  }
+
+  function terminalCellFromEvent(event) {
+    if (!state.term) return null;
+    const screen = document.querySelector("#terminal .xterm-screen");
+    const rect = (screen || document.getElementById("terminal")).getBoundingClientRect();
+    const col = clamp(Math.floor((event.clientX - rect.left) / getTerminalCellWidth()), 0, state.term.cols - 1);
+    const screenRow = clamp(Math.floor((event.clientY - rect.top) / getTerminalCellHeight()), 0, state.term.rows - 1);
+    return { col, row: state.term.buffer.active.viewportY + screenRow };
+  }
+
+  function selectTerminalRange(anchor, focus) {
+    if (!state.term) return;
+    const cols = state.term.cols;
+    let start = anchor;
+    let end = focus;
+    const anchorOffset = anchor.row * cols + anchor.col;
+    const focusOffset = focus.row * cols + focus.col;
+    if (focusOffset < anchorOffset) {
+      start = focus;
+      end = anchor;
+    }
+    const startOffset = start.row * cols + start.col;
+    const endOffset = end.row * cols + end.col;
+    state.term.select(start.col, start.row, Math.max(1, endOffset - startOffset + 1));
   }
 
   function connectWS(id) {
@@ -482,6 +625,16 @@
     send({ type: "input", data });
   }
 
+  function handleTerminalData(data) {
+    if (!state.pendingModifier) {
+      sendInput(data);
+      return;
+    }
+    const modified = modifiedInput(state.pendingModifier, data);
+    clearPendingModifier();
+    sendInput(modified || data);
+  }
+
   function sendResize() {
     if (!state.fit || !state.term) return;
     requestAnimationFrame(() => {
@@ -500,26 +653,76 @@
   }
 
   function sendKey(key) {
+    if (key === "Ctrl" || key === "Alt") {
+      togglePendingModifier(key.toLowerCase());
+      return;
+    }
     const map = {
       Esc: "\x1b",
       Tab: "\t",
-      "Ctrl+C": "\x03",
-      "Ctrl+D": "\x04",
+      "/": "/",
       "↑": "\x1b[A",
       "↓": "\x1b[B",
       "←": "\x1b[D",
       "→": "\x1b[C",
     };
+    clearPendingModifier();
     sendInput(map[key] || "");
     state.term.focus();
   }
 
+  function togglePendingModifier(modifier) {
+    state.pendingModifier = state.pendingModifier === modifier ? null : modifier;
+    updateModifierButtons();
+    state.term.focus();
+  }
+
+  function clearPendingModifier() {
+    if (!state.pendingModifier) return;
+    state.pendingModifier = null;
+    updateModifierButtons();
+  }
+
+  function updateModifierButtons() {
+    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt']").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
+    });
+  }
+
+  function modifiedInput(modifier, data) {
+    if (!/^[a-zA-Z0-9]$/.test(data)) return "";
+    if (modifier === "alt") return `\x1b${data}`;
+    if (modifier !== "ctrl") return "";
+    if (/^[a-zA-Z]$/.test(data)) {
+      return String.fromCharCode(data.toUpperCase().charCodeAt(0) - 64);
+    }
+    return ({
+      "2": "\x00",
+      "3": "\x1b",
+      "4": "\x1c",
+      "5": "\x1d",
+      "6": "\x1e",
+      "7": "\x1f",
+      "8": "\x7f",
+    })[data] || "";
+  }
+
+  function toggleSelectionMode() {
+    state.selectionMode = !state.selectionMode;
+    state.selectionAnchor = null;
+    clearPendingModifier();
+    app.querySelector(".terminal-page")?.classList.toggle("selection-mode", state.selectionMode);
+    const btn = document.getElementById("selectMode");
+    if (btn) btn.textContent = state.selectionMode ? "完成" : "选择";
+    if (!state.selectionMode) state.term.focus();
+  }
+
   function toggleTheme() {
-    state.theme = state.theme === "dark" ? "light" : "dark";
+    state.theme = currentTheme().next;
     localStorage.setItem("webterm-theme", state.theme);
     document.documentElement.dataset.theme = state.theme;
     const btn = document.getElementById("theme");
-    if (btn) btn.textContent = state.theme === "dark" ? "浅色" : "深色";
+    if (btn) btn.textContent = themeButtonLabel();
   }
 
   function applyTermTheme() {
@@ -527,9 +730,15 @@
   }
 
   function termTheme() {
-    return state.theme === "dark"
-      ? { background: "#101214", foreground: "#e6edf3", cursor: "#f6c177" }
-      : { background: "#fbfbfa", foreground: "#1f2328", cursor: "#0969da" };
+    return currentTheme().terminal;
+  }
+
+  function currentTheme() {
+    return THEMES[state.theme] || THEMES.solarized;
+  }
+
+  function themeButtonLabel() {
+    return currentTheme().next === "dracula" ? "Dracula" : "Solarized";
   }
 
   function debounce(fn, wait) {
@@ -552,6 +761,10 @@
 
   function formatDate(value) {
     return new Date(value).toLocaleString();
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
   }
 
   boot().catch((err) => {

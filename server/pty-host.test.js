@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultShell, validateCWD } from './pty-host.js';
+import { buildPtyEnv, defaultShell, validateCWD } from './pty-host.js';
 
 test('default shell is defined', () => {
   const shell = defaultShell();
@@ -21,6 +21,13 @@ test('WEBTERM_SHELL overrides the default unix shell', { skip: process.platform 
     SHELL: '/definitely/missing/shell',
   });
   assert.equal(shell.command, '/bin/sh');
+});
+
+test('pty env does not inherit NO_COLOR', () => {
+  const env = buildPtyEnv({ NO_COLOR: '1', PATH: '/bin' });
+  assert.equal(env.NO_COLOR, undefined);
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.equal(env.COLORTERM, 'truecolor');
 });
 
 test('validate cwd rejects missing path', () => {

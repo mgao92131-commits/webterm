@@ -29,8 +29,20 @@ export function validateCWD(cwd) {
   return resolved;
 }
 
+export function buildPtyEnv(source = process.env) {
+  const env = {
+    ...source,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    WEBTERM: '1',
+  };
+  delete env.NO_COLOR;
+  return env;
+}
+
 export function createPty({ cwd, cols = 100, rows = 30 }) {
   const shell = defaultShell();
+  const env = buildPtyEnv();
   return {
     shell,
     process: spawn(shell.command, shell.args, {
@@ -38,12 +50,7 @@ export function createPty({ cwd, cols = 100, rows = 30 }) {
       cols,
       rows,
       cwd,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-        WEBTERM: '1',
-      },
+      env,
       useConpty: os.platform() === 'win32',
     }),
   };

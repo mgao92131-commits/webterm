@@ -1,25 +1,25 @@
 :root {
   color-scheme: dark;
-  --bg: #101214;
-  --panel: #171a1d;
-  --line: #2f363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #2f81f7;
-  --danger: #da3633;
-  --terminal: #101214;
+  --bg: #002b36;
+  --panel: #073642;
+  --line: #586e75;
+  --text: #eee8d5;
+  --muted: #93a1a1;
+  --accent: #268bd2;
+  --danger: #dc322f;
+  --terminal: #002b36;
 }
 
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f6f8fa;
-  --panel: #ffffff;
-  --line: #d0d7de;
-  --text: #1f2328;
-  --muted: #656d76;
-  --accent: #0969da;
-  --danger: #cf222e;
-  --terminal: #fbfbfa;
+:root[data-theme="dracula"] {
+  color-scheme: dark;
+  --bg: #282a36;
+  --panel: #21222c;
+  --line: #44475a;
+  --text: #f8f8f2;
+  --muted: #bd93f9;
+  --accent: #8be9fd;
+  --danger: #ff5555;
+  --terminal: #282a36;
 }
 
 * {
@@ -217,6 +217,7 @@ input {
   max-width: 100dvw;
   height: 100vh;
   height: 100dvh;
+  height: var(--viewport-height, 100dvh);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -256,11 +257,26 @@ input {
   touch-action: none;
 }
 
+.terminal-page.selection-mode #terminal {
+  cursor: crosshair;
+}
+
+.terminal-page.selection-mode #selectMode {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.quickbar button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .quickbar {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 6px;
   padding: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
   background: var(--panel);
   border-top: 1px solid var(--line);
 }
@@ -321,6 +337,6 @@ input {
   }
 
   .quickbar {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
