@@ -18,7 +18,7 @@ export class SessionManager {
     const id = `s${this.nextID++}`;
     const session = new TerminalSession({
       id,
-      name: name || `terminal-${id.slice(1)}`,
+      name,
       cwd,
       onExit: (sessionID) => this.sessions.delete(sessionID),
     });

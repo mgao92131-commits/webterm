@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { createPty, validateCWD } from './pty-host.js';
 import { EventRing } from './event-ring.js';
+import { createCWDTracker, currentCWD } from './session-state.js';
 
 const require = createRequire(import.meta.url);
 const { Terminal } = require('@xterm/headless');
@@ -9,11 +10,14 @@ const { SerializeAddon } = require('@xterm/addon-serialize');
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 30;
 const SCROLLBACK = 20000;
+const FALLBACK_TITLE = 'Terminal';
+const MAX_RECENT_INPUT_CHARS = 2000;
 
 export class TerminalSession {
   constructor({ id, name, cwd, onExit }) {
     this.id = id;
-    this.name = name || id;
+    this.name = normalizeName(name);
+    this.termTitle = '';
     this.cwd = validateCWD(cwd);
     this.createdAt = new Date();
     this.lastActiveAt = new Date();
@@ -23,6 +27,9 @@ export class TerminalSession {
     this.cols = DEFAULT_COLS;
     this.rows = DEFAULT_ROWS;
     this.ring = new EventRing();
+    this.inputBuffer = '';
+    this.recentInputLines = [];
+    this.recentInputHidden = false;
     this.term = new Terminal({
       cols: this.cols,
       rows: this.rows,
@@ -30,11 +37,13 @@ export class TerminalSession {
       allowProposedApi: true,
       windowsMode: process.platform === 'win32',
     });
+    this.term.onTitleChange((title) => this.updateTermTitle(title));
     this.serializeAddon = new SerializeAddon();
     this.term.loadAddon(this.serializeAddon);
     const pty = createPty({ cwd: this.cwd, cols: this.cols, rows: this.rows });
     this.command = [pty.shell.command, ...pty.shell.args].join(' ');
     this.pty = pty.process;
+    this.cwdTracker = createCWDTracker({ pid: this.pty.pid, initialCWD: this.cwd });
     this.pty.onData((data) => this.handleOutput(data));
     this.pty.onExit(({ exitCode }) => this.handleExit(exitCode));
   }
@@ -43,7 +52,11 @@ export class TerminalSession {
     return {
       id: this.id,
       name: this.name,
-      cwd: this.cwd,
+      termTitle: this.termTitle,
+      displayTitle: sessionDisplayTitle(this.name, this.termTitle),
+      cwd: currentCWD(this.cwdTracker),
+      recentInputLines: this.recentInputLines,
+      recentInputHidden: this.recentInputHidden,
       command: this.command,
       status: this.status,
       clients: this.clients.size,
@@ -53,8 +66,15 @@ export class TerminalSession {
   }
 
   rename(name) {
-    if (!name || !name.trim()) throw new Error('name is required');
-    this.name = name.trim();
+    this.name = normalizeName(name);
+    this.touch();
+    this.broadcast({ type: 'info', data: this.info() });
+  }
+
+  updateTermTitle(title) {
+    const nextTitle = normalizeTitle(title);
+    if (nextTitle === this.termTitle) return;
+    this.termTitle = nextTitle;
     this.touch();
     this.broadcast({ type: 'info', data: this.info() });
   }
@@ -64,7 +84,6 @@ export class TerminalSession {
     this.clients.add(client);
     this.touch();
     client.send({ type: 'info', data: this.info() });
-    client.send({ type: 'state', seq: this.ring.latestSeq(), data: this.serialize() });
     this.broadcast({ type: 'info', data: this.info() });
 
     ws.on('message', (raw) => {
@@ -90,15 +109,17 @@ export class TerminalSession {
     this.touch();
     if (msg.type === 'hello') {
       const lastSeq = Number(msg.lastSeq || 0);
-      if (this.ring.canReplayFrom(lastSeq)) {
-        client.send({ type: 'replay', from: lastSeq, frames: this.ring.after(lastSeq), seq: this.ring.latestSeq() });
+      const latestSeq = this.ring.latestSeq();
+      if (lastSeq > 0 && lastSeq <= latestSeq && this.ring.canReplayFrom(lastSeq)) {
+        client.send({ type: 'replay', from: lastSeq, frames: this.ring.after(lastSeq), seq: latestSeq });
       } else {
-        client.send({ type: 'state', seq: this.ring.latestSeq(), data: this.serialize() });
+        client.send({ type: 'state', seq: latestSeq, data: this.serialize() });
       }
       client.send({ type: 'info', data: this.info() });
       return;
     }
     if (msg.type === 'input' && typeof msg.data === 'string') {
+      this.recordInput(msg.data);
       this.pty.write(msg.data);
       return;
     }
@@ -161,6 +182,62 @@ export class TerminalSession {
   touch() {
     this.lastActiveAt = new Date();
   }
+
+  recordInput(data) {
+    for (const char of String(data || '')) {
+      if (char === '\r') {
+        this.commitInputBuffer();
+      } else if (char === '\n') {
+        this.inputBuffer = (this.inputBuffer + char).slice(-MAX_RECENT_INPUT_CHARS);
+      } else if (char === '\x03' || char === '\x1b') {
+        this.inputBuffer = '';
+      } else if (char === '\x7f' || char === '\b') {
+        this.inputBuffer = this.inputBuffer.slice(0, -1);
+      } else if (isPrintableInputChar(char)) {
+        this.inputBuffer = (this.inputBuffer + char).slice(-MAX_RECENT_INPUT_CHARS);
+      }
+    }
+  }
+
+  commitInputBuffer() {
+    const text = this.inputBuffer.trim();
+    this.inputBuffer = '';
+    if (!text) return;
+    this.recentInputHidden = isSensitiveInput(text);
+    this.recentInputLines = this.recentInputHidden ? [] : lastInputLines(text, 2);
+    this.touch();
+    this.broadcast({ type: 'info', data: this.info() });
+  }
+}
+
+function normalizeName(name) {
+  return String(name || '').trim();
+}
+
+function normalizeTitle(title) {
+  return String(title || '').trim();
+}
+
+function isPrintableInputChar(char) {
+  return char >= ' ' && char !== '\x7f';
+}
+
+export function isSensitiveInput(value) {
+  return /\b(pass(word|wd)?|token|secret|api[_-]?key|authorization|bearer|credential|private[_-]?key)\b/i.test(String(value || ''));
+}
+
+export function lastInputLines(value, count = 2) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .slice(-count);
+}
+
+export function sessionDisplayTitle(name, termTitle) {
+  const cleanName = normalizeName(name);
+  const cleanTermTitle = normalizeTitle(termTitle) || FALLBACK_TITLE;
+  return cleanName ? `${cleanName} - ${cleanTermTitle}` : cleanTermTitle;
 }
 
 class ClientConnection {

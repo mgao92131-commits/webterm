@@ -72,6 +72,13 @@
     selectionMode: false,
     selectionAnchor: null,
     pendingModifier: null,
+    lastQuickbarTouchAt: 0,
+    currentSessionName: "",
+    currentTermTitle: "",
+    currentDisplayTitle: "Terminal",
+    titleBeforeEdit: "",
+    titleEditing: false,
+    skipTitleCommit: false,
   };
 
   document.documentElement.dataset.theme = state.theme;
@@ -116,6 +123,7 @@
   }
 
   function renderFatal(err) {
+    document.title = "WebTerm";
     app.innerHTML = `
       <section class="login-shell">
         <div class="login-card">
@@ -127,6 +135,7 @@
   }
 
   function renderLogin() {
+    document.title = "WebTerm";
     app.innerHTML = `
       <section class="login-shell">
         <form class="login-card">
@@ -164,6 +173,7 @@
   }
 
   async function renderManager() {
+    document.title = "WebTerm";
     document.body.classList.remove("terminal-mode");
     clearReconnect();
     if (state.ws) {
@@ -186,21 +196,8 @@
         </header>
         <p class="error" id="managerError" hidden></p>
         <section class="session-list"></section>
-        <dialog id="sessionDialog" class="dialog">
-          <form method="dialog">
-            <h2 id="dialogTitle">新建终端</h2>
-            <input type="hidden" name="id" />
-            <label>名称<input name="name" autocomplete="off" /></label>
-            <label class="cwd-field">工作目录<input name="cwd" autocomplete="off" placeholder="留空使用服务目录" /></label>
-            <div class="dialog-actions">
-              <button value="cancel">取消</button>
-              <button id="dialogSubmit" value="ok">确定</button>
-            </div>
-          </form>
-        </dialog>
       </section>`;
-    app.querySelector("#new").addEventListener("click", openCreateDialog);
-    app.querySelector("#sessionDialog").addEventListener("close", handleDialogClose);
+    app.querySelector("#new").addEventListener("click", createDefaultSession);
     app.querySelector("#theme").addEventListener("click", toggleTheme);
     drawSessionList();
     startManagerRefresh();
@@ -213,8 +210,6 @@
         stopManagerRefresh();
         return;
       }
-      const dialog = app.querySelector("#sessionDialog");
-      if (dialog && dialog.open) return;
       try {
         await refreshSessions();
         drawSessionList();
@@ -237,86 +232,57 @@
       list.innerHTML = `<div class="empty">还没有终端</div>`;
       return;
     }
-    list.innerHTML = state.sessions.map((s) => `
-      <article class="session-card">
-        <div>
-          <h2>${escapeHTML(s.name)}</h2>
-          <p>${escapeHTML(s.cwd)}</p>
-          <small>${s.clients} 个连接 · ${formatDate(s.lastActiveAt)}</small>
-        </div>
-        <div class="card-actions">
-          <a class="button" href="/terminal/${encodeURIComponent(s.id)}">打开</a>
-          <button data-rename="${escapeHTML(s.id)}">重命名</button>
-          <button class="danger" data-close="${escapeHTML(s.id)}">关闭</button>
-        </div>
-      </article>`).join("");
+    list.innerHTML = state.sessions.map((s) => {
+      const displayTitle = sessionDisplayTitle(s);
+      const nameLine = sessionNameHTML(s);
+      const termTitle = sessionTermTitle(s);
+      const recentInput = recentInputHTML(s);
+      return `
+        <article class="session-card">
+          <button class="session-close" data-close="${escapeHTML(s.id)}" title="关闭会话" aria-label="关闭会话">x</button>
+          <a class="session-link" href="/terminal/${encodeURIComponent(s.id)}" title="打开终端" aria-label="打开 ${escapeHTML(displayTitle)} 终端">
+            ${nameLine}
+            <div class="session-title">${escapeHTML(termTitle)}</div>
+            <div class="session-cwd">${escapeHTML(s.cwd)}</div>
+            ${recentInput}
+          </a>
+        </article>`;
+    }).join("");
     list.querySelectorAll("[data-close]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        await api(`/api/sessions/${btn.dataset.close}`, { method: "DELETE" });
+        if (!confirm("关闭这个会话？")) return;
+        await api(`/api/sessions/${encodeURIComponent(btn.dataset.close)}`, { method: "DELETE" });
         await renderManager();
       });
     });
-    list.querySelectorAll("[data-rename]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const current = state.sessions.find((s) => s.id === btn.dataset.rename);
-        openRenameDialog(current);
-      });
-    });
   }
 
-  function openCreateDialog() {
-    stopManagerRefresh();
-    const dialog = app.querySelector("#sessionDialog");
-    dialog.dataset.mode = "create";
-    dialog.querySelector("#dialogTitle").textContent = "新建终端";
-    dialog.querySelector("[name=id]").value = "";
-    dialog.querySelector("[name=name]").value = "";
-    dialog.querySelector("[name=cwd]").value = "";
-    dialog.querySelector(".cwd-field").hidden = false;
-    dialog.showModal();
-    dialog.querySelector("[name=name]").focus();
+  function sessionNameHTML(session) {
+    const name = String(session.name || "").trim();
+    return name ? `<h2 class="session-name">${escapeHTML(name)}</h2>` : "";
   }
 
-  function openRenameDialog(session) {
-    if (!session) return;
-    stopManagerRefresh();
-    const dialog = app.querySelector("#sessionDialog");
-    dialog.dataset.mode = "rename";
-    dialog.querySelector("#dialogTitle").textContent = "重命名终端";
-    dialog.querySelector("[name=id]").value = session.id;
-    dialog.querySelector("[name=name]").value = session.name;
-    dialog.querySelector("[name=cwd]").value = "";
-    dialog.querySelector(".cwd-field").hidden = true;
-    dialog.showModal();
-    dialog.querySelector("[name=name]").focus();
+  function sessionTermTitle(session) {
+    return String(session.termTitle || "").trim() || "Terminal";
   }
 
-  async function handleDialogClose(event) {
-    const dialog = event.currentTarget;
-    if (dialog.returnValue !== "ok") {
-      startManagerRefresh();
-      return;
+  function recentInputHTML(session) {
+    if (session.recentInputHidden) {
+      return `<div class="recent-input"><pre>敏感输入已隐藏</pre></div>`;
     }
-    const form = new FormData(dialog.querySelector("form"));
-    const mode = dialog.dataset.mode;
+    const lines = Array.isArray(session.recentInputLines) ? session.recentInputLines.filter(Boolean).slice(-2) : [];
+    if (!lines.length) return "";
+    return `<div class="recent-input"><pre>${lines.map((line) => escapeHTML(line)).join("\n")}</pre></div>`;
+  }
+
+  async function createDefaultSession() {
+    stopManagerRefresh();
     try {
       setManagerError("");
-      if (mode === "create") {
-        const s = await api("/api/sessions", {
-          method: "POST",
-          body: JSON.stringify({
-            name: String(form.get("name") || ""),
-            cwd: String(form.get("cwd") || ""),
-          }),
-        });
-        location.href = `/terminal/${encodeURIComponent(s.id)}`;
-      } else if (mode === "rename") {
-        await api(`/api/sessions/${encodeURIComponent(form.get("id"))}`, {
-          method: "PATCH",
-          body: JSON.stringify({ name: String(form.get("name") || "") }),
-        });
-        await renderManager();
-      }
+      const session = await api("/api/sessions", {
+        method: "POST",
+      });
+      location.href = `/terminal/${encodeURIComponent(session.id)}`;
     } catch (err) {
       setManagerError(err.message.trim());
       startManagerRefresh();
@@ -331,6 +297,7 @@
   }
 
   function renderTerminal(id) {
+    document.title = "Terminal - WebTerm";
     document.body.classList.add("terminal-mode");
     if (typeof Terminal === "undefined" || typeof FitAddon === "undefined") {
       renderFatal(new Error("终端组件加载失败，请刷新页面或检查 /vendor/xterm.js 是否可访问"));
@@ -340,15 +307,14 @@
       <section class="terminal-page">
         <header class="terminal-bar">
           <a class="button" href="/">返回</a>
-          <div>
-            <strong id="sessionName">Terminal</strong>
-            <span id="conn">连接中</span>
+          <div class="terminal-title">
+            <input id="sessionName" autocomplete="off" maxlength="80" value="" placeholder="Terminal" aria-label="会话名称" title="会话名称，留空时显示终端标题" />
           </div>
           <button id="selectMode" type="button">选择</button>
         </header>
         <div id="terminal"></div>
         <nav class="quickbar">
-          ${["Ctrl", "Alt", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button data-key="${k}">${k}</button>`).join("")}
+          ${["Ctrl", "Alt", "Shift", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
         </nav>
       </section>`;
     setupTerminal(id);
@@ -359,6 +325,12 @@
     state.manualClose = false;
     state.lastSeq = Number(sessionStorage.getItem(`webterm:${id}:lastSeq`) || 0);
     state.restored = false;
+    state.currentSessionName = "";
+    state.currentTermTitle = "";
+    state.currentDisplayTitle = "Terminal";
+    state.titleBeforeEdit = "";
+    state.titleEditing = false;
+    state.skipTitleCommit = false;
     state.term = new Terminal({
       cursorBlink: true,
       fontFamily: "Consolas, Menlo, Monaco, monospace",
@@ -370,6 +342,7 @@
     state.fit = new FitAddon.FitAddon();
     state.term.loadAddon(state.fit);
     state.term.open(document.getElementById("terminal"));
+    setupModifierInputCapture();
     setupTerminalTouchScroll();
     setupTerminalSelection();
     setupViewportTracking();
@@ -386,11 +359,122 @@
         setTimeout(sendResize, 150);
       }
     });
-    app.querySelectorAll("[data-key]").forEach((btn) => {
-      btn.addEventListener("click", () => sendKey(btn.dataset.key));
-    });
+    app.querySelectorAll("[data-key]").forEach((btn) => setupQuickbarButton(btn));
+    setupTerminalTitleEditor();
     app.querySelector("#selectMode").addEventListener("click", toggleSelectionMode);
     setTimeout(sendResize, 100);
+  }
+
+  function setupTerminalTitleEditor() {
+    const titleInput = document.getElementById("sessionName");
+    if (!titleInput) return;
+
+    titleInput.addEventListener("focus", () => {
+      state.titleEditing = true;
+      state.titleBeforeEdit = state.currentSessionName || "";
+      titleInput.select();
+    });
+    titleInput.addEventListener("blur", () => commitTerminalTitle());
+    titleInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        titleInput.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTerminalTitleEdit();
+      }
+    });
+  }
+
+  function setupModifierInputCapture() {
+    const terminal = document.getElementById("terminal");
+    if (!terminal) return;
+
+    const onKeyDown = (event) => {
+      if (!state.pendingModifier || event.metaKey || event.isComposing) return;
+      const data = keyEventData(event);
+      if (!data) return;
+      if (!sendModifiedInput(data)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const onBeforeInput = (event) => {
+      if (!state.pendingModifier || event.isComposing) return;
+      if (event.inputType && !event.inputType.startsWith("insert")) return;
+      const data = event.data || "";
+      if (!data) return;
+      if (!sendModifiedInput(data)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const bindTarget = (target) => {
+      if (!target || target.dataset.modifierCapture === "1") return;
+      target.dataset.modifierCapture = "1";
+      target.addEventListener("keydown", onKeyDown, true);
+      target.addEventListener("beforeinput", onBeforeInput, true);
+    };
+
+    bindTarget(terminal);
+    bindTarget(terminal.querySelector("textarea.xterm-helper-textarea"));
+    setTimeout(() => bindTarget(terminal.querySelector("textarea.xterm-helper-textarea")), 0);
+  }
+
+  async function commitTerminalTitle() {
+    if (state.skipTitleCommit) {
+      state.skipTitleCommit = false;
+      state.titleEditing = false;
+      return;
+    }
+    const titleInput = document.getElementById("sessionName");
+    const nextName = (titleInput?.value || "").trim();
+    const oldName = state.titleBeforeEdit || "";
+    state.titleEditing = false;
+    if (nextName === oldName || !state.terminalID) {
+      setTerminalInfo({ name: oldName });
+      state.term?.focus();
+      return;
+    }
+    setTerminalInfo({ name: nextName });
+    try {
+      const session = await api(`/api/sessions/${encodeURIComponent(state.terminalID)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: nextName }),
+      });
+      setTerminalInfo(session);
+    } catch (err) {
+      setTerminalInfo({ name: oldName });
+      alert(err.message.trim() || "修改标题失败");
+    } finally {
+      state.term?.focus();
+    }
+  }
+
+  function cancelTerminalTitleEdit() {
+    state.skipTitleCommit = true;
+    state.titleEditing = false;
+    setTerminalInfo({ name: state.titleBeforeEdit || "" });
+    state.term?.focus();
+  }
+
+  function setTerminalInfo(session = {}) {
+    if (Object.prototype.hasOwnProperty.call(session, "name")) {
+      state.currentSessionName = String(session.name || "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(session, "termTitle")) {
+      state.currentTermTitle = String(session.termTitle || "").trim();
+    }
+    state.currentDisplayTitle = session.displayTitle || sessionDisplayTitle({
+      name: state.currentSessionName,
+      termTitle: state.currentTermTitle,
+    });
+    const titleInput = document.getElementById("sessionName");
+    if (titleInput) {
+      titleInput.placeholder = state.currentTermTitle || "Terminal";
+      if (!state.titleEditing) titleInput.value = state.currentSessionName;
+    }
+    document.title = `${state.currentDisplayTitle} - WebTerm`;
   }
 
   function setupViewportTracking() {
@@ -547,8 +631,7 @@
     state.ws.addEventListener("open", () => {
       state.reconnectAttempts = 0;
       clearReconnect();
-      document.getElementById("conn").textContent = "已连接";
-      send({ type: "hello", lastSeq: state.lastSeq });
+      send({ type: "hello", lastSeq: state.restored ? state.lastSeq : 0 });
       sendResize();
     });
     state.ws.addEventListener("message", (event) => {
@@ -557,7 +640,7 @@
         state.term.reset();
         if (msg.data) state.term.write(msg.data);
         state.restored = true;
-        rememberSeq(msg.seq);
+        setLastSeq(msg.seq);
       } else if (msg.type === "replay") {
         if (!state.restored || msg.from === 0) {
           state.term.reset();
@@ -568,26 +651,17 @@
         }
         state.restored = true;
         rememberSeq(msg.seq);
-      } else if (msg.type === "snapshot") {
-        state.term.reset();
-        if (msg.data) state.term.write(msg.data);
       } else if (msg.type === "output") {
         state.term.write(msg.data);
         rememberSeq(msg.seq);
       } else if (msg.type === "info") {
-        document.getElementById("sessionName").textContent = msg.data.name;
-        document.getElementById("conn").textContent = `${msg.data.clients} 个连接`;
+        setTerminalInfo(msg.data);
       } else if (msg.type === "exit") {
         state.manualClose = true;
-        document.getElementById("conn").textContent = "已关闭";
       }
     });
     state.ws.addEventListener("close", () => {
-      document.getElementById("conn").textContent = "已断开，正在重连";
       if (!state.manualClose) scheduleReconnect();
-    });
-    state.ws.addEventListener("error", () => {
-      document.getElementById("conn").textContent = "连接异常";
     });
   }
 
@@ -630,9 +704,7 @@
       sendInput(data);
       return;
     }
-    const modified = modifiedInput(state.pendingModifier, data);
-    clearPendingModifier();
-    sendInput(modified || data);
+    if (!sendModifiedInput(data)) sendInput(data);
   }
 
   function sendResize() {
@@ -646,29 +718,55 @@
   function rememberSeq(seq) {
     const value = Number(seq || 0);
     if (!value || value < state.lastSeq) return;
+    setLastSeq(value);
+  }
+
+  function setLastSeq(seq) {
+    const value = Number(seq || 0);
     state.lastSeq = value;
     if (state.terminalID) {
       sessionStorage.setItem(`webterm:${state.terminalID}:lastSeq`, String(value));
     }
   }
 
+  function setupQuickbarButton(btn) {
+    btn.addEventListener("touchend", (event) => {
+      event.preventDefault();
+      state.lastQuickbarTouchAt = Date.now();
+      tapQuickbarButton(btn);
+    }, { passive: false });
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (Date.now() - state.lastQuickbarTouchAt < 700) return;
+      tapQuickbarButton(btn);
+    });
+  }
+
+  function tapQuickbarButton(btn) {
+    sendKey(btn.dataset.key);
+    btn.blur();
+    state.term.focus();
+  }
+
   function sendKey(key) {
-    if (key === "Ctrl" || key === "Alt") {
+    if (key === "Ctrl" || key === "Alt" || key === "Shift") {
       togglePendingModifier(key.toLowerCase());
       return;
     }
-    const map = {
-      Esc: "\x1b",
-      Tab: "\t",
-      "/": "/",
-      "↑": "\x1b[A",
-      "↓": "\x1b[B",
-      "←": "\x1b[D",
-      "→": "\x1b[C",
-    };
+    const modified = quickbarInput(state.pendingModifier, key);
     clearPendingModifier();
-    sendInput(map[key] || "");
+    if (modified) sendInput(modified);
     state.term.focus();
+  }
+
+  function sendModifiedInput(data) {
+    if (!state.pendingModifier) return false;
+    const modified = modifiedInput(state.pendingModifier, data);
+    clearPendingModifier();
+    if (!modified) return false;
+    sendInput(modified);
+    state.term.focus();
+    return true;
   }
 
   function togglePendingModifier(modifier) {
@@ -684,13 +782,23 @@
   }
 
   function updateModifierButtons() {
-    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt']").forEach((btn) => {
+    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt'], [data-key='Shift']").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
     });
   }
 
+  function keyEventData(event) {
+    if (event.key && event.key.length === 1) return event.key;
+    return ({
+      Space: " ",
+      Enter: "\r",
+      Tab: "\t",
+      Escape: "\x1b",
+    })[event.key] || "";
+  }
+
   function modifiedInput(modifier, data) {
-    if (!/^[a-zA-Z0-9]$/.test(data)) return "";
+    if (String(data || "").length !== 1) return "";
     if (modifier === "alt") return `\x1b${data}`;
     if (modifier !== "ctrl") return "";
     if (/^[a-zA-Z]$/.test(data)) {
@@ -705,6 +813,23 @@
       "7": "\x1f",
       "8": "\x7f",
     })[data] || "";
+  }
+
+  function quickbarInput(modifier, key) {
+    const base = ({
+      Esc: "\x1b",
+      Tab: "\t",
+      "/": "/",
+      "↑": "\x1b[A",
+      "↓": "\x1b[B",
+      "←": "\x1b[D",
+      "→": "\x1b[C",
+    })[key] || "";
+    if (!base) return "";
+    if (modifier === "shift" && key === "Tab") return "\x1b[Z";
+    if (modifier === "alt") return `\x1b${base}`;
+    if (modifier === "ctrl") return modifiedInput("ctrl", base) || base;
+    return base;
   }
 
   function toggleSelectionMode() {
@@ -741,6 +866,13 @@
     return currentTheme().next === "dracula" ? "Dracula" : "Solarized";
   }
 
+  function sessionDisplayTitle(session = {}) {
+    if (session.displayTitle) return String(session.displayTitle);
+    const name = String(session.name || "").trim();
+    const termTitle = String(session.termTitle || "").trim() || "Terminal";
+    return name ? `${name} - ${termTitle}` : termTitle;
+  }
+
   function debounce(fn, wait) {
     let timer;
     return () => {
@@ -757,10 +889,6 @@
       '"': "&quot;",
       "'": "&#39;",
     }[c]));
-  }
-
-  function formatDate(value) {
-    return new Date(value).toLocaleString();
   }
 
   function clamp(value, min, max) {
