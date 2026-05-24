@@ -273,6 +273,7 @@ input {
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--terminal);
+  transform: translateX(calc(-1 * var(--viewport-offset-left, 0px)));
 }
 
 .terminal-bar {
@@ -319,15 +320,33 @@ input {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  padding: 8px;
+  padding: 0;
 }
 
 #terminal .xterm {
   height: 100%;
   max-width: 100%;
+  padding: 8px;
+  background: var(--terminal);
+}
+
+#terminal .xterm-helpers {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+#terminal .composition-view {
+  right: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 #terminal .xterm-viewport {
+  background: var(--terminal) !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch;

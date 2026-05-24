@@ -493,9 +493,12 @@
     const viewport = window.visualViewport;
     const height = viewport?.height || window.innerHeight;
     const offsetTop = viewport?.offsetTop || 0;
+    const scale = viewport?.scale || 1;
+    const offsetLeft = Math.abs(scale - 1) < 0.01 ? (viewport?.offsetLeft || 0) : 0;
     const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
     document.documentElement.style.setProperty("--viewport-height", `${height}px`);
     document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+    document.documentElement.style.setProperty("--viewport-offset-left", `${offsetLeft}px`);
   }
 
   function setupTerminalTouchScroll() {
