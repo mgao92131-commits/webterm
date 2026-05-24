@@ -8,6 +8,10 @@
   --accent: #268bd2;
   --danger: #dc322f;
   --terminal: #002b36;
+  --card-title: #fdf6e3;
+  --card-name: #93a1a1;
+  --card-input: #eee8d5;
+  --card-path: #657b83;
 }
 
 :root[data-theme="dracula"] {
@@ -20,6 +24,10 @@
   --accent: #8be9fd;
   --danger: #ff5555;
   --terminal: #282a36;
+  --card-title: #ffffff;
+  --card-name: #bd93f9;
+  --card-input: #f8f8f2;
+  --card-path: #6272a4;
 }
 
 * {
@@ -149,7 +157,7 @@ input {
 .session-card {
   position: relative;
   display: grid;
-  gap: 4px;
+  gap: 6px;
   padding: 14px 16px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -157,23 +165,29 @@ input {
 }
 
 .session-name {
-  margin: 0;
+  min-width: 0;
   font-size: 12px;
   line-height: 1.4;
+  color: var(--card-name);
   padding-right: 32px;
+  overflow-wrap: anywhere;
 }
 
 .session-title {
   min-width: 0;
   padding-right: 32px;
-  font-weight: 600;
-  line-height: 1.4;
+  color: var(--card-title);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .session-cwd {
   min-width: 0;
+  font-size: 11px;
   line-height: 1.4;
+  color: var(--card-path);
   overflow-wrap: anywhere;
 }
 
@@ -196,7 +210,7 @@ input {
   max-height: 34px;
   margin: 0;
   overflow: hidden;
-  color: var(--text);
+  color: var(--card-input);
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -273,7 +287,6 @@ input {
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--terminal);
-  transform: translateX(calc(-1 * var(--viewport-offset-left, 0px)));
 }
 
 .terminal-bar {

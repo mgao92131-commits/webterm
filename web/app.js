@@ -77,6 +77,10 @@
     selectionAnchor: null,
     pendingModifier: null,
     lastQuickbarTouchAt: 0,
+    lastResizeCols: 0,
+    lastResizeRows: 0,
+    pendingResizeFrame: 0,
+    viewportChangeUntil: 0,
     currentSessionName: "",
     currentTermTitle: "",
     currentDisplayTitle: "Terminal",
@@ -321,10 +325,10 @@
         <article class="session-card">
           <button class="session-close" data-close="${escapeHTML(s.id)}" title="关闭会话" aria-label="关闭会话">x</button>
           <a class="session-link" href="/terminal/${encodeURIComponent(s.id)}" title="打开终端" aria-label="打开 ${escapeHTML(displayTitle)} 终端">
-            ${nameLine}
             <div class="session-title">${escapeHTML(termTitle)}</div>
-            <div class="session-cwd">${escapeHTML(s.cwd)}</div>
+            ${nameLine}
             ${recentInput}
+            <div class="session-cwd">${escapeHTML(s.cwd)}</div>
           </a>
         </article>`;
     }).join("");
@@ -339,7 +343,7 @@
 
   function sessionNameHTML(session) {
     const name = String(session.name || "").trim();
-    return name ? `<h2 class="session-name">${escapeHTML(name)}</h2>` : "";
+    return name ? `<div class="session-name">${escapeHTML(name)}</div>` : "";
   }
 
   function sessionTermTitle(session) {
@@ -429,6 +433,7 @@
     setupTerminalSelection();
     setupViewportTracking();
     state.fit.fit();
+    rememberTerminalSize();
     connectWS(id);
     state.term.onData(handleTerminalData);
     window.addEventListener("resize", debounce(() => {
@@ -438,13 +443,13 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         ensureConnected();
-        setTimeout(sendResize, 150);
+        setTimeout(() => sendResize(true), 150);
       }
     });
     app.querySelectorAll("[data-key]").forEach((btn) => setupQuickbarButton(btn));
     setupTerminalTitleEditor();
     app.querySelector("#selectMode").addEventListener("click", toggleSelectionMode);
-    setTimeout(sendResize, 100);
+    setTimeout(() => sendResize(true), 100);
   }
 
   function setupTerminalTitleEditor() {
@@ -563,24 +568,46 @@
     updateViewportMetrics();
     const viewport = window.visualViewport;
     if (!viewport) return;
-    const update = debounce(() => {
+    const resize = debounce(() => {
+      markViewportChanging();
       updateViewportMetrics();
       sendResize();
+    }, 120);
+    const scroll = debounce(() => {
+      markViewportChanging();
+      updateViewportMetrics();
     }, 60);
-    viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", scroll);
   }
 
   function updateViewportMetrics() {
-    const viewport = window.visualViewport;
-    const height = viewport?.height || window.innerHeight;
-    const offsetTop = viewport?.offsetTop || 0;
-    const scale = viewport?.scale || 1;
-    const offsetLeft = Math.abs(scale - 1) < 0.01 ? (viewport?.offsetLeft || 0) : 0;
+    const { height, offsetTop } = currentViewportMetrics();
     const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
     document.documentElement.style.setProperty("--viewport-height", `${height}px`);
     document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
-    document.documentElement.style.setProperty("--viewport-offset-left", `${offsetLeft}px`);
+  }
+
+  function currentViewportMetrics() {
+    const viewport = window.visualViewport;
+    return {
+      width: viewport?.width || window.innerWidth,
+      height: viewport?.height || window.innerHeight,
+      offsetTop: viewport?.offsetTop || 0,
+      offsetLeft: viewport?.offsetLeft || 0,
+    };
+  }
+
+  function markViewportChanging() {
+    state.viewportChangeUntil = Date.now() + 180;
+  }
+
+  function viewportMetricsChanged(a, b) {
+    if (!a || !b) return false;
+    return Math.abs(a.width - b.width) > 1
+      || Math.abs(a.height - b.height) > 1
+      || Math.abs(a.offsetTop - b.offsetTop) > 1
+      || Math.abs(a.offsetLeft - b.offsetLeft) > 1;
   }
 
   function setupTerminalTouchScroll() {
@@ -590,6 +617,7 @@
     let lastY = 0;
     let pendingPixels = 0;
     let active = false;
+    let touchViewport = null;
 
     terminal.addEventListener("touchstart", (event) => {
       if (state.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
@@ -599,13 +627,25 @@
       active = true;
       lastY = event.touches[0].clientY;
       pendingPixels = 0;
+      touchViewport = currentViewportMetrics();
     }, { passive: true });
 
     terminal.addEventListener("touchmove", (event) => {
       if (!active || !state.term || event.touches.length !== 1) return;
       const y = event.touches[0].clientY;
+      const viewport = currentViewportMetrics();
+      if (Date.now() < state.viewportChangeUntil || viewportMetricsChanged(touchViewport, viewport)) {
+        lastY = y;
+        pendingPixels = 0;
+        touchViewport = viewport;
+        return;
+      }
       const delta = lastY - y;
       lastY = y;
+      if (Math.abs(delta) > 80) {
+        pendingPixels = 0;
+        return;
+      }
       if (!delta) return;
 
       pendingPixels += delta;
@@ -626,10 +666,12 @@
     terminal.addEventListener("touchend", () => {
       active = false;
       pendingPixels = 0;
+      touchViewport = null;
     }, { passive: true });
     terminal.addEventListener("touchcancel", () => {
       active = false;
       pendingPixels = 0;
+      touchViewport = null;
     }, { passive: true });
   }
 
@@ -717,7 +759,7 @@
       state.reconnectAttempts = 0;
       clearReconnect();
       send({ type: "hello", lastSeq: state.restored ? state.lastSeq : 0 });
-      sendResize();
+      sendResize(true);
     });
     state.ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data);
@@ -792,12 +834,55 @@
     if (!sendModifiedInput(data)) sendInput(data);
   }
 
-  function sendResize() {
+  function sendResize(force = false) {
     if (!state.fit || !state.term) return;
-    requestAnimationFrame(() => {
+    if (state.pendingResizeFrame) return;
+    state.pendingResizeFrame = requestAnimationFrame(() => {
+      state.pendingResizeFrame = 0;
+      const proposed = state.fit.proposeDimensions?.();
+      if (!proposed && !force) return;
+      if (proposed && proposed.cols === state.term.cols && proposed.rows === state.term.rows && !force) return;
+      const scroll = captureTerminalScroll();
       state.fit.fit();
-      send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
+      restoreTerminalScroll(scroll);
+      const changed = rememberTerminalSize();
+      if (changed || force) {
+        send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
+      }
     });
+  }
+
+  function captureTerminalScroll() {
+    if (!state.term) return null;
+    const buffer = state.term.buffer.active;
+    return {
+      viewportY: buffer.viewportY,
+      baseY: buffer.baseY,
+      atBottom: buffer.baseY - buffer.viewportY <= 1,
+    };
+  }
+
+  function restoreTerminalScroll(snapshot) {
+    if (!snapshot || !state.term) return;
+    const restore = () => {
+      if (!state.term) return;
+      const buffer = state.term.buffer.active;
+      if (snapshot.atBottom) {
+        state.term.scrollToBottom();
+      } else {
+        state.term.scrollToLine(Math.min(snapshot.viewportY, buffer.baseY));
+      }
+    };
+    restore();
+    requestAnimationFrame(restore);
+  }
+
+  function rememberTerminalSize() {
+    if (!state.term) return false;
+    if (state.lastResizeCols === state.term.cols && state.lastResizeRows === state.term.rows) return false;
+    state.lastResizeCols = state.term.cols;
+    state.lastResizeRows = state.term.rows;
+    return true;
   }
 
   function rememberSeq(seq) {
