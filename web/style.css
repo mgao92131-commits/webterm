@@ -282,14 +282,26 @@ input {
   max-width: 100dvw;
   height: 100vh;
   height: 100dvh;
-  height: var(--viewport-height, 100dvh);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   background: var(--terminal);
 }
 
+.terminal-body {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  transform: translateY(calc(-1 * var(--keyboard-shift, 0px)));
+  transition: transform 160ms ease;
+  will-change: transform;
+  position: relative;
+  z-index: 1;
+}
+
 .terminal-bar {
+  position: relative;
+  z-index: 2;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;

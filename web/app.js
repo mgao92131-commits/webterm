@@ -80,7 +80,9 @@
     lastResizeCols: 0,
     lastResizeRows: 0,
     pendingResizeFrame: 0,
-    viewportChangeUntil: 0,
+    resizeObserver: null,
+    keyboardOpen: false,
+    keyboardSettleTimer: null,
     currentSessionName: "",
     currentTermTitle: "",
     currentDisplayTitle: "Terminal",
@@ -398,10 +400,12 @@
           </div>
           <button id="selectMode" type="button">选择</button>
         </header>
-        <div id="terminal"></div>
-        <nav class="quickbar">
-          ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
-        </nav>
+        <div class="terminal-body">
+          <div id="terminal"></div>
+          <nav class="quickbar">
+            ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
+          </nav>
+        </div>
       </section>`;
     setupTerminal(id);
   }
@@ -432,17 +436,24 @@
     setupTerminalTouchScroll();
     setupTerminalSelection();
     setupViewportTracking();
+    setupTerminalResizeObserver();
     state.fit.fit();
     rememberTerminalSize();
     connectWS(id);
     state.term.onData(handleTerminalData);
     window.addEventListener("resize", debounce(() => {
-      updateViewportMetrics();
-      sendResize();
+      updateKeyboardMetrics();
+      if (state.keyboardOpen) {
+        scheduleResizeAfterKeyboard();
+      } else {
+        sendResize();
+      }
     }, 120));
+    window.addEventListener("orientationchange", () => setTimeout(() => sendResize(true), 350));
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         ensureConnected();
+        updateKeyboardMetrics();
         setTimeout(() => sendResize(true), 150);
       }
     });
@@ -565,27 +576,51 @@
   }
 
   function setupViewportTracking() {
-    updateViewportMetrics();
+    updateKeyboardMetrics();
+    const keyboard = navigator.virtualKeyboard;
+    if (keyboard) {
+      try {
+        keyboard.overlaysContent = true;
+      } catch {
+        // Some WebViews expose the API but do not allow changing this flag.
+      }
+      keyboard.addEventListener("geometrychange", () => {
+        updateKeyboardMetrics();
+      });
+    }
+
     const viewport = window.visualViewport;
     if (!viewport) return;
-    const resize = debounce(() => {
-      markViewportChanging();
-      updateViewportMetrics();
-      sendResize();
-    }, 120);
-    const scroll = debounce(() => {
-      markViewportChanging();
-      updateViewportMetrics();
-    }, 60);
-    viewport.addEventListener("resize", resize);
-    viewport.addEventListener("scroll", scroll);
+    const update = debounce(() => updateKeyboardMetrics(), 60);
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
   }
 
-  function updateViewportMetrics() {
-    const { height, offsetTop } = currentViewportMetrics();
-    const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
-    document.documentElement.style.setProperty("--viewport-height", `${height}px`);
+  function updateKeyboardMetrics() {
+    const keyboardOffset = getKeyboardOffset();
+    const keyboardShift = Math.min(keyboardOffset, getMaxKeyboardShift());
+    const wasOpen = state.keyboardOpen;
+    state.keyboardOpen = keyboardOffset > 20;
     document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+    document.documentElement.style.setProperty("--keyboard-shift", `${keyboardShift}px`);
+    if (wasOpen && !state.keyboardOpen) scheduleResizeAfterKeyboard();
+  }
+
+  function getKeyboardOffset() {
+    const keyboard = navigator.virtualKeyboard;
+    const rect = keyboard?.boundingRect;
+    const keyboardHeight = Math.max(0, rect?.height || 0);
+    const { height, offsetTop } = currentViewportMetrics();
+    const viewportHeight = Math.max(0, window.innerHeight - height - offsetTop);
+    return Math.max(keyboardHeight, viewportHeight);
+  }
+
+  function getMaxKeyboardShift() {
+    const body = document.querySelector(".terminal-body");
+    const header = document.querySelector(".terminal-bar");
+    const bodyHeight = body?.getBoundingClientRect().height || window.innerHeight;
+    const headerHeight = header?.getBoundingClientRect().height || 0;
+    return Math.max(0, bodyHeight - headerHeight - 24);
   }
 
   function currentViewportMetrics() {
@@ -596,10 +631,6 @@
       offsetTop: viewport?.offsetTop || 0,
       offsetLeft: viewport?.offsetLeft || 0,
     };
-  }
-
-  function markViewportChanging() {
-    state.viewportChangeUntil = Date.now() + 180;
   }
 
   function viewportMetricsChanged(a, b) {
@@ -634,7 +665,7 @@
       if (!active || !state.term || event.touches.length !== 1) return;
       const y = event.touches[0].clientY;
       const viewport = currentViewportMetrics();
-      if (Date.now() < state.viewportChangeUntil || viewportMetricsChanged(touchViewport, viewport)) {
+      if (viewportMetricsChanged(touchViewport, viewport)) {
         lastY = y;
         pendingPixels = 0;
         touchViewport = viewport;
@@ -673,6 +704,36 @@
       pendingPixels = 0;
       touchViewport = null;
     }, { passive: true });
+  }
+
+  function setupTerminalResizeObserver() {
+    const terminal = document.getElementById("terminal");
+    if (!terminal || typeof ResizeObserver === "undefined") return;
+    state.resizeObserver?.disconnect();
+    let lastWidth = 0;
+    let lastHeight = 0;
+    state.resizeObserver = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (Math.abs(width - lastWidth) < 2 && Math.abs(height - lastHeight) < 2) return;
+      lastWidth = width;
+      lastHeight = height;
+      if (state.keyboardOpen) {
+        scheduleResizeAfterKeyboard();
+      } else {
+        sendResize();
+      }
+    });
+    state.resizeObserver.observe(terminal);
+  }
+
+  function scheduleResizeAfterKeyboard() {
+    clearTimeout(state.keyboardSettleTimer);
+    state.keyboardSettleTimer = setTimeout(() => {
+      if (!state.keyboardOpen) sendResize(true);
+    }, 260);
   }
 
   function getTerminalCellHeight() {
@@ -836,45 +897,22 @@
 
   function sendResize(force = false) {
     if (!state.fit || !state.term) return;
+    if (state.keyboardOpen) {
+      if (force) scheduleResizeAfterKeyboard();
+      return;
+    }
     if (state.pendingResizeFrame) return;
     state.pendingResizeFrame = requestAnimationFrame(() => {
       state.pendingResizeFrame = 0;
       const proposed = state.fit.proposeDimensions?.();
       if (!proposed && !force) return;
       if (proposed && proposed.cols === state.term.cols && proposed.rows === state.term.rows && !force) return;
-      const scroll = captureTerminalScroll();
       state.fit.fit();
-      restoreTerminalScroll(scroll);
       const changed = rememberTerminalSize();
       if (changed || force) {
         send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
       }
     });
-  }
-
-  function captureTerminalScroll() {
-    if (!state.term) return null;
-    const buffer = state.term.buffer.active;
-    return {
-      viewportY: buffer.viewportY,
-      baseY: buffer.baseY,
-      atBottom: buffer.baseY - buffer.viewportY <= 1,
-    };
-  }
-
-  function restoreTerminalScroll(snapshot) {
-    if (!snapshot || !state.term) return;
-    const restore = () => {
-      if (!state.term) return;
-      const buffer = state.term.buffer.active;
-      if (snapshot.atBottom) {
-        state.term.scrollToBottom();
-      } else {
-        state.term.scrollToLine(Math.min(snapshot.viewportY, buffer.baseY));
-      }
-    };
-    restore();
-    requestAnimationFrame(restore);
   }
 
   function rememberTerminalSize() {
