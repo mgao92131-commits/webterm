@@ -282,26 +282,14 @@ input {
   max-width: 100dvw;
   height: 100vh;
   height: 100dvh;
+  height: var(--viewport-height, 100dvh);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--terminal);
 }
 
-.terminal-body {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  transform: translateY(calc(-1 * var(--keyboard-shift, 0px)));
-  transition: transform 160ms ease;
-  will-change: transform;
-  position: relative;
-  z-index: 1;
-}
-
 .terminal-bar {
-  position: relative;
-  z-index: 2;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -345,33 +333,15 @@ input {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  padding: 0;
+  padding: 8px;
 }
 
 #terminal .xterm {
   height: 100%;
   max-width: 100%;
-  padding: 8px;
-  background: var(--terminal);
-}
-
-#terminal .xterm-helpers {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow: hidden;
-}
-
-#terminal .composition-view {
-  right: 0;
-  max-width: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 #terminal .xterm-viewport {
-  background: var(--terminal) !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch;

@@ -77,12 +77,6 @@
     selectionAnchor: null,
     pendingModifier: null,
     lastQuickbarTouchAt: 0,
-    lastResizeCols: 0,
-    lastResizeRows: 0,
-    pendingResizeFrame: 0,
-    resizeObserver: null,
-    keyboardOpen: false,
-    keyboardSettleTimer: null,
     currentSessionName: "",
     currentTermTitle: "",
     currentDisplayTitle: "Terminal",
@@ -400,12 +394,10 @@
           </div>
           <button id="selectMode" type="button">选择</button>
         </header>
-        <div class="terminal-body">
-          <div id="terminal"></div>
-          <nav class="quickbar">
-            ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
-          </nav>
-        </div>
+        <div id="terminal"></div>
+        <nav class="quickbar">
+          ${["Ctrl", "Alt", "Shift", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
+        </nav>
       </section>`;
     setupTerminal(id);
   }
@@ -433,34 +425,27 @@
     state.term.loadAddon(state.fit);
     state.term.open(document.getElementById("terminal"));
     setupModifierInputCapture();
+    setupTerminalFocusBottom();
     setupTerminalTouchScroll();
     setupTerminalSelection();
     setupViewportTracking();
-    setupTerminalResizeObserver();
     state.fit.fit();
-    rememberTerminalSize();
     connectWS(id);
     state.term.onData(handleTerminalData);
     window.addEventListener("resize", debounce(() => {
-      updateKeyboardMetrics();
-      if (state.keyboardOpen) {
-        scheduleResizeAfterKeyboard();
-      } else {
-        sendResize();
-      }
+      updateViewportMetrics();
+      sendResize();
     }, 120));
-    window.addEventListener("orientationchange", () => setTimeout(() => sendResize(true), 350));
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         ensureConnected();
-        updateKeyboardMetrics();
-        setTimeout(() => sendResize(true), 150);
+        setTimeout(sendResize, 150);
       }
     });
     app.querySelectorAll("[data-key]").forEach((btn) => setupQuickbarButton(btn));
     setupTerminalTitleEditor();
     app.querySelector("#selectMode").addEventListener("click", toggleSelectionMode);
-    setTimeout(() => sendResize(true), 100);
+    setTimeout(sendResize, 100);
   }
 
   function setupTerminalTitleEditor() {
@@ -517,6 +502,21 @@
     bindTarget(terminal);
     bindTarget(terminal.querySelector("textarea.xterm-helper-textarea"));
     setTimeout(() => bindTarget(terminal.querySelector("textarea.xterm-helper-textarea")), 0);
+  }
+
+  function setupTerminalFocusBottom() {
+    const terminal = document.getElementById("terminal");
+    if (!terminal) return;
+    const scrollInputIntoView = () => {
+      state.term?.scrollToBottom();
+      requestAnimationFrame(() => state.term?.scrollToBottom());
+    };
+    terminal.addEventListener("focusin", (event) => {
+      if (event.target?.matches?.("textarea.xterm-helper-textarea")) {
+        scrollInputIntoView();
+      }
+    }, true);
+    terminal.addEventListener("click", scrollInputIntoView);
   }
 
   async function commitTerminalTitle() {
@@ -576,69 +576,24 @@
   }
 
   function setupViewportTracking() {
-    updateKeyboardMetrics();
-    const keyboard = navigator.virtualKeyboard;
-    if (keyboard) {
-      try {
-        keyboard.overlaysContent = true;
-      } catch {
-        // Some WebViews expose the API but do not allow changing this flag.
-      }
-      keyboard.addEventListener("geometrychange", () => {
-        updateKeyboardMetrics();
-      });
-    }
-
+    updateViewportMetrics();
     const viewport = window.visualViewport;
     if (!viewport) return;
-    const update = debounce(() => updateKeyboardMetrics(), 60);
+    const update = debounce(() => {
+      updateViewportMetrics();
+      sendResize();
+    }, 60);
     viewport.addEventListener("resize", update);
     viewport.addEventListener("scroll", update);
   }
 
-  function updateKeyboardMetrics() {
-    const keyboardOffset = getKeyboardOffset();
-    const keyboardShift = Math.min(keyboardOffset, getMaxKeyboardShift());
-    const wasOpen = state.keyboardOpen;
-    state.keyboardOpen = keyboardOffset > 20;
-    document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
-    document.documentElement.style.setProperty("--keyboard-shift", `${keyboardShift}px`);
-    if (wasOpen && !state.keyboardOpen) scheduleResizeAfterKeyboard();
-  }
-
-  function getKeyboardOffset() {
-    const keyboard = navigator.virtualKeyboard;
-    const rect = keyboard?.boundingRect;
-    const keyboardHeight = Math.max(0, rect?.height || 0);
-    const { height, offsetTop } = currentViewportMetrics();
-    const viewportHeight = Math.max(0, window.innerHeight - height - offsetTop);
-    return Math.max(keyboardHeight, viewportHeight);
-  }
-
-  function getMaxKeyboardShift() {
-    const body = document.querySelector(".terminal-body");
-    const header = document.querySelector(".terminal-bar");
-    const bodyHeight = body?.getBoundingClientRect().height || window.innerHeight;
-    const headerHeight = header?.getBoundingClientRect().height || 0;
-    return Math.max(0, bodyHeight - headerHeight - 24);
-  }
-
-  function currentViewportMetrics() {
+  function updateViewportMetrics() {
     const viewport = window.visualViewport;
-    return {
-      width: viewport?.width || window.innerWidth,
-      height: viewport?.height || window.innerHeight,
-      offsetTop: viewport?.offsetTop || 0,
-      offsetLeft: viewport?.offsetLeft || 0,
-    };
-  }
-
-  function viewportMetricsChanged(a, b) {
-    if (!a || !b) return false;
-    return Math.abs(a.width - b.width) > 1
-      || Math.abs(a.height - b.height) > 1
-      || Math.abs(a.offsetTop - b.offsetTop) > 1
-      || Math.abs(a.offsetLeft - b.offsetLeft) > 1;
+    const height = viewport?.height || window.innerHeight;
+    const offsetTop = viewport?.offsetTop || 0;
+    const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
+    document.documentElement.style.setProperty("--viewport-height", `${height}px`);
+    document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
   }
 
   function setupTerminalTouchScroll() {
@@ -648,7 +603,6 @@
     let lastY = 0;
     let pendingPixels = 0;
     let active = false;
-    let touchViewport = null;
 
     terminal.addEventListener("touchstart", (event) => {
       if (state.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
@@ -658,25 +612,13 @@
       active = true;
       lastY = event.touches[0].clientY;
       pendingPixels = 0;
-      touchViewport = currentViewportMetrics();
     }, { passive: true });
 
     terminal.addEventListener("touchmove", (event) => {
       if (!active || !state.term || event.touches.length !== 1) return;
       const y = event.touches[0].clientY;
-      const viewport = currentViewportMetrics();
-      if (viewportMetricsChanged(touchViewport, viewport)) {
-        lastY = y;
-        pendingPixels = 0;
-        touchViewport = viewport;
-        return;
-      }
       const delta = lastY - y;
       lastY = y;
-      if (Math.abs(delta) > 80) {
-        pendingPixels = 0;
-        return;
-      }
       if (!delta) return;
 
       pendingPixels += delta;
@@ -697,43 +639,11 @@
     terminal.addEventListener("touchend", () => {
       active = false;
       pendingPixels = 0;
-      touchViewport = null;
     }, { passive: true });
     terminal.addEventListener("touchcancel", () => {
       active = false;
       pendingPixels = 0;
-      touchViewport = null;
     }, { passive: true });
-  }
-
-  function setupTerminalResizeObserver() {
-    const terminal = document.getElementById("terminal");
-    if (!terminal || typeof ResizeObserver === "undefined") return;
-    state.resizeObserver?.disconnect();
-    let lastWidth = 0;
-    let lastHeight = 0;
-    state.resizeObserver = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (!rect) return;
-      const width = Math.round(rect.width);
-      const height = Math.round(rect.height);
-      if (Math.abs(width - lastWidth) < 2 && Math.abs(height - lastHeight) < 2) return;
-      lastWidth = width;
-      lastHeight = height;
-      if (state.keyboardOpen) {
-        scheduleResizeAfterKeyboard();
-      } else {
-        sendResize();
-      }
-    });
-    state.resizeObserver.observe(terminal);
-  }
-
-  function scheduleResizeAfterKeyboard() {
-    clearTimeout(state.keyboardSettleTimer);
-    state.keyboardSettleTimer = setTimeout(() => {
-      if (!state.keyboardOpen) sendResize(true);
-    }, 260);
   }
 
   function getTerminalCellHeight() {
@@ -820,7 +730,7 @@
       state.reconnectAttempts = 0;
       clearReconnect();
       send({ type: "hello", lastSeq: state.restored ? state.lastSeq : 0 });
-      sendResize(true);
+      sendResize();
     });
     state.ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data);
@@ -884,6 +794,7 @@
   }
 
   function sendInput(data) {
+    state.term?.scrollToBottom();
     send({ type: "input", data });
   }
 
@@ -895,32 +806,12 @@
     if (!sendModifiedInput(data)) sendInput(data);
   }
 
-  function sendResize(force = false) {
+  function sendResize() {
     if (!state.fit || !state.term) return;
-    if (state.keyboardOpen) {
-      if (force) scheduleResizeAfterKeyboard();
-      return;
-    }
-    if (state.pendingResizeFrame) return;
-    state.pendingResizeFrame = requestAnimationFrame(() => {
-      state.pendingResizeFrame = 0;
-      const proposed = state.fit.proposeDimensions?.();
-      if (!proposed && !force) return;
-      if (proposed && proposed.cols === state.term.cols && proposed.rows === state.term.rows && !force) return;
+    requestAnimationFrame(() => {
       state.fit.fit();
-      const changed = rememberTerminalSize();
-      if (changed || force) {
-        send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
-      }
+      send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
     });
-  }
-
-  function rememberTerminalSize() {
-    if (!state.term) return false;
-    if (state.lastResizeCols === state.term.cols && state.lastResizeRows === state.term.rows) return false;
-    state.lastResizeCols = state.term.cols;
-    state.lastResizeRows = state.term.rows;
-    return true;
   }
 
   function rememberSeq(seq) {
@@ -957,7 +848,7 @@
   }
 
   function sendKey(key) {
-    if (key === "Ctrl") {
+    if (key === "Ctrl" || key === "Alt" || key === "Shift") {
       togglePendingModifier(key.toLowerCase());
       return;
     }
@@ -990,7 +881,7 @@
   }
 
   function updateModifierButtons() {
-    app.querySelectorAll("[data-key='Ctrl']").forEach((btn) => {
+    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt'], [data-key='Shift']").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
     });
   }
@@ -1027,8 +918,6 @@
     const base = ({
       Esc: "\x1b",
       Tab: "\t",
-      "Shift Tab": "\x1b[Z",
-      "Ctrl C": "\x03",
       "/": "/",
       "↑": "\x1b[A",
       "↓": "\x1b[B",
@@ -1036,6 +925,8 @@
       "→": "\x1b[C",
     })[key] || "";
     if (!base) return "";
+    if (modifier === "shift" && key === "Tab") return "\x1b[Z";
+    if (modifier === "alt") return `\x1b${base}`;
     if (modifier === "ctrl") return modifiedInput("ctrl", base) || base;
     return base;
   }
