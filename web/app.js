@@ -396,7 +396,7 @@
         </header>
         <div id="terminal"></div>
         <nav class="quickbar">
-          ${["Ctrl", "Alt", "Shift", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
+          ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
         </nav>
       </section>`;
     setupTerminal(id);
@@ -848,7 +848,7 @@
   }
 
   function sendKey(key) {
-    if (key === "Ctrl" || key === "Alt" || key === "Shift") {
+    if (key === "Ctrl") {
       togglePendingModifier(key.toLowerCase());
       return;
     }
@@ -881,7 +881,7 @@
   }
 
   function updateModifierButtons() {
-    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt'], [data-key='Shift']").forEach((btn) => {
+    app.querySelectorAll("[data-key='Ctrl']").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
     });
   }
@@ -918,6 +918,8 @@
     const base = ({
       Esc: "\x1b",
       Tab: "\t",
+      "Shift Tab": "\x1b[Z",
+      "Ctrl C": "\x03",
       "/": "/",
       "↑": "\x1b[A",
       "↓": "\x1b[B",
@@ -925,8 +927,6 @@
       "→": "\x1b[C",
     })[key] || "";
     if (!base) return "";
-    if (modifier === "shift" && key === "Tab") return "\x1b[Z";
-    if (modifier === "alt") return `\x1b${base}`;
     if (modifier === "ctrl") return modifiedInput("ctrl", base) || base;
     return base;
   }
