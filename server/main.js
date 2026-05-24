@@ -1,10 +1,13 @@
 import http from 'node:http';
 import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { AuthManager, setAuthCookie } from './auth.js';
 import { json, readJSON, sameHostOrigin, serveStatic, text } from './http-utils.js';
 import { SessionManager } from './session-manager.js';
+
+loadLocalEnv();
 
 const password = process.env.WEBTERM_PASSWORD;
 if (!password) {
@@ -27,6 +30,16 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === '/ws/sessions') {
+    if (!auth.authenticated(req) || !sameHostOrigin(req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => sessions.attachManager(ws));
+    return;
+  }
+
   const match = url.pathname.match(/^\/ws\/sessions\/([^/]+)$/);
   if (!match || !auth.authenticated(req) || !sameHostOrigin(req)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -126,4 +139,18 @@ function splitAddress(value) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function loadLocalEnv() {
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.local');
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const index = trimmed.indexOf('=');
+    if (index <= 0) continue;
+    const key = trimmed.slice(0, index).trim();
+    const value = trimmed.slice(index + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (!process.env[key]) process.env[key] = value;
+  }
 }

@@ -63,6 +63,10 @@
     term: null,
     fit: null,
     managerTimer: null,
+    managerWS: null,
+    managerReconnectTimer: null,
+    managerReconnectAttempts: 0,
+    managerManualClose: false,
     terminalID: null,
     reconnectTimer: null,
     reconnectAttempts: 0,
@@ -201,6 +205,7 @@
     app.querySelector("#theme").addEventListener("click", toggleTheme);
     drawSessionList();
     startManagerRefresh();
+    connectManagerWS();
   }
 
   function startManagerRefresh() {
@@ -224,6 +229,81 @@
       clearInterval(state.managerTimer);
       state.managerTimer = null;
     }
+  }
+
+  function connectManagerWS() {
+    if (location.pathname !== "/") return;
+    if (state.managerWS && (state.managerWS.readyState === WebSocket.OPEN || state.managerWS.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    state.managerManualClose = false;
+    state.managerWS = new WebSocket(`${proto}://${location.host}/ws/sessions`);
+    state.managerWS.addEventListener("open", () => {
+      state.managerReconnectAttempts = 0;
+      clearManagerReconnect();
+      stopManagerRefresh();
+      setManagerError("");
+    });
+    state.managerWS.addEventListener("message", (event) => {
+      if (location.pathname !== "/") return;
+      const msg = JSON.parse(event.data);
+      if (msg.type === "sessions") {
+        state.sessions = Array.isArray(msg.data) ? msg.data : [];
+        drawSessionList();
+      } else if (msg.type === "session") {
+        upsertSession(msg.data);
+        drawSessionList();
+      } else if (msg.type === "session-closed") {
+        removeSession(msg.id);
+        drawSessionList();
+      }
+    });
+    state.managerWS.addEventListener("close", () => {
+      state.managerWS = null;
+      if (state.managerManualClose || location.pathname !== "/") return;
+      startManagerRefresh();
+      scheduleManagerReconnect();
+    });
+    state.managerWS.addEventListener("error", () => {
+      startManagerRefresh();
+    });
+  }
+
+  function closeManagerWS() {
+    state.managerManualClose = true;
+    clearManagerReconnect();
+    if (state.managerWS) {
+      state.managerWS.close();
+      state.managerWS = null;
+    }
+  }
+
+  function scheduleManagerReconnect() {
+    clearManagerReconnect();
+    const delay = Math.min(1000 * Math.pow(1.6, state.managerReconnectAttempts++), 8000);
+    state.managerReconnectTimer = setTimeout(() => connectManagerWS(), delay);
+  }
+
+  function clearManagerReconnect() {
+    if (state.managerReconnectTimer) {
+      clearTimeout(state.managerReconnectTimer);
+      state.managerReconnectTimer = null;
+    }
+  }
+
+  function upsertSession(session) {
+    if (!session?.id) return;
+    const index = state.sessions.findIndex((item) => item.id === session.id);
+    if (index >= 0) {
+      state.sessions.splice(index, 1, session);
+    } else {
+      state.sessions.push(session);
+    }
+  }
+
+  function removeSession(id) {
+    state.sessions = state.sessions.filter((session) => session.id !== id);
   }
 
   function drawSessionList() {
@@ -299,6 +379,8 @@
   function renderTerminal(id) {
     document.title = "Terminal - WebTerm";
     document.body.classList.add("terminal-mode");
+    stopManagerRefresh();
+    closeManagerWS();
     if (typeof Terminal === "undefined" || typeof FitAddon === "undefined") {
       renderFatal(new Error("终端组件加载失败，请刷新页面或检查 /vendor/xterm.js 是否可访问"));
       return;
@@ -314,7 +396,7 @@
         </header>
         <div id="terminal"></div>
         <nav class="quickbar">
-          ${["Ctrl", "Alt", "Shift", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
+          ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
         </nav>
       </section>`;
     setupTerminal(id);
@@ -752,7 +834,7 @@
   }
 
   function sendKey(key) {
-    if (key === "Ctrl" || key === "Alt" || key === "Shift") {
+    if (key === "Ctrl") {
       togglePendingModifier(key.toLowerCase());
       return;
     }
@@ -785,7 +867,7 @@
   }
 
   function updateModifierButtons() {
-    app.querySelectorAll("[data-key='Ctrl'], [data-key='Alt'], [data-key='Shift']").forEach((btn) => {
+    app.querySelectorAll("[data-key='Ctrl']").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
     });
   }
@@ -822,6 +904,8 @@
     const base = ({
       Esc: "\x1b",
       Tab: "\t",
+      "Shift Tab": "\x1b[Z",
+      "Ctrl C": "\x03",
       "/": "/",
       "↑": "\x1b[A",
       "↓": "\x1b[B",
@@ -829,8 +913,6 @@
       "→": "\x1b[C",
     })[key] || "";
     if (!base) return "";
-    if (modifier === "shift" && key === "Tab") return "\x1b[Z";
-    if (modifier === "alt") return `\x1b${base}`;
     if (modifier === "ctrl") return modifiedInput("ctrl", base) || base;
     return base;
   }

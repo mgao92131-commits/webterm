@@ -14,7 +14,7 @@ const FALLBACK_TITLE = 'Terminal';
 const MAX_RECENT_INPUT_CHARS = 2000;
 
 export class TerminalSession {
-  constructor({ id, name, cwd, onExit }) {
+  constructor({ id, name, cwd, onExit, onInfo }) {
     this.id = id;
     this.name = normalizeName(name);
     this.termTitle = '';
@@ -24,6 +24,7 @@ export class TerminalSession {
     this.status = 'running';
     this.clients = new Set();
     this.onExit = onExit;
+    this.onInfo = onInfo;
     this.cols = DEFAULT_COLS;
     this.rows = DEFAULT_ROWS;
     this.ring = new EventRing();
@@ -68,7 +69,7 @@ export class TerminalSession {
   rename(name) {
     this.name = normalizeName(name);
     this.touch();
-    this.broadcast({ type: 'info', data: this.info() });
+    this.broadcastInfo();
   }
 
   updateTermTitle(title) {
@@ -76,7 +77,7 @@ export class TerminalSession {
     if (nextTitle === this.termTitle) return;
     this.termTitle = nextTitle;
     this.touch();
-    this.broadcast({ type: 'info', data: this.info() });
+    this.broadcastInfo();
   }
 
   attach(ws) {
@@ -84,7 +85,7 @@ export class TerminalSession {
     this.clients.add(client);
     this.touch();
     client.send({ type: 'info', data: this.info() });
-    this.broadcast({ type: 'info', data: this.info() });
+    this.broadcastInfo();
 
     ws.on('message', (raw) => {
       let msg;
@@ -98,7 +99,7 @@ export class TerminalSession {
     ws.on('close', () => {
       this.clients.delete(client);
       this.touch();
-      this.broadcast({ type: 'info', data: this.info() });
+      this.broadcastInfo();
     });
     ws.on('error', () => {
       this.clients.delete(client);
@@ -206,7 +207,13 @@ export class TerminalSession {
     this.recentInputHidden = isSensitiveInput(text);
     this.recentInputLines = this.recentInputHidden ? [] : lastInputLines(text, 2);
     this.touch();
-    this.broadcast({ type: 'info', data: this.info() });
+    this.broadcastInfo();
+  }
+
+  broadcastInfo() {
+    const info = this.info();
+    this.broadcast({ type: 'info', data: info });
+    this.onInfo?.(info);
   }
 }
 

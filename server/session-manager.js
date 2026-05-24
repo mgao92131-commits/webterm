@@ -3,6 +3,7 @@ import { TerminalSession } from './terminal-session.js';
 export class SessionManager {
   constructor() {
     this.sessions = new Map();
+    this.managerClients = new Set();
     this.nextID = 1;
   }
 
@@ -20,9 +21,11 @@ export class SessionManager {
       id,
       name,
       cwd,
-      onExit: (sessionID) => this.sessions.delete(sessionID),
+      onExit: (sessionID) => this.removeExited(sessionID),
+      onInfo: (info) => this.broadcastManager({ type: 'session', data: info }),
     });
     this.sessions.set(id, session);
+    this.broadcastManager({ type: 'session', data: session.info() });
     return session;
   }
 
@@ -38,6 +41,48 @@ export class SessionManager {
     if (!session) return false;
     session.close();
     this.sessions.delete(id);
+    this.broadcastManager({ type: 'session-closed', id });
     return true;
+  }
+
+  removeExited(id) {
+    if (!this.sessions.delete(id)) return;
+    this.broadcastManager({ type: 'session-closed', id });
+  }
+
+  attachManager(ws) {
+    const client = new ManagerClient(ws);
+    this.managerClients.add(client);
+    client.send({ type: 'sessions', data: this.list() });
+    ws.on('close', () => {
+      this.managerClients.delete(client);
+    });
+    ws.on('error', () => {
+      this.managerClients.delete(client);
+    });
+  }
+
+  broadcastManager(message) {
+    for (const client of [...this.managerClients]) {
+      if (!client.send(message)) {
+        this.managerClients.delete(client);
+      }
+    }
+  }
+}
+
+class ManagerClient {
+  constructor(ws) {
+    this.ws = ws;
+  }
+
+  send(message) {
+    if (this.ws.readyState !== 1) return false;
+    try {
+      this.ws.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

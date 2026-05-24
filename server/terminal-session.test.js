@@ -100,6 +100,7 @@ function fakeSession({ latestSeq }) {
     broadcast(message) {
       for (const client of this.clients) client.send(message);
     },
+    broadcastInfo: TerminalSession.prototype.broadcastInfo,
     ring: {
       latestSeq() {
         return latestSeq;
