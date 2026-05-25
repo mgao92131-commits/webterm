@@ -338,7 +338,10 @@ input {
 
 #terminal .xterm {
   height: 100%;
+  width: 100%;
   max-width: 100%;
+  overflow: hidden;
+  contain: paint;
 }
 
 #terminal .xterm-viewport {
@@ -350,7 +353,24 @@ input {
 }
 
 #terminal .xterm-screen {
+  max-width: 100%;
+  overflow: hidden;
   touch-action: none;
+}
+
+#terminal .xterm-helpers {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+#terminal .xterm-helper-textarea {
+  max-width: 1px !important;
+  width: 1px !important;
+}
+
+#terminal .composition-view {
+  max-width: calc(100dvw - 24px);
+  overflow: hidden;
 }
 
 .terminal-page.selection-mode #terminal {

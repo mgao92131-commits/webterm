@@ -429,6 +429,7 @@
     state.term.loadAddon(state.fit);
     state.term.open(document.getElementById("terminal"));
     setupModifierInputCapture();
+    setupMobileIMEBounds();
     setupTerminalFocusBottom();
     setupTerminalTouchScroll();
     setupTerminalSelection();
@@ -509,6 +510,36 @@
     bindTarget(terminal);
     bindTarget(terminal.querySelector("textarea.xterm-helper-textarea"));
     setTimeout(() => bindTarget(terminal.querySelector("textarea.xterm-helper-textarea")), 0);
+  }
+
+  function setupMobileIMEBounds() {
+    const terminal = document.getElementById("terminal");
+    if (!terminal) return;
+
+    const clampCompositionView = () => {
+      const composition = terminal.querySelector(".composition-view");
+      if (!composition) return;
+      const terminalRect = terminal.getBoundingClientRect();
+      const compositionRect = composition.getBoundingClientRect();
+      const available = Math.max(24, terminalRect.right - compositionRect.left - 8);
+      composition.style.maxWidth = `${Math.min(available, terminalRect.width - 16)}px`;
+    };
+
+    const scheduleClamp = () => requestAnimationFrame(clampCompositionView);
+    const bindTextarea = () => {
+      const textarea = terminal.querySelector("textarea.xterm-helper-textarea");
+      if (!textarea || textarea.dataset.imeBounds === "1") return;
+      textarea.dataset.imeBounds = "1";
+      textarea.addEventListener("compositionstart", scheduleClamp);
+      textarea.addEventListener("compositionupdate", scheduleClamp);
+      textarea.addEventListener("input", scheduleClamp);
+      textarea.addEventListener("focus", scheduleClamp);
+    };
+
+    bindTextarea();
+    setTimeout(bindTextarea, 0);
+    window.addEventListener("resize", scheduleClamp);
+    state.term?.onRender?.(scheduleClamp);
   }
 
   function setupTerminalFocusBottom() {
