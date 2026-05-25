@@ -1017,12 +1017,33 @@
     event?.preventDefault();
     rememberSelectionViewport();
     const text = state.term?.getSelection?.() || "";
-    if (!text) return;
-    await navigator.clipboard.writeText(text);
+    if (text) {
+      try {
+        await copyText(text);
+      } catch (err) {
+        console.warn("copy failed", err);
+      }
+    }
     state.selectionMode = false;
     state.selectionAnchor = null;
     state.term?.clearSelection?.();
     updateSelectionModeUI();
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.readOnly = true;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
   }
 
   function updateSelectionModeUI() {
