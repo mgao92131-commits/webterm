@@ -74,6 +74,9 @@
     lastSeq: 0,
     restored: false,
     selectionMode: false,
+    enteringSelectionMode: false,
+    selectionViewportY: null,
+    selectionScrollTop: null,
     selectionAnchor: null,
     pendingModifier: null,
     lastQuickbarTouchAt: 0,
@@ -392,6 +395,7 @@
           <div class="terminal-title">
             <input id="sessionName" autocomplete="off" maxlength="80" value="" placeholder="Terminal" aria-label="会话名称" title="会话名称，留空时显示终端标题" />
           </div>
+          <button id="copySelection" class="selection-copy" type="button" hidden>拷贝</button>
           <button id="selectMode" type="button">选择</button>
         </header>
         <div id="terminal"></div>
@@ -443,8 +447,11 @@
       }
     });
     app.querySelectorAll("[data-key]").forEach((btn) => setupQuickbarButton(btn));
+    app.querySelector("#copySelection").addEventListener("click", copyTerminalSelection);
     setupTerminalTitleEditor();
-    app.querySelector("#selectMode").addEventListener("click", toggleSelectionMode);
+    const selectButton = app.querySelector("#selectMode");
+    selectButton.addEventListener("pointerdown", prepareSelectionModeToggle);
+    selectButton.addEventListener("click", toggleSelectionMode);
     setTimeout(sendResize, 100);
   }
 
@@ -457,7 +464,7 @@
       state.titleBeforeEdit = state.currentSessionName || "";
       titleInput.select();
     });
-    titleInput.addEventListener("blur", () => commitTerminalTitle());
+    titleInput.addEventListener("blur", (event) => commitTerminalTitle(event));
     titleInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -508,6 +515,7 @@
     const terminal = document.getElementById("terminal");
     if (!terminal) return;
     const scrollInputIntoView = () => {
+      if (state.selectionMode) return;
       state.term?.scrollToBottom();
       requestAnimationFrame(() => state.term?.scrollToBottom());
     };
@@ -519,19 +527,20 @@
     terminal.addEventListener("click", scrollInputIntoView);
   }
 
-  async function commitTerminalTitle() {
+  async function commitTerminalTitle(event) {
     if (state.skipTitleCommit) {
       state.skipTitleCommit = false;
       state.titleEditing = false;
       return;
     }
+    const restoreFocus = shouldRestoreTerminalFocusAfterTitleEdit(event);
     const titleInput = document.getElementById("sessionName");
     const nextName = (titleInput?.value || "").trim();
     const oldName = state.titleBeforeEdit || "";
     state.titleEditing = false;
     if (nextName === oldName || !state.terminalID) {
       setTerminalInfo({ name: oldName });
-      state.term?.focus();
+      if (restoreFocus) state.term?.focus();
       return;
     }
     setTerminalInfo({ name: nextName });
@@ -545,15 +554,21 @@
       setTerminalInfo({ name: oldName });
       alert(err.message.trim() || "修改标题失败");
     } finally {
-      state.term?.focus();
+      if (restoreFocus) state.term?.focus();
     }
+  }
+
+  function shouldRestoreTerminalFocusAfterTitleEdit(event) {
+    return !state.selectionMode
+      && !state.enteringSelectionMode
+      && event?.relatedTarget?.id !== "selectMode";
   }
 
   function cancelTerminalTitleEdit() {
     state.skipTitleCommit = true;
     state.titleEditing = false;
     setTerminalInfo({ name: state.titleBeforeEdit || "" });
-    state.term?.focus();
+    if (!state.selectionMode) state.term?.focus();
   }
 
   function setTerminalInfo(session = {}) {
@@ -664,34 +679,53 @@
     const terminal = document.getElementById("terminal");
     if (!terminal || !state.term) return;
 
+    const blockNativeSelectionEvent = (event) => {
+      if (!state.selectionMode) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setTerminalInputSuspended(true);
+    };
+
+    terminal.addEventListener("mousedown", blockNativeSelectionEvent, true);
+    terminal.addEventListener("touchstart", blockNativeSelectionEvent, { capture: true, passive: false });
+
     terminal.addEventListener("pointerdown", (event) => {
       if (!state.selectionMode || event.button !== 0) return;
+      rememberSelectionViewport();
       const cell = terminalCellFromEvent(event);
       if (!cell) return;
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setTerminalInputSuspended(true);
       terminal.setPointerCapture?.(event.pointerId);
       state.selectionAnchor = cell;
       state.term.clearSelection();
       state.term.select(cell.col, cell.row, 1);
-    });
+      restoreSelectionViewport();
+    }, true);
 
     terminal.addEventListener("pointermove", (event) => {
       if (!state.selectionMode || !state.selectionAnchor) return;
       const cell = terminalCellFromEvent(event);
       if (!cell) return;
       event.preventDefault();
+      event.stopPropagation();
       selectTerminalRange(state.selectionAnchor, cell);
-    });
+      restoreSelectionViewport();
+    }, true);
 
     terminal.addEventListener("pointerup", (event) => {
       if (!state.selectionMode) return;
       event.preventDefault();
+      event.stopPropagation();
       state.selectionAnchor = null;
-    });
+    }, true);
 
     terminal.addEventListener("pointercancel", () => {
       state.selectionAnchor = null;
-    });
+    }, true);
   }
 
   function terminalCellFromEvent(event) {
@@ -931,14 +965,73 @@
     return base;
   }
 
+  function prepareSelectionModeToggle() {
+    rememberSelectionViewport();
+    state.enteringSelectionMode = !state.selectionMode;
+    if (state.enteringSelectionMode) {
+      setTerminalInputSuspended(true);
+    }
+  }
+
   function toggleSelectionMode() {
     state.selectionMode = !state.selectionMode;
+    state.enteringSelectionMode = false;
     state.selectionAnchor = null;
     clearPendingModifier();
+    if (!state.selectionMode) state.term?.clearSelection?.();
+    updateSelectionModeUI();
+  }
+
+  async function copyTerminalSelection(event) {
+    event?.preventDefault();
+    rememberSelectionViewport();
+    const text = state.term?.getSelection?.() || "";
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    state.selectionMode = false;
+    state.selectionAnchor = null;
+    state.term?.clearSelection?.();
+    updateSelectionModeUI();
+  }
+
+  function updateSelectionModeUI() {
     app.querySelector(".terminal-page")?.classList.toggle("selection-mode", state.selectionMode);
-    const btn = document.getElementById("selectMode");
-    if (btn) btn.textContent = state.selectionMode ? "完成" : "选择";
-    if (!state.selectionMode) state.term.focus();
+    const selectButton = document.getElementById("selectMode");
+    if (selectButton) selectButton.textContent = state.selectionMode ? "取消" : "选择";
+    const copyButton = document.getElementById("copySelection");
+    if (copyButton) copyButton.hidden = !state.selectionMode;
+    setTerminalInputSuspended(state.selectionMode);
+    restoreSelectionViewport();
+  }
+
+  function rememberSelectionViewport() {
+    state.selectionViewportY = state.term?.buffer?.active?.viewportY ?? null;
+    state.selectionScrollTop = document.querySelector("#terminal .xterm-viewport")?.scrollTop ?? null;
+  }
+
+  function restoreSelectionViewport() {
+    const viewportY = state.selectionViewportY;
+    const scrollTop = state.selectionScrollTop;
+    const restore = () => {
+      if (Number.isFinite(viewportY)) state.term?.scrollToLine(viewportY);
+      const viewport = document.querySelector("#terminal .xterm-viewport");
+      if (viewport && Number.isFinite(scrollTop)) viewport.scrollTop = scrollTop;
+    };
+    restore();
+    requestAnimationFrame(restore);
+  }
+
+  function setTerminalInputSuspended(suspended) {
+    const textarea = document.querySelector("#terminal textarea.xterm-helper-textarea");
+    if (!textarea) return;
+    if (suspended) {
+      textarea.blur();
+      textarea.readOnly = true;
+      textarea.setAttribute("inputmode", "none");
+      return;
+    }
+    textarea.readOnly = false;
+    textarea.removeAttribute("inputmode");
   }
 
   function toggleTheme() {

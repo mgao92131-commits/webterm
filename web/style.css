@@ -291,7 +291,7 @@ input {
 
 .terminal-bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
@@ -362,6 +362,11 @@ input {
   color: var(--accent);
 }
 
+.terminal-page.selection-mode .selection-copy {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .quickbar button.active {
   border-color: var(--accent);
   color: var(--accent);
@@ -414,7 +419,7 @@ input {
   }
 
   .terminal-bar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     gap: 8px;
     padding: 8px;
     width: 100%;
