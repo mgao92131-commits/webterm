@@ -423,6 +423,7 @@
       fontSize: 10,
       convertEol: true,
       scrollback: 20000,
+      overviewRuler: { width: 4 },
       theme: termTheme(),
     });
     state.fit = new FitAddon.FitAddon();
