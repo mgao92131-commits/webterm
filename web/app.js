@@ -86,6 +86,8 @@
     titleBeforeEdit: "",
     titleEditing: false,
     skipTitleCommit: false,
+    keyboardOpen: false,
+    resizingTerminal: false,
   };
 
   document.documentElement.dataset.theme = state.theme;
@@ -417,6 +419,7 @@
     state.titleBeforeEdit = "";
     state.titleEditing = false;
     state.skipTitleCommit = false;
+    state.keyboardOpen = isKeyboardOpen();
     state.term = new Terminal({
       cursorBlink: true,
       fontFamily: "Consolas, Menlo, Monaco, monospace",
@@ -429,6 +432,7 @@
     state.fit = new FitAddon.FitAddon();
     state.term.loadAddon(state.fit);
     state.term.open(document.getElementById("terminal"));
+    setupTerminalDebugHooks();
     setupModifierInputCapture();
     setupMobileIMEBounds();
     setupTerminalFocusBottom();
@@ -436,12 +440,12 @@
     setupTerminalSelection();
     setupViewportTracking();
     state.fit.fit();
+    state.term.onScroll(() => {
+      if (!state.resizingTerminal) state.lastScrollAnchor = captureTerminalScrollAnchor();
+    });
     connectWS(id);
     state.term.onData(handleTerminalData);
-    window.addEventListener("resize", debounce(() => {
-      updateViewportMetrics();
-      sendResize();
-    }, 120));
+    window.addEventListener("resize", debounce(handleViewportResize, 120));
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         ensureConnected();
@@ -559,6 +563,53 @@
     terminal.addEventListener("click", scrollInputIntoView);
   }
 
+  function setupTerminalDebugHooks() {
+    if (!debugEnabled()) return;
+    window.__webtermDebug = {
+      scroll() {
+        const buffer = state.term?.buffer?.active;
+        const viewport = document.querySelector("#terminal .xterm-viewport");
+        return {
+          viewportY: buffer?.viewportY ?? null,
+          baseY: buffer?.baseY ?? null,
+          bufferType: buffer?.type ?? null,
+          rows: state.term?.rows ?? null,
+          cols: state.term?.cols ?? null,
+          scrollTop: viewport?.scrollTop ?? null,
+          scrollHeight: viewport?.scrollHeight ?? null,
+          clientHeight: viewport?.clientHeight ?? null,
+          keyboardOpen: state.keyboardOpen,
+          visualViewport: window.visualViewport ? {
+            height: window.visualViewport.height,
+            offsetTop: window.visualViewport.offsetTop,
+          } : null,
+          innerHeight: window.innerHeight,
+        };
+      },
+      scrollToLine(line) {
+        state.term?.scrollToLine(Number(line) || 0);
+        return this.scroll();
+      },
+      scrollLines(lines) {
+        state.term?.scrollLines(Number(lines) || 0);
+        return this.scroll();
+      },
+      focus() {
+        state.term?.focus();
+        return this.scroll();
+      },
+      input(data) {
+        sendInput(String(data || ""));
+        return this.scroll();
+      },
+    };
+  }
+
+  function debugEnabled() {
+    return new URLSearchParams(location.search).has("debug")
+      || localStorage.getItem("webtermDebug") === "1";
+  }
+
   async function commitTerminalTitle(event) {
     if (state.skipTitleCommit) {
       state.skipTitleCommit = false;
@@ -626,21 +677,43 @@
     updateViewportMetrics();
     const viewport = window.visualViewport;
     if (!viewport) return;
-    const update = debounce(() => {
-      updateViewportMetrics();
-      sendResize();
-    }, 60);
-    viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
+    const resize = debounce(handleViewportResize, 60);
+    const scroll = debounce(() => updateViewportMetrics({ height: false }), 60);
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", scroll);
   }
 
-  function updateViewportMetrics() {
+  function handleViewportResize() {
+    const anchor = captureTerminalScrollAnchor() || state.lastScrollAnchor;
+    const wasKeyboardOpen = state.keyboardOpen;
+    const nextKeyboardOpen = isKeyboardOpen();
+    updateViewportMetrics();
+    sendResize({
+      reason: "viewport",
+      anchor,
+      wasKeyboardOpen,
+      nextKeyboardOpen,
+    });
+  }
+
+  function updateViewportMetrics(options = {}) {
+    const updateHeight = options.height !== false;
     const viewport = window.visualViewport;
     const height = viewport?.height || window.innerHeight;
     const offsetTop = viewport?.offsetTop || 0;
     const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
-    document.documentElement.style.setProperty("--viewport-height", `${height}px`);
+    if (updateHeight) document.documentElement.style.setProperty("--viewport-height", `${height}px`);
     document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+  }
+
+  function getKeyboardOffset() {
+    const viewport = window.visualViewport;
+    if (!viewport) return 0;
+    return Math.max(0, window.innerHeight - viewport.height - (viewport.offsetTop || 0));
+  }
+
+  function isKeyboardOpen() {
+    return getKeyboardOffset() > 80;
   }
 
   function setupTerminalTouchScroll() {
@@ -872,12 +945,56 @@
     if (!sendModifiedInput(data)) sendInput(data);
   }
 
-  function sendResize() {
+  function sendResize(options = {}) {
     if (!state.fit || !state.term) return;
+    const anchor = options.anchor || captureTerminalScrollAnchor();
+    const wasKeyboardOpen = options.wasKeyboardOpen ?? state.keyboardOpen;
+    const nextKeyboardOpen = options.nextKeyboardOpen ?? isKeyboardOpen();
+    state.keyboardOpen = nextKeyboardOpen;
     requestAnimationFrame(() => {
-      state.fit.fit();
+      state.resizingTerminal = true;
+      try {
+        state.fit.fit();
+        if (!wasKeyboardOpen && nextKeyboardOpen) {
+          state.term.scrollToBottom();
+        } else if (options.reason === "viewport" && !nextKeyboardOpen) {
+          restoreTerminalScrollAnchor(anchor);
+          requestAnimationFrame(() => restoreTerminalScrollAnchor(anchor));
+          setTimeout(() => restoreTerminalScrollAnchor(anchor), 80);
+        }
+        state.lastScrollAnchor = captureTerminalScrollAnchor();
+      } finally {
+        state.resizingTerminal = false;
+      }
       send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
     });
+  }
+
+  function captureTerminalScrollAnchor() {
+    if (!state.term) return null;
+    const buffer = state.term.buffer.active;
+    return {
+      viewportY: buffer.viewportY,
+      centerY: buffer.viewportY + Math.floor((state.term?.rows || 1) / 2),
+      baseY: buffer.baseY,
+      rows: state.term?.rows || null,
+      atBottom: buffer.viewportY >= buffer.baseY,
+    };
+  }
+
+  function restoreTerminalScrollAnchor(anchor) {
+    if (!anchor || !state.term) return;
+    if (anchor.atBottom) {
+      state.term.scrollToBottom();
+      return;
+    }
+    const buffer = state.term.buffer.active;
+    const nextRows = state.term.rows || anchor.rows || 1;
+    const line = Number.isFinite(anchor.centerY)
+      ? anchor.centerY - Math.floor(nextRows / 2)
+      : anchor.viewportY;
+    const clampedLine = clamp(line, 0, buffer.baseY);
+    state.term.scrollToLine(clampedLine);
   }
 
   function rememberSeq(seq) {
