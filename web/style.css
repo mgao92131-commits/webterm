@@ -374,7 +374,7 @@ input {
 #terminal .xterm-screen {
   max-width: 100%;
   overflow: hidden;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 /* The custom mobile scrollbar/quickbar make xterm's overview ruler redundant. */
