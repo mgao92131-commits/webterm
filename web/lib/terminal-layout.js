@@ -21,6 +21,7 @@ export class TerminalLayoutController {
     this.lastScrollAnchor = null;
     this.disposed = false;
     this.resizeRafId = null;
+    this.restoreTimeout = null;
   }
 
   attach() {
@@ -94,6 +95,7 @@ export class TerminalLayoutController {
 
   sendResize(options = {}) {
     if (this.disposed || !this.terminalView) return;
+    this.cancelPendingRestore();
     const anchor = options.anchor || this.captureScrollAnchor();
     const wasKeyboardOpen = options.wasKeyboardOpen ?? this.keyboardOpen;
     const nextKeyboardOpen = options.nextKeyboardOpen ?? this.isKeyboardOpen();
@@ -114,11 +116,17 @@ export class TerminalLayoutController {
         if (!wasKeyboardOpen && nextKeyboardOpen) {
           this.terminalView.scrollToBottom();
           this.raf(() => this.terminalView?.scrollToBottom());
-          this.store.setTimeout(() => this.terminalView?.scrollToBottom(), 80);
+          this.restoreTimeout = this.store.setTimeout(() => {
+            this.restoreTimeout = null;
+            this.terminalView?.scrollToBottom();
+          }, 80);
         } else if (!nextKeyboardOpen) {
           this.restoreScrollAnchor(anchor);
           this.raf(() => this.restoreScrollAnchor(anchor));
-          this.store.setTimeout(() => this.restoreScrollAnchor(anchor), 80);
+          this.restoreTimeout = this.store.setTimeout(() => {
+            this.restoreTimeout = null;
+            this.restoreScrollAnchor(anchor);
+          }, 80);
         }
         this.lastScrollAnchor = this.captureScrollAnchor();
       } finally {
@@ -138,6 +146,13 @@ export class TerminalLayoutController {
         }
       }
     });
+  }
+
+  cancelPendingRestore() {
+    if (this.restoreTimeout) {
+      this.restoreTimeout.dispose();
+      this.restoreTimeout = null;
+    }
   }
 
   captureScrollAnchor() {
@@ -184,6 +199,7 @@ export class TerminalLayoutController {
 
   dispose() {
     this.disposed = true;
+    this.cancelPendingRestore();
     if (this.resizeRafId !== null) {
       this.safeCancelRaf(this.resizeRafId);
       this.resizeRafId = null;

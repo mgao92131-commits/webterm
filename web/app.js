@@ -488,6 +488,7 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.terminalDisposables.add(state.layoutController);
     state.terminalDisposables.add(state.terminalView.onScroll(() => {
       if (!state.layoutController?.resizingTerminal) {
+        state.layoutController.cancelPendingRestore();
         state.layoutController.lastScrollAnchor = state.layoutController.captureScrollAnchor();
       }
     }));
@@ -753,6 +754,7 @@ import { TerminalView } from "./lib/terminal-view.js";
       active = true;
       lastY = event.touches[0].clientY;
       pendingPixels = 0;
+      state.layoutController?.cancelPendingRestore();
     }, { passive: true });
 
     state.terminalDisposables.addEventListener(terminal, "touchmove", (event) => {
