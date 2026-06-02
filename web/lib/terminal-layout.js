@@ -22,6 +22,8 @@ export class TerminalLayoutController {
     this.disposed = false;
     this.resizeRafId = null;
     this.restoreTimeout = null;
+    this.restoreRaf = null;
+    this.pendingRestoreCancelled = false;
   }
 
   attach() {
@@ -110,21 +112,32 @@ export class TerminalLayoutController {
       if (this.disposed || !this.terminalView) return;
 
       options.beforeFit?.();
+      this.pendingRestoreCancelled = false;
       this.resizingTerminal = true;
       try {
         this.terminalView.fit();
         if (!wasKeyboardOpen && nextKeyboardOpen) {
           this.terminalView.scrollToBottom();
-          this.raf(() => this.terminalView?.scrollToBottom());
+          this.restoreRaf = this.windowObject.requestAnimationFrame?.(() => {
+            this.restoreRaf = null;
+            if (this.pendingRestoreCancelled) return;
+            this.terminalView?.scrollToBottom();
+          }) || null;
           this.restoreTimeout = this.store.setTimeout(() => {
             this.restoreTimeout = null;
+            if (this.pendingRestoreCancelled) return;
             this.terminalView?.scrollToBottom();
           }, 80);
         } else if (!nextKeyboardOpen) {
           this.restoreScrollAnchor(anchor);
-          this.raf(() => this.restoreScrollAnchor(anchor));
+          this.restoreRaf = this.windowObject.requestAnimationFrame?.(() => {
+            this.restoreRaf = null;
+            if (this.pendingRestoreCancelled) return;
+            this.restoreScrollAnchor(anchor);
+          }) || null;
           this.restoreTimeout = this.store.setTimeout(() => {
             this.restoreTimeout = null;
+            if (this.pendingRestoreCancelled) return;
             this.restoreScrollAnchor(anchor);
           }, 80);
         }
@@ -149,9 +162,14 @@ export class TerminalLayoutController {
   }
 
   cancelPendingRestore() {
+    this.pendingRestoreCancelled = true;
     if (this.restoreTimeout) {
       this.restoreTimeout.dispose();
       this.restoreTimeout = null;
+    }
+    if (this.restoreRaf && this.windowObject.cancelAnimationFrame) {
+      this.windowObject.cancelAnimationFrame(this.restoreRaf);
+      this.restoreRaf = null;
     }
   }
 
