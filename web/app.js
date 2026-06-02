@@ -466,7 +466,6 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.inputController.attach();
     setupMobileIMEBounds();
     setupTerminalFocusBottom();
-    setupTerminalTouchScroll();
     state.selectionController = new TerminalSelectionController({
       store: state.terminalDisposables,
       root: app,
@@ -734,65 +733,6 @@ import { TerminalView } from "./lib/terminal-view.js";
       if (!state.titleEditing) titleInput.value = state.currentSessionName;
     }
     document.title = `${state.currentDisplayTitle} - WebTerm`;
-  }
-
-  function setupTerminalTouchScroll() {
-    const terminal = document.getElementById("terminal");
-    if (!terminal || !state.term) return;
-
-    let lastY = 0;
-    let pendingPixels = 0;
-    let active = false;
-
-    state.terminalDisposables.addEventListener(terminal, "touchstart", (event) => {
-      if (state.selectionController?.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
-        active = false;
-        return;
-      }
-      active = true;
-      lastY = event.touches[0].clientY;
-      pendingPixels = 0;
-    }, { passive: true });
-
-    state.terminalDisposables.addEventListener(terminal, "touchmove", (event) => {
-      if (!active || !state.term || event.touches.length !== 1) return;
-      const y = event.touches[0].clientY;
-      const delta = lastY - y;
-      lastY = y;
-      if (!delta) return;
-
-      pendingPixels += delta;
-      const cellHeight = getTerminalCellHeight();
-      const lines = Math.trunc(pendingPixels / cellHeight);
-      if (!lines) return;
-
-      const buffer = state.term.buffer.active;
-      const canScrollUp = lines < 0 && buffer.viewportY > 0;
-      const canScrollDown = lines > 0 && buffer.viewportY < buffer.baseY;
-      if (canScrollUp || canScrollDown) {
-        state.term.scrollLines(lines);
-        pendingPixels -= lines * cellHeight;
-        event.preventDefault();
-      }
-    }, { passive: false });
-
-    state.terminalDisposables.addEventListener(terminal, "touchend", () => {
-      active = false;
-      pendingPixels = 0;
-    }, { passive: true });
-    state.terminalDisposables.addEventListener(terminal, "touchcancel", () => {
-      active = false;
-      pendingPixels = 0;
-    }, { passive: true });
-  }
-
-  function getTerminalCellHeight() {
-    return state.term?._core?._renderService?.dimensions?.css?.cell?.height
-      || Math.max(10, Number(state.term?.options?.fontSize || 10) * 1.4);
-  }
-
-  function shouldUseTouchScroll() {
-    return window.matchMedia("(pointer: coarse), (max-width: 720px)").matches;
   }
 
   function connectWS(id) {
