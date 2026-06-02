@@ -822,6 +822,7 @@ import { TerminalView } from "./lib/terminal-view.js";
         if (!state.terminalView) return;
         state.terminalView.reset();
         if (msg.data) state.terminalView.enqueueWrite(msg.data);
+        state.terminalView.writeQueue.flush();
         state.restored = true;
         setLastSeq(msg.seq);
       } else if (msg.type === "replay") {
@@ -833,6 +834,7 @@ import { TerminalView } from "./lib/terminal-view.js";
           state.terminalView.enqueueWrite(frame.data || "");
           rememberSeq(frame.seq);
         }
+        state.terminalView.writeQueue.flush();
         state.restored = true;
         rememberSeq(msg.seq);
       } else if (msg.type === "output") {
