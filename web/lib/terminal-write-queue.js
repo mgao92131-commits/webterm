@@ -11,11 +11,14 @@ export class TerminalWriteQueue {
     this.lastFlushBytes = 0;
   }
 
-  enqueue(data) {
+  enqueue(data, callback) {
     if (this.disposed) return;
     const text = String(data || "");
-    if (!text) return;
-    this.queue.push(text);
+    if (!text) {
+      if (callback) callback();
+      return;
+    }
+    this.queue.push({ text, callback });
     this.schedule();
   }
 
@@ -26,18 +29,26 @@ export class TerminalWriteQueue {
 
     let bytes = 0;
     let text = "";
+    const callbacks = [];
     while (this.queue.length) {
       const next = this.queue[0];
-      const nextBytes = byteLength(next);
+      const nextBytes = byteLength(next.text);
       if (text && bytes + nextBytes > this.maxChunkBytes) break;
-      text += next;
+      text += next.text;
       bytes += nextBytes;
+      if (next.callback) {
+        callbacks.push(next.callback);
+      }
       this.queue.shift();
     }
 
     this.lastFlushBytes = bytes;
     this.flushCount += 1;
-    this.write(text);
+    this.write(text, () => {
+      for (const cb of callbacks) {
+        try { cb(); } catch (_) {}
+      }
+    });
     if (this.queue.length) this.schedule();
   }
 
@@ -49,7 +60,7 @@ export class TerminalWriteQueue {
   stats() {
     return {
       queuedFrames: this.queue.length,
-      queuedBytes: this.queue.reduce((total, item) => total + byteLength(item), 0),
+      queuedBytes: this.queue.reduce((total, item) => total + byteLength(item.text), 0),
       flushCount: this.flushCount,
       lastFlushBytes: this.lastFlushBytes,
     };

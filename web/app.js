@@ -433,6 +433,7 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.manualClose = false;
     state.lastSeq = Number(sessionStorage.getItem(`webterm:${id}:lastSeq`) || 0);
     state.restored = false;
+    state.isRestoring = false;
     state.currentSessionName = "";
     state.currentTermTitle = "";
     state.currentDisplayTitle = "Terminal";
@@ -760,6 +761,8 @@ import { TerminalView } from "./lib/terminal-view.js";
       // 无论是否触发滚动行，都第一步无条件阻止浏览器默认原生滚动，以完全阻断事件竞争导致跳变顶部的 Bug
       event.preventDefault();
 
+      if (state.isRestoring) return;
+
       const y = event.touches[0].clientY;
       const delta = lastY - y;
       lastY = y;
@@ -821,7 +824,15 @@ import { TerminalView } from "./lib/terminal-view.js";
       if (msg.type === "state") {
         if (!state.terminalView) return;
         state.terminalView.reset();
-        if (msg.data) state.terminalView.enqueueWrite(msg.data);
+        state.isRestoring = true;
+        if (msg.data) {
+          state.terminalView.enqueueWrite(msg.data, () => {
+            state.isRestoring = false;
+            state.term?.scrollToBottom();
+          });
+        } else {
+          state.isRestoring = false;
+        }
         state.terminalView.writeQueue.flush();
         state.restored = true;
         setLastSeq(msg.seq);
@@ -830,9 +841,20 @@ import { TerminalView } from "./lib/terminal-view.js";
         if (!state.restored || msg.from === 0) {
           state.terminalView.reset();
         }
-        for (const frame of msg.frames || []) {
-          state.terminalView.enqueueWrite(frame.data || "");
-          rememberSeq(frame.seq);
+        state.isRestoring = true;
+        const frames = msg.frames || [];
+        if (frames.length > 0) {
+          for (let i = 0; i < frames.length; i++) {
+            const frame = frames[i];
+            const isLast = i === frames.length - 1;
+            state.terminalView.enqueueWrite(frame.data || "", isLast ? () => {
+              state.isRestoring = false;
+              state.term?.scrollToBottom();
+            } : undefined);
+            rememberSeq(frame.seq);
+          }
+        } else {
+          state.isRestoring = false;
         }
         state.terminalView.writeQueue.flush();
         state.restored = true;

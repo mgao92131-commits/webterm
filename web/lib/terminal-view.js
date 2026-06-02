@@ -37,7 +37,7 @@ export class TerminalView {
     }
 
     this.writeQueue = new TerminalWriteQueue({
-      write: (data) => this.term.write(data),
+      write: (data, callback) => this.term.write(data, callback),
     });
     this.disposables.add(this.writeQueue);
     this.disposables.add(this.term);
@@ -59,8 +59,8 @@ export class TerminalView {
     return this.term.options;
   }
 
-  enqueueWrite(data) {
-    this.writeQueue.enqueue(data);
+  enqueueWrite(data, callback) {
+    this.writeQueue.enqueue(data, callback);
   }
 
   reset() {
