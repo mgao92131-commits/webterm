@@ -1,4 +1,9 @@
-(function () {
+import { DisposableStore } from "./lib/disposable.js";
+import { TerminalInputController } from "./lib/terminal-input-controller.js";
+import { TerminalLayoutController } from "./lib/terminal-layout.js";
+import { TerminalSelectionController } from "./lib/terminal-selection.js";
+import { TerminalView } from "./lib/terminal-view.js";
+
   const app = document.getElementById("app");
   const THEMES = {
     solarized: {
@@ -61,33 +66,28 @@
     theme: THEMES[storedTheme] ? storedTheme : "solarized",
     ws: null,
     term: null,
-    fit: null,
     managerTimer: null,
     managerWS: null,
     managerReconnectTimer: null,
     managerReconnectAttempts: 0,
     managerManualClose: false,
     terminalID: null,
+    terminalDisposables: null,
+    inputController: null,
+    layoutController: null,
+    selectionController: null,
+    terminalView: null,
     reconnectTimer: null,
     reconnectAttempts: 0,
     manualClose: false,
     lastSeq: 0,
     restored: false,
-    selectionMode: false,
-    enteringSelectionMode: false,
-    selectionViewportY: null,
-    selectionScrollTop: null,
-    selectionAnchor: null,
-    pendingModifier: null,
-    lastQuickbarTouchAt: 0,
     currentSessionName: "",
     currentTermTitle: "",
     currentDisplayTitle: "Terminal",
     titleBeforeEdit: "",
     titleEditing: false,
     skipTitleCommit: false,
-    keyboardOpen: false,
-    resizingTerminal: false,
   };
 
   document.documentElement.dataset.theme = state.theme;
@@ -184,12 +184,7 @@
   async function renderManager() {
     document.title = "WebTerm";
     document.body.classList.remove("terminal-mode");
-    clearReconnect();
-    if (state.ws) {
-      state.manualClose = true;
-      state.ws.close();
-      state.ws = null;
-    }
+    disposeTerminalPage();
     await refreshSessions();
     app.innerHTML = `
       <section class="manager">
@@ -386,7 +381,7 @@
     document.body.classList.add("terminal-mode");
     stopManagerRefresh();
     closeManagerWS();
-    if (typeof Terminal === "undefined" || typeof FitAddon === "undefined") {
+    if (!window.Terminal || !window.FitAddon) {
       renderFatal(new Error("终端组件加载失败，请刷新页面或检查 /vendor/xterm.js 是否可访问"));
       return;
     }
@@ -400,7 +395,9 @@
           <button id="copySelection" class="selection-copy" type="button" hidden>拷贝</button>
           <button id="selectMode" type="button">选择</button>
         </header>
-        <div id="terminal"></div>
+        <div id="terminal-container">
+          <div id="terminal"></div>
+        </div>
         <nav class="quickbar">
           ${["Ctrl", "Ctrl C", "Shift Tab", "Esc", "Tab", "/", "←", "↓", "↑", "→"].map((k) => `<button type="button" data-key="${k}">${k}</button>`).join("")}
         </nav>
@@ -408,7 +405,30 @@
     setupTerminal(id);
   }
 
+  function disposeTerminalPage() {
+    clearReconnect();
+    if (state.ws) {
+      state.manualClose = true;
+      state.ws.close();
+      state.ws = null;
+    }
+    if (state.terminalDisposables) {
+      state.terminalDisposables.dispose();
+      state.terminalDisposables = null;
+    }
+    if (state.terminalView) {
+      state.terminalView.dispose();
+    }
+    state.terminalView = null;
+    state.inputController = null;
+    state.layoutController = null;
+    state.selectionController = null;
+    state.term = null;
+  }
+
   function setupTerminal(id) {
+    disposeTerminalPage();
+    state.terminalDisposables = new DisposableStore();
     state.terminalID = id;
     state.manualClose = false;
     state.lastSeq = Number(sessionStorage.getItem(`webterm:${id}:lastSeq`) || 0);
@@ -419,59 +439,79 @@
     state.titleBeforeEdit = "";
     state.titleEditing = false;
     state.skipTitleCommit = false;
-    state.keyboardOpen = isKeyboardOpen();
-    state.term = new Terminal({
-      cursorBlink: true,
-      fontFamily: "Consolas, Menlo, Monaco, monospace",
-      fontSize: 10,
-      convertEol: true,
-      scrollback: 20000,
-      overviewRuler: { width: 4 },
-      theme: termTheme(),
+    state.terminalView = new TerminalView({
+      TerminalCtor: window.Terminal,
+      FitAddonCtor: window.FitAddon,
+      WebglAddonCtor: window.WebglAddon,
+      element: document.getElementById("terminal"),
+      options: {
+        cursorBlink: true,
+        fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+        fontSize: 10,
+        convertEol: true,
+        scrollback: 20000,
+        overviewRuler: { width: 4 },
+        theme: termTheme(),
+      },
     });
-    state.fit = new FitAddon.FitAddon();
-    state.term.loadAddon(state.fit);
-    state.term.open(document.getElementById("terminal"));
+    state.term = state.terminalView.term;
     setupTerminalDebugHooks();
-    setupModifierInputCapture();
+    state.inputController = new TerminalInputController({
+      store: state.terminalDisposables,
+      root: app,
+      terminalElement: document.getElementById("terminal"),
+      sendInput,
+      focusTerminal: () => state.term?.focus(),
+    });
+    state.inputController.attach();
     setupMobileIMEBounds();
     setupTerminalFocusBottom();
     setupTerminalTouchScroll();
-    setupTerminalSelection();
-    setupViewportTracking();
-    state.fit.fit();
-    state.term.onScroll(() => {
-      if (!state.resizingTerminal) state.lastScrollAnchor = captureTerminalScrollAnchor();
+    state.selectionController = new TerminalSelectionController({
+      store: state.terminalDisposables,
+      root: app,
+      terminalElement: document.getElementById("terminal"),
+      terminalView: state.terminalView,
+      clearPendingInput: () => state.inputController?.clearPendingModifier(),
     });
+    state.selectionController.attach();
+    state.layoutController = new TerminalLayoutController({
+      store: state.terminalDisposables,
+      terminalView: state.terminalView,
+      container: document.getElementById("terminal-container"),
+      documentElement: document.documentElement,
+      sendResizeMessage: (size) => send({ type: "resize", ...size }),
+      isVisible: () => !document.hidden,
+    });
+    state.layoutController.attach();
+    state.terminalDisposables.add(state.layoutController);
+    state.terminalDisposables.add(state.terminalView.onScroll(() => {
+      if (!state.layoutController?.resizingTerminal) {
+        state.layoutController.lastScrollAnchor = state.layoutController.captureScrollAnchor();
+      }
+    }));
     connectWS(id);
-    state.term.onData(handleTerminalData);
-    window.addEventListener("resize", debounce(handleViewportResize, 120));
-    document.addEventListener("visibilitychange", () => {
+    state.terminalDisposables.add(state.terminalView.onData(handleTerminalData));
+    state.terminalDisposables.addEventListener(document, "visibilitychange", () => {
       if (!document.hidden) {
         ensureConnected();
-        setTimeout(sendResize, 150);
+        state.terminalDisposables?.addTimeout(setTimeout(() => state.layoutController?.sendResize({ reason: "visibility" }), 150));
       }
     });
-    app.querySelectorAll("[data-key]").forEach((btn) => setupQuickbarButton(btn));
-    app.querySelector("#copySelection").addEventListener("click", copyTerminalSelection);
     setupTerminalTitleEditor();
-    const selectButton = app.querySelector("#selectMode");
-    selectButton.addEventListener("pointerdown", prepareSelectionModeToggle);
-    selectButton.addEventListener("click", toggleSelectionMode);
-    setTimeout(sendResize, 100);
   }
 
   function setupTerminalTitleEditor() {
     const titleInput = document.getElementById("sessionName");
     if (!titleInput) return;
 
-    titleInput.addEventListener("focus", () => {
+    state.terminalDisposables.addEventListener(titleInput, "focus", () => {
       state.titleEditing = true;
       state.titleBeforeEdit = state.currentSessionName || "";
       titleInput.select();
     });
-    titleInput.addEventListener("blur", (event) => commitTerminalTitle(event));
-    titleInput.addEventListener("keydown", (event) => {
+    state.terminalDisposables.addEventListener(titleInput, "blur", (event) => commitTerminalTitle(event));
+    state.terminalDisposables.addEventListener(titleInput, "keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         titleInput.blur();
@@ -480,41 +520,6 @@
         cancelTerminalTitleEdit();
       }
     });
-  }
-
-  function setupModifierInputCapture() {
-    const terminal = document.getElementById("terminal");
-    if (!terminal) return;
-
-    const onKeyDown = (event) => {
-      if (!state.pendingModifier || event.metaKey || event.isComposing) return;
-      const data = keyEventData(event);
-      if (!data) return;
-      if (!sendModifiedInput(data)) return;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    const onBeforeInput = (event) => {
-      if (!state.pendingModifier || event.isComposing) return;
-      if (event.inputType && !event.inputType.startsWith("insert")) return;
-      const data = event.data || "";
-      if (!data) return;
-      if (!sendModifiedInput(data)) return;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    const bindTarget = (target) => {
-      if (!target || target.dataset.modifierCapture === "1") return;
-      target.dataset.modifierCapture = "1";
-      target.addEventListener("keydown", onKeyDown, true);
-      target.addEventListener("beforeinput", onBeforeInput, true);
-    };
-
-    bindTarget(terminal);
-    bindTarget(terminal.querySelector("textarea.xterm-helper-textarea"));
-    setTimeout(() => bindTarget(terminal.querySelector("textarea.xterm-helper-textarea")), 0);
   }
 
   function setupMobileIMEBounds() {
@@ -535,32 +540,32 @@
       const textarea = terminal.querySelector("textarea.xterm-helper-textarea");
       if (!textarea || textarea.dataset.imeBounds === "1") return;
       textarea.dataset.imeBounds = "1";
-      textarea.addEventListener("compositionstart", scheduleClamp);
-      textarea.addEventListener("compositionupdate", scheduleClamp);
-      textarea.addEventListener("input", scheduleClamp);
-      textarea.addEventListener("focus", scheduleClamp);
+      state.terminalDisposables.addEventListener(textarea, "compositionstart", scheduleClamp);
+      state.terminalDisposables.addEventListener(textarea, "compositionupdate", scheduleClamp);
+      state.terminalDisposables.addEventListener(textarea, "input", scheduleClamp);
+      state.terminalDisposables.addEventListener(textarea, "focus", scheduleClamp);
     };
 
     bindTextarea();
-    setTimeout(bindTextarea, 0);
-    window.addEventListener("resize", scheduleClamp);
-    state.term?.onRender?.(scheduleClamp);
+    state.terminalDisposables.addTimeout(setTimeout(bindTextarea, 0));
+    state.terminalDisposables.addEventListener(window, "resize", scheduleClamp);
+    if (state.terminalView) state.terminalDisposables.add(state.terminalView.onRender(scheduleClamp));
   }
 
   function setupTerminalFocusBottom() {
     const terminal = document.getElementById("terminal");
     if (!terminal) return;
     const scrollInputIntoView = () => {
-      if (state.selectionMode) return;
+      if (state.selectionController?.selectionMode) return;
       state.term?.scrollToBottom();
       requestAnimationFrame(() => state.term?.scrollToBottom());
     };
-    terminal.addEventListener("focusin", (event) => {
+    state.terminalDisposables.addEventListener(terminal, "focusin", (event) => {
       if (event.target?.matches?.("textarea.xterm-helper-textarea")) {
         scrollInputIntoView();
       }
     }, true);
-    terminal.addEventListener("click", scrollInputIntoView);
+    state.terminalDisposables.addEventListener(terminal, "click", scrollInputIntoView);
   }
 
   function setupTerminalDebugHooks() {
@@ -578,7 +583,7 @@
           scrollTop: viewport?.scrollTop ?? null,
           scrollHeight: viewport?.scrollHeight ?? null,
           clientHeight: viewport?.clientHeight ?? null,
-          keyboardOpen: state.keyboardOpen,
+          keyboardOpen: state.layoutController?.keyboardOpen ?? false,
           visualViewport: window.visualViewport ? {
             height: window.visualViewport.height,
             offsetTop: window.visualViewport.offsetTop,
@@ -602,12 +607,70 @@
         sendInput(String(data || ""));
         return this.scroll();
       },
+      selectText(text) {
+        const needle = String(text || "");
+        const buffer = state.term?.buffer?.active;
+        if (!needle || !buffer) return "";
+        for (let index = 0; index < buffer.length; index += 1) {
+          const line = buffer.getLine(index)?.translateToString(true) || "";
+          const col = line.indexOf(needle);
+          if (col >= 0) {
+            state.term.select(col, index, needle.length);
+            return state.term.getSelection();
+          }
+        }
+        return "";
+      },
+      termState() {
+        const buffer = state.term?.buffer?.active;
+        return {
+          cols: state.term?.cols ?? null,
+          rows: state.term?.rows ?? null,
+          viewportY: buffer?.viewportY ?? null,
+          baseY: buffer?.baseY ?? null,
+          text: terminalBufferText(),
+        };
+      },
+      wsState() {
+        return {
+          readyState: state.ws?.readyState ?? null,
+          restored: state.restored,
+          lastSeq: state.lastSeq,
+          manualClose: state.manualClose,
+        };
+      },
+      layoutState() {
+        return state.layoutController?.stats?.() || null;
+      },
+      lifecycleState() {
+        return {
+          disposables: state.terminalDisposables?.size ?? 0,
+          hasTerminalView: Boolean(state.terminalView),
+          hasInputController: Boolean(state.inputController),
+          hasLayoutController: Boolean(state.layoutController),
+          hasSelectionController: Boolean(state.selectionController),
+          wsReadyState: state.ws?.readyState ?? null,
+        };
+      },
+      writeQueue() {
+        return state.terminalView?.stats?.() || null;
+      },
     };
   }
 
   function debugEnabled() {
     return new URLSearchParams(location.search).has("debug")
       || localStorage.getItem("webtermDebug") === "1";
+  }
+
+  function terminalBufferText() {
+    const buffer = state.term?.buffer?.active;
+    if (!buffer?.length) return "";
+    const lines = [];
+    for (let index = 0; index < buffer.length; index += 1) {
+      lines.push(buffer.getLine(index)?.translateToString(true) || "");
+    }
+    return lines.join("\n");
   }
 
   async function commitTerminalTitle(event) {
@@ -642,8 +705,8 @@
   }
 
   function shouldRestoreTerminalFocusAfterTitleEdit(event) {
-    return !state.selectionMode
-      && !state.enteringSelectionMode
+    return !state.selectionController?.selectionMode
+      && !state.selectionController?.enteringSelectionMode
       && event?.relatedTarget?.id !== "selectMode";
   }
 
@@ -651,7 +714,7 @@
     state.skipTitleCommit = true;
     state.titleEditing = false;
     setTerminalInfo({ name: state.titleBeforeEdit || "" });
-    if (!state.selectionMode) state.term?.focus();
+    if (!state.selectionController?.selectionMode) state.term?.focus();
   }
 
   function setTerminalInfo(session = {}) {
@@ -673,49 +736,6 @@
     document.title = `${state.currentDisplayTitle} - WebTerm`;
   }
 
-  function setupViewportTracking() {
-    updateViewportMetrics();
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-    const resize = debounce(handleViewportResize, 60);
-    const scroll = debounce(() => updateViewportMetrics({ height: false }), 60);
-    viewport.addEventListener("resize", resize);
-    viewport.addEventListener("scroll", scroll);
-  }
-
-  function handleViewportResize() {
-    const anchor = captureTerminalScrollAnchor() || state.lastScrollAnchor;
-    const wasKeyboardOpen = state.keyboardOpen;
-    const nextKeyboardOpen = isKeyboardOpen();
-    updateViewportMetrics();
-    sendResize({
-      reason: "viewport",
-      anchor,
-      wasKeyboardOpen,
-      nextKeyboardOpen,
-    });
-  }
-
-  function updateViewportMetrics(options = {}) {
-    const updateHeight = options.height !== false;
-    const viewport = window.visualViewport;
-    const height = viewport?.height || window.innerHeight;
-    const offsetTop = viewport?.offsetTop || 0;
-    const keyboardOffset = Math.max(0, window.innerHeight - height - offsetTop);
-    if (updateHeight) document.documentElement.style.setProperty("--viewport-height", `${height}px`);
-    document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
-  }
-
-  function getKeyboardOffset() {
-    const viewport = window.visualViewport;
-    if (!viewport) return 0;
-    return Math.max(0, window.innerHeight - viewport.height - (viewport.offsetTop || 0));
-  }
-
-  function isKeyboardOpen() {
-    return getKeyboardOffset() > 80;
-  }
-
   function setupTerminalTouchScroll() {
     const terminal = document.getElementById("terminal");
     if (!terminal || !state.term) return;
@@ -724,8 +744,8 @@
     let pendingPixels = 0;
     let active = false;
 
-    terminal.addEventListener("touchstart", (event) => {
-      if (state.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
+    state.terminalDisposables.addEventListener(terminal, "touchstart", (event) => {
+      if (state.selectionController?.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
         active = false;
         return;
       }
@@ -734,7 +754,7 @@
       pendingPixels = 0;
     }, { passive: true });
 
-    terminal.addEventListener("touchmove", (event) => {
+    state.terminalDisposables.addEventListener(terminal, "touchmove", (event) => {
       if (!active || !state.term || event.touches.length !== 1) return;
       const y = event.touches[0].clientY;
       const delta = lastY - y;
@@ -756,11 +776,11 @@
       }
     }, { passive: false });
 
-    terminal.addEventListener("touchend", () => {
+    state.terminalDisposables.addEventListener(terminal, "touchend", () => {
       active = false;
       pendingPixels = 0;
     }, { passive: true });
-    terminal.addEventListener("touchcancel", () => {
+    state.terminalDisposables.addEventListener(terminal, "touchcancel", () => {
       active = false;
       pendingPixels = 0;
     }, { passive: true });
@@ -771,91 +791,8 @@
       || Math.max(10, Number(state.term?.options?.fontSize || 10) * 1.4);
   }
 
-  function getTerminalCellWidth() {
-    return state.term?._core?._renderService?.dimensions?.css?.cell?.width
-      || Math.max(5, Number(state.term?.options?.fontSize || 10) * 0.6);
-  }
-
   function shouldUseTouchScroll() {
     return window.matchMedia("(pointer: coarse), (max-width: 720px)").matches;
-  }
-
-  function setupTerminalSelection() {
-    const terminal = document.getElementById("terminal");
-    if (!terminal || !state.term) return;
-
-    const blockNativeSelectionEvent = (event) => {
-      if (!state.selectionMode) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      setTerminalInputSuspended(true);
-    };
-
-    terminal.addEventListener("mousedown", blockNativeSelectionEvent, true);
-    terminal.addEventListener("touchstart", blockNativeSelectionEvent, { capture: true, passive: false });
-
-    terminal.addEventListener("pointerdown", (event) => {
-      if (!state.selectionMode || event.button !== 0) return;
-      rememberSelectionViewport();
-      const cell = terminalCellFromEvent(event);
-      if (!cell) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      setTerminalInputSuspended(true);
-      terminal.setPointerCapture?.(event.pointerId);
-      state.selectionAnchor = cell;
-      state.term.clearSelection();
-      state.term.select(cell.col, cell.row, 1);
-      restoreSelectionViewport();
-    }, true);
-
-    terminal.addEventListener("pointermove", (event) => {
-      if (!state.selectionMode || !state.selectionAnchor) return;
-      const cell = terminalCellFromEvent(event);
-      if (!cell) return;
-      event.preventDefault();
-      event.stopPropagation();
-      selectTerminalRange(state.selectionAnchor, cell);
-      restoreSelectionViewport();
-    }, true);
-
-    terminal.addEventListener("pointerup", (event) => {
-      if (!state.selectionMode) return;
-      event.preventDefault();
-      event.stopPropagation();
-      state.selectionAnchor = null;
-    }, true);
-
-    terminal.addEventListener("pointercancel", () => {
-      state.selectionAnchor = null;
-    }, true);
-  }
-
-  function terminalCellFromEvent(event) {
-    if (!state.term) return null;
-    const screen = document.querySelector("#terminal .xterm-screen");
-    const rect = (screen || document.getElementById("terminal")).getBoundingClientRect();
-    const col = clamp(Math.floor((event.clientX - rect.left) / getTerminalCellWidth()), 0, state.term.cols - 1);
-    const screenRow = clamp(Math.floor((event.clientY - rect.top) / getTerminalCellHeight()), 0, state.term.rows - 1);
-    return { col, row: state.term.buffer.active.viewportY + screenRow };
-  }
-
-  function selectTerminalRange(anchor, focus) {
-    if (!state.term) return;
-    const cols = state.term.cols;
-    let start = anchor;
-    let end = focus;
-    const anchorOffset = anchor.row * cols + anchor.col;
-    const focusOffset = focus.row * cols + focus.col;
-    if (focusOffset < anchorOffset) {
-      start = focus;
-      end = anchor;
-    }
-    const startOffset = start.row * cols + start.col;
-    const endOffset = end.row * cols + end.col;
-    state.term.select(start.col, start.row, Math.max(1, endOffset - startOffset + 1));
   }
 
   function connectWS(id) {
@@ -865,31 +802,39 @@
     const proto = location.protocol === "https:" ? "wss" : "ws";
     state.manualClose = false;
     state.ws = new WebSocket(`${proto}://${location.host}/ws/sessions/${encodeURIComponent(id)}`);
-    state.ws.addEventListener("open", () => {
+    state.terminalDisposables.addEventListener(state.ws, "open", () => {
       state.reconnectAttempts = 0;
       clearReconnect();
       send({ type: "hello", lastSeq: state.restored ? state.lastSeq : 0 });
-      sendResize();
+      state.layoutController?.sendResize({ reason: "ws-open" });
     });
-    state.ws.addEventListener("message", (event) => {
-      const msg = JSON.parse(event.data);
+    state.terminalDisposables.addEventListener(state.ws, "message", (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       if (msg.type === "state") {
-        state.term.reset();
-        if (msg.data) state.term.write(msg.data);
+        if (!state.terminalView) return;
+        state.terminalView.reset();
+        if (msg.data) state.terminalView.enqueueWrite(msg.data);
         state.restored = true;
         setLastSeq(msg.seq);
       } else if (msg.type === "replay") {
+        if (!state.terminalView) return;
         if (!state.restored || msg.from === 0) {
-          state.term.reset();
+          state.terminalView.reset();
         }
         for (const frame of msg.frames || []) {
-          state.term.write(frame.data || "");
+          state.terminalView.enqueueWrite(frame.data || "");
           rememberSeq(frame.seq);
         }
         state.restored = true;
         rememberSeq(msg.seq);
       } else if (msg.type === "output") {
-        state.term.write(msg.data);
+        if (!state.terminalView) return;
+        state.terminalView.enqueueWrite(msg.data);
         rememberSeq(msg.seq);
       } else if (msg.type === "info") {
         setTerminalInfo(msg.data);
@@ -897,7 +842,7 @@
         state.manualClose = true;
       }
     });
-    state.ws.addEventListener("close", () => {
+    state.terminalDisposables.addEventListener(state.ws, "close", () => {
       if (!state.manualClose) scheduleReconnect();
     });
   }
@@ -938,63 +883,11 @@
   }
 
   function handleTerminalData(data) {
-    if (!state.pendingModifier) {
+    if (!state.inputController?.pendingModifier) {
       sendInput(data);
       return;
     }
-    if (!sendModifiedInput(data)) sendInput(data);
-  }
-
-  function sendResize(options = {}) {
-    if (!state.fit || !state.term) return;
-    const anchor = options.anchor || captureTerminalScrollAnchor();
-    const wasKeyboardOpen = options.wasKeyboardOpen ?? state.keyboardOpen;
-    const nextKeyboardOpen = options.nextKeyboardOpen ?? isKeyboardOpen();
-    state.keyboardOpen = nextKeyboardOpen;
-    requestAnimationFrame(() => {
-      state.resizingTerminal = true;
-      try {
-        state.fit.fit();
-        if (!wasKeyboardOpen && nextKeyboardOpen) {
-          state.term.scrollToBottom();
-        } else if (options.reason === "viewport" && !nextKeyboardOpen) {
-          restoreTerminalScrollAnchor(anchor);
-          requestAnimationFrame(() => restoreTerminalScrollAnchor(anchor));
-          setTimeout(() => restoreTerminalScrollAnchor(anchor), 80);
-        }
-        state.lastScrollAnchor = captureTerminalScrollAnchor();
-      } finally {
-        state.resizingTerminal = false;
-      }
-      send({ type: "resize", cols: state.term.cols, rows: state.term.rows, visible: !document.hidden });
-    });
-  }
-
-  function captureTerminalScrollAnchor() {
-    if (!state.term) return null;
-    const buffer = state.term.buffer.active;
-    return {
-      viewportY: buffer.viewportY,
-      centerY: buffer.viewportY + Math.floor((state.term?.rows || 1) / 2),
-      baseY: buffer.baseY,
-      rows: state.term?.rows || null,
-      atBottom: buffer.viewportY >= buffer.baseY,
-    };
-  }
-
-  function restoreTerminalScrollAnchor(anchor) {
-    if (!anchor || !state.term) return;
-    if (anchor.atBottom) {
-      state.term.scrollToBottom();
-      return;
-    }
-    const buffer = state.term.buffer.active;
-    const nextRows = state.term.rows || anchor.rows || 1;
-    const line = Number.isFinite(anchor.centerY)
-      ? anchor.centerY - Math.floor(nextRows / 2)
-      : anchor.viewportY;
-    const clampedLine = clamp(line, 0, buffer.baseY);
-    state.term.scrollToLine(clampedLine);
+    if (!state.inputController.sendModifiedInput(data)) sendInput(data);
   }
 
   function rememberSeq(seq) {
@@ -1011,205 +904,13 @@
     }
   }
 
-  function setupQuickbarButton(btn) {
-    btn.addEventListener("touchend", (event) => {
-      event.preventDefault();
-      state.lastQuickbarTouchAt = Date.now();
-      tapQuickbarButton(btn);
-    }, { passive: false });
-    btn.addEventListener("click", (event) => {
-      event.preventDefault();
-      if (Date.now() - state.lastQuickbarTouchAt < 700) return;
-      tapQuickbarButton(btn);
-    });
-  }
-
-  function tapQuickbarButton(btn) {
-    sendKey(btn.dataset.key);
-    btn.blur();
-    state.term.focus();
-  }
-
-  function sendKey(key) {
-    if (key === "Ctrl") {
-      togglePendingModifier(key.toLowerCase());
-      return;
-    }
-    const modified = quickbarInput(state.pendingModifier, key);
-    clearPendingModifier();
-    if (modified) sendInput(modified);
-    state.term.focus();
-  }
-
-  function sendModifiedInput(data) {
-    if (!state.pendingModifier) return false;
-    const modified = modifiedInput(state.pendingModifier, data);
-    clearPendingModifier();
-    if (!modified) return false;
-    sendInput(modified);
-    state.term.focus();
-    return true;
-  }
-
-  function togglePendingModifier(modifier) {
-    state.pendingModifier = state.pendingModifier === modifier ? null : modifier;
-    updateModifierButtons();
-    state.term.focus();
-  }
-
-  function clearPendingModifier() {
-    if (!state.pendingModifier) return;
-    state.pendingModifier = null;
-    updateModifierButtons();
-  }
-
-  function updateModifierButtons() {
-    app.querySelectorAll("[data-key='Ctrl']").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.key.toLowerCase() === state.pendingModifier);
-    });
-  }
-
-  function keyEventData(event) {
-    if (event.key && event.key.length === 1) return event.key;
-    return ({
-      Space: " ",
-      Enter: "\r",
-      Tab: "\t",
-      Escape: "\x1b",
-    })[event.key] || "";
-  }
-
-  function modifiedInput(modifier, data) {
-    if (String(data || "").length !== 1) return "";
-    if (modifier === "alt") return `\x1b${data}`;
-    if (modifier !== "ctrl") return "";
-    if (/^[a-zA-Z]$/.test(data)) {
-      return String.fromCharCode(data.toUpperCase().charCodeAt(0) - 64);
-    }
-    return ({
-      "2": "\x00",
-      "3": "\x1b",
-      "4": "\x1c",
-      "5": "\x1d",
-      "6": "\x1e",
-      "7": "\x1f",
-      "8": "\x7f",
-    })[data] || "";
-  }
-
-  function quickbarInput(modifier, key) {
-    const base = ({
-      Esc: "\x1b",
-      Tab: "\t",
-      "Shift Tab": "\x1b[Z",
-      "Ctrl C": "\x03",
-      "/": "/",
-      "↑": "\x1b[A",
-      "↓": "\x1b[B",
-      "←": "\x1b[D",
-      "→": "\x1b[C",
-    })[key] || "";
-    if (!base) return "";
-    if (modifier === "ctrl") return modifiedInput("ctrl", base) || base;
-    return base;
-  }
-
-  function prepareSelectionModeToggle() {
-    rememberSelectionViewport();
-    state.enteringSelectionMode = !state.selectionMode;
-    if (state.enteringSelectionMode) {
-      setTerminalInputSuspended(true);
-    }
-  }
-
-  function toggleSelectionMode() {
-    state.selectionMode = !state.selectionMode;
-    state.enteringSelectionMode = false;
-    state.selectionAnchor = null;
-    clearPendingModifier();
-    if (!state.selectionMode) state.term?.clearSelection?.();
-    updateSelectionModeUI();
-  }
-
-  async function copyTerminalSelection(event) {
-    event?.preventDefault();
-    rememberSelectionViewport();
-    const text = state.term?.getSelection?.() || "";
-    if (text) {
-      try {
-        await copyText(text);
-      } catch (err) {
-        console.warn("copy failed", err);
-      }
-    }
-    state.selectionMode = false;
-    state.selectionAnchor = null;
-    state.term?.clearSelection?.();
-    updateSelectionModeUI();
-  }
-
-  async function copyText(text) {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.readOnly = true;
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-
-  function updateSelectionModeUI() {
-    app.querySelector(".terminal-page")?.classList.toggle("selection-mode", state.selectionMode);
-    const selectButton = document.getElementById("selectMode");
-    if (selectButton) selectButton.textContent = state.selectionMode ? "取消" : "选择";
-    const copyButton = document.getElementById("copySelection");
-    if (copyButton) copyButton.hidden = !state.selectionMode;
-    setTerminalInputSuspended(state.selectionMode);
-    restoreSelectionViewport();
-  }
-
-  function rememberSelectionViewport() {
-    state.selectionViewportY = state.term?.buffer?.active?.viewportY ?? null;
-    state.selectionScrollTop = document.querySelector("#terminal .xterm-viewport")?.scrollTop ?? null;
-  }
-
-  function restoreSelectionViewport() {
-    const viewportY = state.selectionViewportY;
-    const scrollTop = state.selectionScrollTop;
-    const restore = () => {
-      if (Number.isFinite(viewportY)) state.term?.scrollToLine(viewportY);
-      const viewport = document.querySelector("#terminal .xterm-viewport");
-      if (viewport && Number.isFinite(scrollTop)) viewport.scrollTop = scrollTop;
-    };
-    restore();
-    requestAnimationFrame(restore);
-  }
-
-  function setTerminalInputSuspended(suspended) {
-    const textarea = document.querySelector("#terminal textarea.xterm-helper-textarea");
-    if (!textarea) return;
-    if (suspended) {
-      textarea.blur();
-      textarea.readOnly = true;
-      textarea.setAttribute("inputmode", "none");
-      return;
-    }
-    textarea.readOnly = false;
-    textarea.removeAttribute("inputmode");
-  }
-
   function toggleTheme() {
     state.theme = currentTheme().next;
     localStorage.setItem("webterm-theme", state.theme);
     document.documentElement.dataset.theme = state.theme;
     const btn = document.getElementById("theme");
     if (btn) btn.textContent = themeButtonLabel();
+    applyTermTheme();
   }
 
   function applyTermTheme() {
@@ -1235,14 +936,6 @@
     return name ? `${name} - ${termTitle}` : termTitle;
   }
 
-  function debounce(fn, wait) {
-    let timer;
-    return () => {
-      clearTimeout(timer);
-      timer = setTimeout(fn, wait);
-    };
-  }
-
   function escapeHTML(value) {
     return String(value || "").replace(/[&<>"']/g, (c) => ({
       "&": "&amp;",
@@ -1253,11 +946,6 @@
     }[c]));
   }
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
-
   boot().catch((err) => {
     app.innerHTML = `<pre class="fatal">${escapeHTML(err.message)}</pre>`;
   });
-})();
