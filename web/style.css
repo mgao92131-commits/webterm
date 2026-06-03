@@ -1,5 +1,7 @@
 :root {
   color-scheme: dark;
+  --quickbar-height: 54px;
+  --keyboard-offset: 0px;
   --bg: #002b36;
   --panel: #073642;
   --line: #586e75;
@@ -278,13 +280,15 @@ input {
 .terminal-page {
   position: fixed;
   inset: 0;
+  box-sizing: border-box;
   width: 100dvw;
   max-width: 100dvw;
   height: 100vh;
   height: 100dvh;
   height: var(--viewport-height, 100dvh);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: var(--quickbar-height);
   overflow: hidden;
   background: var(--terminal);
 }
@@ -348,7 +352,7 @@ input {
   height: 100%;
   width: 100%;
   max-width: 100%;
-  padding: 0 0 8px 0;
+  padding: 0;
   background: var(--terminal);
   overflow: hidden;
   contain: paint;
@@ -429,6 +433,11 @@ input {
 }
 
 .quickbar {
+  position: fixed;
+  right: 0;
+  bottom: var(--keyboard-offset, 0px);
+  left: 0;
+  z-index: 20;
   display: grid;
   grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 6px;
@@ -444,6 +453,10 @@ input {
 }
 
 @media (max-width: 720px) {
+  :root {
+    --quickbar-height: 94px;
+  }
+
   body {
     width: 100dvw;
   }

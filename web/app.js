@@ -465,6 +465,7 @@ import { TerminalView } from "./lib/terminal-view.js";
       focusTerminal: () => state.term?.focus(),
     });
     state.inputController.attach();
+    setupQuickbarMetrics();
     setupMobileIMEBounds();
     setupTerminalFocusBottom();
     setupTerminalTouchScroll();
@@ -487,10 +488,10 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.layoutController.attach();
     state.terminalDisposables.add(state.layoutController);
     state.terminalDisposables.add(state.terminalView.onScroll(() => {
-      if (!state.layoutController?.resizingTerminal) {
-        state.layoutController.cancelPendingRestore();
-        state.layoutController.lastScrollAnchor = state.layoutController.captureScrollAnchor();
-      }
+      state.layoutController?.handleTerminalScroll();
+    }));
+    state.terminalDisposables.add(state.terminalView.onRender(() => {
+      state.layoutController?.handleTerminalRender();
     }));
     connectWS(id);
     state.terminalDisposables.add(state.terminalView.onData(handleTerminalData));
@@ -554,11 +555,35 @@ import { TerminalView } from "./lib/terminal-view.js";
     if (state.terminalView) state.terminalDisposables.add(state.terminalView.onRender(scheduleClamp));
   }
 
+  function setupQuickbarMetrics() {
+    const quickbar = app.querySelector(".quickbar");
+    if (!quickbar) return;
+
+    const updateQuickbarHeight = () => {
+      const height = Math.ceil(quickbar.getBoundingClientRect().height);
+      if (height > 0) {
+        document.documentElement.style.setProperty("--quickbar-height", `${height}px`);
+      }
+    };
+
+    updateQuickbarHeight();
+    requestAnimationFrame(updateQuickbarHeight);
+    state.terminalDisposables.addEventListener(window, "resize", updateQuickbarHeight);
+
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(updateQuickbarHeight);
+      observer.observe(quickbar);
+      state.terminalDisposables.add({ dispose: () => observer.disconnect() });
+    }
+  }
+
   function setupTerminalFocusBottom() {
     const terminal = document.getElementById("terminal");
     if (!terminal) return;
     const scrollInputIntoView = () => {
       if (state.selectionController?.selectionMode) return;
+      const buffer = state.term?.buffer?.active;
+      if (buffer && buffer.viewportY < buffer.baseY) return;
       state.term?.scrollToBottom();
       requestAnimationFrame(() => state.term?.scrollToBottom());
     };
@@ -585,7 +610,6 @@ import { TerminalView } from "./lib/terminal-view.js";
           scrollTop: viewport?.scrollTop ?? null,
           scrollHeight: viewport?.scrollHeight ?? null,
           clientHeight: viewport?.clientHeight ?? null,
-          keyboardOpen: state.layoutController?.keyboardOpen ?? false,
           visualViewport: window.visualViewport ? {
             height: window.visualViewport.height,
             offsetTop: window.visualViewport.offsetTop,
@@ -747,7 +771,10 @@ import { TerminalView } from "./lib/terminal-view.js";
     let active = false;
 
     state.terminalDisposables.addEventListener(terminal, "touchstart", (event) => {
-      if (state.selectionController?.selectionMode || !shouldUseTouchScroll() || event.touches.length !== 1) {
+      const selectionMode = state.selectionController?.selectionMode;
+      const useTouch = shouldUseTouchScroll();
+      const touchesCount = event.touches?.length ?? 0;
+      if (selectionMode || !useTouch || touchesCount !== 1) {
         active = false;
         return;
       }
@@ -758,14 +785,16 @@ import { TerminalView } from "./lib/terminal-view.js";
     }, { passive: true });
 
     state.terminalDisposables.addEventListener(terminal, "touchmove", (event) => {
-      if (!active || !state.term || event.touches.length !== 1) return;
+      const touchesCount = event.touches?.length ?? 0;
+      const clientYVal = event.touches?.[0]?.clientY;
+      if (!active || !state.term || touchesCount !== 1) return;
 
       // 无论是否触发滚动行，都第一步无条件阻止浏览器默认原生滚动，以完全阻断事件竞争导致跳变顶部的 Bug
       event.preventDefault();
 
       if (state.isRestoring) return;
 
-      const y = event.touches[0].clientY;
+      const y = clientYVal;
       const delta = lastY - y;
       lastY = y;
       if (!delta) return;

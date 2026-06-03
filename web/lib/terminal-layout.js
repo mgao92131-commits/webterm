@@ -16,14 +16,20 @@ export class TerminalLayoutController {
     this.sendResizeMessage = sendResizeMessage;
     this.debouncedSendResizeMessage = debounce(sendResizeMessage, 150);
     this.isVisible = isVisible;
-    this.keyboardOpen = this.isKeyboardOpen();
     this.resizingTerminal = false;
-    this.lastScrollAnchor = null;
     this.disposed = false;
     this.resizeRafId = null;
-    this.restoreTimeout = null;
-    this.restoreRaf = null;
-    this.pendingRestoreCancelled = false;
+    this.bottomPin = {
+      active: false,
+      until: 0,
+      rafId: null,
+      deadlineTimeout: null,
+      checkTimeout: null,
+      stableFrames: 0,
+      programmaticScroll: false,
+      clearProgrammaticRaf: null,
+      clearProgrammaticTimeout: null,
+    };
   }
 
   attach() {
@@ -34,13 +40,17 @@ export class TerminalLayoutController {
       this.store.addEventListener(viewport, "resize", debounce(() => this.handleViewportResize(), 16));
       this.store.addEventListener(viewport, "scroll", debounce(() => this.updateViewportMetrics({ height: false }), 16));
     }
+    this.store.addEventListener(this.windowObject, "resize", debounce(() => this.handleViewportResize(), 16));
 
     if (this.windowObject.ResizeObserver && this.container) {
-      const observer = new this.windowObject.ResizeObserver(debounce(() => this.sendResize({ reason: "container" }), 16));
+      const observer = new this.windowObject.ResizeObserver(debounce(() => {
+        this.sendResize({
+          reason: "container",
+          beforeFit: () => this.updateViewportMetrics(),
+        });
+      }, 16));
       observer.observe(this.container);
       this.store.add({ dispose: () => observer.disconnect() });
-    } else {
-      this.store.addEventListener(this.windowObject, "resize", debounce(() => this.handleViewportResize(), 16));
     }
 
     const fontsReady = this.documentElement?.ownerDocument?.fonts?.ready;
@@ -55,14 +65,8 @@ export class TerminalLayoutController {
   }
 
   handleViewportResize() {
-    const anchor = this.captureScrollAnchor() || this.lastScrollAnchor;
-    const wasKeyboardOpen = this.keyboardOpen;
-    const nextKeyboardOpen = this.isKeyboardOpen();
     this.sendResize({
       reason: "viewport",
-      anchor,
-      wasKeyboardOpen,
-      nextKeyboardOpen,
       beforeFit: () => this.updateViewportMetrics(),
     });
   }
@@ -81,27 +85,10 @@ export class TerminalLayoutController {
     this.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
   }
 
-  keyboardOffset() {
-    const viewport = this.windowObject.visualViewport;
-    if (!viewport) return 0;
-    return keyboardOffsetFor({
-      innerHeight: this.windowObject.innerHeight,
-      viewportHeight: viewport.height,
-      viewportOffsetTop: viewport.offsetTop || 0,
-    });
-  }
-
-  isKeyboardOpen() {
-    return this.keyboardOffset() > 80;
-  }
-
   sendResize(options = {}) {
     if (this.disposed || !this.terminalView) return;
-    this.cancelPendingRestore();
-    const anchor = options.anchor || this.captureScrollAnchor();
-    const wasKeyboardOpen = options.wasKeyboardOpen ?? this.keyboardOpen;
-    const nextKeyboardOpen = options.nextKeyboardOpen ?? this.isKeyboardOpen();
-    this.keyboardOpen = nextKeyboardOpen;
+    const beforeViewportHeight = this.viewportHeight();
+    const beforeRows = this.terminalView.rows || 0;
 
     if (this.resizeRafId !== null) {
       this.safeCancelRaf(this.resizeRafId);
@@ -112,36 +99,12 @@ export class TerminalLayoutController {
       if (this.disposed || !this.terminalView) return;
 
       options.beforeFit?.();
-      this.pendingRestoreCancelled = false;
       this.resizingTerminal = true;
       try {
         this.terminalView.fit();
-        if (!wasKeyboardOpen && nextKeyboardOpen) {
-          this.terminalView.scrollToBottom();
-          this.restoreRaf = this.windowObject.requestAnimationFrame?.(() => {
-            this.restoreRaf = null;
-            if (this.pendingRestoreCancelled) return;
-            this.terminalView?.scrollToBottom();
-          }) || null;
-          this.restoreTimeout = this.store.setTimeout(() => {
-            this.restoreTimeout = null;
-            if (this.pendingRestoreCancelled) return;
-            this.terminalView?.scrollToBottom();
-          }, 80);
-        } else if (!nextKeyboardOpen) {
-          this.restoreScrollAnchor(anchor);
-          this.restoreRaf = this.windowObject.requestAnimationFrame?.(() => {
-            this.restoreRaf = null;
-            if (this.pendingRestoreCancelled) return;
-            this.restoreScrollAnchor(anchor);
-          }) || null;
-          this.restoreTimeout = this.store.setTimeout(() => {
-            this.restoreTimeout = null;
-            if (this.pendingRestoreCancelled) return;
-            this.restoreScrollAnchor(anchor);
-          }, 80);
-        }
-        this.lastScrollAnchor = this.captureScrollAnchor();
+        const grew = this.viewportHeight() > beforeViewportHeight || (this.terminalView.rows || 0) > beforeRows;
+        this.beginBottomPin({ grew });
+        this.pokeBottomPin({ force: true });
       } finally {
         this.resizingTerminal = false;
       }
@@ -161,52 +124,179 @@ export class TerminalLayoutController {
     });
   }
 
+  beginBottomPin({ grew = false } = {}) {
+    const now = this.now();
+    this.bottomPin.active = true;
+    this.bottomPin.until = now + (grew ? 500 : 250);
+    this.bottomPin.stableFrames = 0;
+    this.clearBottomPinTimers();
+    this.bottomPin.deadlineTimeout = this.store.setTimeout?.(() => {
+      this.bottomPin.deadlineTimeout = null;
+      this.cancelBottomPin();
+    }, grew ? 520 : 270) || null;
+  }
+
+  pokeBottomPin({ force = false } = {}) {
+    if (this.disposed || !this.bottomPin.active || !this.terminalView) return;
+    if (this.now() > this.bottomPin.until) {
+      this.cancelBottomPin();
+      return;
+    }
+    if (this.bottomPin.rafId !== null) return;
+
+    this.bottomPin.rafId = this.safeRaf(() => {
+      this.bottomPin.rafId = null;
+      if (this.disposed || !this.bottomPin.active || !this.terminalView) return;
+      if (this.now() > this.bottomPin.until) {
+        this.cancelBottomPin();
+        return;
+      }
+
+      if (force || !this.isAtBottom() || !this.isDomViewportAtBottom()) {
+        this.programmaticScrollToBottom();
+        this.bottomPin.stableFrames = 0;
+        this.queueBottomPinCheck(48);
+        return;
+      }
+
+      this.bottomPin.stableFrames += 1;
+      if (this.bottomPin.stableFrames >= 2) {
+        this.cancelBottomPin();
+      } else {
+        this.queueBottomPinCheck(48);
+      }
+    });
+  }
+
+  handleTerminalRender() {
+    this.pokeBottomPin();
+  }
+
+  handleTerminalScroll() {
+    if (this.resizingTerminal || this.bottomPin.programmaticScroll) {
+      this.pokeBottomPin();
+      return;
+    }
+    if (this.bottomPin.active && !this.isNearBottom() && !this.isDomViewportAtBottom()) {
+      this.cancelBottomPin();
+    }
+  }
+
   cancelPendingRestore() {
-    this.pendingRestoreCancelled = true;
-    if (this.restoreTimeout) {
-      this.restoreTimeout.dispose();
-      this.restoreTimeout = null;
-    }
-    if (this.restoreRaf && this.windowObject.cancelAnimationFrame) {
-      this.windowObject.cancelAnimationFrame(this.restoreRaf);
-      this.restoreRaf = null;
-    }
+    this.cancelBottomPin();
   }
 
-  captureScrollAnchor() {
-    return captureScrollAnchor(this.terminalView);
+  cancelBottomPin() {
+    this.bottomPin.active = false;
+    this.bottomPin.until = 0;
+    this.bottomPin.stableFrames = 0;
+    this.clearBottomPinTimers();
   }
 
-  restoreScrollAnchor(anchor) {
-    restoreScrollAnchor(this.terminalView, anchor);
+  clearBottomPinTimers() {
+    if (this.bottomPin.deadlineTimeout) {
+      this.bottomPin.deadlineTimeout.dispose?.();
+      this.bottomPin.deadlineTimeout = null;
+    }
+    if (this.bottomPin.checkTimeout) {
+      this.bottomPin.checkTimeout.dispose?.();
+      this.bottomPin.checkTimeout = null;
+    }
+    if (this.bottomPin.rafId !== null) {
+      this.safeCancelRaf(this.bottomPin.rafId);
+      this.bottomPin.rafId = null;
+    }
   }
 
   stats() {
     return {
-      keyboardOpen: this.keyboardOpen,
+      bottomPinActive: this.bottomPin.active,
+      bottomPinStableFrames: this.bottomPin.stableFrames,
+      programmaticScroll: this.bottomPin.programmaticScroll,
       resizingTerminal: this.resizingTerminal,
-      lastScrollAnchor: this.lastScrollAnchor,
     };
   }
 
-  raf(callback) {
-    const raf = this.windowObject.requestAnimationFrame?.bind(this.windowObject);
-    if (raf) {
-      raf(callback);
-      return;
+  isNearBottom(tolerance = 2) {
+    const buffer = this.terminalView?.buffer?.active;
+    if (!buffer) return false;
+    return buffer.baseY - buffer.viewportY <= tolerance;
+  }
+
+  isAtBottom() {
+    const buffer = this.terminalView?.buffer?.active;
+    if (!buffer) return false;
+    return buffer.viewportY >= buffer.baseY;
+  }
+
+  isDomViewportAtBottom(tolerance = 2) {
+    const viewport = this.container?.querySelector?.(".xterm-viewport");
+    if (!viewport) return true;
+    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= tolerance;
+  }
+
+  viewportHeight() {
+    return this.windowObject.visualViewport?.height || this.windowObject.innerHeight || 0;
+  }
+
+  programmaticScrollToBottom() {
+    if (!this.terminalView) return;
+    this.bottomPin.programmaticScroll = true;
+    this.terminalView.scrollToBottom();
+    this.scrollDomViewportToBottom();
+    this.scheduleClearProgrammaticScroll();
+  }
+
+  scrollDomViewportToBottom() {
+    const viewport = this.container?.querySelector?.(".xterm-viewport");
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }
+
+  scheduleClearProgrammaticScroll() {
+    if (this.bottomPin.clearProgrammaticRaf !== null) {
+      this.safeCancelRaf(this.bottomPin.clearProgrammaticRaf);
     }
-    this.store.setTimeout(callback, 0);
+    if (this.bottomPin.clearProgrammaticTimeout) {
+      this.bottomPin.clearProgrammaticTimeout.dispose?.();
+      this.bottomPin.clearProgrammaticTimeout = null;
+    }
+
+    this.bottomPin.clearProgrammaticRaf = this.safeRaf(() => {
+      this.bottomPin.clearProgrammaticRaf = null;
+      this.bottomPin.clearProgrammaticTimeout = this.store.setTimeout?.(() => {
+        this.bottomPin.clearProgrammaticTimeout = null;
+        this.bottomPin.programmaticScroll = false;
+      }, 0) || null;
+    });
+  }
+
+  queueBottomPinCheck(delay) {
+    if (this.bottomPin.checkTimeout) return;
+    this.bottomPin.checkTimeout = this.store.setTimeout?.(() => {
+      this.bottomPin.checkTimeout = null;
+      this.pokeBottomPin();
+    }, delay) || null;
+  }
+
+  now() {
+    return this.windowObject.performance?.now?.() ?? Date.now();
   }
 
   safeRaf(callback) {
     const raf = this.windowObject.requestAnimationFrame?.bind(this.windowObject);
     if (raf) {
-      return raf(callback);
+      return raf(callback) ?? null;
     }
-    return this.store.setTimeout(callback, 0);
+    return this.store.setTimeout(callback, 0) ?? null;
   }
 
   safeCancelRaf(id) {
+    if (!id) return;
+    if (typeof id.dispose === "function") {
+      id.dispose();
+      return;
+    }
     const cancel = this.windowObject.cancelAnimationFrame?.bind(this.windowObject);
     if (cancel && typeof id === "number") {
       cancel(id);
@@ -217,7 +307,15 @@ export class TerminalLayoutController {
 
   dispose() {
     this.disposed = true;
-    this.cancelPendingRestore();
+    this.cancelBottomPin();
+    if (this.bottomPin.clearProgrammaticRaf !== null) {
+      this.safeCancelRaf(this.bottomPin.clearProgrammaticRaf);
+      this.bottomPin.clearProgrammaticRaf = null;
+    }
+    if (this.bottomPin.clearProgrammaticTimeout) {
+      this.bottomPin.clearProgrammaticTimeout.dispose?.();
+      this.bottomPin.clearProgrammaticTimeout = null;
+    }
     if (this.resizeRafId !== null) {
       this.safeCancelRaf(this.resizeRafId);
       this.resizeRafId = null;
@@ -230,42 +328,10 @@ export function keyboardOffsetFor({ innerHeight, viewportHeight, viewportOffsetT
   return Math.max(0, innerHeight - viewportHeight - viewportOffsetTop);
 }
 
-export function captureScrollAnchor(terminalView) {
-  const buffer = terminalView?.buffer?.active;
-  if (!buffer) return null;
-  return {
-    viewportY: buffer.viewportY,
-    centerY: buffer.viewportY + Math.floor((terminalView.rows || 1) / 2),
-    baseY: buffer.baseY,
-    rows: terminalView.rows || null,
-    atBottom: buffer.viewportY >= buffer.baseY,
-  };
-}
-
-export function restoreScrollAnchor(terminalView, anchor) {
-  if (!anchor || !terminalView) return;
-  if (anchor.atBottom) {
-    terminalView.scrollToBottom();
-    return;
-  }
-  const buffer = terminalView.buffer?.active;
-  if (!buffer) return;
-  const nextRows = terminalView.rows || anchor.rows || 1;
-  let line = anchor.viewportY;
-  if (!Number.isFinite(line) && Number.isFinite(anchor.centerY)) {
-    line = anchor.centerY - Math.floor(nextRows / 2);
-  }
-  terminalView.scrollToLine(clamp(line, 0, buffer.baseY));
-}
-
 function debounce(fn, wait) {
   let timer;
   return () => {
     clearTimeout(timer);
     timer = setTimeout(fn, wait);
   };
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }

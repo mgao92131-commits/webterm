@@ -30,7 +30,6 @@ export class TerminalView {
           }
         }));
         addonDisposable = this.disposables.add(webglAddon);
-        console.log("WebGL renderer enabled");
       } catch (err) {
         console.error("Failed to load WebglAddon, falling back to DOM renderer:", err);
       }
