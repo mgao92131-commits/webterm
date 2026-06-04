@@ -36,6 +36,7 @@ const (
 	msgExit   = byte(0x06)
 	msgPing   = byte(0x07)
 	msgPong   = byte(0x08)
+	msgTitle  = byte(0x09)
 
 	defaultCols           = 100
 	defaultRows           = 30
@@ -43,6 +44,7 @@ const (
 	maxRingFrames         = 4000
 	maxReplayPayloadBytes = 64 * 1024
 	maxRecentInputChars   = 2000
+	maxTermTitleChars     = 256
 )
 
 type Config struct {
@@ -79,6 +81,7 @@ type TerminalSession struct {
 	mu                sync.Mutex
 	id                string
 	name              string
+	termTitle         string
 	cwd               string
 	command           string
 	status            string
@@ -447,7 +450,9 @@ func (m *SessionManager) rename(id, name string) (*TerminalSession, bool) {
 	session.mu.Lock()
 	session.name = strings.TrimSpace(name)
 	session.touchLocked()
+	clients, payload := session.infoBroadcastLocked()
 	session.mu.Unlock()
+	sendInfoBroadcast(clients, payload)
 	return session, true
 }
 
@@ -542,23 +547,54 @@ func shellEnv(cwd, zDotDir string) []string {
 func (s *TerminalSession) info() SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	clients := len(s.clients)
-	return SessionInfo{
-		ID:                s.id,
-		Name:              s.name,
-		TermTitle:         s.termTitleLocked(),
-		DisplayTitle:      s.displayTitleLocked(),
-		CWD:               s.cwd,
-		Command:           s.command,
-		Status:            s.status,
-		Clients:           clients,
-		Cols:              s.cols,
-		Rows:              s.rows,
-		RecentInputLines:  append([]string(nil), s.recentInputLines...),
-		RecentInputHidden: s.recentInputHidden,
-		CreatedAt:         s.createdAt,
-		LastActiveAt:      s.lastActiveAt,
+	return s.infoLocked()
+}
+
+func (s *TerminalSession) infoBroadcastLocked() ([]*Client, []byte) {
+	info := s.infoLocked()
+	payload := mustJSON(info)
+	clients := s.clientListLocked()
+	return clients, payload
+}
+
+func sanitizeTermTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
 	}
+	var builder strings.Builder
+	count := 0
+	for _, r := range title {
+		if count >= maxTermTitleChars {
+			break
+		}
+		if r < ' ' || r == '\x7f' {
+			continue
+		}
+		builder.WriteRune(r)
+		count++
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func sendInfoBroadcast(clients []*Client, payload []byte) {
+	for _, client := range clients {
+		client.sendMessage(msgInfo, payload)
+	}
+}
+
+func (s *TerminalSession) updateTermTitle(title string) {
+	nextTitle := sanitizeTermTitle(title)
+	s.mu.Lock()
+	if nextTitle == s.termTitle {
+		s.mu.Unlock()
+		return
+	}
+	s.termTitle = nextTitle
+	s.touchLocked()
+	clients, payload := s.infoBroadcastLocked()
+	s.mu.Unlock()
+	sendInfoBroadcast(clients, payload)
 }
 
 func (s *TerminalSession) displayTitleLocked() string {
@@ -570,6 +606,9 @@ func (s *TerminalSession) displayTitleLocked() string {
 }
 
 func (s *TerminalSession) termTitleLocked() string {
+	if s.termTitle != "" {
+		return s.termTitle
+	}
 	return "Terminal"
 }
 
@@ -686,6 +725,8 @@ func (c *Client) reader() {
 			c.session.sendReplay(c, hello.LastSeq)
 		case msgPing:
 			c.sendMessage(msgPong, nil)
+		case msgTitle:
+			c.session.updateTermTitle(string(data))
 		}
 	}
 }
