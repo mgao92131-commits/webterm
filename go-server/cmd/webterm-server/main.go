@@ -168,6 +168,7 @@ func main() {
 func loadConfig() Config {
 	loadLocalEnv(filepath.Join("..", ".env.local"))
 	loadLocalEnv(".env.local")
+	loadExecutableEnv()
 	cwd, _ := os.Getwd()
 	return Config{
 		Addr:     env("WEBTERM_GO_ADDR", defaultGoAddr(env("WEBTERM_ADDR", "127.0.0.1:8080"))),
@@ -189,6 +190,14 @@ func defaultGoAddr(nodeAddr string) string {
 		return nodeAddr[:index] + ":8081"
 	}
 	return "127.0.0.1:8081"
+}
+
+func loadExecutableEnv() {
+	executable, err := os.Executable()
+	if err != nil {
+		return
+	}
+	loadLocalEnv(filepath.Join(filepath.Dir(executable), ".env.local"))
 }
 
 func loadLocalEnv(path string) {

@@ -89,6 +89,8 @@ export class TerminalLayoutController {
     if (this.disposed || !this.terminalView) return;
     const beforeViewportHeight = this.viewportHeight();
     const beforeRows = this.terminalView.rows || 0;
+    const domViewport = this.domViewport();
+    const shouldPinBottom = options.pinBottom ?? (this.isNearBottom() || Boolean(domViewport && this.isDomViewportAtBottom()));
 
     if (this.resizeRafId !== null) {
       this.safeCancelRaf(this.resizeRafId);
@@ -102,9 +104,14 @@ export class TerminalLayoutController {
       this.resizingTerminal = true;
       try {
         this.terminalView.fit();
-        const grew = this.viewportHeight() > beforeViewportHeight || (this.terminalView.rows || 0) > beforeRows;
-        this.beginBottomPin({ grew });
-        this.pokeBottomPin({ force: true });
+        if (shouldPinBottom) {
+          const grew = this.viewportHeight() > beforeViewportHeight || (this.terminalView.rows || 0) > beforeRows;
+          this.beginBottomPin({ grew });
+          this.pokeBottomPin({ force: true });
+        } else {
+          this.cancelBottomPin();
+          this.terminalView.refreshAll?.();
+        }
       } finally {
         this.resizingTerminal = false;
       }
@@ -152,7 +159,8 @@ export class TerminalLayoutController {
         return;
       }
 
-      if (force || !this.isAtBottom() || !this.isDomViewportAtBottom()) {
+      const domViewportSettled = !this.hasDomViewport() || this.isDomViewportAtBottom();
+      if (force || !this.isAtBottom() || !domViewportSettled) {
         this.programmaticScrollToBottom();
         this.bottomPin.stableFrames = 0;
         this.queueBottomPinCheck(48);
@@ -180,6 +188,32 @@ export class TerminalLayoutController {
     if (this.bottomPin.active && !this.isNearBottom() && !this.isDomViewportAtBottom()) {
       this.cancelBottomPin();
     }
+  }
+
+  settleAfterWrite({ fit = false } = {}) {
+    if (this.disposed || !this.terminalView) return;
+    this.beginBottomPin({ grew: true });
+
+    const settle = () => {
+      if (this.disposed || !this.terminalView) return;
+      if (fit) {
+        this.terminalView.fit();
+      }
+      this.programmaticScrollToBottom();
+      this.terminalView.refreshAll?.();
+      this.pokeBottomPin({ force: true });
+    };
+
+    settle();
+    this.safeRaf(() => {
+      settle();
+      this.safeRaf(settle);
+    });
+    this.store.setTimeout?.(settle, 80);
+    this.store.setTimeout?.(() => {
+      settle();
+      this.cancelBottomPin();
+    }, 180);
   }
 
   cancelPendingRestore() {
@@ -230,9 +264,17 @@ export class TerminalLayoutController {
   }
 
   isDomViewportAtBottom(tolerance = 2) {
-    const viewport = this.container?.querySelector?.(".xterm-viewport");
-    if (!viewport) return true;
+    const viewport = this.domViewport();
+    if (!viewport) return false;
     return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= tolerance;
+  }
+
+  hasDomViewport() {
+    return Boolean(this.domViewport());
+  }
+
+  domViewport() {
+    return this.container?.querySelector?.(".xterm-viewport") || null;
   }
 
   viewportHeight() {
@@ -244,6 +286,7 @@ export class TerminalLayoutController {
     this.bottomPin.programmaticScroll = true;
     this.terminalView.scrollToBottom();
     this.scrollDomViewportToBottom();
+    this.terminalView.refreshAll?.();
     this.scheduleClearProgrammaticScroll();
   }
 

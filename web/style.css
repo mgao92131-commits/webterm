@@ -348,6 +348,10 @@ input {
   overflow: hidden;
 }
 
+.terminal-page.is-restoring #terminal {
+  visibility: hidden;
+}
+
 #terminal .xterm {
   height: 100%;
   width: 100%;

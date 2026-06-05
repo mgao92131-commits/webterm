@@ -95,7 +95,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private String mPendingTitle = "";
     private final Runnable mUploadTitleRunnable = this::uploadTerminalTitle;
 
-    private TerminalView mTerminalView;
+    TerminalView mTerminalView;
     private TerminalSession mTerminalSession;
     private WebSocket mWebSocket;
     private String mCookie;
@@ -119,48 +119,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private TextView mTerminalTitle;
     private TextView mTerminalSubtitle;
 
-    // 新增服务器管理变量与结构体
-    private static class ServerConfig {
-        String id;
-        String name;
-        String url;
-        String cookie;
-        String username;
-        String password;
-
-        ServerConfig(String id, String name, String url, String cookie, String username, String password) {
-            this.id = id;
-            this.name = name;
-            this.url = url;
-            this.cookie = cookie;
-            this.username = username;
-            this.password = password;
-        }
-
-        JSONObject toJSON() throws JSONException {
-            JSONObject obj = new JSONObject();
-            obj.put("id", id);
-            obj.put("name", name);
-            obj.put("url", url);
-            obj.put("cookie", cookie);
-            obj.put("username", username);
-            obj.put("password", password);
-            return obj;
-        }
-
-        static ServerConfig fromJSON(JSONObject obj) {
-            return new ServerConfig(
-                obj.optString("id"),
-                obj.optString("name"),
-                obj.optString("url"),
-                obj.optString("cookie"),
-                obj.optString("username"),
-                obj.optString("password")
-            );
-        }
-    }
-
-    private final java.util.List<ServerConfig> mServers = new java.util.ArrayList<>();
+    final java.util.List<ServerConfig> mServers = new java.util.ArrayList<>();
     private final java.util.Map<String, Boolean> mServerCollapsed = new java.util.HashMap<>();
     private View mTerminalRoot;
     private View mTerminalViewport;
@@ -236,7 +195,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
     }
 
-    private void saveServersToPrefs() {
+    void saveServersToPrefs() {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         JSONArray arr = new JSONArray();
         for (ServerConfig s : mServers) {
@@ -247,7 +206,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         prefs.edit().putString("servers_list", arr.toString()).apply();
     }
 
-    private void showSessionHome() {
+    void showSessionHome() {
         closeCurrentTerminal(false);
         mBaseUrl = null;
         mCookie = null;
@@ -606,310 +565,25 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void addSessionRow(JSONObject session, ServerConfig server, LinearLayout subList) {
-        String id = session.optString("id");
-        String rawTermTitle = session.optString("termTitle", "").trim();
-        final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
-        final String nameText = session.optString("name", "").trim();
-        String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
-        String cwd = session.optString("cwd", "");
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackground(panelBackground());
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView iconBadge = new TextView(this);
-        iconBadge.setText(">_");
-        iconBadge.setTextColor(Color.rgb(16, 185, 129));
-        iconBadge.setTextSize(12);
-        iconBadge.setTypeface(Typeface.MONOSPACE);
-        iconBadge.setGravity(Gravity.CENTER);
-        GradientDrawable badgeBg = new GradientDrawable();
-        badgeBg.setShape(GradientDrawable.OVAL);
-        badgeBg.setColor(Color.rgb(15, 15, 18));
-        iconBadge.setBackground(badgeBg);
-        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        badgeLp.setMargins(0, 0, dp(10), 0);
-        header.addView(iconBadge, badgeLp);
-
-        LinearLayout titleArea = new LinearLayout(this);
-        titleArea.setOrientation(LinearLayout.VERTICAL);
-        titleArea.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView titleView = new TextView(this);
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(15);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setSingleLine(true);
-        titleView.setEllipsize(TextUtils.TruncateAt.END);
-
-        TextView subtitleView = new TextView(this);
-        subtitleView.setTextColor(Color.rgb(156, 163, 175));
-        subtitleView.setTextSize(11);
-        subtitleView.setSingleLine(true);
-        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
-
-        TextView pathView = new TextView(this);
-        pathView.setTextColor(Color.rgb(156, 163, 175));
-        pathView.setTextSize(11);
-        pathView.setSingleLine(true);
-        pathView.setEllipsize(TextUtils.TruncateAt.START);
-        pathView.setText("📁 " + cwd);
-
-        if (!nameText.isEmpty()) {
-            titleView.setText(nameText);
-            subtitleView.setText(termTitle);
-            subtitleView.setVisibility(View.VISIBLE);
-        } else {
-            titleView.setText(termTitle);
-            subtitleView.setVisibility(View.GONE);
-        }
-        titleArea.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
-        titleArea.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
-        titleArea.addView(pathView, new LinearLayout.LayoutParams(-1, -2));
-        header.addView(titleArea, new LinearLayout.LayoutParams(0, -2, 1));
-
-        TextView closeBtn = new TextView(this);
-        closeBtn.setText("✕");
-        closeBtn.setTextColor(Color.rgb(239, 68, 68));
-        closeBtn.setTextSize(16);
-        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
-        header.addView(closeBtn, new LinearLayout.LayoutParams(-2, -2));
-
-        row.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        if (session.optBoolean("recentInputHidden", false)) {
-            row.addView(recentInputBox("敏感输入已隐藏"), new LinearLayout.LayoutParams(-1, -2));
-        } else {
-            JSONArray recentLines = session.optJSONArray("recentInputLines");
-            String recentText = recentInputText(recentLines);
-            if (!recentText.isEmpty()) {
-                row.addView(recentInputBox(recentText), new LinearLayout.LayoutParams(-1, -2));
-            }
-        }
-
-        LinearLayout footer = new LinearLayout(this);
-        footer.setOrientation(LinearLayout.HORIZONTAL);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(0, dp(8), 0, 0);
-
-        footer.addView(createChip("🆔 " + id));
-        footer.addView(createChip("📐 " + size));
-
-        row.addView(footer, new LinearLayout.LayoutParams(-1, -2));
-
-        row.setOnClickListener((v) -> showTerminal(server.url, server.cookie, id, termTitle, nameText));
-
-        row.setOnLongClickListener((v) -> {
-            showRenameDialog(server, id, nameText);
-            return true;
-        });
-
-        closeBtn.setOnClickListener((v) -> {
-            showCloseConfirmDialog(server, id);
-        });
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, dp(12));
-        subList.addView(row, lp);
-    }
-
-    private TextView recentInputBox(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.rgb(52, 211, 153));
-        view.setTextSize(11);
-        view.setTypeface(Typeface.MONOSPACE);
-        view.setMaxLines(2);
-        view.setEllipsize(TextUtils.TruncateAt.END);
-        view.setPadding(dp(8), dp(6), dp(8), dp(6));
-
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(Color.rgb(10, 10, 12));
-        gd.setCornerRadius(dp(4));
-        view.setBackground(gd);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, dp(8), 0, 0);
-        view.setLayoutParams(lp);
-        return view;
-    }
-
-    private TextView createChip(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.rgb(156, 163, 175));
-        view.setTextSize(10);
-        view.setPadding(dp(6), dp(2), dp(6), dp(2));
-
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(Color.argb(20, 156, 163, 175));
-        gd.setCornerRadius(dp(10));
-        view.setBackground(gd);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-        lp.setMargins(0, 0, dp(6), 0);
-        view.setLayoutParams(lp);
-        return view;
+        SessionRowHelper.addSessionRow(this, session, server, subList);
     }
 
     private void showAddServerDialog(final ServerConfig existingServer) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-
-        LinearLayout container = new LinearLayout(this);
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(dp(24), dp(24), dp(24), dp(24));
-
-        GradientDrawable containerBg = new GradientDrawable();
-        containerBg.setShape(GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(dp(12));
-        containerBg.setStroke(dp(1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
-
-        TextView titleView = new TextView(this);
-        titleView.setText(existingServer == null ? "➕ 连接并保存新电脑" : "✏️ 修改电脑配置");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, dp(16));
-        container.addView(titleView);
-
-        EditText nickname = input("电脑名称 (如: 我的办公电脑)");
-        nickname.setInputType(InputType.TYPE_CLASS_TEXT);
-        nickname.setText(existingServer == null ? "" : existingServer.name);
-        container.addView(nickname, matchWrap());
-
-        EditText url = input("Server URL");
-        url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(existingServer == null ? DEFAULT_URL : existingServer.url);
-        container.addView(url, matchWrap());
-
-        EditText user = input("Username");
-        user.setInputType(InputType.TYPE_CLASS_TEXT);
-        user.setText(existingServer == null ? DEFAULT_USER : existingServer.username);
-        container.addView(user, matchWrap());
-
-        EditText password = input("Password");
-        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(existingServer == null ? "" : existingServer.password);
-        container.addView(password, matchWrap());
-
-        TextView errText = new TextView(this);
-        errText.setTextColor(Color.rgb(239, 68, 68));
-        errText.setTextSize(12);
-        errText.setPadding(0, 0, 0, dp(12));
-        errText.setVisibility(View.GONE);
-        container.addView(errText, new LinearLayout.LayoutParams(-1, -2));
-
-        LinearLayout btnBar = new LinearLayout(this);
-        btnBar.setOrientation(LinearLayout.HORIZONTAL);
-        btnBar.setGravity(Gravity.END);
-        btnBar.setPadding(0, dp(8), 0, 0);
-
-        Button cancelBtn = new Button(this);
-        cancelBtn.setText("取消");
-        styleDialogButton(cancelBtn, false);
-
-        Button submitBtn = new Button(this);
-        submitBtn.setText(existingServer == null ? "立即连接" : "保存修改");
-        styleDialogButton(submitBtn, true);
-
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(dp(100), dp(40));
-        btnLp.setMargins(dp(12), 0, 0, 0);
-
-        btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(dp(80), dp(40)));
-        btnBar.addView(submitBtn, btnLp);
-        container.addView(btnBar);
-
-        builder.setView(container);
-        final AlertDialog dialog = builder.create();
-        dialog.show();
-
-        dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-
-        cancelBtn.setOnClickListener((v) -> dialog.dismiss());
-
-        submitBtn.setOnClickListener((v) -> {
-            String nameVal = nickname.getText().toString().trim();
-            String urlVal = normalizeBaseUrl(url.getText().toString());
-            String userVal = user.getText().toString().trim();
-            String passVal = password.getText().toString();
-
-            if (nameVal.isEmpty()) {
-                nameVal = existingServer == null ? "WebTerm Server" : existingServer.name;
-            }
-            if (urlVal.isEmpty() || userVal.isEmpty() || passVal.isEmpty()) {
-                errText.setText("请输入完整电脑别名、URL、用户名和密码。");
-                errText.setVisibility(View.VISIBLE);
-                return;
-            }
-
-            submitBtn.setEnabled(false);
-            cancelBtn.setEnabled(false);
-            errText.setText("Connecting...");
-            errText.setTextColor(Color.rgb(245, 158, 11));
-            errText.setVisibility(View.VISIBLE);
-
-            final String finalName = nameVal;
-            login(urlVal, userVal, passVal, new LoginCallback() {
-                @Override
-                public void onReady(String baseUrl, String cookie) {
-                    runOnUiThread(() -> {
-                        if (existingServer == null) {
-                            ServerConfig newServer = new ServerConfig(
-                                "srv_" + System.currentTimeMillis(),
-                                finalName,
-                                urlVal,
-                                cookie,
-                                userVal,
-                                passVal
-                            );
-                            mServers.add(newServer);
-                        } else {
-                            existingServer.name = finalName;
-                            existingServer.url = urlVal;
-                            existingServer.cookie = cookie;
-                            existingServer.username = userVal;
-                            existingServer.password = passVal;
-                        }
-                        saveServersToPrefs();
-                        dialog.dismiss();
-                        showSessionHome();
-                    });
-                }
-
-                @Override
-                public void onError(String message) {
-                    runOnUiThread(() -> {
-                        submitBtn.setEnabled(true);
-                        cancelBtn.setEnabled(true);
-                        errText.setText(message);
-                        errText.setTextColor(Color.rgb(239, 68, 68));
-                        errText.setVisibility(View.VISIBLE);
-                    });
-                }
-            });
-        });
+        ServerConfigDialogHelper.show(this, existingServer);
     }
 
-    private void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
+    void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(dp(24), dp(24), dp(24), dp(24));
+        container.setPadding(UIUtils.dp(this, 24), UIUtils.dp(this, 24), UIUtils.dp(this, 24), UIUtils.dp(this, 24));
 
         GradientDrawable containerBg = new GradientDrawable();
         containerBg.setShape(GradientDrawable.RECTANGLE);
         containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(dp(12));
-        containerBg.setStroke(dp(1), Color.rgb(55, 65, 81));
+        containerBg.setCornerRadius(UIUtils.dp(this, 12));
+        containerBg.setStroke(UIUtils.dp(this, 1), Color.rgb(55, 65, 81));
         container.setBackground(containerBg);
 
         TextView titleView = new TextView(this);
@@ -917,31 +591,31 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         titleView.setTextColor(Color.rgb(243, 244, 246));
         titleView.setTextSize(18);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, dp(16));
+        titleView.setPadding(0, 0, 0, UIUtils.dp(this, 16));
         container.addView(titleView);
 
-        EditText input = input("输入新名称");
+        EditText input = UIUtils.createInput(this, "输入新名称");
         input.setText(oldName);
         input.requestFocus();
-        container.addView(input, matchWrap());
+        container.addView(input, UIUtils.matchWrap(this));
 
         LinearLayout btnBar = new LinearLayout(this);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
         btnBar.setGravity(Gravity.END);
-        btnBar.setPadding(0, dp(8), 0, 0);
+        btnBar.setPadding(0, UIUtils.dp(this, 8), 0, 0);
 
         Button cancelBtn = new Button(this);
         cancelBtn.setText("取消");
-        styleDialogButton(cancelBtn, false);
+        UIUtils.styleDialogButton(this, cancelBtn, false);
 
         Button submitBtn = new Button(this);
         submitBtn.setText("保存");
-        styleDialogButton(submitBtn, true);
+        UIUtils.styleDialogButton(this, submitBtn, true);
 
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(dp(100), dp(40));
-        btnLp.setMargins(dp(12), 0, 0, 0);
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(this, 100), UIUtils.dp(this, 40));
+        btnLp.setMargins(UIUtils.dp(this, 12), 0, 0, 0);
 
-        btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(dp(80), dp(40)));
+        btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(UIUtils.dp(this, 80), UIUtils.dp(this, 40)));
         btnBar.addView(submitBtn, btnLp);
         container.addView(btnBar);
 
@@ -1001,7 +675,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private void showCloseConfirmDialog(ServerConfig server, String sessionId) {
+    void showCloseConfirmDialog(ServerConfig server, String sessionId) {
         new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
@@ -1037,74 +711,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             .show();
     }
 
-    private void styleActionButton(Button button, boolean primary) {
-        button.setTextSize(13);
-        button.setTextColor(primary ? Color.rgb(0, 43, 54) : Color.rgb(238, 232, 213));
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(primary ? Color.rgb(38, 139, 210) : Color.TRANSPARENT);
-        drawable.setStroke(dp(1), primary ? Color.rgb(38, 139, 210) : Color.rgb(88, 110, 117));
-        drawable.setCornerRadius(dp(4));
-        button.setBackground(drawable);
-        button.setPadding(dp(8), 0, dp(8), 0);
-    }
-
-    private void styleDialogButton(Button button, boolean primary) {
-        button.setTextSize(13);
-        button.setAllCaps(false);
-        button.setMinWidth(0);
-        button.setMinHeight(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setCornerRadius(dp(6));
-
-        if (primary) {
-            button.setTextColor(Color.rgb(15, 15, 18));
-            drawable.setColor(Color.rgb(16, 185, 129));
-            drawable.setStroke(dp(1), Color.rgb(16, 185, 129));
-        } else {
-            button.setTextColor(Color.rgb(243, 244, 246));
-            drawable.setColor(Color.TRANSPARENT);
-            drawable.setStroke(dp(1), Color.rgb(55, 65, 81));
-        }
-        button.setBackground(drawable);
-    }
-
-    private GradientDrawable panelBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(Color.rgb(30, 30, 36));
-        drawable.setStroke(dp(1), Color.rgb(55, 65, 81));
-        drawable.setCornerRadius(dp(8));
-        return drawable;
-    }
-
-    private TextView recentInputView(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.rgb(238, 232, 213));
-        view.setTextSize(12);
-        view.setTypeface(Typeface.MONOSPACE);
-        view.setMaxLines(2);
-        view.setEllipsize(TextUtils.TruncateAt.END);
-        view.setPadding(0, dp(6), 0, 0);
-        return view;
-    }
-
-    private String recentInputText(@Nullable JSONArray lines) {
-        if (lines == null || lines.length() == 0) return "";
-        StringBuilder text = new StringBuilder();
-        int start = Math.max(0, lines.length() - 2);
-        for (int i = start; i < lines.length(); i++) {
-            String line = lines.optString(i, "").trim();
-            if (line.isEmpty()) continue;
-            if (text.length() > 0) text.append('\n');
-            text.append(line);
-        }
-        return text.toString();
-    }
-
     private void deleteSession(String sessionId) {
         if (mBaseUrl == null || mCookie == null) return;
         String encodedId = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
@@ -1133,11 +739,11 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private void showTerminal(String baseUrl, String cookie, String sessionId) {
+    void showTerminal(String baseUrl, String cookie, String sessionId) {
         showTerminal(baseUrl, cookie, sessionId, "Terminal", "");
     }
 
-    private void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
         mBaseUrl = baseUrl;
         mCookie = cookie;
         mSessionId = sessionId;
@@ -1449,7 +1055,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }, 150);
     }
 
-    private void login(String baseUrl, String username, String password, LoginCallback callback) {
+    void login(String baseUrl, String username, String password, LoginCallback callback) {
         JSONObject login = new JSONObject();
         try {
             login.put("username", username);
@@ -1836,34 +1442,11 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     @Override public void logStackTraceWithMessage(String tag, String message, Exception e) { android.util.Log.e(tag, message, e); }
     @Override public void logStackTrace(String tag, Exception e) { android.util.Log.e(tag, "stack trace", e); }
 
-    private EditText input(String hint) {
-        EditText editText = new EditText(this);
-        editText.setHint(hint);
-        editText.setSingleLine(true);
-        editText.setTextColor(Color.WHITE);
-        editText.setHintTextColor(Color.rgb(75, 85, 99));
-        editText.setPadding(dp(12), dp(10), dp(12), dp(10));
-
-        GradientDrawable gd = new GradientDrawable();
-        gd.setShape(GradientDrawable.RECTANGLE);
-        gd.setColor(Color.rgb(13, 13, 16));
-        gd.setStroke(dp(1), Color.rgb(55, 65, 81));
-        gd.setCornerRadius(dp(6));
-        editText.setBackground(gd);
-        return editText;
-    }
-
-    private LinearLayout.LayoutParams matchWrap() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(52));
-        lp.setMargins(0, 0, 0, dp(12));
-        return lp;
-    }
-
-    private int dp(int value) {
+    int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
-    private static String normalizeBaseUrl(String raw) {
+    static String normalizeBaseUrl(String raw) {
         String value = String.valueOf(raw == null ? "" : raw).trim();
         while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
         if (value.isEmpty()) return "";
@@ -1885,7 +1468,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         return "";
     }
 
-    private interface LoginCallback {
+    interface LoginCallback {
         void onReady(String baseUrl, String cookie);
 
         void onError(String message);
@@ -1926,17 +1509,17 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         @Override public void logStackTrace(String tag, Exception e) { MainActivity.this.logStackTrace(tag, e); }
     }
 
-    private int getSavedFontSize() {
+    int getSavedFontSize() {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         return prefs.getInt("terminal_font_size", 28);
     }
 
-    private String getSavedFontType() {
+    String getSavedFontType() {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         return prefs.getString("terminal_font_type", "monospace");
     }
 
-    private Typeface getTypefaceByName(String type) {
+    Typeface getTypefaceByName(String type) {
         if ("sans-serif".equals(type)) return Typeface.SANS_SERIF;
         if ("serif".equals(type)) return Typeface.SERIF;
         if ("default".equals(type)) return Typeface.DEFAULT;
@@ -1944,219 +1527,22 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void showSettingsDialog() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-
-        LinearLayout container = new LinearLayout(this);
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(dp(24), dp(24), dp(24), dp(24));
-
-        GradientDrawable containerBg = new GradientDrawable();
-        containerBg.setShape(GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(dp(12));
-        containerBg.setStroke(dp(1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
-
-        TextView titleView = new TextView(this);
-        titleView.setText("⚙️ 终端显示设置");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, dp(24));
-        container.addView(titleView);
-
-        // ----------------- 字号设置 (Stepper) -----------------
-        LinearLayout fontSizeRow = new LinearLayout(this);
-        fontSizeRow.setOrientation(LinearLayout.HORIZONTAL);
-        fontSizeRow.setGravity(Gravity.CENTER_VERTICAL);
-        fontSizeRow.setPadding(0, 0, 0, dp(16));
-
-        TextView sizeLabel = new TextView(this);
-        sizeLabel.setText("终端字号");
-        sizeLabel.setTextColor(Color.rgb(229, 231, 235));
-        sizeLabel.setTextSize(14);
-        fontSizeRow.addView(sizeLabel, new LinearLayout.LayoutParams(0, -2, 1));
-
-        LinearLayout sizeStepper = new LinearLayout(this);
-        sizeStepper.setOrientation(LinearLayout.HORIZONTAL);
-        sizeStepper.setGravity(Gravity.CENTER_VERTICAL);
-
-        Button sizeDecBtn = new Button(this);
-        sizeDecBtn.setText("-");
-        styleStepperButton(sizeDecBtn);
-
-        TextView sizeValText = new TextView(this);
-        sizeValText.setText(String.valueOf(getSavedFontSize()));
-        sizeValText.setTextColor(Color.rgb(243, 244, 246));
-        sizeValText.setTextSize(16);
-        sizeValText.setTypeface(Typeface.MONOSPACE);
-        sizeValText.setGravity(Gravity.CENTER);
-
-        Button sizeIncBtn = new Button(this);
-        sizeIncBtn.setText("+");
-        styleStepperButton(sizeIncBtn);
-
-        sizeDecBtn.setOnClickListener((v) -> {
-            int cur = getSavedFontSize();
-            if (cur > 10) {
-                int next = cur - 1;
-                saveFontSize(next);
-                sizeValText.setText(String.valueOf(next));
-                if (mTerminalView != null) {
-                    mTerminalView.setTextSize(next);
-                }
-            }
-        });
-
-        sizeIncBtn.setOnClickListener((v) -> {
-            int cur = getSavedFontSize();
-            if (cur < 72) {
-                int next = cur + 1;
-                saveFontSize(next);
-                sizeValText.setText(String.valueOf(next));
-                if (mTerminalView != null) {
-                    mTerminalView.setTextSize(next);
-                }
-            }
-        });
-
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(dp(36), dp(36));
-        LinearLayout.LayoutParams sizeValLp = new LinearLayout.LayoutParams(dp(60), -2);
-
-        sizeStepper.addView(sizeDecBtn, btnLp);
-        sizeStepper.addView(sizeValText, sizeValLp);
-        sizeStepper.addView(sizeIncBtn, btnLp);
-        fontSizeRow.addView(sizeStepper);
-        container.addView(fontSizeRow);
-
-        // ----------------- 字体切换 (Stepper) -----------------
-        LinearLayout fontTypeRow = new LinearLayout(this);
-        fontTypeRow.setOrientation(LinearLayout.HORIZONTAL);
-        fontTypeRow.setGravity(Gravity.CENTER_VERTICAL);
-        fontTypeRow.setPadding(0, 0, 0, dp(24));
-
-        TextView fontLabel = new TextView(this);
-        fontLabel.setText("终端字体");
-        fontLabel.setTextColor(Color.rgb(229, 231, 235));
-        fontLabel.setTextSize(14);
-        fontTypeRow.addView(fontLabel, new LinearLayout.LayoutParams(0, -2, 1));
-
-        LinearLayout fontStepper = new LinearLayout(this);
-        fontStepper.setOrientation(LinearLayout.HORIZONTAL);
-        fontStepper.setGravity(Gravity.CENTER_VERTICAL);
-
-        Button fontPrevBtn = new Button(this);
-        fontPrevBtn.setText("◀");
-        styleStepperButton(fontPrevBtn);
-
-        TextView fontValText = new TextView(this);
-        fontValText.setText(getFontDisplayName(getSavedFontType()));
-        fontValText.setTextColor(Color.rgb(243, 244, 246));
-        fontValText.setTextSize(14);
-        fontValText.setTypeface(Typeface.DEFAULT_BOLD);
-        fontValText.setGravity(Gravity.CENTER);
-
-        Button fontNextBtn = new Button(this);
-        fontNextBtn.setText("▶");
-        styleStepperButton(fontNextBtn);
-
-        final String[] fontOptions = {"monospace", "sans-serif", "serif", "default"};
-
-        fontPrevBtn.setOnClickListener((v) -> {
-            String cur = getSavedFontType();
-            int idx = -1;
-            for (int i = 0; i < fontOptions.length; i++) {
-                if (fontOptions[i].equals(cur)) {
-                    idx = i;
-                    break;
-                }
-            }
-            int nextIdx = (idx - 1 + fontOptions.length) % fontOptions.length;
-            String next = fontOptions[nextIdx];
-            saveFontType(next);
-            fontValText.setText(getFontDisplayName(next));
-            if (mTerminalView != null) {
-                mTerminalView.setTypeface(getTypefaceByName(next));
-            }
-        });
-
-        fontNextBtn.setOnClickListener((v) -> {
-            String cur = getSavedFontType();
-            int idx = -1;
-            for (int i = 0; i < fontOptions.length; i++) {
-                if (fontOptions[i].equals(cur)) {
-                    idx = i;
-                    break;
-                }
-            }
-            int nextIdx = (idx + 1) % fontOptions.length;
-            String next = fontOptions[nextIdx];
-            saveFontType(next);
-            fontValText.setText(getFontDisplayName(next));
-            if (mTerminalView != null) {
-                mTerminalView.setTypeface(getTypefaceByName(next));
-            }
-        });
-
-        LinearLayout.LayoutParams valLp = new LinearLayout.LayoutParams(dp(100), -2);
-
-        fontStepper.addView(fontPrevBtn, btnLp);
-        fontStepper.addView(fontValText, valLp);
-        fontStepper.addView(fontNextBtn, btnLp);
-        fontTypeRow.addView(fontStepper);
-        container.addView(fontTypeRow);
-
-        // ----------------- 关闭/确定按钮 -----------------
-        LinearLayout btnBar = new LinearLayout(this);
-        btnBar.setOrientation(LinearLayout.HORIZONTAL);
-        btnBar.setGravity(Gravity.END);
-
-        Button closeBtn = new Button(this);
-        closeBtn.setText("完成");
-        styleDialogButton(closeBtn, true);
-
-        btnBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(80), dp(40)));
-        container.addView(btnBar);
-
-        builder.setView(container);
-        final AlertDialog dialog = builder.create();
-        dialog.show();
-
-        dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-        closeBtn.setOnClickListener((v) -> dialog.dismiss());
+        SettingsDialogHelper.show(this);
     }
 
-    private void styleStepperButton(Button button) {
-        button.setTextSize(12);
-        button.setAllCaps(false);
-        button.setMinWidth(0);
-        button.setMinHeight(0);
-        button.setPadding(0, 0, 0, 0);
-        button.setGravity(Gravity.CENTER);
-
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.OVAL);
-
-        button.setTextColor(Color.rgb(243, 244, 246));
-        drawable.setColor(Color.rgb(55, 65, 81));
-        drawable.setStroke(dp(1), Color.rgb(75, 85, 99));
-
-        button.setBackground(drawable);
-    }
-
-    private String getFontDisplayName(String fontType) {
+    String getFontDisplayName(String fontType) {
         if ("sans-serif".equals(fontType)) return "Sans Serif";
         if ("serif".equals(fontType)) return "Serif";
         if ("default".equals(fontType)) return "Default";
         return "Monospace";
     }
 
-    private void saveFontSize(int size) {
+    void saveFontSize(int size) {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         prefs.edit().putInt("terminal_font_size", size).apply();
     }
 
-    private void saveFontType(String type) {
+    void saveFontType(String type) {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         prefs.edit().putString("terminal_font_type", type).apply();
     }

@@ -87,6 +87,12 @@ export class TerminalView {
     this.term.scrollLines(lines);
   }
 
+  refreshAll() {
+    if (this.term.rows > 0) {
+      this.term.refresh(0, this.term.rows - 1);
+    }
+  }
+
   clearSelection() {
     this.term.clearSelection();
   }

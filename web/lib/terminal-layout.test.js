@@ -37,7 +37,7 @@ test("TerminalLayoutController keeps bottom pinned during resize when already ne
   assert.deepEqual(sent, [{ cols: 80, rows: 24, visible: true }]);
 });
 
-test("TerminalLayoutController pins to bottom during resize even from history scroll", () => {
+test("TerminalLayoutController preserves history scroll during resize", () => {
   const terminal = fakeTerminal({ viewportY: 0, baseY: 100, rows: 20 });
   terminal.cols = 80;
   terminal.fit = () => {
@@ -59,9 +59,32 @@ test("TerminalLayoutController pins to bottom during resize even from history sc
   });
   controller.sendResize({ reason: "viewport", beforeFit: () => {} });
 
-  assert.equal(terminal.scrolledToBottom, true);
+  assert.equal(terminal.scrolledToBottom, false);
   assert.equal(terminal.fitCount, 1);
+  assert.equal(terminal.refreshCount, 1);
   assert.deepEqual(sent, [{ cols: 80, rows: 20, visible: true }]);
+});
+
+test("TerminalLayoutController can force bottom pin during resize", () => {
+  const terminal = fakeTerminal({ viewportY: 0, baseY: 100, rows: 20 });
+  terminal.cols = 80;
+  const controller = new TerminalLayoutController({
+    store: lazyStore(),
+    terminalView: terminal,
+    container: null,
+    documentElement: { style: { setProperty() {} } },
+    windowObject: {
+      innerHeight: 800,
+      visualViewport: { height: 500, offsetTop: 0 },
+      requestAnimationFrame: (callback) => callback(),
+    },
+    sendResizeMessage: () => {},
+    isVisible: () => true,
+  });
+
+  controller.sendResize({ reason: "viewport", pinBottom: true });
+
+  assert.equal(terminal.scrolledToBottom, true);
 });
 
 test("TerminalLayoutController keeps checking bottom pin after grow resize until stable", () => {
@@ -102,7 +125,7 @@ test("TerminalLayoutController keeps checking bottom pin after grow resize until
 });
 
 test("TerminalLayoutController pins the DOM viewport to bottom during resize", () => {
-  const viewport = { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 };
+  const viewport = { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 };
   const terminal = fakeTerminal({ viewportY: 0, baseY: 100, rows: 20 });
   terminal.cols = 80;
   const controller = new TerminalLayoutController({
@@ -123,6 +146,29 @@ test("TerminalLayoutController pins the DOM viewport to bottom during resize", (
 
   assert.equal(terminal.scrolledToBottom, true);
   assert.equal(viewport.scrollTop, 1000);
+});
+
+test("TerminalLayoutController settles renderer after large writes", () => {
+  const terminal = fakeTerminal({ viewportY: 0, baseY: 100, rows: 20 });
+  terminal.cols = 80;
+  const controller = new TerminalLayoutController({
+    store: lazyStore(),
+    terminalView: terminal,
+    container: null,
+    documentElement: { style: { setProperty() {} } },
+    windowObject: {
+      innerHeight: 800,
+      visualViewport: { height: 800, offsetTop: 0 },
+      requestAnimationFrame: (callback) => callback(),
+    },
+    sendResizeMessage: () => {},
+    isVisible: () => true,
+  });
+
+  controller.settleAfterWrite();
+
+  assert.equal(terminal.scrolledToBottom, true);
+  assert.equal(terminal.refreshCount > 0, true);
 });
 
 test("TerminalLayoutController updates viewport height on window resize when visualViewport exists", async () => {
@@ -207,6 +253,9 @@ function fakeTerminal({ viewportY, baseY, rows }) {
     scrollToBottom() {
       this.scrolledToBottom = true;
       this.buffer.active.viewportY = this.buffer.active.baseY;
+    },
+    refreshAll() {
+      this.refreshCount = (this.refreshCount || 0) + 1;
     },
   };
 }

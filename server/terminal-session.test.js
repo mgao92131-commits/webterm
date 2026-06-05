@@ -79,6 +79,19 @@ test('hello with stale future lastSeq returns state', () => {
   assert.deepEqual(state, { type: 'state', seq: 2, data: 'SERIALIZED' });
 });
 
+test('broadcast closes slow clients when the send queue overflows', () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket({ autoCompleteSend: false });
+  TerminalSession.prototype.attach.call(session, ws);
+
+  for (let index = 0; index < 250; index += 1) {
+    TerminalSession.prototype.broadcast.call(session, { type: 'output', seq: index + 1, data: String(index) });
+  }
+
+  assert.equal(ws.closed, true);
+  assert.equal(session.clients.size, 0);
+});
+
 function fakeSession({ latestSeq }) {
   const frames = [
     { seq: 1, data: 'a' },
@@ -118,14 +131,20 @@ function fakeSession({ latestSeq }) {
   };
 }
 
-function fakeWebSocket() {
+function fakeWebSocket({ autoCompleteSend = true } = {}) {
   const handlers = new Map();
   return {
     readyState: 1,
     sent: [],
+    closed: false,
     send(data, callback) {
       this.sent.push(JSON.parse(data));
-      callback?.();
+      if (autoCompleteSend) callback?.();
+    },
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+      handlers.get('close')?.();
     },
     on(event, handler) {
       handlers.set(event, handler);

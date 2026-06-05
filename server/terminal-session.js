@@ -175,6 +175,7 @@ export class TerminalSession {
   broadcast(message) {
     for (const client of [...this.clients]) {
       if (!client.send(message)) {
+        client.close();
         this.clients.delete(client);
       }
     }

@@ -699,6 +699,24 @@ import { TerminalView } from "./lib/terminal-view.js";
     return lines.join("\n");
   }
 
+  function beginTerminalRestore() {
+    state.isRestoring = true;
+    document.querySelector(".terminal-page")?.classList.add("is-restoring");
+  }
+
+  function finishTerminalRestore({ fit = false, seq = 0 } = {}) {
+    if (seq) rememberSeq(seq);
+    state.isRestoring = false;
+    state.term?.scrollToBottom();
+    state.terminalView?.refreshAll?.();
+    state.layoutController?.settleAfterWrite?.({ fit });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.querySelector(".terminal-page")?.classList.remove("is-restoring");
+      });
+    });
+  }
+
   async function commitTerminalTitle(event) {
     if (state.skipTitleCommit) {
       state.skipTitleCommit = false;
@@ -855,45 +873,38 @@ import { TerminalView } from "./lib/terminal-view.js";
       if (msg.type === "state") {
         if (!state.terminalView) return;
         state.terminalView.reset();
-        state.isRestoring = true;
+        beginTerminalRestore();
         if (msg.data) {
-          state.terminalView.enqueueWrite(msg.data, () => {
-            state.isRestoring = false;
-            state.term?.scrollToBottom();
-          });
+          state.terminalView.enqueueWrite(msg.data, () => finishTerminalRestore({ seq: msg.seq }));
         } else {
-          state.isRestoring = false;
+          finishTerminalRestore({ fit: true, seq: msg.seq });
         }
         state.terminalView.writeQueue.flush();
         state.restored = true;
-        setLastSeq(msg.seq);
       } else if (msg.type === "replay") {
         if (!state.terminalView) return;
         if (!state.restored || msg.from === 0) {
           state.terminalView.reset();
         }
-        state.isRestoring = true;
+        beginTerminalRestore();
         const frames = msg.frames || [];
         if (frames.length > 0) {
           for (let i = 0; i < frames.length; i++) {
             const frame = frames[i];
             const isLast = i === frames.length - 1;
-            state.terminalView.enqueueWrite(frame.data || "", isLast ? () => {
-              state.isRestoring = false;
-              state.term?.scrollToBottom();
-            } : undefined);
-            rememberSeq(frame.seq);
+            state.terminalView.enqueueWrite(frame.data || "", () => {
+              rememberSeq(frame.seq);
+              if (isLast) finishTerminalRestore({ seq: msg.seq });
+            });
           }
         } else {
-          state.isRestoring = false;
+          finishTerminalRestore({ fit: true, seq: msg.seq });
         }
         state.terminalView.writeQueue.flush();
         state.restored = true;
-        rememberSeq(msg.seq);
       } else if (msg.type === "output") {
         if (!state.terminalView) return;
-        state.terminalView.enqueueWrite(msg.data);
-        rememberSeq(msg.seq);
+        state.terminalView.enqueueWrite(msg.data, () => rememberSeq(msg.seq));
       } else if (msg.type === "info") {
         setTerminalInfo(msg.data);
       } else if (msg.type === "exit") {
