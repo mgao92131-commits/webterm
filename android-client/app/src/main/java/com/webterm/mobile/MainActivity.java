@@ -113,6 +113,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private boolean mReconnectScheduled;
     private boolean mInForeground = true;
     private long mHomeRefreshDelayMs = HOME_REFRESH_INITIAL_DELAY_MS;
+    private final java.util.Map<String, CachedTerminal> mTerminalCache = new java.util.HashMap<>();
     private LinearLayout mSessionList;
     private TextView mSessionStatus;
     private View mConnectionStatusIndicator;
@@ -124,6 +125,27 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     };
     private TextView mTerminalTitle;
     private TextView mTerminalSubtitle;
+
+    private static final class CachedTerminal {
+        final String baseUrl;
+        final String sessionId;
+        TerminalSession terminalSession;
+        String cookie;
+        String termTitle;
+        String sessionName;
+        long lastSeq;
+        int columns;
+        int rows;
+
+        CachedTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, TerminalSession terminalSession) {
+            this.baseUrl = baseUrl;
+            this.cookie = cookie;
+            this.sessionId = sessionId;
+            this.termTitle = termTitle;
+            this.sessionName = sessionName;
+            this.terminalSession = terminalSession;
+        }
+    }
 
     private static final class ServerGroupHolder {
         final ServerConfig server;
@@ -185,7 +207,12 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     protected void onResume() {
         super.onResume();
         mInForeground = true;
-        if (mSessionId == null && mSessionList != null) {
+        if (mSessionId != null && mTerminalSession != null && mWebSocket == null) {
+            mClosed.set(false);
+            mReconnectAttempts = 0;
+            mReconnectScheduled = false;
+            connectWebSocket();
+        } else if (mSessionId == null && mSessionList != null) {
             for (ServerGroupHolder holder : mActiveGroups) {
                 connectManagerWS(holder);
             }
@@ -202,6 +229,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             for (ServerGroupHolder holder : mActiveGroups) {
                 closeManagerWS(holder);
             }
+        } else {
+            pauseCurrentTerminalConnection();
         }
         super.onPause();
     }
@@ -215,6 +244,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
         if (mWebSocket != null) mWebSocket.close(1000, "activity closed");
         if (mTerminalSession != null) mTerminalSession.finishIfRunning();
+        for (CachedTerminal cached : mTerminalCache.values()) {
+            if (cached.terminalSession != null && cached.terminalSession != mTerminalSession) cached.terminalSession.finishIfRunning();
+        }
+        mTerminalCache.clear();
         mHttp.dispatcher().cancelAll();
         super.onDestroy();
     }
@@ -708,6 +741,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 newIds.add(session.optString("id"));
             }
         }
+        removeMissingCachedSessionsForServer(server.url, newIds);
 
         for (int i = subList.getChildCount() - 1; i >= 0; i--) {
             View child = subList.getChildAt(i);
@@ -888,6 +922,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                     public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                         try (response) {
                             if (response.isSuccessful()) {
+                                removeCachedTerminal(server.url, sessionId);
                                 runOnUiThread(() -> {
                                     showSessionHome();
                                 });
@@ -939,14 +974,22 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         for (ServerGroupHolder holder : mActiveGroups) {
             closeManagerWS(holder);
         }
+        CachedTerminal cached = mTerminalCache.get(terminalCacheKey(baseUrl, sessionId));
         mBaseUrl = baseUrl;
         mCookie = cookie;
         mSessionId = sessionId;
-        String headerTitle = termTitle == null || termTitle.trim().isEmpty() ? "Terminal" : termTitle.trim();
-        String headerSubtitle = sessionName == null || sessionName.trim().isEmpty() ? sessionId : sessionName.trim();
+        String headerTitle = cached != null && cached.termTitle != null && !cached.termTitle.trim().isEmpty()
+            ? cached.termTitle.trim()
+            : (termTitle == null || termTitle.trim().isEmpty() ? "Terminal" : termTitle.trim());
+        String headerSubtitle = cached != null && cached.sessionName != null && !cached.sessionName.trim().isEmpty()
+            ? cached.sessionName.trim()
+            : (sessionName == null || sessionName.trim().isEmpty() ? sessionId : sessionName.trim());
         mClosed.set(false);
         mReconnectAttempts = 0;
         mReconnectScheduled = false;
+        mLastSeq = cached != null ? cached.lastSeq : 0;
+        mTerminalColumns = cached != null ? cached.columns : 0;
+        mTerminalRows = cached != null ? cached.rows : 0;
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -1064,7 +1107,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         setContentView(root);
         root.post(this::updateKeyboardAvoidance);
 
-        mTerminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, this, this);
+        mTerminalSession = cached != null && cached.terminalSession != null
+            ? cached.terminalSession
+            : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, this, this);
         mTerminalView.attachSession(mTerminalSession);
         mTerminalView.requestFocus();
         sessions.setOnClickListener((v) -> showSessionHome());
@@ -1139,19 +1184,17 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void closeCurrentTerminal(boolean closeRemote) {
+        String closingBaseUrl = mBaseUrl;
+        String closingSessionId = mSessionId;
+        if (!closeRemote) {
+            cacheCurrentTerminal();
+        }
         mClosed.set(true);
-        mMainHandler.removeCallbacksAndMessages(null);
-        mConnected = false;
-        mReconnectScheduled = false;
-        mSocketGeneration++;
-        if (mWebSocket != null) {
-            mWebSocket.close(1000, "leaving terminal");
-            mWebSocket = null;
-        }
-        if (mTerminalSession != null) {
+        closeCurrentWebSocket("leaving terminal");
+        if (mTerminalSession != null && closeRemote) {
             mTerminalSession.finishIfRunning();
-            mTerminalSession = null;
         }
+        mTerminalSession = null;
         mTerminalView = null;
         mConnectionStatusIndicator = null;
         mRetryButton = null;
@@ -1170,9 +1213,78 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mMainHandler.removeCallbacks(mSendResizeRunnable);
         mLastUploadedTitle = "";
         mPendingTitle = "";
-        if (closeRemote && mSessionId != null) deleteSession(mSessionId);
+        if (closeRemote && closingSessionId != null) {
+            removeCachedTerminal(closingBaseUrl, closingSessionId);
+            deleteSession(closingSessionId);
+        }
         mSessionId = null;
         mLastSeq = 0;
+    }
+
+    private void pauseCurrentTerminalConnection() {
+        cacheCurrentTerminal();
+        closeCurrentWebSocket("activity paused");
+    }
+
+    private void closeCurrentWebSocket(String reason) {
+        mConnected = false;
+        mReconnectScheduled = false;
+        mSocketGeneration++;
+        mMainHandler.removeCallbacks(mReconnectRunnable);
+        mMainHandler.removeCallbacks(mSendResizeRunnable);
+        mMainHandler.removeCallbacks(mUploadTitleRunnable);
+        WebSocket ws = mWebSocket;
+        mWebSocket = null;
+        if (ws != null) {
+            ws.close(1000, reason);
+        }
+    }
+
+    private void cacheCurrentTerminal() {
+        if (mBaseUrl == null || mSessionId == null || mTerminalSession == null) return;
+        String key = terminalCacheKey(mBaseUrl, mSessionId);
+        String title = mTerminalTitle == null ? "" : String.valueOf(mTerminalTitle.getText());
+        String subtitle = mTerminalSubtitle == null ? "" : String.valueOf(mTerminalSubtitle.getText());
+        CachedTerminal cached = mTerminalCache.get(key);
+        if (cached == null) {
+            cached = new CachedTerminal(mBaseUrl, mCookie, mSessionId, title, subtitle, mTerminalSession);
+            mTerminalCache.put(key, cached);
+        }
+        cached.cookie = mCookie;
+        cached.termTitle = title;
+        cached.sessionName = subtitle;
+        cached.terminalSession = mTerminalSession;
+        cached.lastSeq = mLastSeq;
+        cached.columns = mTerminalColumns;
+        cached.rows = mTerminalRows;
+    }
+
+    private void removeCachedTerminal(String baseUrl, String sessionId) {
+        CachedTerminal cached = mTerminalCache.remove(terminalCacheKey(baseUrl, sessionId));
+        if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
+            cached.terminalSession.finishIfRunning();
+        }
+    }
+
+    private void removeMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIds) {
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        java.util.List<String> staleKeys = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, CachedTerminal> entry : mTerminalCache.entrySet()) {
+            CachedTerminal cached = entry.getValue();
+            if (normalizedBaseUrl.equals(normalizeBaseUrl(cached.baseUrl)) && !liveSessionIds.contains(cached.sessionId)) {
+                staleKeys.add(entry.getKey());
+            }
+        }
+        for (String key : staleKeys) {
+            CachedTerminal cached = mTerminalCache.remove(key);
+            if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
+                cached.terminalSession.finishIfRunning();
+            }
+        }
+    }
+
+    private static String terminalCacheKey(String baseUrl, String sessionId) {
+        return normalizeBaseUrl(baseUrl) + "#" + String.valueOf(sessionId == null ? "" : sessionId);
     }
 
     private View createQuickBar() {
@@ -1324,6 +1436,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void connectWebSocket() {
+        if (mSessionId == null || mBaseUrl == null || mCookie == null) return;
+        if (mWebSocket != null) {
+            closeCurrentWebSocket("reconnecting");
+        }
         setConnectionStatus("Connecting", false);
         mReconnectScheduled = false;
         int generation = ++mSocketGeneration;
@@ -1418,6 +1534,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             JSONObject msg = controlPayload(payload);
             if (type == MSG_EXIT) {
                 appendStatus("Remote session exited");
+                removeCachedTerminal(mBaseUrl, mSessionId);
                 if (mTerminalSession != null) mTerminalSession.notifyExternalSessionFinished(msg.optInt("code", 0));
             }
         } catch (JSONException e) {
@@ -1807,6 +1924,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void removeLocalSession(ServerGroupHolder holder, String id) {
+        removeCachedTerminal(holder.server.url, id);
         if (holder.lastSessions == null) return;
         JSONArray newArr = new JSONArray();
         for (int i = 0; i < holder.lastSessions.length(); i++) {
