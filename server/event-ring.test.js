@@ -8,7 +8,10 @@ test('event ring replays frames after seq', () => {
   const b = ring.push('b');
   const c = ring.push('c');
   assert.equal(a.seq, 1);
-  assert.deepEqual(ring.after(b.seq), [{ seq: c.seq, data: 'c' }]);
+  assert.deepEqual(ring.after(b.seq).map(({ seq, data, text }) => ({ seq, data, text })), [
+    { seq: c.seq, data: 'c', text: 'c' },
+  ]);
+  assert.deepEqual([...ring.after(b.seq)[0].bytes], [99]);
   assert.equal(ring.canReplayFrom(0), true);
 });
 

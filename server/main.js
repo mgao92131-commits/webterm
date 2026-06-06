@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { AuthManager, setAuthCookie } from './auth.js';
 import { json, readJSON, sameHostOrigin, serveStatic, text } from './http-utils.js';
+import { selectWebSocketProtocol } from './protocol-binary.js';
 import { SessionManager } from './session-manager.js';
 
 loadLocalEnv();
@@ -26,7 +27,10 @@ const server = http.createServer((req, res) => route(req, res).catch((err) => {
   console.error(err);
   text(res, 500, 'internal server error');
 }));
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  handleProtocols: selectWebSocketProtocol,
+});
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -52,7 +56,9 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => session.attach(ws));
+  wss.handleUpgrade(req, socket, head, (ws) => session.attach(ws, {
+    protocolHint: ws.protocol,
+  }));
 });
 
 server.listen(port, host, () => {

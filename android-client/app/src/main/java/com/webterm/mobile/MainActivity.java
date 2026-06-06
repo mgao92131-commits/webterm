@@ -84,6 +84,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private static final byte MSG_TITLE = 0x09;
     private static final int TRANSCRIPT_ROWS = 20000;
     private static final int MAX_TERM_TITLE_CHARS = 256;
+    private static final long HOME_REFRESH_INITIAL_DELAY_MS = 3000L;
+    private static final long HOME_REFRESH_MAX_DELAY_MS = 60000L;
+    private static final long RESIZE_DEBOUNCE_MS = 100L;
     private static final String PREFS = "webterm";
     private static final String DEFAULT_URL = "http://100.121.115.14:8081";
     private static final String DEFAULT_USER = "gao";
@@ -94,6 +97,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private String mLastUploadedTitle = "";
     private String mPendingTitle = "";
     private final Runnable mUploadTitleRunnable = this::uploadTerminalTitle;
+    private final Runnable mSendResizeRunnable = this::sendCurrentResizeNow;
 
     TerminalView mTerminalView;
     private TerminalSession mTerminalSession;
@@ -107,6 +111,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private int mReconnectAttempts;
     private int mSocketGeneration;
     private boolean mReconnectScheduled;
+    private boolean mInForeground = true;
+    private long mHomeRefreshDelayMs = HOME_REFRESH_INITIAL_DELAY_MS;
     private LinearLayout mSessionList;
     private TextView mSessionStatus;
     private View mConnectionStatusIndicator;
@@ -118,6 +124,40 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     };
     private TextView mTerminalTitle;
     private TextView mTerminalSubtitle;
+
+    private static final class ServerGroupHolder {
+        final ServerConfig server;
+        final LinearLayout subList;
+        final TextView status;
+        WebSocket managerWS = null;
+        JSONArray lastSessions = null;
+        boolean wsConnected = false;
+        boolean managerReconnectEnabled = true;
+        int reconnectAttempts = 0;
+        ServerGroupHolder(ServerConfig server, LinearLayout subList, TextView status) {
+            this.server = server;
+            this.subList = subList;
+            this.status = status;
+        }
+    }
+    private final java.util.List<ServerGroupHolder> mActiveGroups = new java.util.ArrayList<>();
+    private final Runnable mHomeRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isHomeRefreshActive()) return;
+            boolean needsFallbackRefresh = false;
+            for (ServerGroupHolder holder : mActiveGroups) {
+                if (!holder.wsConnected) {
+                    needsFallbackRefresh = true;
+                    loadSessionsForServer(holder.server, holder.subList, holder.status);
+                }
+            }
+            if (needsFallbackRefresh) {
+                long nextDelay = nextHomeRefreshDelay();
+                scheduleHomeRefresh(nextDelay);
+            }
+        }
+    };
 
     final java.util.List<ServerConfig> mServers = new java.util.ArrayList<>();
     private final java.util.Map<String, Boolean> mServerCollapsed = new java.util.HashMap<>();
@@ -142,9 +182,37 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        mInForeground = true;
+        if (mSessionId == null && mSessionList != null) {
+            for (ServerGroupHolder holder : mActiveGroups) {
+                connectManagerWS(holder);
+            }
+            resetHomeRefreshBackoff();
+            scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        mInForeground = false;
+        mMainHandler.removeCallbacks(mHomeRefreshRunnable);
+        if (mSessionId == null) {
+            for (ServerGroupHolder holder : mActiveGroups) {
+                closeManagerWS(holder);
+            }
+        }
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         mClosed.set(true);
         mMainHandler.removeCallbacksAndMessages(null);
+        for (ServerGroupHolder holder : mActiveGroups) {
+            closeManagerWS(holder);
+        }
         if (mWebSocket != null) mWebSocket.close(1000, "activity closed");
         if (mTerminalSession != null) mTerminalSession.finishIfRunning();
         mHttp.dispatcher().cancelAll();
@@ -208,6 +276,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     void showSessionHome() {
         closeCurrentTerminal(false);
+        mClosed.set(false);
         mBaseUrl = null;
         mCookie = null;
 
@@ -277,11 +346,18 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         root.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
 
         setContentView(root);
+        resetHomeRefreshBackoff();
         loadMultiSessions();
+        scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
     }
 
     private void loadMultiSessions() {
+        resetHomeRefreshBackoff();
         if (mSessionList == null) return;
+        for (ServerGroupHolder holder : mActiveGroups) {
+            closeManagerWS(holder);
+        }
+        mActiveGroups.clear();
         mSessionList.removeAllViews();
 
         if (mServers.isEmpty()) {
@@ -298,6 +374,36 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         for (ServerConfig s : mServers) {
             renderServerGroup(s);
         }
+        scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+    }
+
+    private boolean isHomeRefreshActive() {
+        return mInForeground && !mClosed.get() && mSessionId == null && mSessionList != null;
+    }
+
+    private void resetHomeRefreshBackoff() {
+        mHomeRefreshDelayMs = HOME_REFRESH_INITIAL_DELAY_MS;
+        mMainHandler.removeCallbacks(mHomeRefreshRunnable);
+    }
+
+    private void scheduleHomeRefresh(long delayMs) {
+        mMainHandler.removeCallbacks(mHomeRefreshRunnable);
+        if (!isHomeRefreshActive()) return;
+        boolean needsFallbackRefresh = false;
+        for (ServerGroupHolder holder : mActiveGroups) {
+            if (!holder.wsConnected) {
+                needsFallbackRefresh = true;
+                break;
+            }
+        }
+        if (needsFallbackRefresh) {
+            mMainHandler.postDelayed(mHomeRefreshRunnable, Math.max(HOME_REFRESH_INITIAL_DELAY_MS, delayMs));
+        }
+    }
+
+    private long nextHomeRefreshDelay() {
+        mHomeRefreshDelayMs = Math.min(HOME_REFRESH_MAX_DELAY_MS, Math.max(HOME_REFRESH_INITIAL_DELAY_MS, mHomeRefreshDelayMs * 2));
+        return mHomeRefreshDelayMs;
     }
 
     private void renderServerGroup(ServerConfig server) {
@@ -405,7 +511,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             popup.show();
         });
 
+        mActiveGroups.add(new ServerGroupHolder(server, subList, status));
+        ServerGroupHolder holder = mActiveGroups.get(mActiveGroups.size() - 1);
         loadSessionsForServer(server, subList, status);
+        connectManagerWS(holder);
     }
 
     private void createSessionOnServer(ServerConfig server) {
@@ -464,6 +573,13 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
     }
 
+    private boolean shouldKeepExistingList(LinearLayout subList) {
+        if (subList == null || subList.getChildCount() == 0) return false;
+        View firstChild = subList.getChildAt(0);
+        Object tag = firstChild.getTag();
+        return tag == null || (!"error_item".equals(tag) && !"empty_item".equals(tag));
+    }
+
     private void fetchSessionsDirectly(ServerConfig server, LinearLayout subList, TextView status) {
         Request request = new Request.Builder()
             .url(server.url + "/api/sessions")
@@ -476,7 +592,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 runOnUiThread(() -> {
                     status.setText("🔴 离线");
                     status.setTextColor(Color.rgb(239, 68, 68));
-                    renderErrorItem(server, subList, status, e.getMessage());
+                    if (!shouldKeepExistingList(subList)) {
+                        renderErrorItem(server, subList, status, e.getMessage());
+                    }
                 });
             }
 
@@ -492,7 +610,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                         runOnUiThread(() -> {
                             status.setText("🔴 离线");
                             status.setTextColor(Color.rgb(239, 68, 68));
-                            renderErrorItem(server, subList, status, "HTTP " + response.code());
+                            if (!shouldKeepExistingList(subList)) {
+                                renderErrorItem(server, subList, status, "HTTP " + response.code());
+                            }
                         });
                         return;
                     }
@@ -501,13 +621,19 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                         runOnUiThread(() -> {
                             status.setText("🟢 在线 (" + sessions.length() + ")");
                             status.setTextColor(Color.rgb(16, 185, 129));
+                            ServerGroupHolder holder = findHolderForServer(server);
+                            if (holder != null) {
+                                holder.lastSessions = sessions;
+                            }
                             renderServerSessions(server, sessions, subList);
                         });
                     } catch (JSONException e) {
                         runOnUiThread(() -> {
                             status.setText("🔴 异常");
                             status.setTextColor(Color.rgb(239, 68, 68));
-                            renderErrorItem(server, subList, status, "JSON 解析错误");
+                            if (!shouldKeepExistingList(subList)) {
+                                renderErrorItem(server, subList, status, "JSON 解析错误");
+                            }
                         });
                     }
                 }
@@ -529,7 +655,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 runOnUiThread(() -> {
                     status.setText("🔴 离线");
                     status.setTextColor(Color.rgb(239, 68, 68));
-                    renderErrorItem(server, subList, status, "登录失败: " + message);
+                    if (!shouldKeepExistingList(subList)) {
+                        renderErrorItem(server, subList, status, "登录失败: " + message);
+                    }
                 });
             }
         });
@@ -537,19 +665,67 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void renderErrorItem(ServerConfig server, LinearLayout subList, TextView status, String error) {
         subList.removeAllViews();
-        TextView errView = new TextView(this);
-        errView.setText("连接失败: " + error + "，点击重试");
-        errView.setTextColor(Color.rgb(107, 114, 128));
-        errView.setTextSize(13);
-        errView.setPadding(dp(12), dp(12), dp(12), dp(12));
-        errView.setOnClickListener((v) -> loadSessionsForServer(server, subList, status));
-        subList.addView(errView);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setTag("error_item");
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setGravity(Gravity.CENTER);
+        container.setPadding(0, dp(16), 0, dp(16));
+
+        TextView errText = new TextView(this);
+        errText.setText("无法连接到服务器: " + error);
+        errText.setTextColor(Color.rgb(156, 163, 175));
+        errText.setTextSize(13);
+        errText.setGravity(Gravity.CENTER);
+        errText.setPadding(0, 0, 0, dp(10));
+        container.addView(errText);
+
+        TextView retryBtn = new TextView(this);
+        retryBtn.setText("🔄 重新连接");
+        retryBtn.setTextColor(Color.rgb(243, 244, 246));
+        retryBtn.setTextSize(13);
+        retryBtn.setGravity(Gravity.CENTER);
+        retryBtn.setPadding(dp(20), dp(8), dp(20), dp(8));
+
+        GradientDrawable btnBg = new GradientDrawable();
+        btnBg.setShape(GradientDrawable.RECTANGLE);
+        btnBg.setColor(Color.rgb(45, 45, 52));
+        btnBg.setStroke(dp(1), Color.rgb(75, 85, 99));
+        btnBg.setCornerRadius(dp(6));
+        retryBtn.setBackground(btnBg);
+
+        retryBtn.setOnClickListener((v) -> loadSessionsForServer(server, subList, status));
+
+        container.addView(retryBtn, new LinearLayout.LayoutParams(-2, -2));
+        subList.addView(container, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void renderServerSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-        subList.removeAllViews();
+        java.util.Set<String> newIds = new java.util.HashSet<>();
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject session = sessions.optJSONObject(i);
+            if (session != null) {
+                newIds.add(session.optString("id"));
+            }
+        }
+
+        for (int i = subList.getChildCount() - 1; i >= 0; i--) {
+            View child = subList.getChildAt(i);
+            Object tag = child.getTag();
+            if (tag instanceof String) {
+                String id = (String) tag;
+                if (!newIds.contains(id)) {
+                    subList.removeViewAt(i);
+                }
+            } else if ("empty_item".equals(tag) || "error_item".equals(tag)) {
+                subList.removeViewAt(i);
+            }
+        }
+
         if (sessions.length() == 0) {
+            subList.removeAllViews();
             TextView empty = new TextView(this);
+            empty.setTag("empty_item");
             empty.setText("还没有终端会话");
             empty.setTextColor(Color.rgb(156, 163, 175));
             empty.setTextSize(13);
@@ -557,10 +733,25 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             subList.addView(empty);
             return;
         }
+
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject session = sessions.optJSONObject(i);
             if (session == null) continue;
-            addSessionRow(session, server, subList);
+            String id = session.optString("id");
+            View existingRow = null;
+            for (int j = 0; j < subList.getChildCount(); j++) {
+                View child = subList.getChildAt(j);
+                if (id.equals(child.getTag())) {
+                    existingRow = child;
+                    break;
+                }
+            }
+
+            if (existingRow != null) {
+                SessionRowHelper.updateSessionRow(this, existingRow, session, server);
+            } else {
+                addSessionRow(session, server, subList);
+            }
         }
     }
 
@@ -744,6 +935,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
+        mMainHandler.removeCallbacks(mHomeRefreshRunnable);
+        for (ServerGroupHolder holder : mActiveGroups) {
+            closeManagerWS(holder);
+        }
         mBaseUrl = baseUrl;
         mCookie = cookie;
         mSessionId = sessionId;
@@ -875,7 +1070,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         sessions.setOnClickListener((v) -> showSessionHome());
         root.post(() -> {
             if (mTerminalView != null) mTerminalView.updateSize();
-            showKeyboard();
             connectWebSocket();
         });
     }
@@ -973,6 +1167,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mSentResizeRows = 0;
         mMainHandler.removeCallbacks(mUploadTitleRunnable);
         mMainHandler.removeCallbacks(mReconnectRunnable);
+        mMainHandler.removeCallbacks(mSendResizeRunnable);
         mLastUploadedTitle = "";
         mPendingTitle = "";
         if (closeRemote && mSessionId != null) deleteSession(mSessionId);
@@ -1150,7 +1345,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 mSentResizeRows = 0;
                 Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
                 setConnectionStatus("Connected", true);
-                sendCurrentResize();
+                sendCurrentResizeNow();
                 sendBinary(MSG_HELLO, new JSONObjectBuilder().put("lastSeq", mLastSeq).build().toString().getBytes(StandardCharsets.UTF_8));
             }
 
@@ -1308,6 +1503,13 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void sendCurrentResize() {
+        mMainHandler.removeCallbacks(mSendResizeRunnable);
+        if (mWebSocket == null || !mConnected) return;
+        mMainHandler.postDelayed(mSendResizeRunnable, RESIZE_DEBOUNCE_MS);
+    }
+
+    private void sendCurrentResizeNow() {
+        mMainHandler.removeCallbacks(mSendResizeRunnable);
         int columns = mTerminalColumns;
         int rows = mTerminalRows;
         if (columns <= 0 || rows <= 0) return;
@@ -1452,6 +1654,169 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         if (value.isEmpty()) return "";
         if (!value.startsWith("http://") && !value.startsWith("https://")) value = "http://" + value;
         return value;
+    }
+
+    private ServerGroupHolder findHolderForServer(ServerConfig server) {
+        for (ServerGroupHolder holder : mActiveGroups) {
+            if (holder.server == server) return holder;
+        }
+        return null;
+    }
+
+    private void connectManagerWS(final ServerGroupHolder holder) {
+        if (mClosed.get() || mSessionId != null || mSessionList == null || holder.server.url.isEmpty()) {
+            closeManagerWS(holder);
+            return;
+        }
+        if (!mActiveGroups.contains(holder)) return;
+        holder.managerReconnectEnabled = true;
+        if (holder.managerWS != null) return;
+
+        String wsUrl = toWebSocketUrl(holder.server.url) + "/ws/sessions";
+        Request request = new Request.Builder()
+            .url(wsUrl)
+            .header("Cookie", holder.server.cookie != null ? holder.server.cookie : "")
+            .build();
+
+        holder.managerWS = mHttp.newWebSocket(request, new WebSocketListener() {
+            @Override
+            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
+                if (!isActiveManagerHolder(holder)) {
+                    webSocket.close(1000, "stale manager socket");
+                    return;
+                }
+                holder.wsConnected = true;
+                holder.reconnectAttempts = 0;
+                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+                runOnUiThread(() -> {
+                    holder.status.setText("🟢 实时");
+                    holder.status.setTextColor(Color.rgb(16, 185, 129));
+                });
+            }
+
+            @Override
+            public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
+                if (!isActiveManagerHolder(holder)) return;
+                try {
+                    JSONObject msg = new JSONObject(text);
+                    String type = msg.optString("type");
+                    if ("sessions".equals(type)) {
+                        JSONArray arr = msg.optJSONArray("data");
+                        holder.lastSessions = arr != null ? arr : new JSONArray();
+                        runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
+                    } else if ("session".equals(type)) {
+                        JSONObject sessionData = msg.optJSONObject("data");
+                        if (sessionData != null) {
+                            upsertLocalSession(holder, sessionData);
+                        }
+                    } else if ("session-closed".equals(type)) {
+                        String id = msg.optString("id");
+                        if (id != null) {
+                            removeLocalSession(holder, id);
+                        }
+                    }
+                } catch (JSONException e) {
+                    Log.e(TAG, "Failed to parse manager WS message", e);
+                }
+            }
+
+            @Override
+            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+                holder.wsConnected = false;
+                if (holder.managerWS == webSocket) {
+                    holder.managerWS = null;
+                }
+                runOnUiThread(() -> {
+                    if (isActiveManagerHolder(holder)) {
+                        holder.status.setText("🟡 轮询中");
+                        holder.status.setTextColor(Color.rgb(245, 158, 11));
+                    }
+                });
+                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+                scheduleManagerWSReconnect(holder);
+            }
+
+            @Override
+            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+                holder.wsConnected = false;
+                if (holder.managerWS == webSocket) {
+                    holder.managerWS = null;
+                }
+                runOnUiThread(() -> {
+                    if (isActiveManagerHolder(holder)) {
+                        holder.status.setText("🟡 轮询中");
+                        holder.status.setTextColor(Color.rgb(245, 158, 11));
+                    }
+                });
+                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+                scheduleManagerWSReconnect(holder);
+            }
+        });
+    }
+
+    private void scheduleManagerWSReconnect(final ServerGroupHolder holder) {
+        if (!isActiveManagerHolder(holder)) return;
+        int attempt = ++holder.reconnectAttempts;
+        long delayMs = Math.min(1000L * attempt, 8000L);
+        mMainHandler.postDelayed(() -> {
+            if (isActiveManagerHolder(holder)) {
+                connectManagerWS(holder);
+            }
+        }, delayMs);
+    }
+
+    private void closeManagerWS(ServerGroupHolder holder) {
+        holder.managerReconnectEnabled = false;
+        if (holder.managerWS != null) {
+            holder.managerWS.close(1000, "closing page");
+            holder.managerWS = null;
+        }
+        holder.wsConnected = false;
+    }
+
+    private boolean isActiveManagerHolder(ServerGroupHolder holder) {
+        return !mClosed.get()
+            && holder.managerReconnectEnabled
+            && mSessionId == null
+            && mSessionList != null
+            && mActiveGroups.contains(holder);
+    }
+
+    private void upsertLocalSession(ServerGroupHolder holder, JSONObject newData) {
+        if (holder.lastSessions == null) {
+            holder.lastSessions = new JSONArray();
+        }
+        String id = newData.optString("id");
+        if (id == null) return;
+
+        boolean found = false;
+        for (int i = 0; i < holder.lastSessions.length(); i++) {
+            JSONObject s = holder.lastSessions.optJSONObject(i);
+            if (s != null && id.equals(s.optString("id"))) {
+                try {
+                    holder.lastSessions.put(i, newData);
+                } catch (JSONException ignored) {}
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            holder.lastSessions.put(newData);
+        }
+        runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
+    }
+
+    private void removeLocalSession(ServerGroupHolder holder, String id) {
+        if (holder.lastSessions == null) return;
+        JSONArray newArr = new JSONArray();
+        for (int i = 0; i < holder.lastSessions.length(); i++) {
+            JSONObject s = holder.lastSessions.optJSONObject(i);
+            if (s != null && !id.equals(s.optString("id"))) {
+                newArr.put(s);
+            }
+        }
+        holder.lastSessions = newArr;
+        runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
     }
 
     private static String toWebSocketUrl(String baseUrl) {

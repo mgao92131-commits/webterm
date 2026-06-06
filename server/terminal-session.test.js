@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isSensitiveInput, lastInputLines, TerminalSession, sessionDisplayTitle } from './terminal-session.js';
+import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_HELLO, MSG_INFO, MSG_INPUT, MSG_OUTPUT, MSG_PING, MSG_PONG, MSG_RESIZE, readUint64BE } from './protocol-binary.js';
 
 test('session display title follows terminal title when name is empty', () => {
   assert.equal(sessionDisplayTitle('', 'zsh'), 'zsh');
@@ -41,7 +42,7 @@ test('attach sends info but does not send state before hello', () => {
   const session = fakeSession({ latestSeq: 2 });
   const ws = fakeWebSocket();
   TerminalSession.prototype.attach.call(session, ws);
-  assert.deepEqual(messageTypes(ws), ['info', 'info']);
+  assert.deepEqual(messageTypes(ws), ['info']);
 });
 
 test('hello with lastSeq 0 returns state', () => {
@@ -49,7 +50,7 @@ test('hello with lastSeq 0 returns state', () => {
   const ws = fakeWebSocket();
   TerminalSession.prototype.attach.call(session, ws);
   ws.emitMessage({ type: 'hello', lastSeq: 0 });
-  assert.deepEqual(messageTypes(ws), ['info', 'info', 'state', 'info']);
+  assert.deepEqual(messageTypes(ws), ['info', 'state', 'info']);
 });
 
 test('hello with current lastSeq returns empty replay', () => {
@@ -84,6 +85,8 @@ test('broadcast closes slow clients when the send queue overflows', () => {
   const ws = fakeWebSocket({ autoCompleteSend: false });
   TerminalSession.prototype.attach.call(session, ws);
 
+  ws.emitMessage({ type: 'hello', lastSeq: 0 });
+
   for (let index = 0; index < 250; index += 1) {
     TerminalSession.prototype.broadcast.call(session, { type: 'output', seq: index + 1, data: String(index) });
   }
@@ -92,17 +95,100 @@ test('broadcast closes slow clients when the send queue overflows', () => {
   assert.equal(session.clients.size, 0);
 });
 
+test('binary hello replays output frames with seq prefix', () => {
+  const session = fakeSession({ latestSeq: 3 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(MSG_HELLO_FRAME({ lastSeq: 1 }));
+
+  const info = sentBinary(ws).find((frame) => frame[0] === MSG_INFO);
+  assert.ok(info);
+  const output = sentBinary(ws).filter((frame) => frame[0] === MSG_OUTPUT);
+  assert.equal(output.length, 1);
+  assert.equal(readUint64BE(output[0], 1), 3);
+  assert.equal(output[0].subarray(9).toString('utf8'), 'bc');
+});
+
+test('binary hello with lastSeq 0 returns clear screen and state snapshot', () => {
+  const session = fakeSession({ latestSeq: 3 });
+  session.serialize = () => 'SNAPSHOT_DATA';
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(MSG_HELLO_FRAME({ lastSeq: 0 }));
+
+  const info = sentBinary(ws).find((frame) => frame[0] === MSG_INFO);
+  assert.ok(info);
+  const output = sentBinary(ws).filter((frame) => frame[0] === MSG_OUTPUT);
+  assert.equal(output.length, 1);
+  assert.equal(readUint64BE(output[0], 1), 3);
+  assert.equal(output[0].subarray(9).toString('utf8'), '\x1b[3J\x1b[2J\x1b[HSNAPSHOT_DATA');
+});
+
+test('binary subprotocol selects binary transport before first message', () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws, { protocolHint: BINARY_SUBPROTOCOL });
+
+  assert.ok(sentBinary(ws).some((frame) => frame[0] === MSG_INFO));
+});
+
+test('raw protocol header value does not force binary mode', () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws, {
+    protocolHint: `${JSON_SUBPROTOCOL}, ${BINARY_SUBPROTOCOL}`,
+  });
+
+  assert.deepEqual(messageTypes(ws), ['info']);
+});
+
+test('binary input records and writes to pty', () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(Buffer.concat([Buffer.from([MSG_INPUT]), Buffer.from('npm test\r')]));
+
+  assert.deepEqual(session.recentInputLines, ['npm test']);
+  assert.deepEqual(session.writes, ['npm test\r']);
+});
+
+test('binary resize and ping are handled', () => {
+  const session = fakeSession({ latestSeq: 2 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(binaryFrame(MSG_RESIZE, { cols: 120, rows: 40 }));
+  ws.emitBinary(Buffer.from([MSG_PING]));
+
+  assert.deepEqual(session.resizes, [{ cols: 120, rows: 40 }]);
+  assert.ok(sentBinary(ws).some((frame) => frame[0] === MSG_PONG));
+});
+
+test('binary malformed resize is ignored', () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(Buffer.from([MSG_RESIZE, 123]));
+  assert.deepEqual(session.resizes, []);
+});
+
 function fakeSession({ latestSeq }) {
   const frames = [
-    { seq: 1, data: 'a' },
-    { seq: 2, data: 'b' },
-    { seq: 3, data: 'c' },
+    frame(1, 'a'),
+    frame(2, 'b'),
+    frame(3, 'c'),
   ].filter((frame) => frame.seq <= latestSeq);
-  return {
+  const session = {
     clients: new Set(),
     inputBuffer: '',
     recentInputLines: [],
     recentInputHidden: false,
+    writes: [],
+    resizes: [],
+    pty: {
+      write(data) {
+        session.writes.push(data);
+      },
+    },
     touch() {},
     info() {
       return { id: 's1', name: 'terminal-1' };
@@ -110,10 +196,13 @@ function fakeSession({ latestSeq }) {
     serialize() {
       return 'SERIALIZED';
     },
-    broadcast(message) {
-      for (const client of this.clients) client.send(message);
-    },
+    broadcast: TerminalSession.prototype.broadcast,
     broadcastInfo: TerminalSession.prototype.broadcastInfo,
+    handleBinaryClientMessage: TerminalSession.prototype.handleBinaryClientMessage,
+    writeInput: TerminalSession.prototype.writeInput,
+    resize(cols, rows) {
+      this.resizes.push({ cols, rows });
+    },
     ring: {
       latestSeq() {
         return latestSeq;
@@ -129,6 +218,7 @@ function fakeSession({ latestSeq }) {
     recordInput: TerminalSession.prototype.recordInput,
     commitInputBuffer: TerminalSession.prototype.commitInputBuffer,
   };
+  return session;
 }
 
 function fakeWebSocket({ autoCompleteSend = true } = {}) {
@@ -138,7 +228,11 @@ function fakeWebSocket({ autoCompleteSend = true } = {}) {
     sent: [],
     closed: false,
     send(data, callback) {
-      this.sent.push(JSON.parse(data));
+      if (Buffer.isBuffer(data)) {
+        this.sent.push(data);
+      } else {
+        this.sent.push(JSON.parse(data));
+      }
       if (autoCompleteSend) callback?.();
     },
     close() {
@@ -152,6 +246,9 @@ function fakeWebSocket({ autoCompleteSend = true } = {}) {
     emitMessage(message) {
       handlers.get('message')?.(Buffer.from(JSON.stringify(message)));
     },
+    emitBinary(frame) {
+      handlers.get('message')?.(Buffer.from(frame), true);
+    },
   };
 }
 
@@ -161,4 +258,21 @@ function sentMessages(ws) {
 
 function messageTypes(ws) {
   return sentMessages(ws).map((msg) => msg.type);
+}
+
+function sentBinary(ws) {
+  return ws.sent.filter(Buffer.isBuffer);
+}
+
+function frame(seq, data) {
+  const text = String(data);
+  return { seq, data: text, text, bytes: Buffer.from(text, 'utf8') };
+}
+
+function binaryFrame(type, payload) {
+  return Buffer.concat([Buffer.from([type]), Buffer.from(JSON.stringify(payload), 'utf8')]);
+}
+
+function MSG_HELLO_FRAME(payload) {
+  return binaryFrame(MSG_HELLO, payload);
 }

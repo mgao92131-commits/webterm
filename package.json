@@ -7,7 +7,8 @@
     "postinstall": "node server/ensure-node-pty-helper.js",
     "start": "node server/main.js",
     "test": "node --test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:binary": "node scripts/smoke-node-binary-ws.cjs"
   },
   "keywords": [],
   "author": "",
