@@ -6,34 +6,24 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.content.res.ColorStateList;
-import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.TextUtils;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.PopupMenu;
 import android.app.AlertDialog;
 
 import androidx.annotation.NonNull;
@@ -50,26 +40,17 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
-import okio.ByteString;
 
-public final class MainActivity extends Activity implements TerminalSessionClient, TerminalSession.ExternalIOClient, SessionRowActions {
+public final class MainActivity extends Activity implements TerminalSessionClient, TerminalSession.ExternalIOClient, SessionRowActions, TerminalConnection.Listener {
 
     private static final String TAG = "WebTermMobile";
     private static final int TRANSCRIPT_ROWS = 20000;
     private static final int MAX_TERM_TITLE_CHARS = 256;
     private static final long HOME_REFRESH_INITIAL_DELAY_MS = 3000L;
     private static final long HOME_REFRESH_MAX_DELAY_MS = 60000L;
-    private static final long RESIZE_DEBOUNCE_MS = 100L;
-
     private final OkHttpClient mHttp = new OkHttpClient();
     private final WebTermApi mApi = new WebTermApi(mHttp);
     private final AtomicBoolean mClosed = new AtomicBoolean(false);
@@ -77,11 +58,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private String mLastUploadedTitle = "";
     private String mPendingTitle = "";
     private final Runnable mUploadTitleRunnable = this::uploadTerminalTitle;
-    private final Runnable mSendResizeRunnable = this::sendCurrentResizeNow;
 
     TerminalView mTerminalView;
     private TerminalSession mTerminalSession;
-    private WebSocket mWebSocket;
+    private TerminalConnection mTerminalConnection;
     private String mCookie;
     private String mBaseUrl;
     private String mSessionId;
@@ -89,11 +69,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private long mLastSeq;
     private long mPersistedSeq;
     private final java.util.List<TerminalDiskCache.Frame> mPendingDiskFrames = new java.util.ArrayList<>();
-    private boolean mConnected;
     private boolean mCtrlDown;
-    private int mReconnectAttempts;
-    private int mSocketGeneration;
-    private boolean mReconnectScheduled;
     private boolean mInForeground = true;
     private long mHomeRefreshDelayMs = HOME_REFRESH_INITIAL_DELAY_MS;
     private TerminalDiskCache mDiskCache;
@@ -104,10 +80,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private View mConnectionStatusIndicator;
     private ImageButton mRetryButton;
     private AlphaAnimation mConnectingAnimation;
-    private final Runnable mReconnectRunnable = () -> {
-        mReconnectScheduled = false;
-        if (!mClosed.get() && !mConnected) connectWebSocket();
-    };
     private TextView mTerminalTitle;
     private TextView mTerminalSubtitle;
 
@@ -142,11 +114,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         final ServerConfig server;
         final LinearLayout subList;
         final TextView status;
-        WebSocket managerWS = null;
+        ServerSessionMonitor monitor;
         JSONArray lastSessions = null;
-        boolean wsConnected = false;
-        boolean managerReconnectEnabled = true;
-        int reconnectAttempts = 0;
         ServerGroupHolder(ServerConfig server, LinearLayout subList, TextView status) {
             this.server = server;
             this.subList = subList;
@@ -160,7 +129,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             if (!isHomeRefreshActive()) return;
             boolean needsFallbackRefresh = false;
             for (ServerGroupHolder holder : mActiveGroups) {
-                if (!holder.wsConnected) {
+                if (holder.monitor == null || !holder.monitor.isConnected()) {
                     needsFallbackRefresh = true;
                     loadSessionsForServer(holder.server, holder.subList, holder.status, null);
                 }
@@ -181,8 +150,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private int mImeOverlap;
     private int mTerminalColumns;
     private int mTerminalRows;
-    private int mSentResizeColumns;
-    private int mSentResizeRows;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -193,6 +160,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
         mConfigStore = new ServerConfigStore(this);
         mDiskCache = new TerminalDiskCache(getFilesDir());
+        mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
         loadServersFromPrefs();
         showSessionHome();
     }
@@ -201,11 +169,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     protected void onResume() {
         super.onResume();
         mInForeground = true;
-        if (mSessionId != null && mTerminalSession != null && mWebSocket == null) {
+        if (mSessionId != null && mTerminalSession != null && (mTerminalConnection == null || !mTerminalConnection.hasSocket())) {
             mClosed.set(false);
-            mReconnectAttempts = 0;
-            mReconnectScheduled = false;
-            connectWebSocket();
+            connectTerminal();
         } else if (mSessionId == null && mSessionList != null) {
             for (ServerGroupHolder holder : mActiveGroups) {
                 connectManagerWS(holder);
@@ -240,7 +206,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             flushPendingDiskFrames();
             cacheCurrentTerminal();
         }
-        if (mWebSocket != null) mWebSocket.close(1000, "activity closed");
+        if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
         if (mTerminalSession != null) mTerminalSession.finishIfRunning();
         for (CachedTerminal cached : mTerminalCache.values()) {
             if (cached.terminalSession != null && cached.terminalSession != mTerminalSession) cached.terminalSession.finishIfRunning();
@@ -275,72 +241,15 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mBaseUrl = null;
         mCookie = null;
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(24), dp(20), dp(16));
-        root.setBackgroundColor(Color.rgb(15, 15, 18));
-        installRootInsets(root, dp(20), dp(24), dp(20), dp(16), true);
-
-        LinearLayout topbar = new LinearLayout(this);
-        topbar.setOrientation(LinearLayout.HORIZONTAL);
-        topbar.setGravity(Gravity.CENTER_VERTICAL);
-
-        LinearLayout heading = new LinearLayout(this);
-        heading.setOrientation(LinearLayout.VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("WebTerm");
-        title.setTextColor(Color.rgb(243, 244, 246));
-        title.setTextSize(26);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        TextView subtitle = new TextView(this);
-        subtitle.setText("多端会话聚合大厅");
-        subtitle.setTextColor(Color.rgb(156, 163, 175));
-        subtitle.setTextSize(12);
-        heading.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        heading.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
-        topbar.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-
-        ImageButton moreBtn = new ImageButton(this);
-        moreBtn.setImageResource(com.webterm.mobile.R.drawable.ic_more_vert);
-        moreBtn.setColorFilter(Color.rgb(243, 244, 246));
-        GradientDrawable moreBg = new GradientDrawable();
-        moreBg.setShape(GradientDrawable.RECTANGLE);
-        moreBg.setColor(Color.TRANSPARENT);
-        moreBg.setCornerRadius(dp(20));
-        moreBg.setStroke(dp(1), Color.rgb(55, 65, 81));
-        moreBtn.setBackground(moreBg);
-        moreBtn.setPadding(0, 0, 0, 0);
-        moreBtn.setOnClickListener((v) -> {
-            PopupMenu popup = new PopupMenu(this, moreBtn);
-            popup.getMenu().add(0, 1, 0, "➕ 添加电脑");
-            popup.getMenu().add(0, 2, 0, "⚙️ 终端设置");
-            popup.getMenu().add(0, 3, 0, "🔄 刷新列表");
-            popup.setOnMenuItemClickListener((item) -> {
-                if (item.getItemId() == 1) {
-                    showAddServerDialog(null);
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    showSettingsDialog();
-                    return true;
-                } else if (item.getItemId() == 3) {
-                    loadMultiSessions();
-                    return true;
-                }
-                return false;
-            });
-            popup.show();
-        });
-
-        topbar.addView(moreBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        root.addView(topbar, new LinearLayout.LayoutParams(-1, dp(58)));
-
-        ScrollView scrollView = new ScrollView(this);
-        mSessionList = new LinearLayout(this);
-        mSessionList.setOrientation(LinearLayout.VERTICAL);
-        scrollView.addView(mSessionList, new ScrollView.LayoutParams(-1, -2));
-        root.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        setContentView(root);
+        HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
+            this,
+            () -> showAddServerDialog(null),
+            this::showSettingsDialog,
+            this::loadMultiSessions
+        );
+        installRootInsets(home.root, dp(20), dp(24), dp(20), dp(16), true);
+        mSessionList = home.sessionList;
+        setContentView(home.root);
         resetHomeRefreshBackoff();
         loadMultiSessions();
         scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
@@ -362,13 +271,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mSessionList.removeAllViews();
 
         if (mServers.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("📺 暂无保存的电脑\n点击右上角 ➕ 按钮添加电脑");
-            empty.setTextColor(Color.rgb(147, 161, 161));
-            empty.setTextSize(15);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(20), dp(80), dp(20), dp(80));
-            mSessionList.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            mSessionList.addView(HomeScreenBuilder.emptyState(this), new LinearLayout.LayoutParams(-1, -2));
             return;
         }
 
@@ -392,7 +295,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         if (!isHomeRefreshActive()) return;
         boolean needsFallbackRefresh = false;
         for (ServerGroupHolder holder : mActiveGroups) {
-            if (!holder.wsConnected) {
+            if (holder.monitor == null || !holder.monitor.isConnected()) {
                 needsFallbackRefresh = true;
                 break;
             }
@@ -409,114 +312,35 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void renderServerGroup(ServerConfig server, java.util.Map<String, JSONArray> tempInMemorySessions) {
         boolean collapsed = mServerCollapsed.containsKey(server.id) && Boolean.TRUE.equals(mServerCollapsed.get(server.id));
+        HomeScreenBuilder.ServerGroupResult group = HomeScreenBuilder.buildServerGroup(
+            this,
+            server,
+            collapsed,
+            (nextCollapsed) -> mServerCollapsed.put(server.id, nextCollapsed),
+            () -> createSessionOnServer(server),
+            () -> showAddServerDialog(server),
+            () -> confirmRemoveServer(server)
+        );
+        mSessionList.addView(group.group, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout group = new LinearLayout(this);
-        group.setOrientation(LinearLayout.VERTICAL);
-        group.setPadding(0, 0, 0, dp(12));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(6), dp(8), dp(6), dp(8));
-
-        TextView arrow = new TextView(this);
-        arrow.setText(collapsed ? "▶ " : "▼ ");
-        arrow.setTextColor(Color.rgb(156, 163, 175));
-        arrow.setTextSize(14);
-        header.addView(arrow, new LinearLayout.LayoutParams(-2, -2));
-
-        TextView status = new TextView(this);
-        status.setText("🟡");
-        status.setTextColor(Color.rgb(245, 158, 11));
-        status.setTextSize(12);
-        status.setPadding(0, 0, dp(8), 0);
-        header.addView(status, new LinearLayout.LayoutParams(-2, -2));
-
-        TextView nameView = new TextView(this);
-        nameView.setText(server.name);
-        nameView.setTextColor(Color.rgb(243, 244, 246));
-        nameView.setTextSize(16);
-        nameView.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1));
-
-        // 新建终端会话按钮 [+]
-        TextView addSessionBtn = new TextView(this);
-        addSessionBtn.setText("+");
-        addSessionBtn.setTextColor(Color.rgb(16, 185, 129));
-        addSessionBtn.setTextSize(15);
-        addSessionBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        addSessionBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
-        GradientDrawable addBtnBg = new GradientDrawable();
-        addBtnBg.setShape(GradientDrawable.RECTANGLE);
-        addBtnBg.setColor(Color.argb(25, 16, 185, 129));
-        addBtnBg.setCornerRadius(dp(4));
-        addSessionBtn.setBackground(addBtnBg);
-        header.addView(addSessionBtn, new LinearLayout.LayoutParams(-2, -2));
-
-        // 间距 View
-        View space = new View(this);
-        header.addView(space, new LinearLayout.LayoutParams(dp(8), 1));
-
-        // 服务器配置折叠菜单按钮 ⋮
-        TextView menuBtn = new TextView(this);
-        menuBtn.setText("⋮");
-        menuBtn.setTextColor(Color.rgb(156, 163, 175));
-        menuBtn.setTextSize(18);
-        menuBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
-        header.addView(menuBtn, new LinearLayout.LayoutParams(-2, -2));
-
-        group.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        LinearLayout subList = new LinearLayout(this);
-        subList.setOrientation(LinearLayout.VERTICAL);
-        subList.setPadding(dp(8), 0, 0, 0);
-        subList.setVisibility(collapsed ? View.GONE : View.VISIBLE);
-        group.addView(subList, new LinearLayout.LayoutParams(-1, -2));
-
-        mSessionList.addView(group, new LinearLayout.LayoutParams(-1, -2));
-
-        header.setOnClickListener((v) -> {
-            boolean current = mServerCollapsed.containsKey(server.id) && Boolean.TRUE.equals(mServerCollapsed.get(server.id));
-            mServerCollapsed.put(server.id, !current);
-            subList.setVisibility(!current ? View.GONE : View.VISIBLE);
-            arrow.setText(!current ? "▶ " : "▼ ");
-        });
-
-        addSessionBtn.setOnClickListener((v) -> {
-            createSessionOnServer(server);
-        });
-
-        menuBtn.setOnClickListener((v) -> {
-            PopupMenu popup = new PopupMenu(this, menuBtn);
-            popup.getMenu().add(0, 1, 0, "✏️ 修改配置");
-            popup.getMenu().add(0, 2, 0, "❌ 移除电脑");
-            popup.setOnMenuItemClickListener((item) -> {
-                if (item.getItemId() == 1) {
-                    showAddServerDialog(server);
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
-                        .setTitle("确认移除电脑")
-                        .setMessage("确定要从列表中移除该服务器吗？")
-                        .setPositiveButton("移除", (dialog, which) -> {
-                            removeCachedTerminalsForServer(server.url);
-                            mServers.remove(server);
-                            saveServersToPrefs();
-                            loadMultiSessions();
-                        })
-                        .setNegativeButton("取消", null)
-                        .show();
-                    return true;
-                }
-                return false;
-            });
-            popup.show();
-        });
-
-        mActiveGroups.add(new ServerGroupHolder(server, subList, status));
+        mActiveGroups.add(new ServerGroupHolder(server, group.subList, group.status));
         ServerGroupHolder holder = mActiveGroups.get(mActiveGroups.size() - 1);
-        loadSessionsForServer(server, subList, status, tempInMemorySessions);
+        loadSessionsForServer(server, group.subList, group.status, tempInMemorySessions);
         connectManagerWS(holder);
+    }
+
+    private void confirmRemoveServer(ServerConfig server) {
+        new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            .setTitle("确认移除电脑")
+            .setMessage("确定要从列表中移除该服务器吗？")
+            .setPositiveButton("移除", (dialog, which) -> {
+                removeCachedTerminalsForServer(server.url);
+                mServers.remove(server);
+                saveServersToPrefs();
+                loadMultiSessions();
+            })
+            .setNegativeButton("取消", null)
+            .show();
     }
 
     private void createSessionOnServer(ServerConfig server) {
@@ -724,39 +548,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void renderErrorItem(ServerConfig server, LinearLayout subList, TextView status, String error) {
         subList.removeAllViews();
-
-        LinearLayout container = new LinearLayout(this);
-        container.setTag("error_item");
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setGravity(Gravity.CENTER);
-        container.setPadding(0, dp(16), 0, dp(16));
-
-        TextView errText = new TextView(this);
-        errText.setText("无法连接到服务器: " + error);
-        errText.setTextColor(Color.rgb(156, 163, 175));
-        errText.setTextSize(13);
-        errText.setGravity(Gravity.CENTER);
-        errText.setPadding(0, 0, 0, dp(10));
-        container.addView(errText);
-
-        TextView retryBtn = new TextView(this);
-        retryBtn.setText("🔄 重新连接");
-        retryBtn.setTextColor(Color.rgb(243, 244, 246));
-        retryBtn.setTextSize(13);
-        retryBtn.setGravity(Gravity.CENTER);
-        retryBtn.setPadding(dp(20), dp(8), dp(20), dp(8));
-
-        GradientDrawable btnBg = new GradientDrawable();
-        btnBg.setShape(GradientDrawable.RECTANGLE);
-        btnBg.setColor(Color.rgb(45, 45, 52));
-        btnBg.setStroke(dp(1), Color.rgb(75, 85, 99));
-        btnBg.setCornerRadius(dp(6));
-        retryBtn.setBackground(btnBg);
-
-        retryBtn.setOnClickListener((v) -> loadSessionsForServer(server, subList, status, null));
-
-        container.addView(retryBtn, new LinearLayout.LayoutParams(-2, -2));
-        subList.addView(container, new LinearLayout.LayoutParams(-1, -2));
+        subList.addView(
+            SessionListItemViews.errorItem(this, error, () -> loadSessionsForServer(server, subList, status, null)),
+            new LinearLayout.LayoutParams(-1, -2)
+        );
     }
 
     private void renderServerSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
@@ -789,13 +584,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
         if (sessions.length() == 0) {
             subList.removeAllViews();
-            TextView empty = new TextView(this);
-            empty.setTag("empty_item");
-            empty.setText("还没有终端会话");
-            empty.setTextColor(Color.rgb(156, 163, 175));
-            empty.setTextSize(13);
-            empty.setPadding(dp(12), dp(12), dp(12), dp(12));
-            subList.addView(empty);
+            subList.addView(SessionListItemViews.emptyItem(this));
             return;
         }
 
@@ -829,70 +618,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-
-        LinearLayout container = new LinearLayout(this);
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(this, 24), UIUtils.dp(this, 24), UIUtils.dp(this, 24), UIUtils.dp(this, 24));
-
-        GradientDrawable containerBg = new GradientDrawable();
-        containerBg.setShape(GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(this, 12));
-        containerBg.setStroke(UIUtils.dp(this, 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
-
-        TextView titleView = new TextView(this);
-        titleView.setText("✏️ 重命名会话");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, UIUtils.dp(this, 16));
-        container.addView(titleView);
-
-        EditText input = UIUtils.createInput(this, "输入新名称");
-        input.setText(oldName);
-        input.requestFocus();
-        container.addView(input, UIUtils.matchWrap(this));
-
-        LinearLayout btnBar = new LinearLayout(this);
-        btnBar.setOrientation(LinearLayout.HORIZONTAL);
-        btnBar.setGravity(Gravity.END);
-        btnBar.setPadding(0, UIUtils.dp(this, 8), 0, 0);
-
-        Button cancelBtn = new Button(this);
-        cancelBtn.setText("取消");
-        UIUtils.styleDialogButton(this, cancelBtn, false);
-
-        Button submitBtn = new Button(this);
-        submitBtn.setText("保存");
-        UIUtils.styleDialogButton(this, submitBtn, true);
-
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(this, 100), UIUtils.dp(this, 40));
-        btnLp.setMargins(UIUtils.dp(this, 12), 0, 0, 0);
-
-        btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(UIUtils.dp(this, 80), UIUtils.dp(this, 40)));
-        btnBar.addView(submitBtn, btnLp);
-        container.addView(btnBar);
-
-        builder.setView(container);
-        final AlertDialog dialog = builder.create();
-        dialog.show();
-
-        dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-
-        cancelBtn.setOnClickListener((v) -> dialog.dismiss());
-
-        submitBtn.setOnClickListener((v) -> {
-            String newName = input.getText().toString().trim();
-            if (newName.equals(oldName)) {
-                dialog.dismiss();
-                return;
-            }
-
-            submitBtn.setEnabled(false);
-            cancelBtn.setEnabled(false);
-
+        RenameSessionDialogHelper.show(() -> this, oldName, (newName, dialog) -> {
             mApi.renameSession(server, sessionId, newName, new WebTermApi.SimpleCallback() {
                 @Override
                 public void onReady() {
@@ -1000,8 +726,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 ? diskMetadata.instanceId.trim()
                 : normalizedInstanceId);
         mClosed.set(false);
-        mReconnectAttempts = 0;
-        mReconnectScheduled = false;
         mLastSeq = cached != null ? cached.lastSeq : (diskRestore[0] != null ? diskRestore[0].lastSeq : 0);
         mPersistedSeq = cached != null ? cached.persistedSeq : (diskRestore[0] != null ? diskRestore[0].lastSeq : 0);
         mPendingDiskFrames.clear();
@@ -1011,49 +735,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mTerminalColumns = cached != null ? cached.columns : (diskMetadata != null ? diskMetadata.columns : 0);
         mTerminalRows = cached != null ? cached.rows : (diskMetadata != null ? diskMetadata.rows : 0);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.BLACK);
-        mTerminalRoot = root;
-        installRootInsets(root, 0, 0, 0, 0, false);
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setBackgroundColor(Color.BLACK);
-
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(8), dp(6), dp(8), dp(6));
-        topBar.setBackgroundColor(Color.rgb(30, 30, 36));
-
-        ImageButton sessions = new ImageButton(this);
-        sessions.setImageResource(com.webterm.mobile.R.drawable.ic_arrow_back);
-        sessions.setColorFilter(Color.rgb(243, 244, 246));
-        GradientDrawable sessionsBg = new GradientDrawable();
-        sessionsBg.setShape(GradientDrawable.RECTANGLE);
-        sessionsBg.setColor(Color.TRANSPARENT);
-        sessionsBg.setCornerRadius(dp(20));
-        sessionsBg.setStroke(dp(1), Color.rgb(55, 65, 81));
-        sessions.setBackground(sessionsBg);
-        sessions.setPadding(0, 0, 0, 0);
-
-        mTerminalTitle = new TextView(this);
-        mTerminalTitle.setText(headerTitle);
-        mTerminalTitle.setTextColor(Color.rgb(243, 244, 246));
-        mTerminalTitle.setGravity(Gravity.CENTER_VERTICAL);
-        mTerminalTitle.setTextSize(15);
-        mTerminalTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        mTerminalTitle.setSingleLine(true);
-        mTerminalTitle.setEllipsize(TextUtils.TruncateAt.END);
-
-        mTerminalSubtitle = new TextView(this);
-        mTerminalSubtitle.setText(headerSubtitle);
-        mTerminalSubtitle.setTextColor(Color.rgb(156, 163, 175));
-        mTerminalSubtitle.setTextSize(11);
-        mTerminalSubtitle.setSingleLine(true);
-        mTerminalSubtitle.setEllipsize(TextUtils.TruncateAt.END);
-
         if (mConnectingAnimation == null) {
             mConnectingAnimation = new AlphaAnimation(1.0f, 0.2f);
             mConnectingAnimation.setDuration(600);
@@ -1061,71 +742,31 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             mConnectingAnimation.setRepeatCount(Animation.INFINITE);
         }
 
-        LinearLayout statusContainer = new LinearLayout(this);
-        statusContainer.setOrientation(LinearLayout.HORIZONTAL);
-        statusContainer.setGravity(Gravity.CENTER_VERTICAL);
-
-        mRetryButton = new ImageButton(this);
-        mRetryButton.setImageResource(com.webterm.mobile.R.drawable.ic_refresh);
-        mRetryButton.setColorFilter(Color.rgb(243, 244, 246));
-        mRetryButton.setVisibility(View.GONE);
-        GradientDrawable retryBg = new GradientDrawable();
-        retryBg.setShape(GradientDrawable.RECTANGLE);
-        retryBg.setColor(Color.TRANSPARENT);
-        retryBg.setStroke(dp(1), Color.rgb(55, 65, 81));
-        retryBg.setCornerRadius(dp(18));
-        mRetryButton.setBackground(retryBg);
-        mRetryButton.setPadding(0, 0, 0, 0);
-        mRetryButton.setOnClickListener((v) -> {
-            mMainHandler.removeCallbacks(mReconnectRunnable);
-            mReconnectScheduled = false;
-            connectWebSocket();
-        });
-
-        mConnectionStatusIndicator = new View(this);
-        GradientDrawable indicatorBg = new GradientDrawable();
-        indicatorBg.setShape(GradientDrawable.OVAL);
-        indicatorBg.setColor(Color.rgb(239, 68, 68));
-        mConnectionStatusIndicator.setBackground(indicatorBg);
-
-        LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(dp(36), dp(36));
-        retryLp.setMargins(0, 0, dp(10), 0);
-        statusContainer.addView(mRetryButton, retryLp);
-
-        LinearLayout.LayoutParams indicatorLp = new LinearLayout.LayoutParams(dp(12), dp(12));
-        indicatorLp.setMargins(0, 0, dp(6), 0);
-        statusContainer.addView(mConnectionStatusIndicator, indicatorLp);
-
-        LinearLayout labels = new LinearLayout(this);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setGravity(Gravity.CENTER_VERTICAL);
-        labels.setPadding(dp(10), 0, dp(8), 0);
-        labels.addView(mTerminalTitle, new LinearLayout.LayoutParams(-1, 0, 1));
-        labels.addView(mTerminalSubtitle, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        topBar.addView(sessions, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        topBar.addView(labels, new LinearLayout.LayoutParams(0, dp(44), 1));
-        topBar.addView(statusContainer, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(topBar, new LinearLayout.LayoutParams(-1, dp(54)));
-
-        mTerminalView = new TerminalView(this, null);
-        mTerminalView.setFocusable(true);
-        mTerminalView.setFocusableInTouchMode(true);
-        mTerminalView.setTextSize(getSavedFontSize());
-        mTerminalView.setTypeface(getTypefaceByName(getSavedFontType()));
-        mTerminalView.setTerminalViewClient(new NativeTerminalViewClient());
-        FrameLayout terminalViewport = new FrameLayout(this);
-        terminalViewport.setClipChildren(true);
-        terminalViewport.setClipToPadding(true);
-        terminalViewport.setBackgroundColor(Color.BLACK);
-        mTerminalViewport = terminalViewport;
-        terminalViewport.addView(mTerminalView, new FrameLayout.LayoutParams(-1, -1));
-        content.addView(terminalViewport, new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
-        mQuickBar = createQuickBar();
-        root.addView(mQuickBar, new LinearLayout.LayoutParams(-1, dp(92)));
-        setContentView(root);
-        root.post(this::updateKeyboardAvoidance);
+        TerminalScreenBuilder.Result terminalScreen = TerminalScreenBuilder.build(
+            this,
+            headerTitle,
+            headerSubtitle,
+            getSavedFontSize(),
+            getTypefaceByName(getSavedFontType()),
+            new NativeTerminalViewClient(),
+            this::showSessionHome,
+            () -> {
+                if (mTerminalConnection != null) mTerminalConnection.reconnectNow();
+            },
+            () -> mCtrlDown = true,
+            this::writeTerminal
+        );
+        mTerminalRoot = terminalScreen.root;
+        mTerminalView = terminalScreen.terminalView;
+        mTerminalViewport = terminalScreen.terminalViewport;
+        mQuickBar = terminalScreen.quickBar;
+        mTerminalTitle = terminalScreen.title;
+        mTerminalSubtitle = terminalScreen.subtitle;
+        mRetryButton = terminalScreen.retryButton;
+        mConnectionStatusIndicator = terminalScreen.statusIndicator;
+        installRootInsets(mTerminalRoot, 0, 0, 0, 0, false);
+        setContentView(mTerminalRoot);
+        mTerminalRoot.post(this::updateKeyboardAvoidance);
 
         mTerminalSession = cached != null && cached.terminalSession != null
             ? cached.terminalSession
@@ -1138,10 +779,9 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             cacheCurrentTerminal();
         }
         mTerminalView.requestFocus();
-        sessions.setOnClickListener((v) -> showSessionHome());
-        root.post(() -> {
+        mTerminalRoot.post(() -> {
             if (mTerminalView != null) mTerminalView.updateSize();
-            connectWebSocket();
+            connectTerminal();
         });
     }
 
@@ -1232,7 +872,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             cacheCurrentTerminal();
         }
         mClosed.set(true);
-        closeCurrentWebSocket("leaving terminal");
+        closeTerminalConnection("leaving terminal");
         if (mTerminalSession != null && closeRemote) {
             mTerminalSession.finishIfRunning();
         }
@@ -1250,11 +890,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mImeOverlap = 0;
         mTerminalColumns = 0;
         mTerminalRows = 0;
-        mSentResizeColumns = 0;
-        mSentResizeRows = 0;
         mMainHandler.removeCallbacks(mUploadTitleRunnable);
-        mMainHandler.removeCallbacks(mReconnectRunnable);
-        mMainHandler.removeCallbacks(mSendResizeRunnable);
         mLastUploadedTitle = "";
         mPendingTitle = "";
         if (closeRemote && closingSessionId != null) {
@@ -1270,21 +906,12 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private void pauseCurrentTerminalConnection() {
         flushPendingDiskFrames();
         cacheCurrentTerminal();
-        closeCurrentWebSocket("activity paused");
+        closeTerminalConnection("activity paused");
     }
 
-    private void closeCurrentWebSocket(String reason) {
-        mConnected = false;
-        mReconnectScheduled = false;
-        mSocketGeneration++;
-        mMainHandler.removeCallbacks(mReconnectRunnable);
-        mMainHandler.removeCallbacks(mSendResizeRunnable);
+    private void closeTerminalConnection(String reason) {
         mMainHandler.removeCallbacks(mUploadTitleRunnable);
-        WebSocket ws = mWebSocket;
-        mWebSocket = null;
-        if (ws != null) {
-            ws.close(1000, reason);
-        }
+        if (mTerminalConnection != null) mTerminalConnection.close(reason);
     }
 
     private void cacheCurrentTerminal() {
@@ -1435,79 +1062,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             && String.valueOf(sessionIdA == null ? "" : sessionIdA).equals(String.valueOf(sessionIdB == null ? "" : sessionIdB));
     }
 
-    private View createQuickBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.VERTICAL);
-        bar.setPadding(dp(8), dp(7), dp(8), dp(7));
-        bar.setBackgroundColor(Color.rgb(20, 20, 24));
-
-        LinearLayout firstRow = quickBarRow();
-        LinearLayout secondRow = quickBarRow();
-        addKey(firstRow, "Ctrl", () -> mCtrlDown = true);
-        addKey(firstRow, "Esc", () -> writeTerminal("\033"));
-        addKey(firstRow, "C-l", () -> writeTerminal("\014"));
-        addKey(firstRow, "C-d", () -> writeTerminal("\004"));
-        addKey(firstRow, "C-c", () -> writeTerminal("\003"));
-        addKey(firstRow, "S-Tab", () -> writeTerminal("\033[Z"));
-        addKey(firstRow, "Tab", () -> writeTerminal("\t"));
-
-        addKey(secondRow, "/", () -> writeTerminal("/"));
-        addKey(secondRow, "PgUp", () -> writeTerminal("\033[5~"));
-        addKey(secondRow, "PgDn", () -> writeTerminal("\033[6~"));
-        addKey(secondRow, "←", () -> writeTerminal("\033[D"));
-        addKey(secondRow, "→", () -> writeTerminal("\033[C"));
-        addKey(secondRow, "↓", () -> writeTerminal("\033[B"));
-        addKey(secondRow, "↑", () -> writeTerminal("\033[A"));
-        bar.addView(firstRow, new LinearLayout.LayoutParams(-1, 0, 1));
-        bar.addView(secondRow, new LinearLayout.LayoutParams(-1, 0, 1));
-        return bar;
-    }
-
-    private LinearLayout quickBarRow() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        return row;
-    }
-
-    private void addKey(LinearLayout row, String label, Runnable action) {
-        Button button = new Button(this);
-        button.setFocusable(false);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setTextColor(Color.rgb(243, 244, 246));
-        button.setMinWidth(0);
-        button.setMinHeight(0);
-        button.setPadding(dp(4), 0, dp(4), 0);
-        button.setBackground(quickBarButtonBackground(false));
-        button.setOnClickListener((v) -> {
-            if (mTerminalView != null && !mTerminalView.isFocused()) {
-                mTerminalView.requestFocus();
-            }
-            action.run();
-        });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1);
-        lp.setMargins(dp(3), dp(3), dp(3), dp(3));
-        row.addView(button, lp);
-    }
-
-    private Drawable quickBarButtonBackground(boolean active) {
-        GradientDrawable content = new GradientDrawable();
-        content.setShape(GradientDrawable.RECTANGLE);
-        content.setColor(Color.rgb(15, 15, 18));
-        content.setStroke(dp(1), active ? Color.rgb(99, 102, 241) : Color.rgb(55, 65, 81));
-        content.setCornerRadius(dp(4));
-
-        GradientDrawable mask = new GradientDrawable();
-        mask.setShape(GradientDrawable.RECTANGLE);
-        mask.setColor(Color.WHITE);
-        mask.setCornerRadius(dp(4));
-
-        ColorStateList colorStateList = ColorStateList.valueOf(Color.argb(36, 243, 244, 246));
-        return new RippleDrawable(colorStateList, content, mask);
-    }
-
     private void handleKey(int keyCode) {
         if (mTerminalView != null) mTerminalView.handleKeyCode(keyCode, 0);
     }
@@ -1552,114 +1106,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private void connectWebSocket() {
-        if (mSessionId == null || mBaseUrl == null || mCookie == null) return;
-        if (mWebSocket != null) {
-            closeCurrentWebSocket("reconnecting");
-        }
-        setConnectionStatus("Connecting", false);
-        mReconnectScheduled = false;
-        int generation = ++mSocketGeneration;
-        String encodedId = WebTermUrls.encodePath(mSessionId);
-        Request request = new Request.Builder()
-            .url(toWebSocketUrl(mBaseUrl) + "/ws/sessions/" + encodedId)
-            .header("Cookie", mCookie)
-            .build();
-        mWebSocket = mHttp.newWebSocket(request, new WebSocketListener() {
-            @Override
-            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
-                if (generation != mSocketGeneration) {
-                    webSocket.close(1000, "stale socket");
-                    return;
-                }
-                mConnected = true;
-                mReconnectScheduled = false;
-                mSentResizeColumns = 0;
-                mSentResizeRows = 0;
-                Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
-                setConnectionStatus("Connected", true);
-                sendCurrentResizeNow();
-                JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", mLastSeq);
-                sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
-            }
-
-            @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
-                if (generation != mSocketGeneration) return;
-                handleServerMessage(bytes.toByteArray());
-            }
-
-            @Override
-            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
-                if (generation != mSocketGeneration) return;
-                mConnected = false;
-                String reason = describeFailure(t, response);
-                Log.e(TAG, "websocket failure gen=" + generation + " reason=" + reason, t);
-                if (!mClosed.get()) scheduleReconnect(reason);
-            }
-
-            @Override
-            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                if (generation != mSocketGeneration) return;
-                mConnected = false;
-                String description = "Connection closed: " + code + (reason.isEmpty() ? "" : " " + reason);
-                Log.w(TAG, "websocket closed gen=" + generation + " reason=" + description);
-                if (!mClosed.get()) scheduleReconnect(description);
-            }
-        });
-    }
-
-    private void scheduleReconnect(String reason) {
-        if (mClosed.get() || mSessionId == null || mCookie == null || mBaseUrl == null) return;
-        if (mReconnectScheduled) return;
-        int attempt = ++mReconnectAttempts;
-        if (attempt > 8) {
-            setConnectionStatus("Failed: " + reason, false);
-            return;
-        }
-        long delayMs = Math.min(1000L * attempt, 5000L);
-        mReconnectScheduled = true;
-        setConnectionStatus("Disconnected; reconnecting in " + delayMs + "ms", false);
-        mMainHandler.postDelayed(mReconnectRunnable, delayMs);
-    }
-
-    private void handleServerMessage(byte[] frame) {
-        if (frame.length == 0) return;
-        byte type = frame[0];
-        byte[] payload = Arrays.copyOfRange(frame, 1, frame.length);
-        if (type == WebTermProtocol.MSG_OUTPUT) {
-            if (payload.length >= 8) {
-                long seq = WebTermProtocol.readUint64(payload, 0);
-                if (seq <= mLastSeq) return;
-                mLastSeq = seq;
-                byte[] output = Arrays.copyOfRange(payload, 8, payload.length);
-                appendOutput(output);
-                queuePendingDiskFrame(seq, output);
-            } else {
-                appendOutput(payload);
-            }
-            return;
-        }
-        if (type == WebTermProtocol.MSG_INFO) {
-            try {
-                updateTerminalInfo(WebTermProtocol.controlPayload(payload));
-            } catch (JSONException ignored) {
-            }
-            return;
-        }
-        if (type == WebTermProtocol.MSG_PONG) {
-            return;
-        }
-        try {
-            JSONObject msg = WebTermProtocol.controlPayload(payload);
-            if (type == WebTermProtocol.MSG_EXIT) {
-                appendStatus("Remote session exited");
-                removeCachedTerminal(mBaseUrl, mSessionId);
-                if (mTerminalSession != null) mTerminalSession.notifyExternalSessionFinished(msg.optInt("code", 0));
-            }
-        } catch (JSONException e) {
-            appendStatus("Bad message: " + e.getMessage());
-        }
+    private void connectTerminal() {
+        if (mTerminalConnection == null || mSessionId == null || mBaseUrl == null || mCookie == null) return;
+        mTerminalConnection.updateSize(mTerminalColumns, mTerminalRows);
+        mTerminalConnection.connect(mBaseUrl, mCookie, mSessionId, mLastSeq);
     }
 
     private void appendOutput(String data) {
@@ -1674,7 +1124,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         appendOutput("\r\n[" + line + "]\r\n");
     }
 
-    private void setConnectionStatus(String text, boolean connected) {
+    @Override
+    public void onConnectionStatus(String text, boolean connected) {
         runOnUiThread(() -> {
             if (mConnectionStatusIndicator == null) return;
             GradientDrawable bg = (GradientDrawable) mConnectionStatusIndicator.getBackground();
@@ -1699,7 +1150,18 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private void updateTerminalInfo(JSONObject info) {
+    @Override
+    public void onOutput(long seq, byte[] data) {
+        if (seq > 0) {
+            mLastSeq = seq;
+            queuePendingDiskFrame(seq, data);
+            if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(seq);
+        }
+        appendOutput(data);
+    }
+
+    @Override
+    public void onInfo(JSONObject info) {
         String termTitle = info.optString("termTitle", "").trim();
         String name = info.optString("name", "").trim();
         String instanceId = info.optString("instanceId", "").trim();
@@ -1716,56 +1178,28 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private String describeFailure(Throwable t, @Nullable Response response) {
-        StringBuilder message = new StringBuilder();
-        message.append(t.getClass().getSimpleName());
-        if (t.getMessage() != null && !t.getMessage().trim().isEmpty()) {
-            message.append(": ").append(t.getMessage().trim());
-        }
-        if (response != null) {
-            message.append(" (HTTP ").append(response.code()).append(")");
-        }
-        return message.toString();
+    @Override
+    public void onExit(int code) {
+        appendStatus("Remote session exited");
+        removeCachedTerminal(mBaseUrl, mSessionId);
+        if (mTerminalSession != null) mTerminalSession.notifyExternalSessionFinished(code);
+    }
+
+    @Override
+    public void onProtocolError(String message) {
+        appendStatus(message);
     }
 
     @Override
     public void onTerminalInput(String data) {
-        sendBinary(WebTermProtocol.MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
+        if (mTerminalConnection != null) mTerminalConnection.sendInput(data);
     }
 
     @Override
     public void onTerminalResize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
         mTerminalColumns = columns;
         mTerminalRows = rows;
-        sendCurrentResize();
-    }
-
-    private void sendCurrentResize() {
-        mMainHandler.removeCallbacks(mSendResizeRunnable);
-        if (mWebSocket == null || !mConnected) return;
-        mMainHandler.postDelayed(mSendResizeRunnable, RESIZE_DEBOUNCE_MS);
-    }
-
-    private void sendCurrentResizeNow() {
-        mMainHandler.removeCallbacks(mSendResizeRunnable);
-        int columns = mTerminalColumns;
-        int rows = mTerminalRows;
-        if (columns <= 0 || rows <= 0) return;
-        if (columns == mSentResizeColumns && rows == mSentResizeRows) return;
-        JSONObject resize = WebTermProtocol.json();
-        WebTermProtocol.put(resize, "cols", columns);
-        WebTermProtocol.put(resize, "rows", rows);
-        sendBinary(WebTermProtocol.MSG_RESIZE, resize.toString().getBytes(StandardCharsets.UTF_8));
-        if (mWebSocket != null && mConnected) {
-            mSentResizeColumns = columns;
-            mSentResizeRows = rows;
-        }
-    }
-
-    private void sendBinary(byte type, byte[] payload) {
-        WebSocket ws = mWebSocket;
-        if (ws == null || !mConnected) return;
-        ws.send(WebTermProtocol.frame(type, payload));
+        if (mTerminalConnection != null) mTerminalConnection.updateSize(columns, rows);
     }
 
     @Override
@@ -1796,11 +1230,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         if (titleToUpload.isEmpty() || titleToUpload.equals(mLastUploadedTitle)) {
             return;
         }
-        if (mWebSocket == null || !mConnected) {
+        if (mTerminalConnection == null || !mTerminalConnection.isConnected()) {
             return;
         }
-        byte[] titleBytes = titleToUpload.getBytes(StandardCharsets.UTF_8);
-        sendBinary(WebTermProtocol.MSG_TITLE, titleBytes);
+        mTerminalConnection.sendTitle(titleToUpload);
         mLastUploadedTitle = titleToUpload;
         Log.i(TAG, "Uploaded terminal title via WS: " + titleToUpload);
     }
@@ -1892,114 +1325,61 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             return;
         }
         if (!mActiveGroups.contains(holder)) return;
-        holder.managerReconnectEnabled = true;
-        if (holder.managerWS != null) return;
-
-        String wsUrl = toWebSocketUrl(holder.server.url) + "/ws/sessions";
-        Request request = new Request.Builder()
-            .url(wsUrl)
-            .header("Cookie", holder.server.cookie != null ? holder.server.cookie : "")
-            .build();
-
-        holder.managerWS = mHttp.newWebSocket(request, new WebSocketListener() {
-            @Override
-            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
-                if (!isActiveManagerHolder(holder)) {
-                    webSocket.close(1000, "stale manager socket");
-                    return;
-                }
-                holder.wsConnected = true;
-                holder.reconnectAttempts = 0;
-                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
-                runOnUiThread(() -> {
-                    holder.status.setText("🟢");
-                    holder.status.setTextColor(Color.rgb(16, 185, 129));
-                });
-            }
-
-            @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
-                if (!isActiveManagerHolder(holder)) return;
-                try {
-                    JSONObject msg = new JSONObject(text);
-                    String type = msg.optString("type");
-                    if ("sessions".equals(type)) {
-                        JSONArray arr = msg.optJSONArray("data");
-                        holder.lastSessions = arr != null ? arr : new JSONArray();
-                        runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
-                    } else if ("session".equals(type)) {
-                        JSONObject sessionData = msg.optJSONObject("data");
-                        if (sessionData != null) {
-                            upsertLocalSession(holder, sessionData);
+        if (holder.monitor == null) {
+            holder.monitor = new ServerSessionMonitor(mHttp, mMainHandler, holder.server, new ServerSessionMonitor.Listener() {
+                @Override
+                public void onMonitorConnected() {
+                    scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
+                    runOnUiThread(() -> {
+                        if (isActiveManagerHolder(holder)) {
+                            holder.status.setText("🟢");
+                            holder.status.setTextColor(Color.rgb(16, 185, 129));
                         }
-                    } else if ("session-closed".equals(type)) {
-                        String id = msg.optString("id");
-                        if (id != null) {
-                            removeLocalSession(holder, id);
+                    });
+                }
+
+                @Override
+                public void onMonitorSessions(JSONArray sessions) {
+                    if (!isActiveManagerHolder(holder)) return;
+                    holder.lastSessions = sessions;
+                    runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
+                }
+
+                @Override
+                public void onMonitorSession(JSONObject session) {
+                    if (isActiveManagerHolder(holder)) upsertLocalSession(holder, session);
+                }
+
+                @Override
+                public void onMonitorSessionClosed(String sessionId) {
+                    if (isActiveManagerHolder(holder)) removeLocalSession(holder, sessionId);
+                }
+
+                @Override
+                public void onMonitorPollingFallback() {
+                    runOnUiThread(() -> {
+                        if (isActiveManagerHolder(holder)) {
+                            holder.status.setText("🟡");
+                            holder.status.setTextColor(Color.rgb(245, 158, 11));
                         }
-                    }
-                } catch (JSONException e) {
-                    Log.e(TAG, "Failed to parse manager WS message", e);
+                    });
+                    scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
                 }
-            }
-
-            @Override
-            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
-                holder.wsConnected = false;
-                if (holder.managerWS == webSocket) {
-                    holder.managerWS = null;
-                }
-                runOnUiThread(() -> {
-                    if (isActiveManagerHolder(holder)) {
-                        holder.status.setText("🟡");
-                        holder.status.setTextColor(Color.rgb(245, 158, 11));
-                    }
-                });
-                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
-                scheduleManagerWSReconnect(holder);
-            }
-
-            @Override
-            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                holder.wsConnected = false;
-                if (holder.managerWS == webSocket) {
-                    holder.managerWS = null;
-                }
-                runOnUiThread(() -> {
-                    if (isActiveManagerHolder(holder)) {
-                        holder.status.setText("🟡");
-                        holder.status.setTextColor(Color.rgb(245, 158, 11));
-                    }
-                });
-                scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
-                scheduleManagerWSReconnect(holder);
-            }
-        });
-    }
-
-    private void scheduleManagerWSReconnect(final ServerGroupHolder holder) {
-        if (!isActiveManagerHolder(holder)) return;
-        int attempt = ++holder.reconnectAttempts;
-        long delayMs = Math.min(1000L * attempt, 8000L);
-        mMainHandler.postDelayed(() -> {
-            if (isActiveManagerHolder(holder)) {
-                connectManagerWS(holder);
-            }
-        }, delayMs);
+            });
+        }
+        holder.monitor.start();
     }
 
     private void closeManagerWS(ServerGroupHolder holder) {
-        holder.managerReconnectEnabled = false;
-        if (holder.managerWS != null) {
-            holder.managerWS.close(1000, "closing page");
-            holder.managerWS = null;
+        if (holder.monitor != null) {
+            holder.monitor.stop();
         }
-        holder.wsConnected = false;
     }
 
     private boolean isActiveManagerHolder(ServerGroupHolder holder) {
         return !mClosed.get()
-            && holder.managerReconnectEnabled
+            && holder.monitor != null
+            && holder.monitor.isEnabled()
             && mSessionId == null
             && mSessionList != null
             && mActiveGroups.contains(holder);
@@ -2041,10 +1421,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
         holder.lastSessions = newArr;
         runOnUiThread(() -> renderServerSessions(holder.server, holder.lastSessions, holder.subList));
-    }
-
-    private static String toWebSocketUrl(String baseUrl) {
-        return WebTermUrls.toWebSocketUrl(baseUrl);
     }
 
     interface LoginCallback {
