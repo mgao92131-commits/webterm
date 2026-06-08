@@ -4,6 +4,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
+import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -13,29 +14,31 @@ import org.json.JSONObject;
 
 public final class SessionRowHelper {
 
-    public static void addSessionRow(final MainActivity activity, JSONObject session, final ServerConfig server, LinearLayout subList) {
+    public static void addSessionRow(final Context context, final SessionRowActions actions, JSONObject session, final ServerConfig server, LinearLayout subList) {
         String id = session.optString("id");
         String rawTermTitle = session.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = session.optString("name", "").trim();
+        final String createdAt = session.optString("createdAt", "").trim();
+        final String instanceId = session.optString("instanceId", "").trim();
         String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
         String cwd = session.optString("cwd", "");
 
-        LinearLayout row = new LinearLayout(activity);
+        LinearLayout row = new LinearLayout(context);
         row.setTag(id); // 绑定 Tag 以便差分查找
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(UIUtils.dp(activity, 14), UIUtils.dp(activity, 12), UIUtils.dp(activity, 14), UIUtils.dp(activity, 12));
-        row.setBackground(UIUtils.panelBackground(activity));
+        row.setPadding(UIUtils.dp(context, 14), UIUtils.dp(context, 12), UIUtils.dp(context, 14), UIUtils.dp(context, 12));
+        row.setBackground(UIUtils.panelBackground(context));
 
-        LinearLayout header = new LinearLayout(activity);
+        LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        LinearLayout titleArea = new LinearLayout(activity);
+        LinearLayout titleArea = new LinearLayout(context);
         titleArea.setOrientation(LinearLayout.VERTICAL);
         titleArea.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView titleView = new TextView(activity);
+        TextView titleView = new TextView(context);
         titleView.setTag("title");
         titleView.setTextColor(Color.rgb(243, 244, 246));
         titleView.setTextSize(15);
@@ -43,14 +46,14 @@ public final class SessionRowHelper {
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
 
-        TextView subtitleView = new TextView(activity);
+        TextView subtitleView = new TextView(context);
         subtitleView.setTag("subtitle");
         subtitleView.setTextColor(Color.rgb(156, 163, 175));
         subtitleView.setTextSize(11);
         subtitleView.setSingleLine(true);
         subtitleView.setEllipsize(TextUtils.TruncateAt.END);
 
-        TextView pathView = new TextView(activity);
+        TextView pathView = new TextView(context);
         pathView.setTag("path");
         pathView.setTextColor(Color.rgb(107, 114, 128)); // 弱化文本颜色
         pathView.setTextSize(11);
@@ -71,52 +74,52 @@ public final class SessionRowHelper {
         titleArea.addView(pathView, new LinearLayout.LayoutParams(-1, -2));
         header.addView(titleArea, new LinearLayout.LayoutParams(0, -2, 1));
 
-        TextView closeBtn = new TextView(activity);
+        TextView closeBtn = new TextView(context);
         closeBtn.setTag("close");
         closeBtn.setText("✕");
         closeBtn.setTextColor(Color.rgb(107, 114, 128)); // 弱化关闭按钮颜色，避免视觉喧宾夺主
         closeBtn.setTextSize(16);
         closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeBtn.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 4), UIUtils.dp(activity, 8), UIUtils.dp(activity, 4));
+        closeBtn.setPadding(UIUtils.dp(context, 8), UIUtils.dp(context, 4), UIUtils.dp(context, 8), UIUtils.dp(context, 4));
         header.addView(closeBtn, new LinearLayout.LayoutParams(-2, -2));
 
         row.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         // 静态添加最近输入框，通过 updateRecentInput 控制可见性
-        TextView recentView = recentInputBox(activity, "");
+        TextView recentView = recentInputBox(context, "");
         recentView.setTag("recent_box");
         row.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
         updateRecentInput(recentView, session);
 
-        LinearLayout footer = new LinearLayout(activity);
+        LinearLayout footer = new LinearLayout(context);
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(0, UIUtils.dp(activity, 8), 0, 0);
+        footer.setPadding(0, UIUtils.dp(context, 8), 0, 0);
 
-        footer.addView(createChip(activity, "id: " + id)); // 移除彩色 Emoji
-        TextView sizeChip = createChip(activity, size);
+        footer.addView(createChip(context, "id: " + id)); // 移除彩色 Emoji
+        TextView sizeChip = createChip(context, size);
         sizeChip.setTag("size_chip");
         footer.addView(sizeChip); // 移除彩色 Emoji 并直接展示尺寸
 
         row.addView(footer, new LinearLayout.LayoutParams(-1, -2));
 
-        row.setOnClickListener((v) -> activity.showTerminal(server.url, server.cookie, id, termTitle, nameText));
+        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
 
         row.setOnLongClickListener((v) -> {
-            activity.showRenameDialog(server, id, nameText);
+            actions.renameSession(server, id, nameText);
             return true;
         });
 
         closeBtn.setOnClickListener((v) -> {
-            activity.showCloseConfirmDialog(server, id);
+            actions.closeSession(server, id);
         });
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, UIUtils.dp(activity, 12));
+        lp.setMargins(0, 0, 0, UIUtils.dp(context, 12));
         subList.addView(row, lp);
     }
 
-    public static void updateSessionRow(final MainActivity activity, View row, JSONObject session, final ServerConfig server) {
+    public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
         TextView titleView = row.findViewWithTag("title");
         TextView subtitleView = row.findViewWithTag("subtitle");
         TextView pathView = row.findViewWithTag("path");
@@ -127,6 +130,8 @@ public final class SessionRowHelper {
         String rawTermTitle = session.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = session.optString("name", "").trim();
+        final String createdAt = session.optString("createdAt", "").trim();
+        final String instanceId = session.optString("instanceId", "").trim();
         String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
         String cwd = session.optString("cwd", "");
 
@@ -156,9 +161,9 @@ public final class SessionRowHelper {
         }
 
         // 重新绑定点击/长按闭包以同步最新标题
-        row.setOnClickListener((v) -> activity.showTerminal(server.url, server.cookie, id, termTitle, nameText));
+        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
         row.setOnLongClickListener((v) -> {
-            activity.showRenameDialog(server, id, nameText);
+            actions.renameSession(server, id, nameText);
             return true;
         });
     }

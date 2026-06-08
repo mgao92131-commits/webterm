@@ -4,15 +4,16 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.InputType;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
@@ -25,9 +26,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
@@ -36,7 +35,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.PopupMenu;
 import android.app.AlertDialog;
-import android.content.DialogInterface;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -52,46 +50,28 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.IOException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
-import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okio.ByteString;
 
-public final class MainActivity extends Activity implements TerminalSessionClient, TerminalSession.ExternalIOClient {
+public final class MainActivity extends Activity implements TerminalSessionClient, TerminalSession.ExternalIOClient, SessionRowActions {
 
     private static final String TAG = "WebTermMobile";
-    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private static final byte MSG_INPUT = 0x01;
-    private static final byte MSG_OUTPUT = 0x02;
-    private static final byte MSG_RESIZE = 0x03;
-    private static final byte MSG_HELLO = 0x04;
-    private static final byte MSG_INFO = 0x05;
-    private static final byte MSG_EXIT = 0x06;
-    private static final byte MSG_PING = 0x07;
-    private static final byte MSG_PONG = 0x08;
-    private static final byte MSG_TITLE = 0x09;
     private static final int TRANSCRIPT_ROWS = 20000;
     private static final int MAX_TERM_TITLE_CHARS = 256;
     private static final long HOME_REFRESH_INITIAL_DELAY_MS = 3000L;
     private static final long HOME_REFRESH_MAX_DELAY_MS = 60000L;
     private static final long RESIZE_DEBOUNCE_MS = 100L;
-    private static final String PREFS = "webterm";
-    private static final String DEFAULT_URL = "http://100.121.115.14:8081";
-    private static final String DEFAULT_USER = "gao";
 
     private final OkHttpClient mHttp = new OkHttpClient();
+    private final WebTermApi mApi = new WebTermApi(mHttp);
     private final AtomicBoolean mClosed = new AtomicBoolean(false);
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private String mLastUploadedTitle = "";
@@ -105,7 +85,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private String mCookie;
     private String mBaseUrl;
     private String mSessionId;
+    private String mSessionInstanceId = "";
     private long mLastSeq;
+    private long mPersistedSeq;
+    private final java.util.List<TerminalDiskCache.Frame> mPendingDiskFrames = new java.util.ArrayList<>();
     private boolean mConnected;
     private boolean mCtrlDown;
     private int mReconnectAttempts;
@@ -113,6 +96,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private boolean mReconnectScheduled;
     private boolean mInForeground = true;
     private long mHomeRefreshDelayMs = HOME_REFRESH_INITIAL_DELAY_MS;
+    private TerminalDiskCache mDiskCache;
+    private ServerConfigStore mConfigStore;
     private final java.util.Map<String, CachedTerminal> mTerminalCache = new java.util.HashMap<>();
     private LinearLayout mSessionList;
     private TextView mSessionStatus;
@@ -131,18 +116,24 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         final String sessionId;
         TerminalSession terminalSession;
         String cookie;
+        String instanceId;
         String termTitle;
         String sessionName;
+        String createdAt;
         long lastSeq;
+        long persistedSeq;
         int columns;
         int rows;
+        final java.util.List<TerminalDiskCache.Frame> pendingDiskFrames = new java.util.ArrayList<>();
 
-        CachedTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, TerminalSession terminalSession) {
+        CachedTerminal(String baseUrl, String cookie, String sessionId, String instanceId, String termTitle, String sessionName, String createdAt, TerminalSession terminalSession) {
             this.baseUrl = baseUrl;
             this.cookie = cookie;
             this.sessionId = sessionId;
+            this.instanceId = instanceId;
             this.termTitle = termTitle;
             this.sessionName = sessionName;
+            this.createdAt = createdAt;
             this.terminalSession = terminalSession;
         }
     }
@@ -171,7 +162,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             for (ServerGroupHolder holder : mActiveGroups) {
                 if (!holder.wsConnected) {
                     needsFallbackRefresh = true;
-                    loadSessionsForServer(holder.server, holder.subList, holder.status);
+                    loadSessionsForServer(holder.server, holder.subList, holder.status, null);
                 }
             }
             if (needsFallbackRefresh) {
@@ -186,6 +177,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private View mTerminalRoot;
     private View mTerminalViewport;
     private View mQuickBar;
+    private String mSessionCreatedAt = "";
     private int mImeOverlap;
     private int mTerminalColumns;
     private int mTerminalRows;
@@ -199,6 +191,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
         }
+        mConfigStore = new ServerConfigStore(this);
+        mDiskCache = new TerminalDiskCache(getFilesDir());
         loadServersFromPrefs();
         showSessionHome();
     }
@@ -242,12 +236,17 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         for (ServerGroupHolder holder : mActiveGroups) {
             closeManagerWS(holder);
         }
+        if (mSessionId != null && mTerminalSession != null) {
+            flushPendingDiskFrames();
+            cacheCurrentTerminal();
+        }
         if (mWebSocket != null) mWebSocket.close(1000, "activity closed");
         if (mTerminalSession != null) mTerminalSession.finishIfRunning();
         for (CachedTerminal cached : mTerminalCache.values()) {
             if (cached.terminalSession != null && cached.terminalSession != mTerminalSession) cached.terminalSession.finishIfRunning();
         }
         mTerminalCache.clear();
+        if (mDiskCache != null) mDiskCache.shutdown();
         mHttp.dispatcher().cancelAll();
         super.onDestroy();
     }
@@ -263,48 +262,11 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void loadServersFromPrefs() {
         mServers.clear();
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String json = prefs.getString("servers_list", "");
-        if (!json.isEmpty()) {
-            try {
-                JSONArray arr = new JSONArray(json);
-                for (int i = 0; i < arr.length(); i++) {
-                    mServers.add(ServerConfig.fromJSON(arr.getJSONObject(i)));
-                }
-            } catch (JSONException e) {
-                Log.e(TAG, "Failed to parse servers list", e);
-            }
-        }
-
-        // 向下兼容迁移
-        if (mServers.isEmpty()) {
-            String oldUrl = prefs.getString("url", "");
-            if (!oldUrl.isEmpty()) {
-                String oldUser = prefs.getString("user", "");
-                String oldPassword = prefs.getString("password", "");
-                ServerConfig legacy = new ServerConfig(
-                    "srv_" + System.currentTimeMillis(),
-                    "主电脑",
-                    oldUrl,
-                    "",
-                    oldUser,
-                    oldPassword
-                );
-                mServers.add(legacy);
-                saveServersToPrefs();
-            }
-        }
+        mServers.addAll(mConfigStore.loadServers());
     }
 
     void saveServersToPrefs() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        JSONArray arr = new JSONArray();
-        for (ServerConfig s : mServers) {
-            try {
-                arr.put(s.toJSON());
-            } catch (JSONException ignored) {}
-        }
-        prefs.edit().putString("servers_list", arr.toString()).apply();
+        mConfigStore.saveServers(mServers);
     }
 
     void showSessionHome() {
@@ -387,6 +349,12 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private void loadMultiSessions() {
         resetHomeRefreshBackoff();
         if (mSessionList == null) return;
+        java.util.Map<String, JSONArray> tempInMemorySessions = new java.util.HashMap<>();
+        for (ServerGroupHolder holder : mActiveGroups) {
+            if (holder.lastSessions != null && holder.server != null && holder.server.url != null) {
+                tempInMemorySessions.put(normalizeBaseUrl(holder.server.url), holder.lastSessions);
+            }
+        }
         for (ServerGroupHolder holder : mActiveGroups) {
             closeManagerWS(holder);
         }
@@ -405,7 +373,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
 
         for (ServerConfig s : mServers) {
-            renderServerGroup(s);
+            renderServerGroup(s, tempInMemorySessions);
         }
         scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
     }
@@ -439,7 +407,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         return mHomeRefreshDelayMs;
     }
 
-    private void renderServerGroup(ServerConfig server) {
+    private void renderServerGroup(ServerConfig server, java.util.Map<String, JSONArray> tempInMemorySessions) {
         boolean collapsed = mServerCollapsed.containsKey(server.id) && Boolean.TRUE.equals(mServerCollapsed.get(server.id));
 
         LinearLayout group = new LinearLayout(this);
@@ -457,19 +425,19 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         arrow.setTextSize(14);
         header.addView(arrow, new LinearLayout.LayoutParams(-2, -2));
 
+        TextView status = new TextView(this);
+        status.setText("🟡");
+        status.setTextColor(Color.rgb(245, 158, 11));
+        status.setTextSize(12);
+        status.setPadding(0, 0, dp(8), 0);
+        header.addView(status, new LinearLayout.LayoutParams(-2, -2));
+
         TextView nameView = new TextView(this);
         nameView.setText(server.name);
         nameView.setTextColor(Color.rgb(243, 244, 246));
         nameView.setTextSize(16);
         nameView.setTypeface(Typeface.DEFAULT_BOLD);
         header.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1));
-
-        TextView status = new TextView(this);
-        status.setText("Connecting...");
-        status.setTextColor(Color.rgb(245, 158, 11));
-        status.setTextSize(12);
-        status.setPadding(0, 0, dp(8), 0);
-        header.addView(status, new LinearLayout.LayoutParams(-2, -2));
 
         // 新建终端会话按钮 [+]
         TextView addSessionBtn = new TextView(this);
@@ -531,6 +499,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                         .setTitle("确认移除电脑")
                         .setMessage("确定要从列表中移除该服务器吗？")
                         .setPositiveButton("移除", (dialog, which) -> {
+                            removeCachedTerminalsForServer(server.url);
                             mServers.remove(server);
                             saveServersToPrefs();
                             loadMultiSessions();
@@ -546,7 +515,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
         mActiveGroups.add(new ServerGroupHolder(server, subList, status));
         ServerGroupHolder holder = mActiveGroups.get(mActiveGroups.size() - 1);
-        loadSessionsForServer(server, subList, status);
+        loadSessionsForServer(server, subList, status, tempInMemorySessions);
         connectManagerWS(holder);
     }
 
@@ -590,17 +559,60 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         });
     }
 
-    private void loadSessionsForServer(ServerConfig server, LinearLayout subList, TextView status) {
+    private void loadSessionsForServer(ServerConfig server, LinearLayout subList, TextView status, java.util.Map<String, JSONArray> tempInMemorySessions) {
         if (server.url.isEmpty()) return;
-        status.setText("Connecting...");
+        status.setText("🟡");
         status.setTextColor(Color.rgb(245, 158, 11));
+
+        boolean loadedFromL1 = false;
+        if (tempInMemorySessions != null) {
+            JSONArray l1Sessions = tempInMemorySessions.get(normalizeBaseUrl(server.url));
+            if (l1Sessions != null) {
+                ServerGroupHolder holder = findHolderForServer(server);
+                if (holder != null) {
+                    holder.lastSessions = l1Sessions;
+                }
+                renderServerSessions(server, l1Sessions, subList);
+                subList.setTag("cached_list");
+                loadedFromL1 = true;
+            }
+        }
+
+        // Pre-populate with cached sessions immediately if available, to avoid empty screen during connection
+        if (!loadedFromL1 && mDiskCache != null) {
+            mHttp.dispatcher().executorService().execute(() -> {
+                java.util.List<TerminalDiskCache.Metadata> cached = mDiskCache.getCachedSessionsForServer(server.url);
+                if (cached != null && !cached.isEmpty()) {
+                    runOnUiThread(() -> {
+                        if (subList.getChildCount() == 0) {
+                            JSONArray sessions = new JSONArray();
+                            for (TerminalDiskCache.Metadata meta : cached) {
+                                JSONObject session = new JSONObject();
+                                try {
+                                    session.put("id", meta.sessionId);
+                                    session.put("instanceId", meta.instanceId);
+                                    session.put("name", meta.sessionName);
+                                    session.put("termTitle", meta.termTitle);
+                                    session.put("createdAt", meta.createdAt);
+                                    session.put("cols", meta.columns);
+                                    session.put("rows", meta.rows);
+                                    sessions.put(session);
+                                } catch (JSONException ignored) {}
+                            }
+                            renderServerSessions(server, sessions, subList);
+                            subList.setTag("cached_list");
+                        }
+                    });
+                }
+            });
+        }
 
         if (server.cookie != null && !server.cookie.isEmpty()) {
             fetchSessionsDirectly(server, subList, status);
         } else if (server.password != null && !server.password.isEmpty()) {
             silentLoginAndFetch(server, subList, status);
         } else {
-            status.setText("🔴 未登录");
+            status.setText("🔴");
             status.setTextColor(Color.rgb(239, 68, 68));
             renderErrorItem(server, subList, status, "需要登录");
         }
@@ -614,62 +626,38 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void fetchSessionsDirectly(ServerConfig server, LinearLayout subList, TextView status) {
-        Request request = new Request.Builder()
-            .url(server.url + "/api/sessions")
-            .header("Cookie", server.cookie)
-            .get()
-            .build();
-        mHttp.newCall(request).enqueue(new Callback() {
+        mApi.fetchSessions(server, new WebTermApi.SessionsCallback() {
             @Override
-            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+            public void onReady(JSONArray sessions) {
                 runOnUiThread(() -> {
-                    status.setText("🔴 离线");
-                    status.setTextColor(Color.rgb(239, 68, 68));
-                    if (!shouldKeepExistingList(subList)) {
-                        renderErrorItem(server, subList, status, e.getMessage());
+                    status.setText("🟢");
+                    status.setTextColor(Color.rgb(16, 185, 129));
+                    ServerGroupHolder holder = findHolderForServer(server);
+                    if (holder != null) {
+                        holder.lastSessions = sessions;
                     }
+                    renderServerSessions(server, sessions, subList);
                 });
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                try (response) {
-                    String text = response.body().string();
-                    if (response.code() == 401 && server.password != null && !server.password.isEmpty()) {
-                        silentLoginAndFetch(server, subList, status);
-                        return;
-                    }
-                    if (!response.isSuccessful()) {
-                        runOnUiThread(() -> {
-                            status.setText("🔴 离线");
-                            status.setTextColor(Color.rgb(239, 68, 68));
-                            if (!shouldKeepExistingList(subList)) {
-                                renderErrorItem(server, subList, status, "HTTP " + response.code());
-                            }
-                        });
-                        return;
-                    }
-                    try {
-                        JSONArray sessions = new JSONArray(text);
-                        runOnUiThread(() -> {
-                            status.setText("🟢 在线 (" + sessions.length() + ")");
-                            status.setTextColor(Color.rgb(16, 185, 129));
-                            ServerGroupHolder holder = findHolderForServer(server);
-                            if (holder != null) {
-                                holder.lastSessions = sessions;
-                            }
-                            renderServerSessions(server, sessions, subList);
-                        });
-                    } catch (JSONException e) {
-                        runOnUiThread(() -> {
-                            status.setText("🔴 异常");
-                            status.setTextColor(Color.rgb(239, 68, 68));
-                            if (!shouldKeepExistingList(subList)) {
-                                renderErrorItem(server, subList, status, "JSON 解析错误");
-                            }
-                        });
-                    }
+            public void onError(int code, String message) {
+                if (code == 401 && server.password != null && !server.password.isEmpty()) {
+                    silentLoginAndFetch(server, subList, status);
+                    return;
                 }
+                showOfflineCachedSessions(server, subList, status, code > 0 ? "HTTP " + code : message);
+            }
+
+            @Override
+            public void onParseError(String message) {
+                runOnUiThread(() -> {
+                    status.setText("🔴");
+                    status.setTextColor(Color.rgb(239, 68, 68));
+                    if (!shouldKeepExistingList(subList)) {
+                        renderErrorItem(server, subList, status, "JSON 解析错误");
+                    }
+                });
             }
         });
     }
@@ -685,13 +673,51 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
             @Override
             public void onError(String message) {
-                runOnUiThread(() -> {
-                    status.setText("🔴 离线");
-                    status.setTextColor(Color.rgb(239, 68, 68));
-                    if (!shouldKeepExistingList(subList)) {
-                        renderErrorItem(server, subList, status, "登录失败: " + message);
-                    }
-                });
+                showOfflineCachedSessions(server, subList, status, "登录失败: " + message);
+            }
+        });
+    }
+
+    private void showOfflineCachedSessions(ServerConfig server, LinearLayout subList, TextView status, String errorMsg) {
+        java.util.List<TerminalDiskCache.Metadata> cachedMetadata = null;
+        if (mDiskCache != null) {
+            cachedMetadata = mDiskCache.getCachedSessionsForServer(server.url);
+        }
+        
+        final java.util.List<TerminalDiskCache.Metadata> finalCached = cachedMetadata;
+        
+        runOnUiThread(() -> {
+            if (shouldKeepExistingList(subList)) {
+                status.setText("🔴");
+                status.setTextColor(Color.rgb(239, 68, 68));
+                return;
+            }
+            
+            if (finalCached != null && !finalCached.isEmpty()) {
+                status.setText("🔴");
+                status.setTextColor(Color.rgb(239, 68, 68));
+                
+                JSONArray sessions = new JSONArray();
+                for (TerminalDiskCache.Metadata meta : finalCached) {
+                    JSONObject session = new JSONObject();
+                    try {
+                        session.put("id", meta.sessionId);
+                        session.put("instanceId", meta.instanceId);
+                        session.put("name", meta.sessionName);
+                        session.put("termTitle", meta.termTitle);
+                        session.put("createdAt", meta.createdAt);
+                        session.put("cols", meta.columns);
+                        session.put("rows", meta.rows);
+                        sessions.put(session);
+                    } catch (JSONException ignored) {}
+                }
+                
+                renderServerSessions(server, sessions, subList);
+                subList.setTag("cached_list");
+            } else {
+                status.setText("🔴");
+                status.setTextColor(Color.rgb(239, 68, 68));
+                renderErrorItem(server, subList, status, errorMsg);
             }
         });
     }
@@ -727,21 +753,26 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         btnBg.setCornerRadius(dp(6));
         retryBtn.setBackground(btnBg);
 
-        retryBtn.setOnClickListener((v) -> loadSessionsForServer(server, subList, status));
+        retryBtn.setOnClickListener((v) -> loadSessionsForServer(server, subList, status, null));
 
         container.addView(retryBtn, new LinearLayout.LayoutParams(-2, -2));
         subList.addView(container, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void renderServerSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
+        subList.setTag("online_list");
         java.util.Set<String> newIds = new java.util.HashSet<>();
+        java.util.Set<String> liveIdentities = new java.util.HashSet<>();
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject session = sessions.optJSONObject(i);
             if (session != null) {
-                newIds.add(session.optString("id"));
+                String id = session.optString("id");
+                newIds.add(id);
+                String identity = sessionIdentity(id, session.optString("instanceId", ""), session.optString("createdAt", ""));
+                if (!identity.isEmpty()) liveIdentities.add(identity);
             }
         }
-        removeMissingCachedSessionsForServer(server.url, newIds);
+        removeMissingCachedSessionsForServer(server.url, liveIdentities);
 
         for (int i = subList.getChildCount() - 1; i >= 0; i--) {
             View child = subList.getChildAt(i);
@@ -790,7 +821,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private void addSessionRow(JSONObject session, ServerConfig server, LinearLayout subList) {
-        SessionRowHelper.addSessionRow(this, session, server, subList);
+        SessionRowHelper.addSessionRow(this, this, session, server, subList);
     }
 
     private void showAddServerDialog(final ServerConfig existingServer) {
@@ -862,39 +893,21 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             submitBtn.setEnabled(false);
             cancelBtn.setEnabled(false);
 
-            JSONObject body = new JSONObject();
-            try {
-                body.put("name", newName);
-            } catch (JSONException ignored) {}
-
-            String encodedId = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
-            Request request = new Request.Builder()
-                .url(server.url + "/api/sessions/" + encodedId)
-                .header("Cookie", server.cookie)
-                .patch(RequestBody.create(body.toString(), JSON))
-                .build();
-
-            mHttp.newCall(request).enqueue(new Callback() {
+            mApi.renameSession(server, sessionId, newName, new WebTermApi.SimpleCallback() {
                 @Override
-                public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                public void onReady() {
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "重命名失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                        showSessionHome();
                         dialog.dismiss();
                     });
                 }
 
                 @Override
-                public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                    try (response) {
-                        runOnUiThread(() -> {
-                            if (response.isSuccessful()) {
-                                showSessionHome();
-                            } else {
-                                Toast.makeText(MainActivity.this, "重命名失败, code: " + response.code(), Toast.LENGTH_SHORT).show();
-                            }
-                            dialog.dismiss();
-                        });
-                    }
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "重命名失败: " + message, Toast.LENGTH_SHORT).show();
+                        dialog.dismiss();
+                    });
                 }
             });
         });
@@ -905,31 +918,16 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
             .setPositiveButton("关闭", (dialog, which) -> {
-                String encodedId = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
-                Request request = new Request.Builder()
-                    .url(server.url + "/api/sessions/" + encodedId)
-                    .header("Cookie", server.cookie)
-                    .delete()
-                    .build();
-
-                mHttp.newCall(request).enqueue(new Callback() {
+                mApi.deleteSession(server.url, server.cookie, sessionId, new WebTermApi.SimpleCallback() {
                     @Override
-                    public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "关闭失败: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+                    public void onReady() {
+                        removeCachedTerminal(server.url, sessionId);
+                        runOnUiThread(() -> showSessionHome());
                     }
 
                     @Override
-                    public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                        try (response) {
-                            if (response.isSuccessful()) {
-                                removeCachedTerminal(server.url, sessionId);
-                                runOnUiThread(() -> {
-                                    showSessionHome();
-                                });
-                            } else {
-                                runOnUiThread(() -> Toast.makeText(MainActivity.this, "关闭失败, code: " + response.code(), Toast.LENGTH_SHORT).show());
-                            }
-                        }
+                    public void onError(String message) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "关闭失败: " + message, Toast.LENGTH_SHORT).show());
                     }
                 });
             })
@@ -939,57 +937,79 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void deleteSession(String sessionId) {
         if (mBaseUrl == null || mCookie == null) return;
-        String encodedId = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
-        Request request = new Request.Builder()
-            .url(mBaseUrl + "/api/sessions/" + encodedId)
-            .header("Cookie", mCookie)
-            .delete()
-            .build();
-        mHttp.newCall(request).enqueue(new Callback() {
+        mApi.deleteSession(mBaseUrl, mCookie, sessionId, new WebTermApi.SimpleCallback() {
             @Override
-            public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Close failed: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+            public void onReady() {
+                runOnUiThread(MainActivity.this::showSessionHome);
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                try (response) {
-                    if (!response.isSuccessful()) {
-                        String text = response.body().string();
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Close failed: " + response.code() + " " + text, Toast.LENGTH_SHORT).show());
-                        return;
-                    }
-                    runOnUiThread(MainActivity.this::showSessionHome);
-                }
+            public void onError(String message) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
             }
         });
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "");
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "");
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "");
+    }
+
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "");
+    }
+
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
         mMainHandler.removeCallbacks(mHomeRefreshRunnable);
         for (ServerGroupHolder holder : mActiveGroups) {
             closeManagerWS(holder);
         }
-        CachedTerminal cached = mTerminalCache.get(terminalCacheKey(baseUrl, sessionId));
+        String normalizedInstanceId = normalizeIdentityPart(instanceId);
+        String normalizedCreatedAt = normalizeIdentityPart(createdAt);
+        String cacheKey = terminalCacheKey(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
+        CachedTerminal cached = cacheKey.isEmpty() ? null : mTerminalCache.get(cacheKey);
+        final TerminalDiskCache.RestoreResult[] diskRestore = new TerminalDiskCache.RestoreResult[1];
+        if (cached == null && mDiskCache != null && !cacheKey.isEmpty()) {
+            diskRestore[0] = mDiskCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt, null);
+        }
         mBaseUrl = baseUrl;
         mCookie = cookie;
         mSessionId = sessionId;
+        TerminalDiskCache.Metadata diskMetadata = diskRestore[0] == null ? null : diskRestore[0].metadata;
         String headerTitle = cached != null && cached.termTitle != null && !cached.termTitle.trim().isEmpty()
             ? cached.termTitle.trim()
-            : (termTitle == null || termTitle.trim().isEmpty() ? "Terminal" : termTitle.trim());
+            : (diskMetadata != null && diskMetadata.termTitle != null && !diskMetadata.termTitle.trim().isEmpty()
+                ? diskMetadata.termTitle.trim()
+                : (termTitle == null || termTitle.trim().isEmpty() ? "Terminal" : termTitle.trim()));
         String headerSubtitle = cached != null && cached.sessionName != null && !cached.sessionName.trim().isEmpty()
             ? cached.sessionName.trim()
-            : (sessionName == null || sessionName.trim().isEmpty() ? sessionId : sessionName.trim());
+            : (diskMetadata != null && diskMetadata.sessionName != null && !diskMetadata.sessionName.trim().isEmpty()
+                ? diskMetadata.sessionName.trim()
+                : (sessionName == null || sessionName.trim().isEmpty() ? sessionId : sessionName.trim()));
+        mSessionCreatedAt = cached != null && cached.createdAt != null && !cached.createdAt.trim().isEmpty()
+            ? cached.createdAt.trim()
+            : (diskMetadata != null && diskMetadata.createdAt != null && !diskMetadata.createdAt.trim().isEmpty()
+                ? diskMetadata.createdAt.trim()
+                : normalizedCreatedAt);
+        mSessionInstanceId = cached != null && cached.instanceId != null && !cached.instanceId.trim().isEmpty()
+            ? cached.instanceId.trim()
+            : (diskMetadata != null && diskMetadata.instanceId != null && !diskMetadata.instanceId.trim().isEmpty()
+                ? diskMetadata.instanceId.trim()
+                : normalizedInstanceId);
         mClosed.set(false);
         mReconnectAttempts = 0;
         mReconnectScheduled = false;
-        mLastSeq = cached != null ? cached.lastSeq : 0;
-        mTerminalColumns = cached != null ? cached.columns : 0;
-        mTerminalRows = cached != null ? cached.rows : 0;
+        mLastSeq = cached != null ? cached.lastSeq : (diskRestore[0] != null ? diskRestore[0].lastSeq : 0);
+        mPersistedSeq = cached != null ? cached.persistedSeq : (diskRestore[0] != null ? diskRestore[0].lastSeq : 0);
+        mPendingDiskFrames.clear();
+        if (cached != null) {
+            mPendingDiskFrames.addAll(cached.pendingDiskFrames);
+        }
+        mTerminalColumns = cached != null ? cached.columns : (diskMetadata != null ? diskMetadata.columns : 0);
+        mTerminalRows = cached != null ? cached.rows : (diskMetadata != null ? diskMetadata.rows : 0);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -1111,12 +1131,33 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             ? cached.terminalSession
             : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, this, this);
         mTerminalView.attachSession(mTerminalSession);
+        if (cached == null && diskRestore[0] != null && mDiskCache != null) {
+            mDiskCache.restore(baseUrl, sessionId, mSessionInstanceId, mSessionCreatedAt, (seq, bytes) -> {
+                if (mTerminalSession != null) mTerminalSession.appendOutput(bytes);
+            });
+            cacheCurrentTerminal();
+        }
         mTerminalView.requestFocus();
         sessions.setOnClickListener((v) -> showSessionHome());
         root.post(() -> {
             if (mTerminalView != null) mTerminalView.updateSize();
             connectWebSocket();
         });
+    }
+
+    @Override
+    public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
+        showTerminal(server.url, server.cookie, sessionId, termTitle, sessionName, createdAt, instanceId);
+    }
+
+    @Override
+    public void renameSession(ServerConfig server, String sessionId, String oldName) {
+        showRenameDialog(server, sessionId, oldName);
+    }
+
+    @Override
+    public void closeSession(ServerConfig server, String sessionId) {
+        showCloseConfirmDialog(server, sessionId);
     }
 
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom, boolean avoidImeWithPadding) {
@@ -1187,6 +1228,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         String closingBaseUrl = mBaseUrl;
         String closingSessionId = mSessionId;
         if (!closeRemote) {
+            flushPendingDiskFrames();
             cacheCurrentTerminal();
         }
         mClosed.set(true);
@@ -1203,6 +1245,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         mTerminalRoot = null;
         mTerminalViewport = null;
         mQuickBar = null;
+        mSessionInstanceId = "";
+        mSessionCreatedAt = "";
         mImeOverlap = 0;
         mTerminalColumns = 0;
         mTerminalRows = 0;
@@ -1219,9 +1263,12 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         }
         mSessionId = null;
         mLastSeq = 0;
+        mPersistedSeq = 0;
+        mPendingDiskFrames.clear();
     }
 
     private void pauseCurrentTerminalConnection() {
+        flushPendingDiskFrames();
         cacheCurrentTerminal();
         closeCurrentWebSocket("activity paused");
     }
@@ -1242,36 +1289,92 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void cacheCurrentTerminal() {
         if (mBaseUrl == null || mSessionId == null || mTerminalSession == null) return;
-        String key = terminalCacheKey(mBaseUrl, mSessionId);
+        String key = terminalCacheKey(mBaseUrl, mSessionId, mSessionInstanceId, mSessionCreatedAt);
+        if (key.isEmpty()) return;
         String title = mTerminalTitle == null ? "" : String.valueOf(mTerminalTitle.getText());
         String subtitle = mTerminalSubtitle == null ? "" : String.valueOf(mTerminalSubtitle.getText());
         CachedTerminal cached = mTerminalCache.get(key);
         if (cached == null) {
-            cached = new CachedTerminal(mBaseUrl, mCookie, mSessionId, title, subtitle, mTerminalSession);
+            cached = new CachedTerminal(mBaseUrl, mCookie, mSessionId, mSessionInstanceId, title, subtitle, mSessionCreatedAt, mTerminalSession);
             mTerminalCache.put(key, cached);
         }
         cached.cookie = mCookie;
+        cached.instanceId = mSessionInstanceId;
         cached.termTitle = title;
         cached.sessionName = subtitle;
+        cached.createdAt = mSessionCreatedAt;
         cached.terminalSession = mTerminalSession;
         cached.lastSeq = mLastSeq;
+        cached.persistedSeq = mPersistedSeq;
+        cached.pendingDiskFrames.clear();
+        cached.pendingDiskFrames.addAll(mPendingDiskFrames);
         cached.columns = mTerminalColumns;
         cached.rows = mTerminalRows;
     }
 
-    private void removeCachedTerminal(String baseUrl, String sessionId) {
-        CachedTerminal cached = mTerminalCache.remove(terminalCacheKey(baseUrl, sessionId));
-        if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
-            cached.terminalSession.finishIfRunning();
+    private TerminalDiskCache.Metadata currentDiskMetadata() {
+        if (mBaseUrl == null || mSessionId == null) return null;
+        TerminalDiskCache.Metadata metadata = new TerminalDiskCache.Metadata();
+        metadata.baseUrl = mBaseUrl;
+        metadata.sessionId = mSessionId;
+        metadata.instanceId = mSessionInstanceId == null ? "" : mSessionInstanceId;
+        metadata.createdAt = mSessionCreatedAt == null ? "" : mSessionCreatedAt;
+        metadata.termTitle = mTerminalTitle == null ? "" : String.valueOf(mTerminalTitle.getText());
+        metadata.sessionName = mTerminalSubtitle == null ? "" : String.valueOf(mTerminalSubtitle.getText());
+        metadata.columns = mTerminalColumns;
+        metadata.rows = mTerminalRows;
+        metadata.lastSeq = mPersistedSeq;
+        return metadata;
+    }
+
+    private void queuePendingDiskFrame(long seq, byte[] bytes) {
+        if (seq <= 0 || bytes == null || bytes.length == 0) return;
+        mPendingDiskFrames.add(new TerminalDiskCache.Frame(seq, bytes.clone()));
+    }
+
+    private void flushPendingDiskFrames() {
+        if (mDiskCache == null || mPendingDiskFrames.isEmpty()) return;
+        TerminalDiskCache.Metadata metadata = currentDiskMetadata();
+        if (metadata == null) return;
+        java.util.List<TerminalDiskCache.Frame> frames = new java.util.ArrayList<>(mPendingDiskFrames);
+        long persistedSeq = mDiskCache.appendFramesBlocking(metadata, frames);
+        if (persistedSeq <= mPersistedSeq) return;
+        mPersistedSeq = persistedSeq;
+        for (int i = mPendingDiskFrames.size() - 1; i >= 0; i--) {
+            if (mPendingDiskFrames.get(i).seq <= mPersistedSeq) {
+                mPendingDiskFrames.remove(i);
+            }
         }
     }
 
-    private void removeMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIds) {
+    private void removeCachedTerminal(String baseUrl, String sessionId) {
+        if (sameServerSession(baseUrl, sessionId, mBaseUrl, mSessionId)) {
+            mPendingDiskFrames.clear();
+            mPersistedSeq = 0;
+        }
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        for (java.util.Map.Entry<String, CachedTerminal> entry : mTerminalCache.entrySet()) {
+            CachedTerminal cached = entry.getValue();
+            if (normalizedBaseUrl.equals(normalizeBaseUrl(cached.baseUrl)) && String.valueOf(sessionId).equals(cached.sessionId)) {
+                keys.add(entry.getKey());
+            }
+        }
+        for (String key : keys) {
+            CachedTerminal cached = mTerminalCache.remove(key);
+            if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
+                cached.terminalSession.finishIfRunning();
+            }
+        }
+        if (mDiskCache != null) mDiskCache.clearAsync(baseUrl, sessionId);
+    }
+
+    private void removeMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIdentities) {
         String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
         java.util.List<String> staleKeys = new java.util.ArrayList<>();
         for (java.util.Map.Entry<String, CachedTerminal> entry : mTerminalCache.entrySet()) {
             CachedTerminal cached = entry.getValue();
-            if (normalizedBaseUrl.equals(normalizeBaseUrl(cached.baseUrl)) && !liveSessionIds.contains(cached.sessionId)) {
+            if (normalizedBaseUrl.equals(normalizeBaseUrl(cached.baseUrl)) && !liveSessionIdentities.contains(sessionIdentity(cached.sessionId, cached.instanceId, cached.createdAt))) {
                 staleKeys.add(entry.getKey());
             }
         }
@@ -1280,11 +1383,56 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
                 cached.terminalSession.finishIfRunning();
             }
+            if (cached != null && mDiskCache != null) {
+                mDiskCache.clearAsync(cached.baseUrl, cached.sessionId);
+            }
+        }
+        if (mDiskCache != null) {
+            mDiskCache.clearMissingForServerAsync(baseUrl, liveSessionIdentities);
         }
     }
 
-    private static String terminalCacheKey(String baseUrl, String sessionId) {
-        return normalizeBaseUrl(baseUrl) + "#" + String.valueOf(sessionId == null ? "" : sessionId);
+    private void removeCachedTerminalsForServer(String baseUrl) {
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, CachedTerminal> entry : mTerminalCache.entrySet()) {
+            CachedTerminal cached = entry.getValue();
+            if (normalizedBaseUrl.equals(normalizeBaseUrl(cached.baseUrl))) {
+                keys.add(entry.getKey());
+            }
+        }
+        for (String key : keys) {
+            CachedTerminal cached = mTerminalCache.remove(key);
+            if (cached != null && cached.terminalSession != null && cached.terminalSession != mTerminalSession) {
+                cached.terminalSession.finishIfRunning();
+            }
+        }
+        if (mDiskCache != null) mDiskCache.clearServerAsync(baseUrl);
+    }
+
+    private static String terminalCacheKey(String baseUrl, String sessionId, String instanceId, String createdAt) {
+        String identity = sessionIdentity(sessionId, instanceId, createdAt);
+        if (identity.isEmpty()) return "";
+        return normalizeBaseUrl(baseUrl) + "#" + identity;
+    }
+
+    static String sessionIdentity(String sessionId, String instanceId, String createdAt) {
+        String normalizedInstanceId = normalizeIdentityPart(instanceId);
+        if (!normalizedInstanceId.isEmpty()) return "instance:" + normalizedInstanceId;
+        String normalizedCreatedAt = normalizeIdentityPart(createdAt);
+        if (!normalizedCreatedAt.isEmpty()) {
+            return "created:" + String.valueOf(sessionId == null ? "" : sessionId) + "@" + normalizedCreatedAt;
+        }
+        return "";
+    }
+
+    private static String normalizeIdentityPart(String value) {
+        return String.valueOf(value == null ? "" : value).trim();
+    }
+
+    private static boolean sameServerSession(String baseUrlA, String sessionIdA, String baseUrlB, String sessionIdB) {
+        return normalizeBaseUrl(baseUrlA).equals(normalizeBaseUrl(baseUrlB))
+            && String.valueOf(sessionIdA == null ? "" : sessionIdA).equals(String.valueOf(sessionIdB == null ? "" : sessionIdB));
     }
 
     private View createQuickBar() {
@@ -1296,15 +1444,20 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         LinearLayout firstRow = quickBarRow();
         LinearLayout secondRow = quickBarRow();
         addKey(firstRow, "Ctrl", () -> mCtrlDown = true);
-        addKey(firstRow, "Ctrl C", () -> writeTerminal("\003"));
-        addKey(firstRow, "Shift Tab", () -> writeTerminal("\033[Z"));
         addKey(firstRow, "Esc", () -> writeTerminal("\033"));
+        addKey(firstRow, "C-l", () -> writeTerminal("\014"));
+        addKey(firstRow, "C-d", () -> writeTerminal("\004"));
+        addKey(firstRow, "C-c", () -> writeTerminal("\003"));
+        addKey(firstRow, "S-Tab", () -> writeTerminal("\033[Z"));
         addKey(firstRow, "Tab", () -> writeTerminal("\t"));
+
         addKey(secondRow, "/", () -> writeTerminal("/"));
+        addKey(secondRow, "PgUp", () -> writeTerminal("\033[5~"));
+        addKey(secondRow, "PgDn", () -> writeTerminal("\033[6~"));
         addKey(secondRow, "←", () -> writeTerminal("\033[D"));
+        addKey(secondRow, "→", () -> writeTerminal("\033[C"));
         addKey(secondRow, "↓", () -> writeTerminal("\033[B"));
         addKey(secondRow, "↑", () -> writeTerminal("\033[A"));
-        addKey(secondRow, "→", () -> writeTerminal("\033[C"));
         bar.addView(firstRow, new LinearLayout.LayoutParams(-1, 0, 1));
         bar.addView(secondRow, new LinearLayout.LayoutParams(-1, 0, 1));
         return bar;
@@ -1319,6 +1472,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     private void addKey(LinearLayout row, String label, Runnable action) {
         Button button = new Button(this);
+        button.setFocusable(false);
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(12);
@@ -1328,22 +1482,30 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         button.setPadding(dp(4), 0, dp(4), 0);
         button.setBackground(quickBarButtonBackground(false));
         button.setOnClickListener((v) -> {
-            if (mTerminalView != null) mTerminalView.requestFocus();
+            if (mTerminalView != null && !mTerminalView.isFocused()) {
+                mTerminalView.requestFocus();
+            }
             action.run();
-            showKeyboard();
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1);
         lp.setMargins(dp(3), dp(3), dp(3), dp(3));
         row.addView(button, lp);
     }
 
-    private GradientDrawable quickBarButtonBackground(boolean active) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(Color.rgb(15, 15, 18));
-        drawable.setStroke(dp(1), active ? Color.rgb(99, 102, 241) : Color.rgb(55, 65, 81));
-        drawable.setCornerRadius(dp(4));
-        return drawable;
+    private Drawable quickBarButtonBackground(boolean active) {
+        GradientDrawable content = new GradientDrawable();
+        content.setShape(GradientDrawable.RECTANGLE);
+        content.setColor(Color.rgb(15, 15, 18));
+        content.setStroke(dp(1), active ? Color.rgb(99, 102, 241) : Color.rgb(55, 65, 81));
+        content.setCornerRadius(dp(4));
+
+        GradientDrawable mask = new GradientDrawable();
+        mask.setShape(GradientDrawable.RECTANGLE);
+        mask.setColor(Color.WHITE);
+        mask.setCornerRadius(dp(4));
+
+        ColorStateList colorStateList = ColorStateList.valueOf(Color.argb(36, 243, 244, 246));
+        return new RippleDrawable(colorStateList, content, mask);
     }
 
     private void handleKey(int keyCode) {
@@ -1363,74 +1525,29 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     void login(String baseUrl, String username, String password, LoginCallback callback) {
-        JSONObject login = new JSONObject();
-        try {
-            login.put("username", username);
-            login.put("password", password);
-        } catch (JSONException e) {
-            callback.onError(e.getMessage());
-            return;
-        }
-        Request loginRequest = new Request.Builder()
-            .url(baseUrl + "/api/login")
-            .post(RequestBody.create(login.toString(), JSON))
-            .build();
-        mHttp.newCall(loginRequest).enqueue(new Callback() {
+        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
             @Override
-            public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Login failed: " + e.getMessage());
+            public void onReady(String readyBaseUrl, String cookie) {
+                callback.onReady(readyBaseUrl, cookie);
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                try (response) {
-                    if (!response.isSuccessful()) {
-                        callback.onError("Login failed: " + response.code() + " " + response.body().string());
-                        return;
-                    }
-                    String cookie = firstCookie(response);
-                    if (cookie.isEmpty()) {
-                        callback.onError("Login did not return an auth cookie.");
-                        return;
-                    }
-                    callback.onReady(baseUrl, cookie);
-                }
+            public void onError(String message) {
+                callback.onError(message);
             }
         });
     }
 
     private void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
-        JSONObject body = new JSONObject();
-        try {
-            body.put("name", "Android");
-        } catch (JSONException ignored) {
-        }
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/sessions")
-            .header("Cookie", cookie)
-            .post(RequestBody.create(body.toString(), JSON))
-            .build();
-        mHttp.newCall(request).enqueue(new Callback() {
+        mApi.createSession(baseUrl, cookie, new WebTermApi.SessionCreateCallback() {
             @Override
-            public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Session failed: " + e.getMessage());
+            public void onReady(String sessionId) {
+                callback.onReady(sessionId);
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                try (response) {
-                    String text = response.body().string();
-                    if (!response.isSuccessful()) {
-                        callback.onError("Session failed: " + response.code() + " " + text);
-                        return;
-                    }
-                    try {
-                        String id = new JSONObject(text).getString("id");
-                        callback.onReady(id);
-                    } catch (JSONException e) {
-                        callback.onError("Session response error: " + e.getMessage());
-                    }
-                }
+            public void onError(String message) {
+                callback.onError(message);
             }
         });
     }
@@ -1443,7 +1560,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         setConnectionStatus("Connecting", false);
         mReconnectScheduled = false;
         int generation = ++mSocketGeneration;
-        String encodedId = URLEncoder.encode(mSessionId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedId = WebTermUrls.encodePath(mSessionId);
         Request request = new Request.Builder()
             .url(toWebSocketUrl(mBaseUrl) + "/ws/sessions/" + encodedId)
             .header("Cookie", mCookie)
@@ -1462,7 +1579,8 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
                 setConnectionStatus("Connected", true);
                 sendCurrentResizeNow();
-                sendBinary(MSG_HELLO, new JSONObjectBuilder().put("lastSeq", mLastSeq).build().toString().getBytes(StandardCharsets.UTF_8));
+                JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", mLastSeq);
+                sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
             }
 
             @Override
@@ -1509,30 +1627,32 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         if (frame.length == 0) return;
         byte type = frame[0];
         byte[] payload = Arrays.copyOfRange(frame, 1, frame.length);
-        if (type == MSG_OUTPUT) {
+        if (type == WebTermProtocol.MSG_OUTPUT) {
             if (payload.length >= 8) {
-                long seq = readUint64(payload, 0);
+                long seq = WebTermProtocol.readUint64(payload, 0);
                 if (seq <= mLastSeq) return;
                 mLastSeq = seq;
-                appendOutput(Arrays.copyOfRange(payload, 8, payload.length));
+                byte[] output = Arrays.copyOfRange(payload, 8, payload.length);
+                appendOutput(output);
+                queuePendingDiskFrame(seq, output);
             } else {
                 appendOutput(payload);
             }
             return;
         }
-        if (type == MSG_INFO) {
+        if (type == WebTermProtocol.MSG_INFO) {
             try {
-                updateTerminalInfo(controlPayload(payload));
+                updateTerminalInfo(WebTermProtocol.controlPayload(payload));
             } catch (JSONException ignored) {
             }
             return;
         }
-        if (type == MSG_PONG) {
+        if (type == WebTermProtocol.MSG_PONG) {
             return;
         }
         try {
-            JSONObject msg = controlPayload(payload);
-            if (type == MSG_EXIT) {
+            JSONObject msg = WebTermProtocol.controlPayload(payload);
+            if (type == WebTermProtocol.MSG_EXIT) {
                 appendStatus("Remote session exited");
                 removeCachedTerminal(mBaseUrl, mSessionId);
                 if (mTerminalSession != null) mTerminalSession.notifyExternalSessionFinished(msg.optInt("code", 0));
@@ -1540,13 +1660,6 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         } catch (JSONException e) {
             appendStatus("Bad message: " + e.getMessage());
         }
-    }
-
-    private JSONObject controlPayload(byte[] payload) throws JSONException {
-        if (payload == null || payload.length == 0) return new JSONObject();
-        String text = new String(payload, StandardCharsets.UTF_8).trim();
-        if (text.isEmpty() || "null".equals(text)) return new JSONObject();
-        return new JSONObject(text);
     }
 
     private void appendOutput(String data) {
@@ -1589,6 +1702,14 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private void updateTerminalInfo(JSONObject info) {
         String termTitle = info.optString("termTitle", "").trim();
         String name = info.optString("name", "").trim();
+        String instanceId = info.optString("instanceId", "").trim();
+        String createdAt = info.optString("createdAt", "").trim();
+        if (!instanceId.isEmpty()) {
+            mSessionInstanceId = instanceId;
+        }
+        if (!createdAt.isEmpty()) {
+            mSessionCreatedAt = createdAt;
+        }
         runOnUiThread(() -> {
             if (mTerminalTitle != null && !termTitle.isEmpty()) mTerminalTitle.setText(termTitle);
             if (mTerminalSubtitle != null && !name.isEmpty()) mTerminalSubtitle.setText(name);
@@ -1609,7 +1730,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
 
     @Override
     public void onTerminalInput(String data) {
-        sendBinary(MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
+        sendBinary(WebTermProtocol.MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
     }
 
     @Override
@@ -1631,10 +1752,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
         int rows = mTerminalRows;
         if (columns <= 0 || rows <= 0) return;
         if (columns == mSentResizeColumns && rows == mSentResizeRows) return;
-        sendBinary(MSG_RESIZE, new JSONObjectBuilder()
-            .put("cols", columns)
-            .put("rows", rows)
-            .build().toString().getBytes(StandardCharsets.UTF_8));
+        JSONObject resize = WebTermProtocol.json();
+        WebTermProtocol.put(resize, "cols", columns);
+        WebTermProtocol.put(resize, "rows", rows);
+        sendBinary(WebTermProtocol.MSG_RESIZE, resize.toString().getBytes(StandardCharsets.UTF_8));
         if (mWebSocket != null && mConnected) {
             mSentResizeColumns = columns;
             mSentResizeRows = rows;
@@ -1644,18 +1765,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     private void sendBinary(byte type, byte[] payload) {
         WebSocket ws = mWebSocket;
         if (ws == null || !mConnected) return;
-        byte[] frame = new byte[1 + (payload == null ? 0 : payload.length)];
-        frame[0] = type;
-        if (payload != null) System.arraycopy(payload, 0, frame, 1, payload.length);
-        ws.send(ByteString.of(frame));
-    }
-
-    private static long readUint64(byte[] data, int offset) {
-        long value = 0;
-        for (int i = 0; i < 8; i++) {
-            value = (value << 8) | (data[offset + i] & 0xffL);
-        }
-        return value;
+        ws.send(WebTermProtocol.frame(type, payload));
     }
 
     @Override
@@ -1690,7 +1800,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
             return;
         }
         byte[] titleBytes = titleToUpload.getBytes(StandardCharsets.UTF_8);
-        sendBinary(MSG_TITLE, titleBytes);
+        sendBinary(WebTermProtocol.MSG_TITLE, titleBytes);
         mLastUploadedTitle = titleToUpload;
         Log.i(TAG, "Uploaded terminal title via WS: " + titleToUpload);
     }
@@ -1766,11 +1876,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     static String normalizeBaseUrl(String raw) {
-        String value = String.valueOf(raw == null ? "" : raw).trim();
-        while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
-        if (value.isEmpty()) return "";
-        if (!value.startsWith("http://") && !value.startsWith("https://")) value = "http://" + value;
-        return value;
+        return WebTermUrls.normalizeBaseUrl(raw);
     }
 
     private ServerGroupHolder findHolderForServer(ServerConfig server) {
@@ -1806,7 +1912,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 holder.reconnectAttempts = 0;
                 scheduleHomeRefresh(HOME_REFRESH_INITIAL_DELAY_MS);
                 runOnUiThread(() -> {
-                    holder.status.setText("🟢 实时");
+                    holder.status.setText("🟢");
                     holder.status.setTextColor(Color.rgb(16, 185, 129));
                 });
             }
@@ -1845,7 +1951,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 }
                 runOnUiThread(() -> {
                     if (isActiveManagerHolder(holder)) {
-                        holder.status.setText("🟡 轮询中");
+                        holder.status.setText("🟡");
                         holder.status.setTextColor(Color.rgb(245, 158, 11));
                     }
                 });
@@ -1861,7 +1967,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
                 }
                 runOnUiThread(() -> {
                     if (isActiveManagerHolder(holder)) {
-                        holder.status.setText("🟡 轮询中");
+                        holder.status.setText("🟡");
                         holder.status.setTextColor(Color.rgb(245, 158, 11));
                     }
                 });
@@ -1938,17 +2044,7 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     private static String toWebSocketUrl(String baseUrl) {
-        if (baseUrl.startsWith("https://")) return "wss://" + baseUrl.substring("https://".length());
-        if (baseUrl.startsWith("http://")) return "ws://" + baseUrl.substring("http://".length());
-        return "ws://" + baseUrl;
-    }
-
-    private static String firstCookie(Response response) {
-        for (String header : response.headers("Set-Cookie")) {
-            int semicolon = header.indexOf(';');
-            return semicolon >= 0 ? header.substring(0, semicolon) : header;
-        }
-        return "";
+        return WebTermUrls.toWebSocketUrl(baseUrl);
     }
 
     interface LoginCallback {
@@ -1993,13 +2089,11 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     int getSavedFontSize() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        return prefs.getInt("terminal_font_size", 28);
+        return mConfigStore.getFontSize();
     }
 
     String getSavedFontType() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        return prefs.getString("terminal_font_type", "monospace");
+        return mConfigStore.getFontType();
     }
 
     Typeface getTypefaceByName(String type) {
@@ -2021,28 +2115,10 @@ public final class MainActivity extends Activity implements TerminalSessionClien
     }
 
     void saveFontSize(int size) {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        prefs.edit().putInt("terminal_font_size", size).apply();
+        mConfigStore.saveFontSize(size);
     }
 
     void saveFontType(String type) {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        prefs.edit().putString("terminal_font_type", type).apply();
-    }
-
-    private static final class JSONObjectBuilder {
-        private final JSONObject object = new JSONObject();
-
-        JSONObjectBuilder put(String key, Object value) {
-            try {
-                object.put(key, value);
-            } catch (JSONException ignored) {
-            }
-            return this;
-        }
-
-        JSONObject build() {
-            return object;
-        }
+        mConfigStore.saveFontType(type);
     }
 }
