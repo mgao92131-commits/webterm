@@ -12,10 +12,8 @@ final class CachedTerminal {
     String sessionName;
     String createdAt;
     long lastSeq;
-    long persistedSeq;
     int columns;
     int rows;
-    final java.util.List<TerminalDiskCache.Frame> pendingDiskFrames = new java.util.ArrayList<>();
 
     CachedTerminal(String baseUrl, String cookie, String sessionId, String instanceId, String termTitle, String sessionName, String createdAt, TerminalSession terminalSession) {
         this.baseUrl = baseUrl;

@@ -30,6 +30,7 @@ import okhttp3.OkHttpClient;
 public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host {
 
     private static final int TRANSCRIPT_ROWS = 20000;
+    private static final byte[] CLEAR_SCREEN_BYTES = "\u001b[3J\u001b[2J\u001b[H".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     private final OkHttpClient mHttp = new OkHttpClient();
     private final WebTermApi mApi = new WebTermApi(mHttp);
     private final AtomicBoolean mClosed = new AtomicBoolean(false);
@@ -171,7 +172,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mMainHandler.removeCallbacksAndMessages(null);
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
         if (mTerminalState.hasSession() && mTerminalSession != null) {
-            flushPendingDiskFrames();
             cacheCurrentTerminal();
         }
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
@@ -289,7 +289,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         CachedTerminal cached = mTerminalCache == null ? null : mTerminalCache.getMemory(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
         final TerminalDiskCache.RestoreResult[] diskRestore = new TerminalDiskCache.RestoreResult[1];
         if (cached == null && mTerminalCache != null && !SessionIdentity.cacheKey(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt).isEmpty()) {
-            diskRestore[0] = mTerminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt, null);
+            diskRestore[0] = mTerminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
         }
         mTerminalState.setServerSession(baseUrl, cookie, sessionId);
         TerminalLaunchState launchState = TerminalLaunchState.resolve(
@@ -333,21 +333,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             ? cached.terminalSession
             : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, mTerminalSessionClient, mTerminalSessionClient);
         mTerminalView.attachSession(mTerminalSession);
-        if (cached == null && diskRestore[0] != null && mTerminalCache != null) {
-            mTerminalCache.restoreAsyncCombined(
-                mHttp.dispatcher().executorService(),
-                mMainHandler,
-                baseUrl,
-                sessionId,
-                mTerminalState.instanceId(),
-                mTerminalState.createdAt(),
-                (bytes) -> {
-                    if (mTerminalSession != null) {
-                        mTerminalSession.appendOutput(bytes);
-                    }
-                }
-            );
-            cacheCurrentTerminal();
+        if (cached == null && diskRestore[0] != null && diskRestore[0].snapshotBytes != null && diskRestore[0].snapshotBytes.length > 0) {
+            mTerminalSession.appendOutput(CLEAR_SCREEN_BYTES);
+            mTerminalSession.appendOutput(diskRestore[0].snapshotBytes);
         }
         mTerminalView.requestFocus();
         mTerminalRoot.post(() -> {
@@ -386,7 +374,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         String closingBaseUrl = mTerminalState.baseUrl();
         String closingSessionId = mTerminalState.sessionId();
         if (!closeRemote) {
-            flushPendingDiskFrames();
             cacheCurrentTerminal();
         }
         mClosed.set(true);
@@ -413,7 +400,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private void pauseCurrentTerminalConnection() {
-        flushPendingDiskFrames();
         cacheCurrentTerminal();
         closeTerminalConnection("activity paused");
     }
@@ -426,10 +412,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private void cacheCurrentTerminal() {
         if (mTerminalCache == null) return;
         mTerminalCache.saveCurrent(mTerminalState.snapshot(mTerminalTitle, mTerminalSubtitle, mTerminalSession));
-    }
-
-    private void flushPendingDiskFrames() {
-        mTerminalState.flushPendingFrames(mTerminalCache, mTerminalTitle, mTerminalSubtitle);
     }
 
     private void removeCachedTerminal(String baseUrl, String sessionId) {

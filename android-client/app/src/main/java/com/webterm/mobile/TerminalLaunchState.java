@@ -6,10 +6,8 @@ final class TerminalLaunchState {
     final String createdAt;
     final String instanceId;
     final long lastSeq;
-    final long persistedSeq;
     final int columns;
     final int rows;
-    final java.util.List<TerminalDiskCache.Frame> pendingDiskFrames = new java.util.ArrayList<>();
 
     private TerminalLaunchState(
         String headerTitle,
@@ -17,7 +15,6 @@ final class TerminalLaunchState {
         String createdAt,
         String instanceId,
         long lastSeq,
-        long persistedSeq,
         int columns,
         int rows
     ) {
@@ -26,7 +23,6 @@ final class TerminalLaunchState {
         this.createdAt = createdAt;
         this.instanceId = instanceId;
         this.lastSeq = lastSeq;
-        this.persistedSeq = persistedSeq;
         this.columns = columns;
         this.rows = rows;
     }
@@ -47,13 +43,9 @@ final class TerminalLaunchState {
             firstNonBlank(cached == null ? null : cached.createdAt, diskMetadata == null ? null : diskMetadata.createdAt, normalizedCreatedAt, ""),
             firstNonBlank(cached == null ? null : cached.instanceId, diskMetadata == null ? null : diskMetadata.instanceId, normalizedInstanceId, ""),
             cached != null ? cached.lastSeq : (diskRestore != null ? diskRestore.lastSeq : 0),
-            cached != null ? cached.persistedSeq : (diskRestore != null ? diskRestore.lastSeq : 0),
             cached != null ? cached.columns : (diskMetadata != null ? diskMetadata.columns : 0),
             cached != null ? cached.rows : (diskMetadata != null ? diskMetadata.rows : 0)
         );
-        if (cached != null) {
-            state.pendingDiskFrames.addAll(cached.pendingDiskFrames);
-        }
         return state;
     }
 

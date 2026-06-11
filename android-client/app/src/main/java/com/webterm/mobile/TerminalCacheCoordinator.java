@@ -2,13 +2,12 @@ package com.webterm.mobile;
 
 import com.termux.terminal.TerminalSession;
 
-import android.os.Handler;
-
 import java.io.File;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 final class TerminalCacheCoordinator {
+    private static final int SNAPSHOT_MAX_LINES = 5000;
+
     private final TerminalDiskCache diskCache;
     private final java.util.Map<String, CachedTerminal> memoryCache = new java.util.HashMap<>();
 
@@ -25,32 +24,8 @@ final class TerminalCacheCoordinator {
         return key.isEmpty() ? null : memoryCache.get(key);
     }
 
-    TerminalDiskCache.RestoreResult restore(String baseUrl, String sessionId, String instanceId, String createdAt, TerminalDiskCache.FrameVisitor callback) {
-        return diskCache.restore(baseUrl, sessionId, instanceId, createdAt, callback);
-    }
-
-    void restoreAsyncCombined(
-        java.util.concurrent.Executor executor,
-        Handler mainHandler,
-        String baseUrl,
-        String sessionId,
-        String instanceId,
-        String createdAt,
-        RestoreBytesCallback callback
-    ) {
-        executor.execute(() -> {
-            ByteArrayOutputStream combined = new ByteArrayOutputStream();
-            diskCache.restore(baseUrl, sessionId, instanceId, createdAt, (seq, bytes) -> {
-                try {
-                    combined.write(bytes);
-                } catch (IOException ignored) {
-                }
-            });
-            byte[] allBytes = combined.toByteArray();
-            if (allBytes.length > 0) {
-                mainHandler.post(() -> callback.onRestored(allBytes));
-            }
-        });
+    TerminalDiskCache.RestoreResult restore(String baseUrl, String sessionId, String instanceId, String createdAt) {
+        return diskCache.restore(baseUrl, sessionId, instanceId, createdAt);
     }
 
     void saveCurrent(Snapshot snapshot) {
@@ -78,16 +53,12 @@ final class TerminalCacheCoordinator {
         cached.createdAt = snapshot.createdAt;
         cached.terminalSession = snapshot.terminalSession;
         cached.lastSeq = snapshot.lastSeq;
-        cached.persistedSeq = snapshot.persistedSeq;
-        cached.pendingDiskFrames.clear();
-        cached.pendingDiskFrames.addAll(snapshot.pendingDiskFrames);
         cached.columns = snapshot.columns;
         cached.rows = snapshot.rows;
-    }
-
-    long appendFramesBlocking(TerminalDiskCache.Metadata metadata, java.util.List<TerminalDiskCache.Frame> frames) {
-        if (metadata == null || frames == null || frames.isEmpty()) return 0;
-        return diskCache.appendFramesBlocking(metadata, frames);
+        TerminalDiskCache.Metadata metadata = snapshot.diskMetadata;
+        if (metadata != null) {
+            diskCache.saveSnapshotBlocking(metadata, snapshotBytes(snapshot.terminalSession));
+        }
     }
 
     boolean removeTerminal(String baseUrl, String sessionId, String currentBaseUrl, String currentSessionId, TerminalSession currentSession) {
@@ -174,13 +145,35 @@ final class TerminalCacheCoordinator {
         String createdAt;
         TerminalSession terminalSession;
         long lastSeq;
-        long persistedSeq;
         int columns;
         int rows;
-        final java.util.List<TerminalDiskCache.Frame> pendingDiskFrames = new java.util.ArrayList<>();
+        TerminalDiskCache.Metadata diskMetadata;
     }
 
-    interface RestoreBytesCallback {
-        void onRestored(byte[] bytes);
+    private static byte[] snapshotBytes(TerminalSession terminalSession) {
+        String text = snapshotText(terminalSession);
+        return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String snapshotText(TerminalSession terminalSession) {
+        if (terminalSession == null || terminalSession.getEmulator() == null || terminalSession.getEmulator().getScreen() == null) {
+            return "";
+        }
+        String text = terminalSession.getEmulator().getScreen().getTranscriptTextWithFullLinesJoined();
+        return lastLines(text == null ? "" : text, SNAPSHOT_MAX_LINES);
+    }
+
+    private static String lastLines(String text, int maxLines) {
+        if (text.isEmpty() || maxLines <= 0) return text;
+        int lines = 0;
+        for (int i = text.length() - 1; i >= 0; i--) {
+            if (text.charAt(i) == '\n') {
+                lines++;
+                if (lines >= maxLines) {
+                    return text.substring(i + 1);
+                }
+            }
+        }
+        return text;
     }
 }

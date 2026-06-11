@@ -11,10 +11,8 @@ final class TerminalRuntimeState {
     private String instanceId = "";
     private String createdAt = "";
     private long lastSeq;
-    private long persistedSeq;
     private int columns;
     private int rows;
-    private final java.util.List<TerminalDiskCache.Frame> pendingDiskFrames = new java.util.ArrayList<>();
 
     boolean hasSession() {
         return sessionId != null;
@@ -62,9 +60,6 @@ final class TerminalRuntimeState {
         createdAt = launchState.createdAt;
         instanceId = launchState.instanceId;
         lastSeq = launchState.lastSeq;
-        persistedSeq = launchState.persistedSeq;
-        pendingDiskFrames.clear();
-        pendingDiskFrames.addAll(launchState.pendingDiskFrames);
         columns = launchState.columns;
         rows = launchState.rows;
     }
@@ -86,9 +81,6 @@ final class TerminalRuntimeState {
     void onOutput(long seq, byte[] bytes) {
         if (seq <= 0) return;
         lastSeq = seq;
-        if (bytes != null && bytes.length > 0) {
-            pendingDiskFrames.add(new TerminalDiskCache.Frame(seq, bytes.clone()));
-        }
     }
 
     void clearServerSession() {
@@ -103,13 +95,9 @@ final class TerminalRuntimeState {
         columns = 0;
         rows = 0;
         lastSeq = 0;
-        persistedSeq = 0;
-        pendingDiskFrames.clear();
     }
 
     void clearPersistence() {
-        persistedSeq = 0;
-        pendingDiskFrames.clear();
     }
 
     TerminalCacheCoordinator.Snapshot snapshot(TextView titleView, TextView subtitleView, TerminalSession terminalSession) {
@@ -123,10 +111,9 @@ final class TerminalRuntimeState {
         snapshot.createdAt = createdAt;
         snapshot.terminalSession = terminalSession;
         snapshot.lastSeq = lastSeq;
-        snapshot.persistedSeq = persistedSeq;
-        snapshot.pendingDiskFrames.addAll(pendingDiskFrames);
         snapshot.columns = columns;
         snapshot.rows = rows;
+        snapshot.diskMetadata = diskMetadata(titleView, subtitleView);
         return snapshot;
     }
 
@@ -141,23 +128,7 @@ final class TerminalRuntimeState {
         metadata.sessionName = subtitleView == null ? "" : String.valueOf(subtitleView.getText());
         metadata.columns = columns;
         metadata.rows = rows;
-        metadata.lastSeq = persistedSeq;
+        metadata.lastSeq = lastSeq;
         return metadata;
-    }
-
-    boolean flushPendingFrames(TerminalCacheCoordinator terminalCache, TextView titleView, TextView subtitleView) {
-        if (terminalCache == null || pendingDiskFrames.isEmpty()) return false;
-        TerminalDiskCache.Metadata metadata = diskMetadata(titleView, subtitleView);
-        if (metadata == null) return false;
-        java.util.List<TerminalDiskCache.Frame> frames = new java.util.ArrayList<>(pendingDiskFrames);
-        long newPersistedSeq = terminalCache.appendFramesBlocking(metadata, frames);
-        if (newPersistedSeq <= persistedSeq) return false;
-        persistedSeq = newPersistedSeq;
-        for (int i = pendingDiskFrames.size() - 1; i >= 0; i--) {
-            if (pendingDiskFrames.get(i).seq <= persistedSeq) {
-                pendingDiskFrames.remove(i);
-            }
-        }
-        return true;
     }
 }

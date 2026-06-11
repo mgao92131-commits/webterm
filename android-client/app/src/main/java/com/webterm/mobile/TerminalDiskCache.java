@@ -7,8 +7,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
@@ -23,13 +23,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 final class TerminalDiskCache {
     private static final String TAG = "TerminalDiskCache";
     private static final int MAGIC = 0x57544331; // WTC1
     private static final int VERSION = 1;
     private static final int MAX_FRAME_BYTES = 128 * 1024 * 1024;
-    private static final byte[] SNAPSHOT_PREFIX = "\u001b[3J\u001b[2J\u001b[H".getBytes(StandardCharsets.UTF_8);
 
     private final File cacheDir;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -41,42 +42,44 @@ final class TerminalDiskCache {
         }
     }
 
-    long appendFramesBlocking(Metadata metadata, List<Frame> frames) {
-        if (metadata == null || frames == null || frames.isEmpty()) return metadata == null ? 0 : metadata.lastSeq;
+    long saveSnapshotBlocking(Metadata metadata, byte[] snapshotBytes) {
+        if (metadata == null) return 0;
         try {
-            return appendFrames(new Metadata(metadata), frames);
+            return saveSnapshot(new Metadata(metadata), snapshotBytes);
         } catch (IOException | JSONException e) {
-            Log.w(TAG, "Failed to append terminal disk cache", e);
+            Log.w(TAG, "Failed to save terminal disk cache snapshot", e);
             return metadata.lastSeq;
         }
     }
 
-    RestoreResult restore(String baseUrl, String sessionId, String expectedInstanceId, String expectedCreatedAt, FrameVisitor visitor) {
+    RestoreResult restore(String baseUrl, String sessionId, String expectedInstanceId, String expectedCreatedAt) {
         String key = key(baseUrl, sessionId, expectedInstanceId, expectedCreatedAt);
         if (key.isEmpty()) return null;
         File metaFile = metaFile(key);
         File frameFile = frameFile(key);
+        File snapshotFile = snapshotFile(key);
         Metadata metadata = readMetadata(metaFile);
-        if (metadata == null || !frameFile.exists()) return null;
+        if (metadata == null || (!snapshotFile.exists() && !frameFile.exists())) return null;
         if (!isSameSession(metadata, baseUrl, sessionId, expectedInstanceId, expectedCreatedAt)) {
             clear(baseUrl, sessionId, expectedInstanceId, expectedCreatedAt);
             return null;
         }
-        long lastSeq = 0;
-        if (visitor == null) {
-            lastSeq = metadata.lastSeq;
-        } else {
+        byte[] snapshotBytes;
+        if (snapshotFile.exists()) {
             try {
-                lastSeq = replayFrames(frameFile, visitor);
+                snapshotBytes = readGzip(snapshotFile);
             } catch (IOException e) {
-                Log.w(TAG, "Failed to restore terminal disk cache", e);
+                Log.w(TAG, "Failed to restore terminal cache snapshot", e);
                 clear(baseUrl, sessionId, expectedInstanceId, expectedCreatedAt);
                 return null;
             }
+        } else {
+            snapshotBytes = migrateLegacyFrames(frameFile, snapshotFile);
+            deleteFile(frameFile);
         }
-        if (lastSeq <= 0) return null;
-        metadata.lastSeq = Math.max(metadata.lastSeq, lastSeq);
-        return new RestoreResult(metadata, metadata.lastSeq);
+        if (snapshotBytes == null) return null;
+        writeMigratedMetadata(metaFile, metadata);
+        return new RestoreResult(metadata, metadata.lastSeq, snapshotBytes);
     }
 
     List<Metadata> getCachedSessionsForServer(String baseUrl) {
@@ -139,39 +142,16 @@ final class TerminalDiskCache {
         executor.shutdown();
     }
 
-    private long appendFrames(Metadata metadata, List<Frame> frames) throws IOException, JSONException {
+    private long saveSnapshot(Metadata metadata, byte[] snapshotBytes) throws IOException, JSONException {
         String key = key(metadata.baseUrl, metadata.sessionId, metadata.instanceId, metadata.createdAt);
         if (key.isEmpty()) return metadata.lastSeq;
-        File frameFile = frameFile(key);
+        File snapshotFile = snapshotFile(key);
         File metaFile = metaFile(key);
 
-        int startIndex = 0;
-        boolean resetForSnapshot = false;
-        for (int i = 0; i < frames.size(); i++) {
-            Frame frame = frames.get(i);
-            if (frame != null && hasSnapshotPrefix(frame.bytes)) {
-                resetForSnapshot = true;
-                startIndex = i;
-            }
-        }
-        if (resetForSnapshot) deleteFile(frameFile);
-        ensureFrameHeader(frameFile);
-
-        long lastSeq = metadata.lastSeq;
-        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(frameFile, true)))) {
-            for (int i = startIndex; i < frames.size(); i++) {
-                Frame frame = frames.get(i);
-                if (frame == null || frame.bytes == null || frame.seq <= 0) continue;
-                out.writeLong(frame.seq);
-                out.writeInt(frame.bytes.length);
-                out.write(frame.bytes);
-                lastSeq = frame.seq;
-            }
-        }
-
-        metadata.lastSeq = lastSeq;
+        writeGzip(snapshotFile, snapshotBytes == null ? new byte[0] : snapshotBytes);
         writeMetadata(metaFile, metadata);
-        return lastSeq;
+        deleteFile(frameFile(key));
+        return metadata.lastSeq;
     }
 
     private long replayFrames(File frameFile, FrameVisitor visitor) throws IOException {
@@ -197,15 +177,54 @@ final class TerminalDiskCache {
         return lastSeq;
     }
 
-    private void ensureFrameHeader(File frameFile) throws IOException {
-        if (frameFile.exists() && frameFile.length() >= 8) return;
-        File parent = frameFile.getParentFile();
+    private byte[] migrateLegacyFrames(File frameFile, File snapshotFile) {
+        ByteArrayOutputStream combined = new ByteArrayOutputStream();
+        try {
+            replayFrames(frameFile, (seq, bytes) -> {
+                try {
+                    combined.write(bytes);
+                } catch (IOException ignored) {
+                }
+            });
+            byte[] snapshotBytes = combined.toByteArray();
+            writeGzip(snapshotFile, snapshotBytes);
+            return snapshotBytes;
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to migrate legacy terminal frame cache", e);
+            return null;
+        }
+    }
+
+    private byte[] readGzip(File file) throws IOException {
+        try (GZIPInputStream in = new GZIPInputStream(new BufferedInputStream(new FileInputStream(file)));
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            while (true) {
+                int read = in.read(buffer);
+                if (read < 0) break;
+                out.write(buffer, 0, read);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    private void writeGzip(File file, byte[] bytes) throws IOException {
+        File parent = file.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new IOException("Failed to create cache dir");
         }
-        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(frameFile, false)))) {
-            out.writeInt(MAGIC);
-            out.writeInt(VERSION);
+        File tmp = new File(file.getParentFile(), file.getName() + ".tmp");
+        try (GZIPOutputStream out = new GZIPOutputStream(new BufferedOutputStream(new FileOutputStream(tmp, false)))) {
+            out.write(bytes);
+        }
+        replaceFile(tmp, file);
+    }
+
+    private void writeMigratedMetadata(File metaFile, Metadata metadata) {
+        try {
+            writeMetadata(metaFile, metadata);
+        } catch (IOException | JSONException e) {
+            Log.w(TAG, "Failed to update migrated terminal cache metadata", e);
         }
     }
 
@@ -287,6 +306,7 @@ final class TerminalDiskCache {
         String baseName = name.substring(0, name.length() - ".json".length());
         deleteFile(metaFile);
         deleteFile(new File(cacheDir, baseName + ".frames"));
+        deleteFile(new File(cacheDir, baseName + ".snapshot.gz"));
     }
 
     private void deleteFile(File file) {
@@ -301,6 +321,10 @@ final class TerminalDiskCache {
 
     private File metaFile(String key) {
         return new File(cacheDir, key + ".json");
+    }
+
+    private File snapshotFile(String key) {
+        return new File(cacheDir, key + ".snapshot.gz");
     }
 
     private static String key(String baseUrl, String sessionId, String instanceId, String createdAt) {
@@ -321,35 +345,19 @@ final class TerminalDiskCache {
         }
     }
 
-    static boolean hasSnapshotPrefix(byte[] bytes) {
-        if (bytes == null || bytes.length < SNAPSHOT_PREFIX.length) return false;
-        for (int i = 0; i < SNAPSHOT_PREFIX.length; i++) {
-            if (bytes[i] != SNAPSHOT_PREFIX[i]) return false;
-        }
-        return true;
-    }
-
     interface FrameVisitor {
         void onFrame(long seq, byte[] bytes);
-    }
-
-    static final class Frame {
-        final long seq;
-        final byte[] bytes;
-
-        Frame(long seq, byte[] bytes) {
-            this.seq = seq;
-            this.bytes = bytes;
-        }
     }
 
     static final class RestoreResult {
         final Metadata metadata;
         final long lastSeq;
+        final byte[] snapshotBytes;
 
-        RestoreResult(Metadata metadata, long lastSeq) {
+        RestoreResult(Metadata metadata, long lastSeq, byte[] snapshotBytes) {
             this.metadata = metadata;
             this.lastSeq = lastSeq;
+            this.snapshotBytes = snapshotBytes;
         }
     }
 
