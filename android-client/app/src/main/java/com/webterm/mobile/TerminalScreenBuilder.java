@@ -83,17 +83,13 @@ final class TerminalScreenBuilder {
         retryButton.setPadding(0, 0, 0, 0);
         retryButton.setOnClickListener((v) -> onRetry.run());
 
-        View statusIndicator = new View(activity);
-        GradientDrawable indicatorBg = new GradientDrawable();
-        indicatorBg.setShape(GradientDrawable.OVAL);
-        indicatorBg.setColor(Color.rgb(239, 68, 68));
-        statusIndicator.setBackground(indicatorBg);
+        StatusIndicatorView statusIndicator = new StatusIndicatorView(activity);
 
         LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
         retryLp.setMargins(0, 0, UIUtils.dp(activity, 10), 0);
         statusContainer.addView(retryButton, retryLp);
 
-        LinearLayout.LayoutParams indicatorLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 12), UIUtils.dp(activity, 12));
+        LinearLayout.LayoutParams indicatorLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
         indicatorLp.setMargins(0, 0, UIUtils.dp(activity, 6), 0);
         statusContainer.addView(statusIndicator, indicatorLp);
 
@@ -231,6 +227,6 @@ final class TerminalScreenBuilder {
         TextView title;
         TextView subtitle;
         ImageButton retryButton;
-        View statusIndicator;
+        StatusIndicatorView statusIndicator;
     }
 }

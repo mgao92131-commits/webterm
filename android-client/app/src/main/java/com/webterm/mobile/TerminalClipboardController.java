@@ -1,0 +1,31 @@
+package com.webterm.mobile;
+
+import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.widget.Toast;
+
+import com.termux.terminal.TerminalSession;
+
+final class TerminalClipboardController {
+    private final Activity activity;
+
+    TerminalClipboardController(Activity activity) {
+        this.activity = activity;
+    }
+
+    void copy(String text) {
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("terminal", text));
+            Toast.makeText(activity, "Copied", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    void paste(TerminalSession session) {
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
+        if (clipboard == null || !clipboard.hasPrimaryClip() || session == null) return;
+        CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(activity);
+        if (text != null) session.write(text.toString());
+    }
+}

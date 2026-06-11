@@ -115,12 +115,10 @@ final class HomeScreenBuilder {
         arrow.setTextSize(14);
         header.addView(arrow, new LinearLayout.LayoutParams(-2, -2));
 
-        TextView status = new TextView(activity);
-        status.setText("🟡");
-        status.setTextColor(Color.rgb(245, 158, 11));
-        status.setTextSize(12);
-        status.setPadding(0, 0, UIUtils.dp(activity, 8), 0);
-        header.addView(status, new LinearLayout.LayoutParams(-2, -2));
+        StatusIndicatorView status = new StatusIndicatorView(activity);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
+        statusLp.setMargins(0, 0, UIUtils.dp(activity, 8), 0);
+        header.addView(status, statusLp);
 
         TextView nameView = new TextView(activity);
         nameView.setText(server.name);
@@ -211,6 +209,6 @@ final class HomeScreenBuilder {
     static final class ServerGroupResult {
         LinearLayout group;
         LinearLayout subList;
-        TextView status;
+        StatusIndicatorView status;
     }
 }

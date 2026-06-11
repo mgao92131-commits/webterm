@@ -63,12 +63,16 @@ final class TerminalDiskCache {
             return null;
         }
         long lastSeq = 0;
-        try {
-            lastSeq = replayFrames(frameFile, visitor);
-        } catch (IOException e) {
-            Log.w(TAG, "Failed to restore terminal disk cache", e);
-            clear(baseUrl, sessionId, expectedInstanceId, expectedCreatedAt);
-            return null;
+        if (visitor == null) {
+            lastSeq = metadata.lastSeq;
+        } else {
+            try {
+                lastSeq = replayFrames(frameFile, visitor);
+            } catch (IOException e) {
+                Log.w(TAG, "Failed to restore terminal disk cache", e);
+                clear(baseUrl, sessionId, expectedInstanceId, expectedCreatedAt);
+                return null;
+            }
         }
         if (lastSeq <= 0) return null;
         metadata.lastSeq = Math.max(metadata.lastSeq, lastSeq);
@@ -77,13 +81,13 @@ final class TerminalDiskCache {
 
     List<Metadata> getCachedSessionsForServer(String baseUrl) {
         List<Metadata> result = new ArrayList<>();
-        String normalized = MainActivity.normalizeBaseUrl(baseUrl);
+        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         File[] files = cacheDir.listFiles();
         if (files != null) {
             for (File file : files) {
                 if (file.getName().endsWith(".json")) {
                     Metadata metadata = readMetadata(file);
-                    if (metadata != null && normalized.equals(MainActivity.normalizeBaseUrl(metadata.baseUrl))) {
+                    if (metadata != null && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))) {
                         result.add(metadata);
                     }
                 }
@@ -94,19 +98,19 @@ final class TerminalDiskCache {
     }
 
     void clearAsync(String baseUrl, String sessionId) {
-        String normalized = MainActivity.normalizeBaseUrl(baseUrl);
+        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         executor.execute(() -> clearMatching(normalized, sessionId));
     }
 
     void clearServerAsync(String baseUrl) {
-        String normalized = MainActivity.normalizeBaseUrl(baseUrl);
+        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         executor.execute(() -> {
             File[] files = cacheDir.listFiles();
             if (files == null) return;
             for (File file : files) {
                 if (!file.getName().endsWith(".json")) continue;
                 Metadata metadata = readMetadata(file);
-                if (metadata != null && normalized.equals(MainActivity.normalizeBaseUrl(metadata.baseUrl))) {
+                if (metadata != null && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))) {
                     deletePairForMetadataFile(file);
                 }
             }
@@ -114,7 +118,7 @@ final class TerminalDiskCache {
     }
 
     void clearMissingForServerAsync(String baseUrl, java.util.Set<String> liveSessionIdentities) {
-        String normalized = MainActivity.normalizeBaseUrl(baseUrl);
+        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         java.util.Set<String> liveIdentities = new java.util.HashSet<>(liveSessionIdentities);
         executor.execute(() -> {
             File[] files = cacheDir.listFiles();
@@ -123,8 +127,8 @@ final class TerminalDiskCache {
                 if (!file.getName().endsWith(".json")) continue;
                 Metadata metadata = readMetadata(file);
                 if (metadata != null
-                    && normalized.equals(MainActivity.normalizeBaseUrl(metadata.baseUrl))
-                    && !liveIdentities.contains(MainActivity.sessionIdentity(metadata.sessionId, metadata.instanceId, metadata.createdAt))) {
+                    && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))
+                    && !liveIdentities.contains(SessionIdentity.value(metadata.sessionId, metadata.instanceId, metadata.createdAt))) {
                     deletePairForMetadataFile(file);
                 }
             }
@@ -241,7 +245,7 @@ final class TerminalDiskCache {
     }
 
     private boolean isSameSession(Metadata metadata, String baseUrl, String sessionId, String expectedInstanceId, String expectedCreatedAt) {
-        if (!MainActivity.normalizeBaseUrl(metadata.baseUrl).equals(MainActivity.normalizeBaseUrl(baseUrl))) return false;
+        if (!WebTermUrls.normalizeBaseUrl(metadata.baseUrl).equals(WebTermUrls.normalizeBaseUrl(baseUrl))) return false;
         if (!String.valueOf(metadata.sessionId).equals(String.valueOf(sessionId))) return false;
         String expectedInstance = String.valueOf(expectedInstanceId == null ? "" : expectedInstanceId).trim();
         String cachedInstance = String.valueOf(metadata.instanceId == null ? "" : metadata.instanceId).trim();
@@ -265,7 +269,7 @@ final class TerminalDiskCache {
             if (!file.getName().endsWith(".json")) continue;
             Metadata metadata = readMetadata(file);
             if (metadata != null
-                && normalizedBaseUrl.equals(MainActivity.normalizeBaseUrl(metadata.baseUrl))
+                && normalizedBaseUrl.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))
                 && String.valueOf(sessionId).equals(metadata.sessionId)) {
                 deletePairForMetadataFile(file);
             }
@@ -300,9 +304,9 @@ final class TerminalDiskCache {
     }
 
     private static String key(String baseUrl, String sessionId, String instanceId, String createdAt) {
-        String identity = MainActivity.sessionIdentity(sessionId, instanceId, createdAt);
+        String identity = SessionIdentity.value(sessionId, instanceId, createdAt);
         if (identity.isEmpty()) return "";
-        return sha256(MainActivity.normalizeBaseUrl(baseUrl) + "#" + identity);
+        return sha256(WebTermUrls.normalizeBaseUrl(baseUrl) + "#" + identity);
     }
 
     private static String sha256(String text) {

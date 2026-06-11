@@ -1,6 +1,7 @@
 package com.webterm.mobile;
 
 import android.app.AlertDialog;
+import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.Gravity;
@@ -13,7 +14,8 @@ import android.text.InputType;
 
 public final class ServerConfigDialogHelper {
 
-    public static void show(final MainActivity activity, final ServerConfig existingServer) {
+    public static void show(final Host host, final ServerConfig existingServer) {
+        Activity activity = host.activity();
         AlertDialog.Builder builder = new AlertDialog.Builder(activity);
 
         LinearLayout container = new LinearLayout(activity);
@@ -94,7 +96,7 @@ public final class ServerConfigDialogHelper {
 
         submitBtn.setOnClickListener((v) -> {
             String nameVal = nickname.getText().toString().trim();
-            String urlVal = MainActivity.normalizeBaseUrl(url.getText().toString());
+            String urlVal = WebTermUrls.normalizeBaseUrl(url.getText().toString());
             String userVal = user.getText().toString().trim();
             String passVal = password.getText().toString();
 
@@ -114,30 +116,12 @@ public final class ServerConfigDialogHelper {
             errText.setVisibility(View.VISIBLE);
 
             final String finalName = nameVal;
-            activity.login(urlVal, userVal, passVal, new MainActivity.LoginCallback() {
+            host.login(urlVal, userVal, passVal, new LoginCallback() {
                 @Override
                 public void onReady(String baseUrl, String cookie) {
                     activity.runOnUiThread(() -> {
-                        if (existingServer == null) {
-                            ServerConfig newServer = new ServerConfig(
-                                "srv_" + System.currentTimeMillis(),
-                                finalName,
-                                urlVal,
-                                cookie,
-                                userVal,
-                                passVal
-                            );
-                            activity.mServers.add(newServer);
-                        } else {
-                            existingServer.name = finalName;
-                            existingServer.url = urlVal;
-                            existingServer.cookie = cookie;
-                            existingServer.username = userVal;
-                            existingServer.password = passVal;
-                        }
-                        activity.saveServersToPrefs();
+                        host.onServerAuthenticated(existingServer, finalName, urlVal, cookie, userVal, passVal);
                         dialog.dismiss();
-                        activity.showSessionHome();
                     });
                 }
 
@@ -153,5 +137,16 @@ public final class ServerConfigDialogHelper {
                 }
             });
         });
+    }
+
+    interface Host {
+        Activity activity();
+        void login(String baseUrl, String username, String password, LoginCallback callback);
+        void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password);
+    }
+
+    interface LoginCallback {
+        void onReady(String baseUrl, String cookie);
+        void onError(String message);
     }
 }

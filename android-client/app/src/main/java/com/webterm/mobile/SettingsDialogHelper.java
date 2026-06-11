@@ -1,6 +1,7 @@
 package com.webterm.mobile;
 
 import android.app.AlertDialog;
+import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.Gravity;
@@ -10,7 +11,8 @@ import android.widget.TextView;
 
 public final class SettingsDialogHelper {
 
-    public static void show(final MainActivity activity) {
+    public static void show(final Host host) {
+        Activity activity = host.activity();
         AlertDialog.Builder builder = new AlertDialog.Builder(activity);
 
         LinearLayout container = new LinearLayout(activity);
@@ -53,7 +55,7 @@ public final class SettingsDialogHelper {
         UIUtils.styleStepperButton(activity, sizeDecBtn);
 
         TextView sizeValText = new TextView(activity);
-        sizeValText.setText(String.valueOf(activity.getSavedFontSize()));
+        sizeValText.setText(String.valueOf(host.getSavedFontSize()));
         sizeValText.setTextColor(Color.rgb(243, 244, 246));
         sizeValText.setTextSize(16);
         sizeValText.setTypeface(Typeface.MONOSPACE);
@@ -64,26 +66,22 @@ public final class SettingsDialogHelper {
         UIUtils.styleStepperButton(activity, sizeIncBtn);
 
         sizeDecBtn.setOnClickListener((v) -> {
-            int cur = activity.getSavedFontSize();
+            int cur = host.getSavedFontSize();
             if (cur > 10) {
                 int next = cur - 1;
-                activity.saveFontSize(next);
+                host.saveFontSize(next);
                 sizeValText.setText(String.valueOf(next));
-                if (activity.mTerminalView != null) {
-                    activity.mTerminalView.setTextSize(next);
-                }
+                host.applyTerminalFontSize(next);
             }
         });
 
         sizeIncBtn.setOnClickListener((v) -> {
-            int cur = activity.getSavedFontSize();
+            int cur = host.getSavedFontSize();
             if (cur < 72) {
                 int next = cur + 1;
-                activity.saveFontSize(next);
+                host.saveFontSize(next);
                 sizeValText.setText(String.valueOf(next));
-                if (activity.mTerminalView != null) {
-                    activity.mTerminalView.setTextSize(next);
-                }
+                host.applyTerminalFontSize(next);
             }
         });
 
@@ -117,7 +115,7 @@ public final class SettingsDialogHelper {
         UIUtils.styleStepperButton(activity, fontPrevBtn);
 
         TextView fontValText = new TextView(activity);
-        fontValText.setText(activity.getFontDisplayName(activity.getSavedFontType()));
+        fontValText.setText(host.getFontDisplayName(host.getSavedFontType()));
         fontValText.setTextColor(Color.rgb(243, 244, 246));
         fontValText.setTextSize(14);
         fontValText.setTypeface(Typeface.DEFAULT_BOLD);
@@ -130,7 +128,7 @@ public final class SettingsDialogHelper {
         final String[] fontOptions = {"monospace", "sans-serif", "serif", "default"};
 
         fontPrevBtn.setOnClickListener((v) -> {
-            String cur = activity.getSavedFontType();
+            String cur = host.getSavedFontType();
             int idx = -1;
             for (int i = 0; i < fontOptions.length; i++) {
                 if (fontOptions[i].equals(cur)) {
@@ -140,15 +138,13 @@ public final class SettingsDialogHelper {
             }
             int nextIdx = (idx - 1 + fontOptions.length) % fontOptions.length;
             String next = fontOptions[nextIdx];
-            activity.saveFontType(next);
-            fontValText.setText(activity.getFontDisplayName(next));
-            if (activity.mTerminalView != null) {
-                activity.mTerminalView.setTypeface(activity.getTypefaceByName(next));
-            }
+            host.saveFontType(next);
+            fontValText.setText(host.getFontDisplayName(next));
+            host.applyTerminalTypeface(host.getTypefaceByName(next));
         });
 
         fontNextBtn.setOnClickListener((v) -> {
-            String cur = activity.getSavedFontType();
+            String cur = host.getSavedFontType();
             int idx = -1;
             for (int i = 0; i < fontOptions.length; i++) {
                 if (fontOptions[i].equals(cur)) {
@@ -158,11 +154,9 @@ public final class SettingsDialogHelper {
             }
             int nextIdx = (idx + 1) % fontOptions.length;
             String next = fontOptions[nextIdx];
-            activity.saveFontType(next);
-            fontValText.setText(activity.getFontDisplayName(next));
-            if (activity.mTerminalView != null) {
-                activity.mTerminalView.setTypeface(activity.getTypefaceByName(next));
-            }
+            host.saveFontType(next);
+            fontValText.setText(host.getFontDisplayName(next));
+            host.applyTerminalTypeface(host.getTypefaceByName(next));
         });
 
         LinearLayout.LayoutParams valLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 100), -2);
@@ -193,5 +187,17 @@ public final class SettingsDialogHelper {
             dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
         }
         closeBtn.setOnClickListener((v) -> dialog.dismiss());
+    }
+
+    interface Host {
+        Activity activity();
+        int getSavedFontSize();
+        String getSavedFontType();
+        Typeface getTypefaceByName(String type);
+        String getFontDisplayName(String fontType);
+        void saveFontSize(int size);
+        void saveFontType(String type);
+        void applyTerminalFontSize(int size);
+        void applyTerminalTypeface(Typeface typeface);
     }
 }

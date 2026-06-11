@@ -7,6 +7,7 @@ import android.text.TextUtils;
 import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import org.json.JSONArray;
@@ -24,15 +25,17 @@ public final class SessionRowHelper {
         String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
         String cwd = session.optString("cwd", "");
 
-        LinearLayout row = new LinearLayout(context);
+        FrameLayout row = new FrameLayout(context);
         row.setTag(id); // 绑定 Tag 以便差分查找
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(UIUtils.dp(context, 14), UIUtils.dp(context, 12), UIUtils.dp(context, 14), UIUtils.dp(context, 12));
         row.setBackground(UIUtils.panelBackground(context));
+
+        LinearLayout content = new LinearLayout(context);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(UIUtils.dp(context, 14), UIUtils.dp(context, 12), UIUtils.dp(context, 14), UIUtils.dp(context, 12));
 
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setGravity(Gravity.TOP);
 
         LinearLayout titleArea = new LinearLayout(context);
         titleArea.setOrientation(LinearLayout.VERTICAL);
@@ -72,23 +75,14 @@ public final class SessionRowHelper {
         titleArea.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
         titleArea.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
         titleArea.addView(pathView, new LinearLayout.LayoutParams(-1, -2));
-        header.addView(titleArea, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(titleArea, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView closeBtn = new TextView(context);
-        closeBtn.setTag("close");
-        closeBtn.setText("✕");
-        closeBtn.setTextColor(Color.rgb(107, 114, 128)); // 弱化关闭按钮颜色，避免视觉喧宾夺主
-        closeBtn.setTextSize(16);
-        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeBtn.setPadding(UIUtils.dp(context, 8), UIUtils.dp(context, 4), UIUtils.dp(context, 8), UIUtils.dp(context, 4));
-        header.addView(closeBtn, new LinearLayout.LayoutParams(-2, -2));
-
-        row.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         // 静态添加最近输入框，通过 updateRecentInput 控制可见性
         TextView recentView = recentInputBox(context, "");
         recentView.setTag("recent_box");
-        row.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
         updateRecentInput(recentView, session);
 
         LinearLayout footer = new LinearLayout(context);
@@ -101,7 +95,22 @@ public final class SessionRowHelper {
         sizeChip.setTag("size_chip");
         footer.addView(sizeChip); // 移除彩色 Emoji 并直接展示尺寸
 
-        row.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+
+        row.addView(content, new FrameLayout.LayoutParams(-1, -2));
+
+        TextView closeBtn = new TextView(context);
+        closeBtn.setTag("close");
+        closeBtn.setText("✕");
+        closeBtn.setTextColor(Color.rgb(107, 114, 128)); // 弱化关闭按钮颜色，避免视觉喧宾夺主
+        closeBtn.setTextSize(14);
+        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        closeBtn.setGravity(Gravity.CENTER);
+
+        FrameLayout.LayoutParams closeLp = new FrameLayout.LayoutParams(UIUtils.dp(context, 32), UIUtils.dp(context, 32));
+        closeLp.gravity = Gravity.TOP | Gravity.END;
+        closeLp.setMargins(0, UIUtils.dp(context, 4), UIUtils.dp(context, 4), 0);
+        row.addView(closeBtn, closeLp);
 
         row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
 
