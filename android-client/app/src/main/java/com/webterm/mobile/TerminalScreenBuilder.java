@@ -31,6 +31,7 @@ final class TerminalScreenBuilder {
         TerminalViewClient terminalViewClient,
         Runnable onBack,
         Runnable onRetry,
+        Runnable onTodo,
         Runnable onCtrl,
         TextSender textSender
     ) {
@@ -75,6 +76,13 @@ final class TerminalScreenBuilder {
         statusContainer.setOrientation(LinearLayout.HORIZONTAL);
         statusContainer.setGravity(Gravity.CENTER_VERTICAL);
 
+        ImageButton todoButton = new ImageButton(activity);
+        todoButton.setImageResource(com.webterm.mobile.R.drawable.ic_todo);
+        todoButton.setColorFilter(Color.rgb(243, 244, 246));
+        todoButton.setBackground(iconButtonBackground(activity, UIUtils.dp(activity, 18)));
+        todoButton.setPadding(0, 0, 0, 0);
+        todoButton.setOnClickListener((v) -> onTodo.run());
+
         ImageButton retryButton = new ImageButton(activity);
         retryButton.setImageResource(com.webterm.mobile.R.drawable.ic_refresh);
         retryButton.setColorFilter(Color.rgb(243, 244, 246));
@@ -84,6 +92,10 @@ final class TerminalScreenBuilder {
         retryButton.setOnClickListener((v) -> onRetry.run());
 
         StatusIndicatorView statusIndicator = new StatusIndicatorView(activity);
+
+        LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
+        todoLp.setMargins(0, 0, UIUtils.dp(activity, 10), 0);
+        statusContainer.addView(todoButton, todoLp);
 
         LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
         retryLp.setMargins(0, 0, UIUtils.dp(activity, 10), 0);
@@ -120,7 +132,8 @@ final class TerminalScreenBuilder {
         content.addView(terminalViewport, new LinearLayout.LayoutParams(-1, 0, 1));
         root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        View quickBar = createQuickBar(activity, terminalView, onCtrl, textSender);
+        Button[] outCtrlButton = new Button[1];
+        View quickBar = createQuickBar(activity, terminalView, onCtrl, textSender, outCtrlButton);
         root.addView(quickBar, new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, 92)));
 
         Result result = new Result();
@@ -131,7 +144,9 @@ final class TerminalScreenBuilder {
         result.title = title;
         result.subtitle = subtitle;
         result.retryButton = retryButton;
+        result.todoButton = todoButton;
         result.statusIndicator = statusIndicator;
+        result.ctrlButton = outCtrlButton[0];
         return result;
     }
 
@@ -144,7 +159,7 @@ final class TerminalScreenBuilder {
         return bg;
     }
 
-    private static View createQuickBar(Activity activity, TerminalView terminalView, Runnable onCtrl, TextSender textSender) {
+    private static View createQuickBar(Activity activity, TerminalView terminalView, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {
         LinearLayout bar = new LinearLayout(activity);
         bar.setOrientation(LinearLayout.VERTICAL);
         bar.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 7), UIUtils.dp(activity, 8), UIUtils.dp(activity, 7));
@@ -152,7 +167,10 @@ final class TerminalScreenBuilder {
 
         LinearLayout firstRow = quickBarRow(activity);
         LinearLayout secondRow = quickBarRow(activity);
-        addKey(activity, terminalView, firstRow, "Ctrl", onCtrl);
+        Button ctrlButton = addKey(activity, terminalView, firstRow, "Ctrl", onCtrl);
+        if (outCtrlButton != null && outCtrlButton.length > 0) {
+            outCtrlButton[0] = ctrlButton;
+        }
         addKey(activity, terminalView, firstRow, "Esc", () -> textSender.send("\033"));
         addKey(activity, terminalView, firstRow, "C-l", () -> textSender.send("\014"));
         addKey(activity, terminalView, firstRow, "C-d", () -> textSender.send("\004"));
@@ -179,7 +197,7 @@ final class TerminalScreenBuilder {
         return row;
     }
 
-    private static void addKey(Activity activity, TerminalView terminalView, LinearLayout row, String label, Runnable action) {
+    private static Button addKey(Activity activity, TerminalView terminalView, LinearLayout row, String label, Runnable action) {
         Button button = new Button(activity);
         button.setFocusable(false);
         button.setText(label);
@@ -197,6 +215,7 @@ final class TerminalScreenBuilder {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1);
         lp.setMargins(UIUtils.dp(activity, 3), UIUtils.dp(activity, 3), UIUtils.dp(activity, 3), UIUtils.dp(activity, 3));
         row.addView(button, lp);
+        return button;
     }
 
     private static Drawable quickBarButtonBackground(Activity activity, boolean active) {
@@ -219,6 +238,12 @@ final class TerminalScreenBuilder {
         void send(String text);
     }
 
+    static void updateCtrlButtonState(Activity activity, Button ctrlButton, boolean active) {
+        if (ctrlButton != null) {
+            ctrlButton.setBackground(quickBarButtonBackground(activity, active));
+        }
+    }
+
     static final class Result {
         LinearLayout root;
         TerminalView terminalView;
@@ -227,6 +252,8 @@ final class TerminalScreenBuilder {
         TextView title;
         TextView subtitle;
         ImageButton retryButton;
+        ImageButton todoButton;
         StatusIndicatorView statusIndicator;
+        Button ctrlButton;
     }
 }

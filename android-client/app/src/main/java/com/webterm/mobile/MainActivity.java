@@ -29,7 +29,7 @@ import okhttp3.OkHttpClient;
 
 public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host {
 
-    private static final int TRANSCRIPT_ROWS = 20000;
+    private static final int TRANSCRIPT_ROWS = 10000;
     private static final byte[] CLEAR_SCREEN_BYTES = "\u001b[3J\u001b[2J\u001b[H".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     private final OkHttpClient mHttp = new OkHttpClient();
     private final WebTermApi mApi = new WebTermApi(mHttp);
@@ -58,6 +58,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private View mTerminalRoot;
     private View mTerminalViewport;
     private View mQuickBar;
+    private Button mCtrlButton;
     private int mImeOverlap;
 
     @Override
@@ -315,13 +316,18 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             () -> {
                 if (mTerminalConnection != null) mTerminalConnection.reconnectNow();
             },
-            () -> mCtrlDown = true,
+            () -> TodoDialogHelper.show(this, sessionId),
+            () -> {
+                mCtrlDown = !mCtrlDown;
+                TerminalScreenBuilder.updateCtrlButtonState(MainActivity.this, mCtrlButton, mCtrlDown);
+            },
             this::writeTerminal
         );
         mTerminalRoot = terminalScreen.root;
         mTerminalView = terminalScreen.terminalView;
         mTerminalViewport = terminalScreen.terminalViewport;
         mQuickBar = terminalScreen.quickBar;
+        mCtrlButton = terminalScreen.ctrlButton;
         mTerminalTitle = terminalScreen.title;
         mTerminalSubtitle = terminalScreen.subtitle;
         mConnectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton);
@@ -334,8 +340,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, mTerminalSessionClient, mTerminalSessionClient);
         mTerminalView.attachSession(mTerminalSession);
         if (cached == null && diskRestore[0] != null && diskRestore[0].snapshotBytes != null && diskRestore[0].snapshotBytes.length > 0) {
-            mTerminalSession.appendOutput(CLEAR_SCREEN_BYTES);
-            mTerminalSession.appendOutput(diskRestore[0].snapshotBytes);
+            try {
+                mTerminalSession.getEmulator().getScreen().deserialize(diskRestore[0].snapshotBytes);
+            } catch (Throwable t) {
+                android.util.Log.e("MainActivity", "Failed to deserialize snapshot", t);
+            }
         }
         mTerminalView.requestFocus();
         mTerminalRoot.post(() -> {
@@ -389,6 +398,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mTerminalRoot = null;
         mTerminalViewport = null;
         mQuickBar = null;
+        mCtrlButton = null;
+        mCtrlDown = false;
         mImeOverlap = 0;
         mTerminalState.clearTerminalDetails();
         if (mTitleSynchronizer != null) mTitleSynchronizer.reset();
@@ -419,6 +430,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if (mTerminalCache.removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(), mTerminalSession)) {
             mTerminalState.clearPersistence();
         }
+        TodoDialogHelper.clearTodo(this, sessionId);
     }
 
     private void removeMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIdentities) {
@@ -457,7 +469,14 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void clearTerminalControlKey() {
-        mCtrlDown = false;
+        if (mCtrlDown) {
+            mCtrlDown = false;
+            runOnUiThread(() -> {
+                if (mCtrlButton != null) {
+                    TerminalScreenBuilder.updateCtrlButtonState(MainActivity.this, mCtrlButton, false);
+                }
+            });
+        }
     }
 
     @Override
