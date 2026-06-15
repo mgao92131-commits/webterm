@@ -16,3 +16,10 @@ test('auth rejects wrong credentials', () => {
   const auth = new AuthManager({ username: 'admin', password: 'secret' });
   assert.equal(auth.verify('admin', 'bad'), false);
 });
+
+test('auth token handles usernames with dashes', () => {
+  const auth = new AuthManager({ username: 'foo-bar', password: 'secret' });
+  const token = auth.token();
+  assert.equal(auth.verify('foo-bar', 'secret'), true);
+  assert.equal(auth.authenticated({ headers: { cookie: `${COOKIE_NAME}=${encodeURIComponent(token)}` } }), 'foo-bar');
+});

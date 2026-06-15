@@ -38,6 +38,18 @@ if (usersJson) {
   users = [{ username, password, agentSecret }];
 }
 
+// 检查 agentSecret 的唯一性
+const secrets = new Set();
+for (const u of users) {
+  if (u.agentSecret) {
+    if (secrets.has(u.agentSecret)) {
+      console.error(`Duplicate agentSecret config found for user ${u.username}. All agentSecrets must be unique.`);
+      process.exit(1);
+    }
+    secrets.add(u.agentSecret);
+  }
+}
+
 const port = Number(process.env.RELAY_PORT || '9000');
 
 // 复用官方 Web 的认证机制与静态资源目录（支持多用户）
@@ -186,7 +198,7 @@ function ensurePaired(username, clientId, headerDeviceId) {
           type: 'device-connected',
           deviceId: targetDeviceId,
           deviceName: targetAgent.deviceName
-        }, clientId);
+        });
 
         // 主动拉取会话列表
         sendAgentAction(targetAgent, { type: LIST_SESSIONS })
@@ -285,7 +297,7 @@ async function route(req, res) {
     }
 
     const headerDeviceId = req.headers['x-device-id'];
-    const reqClientId = req.headers['x-client-id'];
+    const reqClientId = req.headers['x-client-id'] || `http_${username}`;
 
     try {
       // 获取当前会话列表

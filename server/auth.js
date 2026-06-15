@@ -43,16 +43,20 @@ export class AuthManager {
     const token = parseCookies(req.headers.cookie || '')[COOKIE_NAME];
     if (!token) return null;
     
-    // Support new multi-user token format: v1-${encodeURIComponent(username)}-${signature}
+    // Support new multi-user token format: v1-${base64url(username)}-${signature}
     // As well as old single-user token format: v1-${signature}
-    const match = token.match(/^v1-([^-]+)-(.+)$/);
+    const match = token.match(/^v1-([-A-Za-z0-9_]+)-([-A-Za-z0-9_]{43})$/);
     if (match) {
-      const username = decodeURIComponent(match[1]);
-      const user = this.users.get(username);
-      if (!user) return null;
-      const expectedToken = signToken(username, user.password);
-      if (safeEqual(token, expectedToken)) {
-        return username;
+      try {
+        const username = Buffer.from(match[1], 'base64url').toString('utf8');
+        const user = this.users.get(username);
+        if (!user) return null;
+        const expectedToken = signToken(username, user.password);
+        if (safeEqual(token, expectedToken)) {
+          return username;
+        }
+      } catch {
+        return null;
       }
     } else {
       // Legacy single-user compatibility
@@ -99,7 +103,8 @@ export function parseCookies(header) {
 
 function signToken(username, password) {
   const sig = createHmac('sha256', password).update(username).digest('base64url');
-  return `v1-${encodeURIComponent(username)}-${sig}`;
+  const encodedUser = Buffer.from(username, 'utf8').toString('base64url');
+  return `v1-${encodedUser}-${sig}`;
 }
 
 function safeEqual(a, b) {

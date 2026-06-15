@@ -319,7 +319,9 @@ import { TerminalView } from "./lib/terminal-view.js";
         removeSession(msg.id);
         drawSessionList();
       } else if (msg.type === "error") {
+        state.pairingStatus = "idle";
         setManagerError(msg.message);
+        drawManagerUI();
       }
     });
     state.managerWS.addEventListener("close", () => {
