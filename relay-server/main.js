@@ -10,6 +10,7 @@ import {
   CLIENT_PAIRED, CLIENT_UNPAIRED,
   LIST_SESSIONS, CREATE_SESSION, CLOSE_SESSION, RENAME_SESSION,
   SESSIONS, SESSION_UPDATE, SESSION_CLOSED, SESSION_CREATED,
+  LIST_DEVICES, CONNECT_DEVICE, DEVICES, DEVICE_CONNECTED, DEVICE_DISCONNECTED,
   ERROR,
   encodeRelayFrame, decodeRelayFrame,
   sendJSON, sendBinary
@@ -17,123 +18,211 @@ import {
 
 loadLocalEnv();
 
-const relaySecret = process.env.RELAY_SECRET;
-if (!relaySecret) {
-  console.error('RELAY_SECRET must be set');
-  process.exit(1);
+const usersJson = process.env.RELAY_USERS;
+let users = [];
+if (usersJson) {
+  try {
+    users = JSON.parse(usersJson);
+  } catch (err) {
+    console.error('Failed to parse RELAY_USERS:', err.message);
+    process.exit(1);
+  }
+} else {
+  const password = process.env.RELAY_PASSWORD;
+  const username = process.env.RELAY_USER || 'admin';
+  const agentSecret = process.env.RELAY_SECRET;
+  if (!password || !agentSecret) {
+    console.error('Either RELAY_USERS or (RELAY_PASSWORD and RELAY_SECRET) must be set');
+    process.exit(1);
+  }
+  users = [{ username, password, agentSecret }];
 }
 
-const password = process.env.RELAY_PASSWORD;
-if (!password) {
-  console.error('RELAY_PASSWORD must be set');
-  process.exit(1);
-}
-
-const username = process.env.RELAY_USER || 'admin';
 const port = Number(process.env.RELAY_PORT || '9000');
 
-// 复用官方 Web 的认证机制与静态资源目录
-const auth = new AuthManager({ username, password });
+// 复用官方 Web 的认证机制与静态资源目录（支持多用户）
+const auth = new AuthManager({ users });
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 
 // 内存状态
-const agents = new Map(); // deviceId -> { ws, deviceName, connectedClients: Set<clientId> }
+const agents = new Map(); // deviceId -> { ws, deviceId, deviceName, username }
 const pendingRequests = new Map(); // requestId -> { clientId, deviceId, timer, onAccept, onReject }
+const pendingAgentActions = new Map(); // actionId -> { resolve, reject, timer }
+const sessionClientsMap = new Map(); // globalSessionId -> Set of Client WebSocket
 
-// 原版 API 代理的请求队列（用于异步 WS 命令转同步 HTTP 响应）
-const pendingAgentActions = new Map(); 
+// 控制通道客户端映射：ws -> { username, clientId }
+const managerClients = new Map();
 
-// 数据通道映射：sessionId -> Set of Client WebSocket
-const sessionClientsMap = new Map();
+// 客户端与设备的配对记录：clientId -> deviceId
+const clientPairings = new Map();
 
-// 控制通道客户端集合
-const managerClients = new Set();
+// 正在配对的 Promise 缓存：pairingKey (clientId + '_' + deviceId) -> Promise
+const pendingPairingPromises = new Map();
 
 let nextDeviceId = 1;
 let nextRequestId = 1;
 let nextActionId = 1;
 
-// 自动配对状态
-let pairedAgent = null; 
-let pairingPromise = null;
-
-// 获取第一个可用的在线 Agent（自用单宿主模式）
-function getActiveAgent() {
-  if (agents.size === 0) return null;
-  return Array.from(agents.values())[0];
+// 广播给某个用户名下的所有控制通道客户端
+function broadcastToUser(username, message, excludeClientId = null) {
+  for (const [ws, info] of managerClients.entries()) {
+    if (info.username === username && ws.readyState === 1) {
+      if (excludeClientId && info.clientId === excludeClientId) continue;
+      sendJSON(ws, message);
+    }
+  }
 }
 
-// 确保已成功配对 PC，返回在线 of Agent，若未配对则自动拉起 PC 弹窗并等待
-function ensurePaired() {
-  if (pairedAgent && pairedAgent.ws.readyState === 1) {
-    return Promise.resolve(pairedAgent);
+// 发送给特定的客户端
+function sendJSONToClient(clientId, message) {
+  for (const [ws, info] of managerClients.entries()) {
+    if (info.clientId === clientId && ws.readyState === 1) {
+      sendJSON(ws, message);
+      return true;
+    }
+  }
+  return false;
+}
+
+// 推送设备列表给指定用户
+function pushDevicesToUser(username) {
+  const userDevices = [];
+  for (const agent of agents.values()) {
+    if (agent.username === username && agent.ws.readyState === 1) {
+      userDevices.push({
+        deviceId: agent.deviceId,
+        deviceName: agent.deviceName,
+        status: 'online'
+      });
+    }
+  }
+  broadcastToUser(username, {
+    type: 'devices',
+    devices: userDevices
+  });
+}
+
+// 获取配对的 Agent
+function getPairedAgent(username, clientId, headerDeviceId) {
+  if (headerDeviceId) {
+    const agent = agents.get(headerDeviceId);
+    if (agent && agent.username === username && agent.ws.readyState === 1) {
+      return agent;
+    }
+    return null;
+  }
+  
+  if (clientId) {
+    const pairedId = clientPairings.get(clientId);
+    if (pairedId) {
+      const agent = agents.get(pairedId);
+      if (agent && agent.username === username && agent.ws.readyState === 1) {
+        return agent;
+      }
+    }
+  }
+  
+  // 自动配对：若该用户仅有一个在线设备，自动绑定它
+  const userAgents = Array.from(agents.values()).filter(a => a.username === username && a.ws.readyState === 1);
+  if (userAgents.length === 1) {
+    const agent = userAgents[0];
+    if (clientId) {
+      clientPairings.set(clientId, agent.deviceId);
+    }
+    return agent;
+  }
+  
+  return null;
+}
+
+// 确保已成功配对 PC，返回在线的 Agent
+function ensurePaired(username, clientId, headerDeviceId) {
+  const agent = getPairedAgent(username, clientId, headerDeviceId);
+  if (agent) {
+    return Promise.resolve(agent);
   }
 
-  const agent = getActiveAgent();
-  if (!agent) {
+  const userAgents = Array.from(agents.values()).filter(a => a.username === username && a.ws.readyState === 1);
+  if (userAgents.length === 0) {
     return Promise.reject(new Error('PC Agent 离线，请先在电脑端启动 PC Agent。'));
   }
 
-  if (pairingPromise) {
-    return pairingPromise;
+  const targetDeviceId = headerDeviceId || clientPairings.get(clientId);
+  if (!targetDeviceId) {
+    return Promise.reject(new Error('您有多台电脑在线，请在界面上选择要连接的设备。'));
   }
 
-  pairingPromise = new Promise((resolve, reject) => {
-    const requestId = 'r_auto_' + nextRequestId++;
+  const targetAgent = agents.get(targetDeviceId);
+  if (!targetAgent || targetAgent.username !== username || targetAgent.ws.readyState !== 1) {
+    return Promise.reject(new Error('指定的设备离线或不可用。'));
+  }
+
+  const pairingKey = `${clientId}_${targetDeviceId}`;
+  let pPromise = pendingPairingPromises.get(pairingKey);
+  if (pPromise) return pPromise;
+
+  pPromise = new Promise((resolve, reject) => {
+    const requestId = 'r_' + nextRequestId++;
     const timer = setTimeout(() => {
       pendingRequests.delete(requestId);
-      pairingPromise = null;
+      pendingPairingPromises.delete(pairingKey);
       reject(new Error('配对请求超时，请及时在电脑屏幕上点击 Allow 确认。'));
     }, 30000);
 
     pendingRequests.set(requestId, {
-      clientId: 'web_auto',
-      deviceId: agent.deviceId,
+      clientId,
+      deviceId: targetDeviceId,
       timer,
       onAccept: () => {
-        pairingPromise = null;
-        pairedAgent = agent;
-        // 绑定成功后，告诉 Agent 配对成立以开启数据通道订阅
-        sendJSON(agent.ws, { type: CLIENT_PAIRED, clientId: 'web_auto' });
-        resolve(agent);
+        pendingPairingPromises.delete(pairingKey);
+        clientPairings.set(clientId, targetDeviceId);
+        
+        // 绑定成功后，通知 Agent 配对成立以开启数据通道订阅
+        sendJSON(targetAgent.ws, { type: CLIENT_PAIRED, clientId });
+        resolve(targetAgent);
 
-        // 核心：配对成功后，主动拉取会话列表，并通过控制通道广播给大厅，实现会话卡片的瞬时弹出！
-        sendAgentAction(agent, { type: LIST_SESSIONS })
+        // 广播连接成功
+        broadcastToUser(username, {
+          type: 'device-connected',
+          deviceId: targetDeviceId,
+          deviceName: targetAgent.deviceName
+        }, clientId);
+
+        // 主动拉取会话列表
+        sendAgentAction(targetAgent, { type: LIST_SESSIONS })
           .then(sessions => {
-            const webMsg = {
+            const globalSessions = sessions.map(s => ({ ...s, id: `${targetDeviceId}:${s.id}` }));
+            sendJSONToClient(clientId, {
               type: 'sessions',
-              data: sessions
-            };
-            for (const clientWs of managerClients) {
-              if (clientWs.readyState === 1) {
-                sendJSON(clientWs, webMsg);
-              }
-            }
+              data: globalSessions
+            });
           })
           .catch(err => {
-            console.warn('Failed to broadcast sessions after auto-pair:', err.message);
+            console.warn('Failed to broadcast sessions after pairing:', err.message);
           });
       },
       onReject: () => {
-        pairingPromise = null;
+        pendingPairingPromises.delete(pairingKey);
         reject(new Error('配对请求被电脑端拒绝。'));
         
-        // 广播错误通知给控制通道客户端
-        for (const clientWs of managerClients) {
-          sendJSON(clientWs, { type: 'error', message: '连接被电脑端拒绝' });
-        }
+        sendJSONToClient(clientId, {
+          type: 'device-rejected',
+          deviceId: targetDeviceId,
+          message: '连接被电脑端拒绝'
+        });
       }
     });
 
-    console.log(`Auto pairing triggered: sending CONNECT_REQUEST (${requestId}) to agent ${agent.deviceId}`);
-    sendJSON(agent.ws, {
+    console.log(`Pairing triggered: sending CONNECT_REQUEST (${requestId}) to agent ${targetDeviceId}`);
+    sendJSON(targetAgent.ws, {
       type: CONNECT_REQUEST,
       requestId,
-      clientInfo: '手机网页/App客户端 (自动请求配对)'
+      clientInfo: `网页/App 客户端 (${username})`
     });
   });
 
-  return pairingPromise;
+  pendingPairingPromises.set(pairingKey, pPromise);
+  return pPromise;
 }
 
 // 发送指令给 Agent 并等待回复（异步 WS 转同步 Promise）
@@ -151,7 +240,7 @@ function sendAgentAction(agent, action) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP 路由处理 (兼容原版 node-server 所有的 REST API 接口)
+// HTTP 路由处理
 // ---------------------------------------------------------------------------
 const server = http.createServer((req, res) => {
   route(req, res).catch((err) => {
@@ -171,14 +260,15 @@ async function route(req, res) {
       text(res, 401, 'invalid credentials');
       return;
     }
-    setAuthCookie(res, auth.token(), req.socket.encrypted || process.env.WEBTERM_COOKIE_SECURE === '1');
-    json(res, 200, { username });
+    setAuthCookie(res, auth.token(body.username), req.socket.encrypted || process.env.WEBTERM_COOKIE_SECURE === '1');
+    json(res, 200, { username: body.username });
     return;
   }
 
   // 2. 身份状态获取
   if (req.method === 'GET' && url.pathname === '/api/me') {
-    if (!auth.authenticated(req)) {
+    const username = auth.authenticated(req);
+    if (!username) {
       text(res, 401, 'unauthorized');
       return;
     }
@@ -188,25 +278,30 @@ async function route(req, res) {
 
   // 3. API 转发区 (需要通过 auth 校验且依赖 PC Agent 的响应)
   if (url.pathname.startsWith('/api/')) {
-    if (!auth.authenticated(req)) {
+    const username = auth.authenticated(req);
+    if (!username) {
       text(res, 401, 'unauthorized');
       return;
     }
 
+    const headerDeviceId = req.headers['x-device-id'];
+    const reqClientId = req.headers['x-client-id'];
+
     try {
       // 获取当前会话列表
       if (req.method === 'GET' && url.pathname === '/api/sessions') {
-        // 如果没有配对成功，我们直接秒回空数组，以防止网页白屏挂起！
-        if (!pairedAgent || pairedAgent.ws.readyState !== 1) {
-          // 触发一次后台异步配对申请（这样用户进入页面后会看到大厅，同时电脑端弹窗）
-          ensurePaired().catch(err => console.log('Auto pairing bg check:', err.message));
+        const agent = getPairedAgent(username, reqClientId, headerDeviceId);
+        if (!agent) {
+          // 触发一次后台异步配对申请
+          ensurePaired(username, reqClientId, headerDeviceId).catch(err => console.log('Auto pairing bg check:', err.message));
           json(res, 200, []);
           return;
         }
 
         try {
-          const sessions = await sendAgentAction(pairedAgent, { type: LIST_SESSIONS });
-          json(res, 200, sessions);
+          const sessions = await sendAgentAction(agent, { type: LIST_SESSIONS });
+          const globalSessions = sessions.map(s => ({ ...s, id: `${agent.deviceId}:${s.id}` }));
+          json(res, 200, globalSessions);
         } catch (err) {
           json(res, 200, []);
         }
@@ -216,9 +311,10 @@ async function route(req, res) {
       // 新建终端会话
       if (req.method === 'POST' && url.pathname === '/api/sessions') {
         const body = await readJSON(req);
-        const agent = await ensurePaired();
+        const agent = await ensurePaired(username, reqClientId, headerDeviceId);
         const session = await sendAgentAction(agent, { type: CREATE_SESSION, name: body.name, cwd: body.cwd });
-        json(res, 201, session);
+        const globalSession = { ...session, id: `${agent.deviceId}:${session.id}` };
+        json(res, 201, globalSession);
         return;
       }
 
@@ -226,22 +322,43 @@ async function route(req, res) {
       const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
       if (sessionMatch && req.method === 'PATCH') {
         const body = await readJSON(req);
-        const agent = await ensurePaired();
+        const globalSessionId = decodeURIComponent(sessionMatch[1]);
+        const [targetDeviceId, localSessionId] = globalSessionId.split(':');
+        if (!targetDeviceId || !localSessionId) {
+          text(res, 400, 'invalid session id');
+          return;
+        }
+        const agent = agents.get(targetDeviceId);
+        if (!agent || agent.username !== username || agent.ws.readyState !== 1) {
+          text(res, 503, 'PC Agent offline');
+          return;
+        }
         const session = await sendAgentAction(agent, {
           type: RENAME_SESSION,
-          sessionId: decodeURIComponent(sessionMatch[1]),
+          sessionId: localSessionId,
           name: body.name
         });
-        json(res, 200, session);
+        const globalSession = { ...session, id: `${agent.deviceId}:${session.id}` };
+        json(res, 200, globalSession);
         return;
       }
 
       // 杀死/关闭终端会话
       if (sessionMatch && req.method === 'DELETE') {
-        const agent = await ensurePaired();
+        const globalSessionId = decodeURIComponent(sessionMatch[1]);
+        const [targetDeviceId, localSessionId] = globalSessionId.split(':');
+        if (!targetDeviceId || !localSessionId) {
+          text(res, 400, 'invalid session id');
+          return;
+        }
+        const agent = agents.get(targetDeviceId);
+        if (!agent || agent.username !== username || agent.ws.readyState !== 1) {
+          text(res, 503, 'PC Agent offline');
+          return;
+        }
         await sendAgentAction(agent, {
           type: CLOSE_SESSION,
-          sessionId: decodeURIComponent(sessionMatch[1])
+          sessionId: localSessionId
         });
         res.writeHead(204, { 'Cache-Control': 'no-store' });
         res.end();
@@ -258,12 +375,12 @@ async function route(req, res) {
     return;
   }
 
-  // 4. 其它所有非 API 请求，透明托管复用官方 Web 目录的静态网页
+  // 4. 其它所有静态网页
   await serveStatic(req, res, root);
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket 升级处理 (桥接原版数据流与中继数据流)
+// WebSocket 升级处理
 // ---------------------------------------------------------------------------
 const wssAgent = new WebSocketServer({ noServer: true });
 const wssManager = new WebSocketServer({ noServer: true }); // 控制通道 /ws/sessions
@@ -280,27 +397,28 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  // 网页端/安卓端的请求，需要进行 auth Cookie 验证
-  if (!auth.authenticated(req)) {
+  // 网页端的请求，需要进行 auth Cookie 验证
+  const username = auth.authenticated(req);
+  if (!username) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
     return;
   }
 
-  // B. 网页/安卓的会话管理控制 WebSocket
+  // B. 网页的会话管理控制 WebSocket
   if (url.pathname === '/ws/sessions') {
     wssManager.handleUpgrade(req, socket, head, (ws) => {
-      handleManagerClientConnection(ws);
+      handleManagerClientConnection(ws, username, url);
     });
     return;
   }
 
-  // C. 网页/安卓的会话终端 PTY 传输 WebSocket
+  // C. 网页的会话终端 PTY 传输 WebSocket
   const sessionMatch = url.pathname.match(/^\/ws\/sessions\/([^/]+)$/);
   if (sessionMatch) {
-    const sessionId = decodeURIComponent(sessionMatch[1]);
+    const globalSessionId = decodeURIComponent(sessionMatch[1]);
     wssSession.handleUpgrade(req, socket, head, (ws) => {
-      handleSessionClientConnection(ws, sessionId);
+      handleSessionClientConnection(ws, globalSessionId, username);
     });
     return;
   }
@@ -318,12 +436,12 @@ function handleAgentConnection(ws) {
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
-      // 收到来自 PC Agent 的终端二进制输出流：
-      // 用中继数据解包器拆解，剥掉外衣提取裸终端帧。
+      // 收到来自 PC Agent 的终端二进制输出流
       const relayFrame = decodeRelayFrame(data);
       if (relayFrame) {
-        const { sessionId, terminalFrame } = relayFrame;
-        const clientsForSession = sessionClientsMap.get(sessionId);
+        const { sessionId: localSessionId, terminalFrame } = relayFrame;
+        const globalSessionId = `${registeredDeviceId}:${localSessionId}`;
+        const clientsForSession = sessionClientsMap.get(globalSessionId);
         if (clientsForSession) {
           const type = terminalFrame[0];
           const payload = terminalFrame.subarray(1);
@@ -332,12 +450,9 @@ function handleAgentConnection(ws) {
             if (clientWs.readyState !== 1) continue;
 
             if (clientWs.mode === 'binary') {
-              // 1. 二进制客户端模式：直接转发剥壳后的二进制裸帧
               sendBinary(clientWs, terminalFrame);
             } else {
-              // 2. JSON 客户端模式（如原装 web/app.js）：将输出帧转换为 JSON payload 并广播
               if (type === 0x02) { // MSG_OUTPUT
-                // payload 前 8 字节为 uint64BE seq 序号，后面是真正的文字数据
                 if (payload.length >= 8) {
                   let seq = 0;
                   for (let i = 0; i < 8; i++) {
@@ -370,7 +485,14 @@ function handleAgentConnection(ws) {
 
     // 处理 Agent 设备注册
     if (msg.type === AGENT_REGISTER) {
-      if (msg.secret !== relaySecret) {
+      let matchedUser = null;
+      for (const u of auth.users.values()) {
+        if (u.agentSecret === msg.secret) {
+          matchedUser = u;
+          break;
+        }
+      }
+      if (!matchedUser) {
         sendJSON(ws, { type: ERROR, message: 'Invalid secret' });
         ws.close();
         return;
@@ -380,10 +502,11 @@ function handleAgentConnection(ws) {
         ws,
         deviceId: registeredDeviceId,
         deviceName: msg.deviceName || 'Unknown PC',
-        connectedClients: new Set()
+        username: matchedUser.username
       });
-      console.log(`Agent registered: ${registeredDeviceId} (${msg.deviceName})`);
+      console.log(`Agent registered: ${registeredDeviceId} (${msg.deviceName}) for user ${matchedUser.username}`);
       sendJSON(ws, { type: REGISTERED, deviceId: registeredDeviceId });
+      pushDevicesToUser(matchedUser.username);
       return;
     }
 
@@ -432,24 +555,32 @@ function handleAgentConnection(ws) {
 
     // 收到 PC Agent 侧主动产生的广播消息（大厅的异步同步）
     if ([SESSION_CREATED, SESSION_CLOSED, SESSION_UPDATE].includes(msg.type)) {
-      // 转换为原装 node-server 协议格式，广播发送给所有订阅控制通道的浏览器客户端
+      const agentInfo = agents.get(registeredDeviceId);
+      if (!agentInfo) return;
+
       let webMsg = null;
       if (msg.type === SESSION_CREATED || msg.type === SESSION_UPDATE) {
         webMsg = {
           type: 'session',
-          data: msg.session
+          data: {
+            ...msg.session,
+            id: `${registeredDeviceId}:${msg.session.id}`
+          }
         };
       } else if (msg.type === SESSION_CLOSED) {
         webMsg = {
           type: 'session-closed',
-          id: msg.sessionId
+          id: `${registeredDeviceId}:${msg.sessionId}`
         };
       }
       
       if (webMsg) {
-        for (const clientWs of managerClients) {
-          if (clientWs.readyState === 1) {
-            sendJSON(clientWs, webMsg);
+        for (const [clientWs, info] of managerClients.entries()) {
+          if (info.username === agentInfo.username && clientWs.readyState === 1) {
+            const pairedId = clientPairings.get(info.clientId);
+            if (pairedId === registeredDeviceId) {
+              sendJSON(clientWs, webMsg);
+            }
           }
         }
       }
@@ -459,15 +590,27 @@ function handleAgentConnection(ws) {
   ws.on('close', () => {
     if (registeredDeviceId) {
       console.log(`Agent disconnected: ${registeredDeviceId}`);
+      const agentInfo = agents.get(registeredDeviceId);
       agents.delete(registeredDeviceId);
-      if (pairedAgent && pairedAgent.deviceId === registeredDeviceId) {
-        pairedAgent = null;
-        // 关闭所有已升级的数据连接以触发手机端重连
-        sessionClientsMap.forEach(set => {
-          set.forEach(c => c.close(1001, 'PC Agent offline'));
-        });
-        sessionClientsMap.clear();
+
+      if (agentInfo) {
+        pushDevicesToUser(agentInfo.username);
+        // 清理配对
+        for (const [cId, dId] of clientPairings.entries()) {
+          if (dId === registeredDeviceId) {
+            clientPairings.delete(cId);
+            sendJSONToClient(cId, { type: DEVICE_DISCONNECTED, deviceId: registeredDeviceId });
+          }
+        }
       }
+
+      // 关闭该设备的数据连接
+      sessionClientsMap.forEach((set, globalSessionId) => {
+        if (globalSessionId.startsWith(registeredDeviceId + ':')) {
+          set.forEach(c => c.close(1001, 'PC Agent offline'));
+          sessionClientsMap.delete(globalSessionId);
+        }
+      });
     }
   });
 
@@ -476,33 +619,86 @@ function handleAgentConnection(ws) {
   });
 }
 
-// 网页/App 端控制通道长链接 (监听大厅会话变化)
-function handleManagerClientConnection(ws) {
-  managerClients.add(ws);
+// 网页/App 端控制通道长链接 (监听大厅会话与设备变化)
+function handleManagerClientConnection(ws, username, url) {
+  const clientId = url.searchParams.get('clientId') || 'c_' + Math.random().toString(36).substring(2, 15);
+  managerClients.set(ws, { username, clientId });
+  
   ws.on('close', () => { managerClients.delete(ws); });
   ws.on('error', () => { managerClients.delete(ws); ws.close(); });
+
+  // 1. 立即向客户端推送设备列表
+  pushDevicesToUser(username);
+
+  // 2. 若有已有在线配对的设备，下发状态并拉取会话列表
+  const prevDeviceId = clientPairings.get(clientId);
+  if (prevDeviceId) {
+    const agent = agents.get(prevDeviceId);
+    if (agent && agent.username === username && agent.ws.readyState === 1) {
+      sendJSON(ws, {
+        type: 'device-connected',
+        deviceId: prevDeviceId,
+        deviceName: agent.deviceName
+      });
+      sendAgentAction(agent, { type: LIST_SESSIONS })
+        .then(sessions => {
+          const globalSessions = sessions.map(s => ({ ...s, id: `${prevDeviceId}:${s.id}` }));
+          sendJSON(ws, { type: 'sessions', data: globalSessions });
+        })
+        .catch(err => {
+          console.warn('Failed to pull sessions on manager reconnect:', err.message);
+        });
+    } else {
+      clientPairings.delete(clientId);
+    }
+  }
+
+  // 3. 处理客户端发过来的控制指令
+  ws.on('message', async (data) => {
+    let msg;
+    try {
+      msg = JSON.parse(data.toString('utf8'));
+    } catch {
+      return;
+    }
+
+    if (msg.type === CONNECT_DEVICE) {
+      const { deviceId } = msg;
+      ensurePaired(username, clientId, deviceId).catch(err => {
+        sendJSON(ws, { type: 'error', message: err.message });
+      });
+    } else if (msg.type === LIST_DEVICES) {
+      pushDevicesToUser(username);
+    }
+  });
 }
 
 // 网页/App 端终端二进制数据通道长链接 (PTY 数据流中转)
-function handleSessionClientConnection(ws, sessionId) {
-  // 默认判定为 JSON 协议交互，若是收到二进制字节帧则动态降级为 binary 通讯
+function handleSessionClientConnection(ws, globalSessionId, username) {
   ws.mode = 'json';
 
-  // 接收手机发来的终端二进制指令，穿上 sessionId 封包后投递给 PC Agent
+  const [targetDeviceId, localSessionId] = globalSessionId.split(':');
+  if (!targetDeviceId || !localSessionId) {
+    ws.close(1008, 'Invalid Session ID');
+    return;
+  }
+
+  // 接收手机发来的终端二进制指令，穿上 localSessionId 封包后投递给 PC Agent
   ws.on('message', async (data, isBinary) => {
     try {
-      const agent = await ensurePaired();
-      if (!agent || agent.ws.readyState !== 1) return;
+      const agent = agents.get(targetDeviceId);
+      if (!agent || agent.username !== username || agent.ws.readyState !== 1) {
+        ws.close(1001, 'PC Agent offline');
+        return;
+      }
 
       if (isBinary) {
-        // 二进制模式：直接穿上 sessionId 外衣并发往 PC Agent
         ws.mode = 'binary';
-        const frame = encodeRelayFrame(sessionId, data);
+        const frame = encodeRelayFrame(localSessionId, data);
         sendBinary(agent.ws, frame);
         return;
       }
 
-      // JSON 模式：网页端或旧版 App 的指令，翻译为对应的中继二进制动作帧
       let msg;
       try {
         msg = JSON.parse(data.toString('utf8'));
@@ -528,7 +724,7 @@ function handleSessionClientConnection(ws, sessionId) {
       }
 
       if (terminalFrame) {
-        const frame = encodeRelayFrame(sessionId, terminalFrame);
+        const frame = encodeRelayFrame(localSessionId, terminalFrame);
         sendBinary(agent.ws, frame);
       }
     } catch (err) {
@@ -536,18 +732,18 @@ function handleSessionClientConnection(ws, sessionId) {
     }
   });
 
-  let clientsForSession = sessionClientsMap.get(sessionId);
+  let clientsForSession = sessionClientsMap.get(globalSessionId);
   if (!clientsForSession) {
     clientsForSession = new Set();
-    sessionClientsMap.set(sessionId, clientsForSession);
+    sessionClientsMap.set(globalSessionId, clientsForSession);
   }
   clientsForSession.add(ws);
 
   ws.on('close', () => {
-    const set = sessionClientsMap.get(sessionId);
+    const set = sessionClientsMap.get(globalSessionId);
     if (set) {
       set.delete(ws);
-      if (set.size === 0) sessionClientsMap.delete(sessionId);
+      if (set.size === 0) sessionClientsMap.delete(globalSessionId);
     }
   });
 
@@ -590,3 +786,4 @@ function loadLocalEnv() {
     if (!process.env[key]) process.env[key] = value;
   }
 }
+

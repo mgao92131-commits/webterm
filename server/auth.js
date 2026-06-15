@@ -3,14 +3,19 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 export const COOKIE_NAME = 'webterm_token';
 
 export class AuthManager {
-  constructor({ username, password }) {
-    this.username = username || 'admin';
-    this.password = password;
+  constructor({ username, password, users }) {
     this.failures = new Map();
+    if (users && Array.isArray(users)) {
+      this.users = new Map(users.map(u => [u.username, u]));
+    } else {
+      const defaultUser = username || 'admin';
+      this.users = new Map([[defaultUser, { username: defaultUser, password }]]);
+    }
   }
 
   verify(username, password, remoteAddress = '') {
-    const ok = safeEqual(username || '', this.username) && safeEqual(password || '', this.password);
+    const user = this.users.get(username || '');
+    const ok = user && safeEqual(password || '', user.password);
     if (!ok) {
       const count = (this.failures.get(remoteAddress) || 0) + 1;
       this.failures.set(remoteAddress, count);
@@ -20,13 +25,47 @@ export class AuthManager {
     return true;
   }
 
-  token() {
-    return signToken(this.username, this.password);
+  token(username) {
+    let targetUser = username;
+    if (!targetUser) {
+      if (this.users.size === 1) {
+        targetUser = Array.from(this.users.keys())[0];
+      } else {
+        return '';
+      }
+    }
+    const user = this.users.get(targetUser);
+    if (!user) return '';
+    return signToken(targetUser, user.password);
   }
 
   authenticated(req) {
     const token = parseCookies(req.headers.cookie || '')[COOKIE_NAME];
-    return Boolean(token) && safeEqual(token, this.token());
+    if (!token) return null;
+    
+    // Support new multi-user token format: v1-${encodeURIComponent(username)}-${signature}
+    // As well as old single-user token format: v1-${signature}
+    const match = token.match(/^v1-([^-]+)-(.+)$/);
+    if (match) {
+      const username = decodeURIComponent(match[1]);
+      const user = this.users.get(username);
+      if (!user) return null;
+      const expectedToken = signToken(username, user.password);
+      if (safeEqual(token, expectedToken)) {
+        return username;
+      }
+    } else {
+      // Legacy single-user compatibility
+      if (this.users.size === 1) {
+        const username = Array.from(this.users.keys())[0];
+        const user = this.users.get(username);
+        const expectedOldToken = 'v1-' + createHmac('sha256', user.password).update(username).digest('base64url');
+        if (safeEqual(token, expectedOldToken)) {
+          return username;
+        }
+      }
+    }
+    return null;
   }
 
   failureDelay(remoteAddress = '') {
@@ -59,7 +98,8 @@ export function parseCookies(header) {
 }
 
 function signToken(username, password) {
-  return 'v1-' + createHmac('sha256', password).update(username).digest('base64url');
+  const sig = createHmac('sha256', password).update(username).digest('base64url');
+  return `v1-${encodeURIComponent(username)}-${sig}`;
 }
 
 function safeEqual(a, b) {

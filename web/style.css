@@ -516,3 +516,150 @@ input {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
+
+/* Multi-device layouts */
+.manager-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.device-section, .session-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.device-section h3, .session-section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.device-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.device-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.device-card.active {
+  border-color: var(--accent);
+  background: rgba(38, 139, 210, 0.1);
+}
+
+.device-icon {
+  font-size: 24px;
+}
+
+.device-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.device-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--card-title);
+}
+
+.device-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.device-status-connected {
+  color: #2ecc71;
+}
+
+.device-status-online {
+  color: var(--accent);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  display: inline-block;
+}
+
+.device-status-connected .status-dot {
+  animation: pulse-green 2s infinite;
+}
+
+.device-card.active .device-status:not(.device-status-connected) .status-dot {
+  animation: pulse-yellow 1.5s infinite;
+  background-color: #f1c40f;
+  color: #f1c40f;
+}
+
+@keyframes pulse-green {
+  0% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(46, 204, 113, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
+  }
+}
+
+@keyframes pulse-yellow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(241, 196, 15, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(241, 196, 15, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(241, 196, 15, 0);
+  }
+}
+
+.empty-devices, .empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+/* Disabled button state */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--line) !important;
+}
+
+@media (max-width: 720px) {
+  .manager-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+

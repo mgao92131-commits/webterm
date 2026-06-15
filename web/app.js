@@ -64,6 +64,14 @@ import { TerminalView } from "./lib/terminal-view.js";
     user: null,
     sessions: [],
     theme: THEMES[storedTheme] ? storedTheme : "solarized",
+    clientId: sessionStorage.getItem("webterm-client-id") || (() => {
+      const id = "c_" + Math.random().toString(36).substring(2, 15);
+      sessionStorage.setItem("webterm-client-id", id);
+      return id;
+    })(),
+    devices: [],
+    selectedDeviceId: localStorage.getItem("webterm-selected-device") || null,
+    pairingStatus: "idle", // "idle" | "pending" | "connected"
     ws: null,
     term: null,
     managerTimer: null,
@@ -93,9 +101,12 @@ import { TerminalView } from "./lib/terminal-view.js";
   document.documentElement.dataset.theme = state.theme;
 
   async function api(path, options = {}) {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (state.selectedDeviceId) headers["X-Device-Id"] = state.selectedDeviceId;
+    if (state.clientId) headers["X-Client-Id"] = state.clientId;
     const res = await fetch(path, {
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      headers,
       ...options,
     });
     if (!res.ok) {
@@ -185,7 +196,15 @@ import { TerminalView } from "./lib/terminal-view.js";
     document.title = "WebTerm";
     document.body.classList.remove("terminal-mode");
     disposeTerminalPage();
-    await refreshSessions();
+    
+    if (state.selectedDeviceId) {
+      try {
+        await refreshSessions();
+      } catch (err) {
+        console.warn("Failed to refresh sessions on render:", err.message);
+      }
+    }
+
     app.innerHTML = `
       <section class="manager">
         <header class="topbar">
@@ -195,14 +214,26 @@ import { TerminalView } from "./lib/terminal-view.js";
           </div>
           <div class="actions">
             <button id="theme">${themeButtonLabel()}</button>
-            <button id="new">新建终端</button>
+            <button id="new" ${state.selectedDeviceId && state.pairingStatus === "connected" ? "" : "disabled"}>新建终端</button>
           </div>
         </header>
         <p class="error" id="managerError" hidden></p>
-        <section class="session-list"></section>
+        <div class="manager-layout">
+          <section class="device-section">
+            <h3>设备中心</h3>
+            <div class="device-list"></div>
+          </section>
+          <section class="session-section">
+            <h3>会话列表</h3>
+            <section class="session-list"></section>
+          </section>
+        </div>
       </section>`;
+
     app.querySelector("#new").addEventListener("click", createDefaultSession);
     app.querySelector("#theme").addEventListener("click", toggleTheme);
+    
+    drawDeviceList();
     drawSessionList();
     startManagerRefresh();
     connectManagerWS();
@@ -215,11 +246,13 @@ import { TerminalView } from "./lib/terminal-view.js";
         stopManagerRefresh();
         return;
       }
-      try {
-        await refreshSessions();
-        drawSessionList();
-      } catch (err) {
-        setManagerError(err.message.trim());
+      if (state.selectedDeviceId && state.pairingStatus === "connected") {
+        try {
+          await refreshSessions();
+          drawSessionList();
+        } catch (err) {
+          setManagerError(err.message.trim());
+        }
       }
     }, 3000);
   }
@@ -238,7 +271,7 @@ import { TerminalView } from "./lib/terminal-view.js";
     }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     state.managerManualClose = false;
-    state.managerWS = new WebSocket(`${proto}://${location.host}/ws/sessions`);
+    state.managerWS = new WebSocket(`${proto}://${location.host}/ws/sessions?clientId=${state.clientId}`);
     state.managerWS.addEventListener("open", () => {
       state.managerReconnectAttempts = 0;
       clearManagerReconnect();
@@ -248,7 +281,35 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.managerWS.addEventListener("message", (event) => {
       if (location.pathname !== "/") return;
       const msg = JSON.parse(event.data);
-      if (msg.type === "sessions") {
+      
+      if (msg.type === "devices") {
+        state.devices = Array.isArray(msg.devices) ? msg.devices : [];
+        const activeOnline = state.devices.some(d => d.deviceId === state.selectedDeviceId);
+        if (state.selectedDeviceId && !activeOnline) {
+          state.selectedDeviceId = null;
+          state.pairingStatus = "idle";
+          state.sessions = [];
+        }
+        drawManagerUI();
+      } else if (msg.type === "device-connected") {
+        state.selectedDeviceId = msg.deviceId;
+        localStorage.setItem("webterm-selected-device", msg.deviceId);
+        state.pairingStatus = "connected";
+        setManagerError("");
+        drawManagerUI();
+      } else if (msg.type === "device-rejected") {
+        state.pairingStatus = "idle";
+        setManagerError("连接被电脑端拒绝");
+        drawManagerUI();
+      } else if (msg.type === "device-disconnected") {
+        if (state.selectedDeviceId === msg.deviceId) {
+          state.selectedDeviceId = null;
+          state.pairingStatus = "idle";
+          state.sessions = [];
+          setManagerError("配对设备已离线");
+        }
+        drawManagerUI();
+      } else if (msg.type === "sessions") {
         state.sessions = Array.isArray(msg.data) ? msg.data : [];
         drawSessionList();
       } else if (msg.type === "session") {
@@ -257,6 +318,8 @@ import { TerminalView } from "./lib/terminal-view.js";
       } else if (msg.type === "session-closed") {
         removeSession(msg.id);
         drawSessionList();
+      } else if (msg.type === "error") {
+        setManagerError(msg.message);
       }
     });
     state.managerWS.addEventListener("close", () => {
@@ -306,12 +369,95 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.sessions = state.sessions.filter((session) => session.id !== id);
   }
 
-  function drawSessionList() {
-    const list = app.querySelector(".session-list");
-    if (!state.sessions.length) {
-      list.innerHTML = `<div class="empty">还没有终端</div>`;
+  function drawDeviceList() {
+    const list = app.querySelector(".device-list");
+    if (!list) return;
+
+    if (!state.devices.length) {
+      list.innerHTML = `<div class="empty-devices">暂无在线设备，请先在电脑上启动 PC Agent。</div>`;
       return;
     }
+
+    list.innerHTML = state.devices.map((d) => {
+      const isSelected = d.deviceId === state.selectedDeviceId;
+      const isConnected = isSelected && state.pairingStatus === "connected";
+      const isPending = isSelected && state.pairingStatus === "pending";
+      
+      let statusClass = "device-status-online";
+      let statusLabel = "点击进行配对";
+      if (isConnected) {
+        statusClass = "device-status-connected";
+        statusLabel = "已连接";
+      } else if (isPending) {
+        statusClass = "device-status-pending";
+        statusLabel = "确认中...";
+      }
+
+      return `
+        <div class="device-card ${isSelected ? "active" : ""}" data-device-id="${escapeHTML(d.deviceId)}">
+          <div class="device-icon">💻</div>
+          <div class="device-info">
+            <div class="device-name">${escapeHTML(d.deviceName)}</div>
+            <div class="device-status ${statusClass}">
+              <span class="status-dot"></span>
+              ${statusLabel}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+    list.querySelectorAll(".device-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const deviceId = card.dataset.deviceId;
+        if (deviceId === state.selectedDeviceId && state.pairingStatus === "connected") return;
+        
+        state.selectedDeviceId = deviceId;
+        state.pairingStatus = "pending";
+        setManagerError("");
+        drawManagerUI();
+
+        if (state.managerWS && state.managerWS.readyState === WebSocket.OPEN) {
+          state.managerWS.send(JSON.stringify({
+            type: "connect-device",
+            deviceId
+          }));
+        }
+      });
+    });
+  }
+
+  function drawManagerUI() {
+    drawDeviceList();
+    drawSessionList();
+    const newBtn = app.querySelector("#new");
+    if (newBtn) {
+      if (state.selectedDeviceId && state.pairingStatus === "connected") {
+        newBtn.removeAttribute("disabled");
+      } else {
+        newBtn.setAttribute("disabled", "true");
+      }
+    }
+  }
+
+  function drawSessionList() {
+    const list = app.querySelector(".session-list");
+    if (!list) return;
+
+    if (!state.selectedDeviceId) {
+      list.innerHTML = `<div class="empty">请先在左侧选择并配对一台设备</div>`;
+      return;
+    }
+
+    if (state.pairingStatus === "pending") {
+      list.innerHTML = `<div class="empty">正在请求电脑端配对许可，请及时在电脑屏幕上点击 Allow 确认...</div>`;
+      return;
+    }
+
+    if (!state.sessions.length) {
+      list.innerHTML = `<div class="empty">该设备上还没有终端，点击右上角“新建终端”开启</div>`;
+      return;
+    }
+
     list.innerHTML = state.sessions.map((s) => {
       const displayTitle = sessionDisplayTitle(s);
       const nameLine = sessionNameHTML(s);
@@ -328,11 +474,18 @@ import { TerminalView } from "./lib/terminal-view.js";
           </a>
         </article>`;
     }).join("");
+
     list.querySelectorAll("[data-close]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("关闭这个会话？")) return;
-        await api(`/api/sessions/${encodeURIComponent(btn.dataset.close)}`, { method: "DELETE" });
-        await renderManager();
+      btn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm("确定要关闭这个终端会话吗？")) return;
+        try {
+          await api(`/api/sessions/${encodeURIComponent(btn.dataset.close)}`, { method: "DELETE" });
+          await renderManager();
+        } catch (err) {
+          setManagerError(err.message.trim() || "关闭会话失败");
+        }
       });
     });
   }
