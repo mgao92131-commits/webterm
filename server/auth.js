@@ -45,7 +45,7 @@ export class AuthManager {
     
     // Support new multi-user token format: v1-${base64url(username)}-${signature}
     // As well as old single-user token format: v1-${signature}
-    const match = token.match(/^v1-([-A-Za-z0-9_]+)-([-A-Za-z0-9_]{43})$/);
+    const match = token.match(/^v1-([-A-Za-z0-9_]+)-([-A-Za-z0-9_]{30,90})$/);
     if (match) {
       try {
         const username = Buffer.from(match[1], 'base64url').toString('utf8');

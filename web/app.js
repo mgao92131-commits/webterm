@@ -319,7 +319,9 @@ import { TerminalView } from "./lib/terminal-view.js";
         removeSession(msg.id);
         drawSessionList();
       } else if (msg.type === "error") {
-        state.pairingStatus = "idle";
+        if (state.pairingStatus === "pending") {
+          state.pairingStatus = "idle";
+        }
         setManagerError(msg.message);
         drawManagerUI();
       }
