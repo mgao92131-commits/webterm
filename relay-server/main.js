@@ -200,12 +200,7 @@ function ensurePaired(username, clientId, headerDeviceId) {
           deviceName: targetAgent.deviceName
         });
 
-        // 给其他人广播连接成功消息（排除当前 clientId 避免污染其他 Tab）
-        broadcastToUser(username, {
-          type: 'device-connected',
-          deviceId: targetDeviceId,
-          deviceName: targetAgent.deviceName
-        }, clientId);
+
 
         // 主动拉取会话列表
         sendAgentAction(targetAgent, { type: LIST_SESSIONS })
