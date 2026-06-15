@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { createPty, validateCWD } from './pty-host.js';
 import { EventRing } from './event-ring.js';
 import { createCWDTracker, currentCWD } from './session-state.js';
@@ -25,7 +26,7 @@ const { SerializeAddon } = require('@xterm/addon-serialize');
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 30;
-const SCROLLBACK = 20000;
+const SCROLLBACK = 10000;
 const FALLBACK_TITLE = 'Terminal';
 const MAX_RECENT_INPUT_CHARS = 2000;
 const OUTPUT_BATCH_DELAY_MS = 12;
@@ -34,6 +35,7 @@ const OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
 export class TerminalSession {
   constructor({ id, name, cwd, onExit, onInfo }) {
     this.id = id;
+    this.instanceId = randomUUID();
     this.name = normalizeName(name);
     this.termTitle = '';
     this.cwd = validateCWD(cwd);
@@ -70,6 +72,7 @@ export class TerminalSession {
   info() {
     return {
       id: this.id,
+      instanceId: this.instanceId,
       name: this.name,
       termTitle: this.termTitle,
       displayTitle: sessionDisplayTitle(this.name, this.termTitle),

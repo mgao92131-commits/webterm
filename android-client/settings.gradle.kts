@@ -25,7 +25,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WebTerm Mobile"
+rootProject.name = "webterm"
 include(":app")
 include(":terminal-emulator")
 include(":terminal-view")

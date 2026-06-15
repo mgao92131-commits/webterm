@@ -88,6 +88,10 @@ public final class TerminalRow {
         return mSpaceUsed;
     }
 
+    void setSpaceUsed(short spaceUsed) {
+        this.mSpaceUsed = spaceUsed;
+    }
+
     /** Note that the column may end of second half of wide character. */
     public int findStartOfColumn(int column) {
         if (column == mColumns) return getSpaceUsed();

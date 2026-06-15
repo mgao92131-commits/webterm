@@ -23,3 +23,19 @@ test('event ring trims by frame count', () => {
   assert.equal(ring.canReplayFrom(0), false);
   assert.deepEqual(ring.after(1).map((f) => f.data), ['b', 'c']);
 });
+
+test('event ring trims many frames without shifting active seq order', () => {
+  const ring = new EventRing(3, 1024);
+  for (let i = 0; i < 10; i++) ring.push(String(i));
+  assert.deepEqual(ring.after(0).map((f) => f.data), ['7', '8', '9']);
+  assert.equal(ring.canReplayFrom(7), true);
+  assert.equal(ring.canReplayFrom(6), false);
+});
+
+test('event ring trims by byte count', () => {
+  const ring = new EventRing(10, 3);
+  ring.push('aa');
+  ring.push('bb');
+  ring.push('c');
+  assert.deepEqual(ring.after(0).map((f) => f.data), ['bb', 'c']);
+});

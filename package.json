@@ -6,6 +6,9 @@
   "scripts": {
     "postinstall": "node server/ensure-node-pty-helper.js",
     "start": "node server/main.js",
+    "start:relay": "node relay-server/main.js",
+    "start:agent": "node pc-agent/main.js",
+    "test:client": "node scripts/mock-mobile-client.js",
     "test": "node --test",
     "test:e2e": "playwright test",
     "smoke:binary": "node scripts/smoke-node-binary-ws.cjs"

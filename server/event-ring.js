@@ -3,6 +3,7 @@ export class EventRing {
     this.maxFrames = maxFrames;
     this.maxBytes = maxBytes;
     this.frames = [];
+    this.head = 0;
     this.bytes = 0;
     this.nextSeq = 1;
   }
@@ -24,14 +25,14 @@ export class EventRing {
   }
 
   after(seq) {
-    return this.frames
+    return this.activeFrames()
       .filter((frame) => frame.seq > seq)
       .map(({ seq, data, text, bytes }) => ({ seq, data, text, bytes }));
   }
 
   canReplayFrom(seq) {
-    if (!this.frames.length) return true;
-    return seq >= this.frames[0].seq - 1;
+    if (!this.length()) return true;
+    return seq >= this.frames[this.head].seq - 1;
   }
 
   latestSeq() {
@@ -39,9 +40,25 @@ export class EventRing {
   }
 
   trim() {
-    while (this.frames.length > this.maxFrames || this.bytes > this.maxBytes) {
-      const frame = this.frames.shift();
+    while (this.length() > this.maxFrames || this.bytes > this.maxBytes) {
+      const frame = this.frames[this.head++];
       this.bytes -= frame.byteLength;
     }
+    this.compactIfNeeded();
+  }
+
+  length() {
+    return this.frames.length - this.head;
+  }
+
+  activeFrames() {
+    return this.head === 0 ? this.frames : this.frames.slice(this.head);
+  }
+
+  compactIfNeeded() {
+    if (this.head === 0) return;
+    if (this.head < 1024 && this.head * 2 < this.frames.length) return;
+    this.frames = this.frames.slice(this.head);
+    this.head = 0;
   }
 }

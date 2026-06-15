@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -80,6 +81,7 @@ type SessionManager struct {
 type TerminalSession struct {
 	mu                sync.Mutex
 	id                string
+	instanceID        string
 	name              string
 	termTitle         string
 	cwd               string
@@ -121,6 +123,7 @@ type Outbound struct {
 
 type SessionInfo struct {
 	ID                string    `json:"id"`
+	InstanceID        string    `json:"instanceId"`
 	Name              string    `json:"name"`
 	TermTitle         string    `json:"termTitle"`
 	DisplayTitle      string    `json:"displayTitle"`
@@ -501,6 +504,7 @@ func newTerminalSession(id, name, cwd string, config Config, onExit func(string)
 
 	session := &TerminalSession{
 		id:           id,
+		instanceID:   newInstanceID(),
 		name:         strings.TrimSpace(name),
 		cwd:          cleanCWD,
 		command:      shell,
@@ -517,6 +521,17 @@ func newTerminalSession(id, name, cwd string, config Config, onExit func(string)
 	go session.readPTY()
 	go session.waitProcess(cmd)
 	return session, nil
+}
+
+func newInstanceID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func shellEnv(cwd, zDotDir string) []string {
@@ -890,6 +905,7 @@ func (s *TerminalSession) close() {
 func (s *TerminalSession) infoLocked() SessionInfo {
 	return SessionInfo{
 		ID:                s.id,
+		InstanceID:        s.instanceID,
 		Name:              s.name,
 		TermTitle:         s.termTitleLocked(),
 		DisplayTitle:      s.displayTitleLocked(),

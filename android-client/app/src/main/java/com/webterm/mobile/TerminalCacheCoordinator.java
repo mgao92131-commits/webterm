@@ -19,6 +19,17 @@ final class TerminalCacheCoordinator {
         return diskCache.getCachedSessionsForServer(baseUrl);
     }
 
+    java.util.Map<String, CachedTerminal> getMemorySessionsForServer(String baseUrl) {
+        java.util.Map<String, CachedTerminal> result = new java.util.HashMap<>();
+        String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
+        for (CachedTerminal cached : memoryCache.values()) {
+            if (normalizedBaseUrl.equals(WebTermUrls.normalizeBaseUrl(cached.baseUrl))) {
+                result.put(cached.sessionId, cached);
+            }
+        }
+        return result;
+    }
+
     CachedTerminal getMemory(String baseUrl, String sessionId, String instanceId, String createdAt) {
         String key = SessionIdentity.cacheKey(baseUrl, sessionId, instanceId, createdAt);
         return key.isEmpty() ? null : memoryCache.get(key);
@@ -151,29 +162,9 @@ final class TerminalCacheCoordinator {
     }
 
     private static byte[] snapshotBytes(TerminalSession terminalSession) {
-        String text = snapshotText(terminalSession);
-        return text.getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static String snapshotText(TerminalSession terminalSession) {
         if (terminalSession == null || terminalSession.getEmulator() == null || terminalSession.getEmulator().getScreen() == null) {
-            return "";
+            return new byte[0];
         }
-        String text = terminalSession.getEmulator().getScreen().getTranscriptTextWithFullLinesJoined();
-        return lastLines(text == null ? "" : text, SNAPSHOT_MAX_LINES);
-    }
-
-    private static String lastLines(String text, int maxLines) {
-        if (text.isEmpty() || maxLines <= 0) return text;
-        int lines = 0;
-        for (int i = text.length() - 1; i >= 0; i--) {
-            if (text.charAt(i) == '\n') {
-                lines++;
-                if (lines >= maxLines) {
-                    return text.substring(i + 1);
-                }
-            }
-        }
-        return text;
+        return terminalSession.getEmulator().getScreen().serialize();
     }
 }

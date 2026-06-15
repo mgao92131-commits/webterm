@@ -494,4 +494,104 @@ public final class TerminalBuffer {
         mActiveTranscriptRows = 0;
     }
 
+    public byte[] serialize() {
+        try {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            java.io.DataOutputStream dos = new java.io.DataOutputStream(baos);
+            
+            dos.writeInt(0x54425546); // magic 'TBUF'
+            dos.writeInt(1);          // version
+            dos.writeInt(mColumns);
+            dos.writeInt(mScreenRows);
+            dos.writeInt(mActiveTranscriptRows);
+            dos.writeInt(mScreenFirstRow);
+            dos.writeInt(mTotalRows);
+
+            for (int i = 0; i < mTotalRows; i++) {
+                TerminalRow row = mLines[i];
+                if (row == null) {
+                    dos.writeBoolean(false);
+                } else {
+                    dos.writeBoolean(true);
+                    dos.writeBoolean(row.mLineWrap);
+                    dos.writeShort(row.getSpaceUsed());
+                    
+                    dos.writeInt(row.mText.length);
+                    for (int j = 0; j < row.mText.length; j++) {
+                        dos.writeChar(row.mText[j]);
+                    }
+                    
+                    dos.writeInt(row.mStyle.length);
+                    for (int j = 0; j < row.mStyle.length; j++) {
+                        dos.writeLong(row.mStyle[j]);
+                    }
+                }
+            }
+            dos.flush();
+            return baos.toByteArray();
+        } catch (java.io.IOException e) {
+            return new byte[0];
+        }
+    }
+
+    public void deserialize(byte[] data) {
+        if (data == null || data.length < 28) return;
+        try {
+            java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(data);
+            java.io.DataInputStream dis = new java.io.DataInputStream(bais);
+            
+            int magic = dis.readInt();
+            if (magic != 0x54425546) return;
+            int version = dis.readInt();
+            if (version != 1) return;
+            
+            int tempColumns = dis.readInt();
+            int tempScreenRows = dis.readInt();
+            int tempActiveTranscriptRows = dis.readInt();
+            int tempScreenFirstRow = dis.readInt();
+            int tempTotalRows = dis.readInt();
+            
+            TerminalRow[] tempLines = new TerminalRow[tempTotalRows];
+            
+            for (int i = 0; i < tempTotalRows; i++) {
+                if (dis.readBoolean()) {
+                    boolean lineWrap = dis.readBoolean();
+                    short spaceUsed = dis.readShort();
+                    
+                    int textLen = dis.readInt();
+                    char[] text = new char[textLen];
+                    for (int j = 0; j < textLen; j++) {
+                        text[j] = dis.readChar();
+                    }
+                    
+                    int styleLen = dis.readInt();
+                    long[] style = new long[styleLen];
+                    for (int j = 0; j < styleLen; j++) {
+                        style[j] = dis.readLong();
+                    }
+                    
+                    TerminalRow row = new TerminalRow(tempColumns, TextStyle.NORMAL);
+                    row.mLineWrap = lineWrap;
+                    row.setSpaceUsed(spaceUsed);
+                    row.mText = text;
+                    System.arraycopy(style, 0, row.mStyle, 0, Math.min(style.length, row.mStyle.length));
+                    tempLines[i] = row;
+                } else {
+                    tempLines[i] = new TerminalRow(tempColumns, TextStyle.NORMAL);
+                }
+            }
+            
+            for (int i = 0; i < tempTotalRows; i++) {
+                if (tempLines[i] == null) return;
+            }
+            
+            mColumns = tempColumns;
+            mScreenRows = tempScreenRows;
+            mActiveTranscriptRows = tempActiveTranscriptRows;
+            mScreenFirstRow = tempScreenFirstRow;
+            mTotalRows = tempTotalRows;
+            mLines = tempLines;
+        } catch (Throwable ignored) {
+        }
+    }
 }

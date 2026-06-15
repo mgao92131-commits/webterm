@@ -36,7 +36,6 @@ final class RenameSessionDialogHelper {
 
         EditText input = UIUtils.createInput(host.activity(), "输入新名称");
         input.setText(oldName);
-        input.requestFocus();
         container.addView(input, UIUtils.matchWrap(host.activity()));
 
         LinearLayout btnBar = new LinearLayout(host.activity());
@@ -64,7 +63,22 @@ final class RenameSessionDialogHelper {
         dialog.show();
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | 
+                android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+            );
+            dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
         }
+
+        input.post(() -> {
+            input.requestFocus();
+            input.selectAll();
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) 
+                host.activity().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            }
+        });
 
         cancelBtn.setOnClickListener((v) -> dialog.dismiss());
         submitBtn.setOnClickListener((v) -> {

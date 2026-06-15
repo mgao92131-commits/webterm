@@ -26,6 +26,16 @@ final class TerminalClipboardController {
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
         if (clipboard == null || !clipboard.hasPrimaryClip() || session == null) return;
         CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(activity);
-        if (text != null) session.write(text.toString());
+        if (text != null) {
+            String textStr = text.toString();
+            if (activity instanceof MainActivity) {
+                MainActivity mainActivity = (MainActivity) activity;
+                if (mainActivity.readTerminalControlKey()) {
+                    textStr = "\033[200~" + textStr + "\033[201~";
+                    mainActivity.clearTerminalControlKey();
+                }
+            }
+            session.write(textStr);
+        }
     }
 }

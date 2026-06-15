@@ -24,6 +24,10 @@ final class WebTermTerminalViewClient implements TerminalViewClient {
     @Override public boolean onKeyUp(int keyCode, KeyEvent e) { return false; }
     @Override public boolean onLongPress(MotionEvent event) { return false; }
     @Override public boolean readControlKey() { return host.readTerminalControlKey(); }
+    @Override
+    public void clearControlKey() {
+        host.clearTerminalControlKey();
+    }
     @Override public boolean readAltKey() { return false; }
     @Override public boolean readShiftKey() { return false; }
     @Override public boolean readFnKey() { return false; }

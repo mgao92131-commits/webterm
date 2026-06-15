@@ -356,6 +356,17 @@ public final class TerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                 }
+                if (text != null && mEmulator != null) {
+                    String textStr = text.toString();
+                    boolean hasNewline = textStr.contains("\n") || textStr.contains("\r");
+                    if (hasNewline && mClient.readControlKey()) {
+                        mClient.logInfo(LOG_TAG, "Intercepted IME paste in Ctrl mode: " + textStr);
+                        String wrappedText = "\033[200~" + textStr + "\033[201~";
+                        mTermSession.write(wrappedText);
+                        mClient.clearControlKey();
+                        return true;
+                    }
+                }
                 super.commitText(text, newCursorPosition);
 
                 if (mEmulator == null) return true;

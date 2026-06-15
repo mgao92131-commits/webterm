@@ -42,7 +42,7 @@ final class TerminalLaunchState {
             firstNonBlank(cached == null ? null : cached.sessionName, diskMetadata == null ? null : diskMetadata.sessionName, requestedName, sessionId),
             firstNonBlank(cached == null ? null : cached.createdAt, diskMetadata == null ? null : diskMetadata.createdAt, normalizedCreatedAt, ""),
             firstNonBlank(cached == null ? null : cached.instanceId, diskMetadata == null ? null : diskMetadata.instanceId, normalizedInstanceId, ""),
-            cached != null ? cached.lastSeq : (diskRestore != null ? diskRestore.lastSeq : 0),
+            cached != null ? cached.lastSeq : 0,
             cached != null ? cached.columns : (diskMetadata != null ? diskMetadata.columns : 0),
             cached != null ? cached.rows : (diskMetadata != null ? diskMetadata.rows : 0)
         );

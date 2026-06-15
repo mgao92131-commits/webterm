@@ -52,6 +52,51 @@ final class ServerSessionsLoader {
         if (tempInMemorySessions == null) return false;
         JSONArray sessions = tempInMemorySessions.get(WebTermUrls.normalizeBaseUrl(server.url));
         if (sessions == null) return false;
+
+        if (terminalCache != null) {
+            java.util.Map<String, CachedTerminal> memoryCaches = terminalCache.getMemorySessionsForServer(server.url);
+            java.util.List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server.url);
+            java.util.Map<String, TerminalDiskCache.Metadata> diskMap = new java.util.HashMap<>();
+            if (diskCaches != null) {
+                for (TerminalDiskCache.Metadata meta : diskCaches) {
+                    if (meta.sessionId != null) {
+                        diskMap.put(meta.sessionId, meta);
+                    }
+                }
+            }
+
+            for (int i = 0; i < sessions.length(); i++) {
+                org.json.JSONObject session = sessions.optJSONObject(i);
+                if (session == null) continue;
+                String sessionId = session.optString("id");
+                
+                String termTitle = null;
+                String sessionName = null;
+                
+                CachedTerminal memCached = memoryCaches.get(sessionId);
+                if (memCached != null) {
+                    termTitle = memCached.termTitle;
+                    sessionName = memCached.sessionName;
+                } else {
+                    TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
+                    if (diskCached != null) {
+                        termTitle = diskCached.termTitle;
+                        sessionName = diskCached.sessionName;
+                    }
+                }
+                
+                try {
+                    if (termTitle != null) {
+                        session.put("termTitle", termTitle);
+                    }
+                    if (sessionName != null) {
+                        session.put("name", sessionName);
+                    }
+                } catch (org.json.JSONException ignored) {
+                }
+            }
+        }
+
         listener.onSessionsLoaded(server, sessions);
         listener.onRenderSessions(server, sessions, subList);
         subList.setTag("cached_list");

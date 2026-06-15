@@ -22,7 +22,6 @@ public final class SessionRowHelper {
         final String nameText = session.optString("name", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
-        String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
         String cwd = session.optString("cwd", "");
 
         FrameLayout row = new FrameLayout(context);
@@ -85,17 +84,7 @@ public final class SessionRowHelper {
         content.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
         updateRecentInput(recentView, session);
 
-        LinearLayout footer = new LinearLayout(context);
-        footer.setOrientation(LinearLayout.HORIZONTAL);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(0, UIUtils.dp(context, 8), 0, 0);
 
-        footer.addView(createChip(context, "id: " + id)); // 移除彩色 Emoji
-        TextView sizeChip = createChip(context, size);
-        sizeChip.setTag("size_chip");
-        footer.addView(sizeChip); // 移除彩色 Emoji 并直接展示尺寸
-
-        content.addView(footer, new LinearLayout.LayoutParams(-1, -2));
 
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
@@ -133,7 +122,6 @@ public final class SessionRowHelper {
         TextView subtitleView = row.findViewWithTag("subtitle");
         TextView pathView = row.findViewWithTag("path");
         TextView recentView = row.findViewWithTag("recent_box");
-        TextView sizeChip = row.findViewWithTag("size_chip");
 
         String id = session.optString("id");
         String rawTermTitle = session.optString("termTitle", "").trim();
@@ -141,7 +129,6 @@ public final class SessionRowHelper {
         final String nameText = session.optString("name", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
-        String size = session.optInt("cols", 0) + "x" + session.optInt("rows", 0);
         String cwd = session.optString("cwd", "");
 
         if (titleView != null) {
@@ -165,9 +152,7 @@ public final class SessionRowHelper {
         if (recentView != null) {
             updateRecentInput(recentView, session);
         }
-        if (sizeChip != null) {
-            sizeChip.setText(size);
-        }
+
 
         // 重新绑定点击/长按闭包以同步最新标题
         row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
@@ -214,23 +199,7 @@ public final class SessionRowHelper {
         return view;
     }
 
-    private static TextView createChip(android.content.Context context, String text) {
-        TextView view = new TextView(context);
-        view.setText(text);
-        view.setTextColor(Color.rgb(107, 114, 128)); // 弱化标签文字颜色
-        view.setTextSize(10);
-        view.setPadding(UIUtils.dp(context, 6), UIUtils.dp(context, 2), UIUtils.dp(context, 6), UIUtils.dp(context, 2));
 
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(Color.argb(12, 107, 114, 128)); // 弱化半透明背景
-        gd.setCornerRadius(UIUtils.dp(context, 10));
-        view.setBackground(gd);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-        lp.setMargins(0, 0, UIUtils.dp(context, 6), 0);
-        view.setLayoutParams(lp);
-        return view;
-    }
 
     private static String recentInputText(JSONArray lines) {
         if (lines == null || lines.length() == 0) return "";

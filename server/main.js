@@ -30,6 +30,14 @@ const server = http.createServer((req, res) => route(req, res).catch((err) => {
 const wss = new WebSocketServer({
   noServer: true,
   handleProtocols: selectWebSocketProtocol,
+  perMessageDeflate: {
+    threshold: 1024,
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+    zlibDeflateOptions: {
+      level: 3,
+    },
+  },
 });
 
 server.on('upgrade', (req, socket, head) => {

@@ -52,6 +52,8 @@ public interface TerminalViewClient {
 
     boolean readControlKey();
 
+    void clearControlKey();
+
     boolean readAltKey();
 
     boolean readShiftKey();

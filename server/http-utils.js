@@ -54,23 +54,31 @@ export async function serveStatic(req, res, root) {
     });
     createReadStream(target).pipe(res);
   } catch {
-    const index = path.join(rootResolved, 'index.html');
-    const stat = await fs.stat(index);
-    res.writeHead(200, {
-      'Content-Type': MIME['.html'],
-      'Content-Length': stat.size,
-      'Cache-Control': 'no-store',
-    });
-    createReadStream(index).pipe(res);
+    try {
+      const index = path.join(rootResolved, 'index.html');
+      const stat = await fs.stat(index);
+      res.writeHead(200, {
+        'Content-Type': MIME['.html'],
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store',
+      });
+      createReadStream(index).pipe(res);
+    } catch {
+      text(res, 404, 'not found');
+    }
   }
 }
 
 export function sameHostOrigin(req) {
   const origin = req.headers.origin;
-  if (!origin) return true;
+  if (!origin) return allowEmptyOrigin();
   try {
     return new URL(origin).host.toLowerCase() === String(req.headers.host || '').toLowerCase();
   } catch {
     return false;
   }
+}
+
+function allowEmptyOrigin() {
+  return process.env.WEBTERM_STRICT_ORIGIN !== '1';
 }
