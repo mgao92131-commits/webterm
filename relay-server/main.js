@@ -23,6 +23,14 @@ let users = [];
 if (usersJson) {
   try {
     users = JSON.parse(usersJson);
+    if (!Array.isArray(users)) {
+      throw new Error('RELAY_USERS must be a JSON array');
+    }
+    for (const u of users) {
+      if (!u.username || !u.password || !u.agentSecret) {
+        throw new Error(`User config missing required fields (username, password, agentSecret) for user: ${JSON.stringify(u)}`);
+      }
+    }
   } catch (err) {
     console.error('Failed to parse RELAY_USERS:', err.message);
     process.exit(1);
@@ -638,8 +646,35 @@ function handleManagerClientConnection(ws, username, url) {
   const clientId = url.searchParams.get('clientId') || 'c_' + Math.random().toString(36).substring(2, 15);
   managerClients.set(ws, { username, clientId });
   
-  ws.on('close', () => { managerClients.delete(ws); });
-  ws.on('error', () => { managerClients.delete(ws); ws.close(); });
+  ws.on('close', () => {
+    managerClients.delete(ws);
+    const pairedDeviceId = clientPairings.get(clientId);
+    if (pairedDeviceId) {
+      clientPairings.delete(clientId);
+      
+      // 检查该用户下是否还有其他 manager 客户端同样配对了这台设备
+      let stillPaired = false;
+      for (const [otherWs, info] of managerClients.entries()) {
+        if (info.username === username && otherWs.readyState === 1) {
+          if (clientPairings.get(info.clientId) === pairedDeviceId) {
+            stillPaired = true;
+            break;
+          }
+        }
+      }
+      
+      if (!stillPaired) {
+        const agent = agents.get(pairedDeviceId);
+        if (agent && agent.ws.readyState === 1) {
+          sendJSON(agent.ws, { type: CLIENT_UNPAIRED, clientId });
+        }
+      }
+    }
+  });
+
+  ws.on('error', () => {
+    ws.close();
+  });
 
   // 1. 立即向客户端推送设备列表
   pushDevicesToUser(username);
