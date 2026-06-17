@@ -444,7 +444,24 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             public void onMonitorError(String errorMsg) {
                 activity().runOnUiThread(() -> {
                     if (errorMsg != null && errorMsg.contains("401")) {
-                        updateSubtitleState(RelayState.AUTH_FAILED);
+                        if (mRelayMasterConfig != null && mRelayMasterConfig.username != null && !mRelayMasterConfig.username.isEmpty() && mRelayMasterConfig.password != null && !mRelayMasterConfig.password.isEmpty()) {
+                            updateSubtitleState(RelayState.CONNECTING);
+                            mApi.login(mRelayMasterConfig.url, mRelayMasterConfig.username, mRelayMasterConfig.password, new WebTermApi.LoginCallback() {
+                                @Override
+                                public void onReady(String url, String cookie) {
+                                    mRelayMasterConfig.cookie = cookie;
+                                    saveServersToPrefs();
+                                    startRelayMonitor();
+                                }
+
+                                @Override
+                                public void onError(String message) {
+                                    updateSubtitleState(RelayState.AUTH_FAILED);
+                                }
+                            });
+                        } else {
+                            updateSubtitleState(RelayState.AUTH_FAILED);
+                        }
                     } else {
                         updateSubtitleState(RelayState.CONNECT_FAILED);
                     }

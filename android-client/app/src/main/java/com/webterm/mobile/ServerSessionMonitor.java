@@ -90,11 +90,27 @@ final class ServerSessionMonitor {
 
             @Override
             public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+                if (response != null && response.code() == 401) {
+                    connected = false;
+                    if (webSocket == ServerSessionMonitor.this.webSocket) {
+                        ServerSessionMonitor.this.webSocket = null;
+                    }
+                    listener.onMonitorError("401");
+                    return;
+                }
                 onDisconnected(webSocket);
             }
 
             @Override
             public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+                if (code == 4001 || "Unauthorized".equalsIgnoreCase(reason)) {
+                    connected = false;
+                    if (webSocket == ServerSessionMonitor.this.webSocket) {
+                        ServerSessionMonitor.this.webSocket = null;
+                    }
+                    listener.onMonitorError("401");
+                    return;
+                }
                 onDisconnected(webSocket);
             }
         });
