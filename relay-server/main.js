@@ -6,11 +6,10 @@ import { WebSocketServer } from 'ws';
 import { AuthManager, setAuthCookie } from '../server/auth.js';
 import { serveStatic, json, text, readJSON } from '../server/http-utils.js';
 import {
-  AGENT_REGISTER, REGISTERED, CONNECT_REQUEST, CONNECT_ACCEPT, CONNECT_REJECT,
-  CLIENT_PAIRED, CLIENT_UNPAIRED,
+  AGENT_REGISTER, REGISTERED,
   LIST_SESSIONS, CREATE_SESSION, CLOSE_SESSION, RENAME_SESSION,
   SESSIONS, SESSION_UPDATE, SESSION_CLOSED, SESSION_CREATED,
-  LIST_DEVICES, CONNECT_DEVICE, DEVICES, DEVICE_CONNECTED, DEVICE_DISCONNECTED,
+  LIST_DEVICES,
   ERROR,
   encodeRelayFrame, decodeRelayFrame,
   sendJSON, sendBinary
@@ -66,22 +65,29 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'w
 
 // 内存状态
 const agents = new Map(); // deviceId -> { ws, deviceId, deviceName, username }
-const pendingRequests = new Map(); // requestId -> { clientId, deviceId, timer, onAccept, onReject }
 const pendingAgentActions = new Map(); // actionId -> { resolve, reject, timer }
 const sessionClientsMap = new Map(); // globalSessionId -> Set of Client WebSocket
 
 // 控制通道客户端映射：ws -> { username, clientId }
 const managerClients = new Map();
 
-// 客户端与设备的配对记录：clientId -> deviceId
-const clientPairings = new Map();
-
-// 正在配对的 Promise 缓存：pairingKey (clientId + '_' + deviceId) -> Promise
-const pendingPairingPromises = new Map();
-
 let nextDeviceId = 1;
-let nextRequestId = 1;
 let nextActionId = 1;
+
+// 获取用户可用的 Agent
+function getAgentForUser(username, deviceId) {
+  if (deviceId) {
+    const agent = agents.get(deviceId);
+    if (agent && agent.username === username && agent.ws.readyState === 1) {
+      return agent;
+    }
+    return null;
+  }
+  // 若该用户仅有一个在线设备，自动返回
+  const userAgents = Array.from(agents.values()).filter(a => a.username === username && a.ws.readyState === 1);
+  if (userAgents.length === 1) return userAgents[0];
+  return null;
+}
 
 // 广播给某个用户名下的所有控制通道客户端
 function broadcastToUser(username, message, excludeClientId = null) {
@@ -91,17 +97,6 @@ function broadcastToUser(username, message, excludeClientId = null) {
       sendJSON(ws, message);
     }
   }
-}
-
-// 发送给特定的客户端
-function sendJSONToClient(clientId, message) {
-  for (const [ws, info] of managerClients.entries()) {
-    if (info.clientId === clientId && ws.readyState === 1) {
-      sendJSON(ws, message);
-      return true;
-    }
-  }
-  return false;
 }
 
 // 推送设备列表给指定用户
@@ -120,131 +115,6 @@ function pushDevicesToUser(username) {
     type: 'devices',
     devices: userDevices
   });
-}
-
-// 获取配对的 Agent
-function getPairedAgent(username, clientId, headerDeviceId) {
-  if (headerDeviceId) {
-    const agent = agents.get(headerDeviceId);
-    if (agent && agent.username === username && agent.ws.readyState === 1) {
-      return agent;
-    }
-    return null;
-  }
-  
-  if (clientId) {
-    const pairedId = clientPairings.get(clientId);
-    if (pairedId) {
-      const agent = agents.get(pairedId);
-      if (agent && agent.username === username && agent.ws.readyState === 1) {
-        return agent;
-      }
-    }
-  }
-  
-  // 自动配对：若该用户仅有一个在线设备，自动绑定它
-  const userAgents = Array.from(agents.values()).filter(a => a.username === username && a.ws.readyState === 1);
-  if (userAgents.length === 1) {
-    const agent = userAgents[0];
-    if (clientId) {
-      clientPairings.set(clientId, agent.deviceId);
-    }
-    return agent;
-  }
-  
-  return null;
-}
-
-// 确保已成功配对 PC，返回在线的 Agent
-function ensurePaired(username, clientId, headerDeviceId) {
-  const agent = getPairedAgent(username, clientId, headerDeviceId);
-  if (agent) {
-    return Promise.resolve(agent);
-  }
-
-  const userAgents = Array.from(agents.values()).filter(a => a.username === username && a.ws.readyState === 1);
-  if (userAgents.length === 0) {
-    return Promise.reject(new Error('PC Agent 离线，请先在电脑端启动 PC Agent。'));
-  }
-
-  const targetDeviceId = headerDeviceId || clientPairings.get(clientId);
-  if (!targetDeviceId) {
-    return Promise.reject(new Error('您有多台电脑在线，请在界面上选择要连接的设备。'));
-  }
-
-  const targetAgent = agents.get(targetDeviceId);
-  if (!targetAgent || targetAgent.username !== username || targetAgent.ws.readyState !== 1) {
-    return Promise.reject(new Error('指定的设备离线或不可用。'));
-  }
-
-  const pairingKey = `${clientId}_${targetDeviceId}`;
-  let pPromise = pendingPairingPromises.get(pairingKey);
-  if (pPromise) return pPromise;
-
-  pPromise = new Promise((resolve, reject) => {
-    const requestId = 'r_' + nextRequestId++;
-    const timer = setTimeout(() => {
-      pendingRequests.delete(requestId);
-      pendingPairingPromises.delete(pairingKey);
-      reject(new Error('配对请求超时，请及时在电脑屏幕上点击 Allow 确认。'));
-    }, 30000);
-
-    pendingRequests.set(requestId, {
-      clientId,
-      deviceId: targetDeviceId,
-      timer,
-      onAccept: () => {
-        pendingPairingPromises.delete(pairingKey);
-        clientPairings.set(clientId, targetDeviceId);
-        
-        // 绑定成功后，通知 Agent 配对成立以开启数据通道订阅
-        sendJSON(targetAgent.ws, { type: CLIENT_PAIRED, clientId });
-        resolve(targetAgent);
-
-        // 给发起者单独发连接成功消息
-        sendJSONToClient(clientId, {
-          type: 'device-connected',
-          deviceId: targetDeviceId,
-          deviceName: targetAgent.deviceName
-        });
-
-
-
-        // 主动拉取会话列表
-        sendAgentAction(targetAgent, { type: LIST_SESSIONS })
-          .then(sessions => {
-            const globalSessions = sessions.map(s => ({ ...s, id: `${targetDeviceId}:${s.id}` }));
-            sendJSONToClient(clientId, {
-              type: 'sessions',
-              data: globalSessions
-            });
-          })
-          .catch(err => {
-            console.warn('Failed to broadcast sessions after pairing:', err.message);
-          });
-      },
-      onReject: () => {
-        pendingPairingPromises.delete(pairingKey);
-        reject(new Error('配对请求被电脑端拒绝。'));
-        
-        sendJSONToClient(clientId, {
-          type: 'device-rejected',
-          deviceId: targetDeviceId,
-          message: '连接被电脑端拒绝'
-        });
-      }
-    });
-
-    console.log(`Pairing triggered: sending CONNECT_REQUEST (${requestId}) to agent ${targetDeviceId}`);
-    sendJSON(targetAgent.ws, {
-      type: CONNECT_REQUEST,
-      requestId,
-      clientInfo: `网页/App 客户端 (${username})`
-    });
-  });
-
-  pendingPairingPromises.set(pairingKey, pPromise);
-  return pPromise;
 }
 
 // 发送指令给 Agent 并等待回复（异步 WS 转同步 Promise）
@@ -307,15 +177,12 @@ async function route(req, res) {
     }
 
     const headerDeviceId = req.headers['x-device-id'];
-    const reqClientId = req.headers['x-client-id'] || `http_${username}`;
 
     try {
       // 获取当前会话列表
       if (req.method === 'GET' && url.pathname === '/api/sessions') {
-        const agent = getPairedAgent(username, reqClientId, headerDeviceId);
+        const agent = getAgentForUser(username, headerDeviceId);
         if (!agent) {
-          // 触发一次后台异步配对申请
-          ensurePaired(username, reqClientId, headerDeviceId).catch(err => console.log('Auto pairing bg check:', err.message));
           json(res, 200, []);
           return;
         }
@@ -333,7 +200,11 @@ async function route(req, res) {
       // 新建终端会话
       if (req.method === 'POST' && url.pathname === '/api/sessions') {
         const body = await readJSON(req);
-        const agent = await ensurePaired(username, reqClientId, headerDeviceId);
+        const agent = getAgentForUser(username, headerDeviceId);
+        if (!agent) {
+          text(res, 503, 'PC Agent 离线，请先在电脑端启动 PC Agent。');
+          return;
+        }
         const session = await sendAgentAction(agent, { type: CREATE_SESSION, name: body.name, cwd: body.cwd });
         const globalSession = { ...session, id: `${agent.deviceId}:${session.id}` };
         json(res, 201, globalSession);
@@ -534,22 +405,6 @@ function handleAgentConnection(ws) {
 
     if (!registeredDeviceId) return;
 
-    // 处理配对弹窗反馈 (来自 PC Agent 允许或拒绝)
-    if (msg.type === CONNECT_ACCEPT || msg.type === CONNECT_REJECT) {
-      const { requestId } = msg;
-      const reqInfo = pendingRequests.get(requestId);
-      if (reqInfo) {
-        clearTimeout(reqInfo.timer);
-        pendingRequests.delete(requestId);
-        if (msg.type === CONNECT_ACCEPT) {
-          reqInfo.onAccept();
-        } else {
-          reqInfo.onReject();
-        }
-      }
-      return;
-    }
-
     // 处理 API 同步命令的回应，解决 pending Agent action Promise
     if (msg.actionId) {
       const actionInfo = pendingAgentActions.get(msg.actionId);
@@ -599,10 +454,7 @@ function handleAgentConnection(ws) {
       if (webMsg) {
         for (const [clientWs, info] of managerClients.entries()) {
           if (info.username === agentInfo.username && clientWs.readyState === 1) {
-            const pairedId = clientPairings.get(info.clientId);
-            if (pairedId === registeredDeviceId) {
-              sendJSON(clientWs, webMsg);
-            }
+            sendJSON(clientWs, webMsg);
           }
         }
       }
@@ -617,13 +469,6 @@ function handleAgentConnection(ws) {
 
       if (agentInfo) {
         pushDevicesToUser(agentInfo.username);
-        // 清理配对
-        for (const [cId, dId] of clientPairings.entries()) {
-          if (dId === registeredDeviceId) {
-            clientPairings.delete(cId);
-            sendJSONToClient(cId, { type: DEVICE_DISCONNECTED, deviceId: registeredDeviceId });
-          }
-        }
       }
 
       // 关闭该设备的数据连接
@@ -645,31 +490,9 @@ function handleAgentConnection(ws) {
 function handleManagerClientConnection(ws, username, url) {
   const clientId = url.searchParams.get('clientId') || 'c_' + Math.random().toString(36).substring(2, 15);
   managerClients.set(ws, { username, clientId });
-  
+
   ws.on('close', () => {
     managerClients.delete(ws);
-    const pairedDeviceId = clientPairings.get(clientId);
-    if (pairedDeviceId) {
-      clientPairings.delete(clientId);
-      
-      // 检查该用户下是否还有其他 manager 客户端同样配对了这台设备
-      let stillPaired = false;
-      for (const [otherWs, info] of managerClients.entries()) {
-        if (info.username === username && otherWs.readyState === 1) {
-          if (clientPairings.get(info.clientId) === pairedDeviceId) {
-            stillPaired = true;
-            break;
-          }
-        }
-      }
-      
-      if (!stillPaired) {
-        const agent = agents.get(pairedDeviceId);
-        if (agent && agent.ws.readyState === 1) {
-          sendJSON(agent.ws, { type: CLIENT_UNPAIRED, clientId });
-        }
-      }
-    }
   });
 
   ws.on('error', () => {
@@ -679,26 +502,19 @@ function handleManagerClientConnection(ws, username, url) {
   // 1. 立即向客户端推送设备列表
   pushDevicesToUser(username);
 
-  // 2. 若有已有在线配对的设备，下发状态并拉取会话列表
-  const prevDeviceId = clientPairings.get(clientId);
-  if (prevDeviceId) {
-    const agent = agents.get(prevDeviceId);
-    if (agent && agent.username === username && agent.ws.readyState === 1) {
-      sendJSON(ws, {
-        type: 'device-connected',
-        deviceId: prevDeviceId,
-        deviceName: agent.deviceName
-      });
+  // 2. 若客户端已选定设备，自动拉取会话列表
+  const headerDeviceId = url.searchParams.get('deviceId');
+  if (headerDeviceId) {
+    const agent = getAgentForUser(username, headerDeviceId);
+    if (agent) {
       sendAgentAction(agent, { type: LIST_SESSIONS })
         .then(sessions => {
-          const globalSessions = sessions.map(s => ({ ...s, id: `${prevDeviceId}:${s.id}` }));
+          const globalSessions = sessions.map(s => ({ ...s, id: `${agent.deviceId}:${s.id}` }));
           sendJSON(ws, { type: 'sessions', data: globalSessions });
         })
         .catch(err => {
-          console.warn('Failed to pull sessions on manager reconnect:', err.message);
+          console.warn('Failed to pull sessions on manager connect:', err.message);
         });
-    } else {
-      clientPairings.delete(clientId);
     }
   }
 
@@ -711,13 +527,28 @@ function handleManagerClientConnection(ws, username, url) {
       return;
     }
 
-    if (msg.type === CONNECT_DEVICE) {
-      const { deviceId } = msg;
-      ensurePaired(username, clientId, deviceId).catch(err => {
-        sendJSON(ws, { type: 'error', message: err.message });
-      });
-    } else if (msg.type === LIST_DEVICES) {
+    if (msg.type === LIST_DEVICES) {
       pushDevicesToUser(username);
+    } else if (msg.type === 'connect-device') {
+      const { deviceId } = msg;
+      const agent = getAgentForUser(username, deviceId);
+      if (agent) {
+        sendJSON(ws, {
+          type: 'device-connected',
+          deviceId: agent.deviceId,
+          deviceName: agent.deviceName
+        });
+        sendAgentAction(agent, { type: LIST_SESSIONS })
+          .then(sessions => {
+            const globalSessions = sessions.map(s => ({ ...s, id: `${agent.deviceId}:${s.id}` }));
+            sendJSON(ws, { type: 'sessions', data: globalSessions });
+          })
+          .catch(err => {
+            console.warn('Failed to pull sessions on connect-device:', err.message);
+          });
+      } else {
+        sendJSON(ws, { type: 'error', message: '设备离线或不可用' });
+      }
     }
   });
 }

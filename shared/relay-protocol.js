@@ -21,29 +21,18 @@ export {
 
 // Agent → Relay
 export const AGENT_REGISTER = 'agent-register';
-export const CONNECT_ACCEPT = 'connect-accept';
-export const CONNECT_REJECT = 'connect-reject';
 
 // Relay → Agent
 export const REGISTERED = 'registered';
-export const CONNECT_REQUEST = 'connect-request';
-export const CLIENT_PAIRED = 'client-paired';
-export const CLIENT_UNPAIRED = 'client-unpaired';
 
 // Client (mobile) → Relay
 export const AUTH = 'auth';
 export const LIST_DEVICES = 'list-devices';
-export const CONNECT_DEVICE = 'connect-device';
-export const DISCONNECT_DEVICE = 'disconnect-device';
 
 // Relay → Client (mobile)
 export const AUTHENTICATED = 'authenticated';
 export const AUTH_FAILED = 'auth-failed';
 export const DEVICES = 'devices';
-export const CONNECT_PENDING = 'connect-pending';
-export const DEVICE_CONNECTED = 'device-connected';
-export const DEVICE_REJECTED = 'device-rejected';
-export const DEVICE_DISCONNECTED = 'device-disconnected';
 
 // Forwarded between client ↔ agent (relay transparent pass-through)
 export const LIST_SESSIONS = 'list-sessions';

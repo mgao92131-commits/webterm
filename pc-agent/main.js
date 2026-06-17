@@ -3,13 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { showConfirmDialog } from './auth-prompt.js';
 import { TerminalSession } from '../server/terminal-session.js';
 import {
-  AGENT_REGISTER, REGISTERED, CONNECT_REQUEST, CONNECT_ACCEPT, CONNECT_REJECT,
-  CLIENT_PAIRED, CLIENT_UNPAIRED,
+  AGENT_REGISTER, REGISTERED,
   LIST_SESSIONS, CREATE_SESSION, CLOSE_SESSION, RENAME_SESSION,
-  SESSIONS, SESSION_UPDATE, SESSION_CLOSED, SESSION_CREATED,
+  SESSIONS, SESSION_UPDATE, SESSION_CLOSED, SESSION_CREATED, ERROR,
   MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO, MSG_PING, MSG_PONG, MSG_INFO, MSG_EXIT,
   encodeRelayFrame, decodeRelayFrame,
   encodeOutput, encodeJSON, encodeEmpty, decodeJSONPayload,
@@ -36,9 +34,6 @@ const deviceName = process.env.DEVICE_NAME || os.hostname();
 const sessions = new Map();
 let nextSessionId = 1;
 
-// 当前已配对的手机客户端
-const connectedClients = new Set();
-
 let ws = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000; // 初始重连延时 1 秒
@@ -49,17 +44,30 @@ class RelayClient {
     this.sessionId = sessionId;
     this.relaySend = relaySendFn;
     this.ready = true;
+
+    // 用于 12ms 攒包缓冲区
+    this.pendingOutputBuffers = [];
+    this.pendingOutputBytes = 0;
+    this.pendingOutputSeq = 0;
+    this.outputBatchTimer = null;
   }
 
   send(message) {
     if (!ws || ws.readyState !== 1) return false;
     
     if (message.type === 'output') {
+      if (message.batch === true) {
+        return this.sendBatchedOutput(message);
+      }
+      this.flushPendingOutput();
       const bytes = message.bytes || Buffer.from(message.data || '', 'utf8');
       const termFrame = encodeOutput(message.seq, bytes);
       const frame = encodeRelayFrame(this.sessionId, termFrame);
       return this.relaySend(frame, true); // 发送二进制
     }
+
+    this.flushPendingOutput();
+
     if (message.type === 'info') {
       return this.relaySend({ type: 'session-update', session: message.data }, false); // 发送JSON
     }
@@ -74,8 +82,50 @@ class RelayClient {
     return true;
   }
 
+  sendBatchedOutput(message) {
+    const bytes = message.bytes || Buffer.from(message.data || '', 'utf8');
+    if (!bytes.length) return true;
+    this.pendingOutputBuffers.push(bytes);
+    this.pendingOutputBytes += bytes.length;
+    this.pendingOutputSeq = Number(message.seq || this.pendingOutputSeq || 0);
+
+    const OUTPUT_BATCH_DELAY_MS = 12;
+    const OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
+
+    if (this.pendingOutputBytes >= OUTPUT_BATCH_MAX_BYTES) {
+      this.flushPendingOutput();
+    } else if (!this.outputBatchTimer) {
+      this.outputBatchTimer = setTimeout(() => {
+        this.outputBatchTimer = null;
+        this.flushPendingOutput();
+      }, OUTPUT_BATCH_DELAY_MS);
+    }
+    return true;
+  }
+
+  flushPendingOutput() {
+    if (this.outputBatchTimer) {
+      clearTimeout(this.outputBatchTimer);
+      this.outputBatchTimer = null;
+    }
+    if (!this.pendingOutputBuffers.length) return;
+
+    const combinedBytes = Buffer.concat(this.pendingOutputBuffers, this.pendingOutputBytes);
+    const termFrame = encodeOutput(this.pendingOutputSeq, combinedBytes);
+    const frame = encodeRelayFrame(this.sessionId, termFrame);
+
+    this.pendingOutputBuffers = [];
+    this.pendingOutputBytes = 0;
+    this.pendingOutputSeq = 0;
+
+    this.relaySend(frame, true);
+  }
+
   close() {
-    // 虚拟客户端关闭时不需要做特殊处理，因为 PTY 生命周期不与单个 client 强制绑定
+    if (this.outputBatchTimer) {
+      clearTimeout(this.outputBatchTimer);
+      this.outputBatchTimer = null;
+    }
   }
 }
 
@@ -146,73 +196,28 @@ function connectToRelay() {
     switch (msg.type) {
       case REGISTERED:
         console.log(`Device registered successfully with ID: ${msg.deviceId}`);
-        break;
-
-      case CONNECT_REQUEST: {
-        const { requestId, clientInfo } = msg;
-        console.log(`Received connection request ${requestId} from ${clientInfo}`);
-        
-        // 调用系统提示弹窗
-        const approved = await showConfirmDialog(
-          'Remote Terminal Connection',
-          `Do you want to allow ${clientInfo} to connect and control your terminal?`
-        );
-
-        if (approved) {
-          console.log(`Connection request ${requestId} APPROVED.`);
-          sendJSON(ws, { type: CONNECT_ACCEPT, requestId });
-        } else {
-          console.log(`Connection request ${requestId} DENIED.`);
-          sendJSON(ws, { type: CONNECT_REJECT, requestId });
-        }
-        break;
-      }
-
-      case CLIENT_PAIRED: {
-        const { clientId } = msg;
-        console.log(`Client paired: ${clientId}`);
-        connectedClients.add(clientId);
-
-        // 如果至少有一个客户端连接，确保所有的 session 都附加上虚拟 RelayClient，以向外广播输出流
+        // 重连时重新为所有已有 session 附加 RelayClient
         for (const [id, session] of sessions.entries()) {
-          let rClient = sessionClients.get(id);
-          if (!rClient) {
-            rClient = new RelayClient(id, (payload, isBin) => {
-              if (ws && ws.readyState === 1) {
-                if (isBin) {
-                  return sendBinary(ws, payload);
-                } else {
-                  return sendJSON(ws, payload);
-                }
-              }
-              return false;
-            });
-            sessionClients.set(id, rClient);
+          const oldClient = sessionClients.get(id);
+          if (oldClient) {
+            oldClient.close();
+            session.clients.delete(oldClient);
           }
+          const rClient = new RelayClient(id, (payload, isBin) => {
+            if (ws && ws.readyState === 1) {
+              if (isBin) {
+                return sendBinary(ws, payload);
+              } else {
+                return sendJSON(ws, payload);
+              }
+            }
+            return false;
+          });
+          sessionClients.set(id, rClient);
           session.clients.add(rClient);
         }
-
-        // 发送当前的会话列表给新配对的手机端
         sendSessionList();
         break;
-      }
-
-      case CLIENT_UNPAIRED: {
-        const { clientId } = msg;
-        console.log(`Client unpaired: ${clientId}`);
-        connectedClients.delete(clientId);
-
-        // 如果全部手机客户端都断开，注销虚拟 RelayClient 避免无谓的数据传输，但保留 PTY 进程
-        if (connectedClients.size === 0) {
-          for (const [id, session] of sessions.entries()) {
-            const rClient = sessionClients.get(id);
-            if (rClient) {
-              session.clients.delete(rClient);
-            }
-          }
-        }
-        break;
-      }
 
       case LIST_SESSIONS:
         sendSessionList(msg.actionId);
@@ -222,7 +227,7 @@ function connectToRelay() {
         const { name, cwd, actionId } = msg;
         const sessionId = 's' + nextSessionId++;
         console.log(`Creating session ${sessionId}: name=${name}, cwd=${cwd}`);
-        
+
         const session = new TerminalSession({
           id: sessionId,
           name,
@@ -240,21 +245,19 @@ function connectToRelay() {
 
         sessions.set(sessionId, session);
 
-        // 如果当前有客户端已配对在线，直接附加虚拟 RelayClient 激活数据输出
-        if (connectedClients.size > 0) {
-          const rClient = new RelayClient(sessionId, (payload, isBin) => {
-            if (ws && ws.readyState === 1) {
-              if (isBin) {
-                return sendBinary(ws, payload);
-              } else {
-                return sendJSON(ws, payload);
-              }
+        // 始终附加虚拟 RelayClient 以激活数据输出
+        const rClient = new RelayClient(sessionId, (payload, isBin) => {
+          if (ws && ws.readyState === 1) {
+            if (isBin) {
+              return sendBinary(ws, payload);
+            } else {
+              return sendJSON(ws, payload);
             }
-            return false;
-          });
-          sessionClients.set(sessionId, rClient);
-          session.clients.add(rClient);
-        }
+          }
+          return false;
+        });
+        sessionClients.set(sessionId, rClient);
+        session.clients.add(rClient);
 
         sendJSON(ws, { type: SESSION_CREATED, session: session.info(), actionId });
         break;
@@ -266,6 +269,8 @@ function connectToRelay() {
         if (session) {
           console.log(`Closing session ${sessionId}`);
           session.close();
+          sessions.delete(sessionId);
+          sessionClients.delete(sessionId);
           sendJSON(ws, { type: SESSION_CLOSED, sessionId, actionId });
         } else {
           sendJSON(ws, { type: ERROR, message: 'Session not found', actionId });

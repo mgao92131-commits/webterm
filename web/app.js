@@ -71,7 +71,6 @@ import { TerminalView } from "./lib/terminal-view.js";
     })(),
     devices: [],
     selectedDeviceId: localStorage.getItem("webterm-selected-device") || null,
-    pairingStatus: "idle", // "idle" | "pending" | "connected"
     ws: null,
     term: null,
     managerTimer: null,
@@ -123,7 +122,8 @@ import { TerminalView } from "./lib/terminal-view.js";
     try {
       state.user = await api("/api/me");
       if (location.pathname.startsWith("/terminal/")) {
-        const id = location.pathname.split("/").filter(Boolean).pop();
+        const rawId = location.pathname.split("/").filter(Boolean).pop();
+        const id = rawId ? decodeURIComponent(rawId) : "";
         if (!id || id === "terminal") {
           history.replaceState(null, "", "/");
           renderManager();
@@ -214,7 +214,7 @@ import { TerminalView } from "./lib/terminal-view.js";
           </div>
           <div class="actions">
             <button id="theme">${themeButtonLabel()}</button>
-            <button id="new" ${state.selectedDeviceId && state.pairingStatus === "connected" ? "" : "disabled"}>新建终端</button>
+            <button id="new" ${state.selectedDeviceId ? "" : "disabled"}>新建终端</button>
           </div>
         </header>
         <p class="error" id="managerError" hidden></p>
@@ -246,7 +246,7 @@ import { TerminalView } from "./lib/terminal-view.js";
         stopManagerRefresh();
         return;
       }
-      if (state.selectedDeviceId && state.pairingStatus === "connected") {
+      if (state.selectedDeviceId) {
         try {
           await refreshSessions();
           drawSessionList();
@@ -281,32 +281,13 @@ import { TerminalView } from "./lib/terminal-view.js";
     state.managerWS.addEventListener("message", (event) => {
       if (location.pathname !== "/") return;
       const msg = JSON.parse(event.data);
-      
+
       if (msg.type === "devices") {
         state.devices = Array.isArray(msg.devices) ? msg.devices : [];
         const activeOnline = state.devices.some(d => d.deviceId === state.selectedDeviceId);
         if (state.selectedDeviceId && !activeOnline) {
           state.selectedDeviceId = null;
-          state.pairingStatus = "idle";
           state.sessions = [];
-        }
-        drawManagerUI();
-      } else if (msg.type === "device-connected") {
-        state.selectedDeviceId = msg.deviceId;
-        localStorage.setItem("webterm-selected-device", msg.deviceId);
-        state.pairingStatus = "connected";
-        setManagerError("");
-        drawManagerUI();
-      } else if (msg.type === "device-rejected") {
-        state.pairingStatus = "idle";
-        setManagerError("连接被电脑端拒绝");
-        drawManagerUI();
-      } else if (msg.type === "device-disconnected") {
-        if (state.selectedDeviceId === msg.deviceId) {
-          state.selectedDeviceId = null;
-          state.pairingStatus = "idle";
-          state.sessions = [];
-          setManagerError("配对设备已离线");
         }
         drawManagerUI();
       } else if (msg.type === "sessions") {
@@ -319,9 +300,6 @@ import { TerminalView } from "./lib/terminal-view.js";
         removeSession(msg.id);
         drawSessionList();
       } else if (msg.type === "error") {
-        if (state.pairingStatus === "pending") {
-          state.pairingStatus = "idle";
-        }
         setManagerError(msg.message);
         drawManagerUI();
       }
@@ -384,25 +362,14 @@ import { TerminalView } from "./lib/terminal-view.js";
 
     list.innerHTML = state.devices.map((d) => {
       const isSelected = d.deviceId === state.selectedDeviceId;
-      const isConnected = isSelected && state.pairingStatus === "connected";
-      const isPending = isSelected && state.pairingStatus === "pending";
-      
-      let statusClass = "device-status-online";
-      let statusLabel = "点击进行配对";
-      if (isConnected) {
-        statusClass = "device-status-connected";
-        statusLabel = "已连接";
-      } else if (isPending) {
-        statusClass = "device-status-pending";
-        statusLabel = "确认中...";
-      }
+      const statusLabel = "在线";
 
       return `
         <div class="device-card ${isSelected ? "active" : ""}" data-device-id="${escapeHTML(d.deviceId)}">
           <div class="device-icon">💻</div>
           <div class="device-info">
             <div class="device-name">${escapeHTML(d.deviceName)}</div>
-            <div class="device-status ${statusClass}">
+            <div class="device-status device-status-online">
               <span class="status-dot"></span>
               ${statusLabel}
             </div>
@@ -411,20 +378,21 @@ import { TerminalView } from "./lib/terminal-view.js";
     }).join("");
 
     list.querySelectorAll(".device-card").forEach((card) => {
-      card.addEventListener("click", () => {
+      card.addEventListener("click", async () => {
         const deviceId = card.dataset.deviceId;
-        if (deviceId === state.selectedDeviceId && state.pairingStatus === "connected") return;
-        
+        if (deviceId === state.selectedDeviceId) return;
+
         state.selectedDeviceId = deviceId;
-        state.pairingStatus = "pending";
+        localStorage.setItem("webterm-selected-device", deviceId);
         setManagerError("");
         drawManagerUI();
 
-        if (state.managerWS && state.managerWS.readyState === WebSocket.OPEN) {
-          state.managerWS.send(JSON.stringify({
-            type: "connect-device",
-            deviceId
-          }));
+        // 直接通过 API 获取会话列表
+        try {
+          state.sessions = await api("/api/sessions");
+          drawSessionList();
+        } catch (err) {
+          setManagerError(err.message.trim());
         }
       });
     });
@@ -435,7 +403,7 @@ import { TerminalView } from "./lib/terminal-view.js";
     drawSessionList();
     const newBtn = app.querySelector("#new");
     if (newBtn) {
-      if (state.selectedDeviceId && state.pairingStatus === "connected") {
+      if (state.selectedDeviceId) {
         newBtn.removeAttribute("disabled");
       } else {
         newBtn.setAttribute("disabled", "true");
@@ -448,12 +416,7 @@ import { TerminalView } from "./lib/terminal-view.js";
     if (!list) return;
 
     if (!state.selectedDeviceId) {
-      list.innerHTML = `<div class="empty">请先在左侧选择并配对一台设备</div>`;
-      return;
-    }
-
-    if (state.pairingStatus === "pending") {
-      list.innerHTML = `<div class="empty">正在请求电脑端配对许可，请及时在电脑屏幕上点击 Allow 确认...</div>`;
+      list.innerHTML = `<div class="empty">请先在左侧选择一台设备</div>`;
       return;
     }
 

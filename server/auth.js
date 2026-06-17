@@ -45,7 +45,7 @@ export class AuthManager {
     
     // Support new multi-user token format: v1-${base64url(username)}-${signature}
     // As well as old single-user token format: v1-${signature}
-    const match = token.match(/^v1-([-A-Za-z0-9_]+)-([-A-Za-z0-9_]{30,90})$/);
+    const match = token.match(/^v1~([-A-Za-z0-9_]+)~([-A-Za-z0-9_]{30,90})$/);
     if (match) {
       try {
         const username = Buffer.from(match[1], 'base64url').toString('utf8');
@@ -104,7 +104,7 @@ export function parseCookies(header) {
 function signToken(username, password) {
   const sig = createHmac('sha256', password).update(username).digest('base64url');
   const encodedUser = Buffer.from(username, 'utf8').toString('base64url');
-  return `v1-${encodedUser}-${sig}`;
+  return `v1~${encodedUser}~${sig}`;
 }
 
 function safeEqual(a, b) {
