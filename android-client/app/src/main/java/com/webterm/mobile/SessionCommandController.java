@@ -16,7 +16,7 @@ final class SessionCommandController {
     }
 
     void createSessionOnServer(ServerConfig server) {
-        api.createSession(server.url, server.cookie, new WebTermApi.SessionCreateCallback() {
+        api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
                 activity.runOnUiThread(() -> listener.onOpenTerminal(server.url, server.cookie, sessionId, "Terminal", ""));
@@ -62,7 +62,7 @@ final class SessionCommandController {
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
             .setPositiveButton("关闭", (dialog, which) -> {
-                api.deleteSession(server.url, server.cookie, sessionId, new WebTermApi.SimpleCallback() {
+                api.deleteSession(server, sessionId, new WebTermApi.SimpleCallback() {
                     @Override
                     public void onReady() {
                         listener.onRemoveCachedTerminal(server.url, sessionId);

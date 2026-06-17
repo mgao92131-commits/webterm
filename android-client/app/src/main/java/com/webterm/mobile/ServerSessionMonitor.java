@@ -76,6 +76,12 @@ final class ServerSessionMonitor {
                     } else if ("session-closed".equals(type)) {
                         String id = msg.optString("id");
                         if (id != null) listener.onMonitorSessionClosed(id);
+                    } else if ("devices".equals(type)) {
+                        JSONArray arr = msg.optJSONArray("devices");
+                        listener.onMonitorDevices(arr != null ? arr : new JSONArray());
+                    } else if ("error".equals(type)) {
+                        String errorVal = msg.optString("message");
+                        listener.onMonitorError(errorVal);
                     }
                 } catch (JSONException e) {
                     Log.e(TAG, "Failed to parse manager WS message", e);
@@ -92,6 +98,17 @@ final class ServerSessionMonitor {
                 onDisconnected(webSocket);
             }
         });
+    }
+
+    void connectDevice(String deviceId) {
+        if (webSocket == null || !connected) return;
+        JSONObject msg = new JSONObject();
+        try {
+            msg.put("type", "connect-device");
+            msg.put("deviceId", deviceId);
+            webSocket.send(msg.toString());
+        } catch (JSONException ignored) {
+        }
     }
 
     void stop() {
@@ -136,5 +153,7 @@ final class ServerSessionMonitor {
         void onMonitorSessions(JSONArray sessions);
         void onMonitorSession(JSONObject session);
         void onMonitorSessionClosed(String sessionId);
+        void onMonitorDevices(JSONArray devices);
+        void onMonitorError(String errorMsg);
     }
 }

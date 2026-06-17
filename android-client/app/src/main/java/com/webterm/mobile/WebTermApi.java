@@ -63,12 +63,14 @@ final class WebTermApi {
     }
 
     void fetchSessions(ServerConfig server, SessionsCallback callback) {
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
             .url(server.url + "/api/sessions")
-            .header("Cookie", server.cookie)
-            .get()
-            .build();
-        http.newCall(request).enqueue(new Callback() {
+            .header("Cookie", server.cookie != null ? server.cookie : "")
+            .get();
+        if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
+            builder.header("x-device-id", server.deviceId);
+        }
+        http.newCall(builder.build()).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
                 callback.onError(0, e.getMessage());
@@ -92,6 +94,43 @@ final class WebTermApi {
         });
     }
 
+    void createSession(ServerConfig server, SessionCreateCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("name", "Android");
+        } catch (JSONException ignored) {
+        }
+        Request.Builder builder = new Request.Builder()
+            .url(server.url + "/api/sessions")
+            .header("Cookie", server.cookie != null ? server.cookie : "")
+            .post(RequestBody.create(body.toString(), JSON));
+        if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
+            builder.header("x-device-id", server.deviceId);
+        }
+        http.newCall(builder.build()).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("Session failed: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body().string();
+                    if (!response.isSuccessful()) {
+                        callback.onError("Session failed: " + response.code() + " " + text);
+                        return;
+                    }
+                    try {
+                        callback.onReady(new JSONObject(text).getString("id"));
+                    } catch (JSONException e) {
+                        callback.onError("Session response error: " + e.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
     void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
@@ -100,7 +139,7 @@ final class WebTermApi {
         }
         Request request = new Request.Builder()
             .url(baseUrl + "/api/sessions")
-            .header("Cookie", cookie)
+            .header("Cookie", cookie != null ? cookie : "")
             .post(RequestBody.create(body.toString(), JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -133,18 +172,31 @@ final class WebTermApi {
             body.put("name", newName);
         } catch (JSONException ignored) {
         }
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
             .url(server.url + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
-            .header("Cookie", server.cookie)
-            .patch(RequestBody.create(body.toString(), JSON))
-            .build();
-        http.newCall(request).enqueue(simpleCallback(callback, "Rename failed"));
+            .header("Cookie", server.cookie != null ? server.cookie : "")
+            .patch(RequestBody.create(body.toString(), JSON));
+        if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
+            builder.header("x-device-id", server.deviceId);
+        }
+        http.newCall(builder.build()).enqueue(simpleCallback(callback, "Rename failed"));
+    }
+
+    void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
+        Request.Builder builder = new Request.Builder()
+            .url(server.url + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
+            .header("Cookie", server.cookie != null ? server.cookie : "")
+            .delete();
+        if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
+            builder.header("x-device-id", server.deviceId);
+        }
+        http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
 
     void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
-            .header("Cookie", cookie)
+            .header("Cookie", cookie != null ? cookie : "")
             .delete()
             .build();
         http.newCall(request).enqueue(simpleCallback(callback, "Close failed"));

@@ -45,6 +45,9 @@ final class ServerGroupController {
             monitor = new ServerSessionMonitor(http, mainHandler, server, new ServerSessionMonitor.Listener() {
                 @Override
                 public void onMonitorConnected() {
+                    if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
+                        monitor.connectDevice(server.deviceId);
+                    }
                     listener.onScheduleFallbackRefresh();
                     activity.runOnUiThread(() -> {
                         if (listener.isActive(ServerGroupController.this)) markReady();
@@ -66,6 +69,16 @@ final class ServerGroupController {
                 @Override
                 public void onMonitorSessionClosed(String sessionId) {
                     if (listener.isActive(ServerGroupController.this)) removeLocalSession(sessionId);
+                }
+
+                @Override
+                public void onMonitorDevices(JSONArray devices) {
+                    // 临时的具体设备组不需要处理总的设备列表发现，留空。
+                }
+
+                @Override
+                public void onMonitorError(String errorMsg) {
+                    // 仅记录异常或不处理
                 }
 
                 @Override

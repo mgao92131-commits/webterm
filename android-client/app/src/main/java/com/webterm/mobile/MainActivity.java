@@ -22,13 +22,14 @@ import androidx.annotation.Nullable;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.OkHttpClient;
 
-public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host {
+public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayConfigDialogHelper.Host {
 
     private static final int TRANSCRIPT_ROWS = 10000;
     private static final byte[] CLEAR_SCREEN_BYTES = "\u001b[3J\u001b[2J\u001b[H".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -61,6 +62,22 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private View mQuickBar;
     private Button mCtrlButton;
     private int mImeOverlap;
+
+    // Relay fields
+    private ServerConfig mRelayMasterConfig;
+    private ServerSessionMonitor mRelayMonitor;
+    private final java.util.List<ServerConfig> mRelayDevices = new java.util.ArrayList<>();
+    private TextView mHomeSubtitle;
+    private RelayState mRelayState = RelayState.NOT_CONFIGURED;
+
+    private enum RelayState {
+        NOT_CONFIGURED,
+        CONNECTING,
+        AUTH_FAILED,
+        CONNECT_FAILED,
+        CONNECTED_NO_DEVICES,
+        CONNECTED_WITH_DEVICES
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -154,6 +171,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             connectTerminal();
         } else if (!mTerminalState.hasSession() && mSessionList != null) {
             if (mHomeCoordinator != null) mHomeCoordinator.resume();
+            startRelayMonitor();
         }
     }
 
@@ -162,6 +180,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mInForeground = false;
         if (!mTerminalState.hasSession()) {
             if (mHomeCoordinator != null) mHomeCoordinator.pause();
+            stopRelayMonitor();
         } else {
             pauseCurrentTerminalConnection();
         }
@@ -172,6 +191,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onDestroy() {
         mClosed.set(true);
         mMainHandler.removeCallbacksAndMessages(null);
+        stopRelayMonitor();
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
         if (mTerminalState.hasSession() && mTerminalSession != null) {
             cacheCurrentTerminal();
@@ -194,6 +214,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private void loadServersFromPrefs() {
         mServerConfigs.load();
+        mRelayMasterConfig = null;
+        for (ServerConfig s : mServerConfigs.servers()) {
+            if (s.isRelayMaster) {
+                mRelayMasterConfig = s;
+                break;
+            }
+        }
     }
 
     void saveServersToPrefs() {
@@ -209,17 +236,229 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             this,
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
-            this::loadMultiSessions
+            this::loadMultiSessions,
+            this::showRelayDialog
         );
+        mHomeSubtitle = home.subtitle;
+        updateSubtitleState(mRelayState);
         installRootInsets(home.root, dp(20), dp(24), dp(20), dp(16), true);
         mSessionList = home.sessionList;
         if (mHomeCoordinator != null) mHomeCoordinator.attachSessionList(mSessionList);
         setContentView(home.root);
         loadMultiSessions();
+        startRelayMonitor();
     }
 
     private void loadMultiSessions() {
-        if (mHomeCoordinator != null) mHomeCoordinator.load(mServerConfigs.servers());
+        if (mHomeCoordinator != null) {
+            java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
+            for (ServerConfig s : mServerConfigs.servers()) {
+                if (!s.isRelayMaster) {
+                    allServers.add(s);
+                }
+            }
+            if (mRelayDevices != null && !mRelayDevices.isEmpty()) {
+                allServers.addAll(mRelayDevices);
+            }
+            mHomeCoordinator.load(allServers);
+        }
+    }
+
+    // RelayConfigDialogHelper.Host Implementation
+    private void showRelayDialog() {
+        RelayConfigDialogHelper.show(this, mRelayMasterConfig);
+    }
+
+    @Override
+    public void loginRelay(String baseUrl, String username, String password, RelayConfigDialogHelper.LoginCallback callback) {
+        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String url, String cookie) {
+                callback.onReady(url, cookie);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onRelayAuthenticated(String url, String cookie, String username, String password) {
+        ServerConfig existingMaster = null;
+        for (ServerConfig s : mServerConfigs.servers()) {
+            if (s.isRelayMaster) {
+                existingMaster = s;
+                break;
+            }
+        }
+        if (existingMaster == null) {
+            existingMaster = new ServerConfig(
+                "relay_mst_" + System.currentTimeMillis(),
+                "中转服务器",
+                url,
+                cookie,
+                username,
+                password,
+                true,  // isRelayMaster
+                false, // isRelayDevice
+                ""
+            );
+            mServerConfigs.servers().add(existingMaster);
+        } else {
+            existingMaster.url = url;
+            existingMaster.cookie = cookie;
+            existingMaster.username = username;
+            existingMaster.password = password;
+        }
+        mRelayMasterConfig = existingMaster;
+        saveServersToPrefs();
+        startRelayMonitor();
+        showSessionHome();
+    }
+
+    @Override
+    public void onDisconnectRelay() {
+        ServerConfig existingMaster = null;
+        for (ServerConfig s : mServerConfigs.servers()) {
+            if (s.isRelayMaster) {
+                existingMaster = s;
+                break;
+            }
+        }
+        if (existingMaster != null) {
+            mServerConfigs.servers().remove(existingMaster);
+        }
+        mRelayMasterConfig = null;
+        saveServersToPrefs();
+        stopRelayMonitor();
+        mRelayDevices.clear();
+        updateSubtitleState(RelayState.NOT_CONFIGURED);
+        showSessionHome();
+    }
+
+    private void updateSubtitleState(RelayState state) {
+        mRelayState = state;
+        if (mHomeSubtitle == null) return;
+        mMainHandler.post(() -> {
+            switch (state) {
+                case NOT_CONFIGURED:
+                    mHomeSubtitle.setText("⚠️ 中转服务未连接");
+                    mHomeSubtitle.setTextColor(Color.rgb(245, 158, 11));
+                    break;
+                case CONNECTING:
+                    mHomeSubtitle.setText("⏳ 正在连接中转服务...");
+                    mHomeSubtitle.setTextColor(Color.rgb(245, 158, 11));
+                    break;
+                case AUTH_FAILED:
+                    mHomeSubtitle.setText("🚨 中转服务登录失败");
+                    mHomeSubtitle.setTextColor(Color.rgb(239, 68, 68));
+                    break;
+                case CONNECT_FAILED:
+                    mHomeSubtitle.setText("🚨 无法连接中转服务，正在重连...");
+                    mHomeSubtitle.setTextColor(Color.rgb(239, 68, 68));
+                    break;
+                case CONNECTED_NO_DEVICES:
+                    mHomeSubtitle.setText("🟢 中转服务已连接 (无在线电脑)");
+                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    break;
+                case CONNECTED_WITH_DEVICES:
+                    mHomeSubtitle.setText("🟢 已连接中转服务");
+                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    break;
+            }
+        });
+    }
+
+    private void startRelayMonitor() {
+        stopRelayMonitor();
+        if (mRelayMasterConfig == null || mRelayMasterConfig.url.isEmpty()) {
+            updateSubtitleState(RelayState.NOT_CONFIGURED);
+            return;
+        }
+        updateSubtitleState(RelayState.CONNECTING);
+        mRelayMonitor = new ServerSessionMonitor(mHttp, mMainHandler, mRelayMasterConfig, new ServerSessionMonitor.Listener() {
+            @Override
+            public void onMonitorConnected() {
+                activity().runOnUiThread(() -> {
+                    if (mRelayDevices.isEmpty()) {
+                        updateSubtitleState(RelayState.CONNECTED_NO_DEVICES);
+                    } else {
+                        updateSubtitleState(RelayState.CONNECTED_WITH_DEVICES);
+                    }
+                });
+            }
+
+            @Override
+            public void onMonitorPollingFallback() {
+                activity().runOnUiThread(() -> updateSubtitleState(RelayState.CONNECTING));
+            }
+
+            @Override
+            public void onMonitorSessions(JSONArray sessions) {
+                // 主监控长连接只获取设备列表，不获取具体某设备的会话列表
+            }
+
+            @Override
+            public void onMonitorSession(JSONObject session) {
+            }
+
+            @Override
+            public void onMonitorSessionClosed(String sessionId) {
+            }
+
+            @Override
+            public void onMonitorDevices(JSONArray devices) {
+                mMainHandler.post(() -> {
+                    mRelayDevices.clear();
+                    for (int i = 0; i < devices.length(); i++) {
+                        JSONObject deviceObj = devices.optJSONObject(i);
+                        if (deviceObj == null) continue;
+                        String deviceId = deviceObj.optString("deviceId");
+                        String deviceName = deviceObj.optString("deviceName");
+                        if (deviceId.isEmpty()) continue;
+
+                        mRelayDevices.add(new ServerConfig(
+                            "relay_dev_" + deviceId,
+                            deviceName,
+                            mRelayMasterConfig.url,
+                            mRelayMasterConfig.cookie,
+                            mRelayMasterConfig.username,
+                            mRelayMasterConfig.password,
+                            false, // isRelayMaster
+                            true,  // isRelayDevice
+                            deviceId
+                        ));
+                    }
+                    if (mRelayDevices.isEmpty()) {
+                        updateSubtitleState(RelayState.CONNECTED_NO_DEVICES);
+                    } else {
+                        updateSubtitleState(RelayState.CONNECTED_WITH_DEVICES);
+                    }
+                    loadMultiSessions();
+                });
+            }
+
+            @Override
+            public void onMonitorError(String errorMsg) {
+                activity().runOnUiThread(() -> {
+                    if (errorMsg != null && errorMsg.contains("401")) {
+                        updateSubtitleState(RelayState.AUTH_FAILED);
+                    } else {
+                        updateSubtitleState(RelayState.CONNECT_FAILED);
+                    }
+                });
+            }
+        });
+        mRelayMonitor.start();
+    }
+
+    private void stopRelayMonitor() {
+        if (mRelayMonitor != null) {
+            mRelayMonitor.stop();
+            mRelayMonitor = null;
+        }
     }
 
     private boolean isHomeActive() {

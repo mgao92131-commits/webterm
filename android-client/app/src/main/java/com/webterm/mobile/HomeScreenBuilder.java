@@ -15,7 +15,7 @@ import android.widget.TextView;
 final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-    static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh) {
+    static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(UIUtils.dp(activity, 20), UIUtils.dp(activity, 24), UIUtils.dp(activity, 20), UIUtils.dp(activity, 16));
@@ -49,7 +49,8 @@ final class HomeScreenBuilder {
             PopupMenu popup = new PopupMenu(activity, moreBtn);
             popup.getMenu().add(0, 1, 0, "➕ 添加电脑");
             popup.getMenu().add(0, 2, 0, "⚙️ 终端设置");
-            popup.getMenu().add(0, 3, 0, "🔄 刷新列表");
+            popup.getMenu().add(0, 3, 0, "🔗 中转服务");
+            popup.getMenu().add(0, 4, 0, "🔄 刷新列表");
             popup.setOnMenuItemClickListener((item) -> {
                 if (item.getItemId() == 1) {
                     onAddServer.run();
@@ -58,6 +59,9 @@ final class HomeScreenBuilder {
                     onSettings.run();
                     return true;
                 } else if (item.getItemId() == 3) {
+                    onRelaySettings.run();
+                    return true;
+                } else if (item.getItemId() == 4) {
                     onRefresh.run();
                     return true;
                 }
@@ -78,6 +82,7 @@ final class HomeScreenBuilder {
         HomeResult result = new HomeResult();
         result.root = root;
         result.sessionList = sessionList;
+        result.subtitle = subtitle;
         return result;
     }
 
@@ -121,7 +126,11 @@ final class HomeScreenBuilder {
         header.addView(status, statusLp);
 
         TextView nameView = new TextView(activity);
-        nameView.setText(server.name);
+        if (server.isRelayDevice) {
+            nameView.setText("🔗 " + server.name);
+        } else {
+            nameView.setText(server.name);
+        }
         nameView.setTextColor(Color.rgb(243, 244, 246));
         nameView.setTextSize(16);
         nameView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -143,28 +152,34 @@ final class HomeScreenBuilder {
 
         header.addView(new View(activity), new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), 1));
 
-        TextView menuBtn = new TextView(activity);
-        menuBtn.setText("⋮");
-        menuBtn.setTextColor(Color.rgb(156, 163, 175));
-        menuBtn.setTextSize(18);
-        menuBtn.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 4), UIUtils.dp(activity, 8), UIUtils.dp(activity, 4));
-        menuBtn.setOnClickListener((v) -> {
-            PopupMenu popup = new PopupMenu(activity, menuBtn);
-            popup.getMenu().add(0, 1, 0, "✏️ 修改配置");
-            popup.getMenu().add(0, 2, 0, "❌ 移除电脑");
-            popup.setOnMenuItemClickListener((item) -> {
-                if (item.getItemId() == 1) {
-                    onEditServer.run();
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    onRemoveServer.run();
-                    return true;
-                }
-                return false;
+        if (!server.isRelayDevice) {
+            TextView menuBtn = new TextView(activity);
+            menuBtn.setText("⋮");
+            menuBtn.setTextColor(Color.rgb(156, 163, 175));
+            menuBtn.setTextSize(18);
+            menuBtn.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 4), UIUtils.dp(activity, 8), UIUtils.dp(activity, 4));
+            menuBtn.setOnClickListener((v) -> {
+                PopupMenu popup = new PopupMenu(activity, menuBtn);
+                popup.getMenu().add(0, 1, 0, "✏️ 修改配置");
+                popup.getMenu().add(0, 2, 0, "❌ 移除电脑");
+                popup.setOnMenuItemClickListener((item) -> {
+                    if (item.getItemId() == 1) {
+                        onEditServer.run();
+                        return true;
+                    } else if (item.getItemId() == 2) {
+                        onRemoveServer.run();
+                        return true;
+                    }
+                    return false;
+                });
+                popup.show();
             });
-            popup.show();
-        });
-        header.addView(menuBtn, new LinearLayout.LayoutParams(-2, -2));
+            header.addView(menuBtn, new LinearLayout.LayoutParams(-2, -2));
+        } else {
+            // 给中转设备占一个空白间距，让UI结构一致
+            View spacer = new View(activity);
+            header.addView(spacer, new LinearLayout.LayoutParams(UIUtils.dp(activity, 20), 1));
+        }
 
         group.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
@@ -204,6 +219,7 @@ final class HomeScreenBuilder {
     static final class HomeResult {
         LinearLayout root;
         LinearLayout sessionList;
+        TextView subtitle;
     }
 
     static final class ServerGroupResult {
