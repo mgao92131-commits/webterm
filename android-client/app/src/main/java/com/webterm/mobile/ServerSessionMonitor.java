@@ -127,6 +127,16 @@ final class ServerSessionMonitor {
         }
     }
 
+    void requestDevicesList() {
+        if (webSocket == null || !connected) return;
+        JSONObject msg = new JSONObject();
+        try {
+            msg.put("type", "list-devices");
+            webSocket.send(msg.toString());
+        } catch (JSONException ignored) {
+        }
+    }
+
     void stop() {
         enabled = false;
         connected = false;

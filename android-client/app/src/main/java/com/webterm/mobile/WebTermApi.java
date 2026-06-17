@@ -194,12 +194,17 @@ final class WebTermApi {
     }
 
     void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
             .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
             .header("Cookie", cookie != null ? cookie : "")
-            .delete()
-            .build();
-        http.newCall(request).enqueue(simpleCallback(callback, "Close failed"));
+            .delete();
+        if (sessionId != null && sessionId.contains(":")) {
+            String[] parts = sessionId.split(":");
+            if (parts.length > 0 && !parts[0].isEmpty()) {
+                builder.header("x-device-id", parts[0]);
+            }
+        }
+        http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
 
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {

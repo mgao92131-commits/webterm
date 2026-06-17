@@ -75,6 +75,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         CONNECTING,
         AUTH_FAILED,
         CONNECT_FAILED,
+        CONNECTED_FETCHING_DEVICES,
         CONNECTED_NO_DEVICES,
         CONNECTED_WITH_DEVICES
     }
@@ -236,7 +237,14 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             this,
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
-            this::loadMultiSessions,
+            () -> {
+                loadMultiSessions();
+                if (mRelayMonitor != null && mRelayMonitor.isConnected()) {
+                    mRelayMonitor.requestDevicesList();
+                } else {
+                    startRelayMonitor();
+                }
+            },
             this::showRelayDialog
         );
         mHomeSubtitle = home.subtitle;
@@ -359,6 +367,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                     mHomeSubtitle.setText("🚨 无法连接中转服务，正在重连...");
                     mHomeSubtitle.setTextColor(Color.rgb(239, 68, 68));
                     break;
+                case CONNECTED_FETCHING_DEVICES:
+                    mHomeSubtitle.setText("🟢 已连接中转，正在获取电脑...");
+                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    break;
                 case CONNECTED_NO_DEVICES:
                     mHomeSubtitle.setText("🟢 中转服务已连接 (无在线电脑)");
                     mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
@@ -372,21 +384,21 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private void startRelayMonitor() {
-        stopRelayMonitor();
         if (mRelayMasterConfig == null || mRelayMasterConfig.url.isEmpty()) {
+            stopRelayMonitor();
             updateSubtitleState(RelayState.NOT_CONFIGURED);
             return;
         }
+        if (mRelayMonitor != null && mRelayMonitor.isEnabled()) {
+            return;
+        }
+        stopRelayMonitor();
         updateSubtitleState(RelayState.CONNECTING);
         mRelayMonitor = new ServerSessionMonitor(mHttp, mMainHandler, mRelayMasterConfig, new ServerSessionMonitor.Listener() {
             @Override
             public void onMonitorConnected() {
                 activity().runOnUiThread(() -> {
-                    if (mRelayDevices.isEmpty()) {
-                        updateSubtitleState(RelayState.CONNECTED_NO_DEVICES);
-                    } else {
-                        updateSubtitleState(RelayState.CONNECTED_WITH_DEVICES);
-                    }
+                    updateSubtitleState(RelayState.CONNECTED_FETCHING_DEVICES);
                 });
             }
 
