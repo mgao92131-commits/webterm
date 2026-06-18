@@ -16,16 +16,15 @@ import org.json.JSONObject;
 public final class SessionRowHelper {
 
     public static void addSessionRow(final Context context, final SessionRowActions actions, JSONObject session, final ServerConfig server, LinearLayout subList) {
-        String id = session.optString("id");
-        String rawTermTitle = session.optString("termTitle", "").trim();
-        final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
-        final String nameText = session.optString("name", "").trim();
-        final String createdAt = session.optString("createdAt", "").trim();
-        final String instanceId = session.optString("instanceId", "").trim();
-        String cwd = session.optString("cwd", "");
+        View row = createSessionRowView(context);
+        updateSessionRow(actions, row, session, server);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, 0, 0, UIUtils.dp(context, 12));
+        subList.addView(row, lp);
+    }
 
+    public static View createSessionRowView(final Context context) {
         FrameLayout row = new FrameLayout(context);
-        row.setTag(id); // 绑定 Tag 以便差分查找
         row.setBackground(UIUtils.panelBackground(context));
 
         LinearLayout content = new LinearLayout(context);
@@ -61,16 +60,7 @@ public final class SessionRowHelper {
         pathView.setTextSize(11);
         pathView.setSingleLine(true);
         pathView.setEllipsize(TextUtils.TruncateAt.START);
-        pathView.setText(cwd); // 移除彩色 Emoji
 
-        if (!nameText.isEmpty()) {
-            titleView.setText(nameText);
-            subtitleView.setText(termTitle);
-            subtitleView.setVisibility(View.VISIBLE);
-        } else {
-            titleView.setText(termTitle);
-            subtitleView.setVisibility(View.GONE);
-        }
         titleArea.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
         titleArea.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
         titleArea.addView(pathView, new LinearLayout.LayoutParams(-1, -2));
@@ -82,9 +72,6 @@ public final class SessionRowHelper {
         TextView recentView = recentInputBox(context, "");
         recentView.setTag("recent_box");
         content.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
-        updateRecentInput(recentView, session);
-
-
 
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
@@ -101,20 +88,7 @@ public final class SessionRowHelper {
         closeLp.setMargins(0, UIUtils.dp(context, 4), UIUtils.dp(context, 4), 0);
         row.addView(closeBtn, closeLp);
 
-        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
-
-        row.setOnLongClickListener((v) -> {
-            actions.renameSession(server, id, nameText);
-            return true;
-        });
-
-        closeBtn.setOnClickListener((v) -> {
-            actions.closeSession(server, id);
-        });
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, UIUtils.dp(context, 12));
-        subList.addView(row, lp);
+        return row;
     }
 
     public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
@@ -122,8 +96,11 @@ public final class SessionRowHelper {
         TextView subtitleView = row.findViewWithTag("subtitle");
         TextView pathView = row.findViewWithTag("path");
         TextView recentView = row.findViewWithTag("recent_box");
+        TextView closeBtn = row.findViewWithTag("close");
 
         String id = session.optString("id");
+        row.setTag(id); // 绑定 Tag 以便差分查找
+
         String rawTermTitle = session.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = session.optString("name", "").trim();
@@ -147,19 +124,22 @@ public final class SessionRowHelper {
             }
         }
         if (pathView != null) {
-            pathView.setText(cwd);
+            pathView.setText(cwd); // 移除彩色 Emoji
         }
         if (recentView != null) {
             updateRecentInput(recentView, session);
         }
 
-
-        // 重新绑定点击/长按闭包以同步最新标题
         row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
+
         row.setOnLongClickListener((v) -> {
             actions.renameSession(server, id, nameText);
             return true;
         });
+
+        if (closeBtn != null) {
+            closeBtn.setOnClickListener((v) -> actions.closeSession(server, id));
+        }
     }
 
     private static void updateRecentInput(TextView recentView, JSONObject session) {

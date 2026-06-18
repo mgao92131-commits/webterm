@@ -15,15 +15,14 @@ final class TerminalCacheCoordinator {
         diskCache = new TerminalDiskCache(filesDir);
     }
 
-    java.util.List<TerminalDiskCache.Metadata> getCachedSessionsForServer(String baseUrl) {
-        return diskCache.getCachedSessionsForServer(baseUrl);
+    java.util.List<TerminalDiskCache.Metadata> getCachedSessionsForServer(ServerConfig server) {
+        return diskCache.getCachedSessionsForServer(server);
     }
 
-    java.util.Map<String, CachedTerminal> getMemorySessionsForServer(String baseUrl) {
+    java.util.Map<String, CachedTerminal> getMemorySessionsForServer(ServerConfig server) {
         java.util.Map<String, CachedTerminal> result = new java.util.HashMap<>();
-        String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         for (CachedTerminal cached : memoryCache.values()) {
-            if (normalizedBaseUrl.equals(WebTermUrls.normalizeBaseUrl(cached.baseUrl))) {
+            if (TerminalCacheScope.matches(server, cached.baseUrl, cached.sessionId)) {
                 result.put(cached.sessionId, cached);
             }
         }
@@ -87,12 +86,11 @@ final class TerminalCacheCoordinator {
         return removedCurrent;
     }
 
-    void removeMissingForServer(String baseUrl, java.util.Set<String> liveSessionIdentities, TerminalSession currentSession) {
-        String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
+    void removeMissingForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities, TerminalSession currentSession) {
         java.util.List<String> staleKeys = new java.util.ArrayList<>();
         for (java.util.Map.Entry<String, CachedTerminal> entry : memoryCache.entrySet()) {
             CachedTerminal cached = entry.getValue();
-            if (normalizedBaseUrl.equals(WebTermUrls.normalizeBaseUrl(cached.baseUrl))
+            if (TerminalCacheScope.matches(server, cached.baseUrl, cached.sessionId)
                 && !liveSessionIdentities.contains(SessionIdentity.value(cached.sessionId, cached.instanceId, cached.createdAt))) {
                 staleKeys.add(entry.getKey());
             }
@@ -104,20 +102,19 @@ final class TerminalCacheCoordinator {
                 diskCache.clearAsync(cached.baseUrl, cached.sessionId);
             }
         }
-        diskCache.clearMissingForServerAsync(baseUrl, liveSessionIdentities);
+        diskCache.clearMissingForServerAsync(server, liveSessionIdentities);
     }
 
-    void removeServer(String baseUrl, TerminalSession currentSession) {
-        String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
+    void removeServer(ServerConfig server, TerminalSession currentSession) {
         java.util.List<String> keys = new java.util.ArrayList<>();
         for (java.util.Map.Entry<String, CachedTerminal> entry : memoryCache.entrySet()) {
             CachedTerminal cached = entry.getValue();
-            if (normalizedBaseUrl.equals(WebTermUrls.normalizeBaseUrl(cached.baseUrl))) {
+            if (TerminalCacheScope.matches(server, cached.baseUrl, cached.sessionId)) {
                 keys.add(entry.getKey());
             }
         }
         removeMemoryEntries(keys, currentSession);
-        diskCache.clearServerAsync(baseUrl);
+        diskCache.clearServerAsync(server);
     }
 
     void shutdown(TerminalSession currentSession) {

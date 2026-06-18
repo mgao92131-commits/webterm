@@ -42,6 +42,10 @@ final class TerminalRuntimeState {
         return lastSeq;
     }
 
+    void resetLastSeq() {
+        lastSeq = 0;
+    }
+
     int columns() {
         return columns;
     }

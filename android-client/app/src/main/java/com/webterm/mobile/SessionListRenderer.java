@@ -28,7 +28,7 @@ final class SessionListRenderer {
             String identity = SessionIdentity.value(id, session.optString("instanceId", ""), session.optString("createdAt", ""));
             if (!identity.isEmpty()) liveIdentities.add(identity);
         }
-        cleanupCallback.removeMissingCachedSessions(server.url, liveIdentities);
+        cleanupCallback.removeMissingCachedSessions(server, liveIdentities);
 
         removeStaleRows(subList, newIds);
 
@@ -74,6 +74,6 @@ final class SessionListRenderer {
     }
 
     interface CleanupCallback {
-        void removeMissingCachedSessions(String baseUrl, java.util.Set<String> liveSessionIdentities);
+        void removeMissingCachedSessions(ServerConfig server, java.util.Set<String> liveSessionIdentities);
     }
 }

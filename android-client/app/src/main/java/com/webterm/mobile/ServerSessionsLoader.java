@@ -50,12 +50,12 @@ final class ServerSessionsLoader {
 
     private boolean renderTemporarySessions(ServerConfig server, LinearLayout subList, java.util.Map<String, JSONArray> tempInMemorySessions) {
         if (tempInMemorySessions == null) return false;
-        JSONArray sessions = tempInMemorySessions.get(WebTermUrls.normalizeBaseUrl(server.url));
+        JSONArray sessions = tempInMemorySessions.get(TerminalCacheScope.key(server));
         if (sessions == null) return false;
 
         if (terminalCache != null) {
-            java.util.Map<String, CachedTerminal> memoryCaches = terminalCache.getMemorySessionsForServer(server.url);
-            java.util.List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server.url);
+            java.util.Map<String, CachedTerminal> memoryCaches = terminalCache.getMemorySessionsForServer(server);
+            java.util.List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server);
             java.util.Map<String, TerminalDiskCache.Metadata> diskMap = new java.util.HashMap<>();
             if (diskCaches != null) {
                 for (TerminalDiskCache.Metadata meta : diskCaches) {
@@ -105,7 +105,7 @@ final class ServerSessionsLoader {
 
     private void prepopulateCachedSessions(ServerConfig server, LinearLayout subList) {
         executor.execute(() -> {
-            java.util.List<TerminalDiskCache.Metadata> cached = terminalCache.getCachedSessionsForServer(server.url);
+            java.util.List<TerminalDiskCache.Metadata> cached = terminalCache.getCachedSessionsForServer(server);
             if (cached == null || cached.isEmpty()) return;
             activity.runOnUiThread(() -> {
                 if (subList.getChildCount() == 0) {
@@ -167,7 +167,7 @@ final class ServerSessionsLoader {
     private void showOfflineCachedSessions(ServerConfig server, LinearLayout subList, StatusIndicatorView status, String errorMsg) {
         java.util.List<TerminalDiskCache.Metadata> cachedMetadata = terminalCache == null
             ? null
-            : terminalCache.getCachedSessionsForServer(server.url);
+            : terminalCache.getCachedSessionsForServer(server);
 
         activity.runOnUiThread(() -> {
             markError(status);

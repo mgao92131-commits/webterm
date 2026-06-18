@@ -36,6 +36,21 @@ final class TerminalWindowInsetsController {
             callback.onImeOverlapChanged(imeOverlap);
             return insets;
         });
+        if (root.isAttachedToWindow()) {
+            root.requestApplyInsets();
+        } else {
+            root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewAttachedToWindow(View view) {
+                    view.removeOnAttachStateChangeListener(this);
+                    view.requestApplyInsets();
+                }
+
+                @Override
+                public void onViewDetachedFromWindow(View view) {
+                }
+            });
+        }
     }
 
     static void updateKeyboardAvoidance(Activity activity, View root, View viewport, View quickBar, TerminalView terminal, int imeOverlap) {

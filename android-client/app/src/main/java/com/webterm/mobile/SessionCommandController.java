@@ -66,7 +66,7 @@ final class SessionCommandController {
                     @Override
                     public void onReady() {
                         listener.onRemoveCachedTerminal(server.url, sessionId);
-                        activity.runOnUiThread(listener::onShowHome);
+                        activity.runOnUiThread(() -> listener.onSessionClosed(server, sessionId));
                     }
 
                     @Override
@@ -116,6 +116,7 @@ final class SessionCommandController {
         void onAuthenticated(ServerConfig server);
         void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
+        void onSessionClosed(ServerConfig server, String sessionId);
         void onShowHome();
     }
 }

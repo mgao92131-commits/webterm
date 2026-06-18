@@ -82,15 +82,14 @@ final class TerminalDiskCache {
         return new RestoreResult(metadata, metadata.lastSeq, snapshotBytes);
     }
 
-    List<Metadata> getCachedSessionsForServer(String baseUrl) {
+    List<Metadata> getCachedSessionsForServer(ServerConfig server) {
         List<Metadata> result = new ArrayList<>();
-        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         File[] files = cacheDir.listFiles();
         if (files != null) {
             for (File file : files) {
                 if (file.getName().endsWith(".json")) {
                     Metadata metadata = readMetadata(file);
-                    if (metadata != null && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))) {
+                    if (metadata != null && TerminalCacheScope.matches(server, metadata.baseUrl, metadata.sessionId)) {
                         result.add(metadata);
                     }
                 }
@@ -105,23 +104,21 @@ final class TerminalDiskCache {
         executor.execute(() -> clearMatching(normalized, sessionId));
     }
 
-    void clearServerAsync(String baseUrl) {
-        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
+    void clearServerAsync(ServerConfig server) {
         executor.execute(() -> {
             File[] files = cacheDir.listFiles();
             if (files == null) return;
             for (File file : files) {
                 if (!file.getName().endsWith(".json")) continue;
                 Metadata metadata = readMetadata(file);
-                if (metadata != null && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))) {
+                if (metadata != null && TerminalCacheScope.matches(server, metadata.baseUrl, metadata.sessionId)) {
                     deletePairForMetadataFile(file);
                 }
             }
         });
     }
 
-    void clearMissingForServerAsync(String baseUrl, java.util.Set<String> liveSessionIdentities) {
-        String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
+    void clearMissingForServerAsync(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
         java.util.Set<String> liveIdentities = new java.util.HashSet<>(liveSessionIdentities);
         executor.execute(() -> {
             File[] files = cacheDir.listFiles();
@@ -130,7 +127,7 @@ final class TerminalDiskCache {
                 if (!file.getName().endsWith(".json")) continue;
                 Metadata metadata = readMetadata(file);
                 if (metadata != null
-                    && normalized.equals(WebTermUrls.normalizeBaseUrl(metadata.baseUrl))
+                    && TerminalCacheScope.matches(server, metadata.baseUrl, metadata.sessionId)
                     && !liveIdentities.contains(SessionIdentity.value(metadata.sessionId, metadata.instanceId, metadata.createdAt))) {
                     deletePairForMetadataFile(file);
                 }

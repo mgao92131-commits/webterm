@@ -1,5 +1,7 @@
 package com.webterm.mobile;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.app.Activity;
 import android.widget.Button;
 import android.content.Context;
@@ -10,8 +12,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -53,15 +58,21 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private WebTermTerminalSessionClient mTerminalSessionClient;
     private ServerConfigManager mServerConfigs;
     private LinearLayout mSessionList;
+    private SessionRecyclerAdapter mSessionAdapter;
     private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
     private TextView mTerminalTitle;
     private TextView mTerminalSubtitle;
+    private ScreenMode mScreenMode = ScreenMode.DEVICES;
+    private ServerConfig mSelectedServer;
+    private StatusIndicatorView mSelectedServerStatus;
 
     private View mTerminalRoot;
     private View mTerminalViewport;
     private View mQuickBar;
     private Button mCtrlButton;
     private int mImeOverlap;
+    private boolean mTerminalAttachStarted;
+    private byte[] mPendingDiskSnapshotBytes;
 
     // Relay fields
     private ServerConfig mRelayMasterConfig;
@@ -80,9 +91,23 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         CONNECTED_WITH_DEVICES
     }
 
+    private enum ScreenMode {
+        DEVICES,
+        DEVICE_SESSIONS,
+        TERMINAL
+    }
+
+    private enum PageTransition {
+        NONE,
+        FORWARD,
+        BACK,
+        FADE
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getWindow().getDecorView().setBackgroundColor(Color.rgb(15, 15, 18));
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -107,8 +132,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             }
 
             @Override
+            public void onSessionClosed(ServerConfig server, String sessionId) {
+                handleClosedSessionRow(server, sessionId);
+            }
+
+            @Override
             public void onShowHome() {
-                showSessionHome();
+                showSessionListOrDeviceHome();
             }
         });
         mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
@@ -155,12 +185,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                 }
 
                 @Override
-                public void onRemoveMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIdentities) {
-                    removeMissingCachedSessionsForServer(baseUrl, liveSessionIdentities);
+                public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
+                    removeMissingCachedSessionsForServer(server, liveSessionIdentities);
                 }
             });
         loadServersFromPrefs();
-        showSessionHome();
+        showSessionHome(PageTransition.NONE);
     }
 
     @Override
@@ -170,9 +200,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if (mTerminalState.hasSession() && mTerminalSession != null && (mTerminalConnection == null || !mTerminalConnection.hasSocket())) {
             mClosed.set(false);
             connectTerminal();
-        } else if (!mTerminalState.hasSession() && mSessionList != null) {
-            if (mHomeCoordinator != null) mHomeCoordinator.resume();
-            startRelayMonitor();
+        } else if (!mTerminalState.hasSession() && hasHomeList()) {
+            if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
+                if (mHomeCoordinator != null) mHomeCoordinator.resume();
+            } else {
+                startRelayMonitor();
+            }
         }
     }
 
@@ -180,7 +213,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onPause() {
         mInForeground = false;
         if (!mTerminalState.hasSession()) {
-            if (mHomeCoordinator != null) mHomeCoordinator.pause();
+            if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pause();
             stopRelayMonitor();
         } else {
             pauseCurrentTerminalConnection();
@@ -207,7 +240,15 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onBackPressed() {
         if (mTerminalState.hasSession()) {
-            showSessionHome();
+            if (mSelectedServer != null) {
+                showDeviceSessions(mSelectedServer, PageTransition.BACK);
+            } else {
+                showSessionHome(PageTransition.BACK);
+            }
+            return;
+        }
+        if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
+            showSessionHome(PageTransition.BACK);
             return;
         }
         super.onBackPressed();
@@ -229,9 +270,22 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     void showSessionHome() {
+        showSessionHome(PageTransition.BACK);
+    }
+
+    private void showSessionHome(PageTransition transition) {
         closeCurrentTerminal(false);
         mClosed.set(false);
         mTerminalState.clearServerSession();
+        mScreenMode = ScreenMode.DEVICES;
+        mSelectedServer = null;
+        mSelectedServerStatus = null;
+        mSessionAdapter = null;
+        if (mHomeCoordinator != null) {
+            mHomeCoordinator.pause();
+            mHomeCoordinator.attachSessionList(null);
+            mHomeCoordinator.attachSessionAdapter(null);
+        }
 
         HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
             this,
@@ -249,27 +303,202 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         );
         mHomeSubtitle = home.subtitle;
         updateSubtitleState(mRelayState);
-        installRootInsets(home.root, dp(20), dp(24), dp(20), dp(16), true);
+        installRootInsets(home.root, dp(20), dp(8), dp(20), dp(16), true);
         mSessionList = home.sessionList;
-        if (mHomeCoordinator != null) mHomeCoordinator.attachSessionList(mSessionList);
-        setContentView(home.root);
         loadMultiSessions();
+        setContentViewAnimated(home.root, transition);
         startRelayMonitor();
     }
 
     private void loadMultiSessions() {
-        if (mHomeCoordinator != null) {
-            java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
-            for (ServerConfig s : mServerConfigs.servers()) {
-                if (!s.isRelayMaster) {
-                    allServers.add(s);
-                }
-            }
-            if (mRelayDevices != null && !mRelayDevices.isEmpty()) {
-                allServers.addAll(mRelayDevices);
-            }
-            mHomeCoordinator.load(allServers);
+        if (mSessionList == null || mScreenMode != ScreenMode.DEVICES) return;
+        java.util.List<ServerConfig> allServers = collectVisibleDevices();
+        mSessionList.removeAllViews();
+        if (allServers.isEmpty()) {
+            mSessionList.addView(HomeScreenBuilder.emptyState(this), new LinearLayout.LayoutParams(-1, -2));
+            return;
         }
+        for (ServerConfig server : allServers) {
+            mSessionList.addView(HomeScreenBuilder.deviceCard(
+                this,
+                server,
+                (v) -> showDeviceSessions(server, PageTransition.FORWARD),
+                () -> showAddServerDialog(server),
+                () -> confirmRemoveServer(server)
+            ));
+        }
+    }
+
+    private java.util.List<ServerConfig> collectVisibleDevices() {
+        java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
+        for (ServerConfig s : mServerConfigs.servers()) {
+            if (!s.isRelayMaster) {
+                allServers.add(s);
+            }
+        }
+        if (mRelayDevices != null && !mRelayDevices.isEmpty()) {
+            allServers.addAll(mRelayDevices);
+        }
+        return allServers;
+    }
+
+    private void showDeviceSessions(ServerConfig server) {
+        showDeviceSessions(server, PageTransition.FORWARD);
+    }
+
+    private void showDeviceSessions(ServerConfig server, PageTransition transition) {
+        if (server == null) {
+            showSessionHome(PageTransition.BACK);
+            return;
+        }
+        closeCurrentTerminal(false);
+        stopRelayMonitor();
+        mClosed.set(false);
+        mTerminalState.clearServerSession();
+        mScreenMode = ScreenMode.DEVICE_SESSIONS;
+        mSelectedServer = server;
+        mHomeSubtitle = null;
+        mSessionList = null;
+
+        HomeScreenBuilder.DeviceSessionsResult screen = HomeScreenBuilder.buildDeviceSessions(
+            this,
+            server,
+            () -> showSessionHome(PageTransition.BACK),
+            () -> createSessionOnServer(server),
+            () -> loadSelectedDeviceSessions(),
+            () -> showAddServerDialog(server),
+            () -> confirmRemoveServer(server)
+        );
+        mSelectedServerStatus = screen.status;
+        installRootInsets(screen.root, dp(20), dp(8), dp(20), dp(16), true);
+        mSessionAdapter = new SessionRecyclerAdapter(this, this, this::loadSelectedDeviceSessions);
+        screen.sessionList.setAdapter(mSessionAdapter);
+        if (mHomeCoordinator != null) {
+            mHomeCoordinator.attachSessionList(null);
+            mHomeCoordinator.attachSessionAdapter(mSessionAdapter);
+            mHomeCoordinator.loadDeviceSessions(server, mSelectedServerStatus);
+        }
+        setContentViewAnimated(screen.root, transition);
+    }
+
+    private void loadSelectedDeviceSessions() {
+        if (mHomeCoordinator != null && mSelectedServer != null && mSelectedServerStatus != null) {
+            mHomeCoordinator.loadDeviceSessions(mSelectedServer, mSelectedServerStatus);
+        }
+    }
+
+    private void handleClosedSessionRow(ServerConfig server, String sessionId) {
+        if (mScreenMode != ScreenMode.DEVICE_SESSIONS || !isSelectedServer(server) || mSessionAdapter == null) return;
+        mSessionAdapter.removeSession(sessionId);
+    }
+
+    private boolean isSelectedServer(ServerConfig server) {
+        if (server == null || mSelectedServer == null) return false;
+        if (server == mSelectedServer) return true;
+        if (server.id != null && !server.id.isEmpty() && server.id.equals(mSelectedServer.id)) return true;
+        String serverUrl = WebTermUrls.normalizeBaseUrl(server.url);
+        String selectedUrl = WebTermUrls.normalizeBaseUrl(mSelectedServer.url);
+        String serverDeviceId = server.deviceId == null ? "" : server.deviceId;
+        String selectedDeviceId = mSelectedServer.deviceId == null ? "" : mSelectedServer.deviceId;
+        return serverUrl.equals(selectedUrl) && serverDeviceId.equals(selectedDeviceId);
+    }
+
+    private boolean hasHomeList() {
+        return mScreenMode == ScreenMode.DEVICE_SESSIONS ? mSessionAdapter != null : mSessionList != null;
+    }
+
+    private void showSessionListOrDeviceHome() {
+        if (mSelectedServer != null) {
+            showDeviceSessions(mSelectedServer, PageTransition.BACK);
+        } else {
+            showSessionHome(PageTransition.BACK);
+        }
+    }
+
+    private void setContentViewAnimated(View newRoot, PageTransition transition) {
+        if (newRoot == null) return;
+        if (transition == PageTransition.NONE) {
+            setContentView(newRoot);
+            return;
+        }
+
+        ViewGroup content = findViewById(android.R.id.content);
+        if (content == null || content.getChildCount() == 0) {
+            setContentView(newRoot);
+            return;
+        }
+        content.setBackgroundColor(Color.rgb(15, 15, 18));
+
+        View oldRoot = content.getChildAt(content.getChildCount() - 1);
+        if (oldRoot == null || oldRoot == newRoot) {
+            setContentView(newRoot);
+            return;
+        }
+        for (int i = content.getChildCount() - 2; i >= 0; i--) {
+            View stale = content.getChildAt(i);
+            stale.animate().cancel();
+            content.removeViewAt(i);
+        }
+
+        ViewGroup parent = (ViewGroup) newRoot.getParent();
+        if (parent != null) parent.removeView(newRoot);
+
+        oldRoot.animate().cancel();
+        newRoot.animate().cancel();
+        oldRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        newRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
+        int offset = dp(18);
+        float newStartX = 0f;
+        if (transition == PageTransition.FORWARD) {
+            newStartX = offset;
+        } else if (transition == PageTransition.BACK) {
+            newStartX = -offset;
+        }
+
+        newRoot.setAlpha(transition == PageTransition.FADE ? 0f : 1f);
+        newRoot.setTranslationX(newStartX);
+        content.addView(newRoot, new ViewGroup.LayoutParams(-1, -1));
+
+        DecelerateInterpolator interpolator = new DecelerateInterpolator();
+        newRoot.animate()
+            .alpha(1f)
+            .translationX(0f)
+            .setDuration(180L)
+            .setInterpolator(interpolator)
+            .setListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    newRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+                }
+            })
+            .start();
+
+        if (transition == PageTransition.FADE) {
+            oldRoot.animate()
+                .alpha(0f)
+                .setDuration(180L)
+                .setInterpolator(interpolator)
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        removeOldRoot(content, oldRoot);
+                    }
+                })
+                .start();
+        } else {
+            oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+            newRoot.postDelayed(() -> removeOldRoot(content, oldRoot), 190L);
+        }
+    }
+
+    private void removeOldRoot(ViewGroup content, View oldRoot) {
+        if (oldRoot.getParent() == content) {
+            content.removeView(oldRoot);
+        }
+        oldRoot.setAlpha(1f);
+        oldRoot.setTranslationX(0f);
+        oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
     }
 
     // RelayConfigDialogHelper.Host Implementation
@@ -323,7 +552,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mRelayMasterConfig = existingMaster;
         saveServersToPrefs();
         startRelayMonitor();
-        showSessionHome();
+        showSessionHome(PageTransition.FADE);
     }
 
     @Override
@@ -343,7 +572,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         stopRelayMonitor();
         mRelayDevices.clear();
         updateSubtitleState(RelayState.NOT_CONFIGURED);
-        showSessionHome();
+        showSessionHome(PageTransition.FADE);
     }
 
     private void updateSubtitleState(RelayState state) {
@@ -491,7 +720,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private boolean isHomeActive() {
-        return mInForeground && !mClosed.get() && !mTerminalState.hasSession() && mSessionList != null;
+        return mInForeground && !mClosed.get() && !mTerminalState.hasSession() && mScreenMode == ScreenMode.DEVICE_SESSIONS && mSessionAdapter != null;
     }
 
     private void confirmRemoveServer(ServerConfig server) {
@@ -499,10 +728,14 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             .setTitle("确认移除电脑")
             .setMessage("确定要从列表中移除该服务器吗？")
             .setPositiveButton("移除", (dialog, which) -> {
-                removeCachedTerminalsForServer(server.url);
+                removeCachedTerminalsForServer(server);
                 mServerConfigs.remove(server);
                 saveServersToPrefs();
-                loadMultiSessions();
+                if (server == mSelectedServer) {
+                    showSessionHome(PageTransition.BACK);
+                } else {
+                    loadMultiSessions();
+                }
             })
             .setNegativeButton("取消", null)
             .show();
@@ -525,7 +758,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
         mServerConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
         saveServersToPrefs();
-        showSessionHome();
+        if (existingServer != null && existingServer == mSelectedServer) {
+            showDeviceSessions(existingServer, PageTransition.FADE);
+        } else {
+            showSessionHome(PageTransition.FADE);
+        }
     }
 
     void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
@@ -554,6 +791,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
         if (mHomeCoordinator != null) mHomeCoordinator.pause();
+        mScreenMode = ScreenMode.TERMINAL;
         String normalizedInstanceId = SessionIdentity.normalizePart(instanceId);
         String normalizedCreatedAt = SessionIdentity.normalizePart(createdAt);
         CachedTerminal cached = mTerminalCache == null ? null : mTerminalCache.getMemory(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
@@ -573,6 +811,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         );
         mClosed.set(false);
         mTerminalState.applyLaunchState(launchState);
+        mPendingDiskSnapshotBytes = diskRestore[0] == null ? null : diskRestore[0].snapshotBytes;
 
         TerminalScreenBuilder.Result terminalScreen = TerminalScreenBuilder.build(
             this,
@@ -581,7 +820,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             getSavedFontSize(),
             getTypefaceByName(getSavedFontType()),
             new WebTermTerminalViewClient(this),
-            this::showSessionHome,
+            this::showSessionListOrDeviceHome,
             () -> {
                 if (mTerminalConnection != null) mTerminalConnection.reconnectNow();
             },
@@ -597,34 +836,84 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mTerminalViewport = terminalScreen.terminalViewport;
         mQuickBar = terminalScreen.quickBar;
         mCtrlButton = terminalScreen.ctrlButton;
+        mTerminalAttachStarted = false;
         mTerminalTitle = terminalScreen.title;
         mTerminalSubtitle = terminalScreen.subtitle;
         mConnectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton);
         installRootInsets(mTerminalRoot, 0, 0, 0, 0, false);
-        setContentView(mTerminalRoot);
-        mTerminalRoot.post(this::updateKeyboardAvoidance);
-
         mTerminalSession = cached != null && cached.terminalSession != null
             ? cached.terminalSession
             : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, mTerminalSessionClient, mTerminalSessionClient);
-        mTerminalView.attachSession(mTerminalSession);
-        if (cached == null && diskRestore[0] != null && diskRestore[0].snapshotBytes != null && diskRestore[0].snapshotBytes.length > 0) {
-            try {
-                mTerminalSession.getEmulator().getScreen().deserialize(diskRestore[0].snapshotBytes);
-            } catch (Throwable t) {
-                android.util.Log.e("MainActivity", "Failed to deserialize snapshot", t);
-            }
-        }
-        mTerminalView.requestFocus();
-        mTerminalRoot.post(() -> {
-            if (mTerminalView != null) mTerminalView.updateSize();
-            connectTerminal();
-        });
+        setContentViewAnimated(mTerminalRoot, PageTransition.FORWARD);
+        mTerminalRoot.post(this::updateKeyboardAvoidance);
+        attachTerminalWhenLaidOut();
     }
 
     @Override
     public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
+        mSelectedServer = server;
         showTerminal(server.url, server.cookie, sessionId, termTitle, sessionName, createdAt, instanceId);
+    }
+
+    private void attachTerminalWhenLaidOut() {
+        if (mTerminalRoot == null || mTerminalView == null || mTerminalSession == null || mTerminalAttachStarted) return;
+        ViewTreeObserver observer = mTerminalView.getViewTreeObserver();
+        observer.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                if (mTerminalView == null) {
+                    removeLayoutListener(this);
+                    return;
+                }
+                if (mTerminalView.getWidth() <= 0 || mTerminalView.getHeight() <= 0) return;
+                removeLayoutListener(this);
+                attachAndConnectTerminal();
+            }
+        });
+        mTerminalView.post(() -> {
+            if (mTerminalView != null && mTerminalView.getWidth() > 0 && mTerminalView.getHeight() > 0) {
+                attachAndConnectTerminal();
+            }
+        });
+    }
+
+    private void removeLayoutListener(ViewTreeObserver.OnGlobalLayoutListener listener) {
+        if (mTerminalView == null) return;
+        ViewTreeObserver observer = mTerminalView.getViewTreeObserver();
+        if (observer.isAlive()) {
+            observer.removeOnGlobalLayoutListener(listener);
+        }
+    }
+
+    private void attachAndConnectTerminal() {
+        if (mTerminalAttachStarted || mTerminalView == null || mTerminalSession == null) return;
+        if (mTerminalView.getWidth() <= 0 || mTerminalView.getHeight() <= 0) return;
+        mTerminalAttachStarted = true;
+        mTerminalView.attachSession(mTerminalSession);
+        restorePendingDiskSnapshot();
+        mTerminalView.requestFocus();
+        mTerminalView.updateSize();
+        updateKeyboardAvoidance();
+        connectTerminal();
+    }
+
+    private void restorePendingDiskSnapshot() {
+        byte[] snapshotBytes = mPendingDiskSnapshotBytes;
+        mPendingDiskSnapshotBytes = null;
+        if (snapshotBytes == null || snapshotBytes.length == 0 || mTerminalSession == null) return;
+        try {
+            if (mTerminalSession.getEmulator() == null || mTerminalSession.getEmulator().getScreen() == null) {
+                android.util.Log.w("MainActivity", "Terminal emulator unavailable while restoring disk snapshot; requesting full server snapshot");
+                mTerminalState.resetLastSeq();
+                if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(0);
+                return;
+            }
+            mTerminalSession.getEmulator().getScreen().deserialize(snapshotBytes);
+        } catch (Throwable t) {
+            android.util.Log.w("MainActivity", "Failed to restore terminal disk snapshot; requesting full server snapshot", t);
+            mTerminalState.resetLastSeq();
+            if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(0);
+        }
     }
 
     @Override
@@ -668,6 +957,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mTerminalViewport = null;
         mQuickBar = null;
         mCtrlButton = null;
+        mTerminalAttachStarted = false;
+        mPendingDiskSnapshotBytes = null;
         mCtrlDown = false;
         mImeOverlap = 0;
         mTerminalState.clearTerminalDetails();
@@ -702,12 +993,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         TodoDialogHelper.clearTodo(this, sessionId);
     }
 
-    private void removeMissingCachedSessionsForServer(String baseUrl, java.util.Set<String> liveSessionIdentities) {
-        if (mTerminalCache != null) mTerminalCache.removeMissingForServer(baseUrl, liveSessionIdentities, mTerminalSession);
+    private void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
+        if (mTerminalCache != null) mTerminalCache.removeMissingForServer(server, liveSessionIdentities, mTerminalSession);
     }
 
-    private void removeCachedTerminalsForServer(String baseUrl) {
-        if (mTerminalCache != null) mTerminalCache.removeServer(baseUrl, mTerminalSession);
+    private void removeCachedTerminalsForServer(ServerConfig server) {
+        if (mTerminalCache != null) mTerminalCache.removeServer(server, mTerminalSession);
     }
 
     private void handleKey(int keyCode) {

@@ -57,18 +57,22 @@ final class ServerGroupController {
                 @Override
                 public void onMonitorSessions(JSONArray sessions) {
                     if (!listener.isActive(ServerGroupController.this)) return;
-                    lastSessions = sessions;
+                    lastSessions = filterSessionsForCurrentServer(sessions);
                     activity.runOnUiThread(() -> listener.onRenderSessions(server, lastSessions, subList));
                 }
 
                 @Override
                 public void onMonitorSession(JSONObject session) {
-                    if (listener.isActive(ServerGroupController.this)) upsertLocalSession(session);
+                    if (listener.isActive(ServerGroupController.this) && belongsToCurrentServer(session)) {
+                        upsertLocalSession(session);
+                    }
                 }
 
                 @Override
                 public void onMonitorSessionClosed(String sessionId) {
-                    if (listener.isActive(ServerGroupController.this)) removeLocalSession(sessionId);
+                    if (listener.isActive(ServerGroupController.this) && belongsToCurrentServer(sessionId)) {
+                        removeLocalSession(sessionId);
+                    }
                 }
 
                 @Override
@@ -112,7 +116,28 @@ final class ServerGroupController {
     }
 
     void setLastSessions(JSONArray sessions) {
-        lastSessions = sessions;
+        lastSessions = filterSessionsForCurrentServer(sessions);
+    }
+
+    private JSONArray filterSessionsForCurrentServer(JSONArray sessions) {
+        JSONArray filtered = new JSONArray();
+        if (sessions == null) return filtered;
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject session = sessions.optJSONObject(i);
+            if (belongsToCurrentServer(session)) {
+                filtered.put(session);
+            }
+        }
+        return filtered;
+    }
+
+    private boolean belongsToCurrentServer(JSONObject session) {
+        if (session == null) return false;
+        return belongsToCurrentServer(session.optString("id"));
+    }
+
+    private boolean belongsToCurrentServer(String sessionId) {
+        return TerminalCacheScope.matches(server, server.url, sessionId);
     }
 
     private void upsertLocalSession(JSONObject newData) {
