@@ -5,8 +5,8 @@ loadLocalEnv();
 const mode = process.env.WEBTERM_MODE || 'direct';
 
 if (mode === 'agent') {
-  const { startAgent } = await import('./server/agent.js');
-  startAgent();
+  const { Agent } = await import('./server/agent.js');
+  new Agent().start();
 } else {
   const { DirectServer } = await import('./server/direct.js');
   new DirectServer().start();
