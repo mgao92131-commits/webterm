@@ -8,6 +8,6 @@ if (mode === 'agent') {
   const { startAgent } = await import('./server/agent.js');
   startAgent();
 } else {
-  const { startServer } = await import('./server/direct.js');
-  startServer();
+  const { DirectServer } = await import('./server/direct.js');
+  new DirectServer().start();
 }
