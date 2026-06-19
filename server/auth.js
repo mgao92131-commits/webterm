@@ -1,83 +1,280 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import crypto from 'node:crypto';
+import { promisify } from 'node:util';
+import { findById, findByUsername, verifyUserEmail } from './stores/user-store.js';
+import { issue, consume, revokeAllForUser } from './stores/token-store.js';
+import { sendOtpEmail } from './mail.js';
+import {
+  createVerification,
+  verifyOtp as verifyOtpInStore,
+  getLastVerificationTime,
+  getDailyUserVerificationCount,
+  getDailyIpVerificationCount
+} from './stores/email-verification-store.js';
+import {
+  isDeviceTrusted,
+  addTrustedDevice,
+  updateDeviceLastSeen
+} from './stores/trusted-device-store.js';
+
+const scrypt = promisify(crypto.scrypt);
 
 export const COOKIE_NAME = 'webterm_token';
+export const REFRESH_COOKIE_NAME = 'webterm_refresh';
 
-export class AuthManager {
-  constructor({ username, password, users }) {
-    this.failures = new Map();
-    if (users && Array.isArray(users)) {
-      this.users = new Map(users.map(u => [u.username, u]));
+let jwtSecret = null;
+function getJwtSecret() {
+  if (jwtSecret) return jwtSecret;
+  jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    if (process.env.NODE_ENV === 'test') {
+      jwtSecret = 'test_fallback_secret_only_for_unit_tests';
     } else {
-      const defaultUser = username || 'admin';
-      this.users = new Map([[defaultUser, { username: defaultUser, password }]]);
+      console.error('FATAL: JWT_SECRET environment variable is not set!');
+      process.exit(1);
     }
   }
+  return jwtSecret;
+}
 
-  verify(username, password, remoteAddress = '') {
-    const user = this.users.get(username || '');
-    const ok = user && safeEqual(password || '', user.password);
-    if (!ok) {
-      const count = (this.failures.get(remoteAddress) || 0) + 1;
-      this.failures.set(remoteAddress, count);
+// --- Password Hashing with scrypt ---
+export async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$${salt}$${derivedKey.toString('hex')}`;
+}
+
+export async function verifyPassword(password, storedHash) {
+  try {
+    const parts = storedHash.split('$');
+    if (parts.length !== 3 || parts[0] !== 'scrypt') {
       return false;
     }
-    this.failures.delete(remoteAddress);
+    const salt = parts[1];
+    const hash = parts[2];
+    const derivedKey = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 });
+    
+    const left = Buffer.from(hash, 'hex');
+    const right = derivedKey;
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
+}
+
+// --- Custom JWT HS256 Implementation ---
+function base64UrlEncode(strOrBuffer) {
+  const buf = Buffer.isBuffer(strOrBuffer) ? strOrBuffer : Buffer.from(strOrBuffer, 'utf8');
+  return buf.toString('base64url');
+}
+
+function base64UrlDecode(str) {
+  return Buffer.from(str, 'base64url').toString('utf8');
+}
+
+export function signJwt(payload, secret = getJwtSecret()) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const part1 = base64UrlEncode(JSON.stringify(header));
+  const part2 = base64UrlEncode(JSON.stringify(payload));
+  const signature = crypto.createHmac('sha256', secret)
+    .update(part1 + '.' + part2)
+    .digest('base64url');
+  return part1 + '.' + part2 + '.' + signature;
+}
+
+export function verifyJwt(token, secret = getJwtSecret()) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [part1, part2, signature] = parts;
+    const expectedSig = crypto.createHmac('sha256', secret)
+      .update(part1 + '.' + part2)
+      .digest('base64url');
+    
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    
+    const payload = JSON.parse(base64UrlDecode(part2));
+    if (payload.exp && Date.now() > payload.exp * 1000) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// --- AuthManager ---
+export class AuthManager {
+  constructor() {
+    this.failures = new Map();
+  }
+
+  // Generate and send OTP with rate limits checked
+  async sendVerificationOtp(userId, email, purpose, targetDeviceId = null, ipAddress = null) {
+    const now = Date.now();
+    const lastTime = getLastVerificationTime(userId);
+    if (now - lastTime < 60 * 1000) {
+      throw new Error('发送过于频繁，请等待 60 秒后再试。');
+    }
+    
+    const dailyUserCount = getDailyUserVerificationCount(userId);
+    if (dailyUserCount >= 10) {
+      throw new Error('今天发送验证码的次数已达上限（10次）。');
+    }
+    
+    const dailyIpCount = getDailyIpVerificationCount(ipAddress);
+    if (dailyIpCount >= 30) {
+      throw new Error('该 IP 地址今天发送验证码的次数已达上限（30次）。');
+    }
+    
+    const code = crypto.randomInt(100000, 1000000).toString();
+    createVerification(userId, purpose, code, targetDeviceId, ipAddress);
+    await sendOtpEmail(email, code, purpose);
     return true;
   }
 
-  token(username) {
-    let targetUser = username;
-    if (!targetUser) {
-      if (this.users.size === 1) {
-        targetUser = Array.from(this.users.keys())[0];
-      } else {
-        return '';
-      }
-    }
-    const user = this.users.get(targetUser);
-    if (!user) return '';
-    return signToken(targetUser, user.password);
+  issueSession(user) {
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 15 * 60; // 15 minutes access token
+    const payload = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      iat,
+      exp
+    };
+    
+    const accessToken = signJwt(payload, getJwtSecret());
+    const refreshToken = issue(user.id);
+    
+    return {
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role
+      },
+      accessToken,
+      refreshToken
+    };
   }
 
-  authenticated(req) {
+  async login(email, password, deviceId = null, ipAddress = null) {
+    const user = findByUsername(email);
+    if (!user || user.disabled === 1) return null;
+    
+    const ok = await verifyPassword(password, user.passwordHash);
+    if (!ok) return null;
+
+    // Check if email has been verified/activated
+    if (user.emailVerifiedAt === null) {
+      return { inactive: true, user: { id: user.id, username: user.username } };
+    }
+
+    // Check if device is trusted
+    const trusted = isDeviceTrusted(user.id, deviceId);
+    if (!trusted) {
+      try {
+        await this.sendVerificationOtp(user.id, user.username, 'new_device', deviceId, ipAddress);
+        return { otpRequired: true, targetDeviceId: deviceId, user: { id: user.id, username: user.username } };
+      } catch (err) {
+        return { otpRequired: true, otpError: err.message, targetDeviceId: deviceId, user: { id: user.id, username: user.username } };
+      }
+    }
+
+    // Device is trusted, perform direct login
+    updateDeviceLastSeen(user.id, deviceId);
+    return this.issueSession(user);
+  }
+
+  refresh(refreshToken, deviceId = null) {
+    const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const consumed = consume(hash);
+    if (!consumed) return null;
+    
+    const { userId, isExpired, isRevoked } = consumed;
+    
+    if (isExpired) return null;
+
+    if (isRevoked) {
+      // Re-use detection: revoke all tokens for this user
+      revokeAllForUser(userId);
+      return null;
+    }
+    
+    const user = findById(userId);
+    if (!user || user.disabled === 1) return null;
+
+    // Device verification during token refresh:
+    // If user has email verified (meaning using OTP auth) and deviceId is provided,
+    // verify if device is still trusted. If untrusted, reject.
+    if (user.emailVerifiedAt && deviceId && !isDeviceTrusted(userId, deviceId)) {
+      return null;
+    }
+
+    if (deviceId) {
+      updateDeviceLastSeen(userId, deviceId);
+    }
+    
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 15 * 60; // 15 minutes
+    const payload = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      iat,
+      exp
+    };
+    
+    const accessToken = signJwt(payload, getJwtSecret());
+    const newRefreshToken = issue(user.id);
+    
+    return {
+      accessToken,
+      refreshToken: newRefreshToken
+    };
+  }
+
+  logout(refreshToken) {
+    const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    consume(hash);
+  }
+
+  authenticate(req) {
     const token = parseCookies(req.headers.cookie || '')[COOKIE_NAME];
     if (!token) return null;
     
-    // Support new multi-user token format: v1-${base64url(username)}-${signature}
-    // As well as old single-user token format: v1-${signature}
-    const match = token.match(/^v1~([-A-Za-z0-9_]+)~([-A-Za-z0-9_]{30,90})$/);
-    if (match) {
-      try {
-        const username = Buffer.from(match[1], 'base64url').toString('utf8');
-        const user = this.users.get(username);
-        if (!user) return null;
-        const expectedToken = signToken(username, user.password);
-        if (safeEqual(token, expectedToken)) {
-          return username;
-        }
-      } catch {
-        return null;
-      }
-    } else {
-      // Legacy single-user compatibility
-      if (this.users.size === 1) {
-        const username = Array.from(this.users.keys())[0];
-        const user = this.users.get(username);
-        const expectedOldToken = 'v1-' + createHmac('sha256', user.password).update(username).digest('base64url');
-        if (safeEqual(token, expectedOldToken)) {
-          return username;
-        }
-      }
-    }
-    return null;
+    const payload = verifyJwt(token, getJwtSecret());
+    if (!payload) return null;
+    
+    const user = findById(payload.sub);
+    if (!user || user.disabled === 1) return null;
+    
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role
+    };
   }
 
   failureDelay(remoteAddress = '') {
     const count = this.failures.get(remoteAddress) || 0;
     return Math.min(1000, 250 + count * 150);
   }
+
+  recordFailure(remoteAddress = '') {
+    const count = (this.failures.get(remoteAddress) || 0) + 1;
+    this.failures.set(remoteAddress, count);
+  }
+
+  clearFailures(remoteAddress = '') {
+    this.failures.delete(remoteAddress);
+  }
 }
 
+// --- Cookie Helpers ---
 export function setAuthCookie(res, token, secure = false) {
   const cookie = [
     `${COOKIE_NAME}=${encodeURIComponent(token)}`,
@@ -87,6 +284,28 @@ export function setAuthCookie(res, token, secure = false) {
   ];
   if (secure) cookie.push('Secure');
   res.setHeader('Set-Cookie', cookie.join('; '));
+}
+
+export function setRefreshCookie(res, token, secure = false) {
+  const cookie = [
+    `${REFRESH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/api/auth',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (secure) cookie.push('Secure');
+  
+  const existing = res.getHeader('Set-Cookie');
+  const cookies = [];
+  if (existing) {
+    if (Array.isArray(existing)) {
+      cookies.push(...existing);
+    } else {
+      cookies.push(existing);
+    }
+  }
+  cookies.push(cookie.join('; '));
+  res.setHeader('Set-Cookie', cookies);
 }
 
 export function parseCookies(header) {
@@ -101,14 +320,33 @@ export function parseCookies(header) {
   return cookies;
 }
 
-function signToken(username, password) {
-  const sig = createHmac('sha256', password).update(username).digest('base64url');
-  const encodedUser = Buffer.from(username, 'utf8').toString('base64url');
-  return `v1~${encodedUser}~${sig}`;
+export function getOrCreateDeviceId(req, res) {
+  const cookies = parseCookies(req.headers.cookie || '');
+  let deviceId = cookies['webterm_device_id'];
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    const secureCookie = req.socket.encrypted || process.env.WEBTERM_COOKIE_SECURE === '1';
+    const cookieParts = [
+      `webterm_device_id=${deviceId}`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Lax',
+      'Max-Age=31536000'
+    ];
+    if (secureCookie) cookieParts.push('Secure');
+    
+    const existing = res.getHeader('Set-Cookie');
+    const cookiesList = [];
+    if (existing) {
+      if (Array.isArray(existing)) {
+        cookiesList.push(...existing);
+      } else {
+        cookiesList.push(existing);
+      }
+    }
+    cookiesList.push(cookieParts.join('; '));
+    res.setHeader('Set-Cookie', cookiesList);
+  }
+  return deviceId;
 }
 
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a));
-  const right = Buffer.from(String(b));
-  return left.length === right.length && timingSafeEqual(left, right);
-}

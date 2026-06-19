@@ -121,6 +121,20 @@ export class TerminalSession {
     });
   }
 
+  attachClient(client) {
+    this.clients.add(client);
+    this.touch();
+  }
+
+  detachClient(client) {
+    this.clients.delete(client);
+    this.touch();
+  }
+
+  hasClient(client) {
+    return this.clients.has(client);
+  }
+
   handleClientMessage(client, msg) {
     this.touch();
     if (msg.type === 'hello') {

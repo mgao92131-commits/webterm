@@ -45,9 +45,6 @@ final class ServerGroupController {
             monitor = new ServerSessionMonitor(http, mainHandler, server, new ServerSessionMonitor.Listener() {
                 @Override
                 public void onMonitorConnected() {
-                    if (server.isRelayDevice && server.deviceId != null && !server.deviceId.isEmpty()) {
-                        monitor.connectDevice(server.deviceId);
-                    }
                     listener.onScheduleFallbackRefresh();
                     activity.runOnUiThread(() -> {
                         if (listener.isActive(ServerGroupController.this)) markReady();

@@ -5,4 +5,5 @@ node_modules/
 npm-debug.log*
 test-results/
 .antigravitycli
-go-server/runtime/zsh/.zsh_history
+data/
+*.db*

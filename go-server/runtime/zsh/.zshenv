@@ -1,3 +1,0 @@
-if [[ -f "$HOME/.zshenv" ]]; then
-  source "$HOME/.zshenv"
-fi
