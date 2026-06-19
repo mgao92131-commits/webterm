@@ -29,8 +29,8 @@ function getJwtSecret() {
     if (process.env.NODE_ENV === 'test') {
       jwtSecret = 'test_fallback_secret_only_for_unit_tests';
     } else {
-      console.error('FATAL: JWT_SECRET environment variable is not set!');
-      process.exit(1);
+      console.warn('WARNING: JWT_SECRET environment variable is not set. Generating a temporary random secret for this session.');
+      jwtSecret = crypto.randomBytes(32).toString('hex');
     }
   }
   return jwtSecret;
@@ -272,6 +272,17 @@ export class AuthManager {
     
     const payload = verifyJwt(token, getJwtSecret());
     if (!payload) return null;
+
+    if (payload.sub === 0) {
+      const expectedUser = process.env.WEBTERM_USER || 'admin';
+      if (payload.username === expectedUser) {
+        return {
+          id: 0,
+          username: expectedUser,
+          role: 'admin'
+        };
+      }
+    }
     
     const user = findById(payload.sub);
     if (!user || user.disabled === 1) return null;

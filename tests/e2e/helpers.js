@@ -1,9 +1,27 @@
 import { expect } from "@playwright/test";
 
 export async function openTerminal(page) {
+  page.on("console", msg => console.log(`[BROWSER CONSOLE] [${msg.type()}] ${msg.text()}`));
+  page.on("request", req => {
+    if (req.url().includes("/api/")) {
+      console.log(`[REQUEST] ${req.method()} ${req.url()}`);
+    }
+  });
+  page.on("response", res => {
+    if (res.url().includes("/api/")) {
+      console.log(`[RESPONSE] ${res.status()} ${res.url()}`);
+    }
+  });
   await page.goto("/");
   await page.evaluate(() => localStorage.setItem("webtermDebug", "1"));
   await page.reload();
+  
+  // 兼容有邮箱输入框的新登录页面
+  const emailInput = page.locator('input[name="email"]');
+  if (await emailInput.isVisible()) {
+    await emailInput.fill("admin");
+  }
+  
   await page.getByLabel("密码").fill("test");
   await page.getByRole("button", { name: "登录" }).click();
   await page.getByRole("button", { name: "新建终端" }).click();

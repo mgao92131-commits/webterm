@@ -21,7 +21,7 @@ export class DirectServer {
     this.host = h;
     this.port = Number(p);
     this.root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
-    this.auth = new AuthManager({ username: this.username, password });
+    this.auth = new AuthManager();
     this.sessions = new SessionManager();
   }
 
@@ -79,15 +79,24 @@ export class DirectServer {
 
   async route(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (req.method === 'POST' && url.pathname === '/api/login') {
+    if (req.method === 'POST' && (url.pathname === '/api/login' || url.pathname === '/api/auth/login')) {
       const body = await readJSON(req);
-      if (!this.auth.verify(body.username, body.password, req.socket.remoteAddress)) {
+      const username = body.email || body.username;
+      console.log('--- DirectServer login debug ---', {
+        username,
+        bodyUsername: body.username,
+        bodyEmail: body.email,
+        bodyPassword: body.password,
+        expectedUser: process.env.WEBTERM_USER || 'admin',
+        expectedPass: process.env.WEBTERM_PASSWORD
+      });
+      if (!this.auth.verify(username, body.password, req.socket.remoteAddress)) {
         await delay(this.auth.failureDelay(req.socket.remoteAddress));
         text(res, 401, 'invalid credentials');
         return;
       }
       setAuthCookie(res, this.auth.token(), req.socket.encrypted || process.env.WEBTERM_COOKIE_SECURE === '1');
-      json(res, 200, { username: this.username, mode: 'direct' });
+      json(res, 200, { username: this.username, email: this.username, role: 'admin', mode: 'direct' });
       return;
     }
 
@@ -104,8 +113,8 @@ export class DirectServer {
   }
 
   async routeAPI(req, res, url) {
-    if (req.method === 'GET' && url.pathname === '/api/me') {
-      json(res, 200, { username: this.username, mode: 'direct' });
+    if (req.method === 'GET' && (url.pathname === '/api/me' || url.pathname === '/api/auth/me')) {
+      json(res, 200, { id: 1, username: this.username, role: 'admin', mode: 'direct' });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/sessions') {
