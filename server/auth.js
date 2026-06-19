@@ -242,6 +242,30 @@ export class AuthManager {
     consume(hash);
   }
 
+  // --- Direct-mode simple auth (uses WEBTERM_PASSWORD) ---
+  verify(username, password, remoteAddress) {
+    const expectedUser = process.env.WEBTERM_USER || 'admin';
+    const expectedPass = process.env.WEBTERM_PASSWORD;
+    if (!expectedPass) return false;
+    if (username !== expectedUser || password !== expectedPass) {
+      this.recordFailure(remoteAddress);
+      return false;
+    }
+    this.clearFailures(remoteAddress);
+    return true;
+  }
+
+  token() {
+    const payload = {
+      sub: 0,
+      username: process.env.WEBTERM_USER || 'admin',
+      role: 'admin',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+    };
+    return signJwt(payload);
+  }
+
   authenticate(req) {
     const token = parseCookies(req.headers.cookie || '')[COOKIE_NAME];
     if (!token) return null;

@@ -103,26 +103,8 @@ export function createWsHandlers(ctx) {
         console.log(`[Relay] Agent disconnected: ${registeredDeviceId}`);
         registry.removeAgent(registeredDeviceId);
         if (registeredUserId) registry.pushDevicesToUser(registeredUserId, sendJSON);
-
-        activeWsTunnels.forEach((tunnel, tunnelId) => {
-          if (tunnel.deviceId === registeredDeviceId) {
-            tunnel.clientWs.close(4000, 'PC Agent offline');
-            activeWsTunnels.delete(tunnelId);
-          }
-        });
-        pendingHttpResponses.forEach((pending, reqId) => {
-          if (pending.deviceId === registeredDeviceId) {
-            clearTimeout(pending.timer);
-            text(pending.res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。');
-            pendingHttpResponses.delete(reqId);
-          }
-        });
-        pendingP2pOffers.forEach((pending, clientId) => {
-          if (pending.deviceId === registeredDeviceId) {
-            clearTimeout(pending.timer);
-            text(pending.res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。');
-            pendingP2pOffers.delete(clientId);
-          }
+        registry.cleanupAgentState(registeredDeviceId, {
+          activeWsTunnels, pendingHttpResponses, pendingP2pOffers, text
         });
       }
     });
