@@ -15,8 +15,6 @@ import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
-import com.termux.view.TerminalView;
-
 import org.json.JSONObject;
 
 import java.util.List;
@@ -369,7 +367,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mScreenMode = ScreenMode.TERMINAL;
         mTerminalLifecycle.showTerminal(
             baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
-            this, mTerminalSessionClient, mClipboardController,
+            this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
     }

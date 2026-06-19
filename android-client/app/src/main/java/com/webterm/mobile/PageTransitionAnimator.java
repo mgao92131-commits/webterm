@@ -22,6 +22,7 @@ final class PageTransitionAnimator {
 
         ViewGroup content = activity.findViewById(android.R.id.content);
         if (content == null || content.getChildCount() == 0) { activity.setContentView(newRoot); return; }
+        content.setBackgroundColor(android.graphics.Color.rgb(15, 15, 18));
 
         View oldRoot = content.getChildAt(content.getChildCount() - 1);
         if (oldRoot == null || oldRoot == newRoot) { activity.setContentView(newRoot); return; }

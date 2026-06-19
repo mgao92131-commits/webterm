@@ -2,11 +2,9 @@ package com.webterm.mobile;
 
 import android.app.Activity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.termux.terminal.TerminalSession;
@@ -100,7 +98,6 @@ final class TerminalLifecycleController {
         String termTitle, String sessionName, String createdAt, String instanceId,
         WebTermTerminalViewClient.Host viewClientHost,
         WebTermTerminalSessionClient sessionClient,
-        TerminalClipboardController clipboardController,
         Runnable onBack
     ) {
         String normalizedInstanceId = SessionIdentity.normalizePart(instanceId);
