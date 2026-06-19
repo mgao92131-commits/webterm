@@ -1,8 +1,7 @@
 package com.webterm.mobile;
 
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -10,12 +9,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.app.AlertDialog;
 
 import androidx.annotation.Nullable;
 
@@ -63,13 +59,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         DEVICES,
         DEVICE_SESSIONS,
         TERMINAL
-    }
-
-    private enum PageTransition {
-        NONE,
-        FORWARD,
-        BACK,
-        FADE
     }
 
     @Override
@@ -128,7 +117,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                 }
             });
         loadServersFromPrefs();
-        showSessionHome(PageTransition.NONE);
+        showSessionHome(PageTransitionAnimator.Transition.NONE);
     }
 
     @Override
@@ -180,14 +169,14 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     public void onBackPressed() {
         if (mTerminalLifecycle.hasSession()) {
             if (mSelectedServer != null) {
-                showDeviceSessions(mSelectedServer, PageTransition.BACK);
+                showDeviceSessions(mSelectedServer, PageTransitionAnimator.Transition.BACK);
             } else {
-                showSessionHome(PageTransition.BACK);
+                showSessionHome(PageTransitionAnimator.Transition.BACK);
             }
             return;
         }
         if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
-            showSessionHome(PageTransition.BACK);
+            showSessionHome(PageTransitionAnimator.Transition.BACK);
             return;
         }
         super.onBackPressed();
@@ -204,9 +193,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mServerConfigs.save();
     }
 
-    void showSessionHome() { showSessionHome(PageTransition.BACK); }
+    void showSessionHome() { showSessionHome(PageTransitionAnimator.Transition.BACK); }
 
-    private void showSessionHome(PageTransition transition) {
+    private void showSessionHome(PageTransitionAnimator.Transition transition) {
         mTerminalLifecycle.closeTerminal(false);
         mClosed.set(false);
         mTerminalState.clearServerSession();
@@ -247,7 +236,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         for (ServerConfig server : allServers) {
             mSessionList.addView(HomeScreenBuilder.deviceCard(
                 this, server,
-                (v) -> showDeviceSessions(server, PageTransition.FORWARD),
+                (v) -> showDeviceSessions(server, PageTransitionAnimator.Transition.FORWARD),
                 () -> showAddServerDialog(server),
                 () -> confirmRemoveServer(server)
             ));
@@ -264,10 +253,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         return allServers;
     }
 
-    private void showDeviceSessions(ServerConfig server) { showDeviceSessions(server, PageTransition.FORWARD); }
+    private void showDeviceSessions(ServerConfig server) { showDeviceSessions(server, PageTransitionAnimator.Transition.FORWARD); }
 
-    private void showDeviceSessions(ServerConfig server, PageTransition transition) {
-        if (server == null) { showSessionHome(PageTransition.BACK); return; }
+    private void showDeviceSessions(ServerConfig server, PageTransitionAnimator.Transition transition) {
+        if (server == null) { showSessionHome(PageTransitionAnimator.Transition.BACK); return; }
         mTerminalLifecycle.closeTerminal(false);
         mRelayCoordinator.stop();
         mClosed.set(false);
@@ -279,7 +268,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
         HomeScreenBuilder.DeviceSessionsResult screen = HomeScreenBuilder.buildDeviceSessions(
             this, server,
-            () -> showSessionHome(PageTransition.BACK),
+            () -> showSessionHome(PageTransitionAnimator.Transition.BACK),
             () -> createSessionOnServer(server),
             () -> loadSelectedDeviceSessions(),
             () -> showAddServerDialog(server),
@@ -325,9 +314,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private void showSessionListOrDeviceHome() {
         if (mSelectedServer != null) {
-            showDeviceSessions(mSelectedServer, PageTransition.BACK);
+            showDeviceSessions(mSelectedServer, PageTransitionAnimator.Transition.BACK);
         } else {
-            showSessionHome(PageTransition.BACK);
+            showSessionHome(PageTransitionAnimator.Transition.BACK);
         }
     }
 
@@ -353,7 +342,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                 mServerConfigs.remove(server);
                 saveServers();
                 if (server == mSelectedServer) {
-                    showSessionHome(PageTransition.BACK);
+                    showSessionHome(PageTransitionAnimator.Transition.BACK);
                 } else {
                     loadMultiSessions();
                 }
@@ -417,7 +406,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void setContentRoot(View root) {
-        setContentViewAnimated(root, PageTransition.FORWARD);
+        setContentViewAnimated(root, PageTransitionAnimator.Transition.FORWARD);
     }
 
     @Override
@@ -500,9 +489,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mServerConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
         saveServers();
         if (existingServer != null && existingServer == mSelectedServer) {
-            showDeviceSessions(existingServer, PageTransition.FADE);
+            showDeviceSessions(existingServer, PageTransitionAnimator.Transition.FADE);
         } else {
-            showSessionHome(PageTransition.FADE);
+            showSessionHome(PageTransitionAnimator.Transition.FADE);
         }
     }
 
@@ -511,7 +500,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onRelayDevicesChanged() { loadMultiSessions(); }
     @Override
-    public void onRelayAuthDone() { showSessionHome(PageTransition.FADE); }
+    public void onRelayAuthDone() { showSessionHome(PageTransitionAnimator.Transition.FADE); }
     @Override
     public ServerConfigManager serverConfigs() { return mServerConfigs; }
 
@@ -571,70 +560,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     // ── Animation ──────────────────────────────────────────────────
 
-    private void setContentViewAnimated(View newRoot, PageTransition transition) {
-        if (newRoot == null) return;
-        if (transition == PageTransition.NONE) { setContentView(newRoot); return; }
-
-        ViewGroup content = findViewById(android.R.id.content);
-        if (content == null || content.getChildCount() == 0) { setContentView(newRoot); return; }
-        content.setBackgroundColor(Color.rgb(15, 15, 18));
-
-        View oldRoot = content.getChildAt(content.getChildCount() - 1);
-        if (oldRoot == null || oldRoot == newRoot) { setContentView(newRoot); return; }
-        for (int i = content.getChildCount() - 2; i >= 0; i--) {
-            View stale = content.getChildAt(i);
-            stale.animate().cancel();
-            content.removeViewAt(i);
-        }
-
-        ViewGroup parent = (ViewGroup) newRoot.getParent();
-        if (parent != null) parent.removeView(newRoot);
-
-        oldRoot.animate().cancel();
-        newRoot.animate().cancel();
-        oldRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        newRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-
-        int offset = dp(18);
-        float newStartX = transition == PageTransition.FORWARD ? offset
-            : transition == PageTransition.BACK ? -offset : 0f;
-
-        newRoot.setAlpha(transition == PageTransition.FADE ? 0f : 1f);
-        newRoot.setTranslationX(newStartX);
-        content.addView(newRoot, new ViewGroup.LayoutParams(-1, -1));
-
-        DecelerateInterpolator interpolator = new DecelerateInterpolator();
-        newRoot.animate()
-            .alpha(1f).translationX(0f).setDuration(180L).setInterpolator(interpolator)
-            .setListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    newRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-                }
-            }).start();
-
-        if (transition == PageTransition.FADE) {
-            oldRoot.animate().alpha(0f).setDuration(180L).setInterpolator(interpolator)
-                .setListener(new AnimatorListenerAdapter() {
-                    @Override
-                    public void onAnimationEnd(Animator animation) {
-                        removeOldRoot(content, oldRoot);
-                    }
-                }).start();
-        } else {
-            oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-            newRoot.postDelayed(() -> removeOldRoot(content, oldRoot), 190L);
-        }
-    }
-
-    private void removeOldRoot(ViewGroup content, View oldRoot) {
-        if (oldRoot.getParent() == content) content.removeView(oldRoot);
-        oldRoot.setAlpha(1f);
-        oldRoot.setTranslationX(0f);
-        oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+    private void setContentViewAnimated(View newRoot, PageTransitionAnimator.Transition transition) {
+        PageTransitionAnimator.animate(this, newRoot, transition);
     }
 
     int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return PageTransitionAnimator.dp(this, value);
     }
 }
