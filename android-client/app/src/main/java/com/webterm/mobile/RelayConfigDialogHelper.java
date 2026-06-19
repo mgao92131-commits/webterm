@@ -39,17 +39,17 @@ public final class RelayConfigDialogHelper {
 
         EditText url = UIUtils.createInput(activity, "中转服务 URL (如: http://10.0.0.5:9000)");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(relayMaster == null ? "" : relayMaster.url);
+        url.setText(relayMaster == null ? "" : relayMaster.getUrl());
         container.addView(url, UIUtils.matchWrap(activity));
 
         EditText user = UIUtils.createInput(activity, "Username");
         user.setInputType(InputType.TYPE_CLASS_TEXT);
-        user.setText(relayMaster == null ? "" : relayMaster.username);
+        user.setText(relayMaster == null ? "" : relayMaster.getUsername());
         container.addView(user, UIUtils.matchWrap(activity));
 
         EditText password = UIUtils.createInput(activity, "Password");
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(relayMaster == null ? "" : relayMaster.password);
+        password.setText(relayMaster == null ? "" : relayMaster.getPassword());
         container.addView(password, UIUtils.matchWrap(activity));
 
         TextView errText = new TextView(activity);

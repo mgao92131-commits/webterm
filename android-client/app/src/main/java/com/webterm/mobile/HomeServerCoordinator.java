@@ -28,6 +28,7 @@ final class HomeServerCoordinator {
     private final HomeRefreshScheduler refreshScheduler;
     private final List<ServerGroupController> activeGroups = new ArrayList<>();
     private final Map<String, Boolean> serverCollapsed = new HashMap<>();
+    private final Map<String, Boolean> directoryCollapsed = new HashMap<>();
 
     private LinearLayout sessionList;
     private SessionRecyclerAdapter sessionAdapter;
@@ -104,6 +105,24 @@ final class HomeServerCoordinator {
 
     void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {
         this.sessionAdapter = sessionAdapter;
+        if (sessionAdapter != null) {
+            sessionAdapter.setCollapseState(new SessionRecyclerAdapter.CollapseState() {
+                @Override
+                public boolean isCollapsed(String groupKey) {
+                    return Boolean.TRUE.equals(directoryCollapsed.get(groupKey));
+                }
+
+                @Override
+                public void setCollapsed(String groupKey, boolean collapsed) {
+                    if (groupKey == null || groupKey.isEmpty()) return;
+                    if (collapsed) {
+                        directoryCollapsed.put(groupKey, true);
+                    } else {
+                        directoryCollapsed.remove(groupKey);
+                    }
+                }
+            });
+        }
     }
 
     void load(List<ServerConfig> servers) {
@@ -221,7 +240,7 @@ final class HomeServerCoordinator {
     private Map<String, JSONArray> collectInMemorySessions() {
         Map<String, JSONArray> tempInMemorySessions = new HashMap<>();
         for (ServerGroupController holder : activeGroups) {
-            if (holder.getLastSessions() != null && holder.server != null && holder.server.url != null) {
+            if (holder.getLastSessions() != null && holder.server != null && holder.server.getUrl() != null) {
                 tempInMemorySessions.put(TerminalCacheScope.key(holder.server), holder.getLastSessions());
             }
         }
@@ -229,12 +248,12 @@ final class HomeServerCoordinator {
     }
 
     private void renderServerGroup(ServerConfig server, Map<String, JSONArray> tempInMemorySessions) {
-        boolean collapsed = serverCollapsed.containsKey(server.id) && Boolean.TRUE.equals(serverCollapsed.get(server.id));
+        boolean collapsed = serverCollapsed.containsKey(server.getId()) && Boolean.TRUE.equals(serverCollapsed.get(server.getId()));
         HomeScreenBuilder.ServerGroupResult group = HomeScreenBuilder.buildServerGroup(
             activity,
             server,
             collapsed,
-            (nextCollapsed) -> serverCollapsed.put(server.id, nextCollapsed),
+            (nextCollapsed) -> serverCollapsed.put(server.getId(), nextCollapsed),
             () -> listener.onCreateSession(server),
             () -> listener.onEditServer(server),
             () -> listener.onRemoveServer(server)
@@ -272,7 +291,7 @@ final class HomeServerCoordinator {
     }
 
     private void loadSessionsForAdapter(ServerConfig server, StatusIndicatorView status, Map<String, JSONArray> tempInMemorySessions) {
-        if (server.url.isEmpty() || sessionAdapter == null) return;
+        if (server.getUrl().isEmpty() || sessionAdapter == null) return;
         status.setStatus(StatusIndicatorView.Status.CONNECTING);
 
         boolean loadedFromMemory = renderTemporarySessionsIntoAdapter(server, tempInMemorySessions);
@@ -280,9 +299,9 @@ final class HomeServerCoordinator {
             prepopulateCachedSessionsIntoAdapter(server);
         }
 
-        if (server.cookie != null && !server.cookie.isEmpty()) {
+        if (server.getCookie() != null && !server.getCookie().isEmpty()) {
             fetchSessionsIntoAdapter(server, status);
-        } else if (server.password != null && !server.password.isEmpty()) {
+        } else if (server.getPassword() != null && !server.getPassword().isEmpty()) {
             silentLoginAndFetchIntoAdapter(server, status);
         } else {
             status.setStatus(StatusIndicatorView.Status.DISCONNECTED);
@@ -328,7 +347,7 @@ final class HomeServerCoordinator {
 
             @Override
             public void onError(int code, String message) {
-                if (code == 401 && server.password != null && !server.password.isEmpty()) {
+                if (code == 401 && server.getPassword() != null && !server.getPassword().isEmpty()) {
                     silentLoginAndFetchIntoAdapter(server, status);
                     return;
                 }
@@ -348,10 +367,10 @@ final class HomeServerCoordinator {
     }
 
     private void silentLoginAndFetchIntoAdapter(ServerConfig server, StatusIndicatorView status) {
-        api.login(server.url, server.username, server.password, new WebTermApi.LoginCallback() {
+        api.login(server.getUrl(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
-                server.cookie = cookie;
+                server.setCookie(cookie);
                 listener.onAuthenticated(server);
                 activity.runOnUiThread(() -> fetchSessionsIntoAdapter(server, status));
             }
@@ -441,7 +460,7 @@ final class HomeServerCoordinator {
     }
 
     private void connectManagerWS(ServerGroupController holder) {
-        if (!listener.isHomeActive() || !hasAttachedTarget() || holder.server.url.isEmpty()) {
+        if (!listener.isHomeActive() || !hasAttachedTarget() || holder.server.getUrl().isEmpty()) {
             closeManagerWS(holder);
             return;
         }

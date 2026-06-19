@@ -52,14 +52,14 @@ final class HomeScreenBuilder {
         heading.setOrientation(LinearLayout.VERTICAL);
         heading.setPadding(UIUtils.dp(activity, 12), 0, 0, 0);
         TextView title = new TextView(activity);
-        title.setText(server.name);
+        title.setText(server.getName());
         title.setTextColor(Color.rgb(243, 244, 246));
         title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView subtitle = new TextView(activity);
-        subtitle.setText(server.isRelayDevice ? "中转设备" : server.url);
+        subtitle.setText(server.isRelayDevice() ? "中转设备" : server.getUrl());
         subtitle.setTextColor(Color.rgb(156, 163, 175));
         subtitle.setTextSize(12);
         subtitle.setSingleLine(true);
@@ -89,7 +89,7 @@ final class HomeScreenBuilder {
         moreBtn.setOnClickListener((v) -> {
             PopupMenu popup = new PopupMenu(activity, moreBtn);
             popup.getMenu().add(0, 1, 0, "刷新终端");
-            if (!server.isRelayDevice) {
+            if (!server.isRelayDevice()) {
                 popup.getMenu().add(0, 2, 1, "修改配置");
                 popup.getMenu().add(0, 3, 2, "移除电脑");
             }
@@ -216,14 +216,14 @@ final class HomeScreenBuilder {
         card.setOnClickListener(onClick);
 
         TextView badge = new TextView(activity);
-        badge.setText(server.isRelayDevice ? "R" : "PC");
-        badge.setTextColor(server.isRelayDevice ? Color.rgb(96, 165, 250) : Color.rgb(16, 185, 129));
+        badge.setText(server.isRelayDevice() ? "R" : "PC");
+        badge.setTextColor(server.isRelayDevice() ? Color.rgb(96, 165, 250) : Color.rgb(16, 185, 129));
         badge.setTextSize(12);
         badge.setTypeface(Typeface.DEFAULT_BOLD);
         badge.setGravity(Gravity.CENTER);
         GradientDrawable badgeBg = new GradientDrawable();
         badgeBg.setShape(GradientDrawable.RECTANGLE);
-        badgeBg.setColor(server.isRelayDevice ? Color.argb(30, 96, 165, 250) : Color.argb(30, 16, 185, 129));
+        badgeBg.setColor(server.isRelayDevice() ? Color.argb(30, 96, 165, 250) : Color.argb(30, 16, 185, 129));
         badgeBg.setCornerRadius(UIUtils.dp(activity, 6));
         badge.setBackground(badgeBg);
         LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 42), UIUtils.dp(activity, 42));
@@ -233,14 +233,14 @@ final class HomeScreenBuilder {
         LinearLayout textArea = new LinearLayout(activity);
         textArea.setOrientation(LinearLayout.VERTICAL);
         TextView name = new TextView(activity);
-        name.setText(server.name);
+        name.setText(server.getName());
         name.setTextColor(Color.rgb(243, 244, 246));
         name.setTextSize(16);
         name.setTypeface(Typeface.DEFAULT_BOLD);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView detail = new TextView(activity);
-        detail.setText(server.isRelayDevice ? "中转设备" : server.url);
+        detail.setText(server.isRelayDevice() ? "中转设备" : server.getUrl());
         detail.setTextColor(Color.rgb(156, 163, 175));
         detail.setTextSize(12);
         detail.setSingleLine(true);
@@ -249,7 +249,7 @@ final class HomeScreenBuilder {
         textArea.addView(detail, new LinearLayout.LayoutParams(-1, -2));
         card.addView(textArea, new LinearLayout.LayoutParams(0, -2, 1));
 
-        if (!server.isRelayDevice) {
+        if (!server.isRelayDevice()) {
             TextView menuBtn = new TextView(activity);
             menuBtn.setText("⋮");
             menuBtn.setTextColor(Color.rgb(156, 163, 175));
@@ -311,10 +311,10 @@ final class HomeScreenBuilder {
         header.addView(status, statusLp);
 
         TextView nameView = new TextView(activity);
-        if (server.isRelayDevice) {
-            nameView.setText("🔗 " + server.name);
+        if (server.isRelayDevice()) {
+            nameView.setText("🔗 " + server.getName());
         } else {
-            nameView.setText(server.name);
+            nameView.setText(server.getName());
         }
         nameView.setTextColor(Color.rgb(243, 244, 246));
         nameView.setTextSize(16);
@@ -337,7 +337,7 @@ final class HomeScreenBuilder {
 
         header.addView(new View(activity), new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), 1));
 
-        if (!server.isRelayDevice) {
+        if (!server.isRelayDevice()) {
             TextView menuBtn = new TextView(activity);
             menuBtn.setText("⋮");
             menuBtn.setTextColor(Color.rgb(156, 163, 175));

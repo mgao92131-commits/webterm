@@ -36,7 +36,7 @@ final class ServerGroupController {
     }
 
     void start() {
-        if (server.url.isEmpty()) {
+        if (server.getUrl().isEmpty()) {
             stop();
             return;
         }
@@ -134,7 +134,7 @@ final class ServerGroupController {
     }
 
     private boolean belongsToCurrentServer(String sessionId) {
-        return TerminalCacheScope.matches(server, server.url, sessionId);
+        return TerminalCacheScope.matches(server, server.getUrl(), sessionId);
     }
 
     private void upsertLocalSession(JSONObject newData) {
@@ -163,7 +163,7 @@ final class ServerGroupController {
     }
 
     private void removeLocalSession(String id) {
-        listener.onSessionClosed(server.url, id);
+        listener.onSessionClosed(server.getUrl(), id);
         if (lastSessions == null) return;
         JSONArray nextSessions = new JSONArray();
         for (int i = 0; i < lastSessions.length(); i++) {

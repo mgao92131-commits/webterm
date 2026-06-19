@@ -9,9 +9,11 @@ import com.termux.terminal.TerminalSession;
 
 final class TerminalClipboardController {
     private final Activity activity;
+    private final WebTermTerminalViewClient.Host controlKeyHost;
 
-    TerminalClipboardController(Activity activity) {
+    TerminalClipboardController(Activity activity, WebTermTerminalViewClient.Host controlKeyHost) {
         this.activity = activity;
+        this.controlKeyHost = controlKeyHost;
     }
 
     void copy(String text) {
@@ -28,12 +30,9 @@ final class TerminalClipboardController {
         CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(activity);
         if (text != null) {
             String textStr = text.toString();
-            if (activity instanceof MainActivity) {
-                MainActivity mainActivity = (MainActivity) activity;
-                if (mainActivity.readTerminalControlKey()) {
-                    textStr = "\033[200~" + textStr + "\033[201~";
-                    mainActivity.clearTerminalControlKey();
-                }
+            if (controlKeyHost.readTerminalControlKey()) {
+                textStr = "\033[200~" + textStr + "\033[201~";
+                controlKeyHost.clearTerminalControlKey();
             }
             session.write(textStr);
         }

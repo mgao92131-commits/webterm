@@ -37,7 +37,7 @@ final class ServerSessionMonitor {
     }
 
     void start() {
-        if (server.url.isEmpty()) {
+        if (server.getUrl().isEmpty()) {
             stop();
             return;
         }
@@ -45,8 +45,8 @@ final class ServerSessionMonitor {
         if (webSocket != null) return;
 
         Request request = new Request.Builder()
-            .url(WebTermUrls.toWebSocketUrl(server.url) + "/ws/sessions")
-            .header("Cookie", server.cookie != null ? server.cookie : "")
+            .url(WebTermUrls.toWebSocketUrl(server.getUrl()) + "/ws/sessions")
+            .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .build();
 
         webSocket = http.newWebSocket(request, new WebSocketListener() {

@@ -19,13 +19,13 @@ final class SessionCommandController {
         api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
-                activity.runOnUiThread(() -> listener.onOpenTerminal(server.url, server.cookie, sessionId, "Terminal", ""));
+                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", ""));
             }
 
             @Override
             public void onError(String message) {
                 activity.runOnUiThread(() -> {
-                    if (message.contains("401") && server.password != null && !server.password.isEmpty()) {
+                    if (message.contains("401") && server.getPassword() != null && !server.getPassword().isEmpty()) {
                         silentLoginAndCreate(server);
                     } else {
                         Toast.makeText(activity, "创建失败: " + message, Toast.LENGTH_LONG).show();
@@ -65,7 +65,7 @@ final class SessionCommandController {
                 api.deleteSession(server, sessionId, new WebTermApi.SimpleCallback() {
                     @Override
                     public void onReady() {
-                        listener.onRemoveCachedTerminal(server.url, sessionId);
+                        listener.onRemoveCachedTerminal(server.getUrl(), sessionId);
                         activity.runOnUiThread(() -> listener.onSessionClosed(server, sessionId));
                     }
 
@@ -95,10 +95,10 @@ final class SessionCommandController {
     }
 
     private void silentLoginAndCreate(ServerConfig server) {
-        api.login(server.url, server.username, server.password, new WebTermApi.LoginCallback() {
+        api.login(server.getUrl(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
-                server.cookie = cookie;
+                server.setCookie(cookie);
                 listener.onAuthenticated(server);
                 createSessionOnServer(server);
             }

@@ -37,11 +37,11 @@ final class ServerConfigManager {
             return;
         }
 
-        existingServer.name = name;
-        existingServer.url = url;
-        existingServer.cookie = cookie;
-        existingServer.username = username;
-        existingServer.password = password;
+        existingServer.setName(name);
+        existingServer.setUrl(url);
+        existingServer.setCookie(cookie);
+        existingServer.setUsername(username);
+        existingServer.setPassword(password);
     }
 
     void remove(ServerConfig server) {

@@ -32,7 +32,7 @@ final class ServerSessionsLoader {
     }
 
     void load(ServerConfig server, LinearLayout subList, StatusIndicatorView status, java.util.Map<String, JSONArray> tempInMemorySessions) {
-        if (server.url.isEmpty()) return;
+        if (server.getUrl().isEmpty()) return;
         markPending(status);
 
         boolean loadedFromMemory = renderTemporarySessions(server, subList, tempInMemorySessions);
@@ -40,9 +40,9 @@ final class ServerSessionsLoader {
             prepopulateCachedSessions(server, subList);
         }
 
-        if (server.cookie != null && !server.cookie.isEmpty()) {
+        if (server.getCookie() != null && !server.getCookie().isEmpty()) {
             fetch(server, subList, status);
-        } else if (server.password != null && !server.password.isEmpty()) {
+        } else if (server.getPassword() != null && !server.getPassword().isEmpty()) {
             silentLoginAndFetch(server, subList, status);
         } else {
             markError(status);
@@ -131,7 +131,7 @@ final class ServerSessionsLoader {
 
             @Override
             public void onError(int code, String message) {
-                if (code == 401 && server.password != null && !server.password.isEmpty()) {
+                if (code == 401 && server.getPassword() != null && !server.getPassword().isEmpty()) {
                     silentLoginAndFetch(server, subList, status);
                     return;
                 }
@@ -151,10 +151,10 @@ final class ServerSessionsLoader {
     }
 
     private void silentLoginAndFetch(ServerConfig server, LinearLayout subList, StatusIndicatorView status) {
-        api.login(server.url, server.username, server.password, new WebTermApi.LoginCallback() {
+        api.login(server.getUrl(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
-                server.cookie = cookie;
+                server.setCookie(cookie);
                 listener.onAuthenticated(server);
                 activity.runOnUiThread(() -> fetch(server, subList, status));
             }

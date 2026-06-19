@@ -39,22 +39,22 @@ public final class ServerConfigDialogHelper {
 
         EditText nickname = UIUtils.createInput(activity, "电脑名称 (如: 我的办公电脑)");
         nickname.setInputType(InputType.TYPE_CLASS_TEXT);
-        nickname.setText(existingServer == null ? "" : existingServer.name);
+        nickname.setText(existingServer == null ? "" : existingServer.getName());
         container.addView(nickname, UIUtils.matchWrap(activity));
 
         EditText url = UIUtils.createInput(activity, "Server URL");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(existingServer == null ? "http://100.121.115.14:8081" : existingServer.url);
+        url.setText(existingServer == null ? "http://100.121.115.14:8081" : existingServer.getUrl());
         container.addView(url, UIUtils.matchWrap(activity));
 
         EditText user = UIUtils.createInput(activity, "Username");
         user.setInputType(InputType.TYPE_CLASS_TEXT);
-        user.setText(existingServer == null ? "gao" : existingServer.username);
+        user.setText(existingServer == null ? "gao" : existingServer.getUsername());
         container.addView(user, UIUtils.matchWrap(activity));
 
         EditText password = UIUtils.createInput(activity, "Password");
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(existingServer == null ? "" : existingServer.password);
+        password.setText(existingServer == null ? "" : existingServer.getPassword());
         container.addView(password, UIUtils.matchWrap(activity));
 
         TextView errText = new TextView(activity);
@@ -101,7 +101,7 @@ public final class ServerConfigDialogHelper {
             String passVal = password.getText().toString();
 
             if (nameVal.isEmpty()) {
-                nameVal = existingServer == null ? "WebTerm Server" : existingServer.name;
+                nameVal = existingServer == null ? "WebTerm Server" : existingServer.getName();
             }
             if (urlVal.isEmpty() || userVal.isEmpty() || passVal.isEmpty()) {
                 errText.setText("请输入完整电脑别名、URL、用户名和密码。");

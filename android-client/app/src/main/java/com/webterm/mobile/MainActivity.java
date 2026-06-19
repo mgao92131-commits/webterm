@@ -30,11 +30,12 @@ import com.termux.view.TerminalView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.OkHttpClient;
 
-public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayConfigDialogHelper.Host {
+public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host {
 
     private static final int TRANSCRIPT_ROWS = 10000;
     private static final byte[] CLEAR_SCREEN_BYTES = "\u001b[3J\u001b[2J\u001b[H".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -75,21 +76,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private byte[] mPendingDiskSnapshotBytes;
 
     // Relay fields
-    private ServerConfig mRelayMasterConfig;
-    private ServerSessionMonitor mRelayMonitor;
-    private final java.util.List<ServerConfig> mRelayDevices = new java.util.ArrayList<>();
+    private RelayCoordinator mRelayCoordinator;
     private TextView mHomeSubtitle;
-    private RelayState mRelayState = RelayState.NOT_CONFIGURED;
-
-    private enum RelayState {
-        NOT_CONFIGURED,
-        CONNECTING,
-        AUTH_FAILED,
-        CONNECT_FAILED,
-        CONNECTED_FETCHING_DEVICES,
-        CONNECTED_NO_DEVICES,
-        CONNECTED_WITH_DEVICES
-    }
 
     private enum ScreenMode {
         DEVICES,
@@ -114,11 +102,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         }
         mConfigStore = new ServerConfigStore(this);
         mServerConfigs = new ServerConfigManager(mConfigStore);
+        mRelayCoordinator = new RelayCoordinator(mHttp, mMainHandler, mApi, this);
         mTerminalCache = new TerminalCacheCoordinator(getFilesDir());
         mSessionCommands = new SessionCommandController(this, mApi, new SessionCommandController.Listener() {
             @Override
             public void onAuthenticated(ServerConfig server) {
-                saveServersToPrefs();
+                saveServers();
             }
 
             @Override
@@ -143,7 +132,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         });
         mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
         mTitleSynchronizer = new TerminalTitleSynchronizer(mMainHandler, () -> mTerminalConnection);
-        mClipboardController = new TerminalClipboardController(this);
+        mClipboardController = new TerminalClipboardController(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
         mHomeCoordinator = new HomeServerCoordinator(
             this,
@@ -161,7 +150,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
                 @Override
                 public void onAuthenticated(ServerConfig server) {
-                    saveServersToPrefs();
+                    saveServers();
                 }
 
                 @Override
@@ -204,7 +193,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 if (mHomeCoordinator != null) mHomeCoordinator.resume();
             } else {
-                startRelayMonitor();
+                mRelayCoordinator.start();
             }
         }
     }
@@ -214,7 +203,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mInForeground = false;
         if (!mTerminalState.hasSession()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pause();
-            stopRelayMonitor();
+            mRelayCoordinator.stop();
         } else {
             pauseCurrentTerminalConnection();
         }
@@ -225,7 +214,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onDestroy() {
         mClosed.set(true);
         mMainHandler.removeCallbacksAndMessages(null);
-        stopRelayMonitor();
+        mRelayCoordinator.stop();
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
         if (mTerminalState.hasSession() && mTerminalSession != null) {
             cacheCurrentTerminal();
@@ -256,16 +245,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private void loadServersFromPrefs() {
         mServerConfigs.load();
-        mRelayMasterConfig = null;
-        for (ServerConfig s : mServerConfigs.servers()) {
-            if (s.isRelayMaster) {
-                mRelayMasterConfig = s;
-                break;
-            }
-        }
+        mRelayCoordinator.loadMasterFromServers(mServerConfigs.servers());
     }
 
-    void saveServersToPrefs() {
+    public void saveServers() {
         mServerConfigs.save();
     }
 
@@ -293,21 +276,17 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             this::showSettingsDialog,
             () -> {
                 loadMultiSessions();
-                if (mRelayMonitor != null && mRelayMonitor.isConnected()) {
-                    mRelayMonitor.requestDevicesList();
-                } else {
-                    startRelayMonitor();
-                }
+                mRelayCoordinator.start();
             },
-            this::showRelayDialog
+            () -> RelayConfigDialogHelper.show(mRelayCoordinator, mRelayCoordinator.masterConfig())
         );
         mHomeSubtitle = home.subtitle;
-        updateSubtitleState(mRelayState);
+        mRelayCoordinator.attachSubtitle(home.subtitle);
         installRootInsets(home.root, dp(20), dp(8), dp(20), dp(16), true);
         mSessionList = home.sessionList;
         loadMultiSessions();
         setContentViewAnimated(home.root, transition);
-        startRelayMonitor();
+        mRelayCoordinator.start();
     }
 
     private void loadMultiSessions() {
@@ -332,12 +311,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private java.util.List<ServerConfig> collectVisibleDevices() {
         java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
         for (ServerConfig s : mServerConfigs.servers()) {
-            if (!s.isRelayMaster) {
+            if (!s.isRelayMaster()) {
                 allServers.add(s);
             }
         }
-        if (mRelayDevices != null && !mRelayDevices.isEmpty()) {
-            allServers.addAll(mRelayDevices);
+        List<ServerConfig> relayDevices = mRelayCoordinator.devices();
+        if (!relayDevices.isEmpty()) {
+            allServers.addAll(relayDevices);
         }
         return allServers;
     }
@@ -352,7 +332,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             return;
         }
         closeCurrentTerminal(false);
-        stopRelayMonitor();
+        mRelayCoordinator.stop();
         mClosed.set(false);
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICE_SESSIONS;
@@ -395,11 +375,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private boolean isSelectedServer(ServerConfig server) {
         if (server == null || mSelectedServer == null) return false;
         if (server == mSelectedServer) return true;
-        if (server.id != null && !server.id.isEmpty() && server.id.equals(mSelectedServer.id)) return true;
-        String serverUrl = WebTermUrls.normalizeBaseUrl(server.url);
-        String selectedUrl = WebTermUrls.normalizeBaseUrl(mSelectedServer.url);
-        String serverDeviceId = server.deviceId == null ? "" : server.deviceId;
-        String selectedDeviceId = mSelectedServer.deviceId == null ? "" : mSelectedServer.deviceId;
+        if (server.getId() != null && !server.getId().isEmpty() && server.getId().equals(mSelectedServer.getId())) return true;
+        String serverUrl = WebTermUrls.normalizeBaseUrl(server.getUrl());
+        String selectedUrl = WebTermUrls.normalizeBaseUrl(mSelectedServer.getUrl());
+        String serverDeviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+        String selectedDeviceId = mSelectedServer.getDeviceId() == null ? "" : mSelectedServer.getDeviceId();
         return serverUrl.equals(selectedUrl) && serverDeviceId.equals(selectedDeviceId);
     }
 
@@ -501,222 +481,20 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
     }
 
-    // RelayConfigDialogHelper.Host Implementation
-    private void showRelayDialog() {
-        RelayConfigDialogHelper.show(this, mRelayMasterConfig);
+    // RelayCoordinator.Host implementation
+    @Override
+    public void onRelayDevicesChanged() {
+        loadMultiSessions();
     }
 
     @Override
-    public void loginRelay(String baseUrl, String username, String password, RelayConfigDialogHelper.LoginCallback callback) {
-        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String url, String cookie) {
-                callback.onReady(url, cookie);
-            }
-
-            @Override
-            public void onError(String message) {
-                callback.onError(message);
-            }
-        });
-    }
-
-    @Override
-    public void onRelayAuthenticated(String url, String cookie, String username, String password) {
-        ServerConfig existingMaster = null;
-        for (ServerConfig s : mServerConfigs.servers()) {
-            if (s.isRelayMaster) {
-                existingMaster = s;
-                break;
-            }
-        }
-        if (existingMaster == null) {
-            existingMaster = new ServerConfig(
-                "relay_mst_" + System.currentTimeMillis(),
-                "中转服务器",
-                url,
-                cookie,
-                username,
-                password,
-                true,  // isRelayMaster
-                false, // isRelayDevice
-                ""
-            );
-            mServerConfigs.servers().add(existingMaster);
-        } else {
-            existingMaster.url = url;
-            existingMaster.cookie = cookie;
-            existingMaster.username = username;
-            existingMaster.password = password;
-        }
-        mRelayMasterConfig = existingMaster;
-        saveServersToPrefs();
-        startRelayMonitor();
+    public void onRelayAuthDone() {
         showSessionHome(PageTransition.FADE);
     }
 
     @Override
-    public void onDisconnectRelay() {
-        ServerConfig existingMaster = null;
-        for (ServerConfig s : mServerConfigs.servers()) {
-            if (s.isRelayMaster) {
-                existingMaster = s;
-                break;
-            }
-        }
-        if (existingMaster != null) {
-            mServerConfigs.servers().remove(existingMaster);
-        }
-        mRelayMasterConfig = null;
-        saveServersToPrefs();
-        stopRelayMonitor();
-        mRelayDevices.clear();
-        updateSubtitleState(RelayState.NOT_CONFIGURED);
-        showSessionHome(PageTransition.FADE);
-    }
-
-    private void updateSubtitleState(RelayState state) {
-        mRelayState = state;
-        if (mHomeSubtitle == null) return;
-        mMainHandler.post(() -> {
-            switch (state) {
-                case NOT_CONFIGURED:
-                    mHomeSubtitle.setText("⚠️ 中转服务未连接");
-                    mHomeSubtitle.setTextColor(Color.rgb(245, 158, 11));
-                    break;
-                case CONNECTING:
-                    mHomeSubtitle.setText("⏳ 正在连接中转服务...");
-                    mHomeSubtitle.setTextColor(Color.rgb(245, 158, 11));
-                    break;
-                case AUTH_FAILED:
-                    mHomeSubtitle.setText("🚨 中转服务登录失败");
-                    mHomeSubtitle.setTextColor(Color.rgb(239, 68, 68));
-                    break;
-                case CONNECT_FAILED:
-                    mHomeSubtitle.setText("🚨 无法连接中转服务，正在重连...");
-                    mHomeSubtitle.setTextColor(Color.rgb(239, 68, 68));
-                    break;
-                case CONNECTED_FETCHING_DEVICES:
-                    mHomeSubtitle.setText("🟢 已连接中转，正在获取电脑...");
-                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
-                    break;
-                case CONNECTED_NO_DEVICES:
-                    mHomeSubtitle.setText("🟢 中转服务已连接 (无在线电脑)");
-                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
-                    break;
-                case CONNECTED_WITH_DEVICES:
-                    mHomeSubtitle.setText("🟢 已连接中转服务");
-                    mHomeSubtitle.setTextColor(Color.rgb(16, 185, 129));
-                    break;
-            }
-        });
-    }
-
-    private void startRelayMonitor() {
-        if (mRelayMasterConfig == null || mRelayMasterConfig.url.isEmpty()) {
-            stopRelayMonitor();
-            updateSubtitleState(RelayState.NOT_CONFIGURED);
-            return;
-        }
-        if (mRelayMonitor != null && mRelayMonitor.isEnabled()) {
-            return;
-        }
-        stopRelayMonitor();
-        updateSubtitleState(RelayState.CONNECTING);
-        mRelayMonitor = new ServerSessionMonitor(mHttp, mMainHandler, mRelayMasterConfig, new ServerSessionMonitor.Listener() {
-            @Override
-            public void onMonitorConnected() {
-                activity().runOnUiThread(() -> {
-                    updateSubtitleState(RelayState.CONNECTED_FETCHING_DEVICES);
-                });
-            }
-
-            @Override
-            public void onMonitorPollingFallback() {
-                activity().runOnUiThread(() -> updateSubtitleState(RelayState.CONNECTING));
-            }
-
-            @Override
-            public void onMonitorSessions(JSONArray sessions) {
-                // 主监控长连接只获取设备列表，不获取具体某设备的会话列表
-            }
-
-            @Override
-            public void onMonitorSession(JSONObject session) {
-            }
-
-            @Override
-            public void onMonitorSessionClosed(String sessionId) {
-            }
-
-            @Override
-            public void onMonitorDevices(JSONArray devices) {
-                mMainHandler.post(() -> {
-                    mRelayDevices.clear();
-                    for (int i = 0; i < devices.length(); i++) {
-                        JSONObject deviceObj = devices.optJSONObject(i);
-                        if (deviceObj == null) continue;
-                        String deviceId = deviceObj.optString("deviceId");
-                        String deviceName = deviceObj.optString("deviceName");
-                        if (deviceId.isEmpty()) continue;
-
-                        mRelayDevices.add(new ServerConfig(
-                            "relay_dev_" + deviceId,
-                            deviceName,
-                            mRelayMasterConfig.url,
-                            mRelayMasterConfig.cookie,
-                            mRelayMasterConfig.username,
-                            mRelayMasterConfig.password,
-                            false, // isRelayMaster
-                            true,  // isRelayDevice
-                            deviceId
-                        ));
-                    }
-                    if (mRelayDevices.isEmpty()) {
-                        updateSubtitleState(RelayState.CONNECTED_NO_DEVICES);
-                    } else {
-                        updateSubtitleState(RelayState.CONNECTED_WITH_DEVICES);
-                    }
-                    loadMultiSessions();
-                });
-            }
-
-            @Override
-            public void onMonitorError(String errorMsg) {
-                activity().runOnUiThread(() -> {
-                    if (errorMsg != null && errorMsg.contains("401")) {
-                        if (mRelayMasterConfig != null && mRelayMasterConfig.username != null && !mRelayMasterConfig.username.isEmpty() && mRelayMasterConfig.password != null && !mRelayMasterConfig.password.isEmpty()) {
-                            updateSubtitleState(RelayState.CONNECTING);
-                            mApi.login(mRelayMasterConfig.url, mRelayMasterConfig.username, mRelayMasterConfig.password, new WebTermApi.LoginCallback() {
-                                @Override
-                                public void onReady(String url, String cookie) {
-                                    mRelayMasterConfig.cookie = cookie;
-                                    saveServersToPrefs();
-                                    startRelayMonitor();
-                                }
-
-                                @Override
-                                public void onError(String message) {
-                                    updateSubtitleState(RelayState.AUTH_FAILED);
-                                }
-                            });
-                        } else {
-                            updateSubtitleState(RelayState.AUTH_FAILED);
-                        }
-                    } else {
-                        updateSubtitleState(RelayState.CONNECT_FAILED);
-                    }
-                });
-            }
-        });
-        mRelayMonitor.start();
-    }
-
-    private void stopRelayMonitor() {
-        if (mRelayMonitor != null) {
-            mRelayMonitor.stop();
-            mRelayMonitor = null;
-        }
+    public ServerConfigManager serverConfigs() {
+        return mServerConfigs;
     }
 
     private boolean isHomeActive() {
@@ -730,7 +508,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             .setPositiveButton("移除", (dialog, which) -> {
                 removeCachedTerminalsForServer(server);
                 mServerConfigs.remove(server);
-                saveServersToPrefs();
+                saveServers();
                 if (server == mSelectedServer) {
                     showSessionHome(PageTransition.BACK);
                 } else {
@@ -757,7 +535,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
         mServerConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
-        saveServersToPrefs();
+        saveServers();
         if (existingServer != null && existingServer == mSelectedServer) {
             showDeviceSessions(existingServer, PageTransition.FADE);
         } else {
@@ -852,7 +630,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
         mSelectedServer = server;
-        showTerminal(server.url, server.cookie, sessionId, termTitle, sessionName, createdAt, instanceId);
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId);
     }
 
     private void attachTerminalWhenLaidOut() {

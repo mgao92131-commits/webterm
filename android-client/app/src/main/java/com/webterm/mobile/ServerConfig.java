@@ -4,33 +4,47 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 public class ServerConfig {
-    public String id;
-    public String name;
-    public String url;
-    public String cookie;
-    public String username;
-    public String password;
-
-    // Relay fields
-    public boolean isRelayMaster;
-    public boolean isRelayDevice;
-    public String deviceId;
+    private String id;
+    private String name;
+    private String url;
+    private String cookie;
+    private String username;
+    private String password;
+    private boolean relayMaster;
+    private boolean relayDevice;
+    private String deviceId;
 
     public ServerConfig(String id, String name, String url, String cookie, String username, String password) {
         this(id, name, url, cookie, username, password, false, false, "");
     }
 
-    public ServerConfig(String id, String name, String url, String cookie, String username, String password, boolean isRelayMaster, boolean isRelayDevice, String deviceId) {
+    public ServerConfig(String id, String name, String url, String cookie, String username, String password, boolean relayMaster, boolean relayDevice, String deviceId) {
         this.id = id;
         this.name = name;
         this.url = url;
         this.cookie = cookie;
         this.username = username;
         this.password = password;
-        this.isRelayMaster = isRelayMaster;
-        this.isRelayDevice = isRelayDevice;
+        this.relayMaster = relayMaster;
+        this.relayDevice = relayDevice;
         this.deviceId = deviceId;
     }
+
+    public String getId() { return id; }
+    public String getName() { return name; }
+    public String getUrl() { return url; }
+    public String getCookie() { return cookie; }
+    public String getUsername() { return username; }
+    public String getPassword() { return password; }
+    public boolean isRelayMaster() { return relayMaster; }
+    public boolean isRelayDevice() { return relayDevice; }
+    public String getDeviceId() { return deviceId; }
+
+    public void setName(String name) { this.name = name; }
+    public void setUrl(String url) { this.url = url; }
+    public void setCookie(String cookie) { this.cookie = cookie; }
+    public void setUsername(String username) { this.username = username; }
+    public void setPassword(String password) { this.password = password; }
 
     public JSONObject toJSON() throws JSONException {
         JSONObject obj = new JSONObject();
@@ -40,8 +54,8 @@ public class ServerConfig {
         obj.put("cookie", cookie);
         obj.put("username", username);
         obj.put("password", password);
-        obj.put("isRelayMaster", isRelayMaster);
-        obj.put("isRelayDevice", isRelayDevice);
+        obj.put("isRelayMaster", relayMaster);
+        obj.put("isRelayDevice", relayDevice);
         obj.put("deviceId", deviceId);
         return obj;
     }
