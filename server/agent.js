@@ -5,24 +5,14 @@ import {
   AGENT_REGISTER, REGISTERED, ERROR,
   HTTP_REQUEST, HTTP_RESPONSE, HTTP_ERROR,
   WS_CONNECT, WS_CONNECTED, WS_ERROR, WS_CLOSE,
-  MSG_TYPE_WS_DATA, MSG_TYPE_HTTP_CHUNK,
+  MSG_TYPE_WS_DATA,
   WS_DATA_TEXT, WS_DATA_BINARY,
-  HTTP_CHUNK_DATA, HTTP_CHUNK_FIN,
   encodeTunnelFrame, decodeTunnelFrame,
   sendJSON, sendBinary
 } from '../shared/tunnel-protocol.js';
 import { VirtualSocket } from '../shared/tunnel-transport.js';
+import { P2PManager } from './webrtc.js';
 
-let nodeDataChannel;
-try {
-  const mod = await import('node-datachannel');
-  nodeDataChannel = mod.default || mod;
-  nodeDataChannel.initLogger('Warning');
-} catch (err) {
-  console.warn('[Agent WebRTC] node-datachannel is not installed or failed to load. P2P direct mode will be disabled:', err.message);
-}
-
-const peerConnections = new Map(); // clientId -> { pc, username }
 const sessions = new SessionManager();
 
 let relayUrl;
@@ -32,6 +22,7 @@ let deviceName;
 let ws = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
+let p2p = null;
 
 // VirtualSocket 隧道 Map: tunnelConnectionId -> VirtualSocket
 const virtualSockets = new Map();
@@ -52,6 +43,11 @@ export function startAgent() {
   deviceName = process.env.DEVICE_NAME || os.hostname();
 
   console.log(`[Agent] Initializing in-memory Terminal Session Manager...`);
+  p2p = new P2PManager((m) => sendJSON(getAgentWs(), m));
+  p2p.setMessageHandlers({
+    onTextMessage: (parsed, transport) => handleP2pMessage(parsed, transport),
+    onBinaryMessage: (data) => handleBinaryFrame(data),
+  });
   // 建立与中转服务器的连接
   connectToRelay();
 }
@@ -108,11 +104,11 @@ function connectToRelay() {
         break;
 
       case 'p2p-offer':
-        handleP2pOffer(msg);
+        p2p.handleOffer(msg);
         break;
 
       case 'p2p-ice':
-        handleP2pIce(msg);
+        p2p.handleIce(msg);
         break;
 
       case ERROR:
@@ -314,12 +310,24 @@ function handleBinaryFrame(data) {
   }
 }
 
+// --- P2P DataChannel Message Delegation ---
+function handleP2pMessage(parsed, transport) {
+  if (parsed.type === HTTP_REQUEST) {
+    handleHttpRequest(parsed, transport);
+  } else if (parsed.type === WS_CONNECT) {
+    handleWsConnect(parsed, transport);
+  } else if (parsed.type === WS_CLOSE) {
+    handleWsClose(parsed);
+  }
+}
+
 // --- Lifecycle Helpers ---
 function cleanupConnections() {
   for (const virtualSocket of virtualSockets.values()) {
     try { virtualSocket.close(1001, 'PC Agent offline'); } catch {}
   }
   virtualSockets.clear();
+  if (p2p) p2p.cleanup();
 }
 
 function scheduleReconnect() {
@@ -330,133 +338,4 @@ function scheduleReconnect() {
     connectToRelay();
     reconnectDelay = Math.min(10000, reconnectDelay * 2);
   }, reconnectDelay);
-}
-
-// --- WebRTC P2P Signaling & Connection Logic ---
-function handleP2pOffer(msg) {
-  if (!nodeDataChannel) {
-    console.warn('[Agent WebRTC] node-datachannel is not available. Ignoring offer.');
-    return;
-  }
-  const clientId = msg.from;
-  const sdp = msg.sdp;
-  const username = msg.username;
-
-  // 清理现有的连接
-  const oldVal = peerConnections.get(clientId);
-  if (oldVal) {
-    try { oldVal.pc.close(); } catch {}
-    peerConnections.delete(clientId);
-  }
-
-  console.log(`[Agent WebRTC] Creating PeerConnection for client: ${clientId} (user: ${username})`);
-  
-  let pc;
-  try {
-    pc = new nodeDataChannel.PeerConnection(clientId, {
-      iceServers: ['stun:stun.l.google.com:19302']
-    });
-  } catch (err) {
-    console.error('[Agent WebRTC] Failed to create PeerConnection:', err.message);
-    return;
-  }
-
-  const clientState = {
-    pc,
-    username
-  };
-  peerConnections.set(clientId, clientState);
-
-  pc.onLocalDescription((sdpText, type) => {
-    if (type === 'answer') {
-      console.log(`[Agent WebRTC] Generated local SDP answer for ${clientId}, sending immediately.`);
-      sendJSON(getAgentWs(), {
-        type: 'p2p-answer',
-        sdp: sdpText,
-        to: clientId
-      });
-    }
-  });
-
-  pc.onLocalCandidate((candidate, mid) => {
-    sendJSON(getAgentWs(), {
-      type: 'p2p-ice',
-      candidate: { candidate, sdpMid: mid || '0' },
-      to: clientId
-    });
-  });
-
-  pc.onStateChange((state) => {
-    console.log(`[Agent WebRTC] PeerConnection state for ${clientId} changed to: ${state}`);
-    if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-      console.log(`[Agent WebRTC] Cleaning up client connection for ${clientId}`);
-      try { pc.close(); } catch {}
-      peerConnections.delete(clientId);
-    }
-  });
-
-  pc.onDataChannel((dc) => {
-    console.log(`[Agent WebRTC] DataChannel opened for client: ${clientId}`);
-    
-    dc.onMessage((data) => {
-      if (typeof data === 'string') {
-        try {
-          const parsed = JSON.parse(data);
-          
-          const transport = {
-            sendJSON: (m) => {
-              try { dc.sendMessage(JSON.stringify(m)); } catch (err) {
-                console.error('[Agent WebRTC] Failed to send JSON over DC:', err.message);
-              }
-            },
-            sendBinary: (f) => {
-              try { dc.sendMessage(f); } catch (err) {
-                console.error('[Agent WebRTC] Failed to send Binary over DC:', err.message);
-              }
-            }
-          };
-
-          if (parsed.type === HTTP_REQUEST) {
-            handleHttpRequest(parsed, transport);
-          } else if (parsed.type === WS_CONNECT) {
-            handleWsConnect(parsed, transport);
-          } else if (parsed.type === WS_CLOSE) {
-            handleWsClose(parsed);
-          }
-        } catch (err) {
-          console.error('[Agent WebRTC] Error parsing DC text message:', err.message);
-        }
-      } else {
-        // 二进制帧传输
-        try {
-          handleBinaryFrame(data);
-        } catch (err) {
-          console.error('[Agent WebRTC] Error processing DC binary message:', err.message);
-        }
-      }
-    });
-
-    dc.onClosed(() => {
-      console.log(`[Agent WebRTC] DataChannel closed for client: ${clientId}`);
-    });
-  });
-
-  try {
-    pc.setRemoteDescription(sdp, 'offer');
-  } catch (err) {
-    console.error('[Agent WebRTC] Failed to setRemoteDescription:', err.message);
-    peerConnections.delete(clientId);
-  }
-}
-
-function handleP2pIce(msg) {
-  const clientId = msg.from;
-  const clientState = peerConnections.get(clientId);
-  if (clientState && msg.candidate) {
-    try {
-      clientState.pc.addRemoteCandidate(msg.candidate.candidate, msg.candidate.sdpMid || '0');
-    } catch (err) {
-      console.error(`[Agent WebRTC] Failed to add remote candidate for ${clientId}:`, err.message);
-    }
-  }
 }
