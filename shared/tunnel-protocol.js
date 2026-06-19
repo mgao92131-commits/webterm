@@ -3,46 +3,21 @@
  * Universal HTTP/WebSocket tunneling and proxying.
  */
 
-// Re-export terminal protocol constants if needed
+// Re-export terminal protocol constants
 export {
   MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
   MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
   BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
-  encodeOutput, encodeJSON, encodeEmpty, decodeJSONPayload,
-  readUint64BE, writeUint64BE,
-} from '../server/protocol-binary.js';
+} from './constants.js';
 
-// ---------------------------------------------------------------------------
-// Tunnel Control Plane JSON Messages
-// ---------------------------------------------------------------------------
-
-// Agent → Relay (Registration & Authentication)
-export const AGENT_REGISTER = 'agent-register';
-export const REGISTERED = 'registered';
-export const ERROR = 'error';
-
-// Proxy Actions
-export const HTTP_REQUEST = 'http-request';
-export const HTTP_RESPONSE = 'http-response';
-export const HTTP_ERROR = 'http-error';
-
-export const WS_CONNECT = 'ws-connect';
-export const WS_CONNECTED = 'ws-connected';
-export const WS_ERROR = 'ws-error';
-export const WS_CLOSE = 'ws-close';
-
-// ---------------------------------------------------------------------------
-// Binary Multiplexed Frame Definitions (Message Types)
-// ---------------------------------------------------------------------------
-export const MSG_TYPE_WS_DATA = 0x01;
-export const MSG_TYPE_HTTP_CHUNK = 0x02;
-
-// Payload Types / Flag Bytes
-export const WS_DATA_TEXT = 0x01;
-export const WS_DATA_BINARY = 0x02;
-
-export const HTTP_CHUNK_DATA = 0x01;
-export const HTTP_CHUNK_FIN = 0x02;
+export {
+  AGENT_REGISTER, REGISTERED, ERROR,
+  HTTP_REQUEST, HTTP_RESPONSE, HTTP_ERROR,
+  WS_CONNECT, WS_CONNECTED, WS_ERROR, WS_CLOSE,
+  MSG_TYPE_WS_DATA, MSG_TYPE_HTTP_CHUNK,
+  WS_DATA_TEXT, WS_DATA_BINARY,
+  HTTP_CHUNK_DATA, HTTP_CHUNK_FIN,
+} from './constants.js';
 
 // ---------------------------------------------------------------------------
 // Frame Multiplexing Encoders & Decoders

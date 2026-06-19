@@ -1,15 +1,14 @@
-export const MSG_INPUT = 0x01;
-export const MSG_OUTPUT = 0x02;
-export const MSG_RESIZE = 0x03;
-export const MSG_HELLO = 0x04;
-export const MSG_INFO = 0x05;
-export const MSG_EXIT = 0x06;
-export const MSG_PING = 0x07;
-export const MSG_PONG = 0x08;
-export const MSG_TITLE = 0x09;
+import {
+  MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
+  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
+  BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
+} from '../shared/constants.js';
 
-export const BINARY_SUBPROTOCOL = 'webterm.binary.v1';
-export const JSON_SUBPROTOCOL = 'webterm.json.v1';
+export {
+  MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
+  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
+  BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
+};
 
 export function selectWebSocketProtocol(protocols) {
   if (protocols?.has?.(BINARY_SUBPROTOCOL)) return BINARY_SUBPROTOCOL;

@@ -1,4 +1,4 @@
-import{c as e}from"./arrow-left-D8ZkPJg8.js";/**
+import{c as e}from"./arrow-left-C1DRzdNL.js";/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.

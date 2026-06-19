@@ -1,13 +1,9 @@
 import { store, api } from '../store';
-
-export const MSG_TYPE_WS_DATA = 0x01;
-export const MSG_TYPE_HTTP_CHUNK = 0x02;
-
-export const WS_DATA_TEXT = 0x01;
-export const WS_DATA_BINARY = 0x02;
-
-export const HTTP_CHUNK_DATA = 0x01;
-export const HTTP_CHUNK_FIN = 0x02;
+import {
+  MSG_TYPE_WS_DATA, MSG_TYPE_HTTP_CHUNK,
+  WS_DATA_TEXT, WS_DATA_BINARY,
+  HTTP_CHUNK_DATA, HTTP_CHUNK_FIN,
+} from '@shared/constants.js';
 
 // 解决 atob 无法解码含有 UTF-8 多字节字符（如中文）的 base64 字符串问题
 export function decodeBase64Utf8(base64: string): string {
