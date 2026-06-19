@@ -17,7 +17,7 @@ import { addTrustedDevice, listTrustedDevices, deleteTrustedDevice } from '../se
 import { serveStatic, text } from '../server/http-utils.js';
 import { delay, loadLocalEnv } from '../shared/utils.js';
 import { sendJSON } from '../shared/tunnel-protocol.js';
-import { getAgentForUser, pushDevicesToUser, getDeviceNameFromUa } from './agent-registry.js';
+import { AgentRegistry, getDeviceNameFromUa } from './agent-registry.js';
 import { createRoutes } from './routes.js';
 import { createWsHandlers } from './ws-handlers.js';
 
@@ -32,16 +32,14 @@ const auth = new AuthManager();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 
 // In-memory state
-const agents = new Map();
-const managerClients = new Map();
+const registry = new AgentRegistry();
 const pendingHttpResponses = new Map();
 const activeWsTunnels = new Map();
 const pendingP2pOffers = new Map();
 
 // Build context for sub-modules
 const routeCtx = {
-  auth, getOrCreateDeviceId, agents, pendingHttpResponses, pendingP2pOffers,
-  getAgentForUser, pushDevicesToUser: (userId) => pushDevicesToUser(userId, sendJSON),
+  auth, getOrCreateDeviceId, registry, pendingHttpResponses, pendingP2pOffers,
   getDeviceNameFromUa,
   findByUsername, updatePassword, createUser, verifyUserEmail,
   createDevice, listByUser, deleteDevice,
@@ -52,8 +50,8 @@ const routeCtx = {
 };
 
 const wsCtx = {
-  auth, agents, managerClients, pendingHttpResponses, activeWsTunnels,
-  pendingP2pOffers, pushDevicesToUser: (userId) => pushDevicesToUser(userId, sendJSON),
+  auth, registry, pendingHttpResponses, activeWsTunnels,
+  pendingP2pOffers,
   findBySecretHash, updateLastSeen, text
 };
 
@@ -93,10 +91,10 @@ server.on('upgrade', (req, socket, head) => {
   if (url.pathname === '/ws/sessions') {
     wssManager.handleUpgrade(req, socket, head, (ws) => {
       const clientId = url.searchParams.get('clientId') || 'c_' + Math.random().toString(36).substring(2, 15);
-      managerClients.set(ws, { userId: user.id, username: user.username, clientId });
-      ws.on('close', () => managerClients.delete(ws));
+      registry.addManagerClient(ws, { userId: user.id, username: user.username, clientId });
+      ws.on('close', () => registry.removeManagerClient(ws));
       ws.on('error', () => ws.close());
-      pushDevicesToUser(user.id, sendJSON);
+      registry.pushDevicesToUser(user.id, sendJSON);
     });
     return;
   }
@@ -116,7 +114,7 @@ server.on('upgrade', (req, socket, head) => {
       }
     }
 
-    const agent = getAgentForUser(user.id, deviceId);
+    const agent = registry.getAgentForUser(user.id, deviceId);
     if (!agent) {
       socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
       socket.destroy();
@@ -142,7 +140,7 @@ const interval = setInterval(() => {
   });
 
   const now = Date.now();
-  for (const agent of agents.values()) {
+  for (const agent of registry.getAgentValues()) {
     if (agent.ws.readyState === 1) {
       if (!agent.lastSeenDbUpdated || now - agent.lastSeenDbUpdated > 5 * 60 * 1000) {
         try {

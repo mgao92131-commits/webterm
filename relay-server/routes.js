@@ -12,8 +12,8 @@ import {
 
 export function createRoutes(ctx) {
   const {
-    auth, getOrCreateDeviceId, agents, pendingHttpResponses, pendingP2pOffers,
-    getAgentForUser, pushDevicesToUser, getDeviceNameFromUa,
+    auth, getOrCreateDeviceId, registry, pendingHttpResponses, pendingP2pOffers,
+    getDeviceNameFromUa,
     findByUsername, updatePassword, createUser, verifyUserEmail,
     createDevice, listByUser, deleteDevice,
     verifyOtpInStore, addTrustedDevice, listTrustedDevices, deleteTrustedDevice,
@@ -253,7 +253,7 @@ export function createRoutes(ctx) {
     if (req.method === 'GET' && url.pathname === '/api/devices') {
       const devicesList = listByUser(user.id);
       const enriched = devicesList.map(d => {
-        const agent = agents.get('d' + d.id);
+        const agent = registry.getAgent('d' + d.id);
         return { ...d, online: !!(agent && agent.ws.readyState === 1) };
       });
       json(res, 200, enriched);
@@ -280,12 +280,12 @@ export function createRoutes(ctx) {
       }
       deleteDevice(deviceDbId);
       const targetDeviceId = 'd' + deviceDbId;
-      const onlineAgent = agents.get(targetDeviceId);
+      const onlineAgent = registry.getAgent(targetDeviceId);
       if (onlineAgent) {
         console.log(`[Relay] Closing connection for deleted agent: ${targetDeviceId}`);
         onlineAgent.ws.close(1008, 'Device deleted');
-        agents.delete(targetDeviceId);
-        pushDevicesToUser(user.id);
+        registry.removeAgent(targetDeviceId);
+        registry.pushDevicesToUser(user.id, sendJSON);
       }
       text(res, 204, '');
     }
@@ -300,7 +300,7 @@ export function createRoutes(ctx) {
     if (req.method === 'POST' && url.pathname === '/api/p2p/offer') {
       const body = await readJSON(req);
       const { sdp, deviceId: targetDeviceId } = body;
-      const agent = getAgentForUser(user.id, targetDeviceId);
+      const agent = registry.getAgentForUser(user.id, targetDeviceId);
       if (!agent) { text(res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。'); return; }
 
       const timer = setTimeout(() => {
@@ -317,7 +317,7 @@ export function createRoutes(ctx) {
     if (req.method === 'POST' && url.pathname === '/api/p2p/ice') {
       const body = await readJSON(req);
       const { candidate, deviceId: targetDeviceId } = body;
-      const agent = getAgentForUser(user.id, targetDeviceId);
+      const agent = registry.getAgentForUser(user.id, targetDeviceId);
       if (agent && agent.ws.readyState === 1) {
         sendJSON(agent.ws, { type: 'p2p-ice', candidate, from: clientId });
       }
@@ -345,7 +345,7 @@ export function createRoutes(ctx) {
       }
     }
 
-    const agent = getAgentForUser(user.id, targetDeviceId);
+    const agent = registry.getAgentForUser(user.id, targetDeviceId);
     if (!agent) { text(res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。'); return; }
 
     const requestId = 'req_' + Math.random().toString(36).substring(2, 15);

@@ -16,8 +16,8 @@ import {
 
 export function createWsHandlers(ctx) {
   const {
-    auth, agents, managerClients, pendingHttpResponses, activeWsTunnels,
-    pendingP2pOffers, pushDevicesToUser, findBySecretHash, updateLastSeen,
+    auth, registry, pendingHttpResponses, activeWsTunnels,
+    pendingP2pOffers, findBySecretHash, updateLastSeen,
     text
   } = ctx;
 
@@ -53,7 +53,7 @@ export function createWsHandlers(ctx) {
         }
         registeredDeviceId = 'd' + device.id;
         registeredUserId = device.userId;
-        agents.set(registeredDeviceId, {
+        registry.registerAgent(registeredDeviceId, {
           ws, deviceId: registeredDeviceId,
           deviceName: device.deviceName || msg.deviceName || 'Unknown PC',
           userId: device.userId, username: device.username,
@@ -62,7 +62,7 @@ export function createWsHandlers(ctx) {
         console.log(`[Relay] Agent registered: ${registeredDeviceId} (${device.deviceName}) for user ${device.username}`);
         updateLastSeen(device.id);
         sendJSON(ws, { type: REGISTERED, deviceId: registeredDeviceId });
-        pushDevicesToUser(device.userId);
+        registry.pushDevicesToUser(device.userId, sendJSON);
         return;
       }
 
@@ -79,7 +79,7 @@ export function createWsHandlers(ctx) {
       }
 
       if (msg.type === 'p2p-ice') {
-        for (const [clientWs, info] of managerClients.entries()) {
+        for (const [clientWs, info] of registry.getManagerClients()) {
           if (info.clientId === msg.to && clientWs.readyState === 1) {
             sendJSON(clientWs, { type: 'p2p-ice', candidate: msg.candidate });
             break;
@@ -138,7 +138,7 @@ export function createWsHandlers(ctx) {
           if (msg.type === WS_CONNECTED) {
             if (tunnel.isConnected) return;
             tunnel.isConnected = true;
-            const currentAgent = agents.get(tunnel.deviceId);
+            const currentAgent = registry.getAgent(tunnel.deviceId);
             if (currentAgent && currentAgent.ws.readyState === 1) {
               for (const item of tunnel.queue) {
                 const typeByte = item.clientIsBinary ? WS_DATA_BINARY : WS_DATA_TEXT;
@@ -158,8 +158,8 @@ export function createWsHandlers(ctx) {
     ws.on('close', () => {
       if (registeredDeviceId) {
         console.log(`[Relay] Agent disconnected: ${registeredDeviceId}`);
-        agents.delete(registeredDeviceId);
-        if (registeredUserId) pushDevicesToUser(registeredUserId);
+        registry.removeAgent(registeredDeviceId);
+        if (registeredUserId) registry.pushDevicesToUser(registeredUserId, sendJSON);
 
         activeWsTunnels.forEach((tunnel, tunnelId) => {
           if (tunnel.deviceId === registeredDeviceId) {
@@ -216,7 +216,7 @@ export function createWsHandlers(ctx) {
         tunnel.queue.push({ clientData, clientIsBinary });
         return;
       }
-      const currentAgent = agents.get(tunnel.deviceId);
+      const currentAgent = registry.getAgent(tunnel.deviceId);
       if (currentAgent && currentAgent.ws.readyState === 1) {
         const typeByte = clientIsBinary ? WS_DATA_BINARY : WS_DATA_TEXT;
         const frame = encodeTunnelFrame(MSG_TYPE_WS_DATA, tunnelConnectionId, typeByte, clientData);
@@ -227,7 +227,7 @@ export function createWsHandlers(ctx) {
     clientWs.on('close', (code, reason) => {
       if (activeWsTunnels.has(tunnelConnectionId)) {
         activeWsTunnels.delete(tunnelConnectionId);
-        const currentAgent = agents.get(agent.deviceId);
+        const currentAgent = registry.getAgent(agent.deviceId);
         if (currentAgent && currentAgent.ws.readyState === 1) {
           sendJSON(currentAgent.ws, {
             type: WS_CLOSE, tunnelConnectionId, code,
