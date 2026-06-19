@@ -1,4 +1,5 @@
 node_modules/
+.npm-cache/
 .tools/
 .env.local
 .DS_Store

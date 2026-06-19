@@ -53,7 +53,7 @@ export function startServer() {
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/ws/sessions') {
-      if (!auth.authenticated(req) || !sameHostOrigin(req)) {
+      if (!auth.authenticate(req) || !sameHostOrigin(req)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -63,7 +63,7 @@ export function startServer() {
     }
 
     const match = url.pathname.match(/^\/ws\/sessions\/([^/]+)$/);
-    if (!match || !auth.authenticated(req) || !sameHostOrigin(req)) {
+    if (!match || !auth.authenticate(req) || !sameHostOrigin(req)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -99,7 +99,7 @@ async function route(req, res) {
   }
 
   if (url.pathname.startsWith('/api/')) {
-    if (!auth.authenticated(req)) {
+    if (!auth.authenticate(req)) {
       text(res, 401, 'unauthorized');
       return;
     }
