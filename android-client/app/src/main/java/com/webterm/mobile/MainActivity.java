@@ -3,8 +3,6 @@ package com.webterm.mobile;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.app.Activity;
-import android.widget.Button;
-import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -13,21 +11,16 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
 import android.view.WindowManager;
-import android.view.inputmethod.InputMethodManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.app.AlertDialog;
 
 import androidx.annotation.Nullable;
 
-import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.List;
@@ -35,21 +28,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.OkHttpClient;
 
-public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host {
+public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host, TerminalLifecycleController.Host {
 
-    private static final int TRANSCRIPT_ROWS = 10000;
-    private static final byte[] CLEAR_SCREEN_BYTES = "\u001b[3J\u001b[2J\u001b[H".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     private final OkHttpClient mHttp = new OkHttpClient();
     private final WebTermApi mApi = new WebTermApi(mHttp);
     private final AtomicBoolean mClosed = new AtomicBoolean(false);
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
-
-    private TerminalView mTerminalView;
-    private TerminalSession mTerminalSession;
-    private TerminalConnection mTerminalConnection;
     private final TerminalRuntimeState mTerminalState = new TerminalRuntimeState();
-    private boolean mCtrlDown;
+    private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
+
     private boolean mInForeground = true;
+    private TerminalConnection mTerminalConnection;
     private TerminalCacheCoordinator mTerminalCache;
     private ServerConfigStore mConfigStore;
     private SessionCommandController mSessionCommands;
@@ -58,24 +47,15 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private TerminalClipboardController mClipboardController;
     private WebTermTerminalSessionClient mTerminalSessionClient;
     private ServerConfigManager mServerConfigs;
+    private TerminalLifecycleController mTerminalLifecycle;
+
     private LinearLayout mSessionList;
     private SessionRecyclerAdapter mSessionAdapter;
-    private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
-    private TextView mTerminalTitle;
-    private TextView mTerminalSubtitle;
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
     private ServerConfig mSelectedServer;
     private StatusIndicatorView mSelectedServerStatus;
 
-    private View mTerminalRoot;
-    private View mTerminalViewport;
-    private View mQuickBar;
-    private Button mCtrlButton;
     private int mImeOverlap;
-    private boolean mTerminalAttachStarted;
-    private byte[] mPendingDiskSnapshotBytes;
-
-    // Relay fields
     private RelayCoordinator mRelayCoordinator;
     private TextView mHomeSubtitle;
 
@@ -106,73 +86,42 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mTerminalCache = new TerminalCacheCoordinator(getFilesDir());
         mSessionCommands = new SessionCommandController(this, mApi, new SessionCommandController.Listener() {
             @Override
-            public void onAuthenticated(ServerConfig server) {
-                saveServers();
-            }
-
+            public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
             public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
                 showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName);
             }
-
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
                 removeCachedTerminal(baseUrl, sessionId);
             }
-
             @Override
             public void onSessionClosed(ServerConfig server, String sessionId) {
                 handleClosedSessionRow(server, sessionId);
             }
-
             @Override
-            public void onShowHome() {
-                showSessionListOrDeviceHome();
-            }
+            public void onShowHome() { showSessionListOrDeviceHome(); }
         });
         mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
         mTitleSynchronizer = new TerminalTitleSynchronizer(mMainHandler, () -> mTerminalConnection);
         mClipboardController = new TerminalClipboardController(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
+        mTerminalLifecycle = new TerminalLifecycleController(
+            this, this, mTerminalState, mClosed, mConnectionStatus,
+            mTerminalCache, mTerminalConnection, mTitleSynchronizer, mSessionCommands
+        );
         mHomeCoordinator = new HomeServerCoordinator(
-            this,
-            mHttp,
-            mMainHandler,
-            mApi,
-            mTerminalCache,
-            mHttp.dispatcher().executorService(),
-            this,
+            this, mHttp, mMainHandler, mApi, mTerminalCache,
+            mHttp.dispatcher().executorService(), this,
             new HomeServerCoordinator.Listener() {
-                @Override
-                public boolean isHomeActive() {
-                    return MainActivity.this.isHomeActive();
-                }
-
-                @Override
-                public void onAuthenticated(ServerConfig server) {
-                    saveServers();
-                }
-
-                @Override
-                public void onCreateSession(ServerConfig server) {
-                    createSessionOnServer(server);
-                }
-
-                @Override
-                public void onEditServer(ServerConfig server) {
-                    showAddServerDialog(server);
-                }
-
-                @Override
-                public void onRemoveServer(ServerConfig server) {
-                    confirmRemoveServer(server);
-                }
-
-                @Override
-                public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
+                @Override public boolean isHomeActive() { return MainActivity.this.isHomeActive(); }
+                @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
+                @Override public void onCreateSession(ServerConfig server) { createSessionOnServer(server); }
+                @Override public void onEditServer(ServerConfig server) { showAddServerDialog(server); }
+                @Override public void onRemoveServer(ServerConfig server) { confirmRemoveServer(server); }
+                @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
                     removeCachedTerminal(baseUrl, sessionId);
                 }
-
                 @Override
                 public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
                     removeMissingCachedSessionsForServer(server, liveSessionIdentities);
@@ -186,10 +135,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onResume() {
         super.onResume();
         mInForeground = true;
-        if (mTerminalState.hasSession() && mTerminalSession != null && (mTerminalConnection == null || !mTerminalConnection.hasSocket())) {
+        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()
+            && (mTerminalConnection == null || !mTerminalConnection.hasSocket())) {
             mClosed.set(false);
-            connectTerminal();
-        } else if (!mTerminalState.hasSession() && hasHomeList()) {
+            mTerminalLifecycle.connectTerminal();
+        } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 if (mHomeCoordinator != null) mHomeCoordinator.resume();
             } else {
@@ -201,11 +151,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     protected void onPause() {
         mInForeground = false;
-        if (!mTerminalState.hasSession()) {
+        if (!mTerminalLifecycle.hasSession()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pause();
             mRelayCoordinator.stop();
         } else {
-            pauseCurrentTerminalConnection();
+            mTerminalLifecycle.pauseCurrentConnection();
         }
         super.onPause();
     }
@@ -216,19 +166,19 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mMainHandler.removeCallbacksAndMessages(null);
         mRelayCoordinator.stop();
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
-        if (mTerminalState.hasSession() && mTerminalSession != null) {
-            cacheCurrentTerminal();
+        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()) {
+            mTerminalLifecycle.closeTerminal(false);
         }
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
-        if (mTerminalSession != null) mTerminalSession.finishIfRunning();
-        if (mTerminalCache != null) mTerminalCache.shutdown(mTerminalSession);
+        if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
+        if (mTerminalCache != null) mTerminalCache.shutdown(mTerminalLifecycle.terminalSession());
         mHttp.dispatcher().cancelAll();
         super.onDestroy();
     }
 
     @Override
     public void onBackPressed() {
-        if (mTerminalState.hasSession()) {
+        if (mTerminalLifecycle.hasSession()) {
             if (mSelectedServer != null) {
                 showDeviceSessions(mSelectedServer, PageTransition.BACK);
             } else {
@@ -243,6 +193,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         super.onBackPressed();
     }
 
+    // ── Navigation ────────────────────────────────────────────────
+
     private void loadServersFromPrefs() {
         mServerConfigs.load();
         mRelayCoordinator.loadMasterFromServers(mServerConfigs.servers());
@@ -252,12 +204,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mServerConfigs.save();
     }
 
-    void showSessionHome() {
-        showSessionHome(PageTransition.BACK);
-    }
+    void showSessionHome() { showSessionHome(PageTransition.BACK); }
 
     private void showSessionHome(PageTransition transition) {
-        closeCurrentTerminal(false);
+        mTerminalLifecycle.closeTerminal(false);
         mClosed.set(false);
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICES;
@@ -274,10 +224,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             this,
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
-            () -> {
-                loadMultiSessions();
-                mRelayCoordinator.start();
-            },
+            () -> { loadMultiSessions(); mRelayCoordinator.start(); },
             () -> RelayConfigDialogHelper.show(mRelayCoordinator, mRelayCoordinator.masterConfig())
         );
         mHomeSubtitle = home.subtitle;
@@ -299,8 +246,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         }
         for (ServerConfig server : allServers) {
             mSessionList.addView(HomeScreenBuilder.deviceCard(
-                this,
-                server,
+                this, server,
                 (v) -> showDeviceSessions(server, PageTransition.FORWARD),
                 () -> showAddServerDialog(server),
                 () -> confirmRemoveServer(server)
@@ -311,27 +257,18 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private java.util.List<ServerConfig> collectVisibleDevices() {
         java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
         for (ServerConfig s : mServerConfigs.servers()) {
-            if (!s.isRelayMaster()) {
-                allServers.add(s);
-            }
+            if (!s.isRelayMaster()) allServers.add(s);
         }
         List<ServerConfig> relayDevices = mRelayCoordinator.devices();
-        if (!relayDevices.isEmpty()) {
-            allServers.addAll(relayDevices);
-        }
+        if (!relayDevices.isEmpty()) allServers.addAll(relayDevices);
         return allServers;
     }
 
-    private void showDeviceSessions(ServerConfig server) {
-        showDeviceSessions(server, PageTransition.FORWARD);
-    }
+    private void showDeviceSessions(ServerConfig server) { showDeviceSessions(server, PageTransition.FORWARD); }
 
     private void showDeviceSessions(ServerConfig server, PageTransition transition) {
-        if (server == null) {
-            showSessionHome(PageTransition.BACK);
-            return;
-        }
-        closeCurrentTerminal(false);
+        if (server == null) { showSessionHome(PageTransition.BACK); return; }
+        mTerminalLifecycle.closeTerminal(false);
         mRelayCoordinator.stop();
         mClosed.set(false);
         mTerminalState.clearServerSession();
@@ -341,8 +278,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mSessionList = null;
 
         HomeScreenBuilder.DeviceSessionsResult screen = HomeScreenBuilder.buildDeviceSessions(
-            this,
-            server,
+            this, server,
             () -> showSessionHome(PageTransition.BACK),
             () -> createSessionOnServer(server),
             () -> loadSelectedDeviceSessions(),
@@ -395,110 +331,17 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         }
     }
 
-    private void setContentViewAnimated(View newRoot, PageTransition transition) {
-        if (newRoot == null) return;
-        if (transition == PageTransition.NONE) {
-            setContentView(newRoot);
-            return;
-        }
-
-        ViewGroup content = findViewById(android.R.id.content);
-        if (content == null || content.getChildCount() == 0) {
-            setContentView(newRoot);
-            return;
-        }
-        content.setBackgroundColor(Color.rgb(15, 15, 18));
-
-        View oldRoot = content.getChildAt(content.getChildCount() - 1);
-        if (oldRoot == null || oldRoot == newRoot) {
-            setContentView(newRoot);
-            return;
-        }
-        for (int i = content.getChildCount() - 2; i >= 0; i--) {
-            View stale = content.getChildAt(i);
-            stale.animate().cancel();
-            content.removeViewAt(i);
-        }
-
-        ViewGroup parent = (ViewGroup) newRoot.getParent();
-        if (parent != null) parent.removeView(newRoot);
-
-        oldRoot.animate().cancel();
-        newRoot.animate().cancel();
-        oldRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        newRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-
-        int offset = dp(18);
-        float newStartX = 0f;
-        if (transition == PageTransition.FORWARD) {
-            newStartX = offset;
-        } else if (transition == PageTransition.BACK) {
-            newStartX = -offset;
-        }
-
-        newRoot.setAlpha(transition == PageTransition.FADE ? 0f : 1f);
-        newRoot.setTranslationX(newStartX);
-        content.addView(newRoot, new ViewGroup.LayoutParams(-1, -1));
-
-        DecelerateInterpolator interpolator = new DecelerateInterpolator();
-        newRoot.animate()
-            .alpha(1f)
-            .translationX(0f)
-            .setDuration(180L)
-            .setInterpolator(interpolator)
-            .setListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    newRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-                }
-            })
-            .start();
-
-        if (transition == PageTransition.FADE) {
-            oldRoot.animate()
-                .alpha(0f)
-                .setDuration(180L)
-                .setInterpolator(interpolator)
-                .setListener(new AnimatorListenerAdapter() {
-                    @Override
-                    public void onAnimationEnd(Animator animation) {
-                        removeOldRoot(content, oldRoot);
-                    }
-                })
-                .start();
-        } else {
-            oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-            newRoot.postDelayed(() -> removeOldRoot(content, oldRoot), 190L);
-        }
-    }
-
-    private void removeOldRoot(ViewGroup content, View oldRoot) {
-        if (oldRoot.getParent() == content) {
-            content.removeView(oldRoot);
-        }
-        oldRoot.setAlpha(1f);
-        oldRoot.setTranslationX(0f);
-        oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-    }
-
-    // RelayCoordinator.Host implementation
-    @Override
-    public void onRelayDevicesChanged() {
-        loadMultiSessions();
-    }
-
-    @Override
-    public void onRelayAuthDone() {
-        showSessionHome(PageTransition.FADE);
-    }
-
-    @Override
-    public ServerConfigManager serverConfigs() {
-        return mServerConfigs;
-    }
-
     private boolean isHomeActive() {
-        return mInForeground && !mClosed.get() && !mTerminalState.hasSession() && mScreenMode == ScreenMode.DEVICE_SESSIONS && mSessionAdapter != null;
+        return mInForeground && !mClosed.get() && !mTerminalLifecycle.hasSession()
+            && mScreenMode == ScreenMode.DEVICE_SESSIONS && mSessionAdapter != null;
+    }
+
+    private void showAddServerDialog(final ServerConfig existingServer) {
+        ServerConfigDialogHelper.show(this, existingServer);
+    }
+
+    private void createSessionOnServer(ServerConfig server) {
+        if (mSessionCommands != null) mSessionCommands.createSessionOnServer(server);
     }
 
     private void confirmRemoveServer(ServerConfig server) {
@@ -519,411 +362,42 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             .show();
     }
 
-    private void createSessionOnServer(ServerConfig server) {
-        if (mSessionCommands != null) mSessionCommands.createSessionOnServer(server);
-    }
-
-    private void showAddServerDialog(final ServerConfig existingServer) {
-        ServerConfigDialogHelper.show(this, existingServer);
-    }
-
-    @Override
-    public Activity activity() {
-        return this;
-    }
-
-    @Override
-    public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
-        mServerConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
-        saveServers();
-        if (existingServer != null && existingServer == mSelectedServer) {
-            showDeviceSessions(existingServer, PageTransition.FADE);
-        } else {
-            showSessionHome(PageTransition.FADE);
-        }
-    }
-
-    void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
-        if (mSessionCommands != null) mSessionCommands.showRenameDialog(server, sessionId, oldName);
-    }
-
-    void showCloseConfirmDialog(ServerConfig server, String sessionId) {
-        if (mSessionCommands != null) mSessionCommands.showCloseConfirmDialog(server, sessionId);
-    }
-
-    private void deleteSession(String sessionId) {
-        if (mSessionCommands != null) mSessionCommands.deleteCurrentSession(mTerminalState.baseUrl(), mTerminalState.cookie(), sessionId);
-    }
+    // ── Terminal ───────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
         showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "");
     }
-
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
         showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "");
     }
-
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
         showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "");
     }
 
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+                      String createdAt, String instanceId) {
         if (mHomeCoordinator != null) mHomeCoordinator.pause();
         mScreenMode = ScreenMode.TERMINAL;
-        String normalizedInstanceId = SessionIdentity.normalizePart(instanceId);
-        String normalizedCreatedAt = SessionIdentity.normalizePart(createdAt);
-        CachedTerminal cached = mTerminalCache == null ? null : mTerminalCache.getMemory(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
-        final TerminalDiskCache.RestoreResult[] diskRestore = new TerminalDiskCache.RestoreResult[1];
-        if (cached == null && mTerminalCache != null && !SessionIdentity.cacheKey(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt).isEmpty()) {
-            diskRestore[0] = mTerminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
-        }
-        mTerminalState.setServerSession(baseUrl, cookie, sessionId);
-        TerminalLaunchState launchState = TerminalLaunchState.resolve(
-            sessionId,
-            termTitle,
-            sessionName,
-            normalizedCreatedAt,
-            normalizedInstanceId,
-            cached,
-            diskRestore[0]
+        mTerminalLifecycle.showTerminal(
+            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            this, mTerminalSessionClient, mClipboardController,
+            this::showSessionListOrDeviceHome
         );
-        mClosed.set(false);
-        mTerminalState.applyLaunchState(launchState);
-        mPendingDiskSnapshotBytes = diskRestore[0] == null ? null : diskRestore[0].snapshotBytes;
-
-        TerminalScreenBuilder.Result terminalScreen = TerminalScreenBuilder.build(
-            this,
-            launchState.headerTitle,
-            launchState.headerSubtitle,
-            getSavedFontSize(),
-            getTypefaceByName(getSavedFontType()),
-            new WebTermTerminalViewClient(this),
-            this::showSessionListOrDeviceHome,
-            () -> {
-                if (mTerminalConnection != null) mTerminalConnection.reconnectNow();
-            },
-            () -> TodoDialogHelper.show(this, sessionId),
-            () -> {
-                mCtrlDown = !mCtrlDown;
-                TerminalScreenBuilder.updateCtrlButtonState(MainActivity.this, mCtrlButton, mCtrlDown);
-            },
-            this::writeTerminal
-        );
-        mTerminalRoot = terminalScreen.root;
-        mTerminalView = terminalScreen.terminalView;
-        mTerminalViewport = terminalScreen.terminalViewport;
-        mQuickBar = terminalScreen.quickBar;
-        mCtrlButton = terminalScreen.ctrlButton;
-        mTerminalAttachStarted = false;
-        mTerminalTitle = terminalScreen.title;
-        mTerminalSubtitle = terminalScreen.subtitle;
-        mConnectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton);
-        installRootInsets(mTerminalRoot, 0, 0, 0, 0, false);
-        mTerminalSession = cached != null && cached.terminalSession != null
-            ? cached.terminalSession
-            : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, mTerminalSessionClient, mTerminalSessionClient);
-        setContentViewAnimated(mTerminalRoot, PageTransition.FORWARD);
-        mTerminalRoot.post(this::updateKeyboardAvoidance);
-        attachTerminalWhenLaidOut();
     }
 
     @Override
-    public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId) {
+    public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName,
+                            String createdAt, String instanceId) {
         mSelectedServer = server;
         showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId);
     }
 
-    private void attachTerminalWhenLaidOut() {
-        if (mTerminalRoot == null || mTerminalView == null || mTerminalSession == null || mTerminalAttachStarted) return;
-        ViewTreeObserver observer = mTerminalView.getViewTreeObserver();
-        observer.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-            @Override
-            public void onGlobalLayout() {
-                if (mTerminalView == null) {
-                    removeLayoutListener(this);
-                    return;
-                }
-                if (mTerminalView.getWidth() <= 0 || mTerminalView.getHeight() <= 0) return;
-                removeLayoutListener(this);
-                attachAndConnectTerminal();
-            }
-        });
-        mTerminalView.post(() -> {
-            if (mTerminalView != null && mTerminalView.getWidth() > 0 && mTerminalView.getHeight() > 0) {
-                attachAndConnectTerminal();
-            }
-        });
-    }
-
-    private void removeLayoutListener(ViewTreeObserver.OnGlobalLayoutListener listener) {
-        if (mTerminalView == null) return;
-        ViewTreeObserver observer = mTerminalView.getViewTreeObserver();
-        if (observer.isAlive()) {
-            observer.removeOnGlobalLayoutListener(listener);
-        }
-    }
-
-    private void attachAndConnectTerminal() {
-        if (mTerminalAttachStarted || mTerminalView == null || mTerminalSession == null) return;
-        if (mTerminalView.getWidth() <= 0 || mTerminalView.getHeight() <= 0) return;
-        mTerminalAttachStarted = true;
-        mTerminalView.attachSession(mTerminalSession);
-        restorePendingDiskSnapshot();
-        mTerminalView.requestFocus();
-        mTerminalView.updateSize();
-        updateKeyboardAvoidance();
-        connectTerminal();
-    }
-
-    private void restorePendingDiskSnapshot() {
-        byte[] snapshotBytes = mPendingDiskSnapshotBytes;
-        mPendingDiskSnapshotBytes = null;
-        if (snapshotBytes == null || snapshotBytes.length == 0 || mTerminalSession == null) return;
-        try {
-            if (mTerminalSession.getEmulator() == null || mTerminalSession.getEmulator().getScreen() == null) {
-                android.util.Log.w("MainActivity", "Terminal emulator unavailable while restoring disk snapshot; requesting full server snapshot");
-                mTerminalState.resetLastSeq();
-                if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(0);
-                return;
-            }
-            mTerminalSession.getEmulator().getScreen().deserialize(snapshotBytes);
-        } catch (Throwable t) {
-            android.util.Log.w("MainActivity", "Failed to restore terminal disk snapshot; requesting full server snapshot", t);
-            mTerminalState.resetLastSeq();
-            if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(0);
-        }
-    }
+    // ── TerminalLifecycleController.Host ───────────────────────────
 
     @Override
-    public void renameSession(ServerConfig server, String sessionId, String oldName) {
-        showRenameDialog(server, sessionId, oldName);
-    }
-
+    public int getSavedFontSize() { return mConfigStore.getFontSize(); }
     @Override
-    public void closeSession(ServerConfig server, String sessionId) {
-        showCloseConfirmDialog(server, sessionId);
-    }
-
-    private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom, boolean avoidImeWithPadding) {
-        TerminalWindowInsetsController.installRootInsets(this, root, baseLeft, baseTop, baseRight, baseBottom, avoidImeWithPadding, (imeOverlap) -> {
-            mImeOverlap = imeOverlap;
-            updateKeyboardAvoidance();
-        });
-    }
-
-    private void updateKeyboardAvoidance() {
-        TerminalWindowInsetsController.updateKeyboardAvoidance(this, mTerminalRoot, mTerminalViewport, mQuickBar, mTerminalView, mImeOverlap);
-    }
-
-    private void closeCurrentTerminal(boolean closeRemote) {
-        String closingBaseUrl = mTerminalState.baseUrl();
-        String closingSessionId = mTerminalState.sessionId();
-        if (!closeRemote) {
-            cacheCurrentTerminal();
-        }
-        mClosed.set(true);
-        closeTerminalConnection("leaving terminal");
-        if (mTerminalSession != null && closeRemote) {
-            mTerminalSession.finishIfRunning();
-        }
-        mTerminalSession = null;
-        mTerminalView = null;
-        mConnectionStatus.clear();
-        mTerminalTitle = null;
-        mTerminalSubtitle = null;
-        mTerminalRoot = null;
-        mTerminalViewport = null;
-        mQuickBar = null;
-        mCtrlButton = null;
-        mTerminalAttachStarted = false;
-        mPendingDiskSnapshotBytes = null;
-        mCtrlDown = false;
-        mImeOverlap = 0;
-        mTerminalState.clearTerminalDetails();
-        if (mTitleSynchronizer != null) mTitleSynchronizer.reset();
-        if (closeRemote && closingSessionId != null) {
-            removeCachedTerminal(closingBaseUrl, closingSessionId);
-            deleteSession(closingSessionId);
-        }
-        mTerminalState.clearServerSession();
-    }
-
-    private void pauseCurrentTerminalConnection() {
-        cacheCurrentTerminal();
-        closeTerminalConnection("activity paused");
-    }
-
-    private void closeTerminalConnection(String reason) {
-        if (mTitleSynchronizer != null) mTitleSynchronizer.cancel();
-        if (mTerminalConnection != null) mTerminalConnection.close(reason);
-    }
-
-    private void cacheCurrentTerminal() {
-        if (mTerminalCache == null) return;
-        mTerminalCache.saveCurrent(mTerminalState.snapshot(mTerminalTitle, mTerminalSubtitle, mTerminalSession));
-    }
-
-    private void removeCachedTerminal(String baseUrl, String sessionId) {
-        if (mTerminalCache == null) return;
-        if (mTerminalCache.removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(), mTerminalSession)) {
-            mTerminalState.clearPersistence();
-        }
-        TodoDialogHelper.clearTodo(this, sessionId);
-    }
-
-    private void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
-        if (mTerminalCache != null) mTerminalCache.removeMissingForServer(server, liveSessionIdentities, mTerminalSession);
-    }
-
-    private void removeCachedTerminalsForServer(ServerConfig server) {
-        if (mTerminalCache != null) mTerminalCache.removeServer(server, mTerminalSession);
-    }
-
-    private void handleKey(int keyCode) {
-        if (mTerminalView != null) mTerminalView.handleKeyCode(keyCode, 0);
-    }
-
-    private void writeTerminal(String data) {
-        if (mTerminalSession != null) mTerminalSession.write(data);
-    }
-
-    private void showKeyboard() {
-        if (mTerminalView == null) return;
-        mTerminalView.postDelayed(() -> {
-            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-            if (imm != null) imm.showSoftInput(mTerminalView, InputMethodManager.SHOW_IMPLICIT);
-        }, 150);
-    }
-
-    @Override
-    public void onTerminalViewTapped() {
-        showKeyboard();
-    }
-
-    @Override
-    public boolean readTerminalControlKey() {
-        return mCtrlDown;
-    }
-
-    @Override
-    public void clearTerminalControlKey() {
-        if (mCtrlDown) {
-            mCtrlDown = false;
-            runOnUiThread(() -> {
-                if (mCtrlButton != null) {
-                    TerminalScreenBuilder.updateCtrlButtonState(MainActivity.this, mCtrlButton, false);
-                }
-            });
-        }
-    }
-
-    @Override
-    public void login(String baseUrl, String username, String password, ServerConfigDialogHelper.LoginCallback callback) {
-        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String readyBaseUrl, String cookie) {
-                callback.onReady(readyBaseUrl, cookie);
-            }
-
-            @Override
-            public void onError(String message) {
-                callback.onError(message);
-            }
-        });
-    }
-
-    private void connectTerminal() {
-        if (mTerminalConnection == null || !mTerminalState.hasSession() || mTerminalState.baseUrl() == null || mTerminalState.cookie() == null) return;
-        mTerminalConnection.updateSize(mTerminalState.columns(), mTerminalState.rows());
-        mTerminalConnection.connect(mTerminalState.baseUrl(), mTerminalState.cookie(), mTerminalState.sessionId(), mTerminalState.lastSeq());
-    }
-
-    private void appendOutput(String data) {
-        if (mTerminalSession != null) mTerminalSession.appendOutput(data);
-    }
-
-    private void appendOutput(byte[] data) {
-        if (mTerminalSession != null) mTerminalSession.appendOutput(data);
-    }
-
-    private void appendStatus(String line) {
-        appendOutput("\r\n[" + line + "]\r\n");
-    }
-
-    @Override
-    public void onConnectionStatus(String text, boolean connected) {
-        runOnUiThread(() -> mConnectionStatus.update(text, connected));
-    }
-
-    @Override
-    public void onOutput(long seq, byte[] data) {
-        if (seq > 0) {
-            mTerminalState.onOutput(seq, data);
-            if (mTerminalConnection != null) mTerminalConnection.updateLastSeq(seq);
-        }
-        appendOutput(data);
-    }
-
-    @Override
-    public void onInfo(JSONObject info) {
-        String termTitle = info.optString("termTitle", "").trim();
-        String name = info.optString("name", "").trim();
-        String instanceId = info.optString("instanceId", "").trim();
-        String createdAt = info.optString("createdAt", "").trim();
-        mTerminalState.updateIdentity(instanceId, createdAt);
-        runOnUiThread(() -> {
-            if (mTerminalTitle != null && !termTitle.isEmpty()) mTerminalTitle.setText(termTitle);
-            if (mTerminalSubtitle != null && !name.isEmpty()) mTerminalSubtitle.setText(name);
-        });
-    }
-
-    @Override
-    public void onExit(int code) {
-        appendStatus("Remote session exited");
-        removeCachedTerminal(mTerminalState.baseUrl(), mTerminalState.sessionId());
-        if (mTerminalSession != null) mTerminalSession.notifyExternalSessionFinished(code);
-    }
-
-    @Override
-    public void onProtocolError(String message) {
-        appendStatus(message);
-    }
-
-    @Override
-    public void onTerminalInput(String data) {
-        if (mTerminalConnection != null) mTerminalConnection.sendInput(data);
-    }
-
-    @Override
-    public void onTerminalResize(int columns, int rows) {
-        mTerminalState.updateSize(columns, rows);
-        if (mTerminalConnection != null) mTerminalConnection.updateSize(columns, rows);
-    }
-
-    @Override
-    public void onTerminalTextChanged() {
-        if (mTerminalView != null) mTerminalView.onScreenUpdated();
-        updateKeyboardAvoidance();
-    }
-
-    @Override
-    public TextView terminalTitleView() {
-        return mTerminalTitle;
-    }
-
-    int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    @Override
-    public int getSavedFontSize() {
-        return mConfigStore.getFontSize();
-    }
-
-    @Override
-    public String getSavedFontType() {
-        return mConfigStore.getFontType();
-    }
+    public String getSavedFontType() { return mConfigStore.getFontType(); }
 
     @Override
     public Typeface getTypefaceByName(String type) {
@@ -933,9 +407,115 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         return Typeface.MONOSPACE;
     }
 
-    private void showSettingsDialog() {
-        SettingsDialogHelper.show(this);
+    @Override
+    public void installTerminalInsets(View root) {
+        TerminalWindowInsetsController.installRootInsets(this, root, 0, 0, 0, 0, false, (imeOverlap) -> {
+            mImeOverlap = imeOverlap;
+            updateKeyboardAvoidance();
+        });
     }
+
+    @Override
+    public void setContentRoot(View root) {
+        setContentViewAnimated(root, PageTransition.FORWARD);
+    }
+
+    @Override
+    public void updateKeyboardAvoidance() {
+        TerminalWindowInsetsController.updateKeyboardAvoidance(this,
+            mTerminalLifecycle.terminalRoot(), mTerminalLifecycle.terminalViewport(),
+            mTerminalLifecycle.quickBar(), mTerminalLifecycle.terminalView(), mImeOverlap);
+    }
+
+    // ── WebTermTerminalViewClient.Host ─────────────────────────────
+
+    @Override
+    public void onTerminalViewTapped() { mTerminalLifecycle.showKeyboard(); }
+    @Override
+    public boolean readTerminalControlKey() { return mTerminalLifecycle.readCtrlKey(); }
+    @Override
+    public void clearTerminalControlKey() { mTerminalLifecycle.setCtrlKey(false); }
+
+    // ── WebTermTerminalSessionClient.Host ──────────────────────────
+
+    @Override
+    public void onTerminalInput(String data) {
+        if (mTerminalConnection != null) mTerminalConnection.sendInput(data);
+    }
+    @Override
+    public void onTerminalResize(int columns, int rows) {
+        mTerminalLifecycle.onTerminalResize(columns, rows);
+    }
+    @Override
+    public void onTerminalTextChanged() { mTerminalLifecycle.onTerminalTextChanged(); }
+    @Override
+    public TextView terminalTitleView() { return mTerminalLifecycle.terminalTitleView(); }
+
+    // ── TerminalConnection.Listener ─────────────────────────────────
+
+    @Override
+    public void onConnectionStatus(String text, boolean connected) {
+        runOnUiThread(() -> mConnectionStatus.update(text, connected));
+    }
+    @Override
+    public void onOutput(long seq, byte[] data) { mTerminalLifecycle.onOutput(seq, data); }
+    @Override
+    public void onInfo(JSONObject info) { mTerminalLifecycle.onInfo(info); }
+    @Override
+    public void onExit(int code) { mTerminalLifecycle.onExit(code); }
+    @Override
+    public void onProtocolError(String message) {
+        mTerminalLifecycle.appendOutput("\r\n[" + message + "]\r\n");
+    }
+
+    // ── SessionRowActions ──────────────────────────────────────────
+
+    @Override
+    public void renameSession(ServerConfig server, String sessionId, String oldName) {
+        if (mSessionCommands != null) mSessionCommands.showRenameDialog(server, sessionId, oldName);
+    }
+    @Override
+    public void closeSession(ServerConfig server, String sessionId) {
+        if (mSessionCommands != null) mSessionCommands.showCloseConfirmDialog(server, sessionId);
+    }
+
+    // ── ServerConfigDialogHelper.Host ──────────────────────────────
+
+    @Override
+    public Activity activity() { return this; }
+
+    @Override
+    public void login(String baseUrl, String username, String password, ServerConfigDialogHelper.LoginCallback callback) {
+        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String readyBaseUrl, String cookie) { callback.onReady(readyBaseUrl, cookie); }
+            @Override
+            public void onError(String message) { callback.onError(message); }
+        });
+    }
+
+    @Override
+    public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie,
+                                      String username, String password) {
+        mServerConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
+        saveServers();
+        if (existingServer != null && existingServer == mSelectedServer) {
+            showDeviceSessions(existingServer, PageTransition.FADE);
+        } else {
+            showSessionHome(PageTransition.FADE);
+        }
+    }
+
+    // ── RelayCoordinator.Host ──────────────────────────────────────
+
+    @Override
+    public void onRelayDevicesChanged() { loadMultiSessions(); }
+    @Override
+    public void onRelayAuthDone() { showSessionHome(PageTransition.FADE); }
+    @Override
+    public ServerConfigManager serverConfigs() { return mServerConfigs; }
+
+    // ── SettingsDialogHelper.Host ──────────────────────────────────
 
     @Override
     public String getFontDisplayName(String fontType) {
@@ -944,24 +524,117 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if ("default".equals(fontType)) return "Default";
         return "Monospace";
     }
-
     @Override
-    public void saveFontSize(int size) {
-        mConfigStore.saveFontSize(size);
-    }
-
+    public void saveFontSize(int size) { mConfigStore.saveFontSize(size); }
     @Override
-    public void saveFontType(String type) {
-        mConfigStore.saveFontType(type);
-    }
-
+    public void saveFontType(String type) { mConfigStore.saveFontType(type); }
     @Override
     public void applyTerminalFontSize(int size) {
-        if (mTerminalView != null) mTerminalView.setTextSize(size);
+        if (mTerminalLifecycle.terminalView() != null) mTerminalLifecycle.terminalView().setTextSize(size);
     }
-
     @Override
     public void applyTerminalTypeface(Typeface typeface) {
-        if (mTerminalView != null) mTerminalView.setTypeface(typeface);
+        if (mTerminalLifecycle.terminalView() != null) mTerminalLifecycle.terminalView().setTypeface(typeface);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────
+
+    private void showSettingsDialog() { SettingsDialogHelper.show(this); }
+
+    private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom,
+                                   boolean avoidImeWithPadding) {
+        TerminalWindowInsetsController.installRootInsets(this, root, baseLeft, baseTop, baseRight, baseBottom,
+            avoidImeWithPadding, (imeOverlap) -> {
+                mImeOverlap = imeOverlap;
+                updateKeyboardAvoidance();
+            });
+    }
+
+    private void removeCachedTerminal(String baseUrl, String sessionId) {
+        if (mTerminalCache == null) return;
+        if (mTerminalCache.removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(),
+            mTerminalLifecycle.terminalSession())) {
+            mTerminalState.clearPersistence();
+        }
+        TodoDialogHelper.clearTodo(this, sessionId);
+    }
+
+    private void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
+        if (mTerminalCache != null) {
+            mTerminalCache.removeMissingForServer(server, liveSessionIdentities, mTerminalLifecycle.terminalSession());
+        }
+    }
+
+    private void removeCachedTerminalsForServer(ServerConfig server) {
+        if (mTerminalCache != null) mTerminalCache.removeServer(server, mTerminalLifecycle.terminalSession());
+    }
+
+    // ── Animation ──────────────────────────────────────────────────
+
+    private void setContentViewAnimated(View newRoot, PageTransition transition) {
+        if (newRoot == null) return;
+        if (transition == PageTransition.NONE) { setContentView(newRoot); return; }
+
+        ViewGroup content = findViewById(android.R.id.content);
+        if (content == null || content.getChildCount() == 0) { setContentView(newRoot); return; }
+        content.setBackgroundColor(Color.rgb(15, 15, 18));
+
+        View oldRoot = content.getChildAt(content.getChildCount() - 1);
+        if (oldRoot == null || oldRoot == newRoot) { setContentView(newRoot); return; }
+        for (int i = content.getChildCount() - 2; i >= 0; i--) {
+            View stale = content.getChildAt(i);
+            stale.animate().cancel();
+            content.removeViewAt(i);
+        }
+
+        ViewGroup parent = (ViewGroup) newRoot.getParent();
+        if (parent != null) parent.removeView(newRoot);
+
+        oldRoot.animate().cancel();
+        newRoot.animate().cancel();
+        oldRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        newRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
+        int offset = dp(18);
+        float newStartX = transition == PageTransition.FORWARD ? offset
+            : transition == PageTransition.BACK ? -offset : 0f;
+
+        newRoot.setAlpha(transition == PageTransition.FADE ? 0f : 1f);
+        newRoot.setTranslationX(newStartX);
+        content.addView(newRoot, new ViewGroup.LayoutParams(-1, -1));
+
+        DecelerateInterpolator interpolator = new DecelerateInterpolator();
+        newRoot.animate()
+            .alpha(1f).translationX(0f).setDuration(180L).setInterpolator(interpolator)
+            .setListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    newRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+                }
+            }).start();
+
+        if (transition == PageTransition.FADE) {
+            oldRoot.animate().alpha(0f).setDuration(180L).setInterpolator(interpolator)
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        removeOldRoot(content, oldRoot);
+                    }
+                }).start();
+        } else {
+            oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+            newRoot.postDelayed(() -> removeOldRoot(content, oldRoot), 190L);
+        }
+    }
+
+    private void removeOldRoot(ViewGroup content, View oldRoot) {
+        if (oldRoot.getParent() == content) content.removeView(oldRoot);
+        oldRoot.setAlpha(1f);
+        oldRoot.setTranslationX(0f);
+        oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+    }
+
+    int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 }
