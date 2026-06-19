@@ -6,6 +6,7 @@ import { AuthManager, setAuthCookie } from './auth.js';
 import { json, readJSON, sameHostOrigin, serveStatic, text } from './http-utils.js';
 import { selectWebSocketProtocol } from './protocol-binary.js';
 import { SessionManager } from './session-manager.js';
+import { delay } from '../shared/utils.js';
 
 let password;
 let username;
@@ -160,8 +161,4 @@ function splitAddress(value) {
   const index = value.lastIndexOf(':');
   if (index <= 0) return [value, '8080'];
   return [value.slice(0, index), value.slice(index + 1)];
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

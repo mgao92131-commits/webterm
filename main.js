@@ -1,4 +1,4 @@
-import { loadLocalEnv } from './server/env.js';
+import { loadLocalEnv } from './shared/utils.js';
 
 loadLocalEnv();
 
