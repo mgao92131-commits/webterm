@@ -8,3 +8,5 @@ test-results/
 .antigravitycli
 data/
 *.db*
+agent_run.log
+webterm_deploy_temp.tar.gz

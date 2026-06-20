@@ -10,12 +10,23 @@ import {
   sendJSON, sendBinary
 } from '../shared/tunnel-protocol.js';
 
-export function createClientWsTunnel(registry, activeWsTunnels, clientWs, agent, targetPath, req) {
+export function createClientWsTunnel(registry, activeWsTunnels, clientWs, agent, targetPath, req, options = {}) {
   const tunnelConnectionId = 'tc_' + Math.random().toString(36).substring(2, 15);
   const queue = [];
 
+  const connectionTimer = setTimeout(() => {
+    const tunnel = activeWsTunnels.get(tunnelConnectionId);
+    if (tunnel && !tunnel.isConnected) {
+      console.log(`[Relay] Tunnel ${tunnelConnectionId} connection timeout (15s)`);
+      clientWs.close(4008, 'Tunnel connection timeout');
+      activeWsTunnels.delete(tunnelConnectionId);
+    }
+  }, 15000);
+
   activeWsTunnels.set(tunnelConnectionId, {
-    clientWs, deviceId: agent.deviceId, isConnected: false, queue
+    clientWs, deviceId: agent.deviceId, isConnected: false, queue,
+    connectionTimer,
+    transformOutboundText: options.transformOutboundText || null
   });
 
   const relayHeaders = { ...req.headers };
@@ -48,6 +59,10 @@ export function createClientWsTunnel(registry, activeWsTunnels, clientWs, agent,
   });
 
   clientWs.on('close', (code, reason) => {
+    const tunnel = activeWsTunnels.get(tunnelConnectionId);
+    if (tunnel && tunnel.connectionTimer) {
+      clearTimeout(tunnel.connectionTimer);
+    }
     if (activeWsTunnels.has(tunnelConnectionId)) {
       activeWsTunnels.delete(tunnelConnectionId);
       const currentAgent = registry.getAgent(agent.deviceId);
@@ -71,6 +86,10 @@ export function handleAgentTunnelMessage(msg, registry, activeWsTunnels) {
   if (msg.type === WS_CONNECTED) {
     if (tunnel.isConnected) return;
     tunnel.isConnected = true;
+    if (tunnel.connectionTimer) {
+      clearTimeout(tunnel.connectionTimer);
+      delete tunnel.connectionTimer;
+    }
     const currentAgent = registry.getAgent(tunnel.deviceId);
     if (currentAgent && currentAgent.ws.readyState === 1) {
       for (const item of tunnel.queue) {
@@ -81,7 +100,46 @@ export function handleAgentTunnelMessage(msg, registry, activeWsTunnels) {
     }
     tunnel.queue = [];
   } else if (msg.type === WS_ERROR || msg.type === WS_CLOSE) {
+    if (tunnel.connectionTimer) {
+      clearTimeout(tunnel.connectionTimer);
+    }
     tunnel.clientWs.close(msg.code || 1000, String(msg.message || msg.reason || ''));
     activeWsTunnels.delete(msg.tunnelConnectionId);
   }
+}
+
+export function prefixSessionManagerMessage(text, deviceId) {
+  if (!deviceId) return text;
+  let message;
+  try {
+    message = JSON.parse(text);
+  } catch {
+    return text;
+  }
+
+  if (message.type === 'sessions' && Array.isArray(message.data)) {
+    message.data = message.data.map((session) => prefixSessionInfo(session, deviceId));
+  } else if (message.type === 'session' && message.data && typeof message.data === 'object') {
+    message.data = prefixSessionInfo(message.data, deviceId);
+  } else if (message.type === 'session-closed') {
+    message.id = prefixSessionId(message.id, deviceId);
+  } else {
+    return text;
+  }
+
+  return JSON.stringify(message);
+}
+
+function prefixSessionInfo(session, deviceId) {
+  if (!session || typeof session !== 'object') return session;
+  return {
+    ...session,
+    id: prefixSessionId(session.id, deviceId),
+  };
+}
+
+function prefixSessionId(id, deviceId) {
+  const value = String(id || '');
+  if (!value || value.includes(':')) return value;
+  return `${deviceId}:${value}`;
 }

@@ -103,6 +103,7 @@ final class HomeServerCoordinator {
 
             @Override
             public void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
+                hydrateCachedNames(server, sessions);
                 renderServerSessions(server, sessions);
             }
 
@@ -202,6 +203,7 @@ final class HomeServerCoordinator {
                     status.setStatus(StatusIndicatorView.Status.CONNECTED);
                     ServerGroupController holder = findHolderForServer(server);
                     if (holder != null) holder.setLastSessions(sessions);
+                    hydrateCachedNames(server, sessions);
                     renderServerSessions(server, sessions);
                 });
             }
@@ -296,22 +298,20 @@ final class HomeServerCoordinator {
             org.json.JSONObject session = sessions.optJSONObject(i);
             if (session == null) continue;
             String sessionId = session.optString("id");
-            String termTitle = null;
             String sessionName = null;
             CachedTerminal memCached = memoryCaches.get(sessionId);
             if (memCached != null) {
-                termTitle = memCached.termTitle;
                 sessionName = memCached.sessionName;
             } else {
                 TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
                 if (diskCached != null) {
-                    termTitle = diskCached.termTitle;
                     sessionName = diskCached.sessionName;
                 }
             }
             try {
-                if (termTitle != null) session.put("termTitle", termTitle);
-                if (sessionName != null) session.put("name", sessionName);
+                if (sessionName != null && session.optString("name", "").trim().isEmpty()) {
+                    session.put("name", sessionName);
+                }
             } catch (org.json.JSONException ignored) {
             }
         }

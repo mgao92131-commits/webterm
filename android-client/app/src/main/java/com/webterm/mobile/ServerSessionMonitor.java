@@ -44,8 +44,13 @@ final class ServerSessionMonitor {
         enabled = true;
         if (webSocket != null) return;
 
+        String urlString = WebTermUrls.toWebSocketUrl(server.getUrl()) + "/ws/sessions";
+        if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
+            urlString += "?deviceId=" + WebTermUrls.encodePath(server.getDeviceId());
+        }
+
         Request request = new Request.Builder()
-            .url(WebTermUrls.toWebSocketUrl(server.getUrl()) + "/ws/sessions")
+            .url(urlString)
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .build();
 

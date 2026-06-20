@@ -3,6 +3,7 @@ package com.webterm.mobile;
 import android.app.Activity;
 import android.graphics.Color;
 import android.os.Handler;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -60,7 +61,7 @@ final class ServerGroupController {
 
                 @Override
                 public void onMonitorSession(JSONObject session) {
-                    if (listener.isActive(ServerGroupController.this) && belongsToCurrentServer(session)) {
+                    if (belongsToCurrentServer(session)) {
                         upsertLocalSession(session);
                     }
                 }
@@ -159,7 +160,36 @@ final class ServerGroupController {
         if (!found) {
             lastSessions.put(newData);
         }
-        activity.runOnUiThread(() -> listener.onRenderSessions(server, lastSessions, subList));
+
+        final String rawTermTitle = newData.optString("termTitle", "").trim();
+        final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
+        final String nameText = newData.optString("name", "").trim();
+        activity.runOnUiThread(() -> {
+            View rowView = activity.findViewById(android.R.id.content).findViewWithTag(id);
+            if (rowView != null) {
+                TextView titleView = rowView.findViewWithTag("title");
+                TextView subtitleView = rowView.findViewWithTag("subtitle");
+                if (titleView != null) {
+                    if (!nameText.isEmpty()) {
+                        titleView.setText(nameText);
+                    } else {
+                        titleView.setText(termTitle);
+                    }
+                }
+                if (subtitleView != null) {
+                    if (!nameText.isEmpty()) {
+                        subtitleView.setText(termTitle);
+                        subtitleView.setVisibility(View.VISIBLE);
+                    } else {
+                        subtitleView.setVisibility(View.GONE);
+                    }
+                }
+            }
+        });
+
+        if (listener.isActive(this)) {
+            activity.runOnUiThread(() -> listener.onRenderSessions(server, lastSessions, subList));
+        }
     }
 
     private void removeLocalSession(String id) {

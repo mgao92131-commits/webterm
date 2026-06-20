@@ -1,0 +1,8 @@
+node_modules
+data
+.git
+.npm-cache
+test-results
+tests
+.claude
+*.log

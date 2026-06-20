@@ -379,9 +379,11 @@ async function selectDevice(deviceId: string) {
   store.managerError = '';
   store.sessions = [];
   isPanelOpen.value = false; // 选中后自动收起
+  closeManagerWS();
   
   // 启动 P2P 直连握手
   p2pManager.connectToDevice(deviceId);
+  connectManagerWS();
 
   try {
     await refreshSessionList();
@@ -395,7 +397,7 @@ async function refreshSessionList() {
   if (!store.selectedDeviceId) return;
   try {
     const rawSessions = await api("/api/sessions");
-    store.sessions = rawSessions;
+    store.sessions = Array.isArray(rawSessions) ? rawSessions : [];
   } catch (err: any) {
     if (err.status === 401) {
       router.push("/login");
@@ -476,6 +478,7 @@ function connectManagerWS() {
   
   const deviceParam = store.selectedDeviceId ? `&deviceId=${encodeURIComponent(store.selectedDeviceId)}` : '';
   ws = new WebSocket(`${proto}://${window.location.host}/ws/sessions?clientId=${store.clientId}${deviceParam}`);
+  const currentWs = ws;
   
   ws.addEventListener("open", () => {
     reconnectAttempts = 0;
@@ -497,6 +500,15 @@ function connectManagerWS() {
           store.selectedDeviceId = null;
           store.sessions = [];
         }
+      } else if (msg.type === "sessions") {
+        store.sessions = Array.isArray(msg.data) ? msg.data : [];
+        stopPolling();
+      } else if (msg.type === "session") {
+        upsertSession(msg.data);
+        stopPolling();
+      } else if (msg.type === "session-closed") {
+        removeSession(msg.id);
+        stopPolling();
       } else if (msg.type === "p2p-ice") {
         p2pManager.handleRemoteCandidate(msg.candidate);
       } else if (msg.type === "error") {
@@ -508,6 +520,7 @@ function connectManagerWS() {
   });
   
   ws.addEventListener("close", () => {
+    if (ws !== currentWs) return;
     ws = null;
     if (manualClose) return;
     
@@ -517,6 +530,7 @@ function connectManagerWS() {
   });
   
   ws.addEventListener("error", () => {
+    if (ws !== currentWs) return;
     startPolling();
   });
 }

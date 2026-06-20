@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import db, { runMigrations } from './db.js';
 import { createUser, setDisabled } from './stores/user-store.js';
 import { addTrustedDevice } from './stores/trusted-device-store.js';
-import { AuthManager, hashPassword, verifyPassword, signJwt, verifyJwt, COOKIE_NAME } from './auth.js';
+import { AuthManager, hashPassword, verifyPassword, signJwt, verifyJwt, COOKIE_NAME, _testRefreshCache } from './auth.js';
 
 // Setup database once
 process.env.NODE_ENV = 'test';
@@ -92,6 +92,17 @@ test('AuthManager refresh and token reuse detection works', async () => {
   assert.ok(refreshRes);
   assert.ok(refreshRes.accessToken);
   assert.ok(refreshRes.refreshToken);
+
+  // New concurrent refresh within 10s window should return the same cached tokens
+  const concurrentRes = auth.refresh(loginRes.refreshToken, 'test_device_2');
+  assert.ok(concurrentRes);
+  assert.equal(concurrentRes.accessToken, refreshRes.accessToken);
+  assert.equal(concurrentRes.refreshToken, refreshRes.refreshToken);
+
+  // Clear cache manually to simulate time elapsed (> 10s)
+  if (_testRefreshCache) {
+    _testRefreshCache.clear();
+  }
   
   // Attempt token reuse (replay attack)
   // Consuming the old loginRes.refreshToken again should trigger revocation for all tokens

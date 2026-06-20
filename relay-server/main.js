@@ -1,5 +1,7 @@
 // WebTerm Relay Server — orchestrates HTTP routes, WebSocket handlers, agent registry.
 import http from 'node:http';
+import https from 'node:https';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -20,6 +22,7 @@ import { sendJSON } from '../shared/tunnel-protocol.js';
 import { AgentRegistry, getDeviceNameFromUa } from './agent-registry.js';
 import { createRoutes } from './routes.js';
 import { createWsHandlers } from './ws-handlers.js';
+import { prefixSessionManagerMessage } from './client-tunnel.js';
 
 loadLocalEnv('..');
 
@@ -58,15 +61,32 @@ const wsCtx = {
 const { route } = createRoutes(routeCtx);
 const { handleAgentConnection, handleClientWsTunnel } = createWsHandlers(wsCtx);
 
-// HTTP server
-const server = http.createServer((req, res) => {
+// HTTP or HTTPS server
+let server;
+const sslKeyPath = process.env.RELAY_SSL_KEY;
+const sslCertPath = process.env.RELAY_SSL_CERT;
+const useHttps = !!(sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath));
+
+const requestHandler = (req, res) => {
   route(req, res).then((handled) => {
     if (handled === false) serveStatic(req, res, root);
   }).catch((err) => {
     console.error('[Relay Server Error]', err);
     text(res, 500, 'internal server error');
   });
-});
+};
+
+if (useHttps) {
+  console.log(`[Relay] Starting HTTPS server with key: ${sslKeyPath}, cert: ${sslCertPath}`);
+  const options = {
+    key: fs.readFileSync(sslKeyPath),
+    cert: fs.readFileSync(sslCertPath),
+  };
+  server = https.createServer(options, requestHandler);
+} else {
+  console.log('[Relay] Starting HTTP server (no SSL config found)');
+  server = http.createServer(requestHandler);
+}
 
 // WebSocket servers
 const wssAgent = new WebSocketServer({ noServer: true });
@@ -88,7 +108,7 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  if (url.pathname === '/ws/sessions') {
+  if (url.pathname === '/ws/sessions' && !url.searchParams.get('deviceId')) {
     wssManager.handleUpgrade(req, socket, head, (ws) => {
       const clientId = url.searchParams.get('clientId') || 'c_' + Math.random().toString(36).substring(2, 15);
       registry.addManagerClient(ws, { userId: user.id, username: user.username, clientId });
@@ -103,6 +123,7 @@ server.on('upgrade', (req, socket, head) => {
     const match = url.pathname.match(/^\/ws\/sessions\/([^/]+)$/);
     let deviceId = url.searchParams.get('deviceId');
     let targetPath = url.pathname;
+    let transformOutboundText = null;
 
     if (match) {
       const globalId = decodeURIComponent(match[1]);
@@ -112,6 +133,9 @@ server.on('upgrade', (req, socket, head) => {
         const localId = globalId.substring(colonIndex + 1);
         targetPath = `/ws/sessions/${encodeURIComponent(localId)}`;
       }
+    } else if (url.pathname === '/ws/sessions' && deviceId) {
+      targetPath = '/ws/sessions';
+      transformOutboundText = (text) => prefixSessionManagerMessage(text, deviceId);
     }
 
     const agent = registry.getAgentForUser(user.id, deviceId);
@@ -122,7 +146,7 @@ server.on('upgrade', (req, socket, head) => {
     }
 
     wssSession.handleUpgrade(req, socket, head, (clientWs) => {
-      handleClientWsTunnel(clientWs, agent, targetPath, req);
+      handleClientWsTunnel(clientWs, agent, targetPath, req, { transformOutboundText });
     });
     return;
   }
@@ -200,7 +224,8 @@ async function start() {
   }
 
   server.listen(port, () => {
-    console.log(`WebTerm Relay Server listening on port ${port}`);
+    const protocol = useHttps ? 'https' : 'http';
+    console.log(`WebTerm Relay Server listening on ${protocol}://localhost:${port}`);
   });
 }
 

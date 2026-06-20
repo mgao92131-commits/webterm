@@ -1,0 +1,19 @@
+services:
+  webterm-relay:
+    build: .
+    container_name: webterm-relay
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - RELAY_PORT=9000
+      - JWT_SECRET=a2489c170288d1b662efccc48e8d776d9278f0a61e5cbbdffcf12e4b03cc9ad
+      
+      - NODE_ENV=production
+      - SMTP_HOST=smtp.qq.com
+      - SMTP_PORT=465
+      - SMTP_USER=a18118053911@qq.com
+      - SMTP_PASS=rckjbrwkecrucbhd
+      - SMTP_FROM=a18118053911@qq.com
+    restart: always

@@ -53,6 +53,10 @@ export function createWsHandlers(ctx) {
         }
         registeredDeviceId = 'd' + device.id;
         registeredUserId = device.userId;
+        const existing = registry.getAgent(registeredDeviceId);
+        if (existing && existing.ws && existing.ws.readyState === 1) {
+          existing.ws.close(4001, 'Replaced by new connection');
+        }
         registry.registerAgent(registeredDeviceId, {
           ws, deviceId: registeredDeviceId,
           deviceName: device.deviceName || msg.deviceName || 'Unknown PC',
@@ -100,12 +104,15 @@ export function createWsHandlers(ctx) {
 
     ws.on('close', () => {
       if (registeredDeviceId) {
-        console.log(`[Relay] Agent disconnected: ${registeredDeviceId}`);
-        registry.removeAgent(registeredDeviceId);
-        if (registeredUserId) registry.pushDevicesToUser(registeredUserId, sendJSON);
-        registry.cleanupAgentState(registeredDeviceId, {
-          activeWsTunnels, pendingHttpResponses, pendingP2pOffers, text
-        });
+        const current = registry.getAgent(registeredDeviceId);
+        if (current && current.ws === ws) {
+          console.log(`[Relay] Agent disconnected: ${registeredDeviceId}`);
+          registry.removeAgent(registeredDeviceId);
+          if (registeredUserId) registry.pushDevicesToUser(registeredUserId, sendJSON);
+          registry.cleanupAgentState(registeredDeviceId, {
+            activeWsTunnels, pendingHttpResponses, pendingP2pOffers, text
+          });
+        }
       }
     });
 
@@ -121,7 +128,10 @@ export function createWsHandlers(ctx) {
       const tunnel = activeWsTunnels.get(id);
       if (tunnel && tunnel.clientWs.readyState === 1) {
         if (extraByte === WS_DATA_TEXT) {
-          tunnel.clientWs.send(payload.toString('utf8'));
+          const text = payload.toString('utf8');
+          tunnel.clientWs.send(tunnel.transformOutboundText
+            ? tunnel.transformOutboundText(text)
+            : text);
         } else if (extraByte === WS_DATA_BINARY) {
           tunnel.clientWs.send(payload);
         }

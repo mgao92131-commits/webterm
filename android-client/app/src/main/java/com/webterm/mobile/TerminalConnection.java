@@ -139,6 +139,7 @@ final class TerminalConnection {
                 }
                 connected = true;
                 reconnectScheduled = false;
+                reconnectAttempts = 0;
                 sentColumns = 0;
                 sentRows = 0;
                 Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());

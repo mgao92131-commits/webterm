@@ -21,6 +21,17 @@ const scrypt = promisify(crypto.scrypt);
 export const COOKIE_NAME = 'webterm_token';
 export const REFRESH_COOKIE_NAME = 'webterm_refresh';
 
+const refreshCache = new Map(); // key: oldHash, value: { expiresAt: number, tokens: { accessToken: string, refreshToken: string } }
+
+function cleanRefreshCache() {
+  const now = Date.now();
+  for (const [key, val] of refreshCache.entries()) {
+    if (now > val.expiresAt) {
+      refreshCache.delete(key);
+    }
+  }
+}
+
 function maskEmail(email) {
   if (!email) return '';
   const parts = email.split('@');
@@ -211,6 +222,15 @@ export class AuthManager {
 
   refresh(refreshToken, deviceId = null) {
     const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+    // Check concurrent refresh cache (10 seconds safety window)
+    cleanRefreshCache();
+    const cached = refreshCache.get(hash);
+    if (cached && Date.now() <= cached.expiresAt) {
+      console.log('[Auth Debug] Serving cached token pair for concurrent refresh request');
+      return cached.tokens;
+    }
+
     const consumed = consume(hash);
     if (!consumed) return null;
     
@@ -251,10 +271,18 @@ export class AuthManager {
     const accessToken = signJwt(payload, getJwtSecret());
     const newRefreshToken = issue(user.id);
     
-    return {
+    const tokens = {
       accessToken,
       refreshToken: newRefreshToken
     };
+
+    // Cache the issued tokens for 10 seconds to handle concurrent client requests
+    refreshCache.set(hash, {
+      expiresAt: Date.now() + 10 * 1000,
+      tokens
+    });
+
+    return tokens;
   }
 
   logout(refreshToken) {
@@ -336,6 +364,7 @@ export function setAuthCookie(res, token, secure = false) {
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
+    'Max-Age=900', // 15 minutes, matches access token expiration
   ];
   if (secure) cookie.push('Secure');
   res.setHeader('Set-Cookie', cookie.join('; '));
@@ -347,6 +376,7 @@ export function setRefreshCookie(res, token, secure = false) {
     'Path=/api/auth',
     'HttpOnly',
     'SameSite=Lax',
+    'Max-Age=2592000', // 30 days, matches refresh token TTL
   ];
   if (secure) cookie.push('Secure');
   
@@ -404,4 +434,6 @@ export function getOrCreateDeviceId(req, res) {
   }
   return deviceId;
 }
+
+export const _testRefreshCache = process.env.NODE_ENV === 'test' ? refreshCache : null;
 

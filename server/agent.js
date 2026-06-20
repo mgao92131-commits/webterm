@@ -220,8 +220,20 @@ export class Agent {
     const { tunnelConnectionId, path } = msg;
 
     const pathname = path.split('?')[0];
+    const virtualSocket = new VirtualSocket(tunnelConnectionId, transport, () => {
+      this.virtualSockets.delete(tunnelConnectionId);
+    });
+    this.virtualSockets.set(tunnelConnectionId, virtualSocket);
+
+    if (pathname === '/ws/sessions') {
+      transport.sendJSON({ type: WS_CONNECTED, tunnelConnectionId });
+      this.sessions.attachManager(virtualSocket);
+      return;
+    }
+
     const match = pathname.match(/^\/ws\/sessions\/([^/]+)$/);
     if (!match) {
+      this.virtualSockets.delete(tunnelConnectionId);
       transport.sendJSON({ type: WS_ERROR, tunnelConnectionId, code: 404, message: 'Session path match failed' });
       return;
     }
@@ -229,18 +241,22 @@ export class Agent {
     const sessionId = decodeURIComponent(match[1]);
     const session = this.sessions.get(sessionId);
     if (!session) {
+      this.virtualSockets.delete(tunnelConnectionId);
       transport.sendJSON({ type: WS_ERROR, tunnelConnectionId, code: 404, message: `Session ${sessionId} not found` });
       return;
     }
 
-    const virtualSocket = new VirtualSocket(tunnelConnectionId, transport, () => {
-      this.virtualSockets.delete(tunnelConnectionId);
-    });
-    this.virtualSockets.set(tunnelConnectionId, virtualSocket);
-
     transport.sendJSON({ type: WS_CONNECTED, tunnelConnectionId });
 
-    session.attach(virtualSocket, { protocolHint: BINARY_SUBPROTOCOL });
+    let protocolHint = '';
+    if (Array.isArray(msg.protocols) && msg.protocols.length > 0) {
+      if (msg.protocols.includes(BINARY_SUBPROTOCOL)) {
+        protocolHint = BINARY_SUBPROTOCOL;
+      } else if (msg.protocols.includes(JSON_SUBPROTOCOL)) {
+        protocolHint = JSON_SUBPROTOCOL;
+      }
+    }
+    session.attach(virtualSocket, { protocolHint });
   }
 
   #handleWsClose(msg) {
