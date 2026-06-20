@@ -54,16 +54,8 @@ public final class SessionRowHelper {
         subtitleView.setSingleLine(true);
         subtitleView.setEllipsize(TextUtils.TruncateAt.END);
 
-        TextView pathView = new TextView(context);
-        pathView.setTag("path");
-        pathView.setTextColor(Color.rgb(107, 114, 128)); // 弱化文本颜色
-        pathView.setTextSize(11);
-        pathView.setSingleLine(true);
-        pathView.setEllipsize(TextUtils.TruncateAt.START);
-
         titleArea.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
         titleArea.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
-        titleArea.addView(pathView, new LinearLayout.LayoutParams(-1, -2));
         header.addView(titleArea, new LinearLayout.LayoutParams(-1, -2));
 
         content.addView(header, new LinearLayout.LayoutParams(-1, -2));
@@ -94,7 +86,6 @@ public final class SessionRowHelper {
     public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
         TextView titleView = row.findViewWithTag("title");
         TextView subtitleView = row.findViewWithTag("subtitle");
-        TextView pathView = row.findViewWithTag("path");
         TextView recentView = row.findViewWithTag("recent_box");
         TextView closeBtn = row.findViewWithTag("close");
 
@@ -106,7 +97,6 @@ public final class SessionRowHelper {
         final String nameText = session.optString("name", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
-        String cwd = session.optString("cwd", "");
 
         if (titleView != null) {
             if (!nameText.isEmpty()) {
@@ -122,9 +112,6 @@ public final class SessionRowHelper {
             } else {
                 subtitleView.setVisibility(View.GONE);
             }
-        }
-        if (pathView != null) {
-            pathView.setText(cwd); // 移除彩色 Emoji
         }
         if (recentView != null) {
             updateRecentInput(recentView, session);

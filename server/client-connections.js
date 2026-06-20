@@ -4,7 +4,7 @@
 import {
   MSG_INFO, MSG_EXIT, MSG_PONG,
   BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
-  encodeEmpty, encodeJSON, encodeOutput,
+  encodeEmpty, encodeJSON, encodeOutput, encodeState,
 } from './protocol-binary.js';
 
 const OUTPUT_BATCH_DELAY_MS = 12;
@@ -119,6 +119,9 @@ class BinaryClientConnection {
     if (message.type === 'output') {
       return encodeOutput(message.seq, message.bytes ?? message.data);
     }
+    if (message.type === 'state') {
+      return encodeState(message.seq, message.bytes ?? message.data);
+    }
     if (message.type === 'info') {
       return encodeJSON(MSG_INFO, message.data);
     }
@@ -180,6 +183,7 @@ class BinaryClientConnection {
   }
 
   close() {
+    this.flushPendingOutput();
     if (this.outputBatchTimer) {
       clearTimeout(this.outputBatchTimer);
       this.outputBatchTimer = null;

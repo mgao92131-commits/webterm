@@ -23,14 +23,10 @@ final class HomeServerCoordinator {
     private final TerminalCacheCoordinator terminalCache;
     private final Executor executor;
     private final Listener listener;
-    private final SessionListRenderer sessionListRenderer;
-    private final ServerSessionsLoader serverSessionsLoader;
     private final HomeRefreshScheduler refreshScheduler;
     private final List<ServerGroupController> activeGroups = new ArrayList<>();
-    private final Map<String, Boolean> serverCollapsed = new HashMap<>();
     private final Map<String, Boolean> directoryCollapsed = new HashMap<>();
 
-    private LinearLayout sessionList;
     private SessionRecyclerAdapter sessionAdapter;
 
     HomeServerCoordinator(
@@ -40,7 +36,6 @@ final class HomeServerCoordinator {
         WebTermApi api,
         TerminalCacheCoordinator terminalCache,
         Executor executor,
-        SessionRowActions rowActions,
         Listener listener
     ) {
         this.activity = activity;
@@ -50,30 +45,6 @@ final class HomeServerCoordinator {
         this.terminalCache = terminalCache;
         this.executor = executor;
         this.listener = listener;
-        sessionListRenderer = new SessionListRenderer(activity, rowActions);
-        serverSessionsLoader = new ServerSessionsLoader(
-            activity,
-            api,
-            terminalCache,
-            executor,
-            new ServerSessionsLoader.Listener() {
-                @Override
-                public void onAuthenticated(ServerConfig server) {
-                    listener.onAuthenticated(server);
-                }
-
-                @Override
-                public void onSessionsLoaded(ServerConfig server, JSONArray sessions) {
-                    ServerGroupController holder = findHolderForServer(server);
-                    if (holder != null) holder.setLastSessions(sessions);
-                }
-
-                @Override
-                public void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-                    renderServerSessions(server, sessions, subList);
-                }
-            }
-        );
         refreshScheduler = new HomeRefreshScheduler(
             mainHandler,
             new HomeRefreshScheduler.Listener() {
@@ -89,18 +60,10 @@ final class HomeServerCoordinator {
 
                 @Override
                 public void loadSessionsForGroup(ServerGroupController group) {
-                    if (group.subList != null) {
-                        loadSessionsForServer(group.server, group.subList, group.status, null);
-                    } else {
-                        loadSessionsForAdapter(group.server, group.status, null);
-                    }
+                    loadSessionsForAdapter(group.server, group.status, null);
                 }
             }
         );
-    }
-
-    void attachSessionList(LinearLayout sessionList) {
-        this.sessionList = sessionList;
     }
 
     void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {
@@ -125,65 +88,7 @@ final class HomeServerCoordinator {
         }
     }
 
-    void load(List<ServerConfig> servers) {
-        refreshScheduler.reset();
-        if (sessionList == null) return;
-        Map<String, JSONArray> tempInMemorySessions = collectInMemorySessions();
-        stopAllGroups();
-        activeGroups.clear();
-        sessionList.removeAllViews();
-
-        if (servers.isEmpty()) {
-            sessionList.addView(HomeScreenBuilder.emptyState(activity), new LinearLayout.LayoutParams(-1, -2));
-            return;
-        }
-
-        for (ServerConfig server : servers) {
-            renderServerGroup(server, tempInMemorySessions);
-        }
-        refreshScheduler.scheduleInitial();
-    }
-
     void loadDeviceSessions(ServerConfig server, StatusIndicatorView status) {
-        if (sessionAdapter != null) {
-            loadDeviceSessionsIntoAdapter(server, status);
-            return;
-        }
-        refreshScheduler.reset();
-        if (sessionList == null || server == null) return;
-        Map<String, JSONArray> tempInMemorySessions = collectInMemorySessions();
-        stopAllGroups();
-        activeGroups.clear();
-        sessionList.removeAllViews();
-
-        ServerGroupController holder = new ServerGroupController(activity, http, mainHandler, server, sessionList, status, new ServerGroupController.Listener() {
-            @Override
-            public boolean isActive(ServerGroupController controller) {
-                return isActiveManagerHolder(controller);
-            }
-
-            @Override
-            public void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-                renderServerSessions(server, sessions, subList);
-            }
-
-            @Override
-            public void onSessionClosed(String baseUrl, String sessionId) {
-                listener.onRemoveCachedTerminal(baseUrl, sessionId);
-            }
-
-            @Override
-            public void onScheduleFallbackRefresh() {
-                refreshScheduler.scheduleInitial();
-            }
-        });
-        activeGroups.add(holder);
-        loadSessionsForServer(server, sessionList, status, tempInMemorySessions);
-        connectManagerWS(holder);
-        refreshScheduler.scheduleInitial();
-    }
-
-    private void loadDeviceSessionsIntoAdapter(ServerConfig server, StatusIndicatorView status) {
         refreshScheduler.reset();
         if (sessionAdapter == null || server == null) return;
         Map<String, JSONArray> tempInMemorySessions = collectInMemorySessions();
@@ -198,7 +103,7 @@ final class HomeServerCoordinator {
 
             @Override
             public void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-                renderServerSessions(server, sessions, subList);
+                renderServerSessions(server, sessions);
             }
 
             @Override
@@ -233,7 +138,6 @@ final class HomeServerCoordinator {
     void destroy() {
         pause();
         activeGroups.clear();
-        sessionList = null;
         sessionAdapter = null;
     }
 
@@ -245,49 +149,6 @@ final class HomeServerCoordinator {
             }
         }
         return tempInMemorySessions;
-    }
-
-    private void renderServerGroup(ServerConfig server, Map<String, JSONArray> tempInMemorySessions) {
-        boolean collapsed = serverCollapsed.containsKey(server.getId()) && Boolean.TRUE.equals(serverCollapsed.get(server.getId()));
-        HomeScreenBuilder.ServerGroupResult group = HomeScreenBuilder.buildServerGroup(
-            activity,
-            server,
-            collapsed,
-            (nextCollapsed) -> serverCollapsed.put(server.getId(), nextCollapsed),
-            () -> listener.onCreateSession(server),
-            () -> listener.onEditServer(server),
-            () -> listener.onRemoveServer(server)
-        );
-        sessionList.addView(group.group, new LinearLayout.LayoutParams(-1, -2));
-
-        ServerGroupController holder = new ServerGroupController(activity, http, mainHandler, server, group.subList, group.status, new ServerGroupController.Listener() {
-            @Override
-            public boolean isActive(ServerGroupController controller) {
-                return isActiveManagerHolder(controller);
-            }
-
-            @Override
-            public void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-                renderServerSessions(server, sessions, subList);
-            }
-
-            @Override
-            public void onSessionClosed(String baseUrl, String sessionId) {
-                listener.onRemoveCachedTerminal(baseUrl, sessionId);
-            }
-
-            @Override
-            public void onScheduleFallbackRefresh() {
-                refreshScheduler.scheduleInitial();
-            }
-        });
-        activeGroups.add(holder);
-        loadSessionsForServer(server, group.subList, group.status, tempInMemorySessions);
-        connectManagerWS(holder);
-    }
-
-    private void loadSessionsForServer(ServerConfig server, LinearLayout subList, StatusIndicatorView status, Map<String, JSONArray> tempInMemorySessions) {
-        serverSessionsLoader.load(server, subList, status, tempInMemorySessions);
     }
 
     private void loadSessionsForAdapter(ServerConfig server, StatusIndicatorView status, Map<String, JSONArray> tempInMemorySessions) {
@@ -316,7 +177,7 @@ final class HomeServerCoordinator {
         hydrateCachedNames(server, sessions);
         ServerGroupController holder = findHolderForServer(server);
         if (holder != null) holder.setLastSessions(sessions);
-        renderServerSessions(server, sessions, null);
+        renderServerSessions(server, sessions);
         return true;
     }
 
@@ -327,7 +188,7 @@ final class HomeServerCoordinator {
             if (cached == null || cached.isEmpty()) return;
             activity.runOnUiThread(() -> {
                 if (sessionAdapter != null && !sessionAdapter.hasSessionRows()) {
-                    renderServerSessions(server, CachedSessionMapper.toSessions(cached), null);
+                    renderServerSessions(server, CachedSessionMapper.toSessions(cached));
                 }
             });
         });
@@ -341,15 +202,32 @@ final class HomeServerCoordinator {
                     status.setStatus(StatusIndicatorView.Status.CONNECTED);
                     ServerGroupController holder = findHolderForServer(server);
                     if (holder != null) holder.setLastSessions(sessions);
-                    renderServerSessions(server, sessions, null);
+                    renderServerSessions(server, sessions);
                 });
             }
 
             @Override
             public void onError(int code, String message) {
-                if (code == 401 && server.getPassword() != null && !server.getPassword().isEmpty()) {
-                    silentLoginAndFetchIntoAdapter(server, status);
-                    return;
+                if (code == 401) {
+                    if (server.getCookie() != null && !server.getCookie().isEmpty()) {
+                        api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
+                            @Override
+                            public void onReady(String baseUrl, String cookie) {
+                                server.setCookie(cookie);
+                                listener.onAuthenticated(server);
+                                activity.runOnUiThread(() -> fetchSessionsIntoAdapter(server, status));
+                            }
+
+                            @Override
+                            public void onError(String refreshError) {
+                                silentLoginAndFetchIntoAdapter(server, status);
+                            }
+                        });
+                        return;
+                    } else if (server.getPassword() != null && !server.getPassword().isEmpty()) {
+                        silentLoginAndFetchIntoAdapter(server, status);
+                        return;
+                    }
                 }
                 showOfflineCachedSessionsIntoAdapter(server, status, code > 0 ? "HTTP " + code : message);
             }
@@ -367,7 +245,11 @@ final class HomeServerCoordinator {
     }
 
     private void silentLoginAndFetchIntoAdapter(ServerConfig server, StatusIndicatorView status) {
-        api.login(server.getUrl(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
+        if (server.getPassword() == null || server.getPassword().isEmpty()) {
+            showOfflineCachedSessionsIntoAdapter(server, status, "登录失败: 密码为空");
+            return;
+        }
+        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
                 server.setCookie(cookie);
@@ -392,7 +274,7 @@ final class HomeServerCoordinator {
             if (sessionAdapter != null && sessionAdapter.hasSessionRows()) return;
 
             if (cachedMetadata != null && !cachedMetadata.isEmpty()) {
-                renderServerSessions(server, CachedSessionMapper.toSessions(cachedMetadata), null);
+                renderServerSessions(server, CachedSessionMapper.toSessions(cachedMetadata));
             } else if (sessionAdapter != null) {
                 sessionAdapter.showError(errorMsg);
             }
@@ -435,13 +317,10 @@ final class HomeServerCoordinator {
         }
     }
 
-    private void renderServerSessions(ServerConfig server, JSONArray sessions, LinearLayout subList) {
-        if (subList == null && sessionAdapter != null) {
-            cleanupMissingCachedSessions(server, sessions);
-            sessionAdapter.submitSessions(server, sessions);
-            return;
-        }
-        sessionListRenderer.render(server, sessions, subList, listener::onRemoveMissingCachedSessionsForServer);
+    private void renderServerSessions(ServerConfig server, JSONArray sessions) {
+        if (sessionAdapter == null) return;
+        cleanupMissingCachedSessions(server, sessions);
+        sessionAdapter.submitSessions(server, sessions);
     }
 
     private void cleanupMissingCachedSessions(ServerConfig server, JSONArray sessions) {
@@ -490,7 +369,7 @@ final class HomeServerCoordinator {
     }
 
     private boolean hasAttachedTarget() {
-        return sessionList != null || sessionAdapter != null;
+        return sessionAdapter != null;
     }
 
     private ServerGroupController findHolderForServer(ServerConfig server) {
@@ -503,9 +382,6 @@ final class HomeServerCoordinator {
     interface Listener {
         boolean isHomeActive();
         void onAuthenticated(ServerConfig server);
-        void onCreateSession(ServerConfig server);
-        void onEditServer(ServerConfig server);
-        void onRemoveServer(ServerConfig server);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
         void onRemoveMissingCachedSessionsForServer(ServerConfig server, Set<String> liveSessionIdentities);
     }

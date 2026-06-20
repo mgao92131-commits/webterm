@@ -5,9 +5,19 @@ let nodeDataChannel;
 try {
   const mod = await import('node-datachannel');
   nodeDataChannel = mod.default || mod;
-  nodeDataChannel.initLogger('Warning');
+
+  if (typeof nodeDataChannel.initLogger !== 'function' ||
+      typeof nodeDataChannel.PeerConnection !== 'function') {
+    throw new Error('Required node-datachannel features (initLogger, PeerConnection) are not available.');
+  }
+
+  nodeDataChannel.initLogger('Warning', () => {});
 } catch (err) {
   console.warn('[Agent WebRTC] node-datachannel is not installed or failed to load. P2P direct mode will be disabled:', err.message);
+
+  if (process.env.DEBUG || process.env.NODE_ENV !== 'production') {
+    console.warn('[Agent WebRTC] Error details:', err.stack || err);
+  }
 }
 
 export class P2PManager {

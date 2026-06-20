@@ -7,6 +7,7 @@ import {
   WS_CONNECT, WS_CONNECTED, WS_ERROR, WS_CLOSE,
   MSG_TYPE_WS_DATA,
   WS_DATA_TEXT, WS_DATA_BINARY,
+  BINARY_SUBPROTOCOL,
   encodeTunnelFrame, decodeTunnelFrame,
   sendJSON, sendBinary
 } from '../shared/tunnel-protocol.js';
@@ -149,7 +150,8 @@ export class Agent {
       return;
     }
 
-    const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
+    const pathname = path.split('?')[0];
+    const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
     if (sessionMatch) {
       const sessionId = decodeURIComponent(sessionMatch[1]);
 
@@ -217,7 +219,8 @@ export class Agent {
   #handleWsConnect(msg, transport = this.#defaultTransport()) {
     const { tunnelConnectionId, path } = msg;
 
-    const match = path.match(/^\/ws\/sessions\/([^/]+)$/);
+    const pathname = path.split('?')[0];
+    const match = pathname.match(/^\/ws\/sessions\/([^/]+)$/);
     if (!match) {
       transport.sendJSON({ type: WS_ERROR, tunnelConnectionId, code: 404, message: 'Session path match failed' });
       return;
@@ -237,7 +240,7 @@ export class Agent {
 
     transport.sendJSON({ type: WS_CONNECTED, tunnelConnectionId });
 
-    session.attach(virtualSocket, { protocolHint: 'binary' });
+    session.attach(virtualSocket, { protocolHint: BINARY_SUBPROTOCOL });
   }
 
   #handleWsClose(msg) {

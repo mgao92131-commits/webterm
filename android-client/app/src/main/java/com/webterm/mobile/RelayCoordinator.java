@@ -135,11 +135,9 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
             public void onMonitorError(String errorMsg) {
                 host.activity().runOnUiThread(() -> {
                     if (errorMsg != null && errorMsg.contains("401")) {
-                        if (relayMasterConfig != null
-                            && relayMasterConfig.getUsername() != null && !relayMasterConfig.getUsername().isEmpty()
-                            && relayMasterConfig.getPassword() != null && !relayMasterConfig.getPassword().isEmpty()) {
+                        if (relayMasterConfig != null && relayMasterConfig.getCookie() != null && !relayMasterConfig.getCookie().isEmpty()) {
                             updateSubtitleState(RelayState.CONNECTING);
-                            api.login(relayMasterConfig.getUrl(), relayMasterConfig.getUsername(), relayMasterConfig.getPassword(), new WebTermApi.LoginCallback() {
+                            api.refresh(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.LoginCallback() {
                                 @Override
                                 public void onReady(String url, String cookie) {
                                     relayMasterConfig.setCookie(cookie);
@@ -149,11 +147,11 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
 
                                 @Override
                                 public void onError(String message) {
-                                    updateSubtitleState(RelayState.AUTH_FAILED);
+                                    performPasswordLogin();
                                 }
                             });
                         } else {
-                            updateSubtitleState(RelayState.AUTH_FAILED);
+                            performPasswordLogin();
                         }
                     } else {
                         updateSubtitleState(RelayState.CONNECT_FAILED);
@@ -162,6 +160,29 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
             }
         });
         relayMonitor.start();
+    }
+
+    private void performPasswordLogin() {
+        if (relayMasterConfig != null
+            && relayMasterConfig.getUsername() != null && !relayMasterConfig.getUsername().isEmpty()
+            && relayMasterConfig.getPassword() != null && !relayMasterConfig.getPassword().isEmpty()) {
+            updateSubtitleState(RelayState.CONNECTING);
+            api.login(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), relayMasterConfig.getUsername(), relayMasterConfig.getPassword(), new WebTermApi.LoginCallback() {
+                @Override
+                public void onReady(String url, String cookie) {
+                    relayMasterConfig.setCookie(cookie);
+                    host.saveServers();
+                    start();
+                }
+
+                @Override
+                public void onError(String message) {
+                    updateSubtitleState(RelayState.AUTH_FAILED);
+                }
+            });
+        } else {
+            updateSubtitleState(RelayState.AUTH_FAILED);
+        }
     }
 
     void stop() {
@@ -186,10 +207,31 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
 
     @Override
     public void loginRelay(String baseUrl, String username, String password, RelayConfigDialogHelper.LoginCallback callback) {
-        api.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
+        String oldCookie = relayMasterConfig != null ? relayMasterConfig.getCookie() : "";
+        api.login(baseUrl, oldCookie, username, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
-            public void onReady(String url, String cookie) {
-                callback.onReady(url, cookie);
+            public void onReady(String baseUrl, String cookie) {
+                callback.onReady(baseUrl, cookie);
+            }
+
+            @Override
+            public void onOtpRequired(String targetDeviceId, String cookie) {
+                callback.onOtpRequired(targetDeviceId, cookie);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, RelayConfigDialogHelper.LoginCallback callback) {
+        api.verifyOtp(baseUrl, username, code, targetDeviceId, cookie, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String baseUrl, String cookie) {
+                callback.onReady(baseUrl, cookie);
             }
 
             @Override

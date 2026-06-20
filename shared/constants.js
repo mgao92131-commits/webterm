@@ -11,6 +11,7 @@ export const MSG_EXIT = 0x06;
 export const MSG_PING = 0x07;
 export const MSG_PONG = 0x08;
 export const MSG_TITLE = 0x09;
+export const MSG_STATE = 0x0a;
 
 // WebSocket subprotocol identifiers
 export const BINARY_SUBPROTOCOL = 'webterm.binary.v1';

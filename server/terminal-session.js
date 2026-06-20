@@ -130,6 +130,7 @@ export class TerminalSession {
     this.touch();
     if (msg.type === 'hello') {
       const lastSeq = Number(msg.lastSeq || 0);
+      this.resizeFromHello(msg);
       const latestSeq = this.ring.latestSeq();
       if (lastSeq > 0 && lastSeq <= latestSeq && this.ring.canReplayFrom(lastSeq)) {
         client.send({ type: 'replay', from: lastSeq, frames: this.ring.after(lastSeq), seq: latestSeq });
@@ -163,12 +164,15 @@ export class TerminalSession {
     const payload = frame.subarray(1);
     if (type === MSG_HELLO) {
       let lastSeq = 0;
+      let hello = {};
       try {
-        lastSeq = Number(decodeJSONPayload(payload).lastSeq || 0);
+        hello = decodeJSONPayload(payload);
+        lastSeq = Number(hello.lastSeq || 0);
       } catch {
         lastSeq = 0;
       }
       client.send({ type: 'info', data: this.info() });
+      this.resizeFromHello(hello);
       const latestSeq = this.ring.latestSeq();
       if (lastSeq > 0 && lastSeq <= latestSeq && this.ring.canReplayFrom(lastSeq)) {
         const frames = this.ring.after(lastSeq);
@@ -205,7 +209,7 @@ export class TerminalSession {
         const stateData = this.serialize() || '';
         const snapshotBytes = Buffer.from(clearScreen + stateData, 'utf8');
         client.send({
-          type: 'output',
+          type: 'state',
           seq: latestSeq,
           bytes: snapshotBytes,
         });
@@ -259,6 +263,12 @@ export class TerminalSession {
     this.term.resize(cols, rows);
     this.pty.resize(cols, rows);
     this.touch();
+  }
+
+  resizeFromHello(hello) {
+    const cols = clampInt(hello?.cols, 10, 500);
+    const rows = clampInt(hello?.rows, 5, 200);
+    if (cols && rows && (cols !== this.cols || rows !== this.rows)) this.resize(cols, rows);
   }
 
   writeInput(data) {

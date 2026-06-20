@@ -52,6 +52,11 @@ public final class RelayConfigDialogHelper {
         password.setText(relayMaster == null ? "" : relayMaster.getPassword());
         container.addView(password, UIUtils.matchWrap(activity));
 
+        EditText otpInput = UIUtils.createInput(activity, "6 位邮箱验证码 (OTP)");
+        otpInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        otpInput.setVisibility(View.GONE);
+        container.addView(otpInput, UIUtils.matchWrap(activity));
+
         TextView errText = new TextView(activity);
         errText.setTextColor(Color.rgb(239, 68, 68));
         errText.setTextSize(12);
@@ -108,58 +113,122 @@ public final class RelayConfigDialogHelper {
         }
 
         final Button finalDiscBtn = disconnectBtn;
+        final boolean[] isOtpMode = new boolean[]{false};
+        final String[] currentTargetDeviceId = new String[]{""};
+        final String[] currentCookie = new String[]{relayMaster == null ? "" : relayMaster.getCookie()};
+
         submitBtn.setOnClickListener((v) -> {
             String urlVal = WebTermUrls.normalizeBaseUrl(url.getText().toString());
             String userVal = user.getText().toString().trim();
             String passVal = password.getText().toString();
 
-            if (urlVal.isEmpty() || userVal.isEmpty() || passVal.isEmpty()) {
-                errText.setText("请输入完整的中转服务 URL、用户名和密码。");
+            if (isOtpMode[0]) {
+                String codeVal = otpInput.getText().toString().trim();
+                if (codeVal.isEmpty()) {
+                    errText.setText("请输入验证码。");
+                    errText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                submitBtn.setEnabled(false);
+                cancelBtn.setEnabled(false);
+                errText.setText("Verifying OTP...");
+                errText.setTextColor(Color.rgb(245, 158, 11));
                 errText.setVisibility(View.VISIBLE);
-                return;
+
+                host.verifyOtp(urlVal, userVal, codeVal, currentTargetDeviceId[0], currentCookie[0], new LoginCallback() {
+                    @Override
+                    public void onReady(String baseUrl, String cookie) {
+                        activity.runOnUiThread(() -> {
+                            host.onRelayAuthenticated(baseUrl, cookie, userVal, passVal);
+                            dialog.dismiss();
+                        });
+                    }
+
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {}
+
+                    @Override
+                    public void onError(String message) {
+                        activity.runOnUiThread(() -> {
+                            submitBtn.setEnabled(true);
+                            cancelBtn.setEnabled(true);
+                            errText.setText(message);
+                            errText.setTextColor(Color.rgb(239, 68, 68));
+                            errText.setVisibility(View.VISIBLE);
+                        });
+                    }
+                });
+            } else {
+                if (urlVal.isEmpty() || userVal.isEmpty() || passVal.isEmpty()) {
+                    errText.setText("请输入完整的中转服务 URL、用户名 and 密码。");
+                    errText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                submitBtn.setEnabled(false);
+                cancelBtn.setEnabled(false);
+                if (finalDiscBtn != null) finalDiscBtn.setEnabled(false);
+
+                errText.setText("Connecting & Authenticating...");
+                errText.setTextColor(Color.rgb(245, 158, 11));
+                errText.setVisibility(View.VISIBLE);
+
+                host.loginRelay(urlVal, userVal, passVal, new LoginCallback() {
+                    @Override
+                    public void onReady(String baseUrl, String cookie) {
+                        activity.runOnUiThread(() -> {
+                            host.onRelayAuthenticated(baseUrl, cookie, userVal, passVal);
+                            dialog.dismiss();
+                        });
+                    }
+
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {
+                        activity.runOnUiThread(() -> {
+                            isOtpMode[0] = true;
+                            currentTargetDeviceId[0] = targetDeviceId;
+                            currentCookie[0] = cookie;
+                            url.setVisibility(View.GONE);
+                            user.setVisibility(View.GONE);
+                            password.setVisibility(View.GONE);
+                            otpInput.setVisibility(View.VISIBLE);
+                            titleView.setText("🛡️ 输入中转站验证码");
+                            submitBtn.setText("验证并登录");
+                            submitBtn.setEnabled(true);
+                            cancelBtn.setEnabled(true);
+                            if (finalDiscBtn != null) finalDiscBtn.setEnabled(true);
+                            errText.setText("已发送验证码，请检查您的邮箱。");
+                            errText.setTextColor(Color.rgb(16, 185, 129));
+                            errText.setVisibility(View.VISIBLE);
+                        });
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        activity.runOnUiThread(() -> {
+                            submitBtn.setEnabled(true);
+                            cancelBtn.setEnabled(true);
+                            if (finalDiscBtn != null) finalDiscBtn.setEnabled(true);
+                            errText.setText(message);
+                            errText.setTextColor(Color.rgb(239, 68, 68));
+                            errText.setVisibility(View.VISIBLE);
+                        });
+                    }
+                });
             }
-
-            submitBtn.setEnabled(false);
-            cancelBtn.setEnabled(false);
-            if (finalDiscBtn != null) finalDiscBtn.setEnabled(false);
-            
-            errText.setText("Connecting & Authenticating...");
-            errText.setTextColor(Color.rgb(245, 158, 11));
-            errText.setVisibility(View.VISIBLE);
-
-            host.loginRelay(urlVal, userVal, passVal, new LoginCallback() {
-                @Override
-                public void onReady(String baseUrl, String cookie) {
-                    activity.runOnUiThread(() -> {
-                        host.onRelayAuthenticated(baseUrl, cookie, userVal, passVal);
-                        dialog.dismiss();
-                    });
-                }
-
-                @Override
-                public void onError(String message) {
-                    activity.runOnUiThread(() -> {
-                        submitBtn.setEnabled(true);
-                        cancelBtn.setEnabled(true);
-                        if (finalDiscBtn != null) finalDiscBtn.setEnabled(true);
-                        errText.setText(message);
-                        errText.setTextColor(Color.rgb(239, 68, 68));
-                        errText.setVisibility(View.VISIBLE);
-                    });
-                }
-            });
         });
     }
 
     public interface Host {
         Activity activity();
         void loginRelay(String baseUrl, String username, String password, LoginCallback callback);
+        void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, LoginCallback callback);
         void onRelayAuthenticated(String url, String cookie, String username, String password);
         void onDisconnectRelay();
     }
 
     public interface LoginCallback {
         void onReady(String baseUrl, String cookie);
+        void onOtpRequired(String targetDeviceId, String cookie);
         void onError(String message);
     }
 }

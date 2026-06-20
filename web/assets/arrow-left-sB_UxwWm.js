@@ -1,4 +1,4 @@
-import{E as b,G as l,H as v}from"./index-0nsmEJs6.js";/**
+import{G as b,H as l,I as v}from"./index-C5lTcQyU.js";/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -33,12 +33,12 @@ import{E as b,G as l,H as v}from"./index-0nsmEJs6.js";/**
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const y=Symbol("lucide-icons");function E(){return b(y,{})}/**
+ */const y=Symbol("lucide-icons");function I(){return b(y,{})}/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const _=({name:t,iconNode:e,absoluteStrokeWidth:r,"absolute-stroke-width":o,strokeWidth:c,"stroke-width":k,size:i,color:f,...p},{slots:d})=>{const{size:n,color:C,strokeWidth:m=2,absoluteStrokeWidth:x=!1,class:g=""}=E(),A=v(()=>{const a=h(r)||h(o)||r===!0||o===!0||x===!0,u=c||k||m||s["stroke-width"];return a?Number(u)*24/Number(i??n??s.width):u});return l("svg",{...s,...p,width:i??n??s.width,height:i??n??s.height,stroke:f??C??s.stroke,"stroke-width":A.value,class:L("lucide",g,...t?[`lucide-${w(W(t))}-icon`,`lucide-${w(t)}`]:["lucide-icon"])},[...e.map(a=>l(...a)),...d.default?[d.default()]:[]])};/**
+ */const _=({name:t,iconNode:e,absoluteStrokeWidth:r,"absolute-stroke-width":o,strokeWidth:c,"stroke-width":k,size:i,color:f,...p},{slots:d})=>{const{size:n,color:C,strokeWidth:m=2,absoluteStrokeWidth:x=!1,class:g=""}=I(),A=v(()=>{const a=h(r)||h(o)||r===!0||o===!0||x===!0,u=c||k||m||s["stroke-width"];return a?Number(u)*24/Number(i??n??s.width):u});return l("svg",{...s,...p,width:i??n??s.width,height:i??n??s.height,stroke:f??C??s.stroke,"stroke-width":A.value,class:L("lucide",g,...t?[`lucide-${w(W(t))}-icon`,`lucide-${w(t)}`]:["lucide-icon"])},[...e.map(a=>l(...a)),...d.default?[d.default()]:[]])};/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.

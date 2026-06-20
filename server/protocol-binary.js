@@ -1,12 +1,12 @@
 import {
   MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
-  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
+  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE, MSG_STATE,
   BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
 } from '../shared/constants.js';
 
 export {
   MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
-  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
+  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE, MSG_STATE,
   BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
 };
 
@@ -17,9 +17,17 @@ export function selectWebSocketProtocol(protocols) {
 }
 
 export function encodeOutput(seq, data) {
+  return encodeSequencedData(MSG_OUTPUT, seq, data);
+}
+
+export function encodeState(seq, data) {
+  return encodeSequencedData(MSG_STATE, seq, data);
+}
+
+function encodeSequencedData(type, seq, data) {
   const bytes = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
   const frame = Buffer.allocUnsafe(1 + 8 + bytes.length);
-  frame[0] = MSG_OUTPUT;
+  frame[0] = type;
   writeUint64BE(frame, Number(seq), 1);
   bytes.copy(frame, 9);
   return frame;

@@ -34,8 +34,8 @@ final class TerminalLifecycleController {
     private TextView terminalTitle;
     private TextView terminalSubtitle;
     private boolean terminalAttachStarted;
-    private byte[] pendingDiskSnapshotBytes;
     private boolean ctrlDown;
+    private WebTermTerminalSessionClient activeSessionClient;
 
     TerminalLifecycleController(
         Activity activity,
@@ -113,7 +113,6 @@ final class TerminalLifecycleController {
         );
         closed.set(false);
         terminalState.applyLaunchState(launchState);
-        pendingDiskSnapshotBytes = diskRestore[0] == null ? null : diskRestore[0].snapshotBytes;
 
         TerminalScreenBuilder.Result terminalScreen = TerminalScreenBuilder.build(
             activity,
@@ -133,6 +132,7 @@ final class TerminalLifecycleController {
         terminalViewport = terminalScreen.terminalViewport;
         quickBar = terminalScreen.quickBar;
         ctrlButton = terminalScreen.ctrlButton;
+        activeSessionClient = sessionClient;
         terminalAttachStarted = false;
         terminalTitle = terminalScreen.title;
         terminalSubtitle = terminalScreen.subtitle;
@@ -167,8 +167,8 @@ final class TerminalLifecycleController {
         terminalViewport = null;
         quickBar = null;
         ctrlButton = null;
+        activeSessionClient = null;
         terminalAttachStarted = false;
-        pendingDiskSnapshotBytes = null;
         ctrlDown = false;
         terminalState.clearTerminalDetails();
         if (titleSynchronizer != null) titleSynchronizer.reset();
@@ -218,11 +218,31 @@ final class TerminalLifecycleController {
     }
 
     void onOutput(long seq, byte[] data) {
-        if (seq > 0) {
-            terminalState.onOutput(seq, data);
-            if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
-        }
-        appendOutput(data);
+        activity.runOnUiThread(() -> {
+            if (closed.get() || terminalSession == null) return;
+            if (seq > 0) {
+                terminalState.onOutput(seq, data);
+                if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
+            }
+            terminalSession.appendOutput(data);
+        });
+    }
+
+    void onState(long seq, byte[] data) {
+        activity.runOnUiThread(() -> {
+            if (closed.get() || terminalView == null || activeSessionClient == null) return;
+            terminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, activeSessionClient, activeSessionClient);
+            terminalView.attachSession(terminalSession);
+            terminalView.requestFocus();
+            terminalView.updateSize();
+            if (seq > 0) {
+                terminalState.onOutput(seq, data);
+                if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
+            }
+            terminalSession.appendOutput(data);
+            terminalView.onScreenUpdated();
+            host.updateKeyboardAvoidance();
+        });
     }
 
     void onInfo(org.json.JSONObject info) {
@@ -282,31 +302,10 @@ final class TerminalLifecycleController {
         if (terminalView.getWidth() <= 0 || terminalView.getHeight() <= 0) return;
         terminalAttachStarted = true;
         terminalView.attachSession(terminalSession);
-        restorePendingDiskSnapshot();
         terminalView.requestFocus();
         terminalView.updateSize();
         host.updateKeyboardAvoidance();
         connectTerminal();
-    }
-
-    private void restorePendingDiskSnapshot() {
-        byte[] snapshotBytes = pendingDiskSnapshotBytes;
-        pendingDiskSnapshotBytes = null;
-        if (snapshotBytes == null || snapshotBytes.length == 0 || terminalSession == null) return;
-        try {
-            if (terminalSession.getEmulator() == null || terminalSession.getEmulator().getScreen() == null) {
-                terminalState.resetLastSeq();
-                if (terminalConnection != null) terminalConnection.updateLastSeq(0);
-                return;
-            }
-            if (!terminalSession.getEmulator().getScreen().deserialize(snapshotBytes)) {
-                terminalState.resetLastSeq();
-                if (terminalConnection != null) terminalConnection.updateLastSeq(0);
-            }
-        } catch (Throwable t) {
-            terminalState.resetLastSeq();
-            if (terminalConnection != null) terminalConnection.updateLastSeq(0);
-        }
     }
 
     private void closeTerminalConnection(String reason) {

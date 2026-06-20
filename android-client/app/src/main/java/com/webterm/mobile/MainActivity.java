@@ -101,13 +101,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         );
         mHomeCoordinator = new HomeServerCoordinator(
             this, mHttp, mMainHandler, mApi, mTerminalCache,
-            mHttp.dispatcher().executorService(), this,
+            mHttp.dispatcher().executorService(),
             new HomeServerCoordinator.Listener() {
                 @Override public boolean isHomeActive() { return MainActivity.this.isHomeActive(); }
                 @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
-                @Override public void onCreateSession(ServerConfig server) { createSessionOnServer(server); }
-                @Override public void onEditServer(ServerConfig server) { showAddServerDialog(server); }
-                @Override public void onRemoveServer(ServerConfig server) { confirmRemoveServer(server); }
                 @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
                     removeCachedTerminal(baseUrl, sessionId);
                 }
@@ -205,7 +202,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mSessionAdapter = null;
         if (mHomeCoordinator != null) {
             mHomeCoordinator.pause();
-            mHomeCoordinator.attachSessionList(null);
             mHomeCoordinator.attachSessionAdapter(null);
         }
 
@@ -280,7 +276,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mSessionAdapter = new SessionRecyclerAdapter(this, this, this::loadSelectedDeviceSessions);
         screen.sessionList.setAdapter(mSessionAdapter);
         if (mHomeCoordinator != null) {
-            mHomeCoordinator.attachSessionList(null);
             mHomeCoordinator.attachSessionAdapter(mSessionAdapter);
             mHomeCoordinator.loadDeviceSessions(server, mSelectedServerStatus);
         }
@@ -450,6 +445,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onOutput(long seq, byte[] data) { mTerminalLifecycle.onOutput(seq, data); }
     @Override
+    public void onState(long seq, byte[] data) { mTerminalLifecycle.onState(seq, data); }
+    @Override
     public void onInfo(JSONObject info) { mTerminalLifecycle.onInfo(info); }
     @Override
     public void onExit(int code) { mTerminalLifecycle.onExit(code); }
@@ -476,7 +473,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void login(String baseUrl, String username, String password, ServerConfigDialogHelper.LoginCallback callback) {
-        mApi.login(baseUrl, username, password, new WebTermApi.LoginCallback() {
+        mApi.login(baseUrl, "", username, password, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String readyBaseUrl, String cookie) { callback.onReady(readyBaseUrl, cookie); }
             @Override

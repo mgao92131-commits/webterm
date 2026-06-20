@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isSensitiveInput, lastInputLines, TerminalSession, sessionDisplayTitle } from './terminal-session.js';
-import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_HELLO, MSG_INFO, MSG_INPUT, MSG_OUTPUT, MSG_PING, MSG_PONG, MSG_RESIZE, readUint64BE } from './protocol-binary.js';
+import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_HELLO, MSG_INFO, MSG_INPUT, MSG_OUTPUT, MSG_PING, MSG_PONG, MSG_RESIZE, MSG_STATE, readUint64BE } from './protocol-binary.js';
 
 test('session display title follows terminal title when name is empty', () => {
   assert.equal(sessionDisplayTitle('', 'zsh'), 'zsh');
@@ -51,6 +51,20 @@ test('hello with lastSeq 0 returns state', () => {
   TerminalSession.prototype.attach.call(session, ws);
   ws.emitMessage({ type: 'hello', lastSeq: 0 });
   assert.deepEqual(messageTypes(ws), ['info', 'state', 'info']);
+});
+
+test('hello with dimensions resizes before serializing state', () => {
+  const session = fakeSession({ latestSeq: 2 });
+  session.serialize = () => {
+    assert.deepEqual(session.resizes, [{ cols: 120, rows: 40 }]);
+    return 'RESIZED_STATE';
+  };
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitMessage({ type: 'hello', lastSeq: 0, cols: 120, rows: 40 });
+
+  const state = sentMessages(ws).find((msg) => msg.type === 'state');
+  assert.deepEqual(state, { type: 'state', seq: 2, data: 'RESIZED_STATE' });
 });
 
 test('hello with current lastSeq returns empty replay', () => {
@@ -118,10 +132,37 @@ test('binary hello with lastSeq 0 returns clear screen and state snapshot', () =
 
   const info = sentBinary(ws).find((frame) => frame[0] === MSG_INFO);
   assert.ok(info);
+  const state = sentBinary(ws).filter((frame) => frame[0] === MSG_STATE);
+  assert.equal(state.length, 1);
+  assert.equal(readUint64BE(state[0], 1), 3);
+  assert.equal(state[0].subarray(9).toString('utf8'), '\x1b[3J\x1b[2J\x1b[HSNAPSHOT_DATA');
+});
+
+test('binary hello with dimensions resizes before state snapshot', () => {
+  const session = fakeSession({ latestSeq: 3 });
+  session.serialize = () => {
+    assert.deepEqual(session.resizes, [{ cols: 132, rows: 43 }]);
+    return 'BINARY_RESIZED_STATE';
+  };
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(MSG_HELLO_FRAME({ lastSeq: 0, cols: 132, rows: 43 }));
+
+  const state = sentBinary(ws).find((frame) => frame[0] === MSG_STATE);
+  assert.equal(readUint64BE(state, 1), 3);
+  assert.equal(state.subarray(9).toString('utf8'), '\x1b[3J\x1b[2J\x1b[HBINARY_RESIZED_STATE');
+});
+
+test('binary hello with dimensions resizes before replay', () => {
+  const session = fakeSession({ latestSeq: 3 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitBinary(MSG_HELLO_FRAME({ lastSeq: 1, cols: 140, rows: 45 }));
+
+  assert.deepEqual(session.resizes, [{ cols: 140, rows: 45 }]);
   const output = sentBinary(ws).filter((frame) => frame[0] === MSG_OUTPUT);
   assert.equal(output.length, 1);
   assert.equal(readUint64BE(output[0], 1), 3);
-  assert.equal(output[0].subarray(9).toString('utf8'), '\x1b[3J\x1b[2J\x1b[HSNAPSHOT_DATA');
 });
 
 test('binary subprotocol selects binary transport before first message', () => {
@@ -200,6 +241,7 @@ function fakeSession({ latestSeq }) {
     broadcastInfo: TerminalSession.prototype.broadcastInfo,
     handleBinaryClientMessage: TerminalSession.prototype.handleBinaryClientMessage,
     writeInput: TerminalSession.prototype.writeInput,
+    resizeFromHello: TerminalSession.prototype.resizeFromHello,
     resize(cols, rows) {
       this.resizes.push({ cols, rows });
     },

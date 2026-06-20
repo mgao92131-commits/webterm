@@ -102,7 +102,7 @@ server.on('upgrade', (req, socket, head) => {
   if (url.pathname.startsWith('/ws/')) {
     const match = url.pathname.match(/^\/ws\/sessions\/([^/]+)$/);
     let deviceId = url.searchParams.get('deviceId');
-    let targetPath = url.pathname + (url.search ? url.search : '');
+    let targetPath = url.pathname;
 
     if (match) {
       const globalId = decodeURIComponent(match[1]);

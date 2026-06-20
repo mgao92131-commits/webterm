@@ -25,8 +25,24 @@ final class SessionCommandController {
             @Override
             public void onError(String message) {
                 activity.runOnUiThread(() -> {
-                    if (message.contains("401") && server.getPassword() != null && !server.getPassword().isEmpty()) {
-                        silentLoginAndCreate(server);
+                    if (message.contains("401")) {
+                        if (server.getCookie() != null && !server.getCookie().isEmpty()) {
+                            api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
+                                @Override
+                                public void onReady(String baseUrl, String cookie) {
+                                    server.setCookie(cookie);
+                                    listener.onAuthenticated(server);
+                                    createSessionOnServer(server);
+                                }
+
+                                @Override
+                                public void onError(String refreshError) {
+                                    silentLoginAndCreate(server);
+                                }
+                            });
+                        } else {
+                            silentLoginAndCreate(server);
+                        }
                     } else {
                         Toast.makeText(activity, "创建失败: " + message, Toast.LENGTH_LONG).show();
                     }
@@ -95,7 +111,13 @@ final class SessionCommandController {
     }
 
     private void silentLoginAndCreate(ServerConfig server) {
-        api.login(server.getUrl(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
+        if (server.getPassword() == null || server.getPassword().isEmpty()) {
+            activity.runOnUiThread(() -> {
+                Toast.makeText(activity, "静默登录失败，无法创建会话: 密码为空", Toast.LENGTH_LONG).show();
+            });
+            return;
+        }
+        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
                 server.setCookie(cookie);

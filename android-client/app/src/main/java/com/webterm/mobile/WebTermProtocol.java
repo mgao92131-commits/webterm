@@ -17,6 +17,7 @@ final class WebTermProtocol {
     static final byte MSG_PING = 0x07;
     static final byte MSG_PONG = 0x08;
     static final byte MSG_TITLE = 0x09;
+    static final byte MSG_STATE = 0x0a;
 
     private WebTermProtocol() {}
 

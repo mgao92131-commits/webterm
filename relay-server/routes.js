@@ -330,7 +330,7 @@ export function createRoutes(ctx) {
     if (!user) { text(res, 401, 'unauthorized'); return; }
 
     const match = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
-    let targetPath = req.url;
+    let targetPath = url.pathname + (url.search ? url.search : '');
     let targetPathname = url.pathname;
     let targetDeviceId = req.headers['x-device-id'];
 

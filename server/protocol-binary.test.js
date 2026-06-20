@@ -5,11 +5,13 @@ import {
   MSG_INFO,
   MSG_OUTPUT,
   MSG_PONG,
+  MSG_STATE,
   BINARY_SUBPROTOCOL,
   JSON_SUBPROTOCOL,
   encodeEmpty,
   encodeJSON,
   encodeOutput,
+  encodeState,
   readUint64BE,
   selectWebSocketProtocol,
 } from './protocol-binary.js';
@@ -19,6 +21,13 @@ test('binary protocol encodes output with big-endian seq and payload', () => {
   assert.equal(frame[0], MSG_OUTPUT);
   assert.equal(readUint64BE(frame, 1), 258);
   assert.equal(frame.subarray(9).toString('utf8'), 'ok');
+});
+
+test('binary protocol encodes state with big-endian seq and payload', () => {
+  const frame = encodeState(259, Buffer.from('snapshot'));
+  assert.equal(frame[0], MSG_STATE);
+  assert.equal(readUint64BE(frame, 1), 259);
+  assert.equal(frame.subarray(9).toString('utf8'), 'snapshot');
 });
 
 test('binary protocol encodes json control frames', () => {

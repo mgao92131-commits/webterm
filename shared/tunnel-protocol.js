@@ -6,7 +6,7 @@
 // Re-export terminal protocol constants
 export {
   MSG_INPUT, MSG_OUTPUT, MSG_RESIZE, MSG_HELLO,
-  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE,
+  MSG_INFO, MSG_EXIT, MSG_PING, MSG_PONG, MSG_TITLE, MSG_STATE,
   BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
 } from './constants.js';
 

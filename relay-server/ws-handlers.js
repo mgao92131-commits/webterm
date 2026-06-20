@@ -120,7 +120,11 @@ export function createWsHandlers(ctx) {
     if (msgType === MSG_TYPE_WS_DATA) {
       const tunnel = activeWsTunnels.get(id);
       if (tunnel && tunnel.clientWs.readyState === 1) {
-        tunnel.clientWs.send(payload);
+        if (extraByte === WS_DATA_TEXT) {
+          tunnel.clientWs.send(payload.toString('utf8'));
+        } else if (extraByte === WS_DATA_BINARY) {
+          tunnel.clientWs.send(payload);
+        }
       }
     } else if (msgType === MSG_TYPE_HTTP_CHUNK) {
       const pending = pendingHttpResponses.get(id);

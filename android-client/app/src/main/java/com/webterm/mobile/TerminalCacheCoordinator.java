@@ -3,11 +3,8 @@ package com.webterm.mobile;
 import com.termux.terminal.TerminalSession;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 
 final class TerminalCacheCoordinator {
-    private static final int SNAPSHOT_MAX_LINES = 5000;
-
     private final TerminalDiskCache diskCache;
     private final java.util.Map<String, CachedTerminal> memoryCache = new java.util.HashMap<>();
 
@@ -67,7 +64,7 @@ final class TerminalCacheCoordinator {
         cached.rows = snapshot.rows;
         TerminalDiskCache.Metadata metadata = snapshot.diskMetadata;
         if (metadata != null) {
-            diskCache.saveSnapshotBlocking(metadata, snapshotBytes(snapshot.terminalSession));
+            diskCache.saveMetadataBlocking(metadata);
         }
     }
 
@@ -158,10 +155,4 @@ final class TerminalCacheCoordinator {
         TerminalDiskCache.Metadata diskMetadata;
     }
 
-    private static byte[] snapshotBytes(TerminalSession terminalSession) {
-        if (terminalSession == null || terminalSession.getEmulator() == null || terminalSession.getEmulator().getScreen() == null) {
-            return new byte[0];
-        }
-        return terminalSession.getEmulator().getScreen().serialize();
-    }
 }

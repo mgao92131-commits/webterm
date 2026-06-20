@@ -90,7 +90,9 @@ public final class TerminalRenderer {
             int lastRunStartColumn = -1;
             int lastRunStartIndex = 0;
             boolean lastRunFontWidthMismatch = false;
+            boolean lastRunPreserveGlyphAspect = false;
             int currentCharIndex = 0;
+            int preserveGlyphPaddingColumn = -1;
             float measuredWidthForRun = 0.f;
 
             for (int column = 0; column < columns; ) {
@@ -110,8 +112,11 @@ public final class TerminalRenderer {
                 final float measuredCodePointWidth = (codePoint < asciiMeasures.length) ? asciiMeasures[codePoint] : mTextPaint.measureText(line,
                     currentCharIndex, charsForCodePoint);
                 final boolean fontWidthMismatch = Math.abs(measuredCodePointWidth / mFontWidth - codePointWcWidth) > 0.01;
+                final boolean preserveGlyphAspect = shouldPreserveGlyphAspect(lineObject, line, charsUsedInLine,
+                    currentCharIndex, charsForCodePoint, column, columns, codePoint, codePointWcWidth, style, fontWidthMismatch)
+                    || (codePoint == ' ' && column <= preserveGlyphPaddingColumn);
 
-                if (style != lastRunStyle || insideCursor != lastRunInsideCursor || insideSelection != lastRunInsideSelection || fontWidthMismatch || lastRunFontWidthMismatch) {
+                if (style != lastRunStyle || insideCursor != lastRunInsideCursor || insideSelection != lastRunInsideSelection || fontWidthMismatch || lastRunFontWidthMismatch || preserveGlyphAspect != lastRunPreserveGlyphAspect) {
                     if (column == 0) {
                         // Skip first column as there is nothing to draw, just record the current style.
                     } else {
@@ -124,7 +129,8 @@ public final class TerminalRenderer {
                         }
                         drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun,
                             lastRunStartIndex, charsSinceLastRun, measuredWidthForRun,
-                            cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+                            cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection,
+                            lastRunPreserveGlyphAspect);
                     }
                     measuredWidthForRun = 0.f;
                     lastRunStyle = style;
@@ -133,8 +139,13 @@ public final class TerminalRenderer {
                     lastRunStartColumn = column;
                     lastRunStartIndex = currentCharIndex;
                     lastRunFontWidthMismatch = fontWidthMismatch;
+                    lastRunPreserveGlyphAspect = preserveGlyphAspect;
                 }
                 measuredWidthForRun += measuredCodePointWidth;
+                if (preserveGlyphAspect && codePoint != ' ' && hasRightPaddingSpace(lineObject, line, charsUsedInLine,
+                    currentCharIndex, charsForCodePoint, column, columns, codePointWcWidth, style)) {
+                    preserveGlyphPaddingColumn = column + codePointWcWidth;
+                }
                 column += codePointWcWidth;
                 currentCharIndex += charsForCodePoint;
                 while (currentCharIndex < charsUsedInLine && WcWidth.width(line, currentCharIndex) <= 0) {
@@ -152,13 +163,14 @@ public final class TerminalRenderer {
                 invertCursorTextColor = true;
             }
             drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun, lastRunStartIndex, charsSinceLastRun,
-                measuredWidthForRun, cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+                measuredWidthForRun, cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection,
+                lastRunPreserveGlyphAspect);
         }
     }
 
     private void drawTextRun(Canvas canvas, char[] text, int[] palette, float y, int startColumn, int runWidthColumns,
                              int startCharIndex, int runWidthChars, float mes, int cursor, int cursorStyle,
-                             long textStyle, boolean reverseVideo) {
+                             long textStyle, boolean reverseVideo, boolean preserveGlyphAspect) {
         int foreColor = TextStyle.decodeForeColor(textStyle);
         final int effect = TextStyle.decodeEffect(textStyle);
         int backColor = TextStyle.decodeBackColor(textStyle);
@@ -191,7 +203,7 @@ public final class TerminalRenderer {
 
         mes = mes / mFontWidth;
         boolean savedMatrix = false;
-        if (Math.abs(mes - runWidthColumns) > 0.01) {
+        if (!preserveGlyphAspect && Math.abs(mes - runWidthColumns) > 0.01) {
             canvas.save();
             canvas.scale(runWidthColumns / mes, 1.f);
             left *= mes / runWidthColumns;
@@ -237,6 +249,64 @@ public final class TerminalRenderer {
         }
 
         if (savedMatrix) canvas.restore();
+    }
+
+    private boolean shouldPreserveGlyphAspect(TerminalRow lineObject, char[] line, int charsUsedInLine,
+                                              int charIndex, int charsForCodePoint, int column, int columns,
+                                              int codePoint, int codePointWcWidth, long style, boolean fontWidthMismatch) {
+        if (!fontWidthMismatch || !isAspectPreservedGlyph(codePoint)) return false;
+        return isPowerlineGlyph(codePoint) || hasRightPaddingSpace(lineObject, line, charsUsedInLine,
+            charIndex, charsForCodePoint, column, columns, codePointWcWidth, style);
+    }
+
+    private boolean hasRightPaddingSpace(TerminalRow lineObject, char[] line, int charsUsedInLine,
+                                         int charIndex, int charsForCodePoint, int column, int columns,
+                                         int codePointWcWidth, long style) {
+        final int nextColumn = column + codePointWcWidth;
+        if (nextColumn >= columns || lineObject.getStyle(nextColumn) != style) return false;
+
+        int nextCharIndex = charIndex + charsForCodePoint;
+        while (nextCharIndex < charsUsedInLine && WcWidth.width(line, nextCharIndex) <= 0) {
+            nextCharIndex += Character.isHighSurrogate(line[nextCharIndex]) ? 2 : 1;
+        }
+        return nextCharIndex >= charsUsedInLine || line[nextCharIndex] == ' ';
+    }
+
+    private boolean isAspectPreservedGlyph(int codePoint) {
+        return isPowerlineGlyph(codePoint)
+            || isNerdFontGlyph(codePoint)
+            || isEmojiGlyph(codePoint)
+            || isSymbolGlyph(codePoint)
+            || isPrivateUseGlyph(codePoint);
+    }
+
+    private boolean isPowerlineGlyph(int codePoint) {
+        return codePoint >= 0xe0a0 && codePoint <= 0xe0d7;
+    }
+
+    private boolean isNerdFontGlyph(int codePoint) {
+        return (codePoint >= 0xe5fa && codePoint <= 0xe6b1)
+            || (codePoint >= 0xe700 && codePoint <= 0xe8ef)
+            || (codePoint >= 0xea60 && codePoint <= 0xebeb)
+            || (codePoint >= 0xed00 && codePoint <= 0xefc1)
+            || (codePoint >= 0xf000 && codePoint <= 0xf2ff)
+            || (codePoint >= 0xf300 && codePoint <= 0xfd46);
+    }
+
+    private boolean isPrivateUseGlyph(int codePoint) {
+        return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+            || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+            || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+    }
+
+    private boolean isEmojiGlyph(int codePoint) {
+        return (codePoint >= 0x1f000 && codePoint <= 0x1faff)
+            || (codePoint >= 0x2600 && codePoint <= 0x27bf);
+    }
+
+    private boolean isSymbolGlyph(int codePoint) {
+        return (codePoint >= 0x25a0 && codePoint <= 0x25ff)
+            || (codePoint >= 0x2b00 && codePoint <= 0x2bff);
     }
 
     public float getFontWidth() {

@@ -22,6 +22,7 @@ import okio.ByteString;
 final class TerminalConnection {
     private static final String TAG = "TerminalConnection";
     private static final long RESIZE_DEBOUNCE_MS = 100L;
+    private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
 
     private final OkHttpClient http;
     private final Handler mainHandler;
@@ -127,6 +128,7 @@ final class TerminalConnection {
         Request request = new Request.Builder()
             .url(WebTermUrls.toWebSocketUrl(baseUrl) + "/ws/sessions/" + encodedId)
             .header("Cookie", cookie)
+            .header("Sec-WebSocket-Protocol", BINARY_SUBPROTOCOL)
             .build();
         webSocket = http.newWebSocket(request, new WebSocketListener() {
             @Override
@@ -141,9 +143,15 @@ final class TerminalConnection {
                 sentRows = 0;
                 Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
                 listener.onConnectionStatus("Connected", true);
-                sendResizeNow();
                 JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
+                if (columns > 0 && rows > 0) {
+                    WebTermProtocol.put(hello, "cols", columns);
+                    WebTermProtocol.put(hello, "rows", rows);
+                    sentColumns = columns;
+                    sentRows = rows;
+                }
                 sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
+                sendResizeNow();
             }
 
             @Override
@@ -198,6 +206,15 @@ final class TerminalConnection {
                 listener.onOutput(seq, Arrays.copyOfRange(payload, 8, payload.length));
             } else {
                 listener.onOutput(0, payload);
+            }
+            return;
+        }
+        if (type == WebTermProtocol.MSG_STATE) {
+            if (payload.length >= 8) {
+                long seq = WebTermProtocol.readUint64(payload, 0);
+                if (seq < lastSeq) return;
+                lastSeq = seq;
+                listener.onState(seq, Arrays.copyOfRange(payload, 8, payload.length));
             }
             return;
         }
@@ -262,6 +279,7 @@ final class TerminalConnection {
     interface Listener {
         void onConnectionStatus(String text, boolean connected);
         void onOutput(long seq, byte[] data);
+        void onState(long seq, byte[] data);
         void onInfo(JSONObject info);
         void onExit(int code);
         void onProtocolError(String message);

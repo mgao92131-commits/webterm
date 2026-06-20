@@ -21,6 +21,15 @@ const scrypt = promisify(crypto.scrypt);
 export const COOKIE_NAME = 'webterm_token';
 export const REFRESH_COOKIE_NAME = 'webterm_refresh';
 
+function maskEmail(email) {
+  if (!email) return '';
+  const parts = email.split('@');
+  if (parts.length !== 2) return '***';
+  const [name, domain] = parts;
+  if (name.length <= 2) return name + '***@' + domain;
+  return name.substring(0, 2) + '***@' + domain;
+}
+
 let jwtSecret = null;
 function getJwtSecret() {
   if (jwtSecret) return jwtSecret;
@@ -121,8 +130,8 @@ export class AuthManager {
     }
     
     const dailyUserCount = getDailyUserVerificationCount(userId);
-    if (dailyUserCount >= 10) {
-      throw new Error('今天发送验证码的次数已达上限（10次）。');
+    if (dailyUserCount >= 60) {
+      throw new Error('今天发送验证码的次数已达上限（60次）。');
     }
     
     const dailyIpCount = getDailyIpVerificationCount(ipAddress);
@@ -162,14 +171,22 @@ export class AuthManager {
   }
 
   async login(email, password, deviceId = null, ipAddress = null) {
+    console.log('[Login Debug] Attempt:', { email: maskEmail(email), deviceId });
     const user = findByUsername(email);
-    if (!user || user.disabled === 1) return null;
+    if (!user || user.disabled === 1) {
+      console.log('[Login Debug] User not found or disabled:', maskEmail(email));
+      return null;
+    }
     
     const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) return null;
+    if (!ok) {
+      console.log('[Login Debug] Password incorrect for:', maskEmail(email));
+      return null;
+    }
 
     // Check if email has been verified/activated
     if (user.emailVerifiedAt === null) {
+      console.log('[Login Debug] Email not verified:', maskEmail(email));
       return { inactive: true, user: { id: user.id, username: user.username } };
     }
 
@@ -177,14 +194,17 @@ export class AuthManager {
     const trusted = isDeviceTrusted(user.id, deviceId);
     if (!trusted) {
       try {
+        console.log('[Login Debug] Device untrusted, sending OTP to:', maskEmail(email));
         await this.sendVerificationOtp(user.id, user.username, 'new_device', deviceId, ipAddress);
         return { otpRequired: true, targetDeviceId: deviceId, user: { id: user.id, username: user.username } };
       } catch (err) {
+        console.log('[Login Debug] Send OTP error:', err.message);
         return { otpRequired: true, otpError: err.message, targetDeviceId: deviceId, user: { id: user.id, username: user.username } };
       }
     }
 
     // Device is trusted, perform direct login
+    console.log('[Login Debug] Device trusted. Direct login for:', maskEmail(email));
     updateDeviceLastSeen(user.id, deviceId);
     return this.issueSession(user);
   }
