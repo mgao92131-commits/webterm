@@ -24,6 +24,23 @@ public class ScreenBufferTest extends TerminalTestCase {
 		assertEquals("XX\nXYY\n YY", screen.getTranscriptText());
 	}
 
+	public void testDeserializeRestoresWideCharacterRows() {
+		TerminalBuffer screen = new TerminalBuffer(5, 3, 3);
+		screen.setChar(0, 0, 0x679C, 0);
+		screen.setChar(2, 0, 'a', 0);
+
+		TerminalBuffer restored = new TerminalBuffer(5, 3, 3);
+		assertTrue(restored.deserialize(screen.serialize()));
+		TerminalRow row = restored.mLines[restored.externalToInternalRow(0)];
+		assertTrue(row.mHasNonOneWidthOrSurrogateChars);
+
+		row.setChar(1, 0x679D, 0);
+		assertEquals(0x679D, row.mText[row.findStartOfColumn(1)]);
+		assertEquals(0, row.findStartOfColumn(0));
+		assertEquals(1, row.findStartOfColumn(1));
+		assertEquals(1, row.findStartOfColumn(2));
+	}
+
 	public void testGetSelectedText() {
 		withTerminalSized(5, 3).enterString("ABCDEFGHIJ").assertLinesAre("ABCDE", "FGHIJ", "     ");
 		assertEquals("AB", mTerminal.getSelectedText(0, 0, 1, 0));

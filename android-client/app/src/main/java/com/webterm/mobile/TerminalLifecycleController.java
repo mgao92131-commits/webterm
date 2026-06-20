@@ -149,6 +149,7 @@ final class TerminalLifecycleController {
     void closeTerminal(boolean closeRemote) {
         String closingBaseUrl = terminalState.baseUrl();
         String closingSessionId = terminalState.sessionId();
+        hideKeyboard();
         if (!closeRemote) {
             cacheCurrentTerminal();
         }
@@ -195,6 +196,15 @@ final class TerminalLifecycleController {
             InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
             if (imm != null) imm.showSoftInput(terminalView, InputMethodManager.SHOW_IMPLICIT);
         }, 150);
+    }
+
+    private void hideKeyboard() {
+        View focused = activity.getCurrentFocus();
+        View tokenView = terminalView != null ? terminalView : (focused != null ? focused : terminalRoot);
+        if (tokenView == null) return;
+        InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(tokenView.getWindowToken(), 0);
+        tokenView.clearFocus();
     }
 
     void onTerminalResize(int columns, int rows) {
@@ -289,7 +299,10 @@ final class TerminalLifecycleController {
                 if (terminalConnection != null) terminalConnection.updateLastSeq(0);
                 return;
             }
-            terminalSession.getEmulator().getScreen().deserialize(snapshotBytes);
+            if (!terminalSession.getEmulator().getScreen().deserialize(snapshotBytes)) {
+                terminalState.resetLastSeq();
+                if (terminalConnection != null) terminalConnection.updateLastSeq(0);
+            }
         } catch (Throwable t) {
             terminalState.resetLastSeq();
             if (terminalConnection != null) terminalConnection.updateLastSeq(0);

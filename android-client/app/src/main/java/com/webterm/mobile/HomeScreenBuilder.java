@@ -19,8 +19,8 @@ import androidx.recyclerview.widget.RecyclerView;
 final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-    static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings) {
-        return buildTopLevel(activity, "WebTerm", "设备列表", onAddServer, onSettings, onRefresh, onRelaySettings);
+    static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
+        return buildTopLevel(activity, "WebTerm", "设备列表", onAddServer, onSettings, onRefresh, onRelaySettings, onCrashLogs);
     }
 
     static DeviceSessionsResult buildDeviceSessions(
@@ -127,7 +127,7 @@ final class HomeScreenBuilder {
         return result;
     }
 
-    private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings) {
+    private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(15, 15, 18));
@@ -162,6 +162,7 @@ final class HomeScreenBuilder {
             popup.getMenu().add(0, 2, 0, "终端设置");
             popup.getMenu().add(0, 3, 0, "中转服务");
             popup.getMenu().add(0, 4, 0, "刷新设备");
+            popup.getMenu().add(0, 5, 0, "导出崩溃日志");
             popup.setOnMenuItemClickListener((item) -> {
                 if (item.getItemId() == 1) {
                     onAddServer.run();
@@ -174,6 +175,9 @@ final class HomeScreenBuilder {
                     return true;
                 } else if (item.getItemId() == 4) {
                     onRefresh.run();
+                    return true;
+                } else if (item.getItemId() == 5) {
+                    onCrashLogs.run();
                     return true;
                 }
                 return false;

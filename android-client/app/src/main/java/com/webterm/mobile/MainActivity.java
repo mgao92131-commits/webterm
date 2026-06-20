@@ -2,6 +2,7 @@ package com.webterm.mobile;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -12,6 +13,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 
@@ -212,7 +214,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
             () -> { loadMultiSessions(); mRelayCoordinator.start(); },
-            () -> RelayConfigDialogHelper.show(mRelayCoordinator, mRelayCoordinator.masterConfig())
+            () -> RelayConfigDialogHelper.show(mRelayCoordinator, mRelayCoordinator.masterConfig()),
+            this::shareLatestCrashLog
         );
         mHomeSubtitle = home.subtitle;
         mRelayCoordinator.attachSubtitle(home.subtitle);
@@ -527,6 +530,19 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── Helpers ────────────────────────────────────────────────────
 
     private void showSettingsDialog() { SettingsDialogHelper.show(this); }
+
+    private void shareLatestCrashLog() {
+        String crashLog = CrashReporter.readLatestCrash(this);
+        if (crashLog == null || crashLog.trim().isEmpty()) {
+            Toast.makeText(this, "暂无崩溃日志", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, "WebTerm 崩溃日志");
+        send.putExtra(Intent.EXTRA_TEXT, crashLog);
+        startActivity(Intent.createChooser(send, "导出崩溃日志"));
+    }
 
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom,
                                    boolean avoidImeWithPadding) {

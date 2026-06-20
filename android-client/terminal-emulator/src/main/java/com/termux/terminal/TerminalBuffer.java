@@ -534,22 +534,27 @@ public final class TerminalBuffer {
         }
     }
 
-    public void deserialize(byte[] data) {
-        if (data == null || data.length < 28) return;
+    public boolean deserialize(byte[] data) {
+        if (data == null || data.length < 28) return false;
         try {
             java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(data);
             java.io.DataInputStream dis = new java.io.DataInputStream(bais);
             
             int magic = dis.readInt();
-            if (magic != 0x54425546) return;
+            if (magic != 0x54425546) return false;
             int version = dis.readInt();
-            if (version != 1) return;
+            if (version != 1) return false;
             
             int tempColumns = dis.readInt();
             int tempScreenRows = dis.readInt();
             int tempActiveTranscriptRows = dis.readInt();
             int tempScreenFirstRow = dis.readInt();
             int tempTotalRows = dis.readInt();
+            if (tempColumns <= 0 || tempScreenRows <= 0 || tempTotalRows < tempScreenRows
+                || tempActiveTranscriptRows < 0 || tempActiveTranscriptRows > tempTotalRows - tempScreenRows
+                || tempScreenFirstRow < 0 || tempScreenFirstRow >= tempTotalRows) {
+                return false;
+            }
             
             TerminalRow[] tempLines = new TerminalRow[tempTotalRows];
             
@@ -570,10 +575,9 @@ public final class TerminalBuffer {
                         style[j] = dis.readLong();
                     }
                     
+                    if (styleLen < tempColumns) return false;
                     TerminalRow row = new TerminalRow(tempColumns, TextStyle.NORMAL);
-                    row.mLineWrap = lineWrap;
-                    row.setSpaceUsed(spaceUsed);
-                    row.mText = text;
+                    if (!row.restoreState(lineWrap, spaceUsed, text)) return false;
                     System.arraycopy(style, 0, row.mStyle, 0, Math.min(style.length, row.mStyle.length));
                     tempLines[i] = row;
                 } else {
@@ -582,7 +586,7 @@ public final class TerminalBuffer {
             }
             
             for (int i = 0; i < tempTotalRows; i++) {
-                if (tempLines[i] == null) return;
+                if (tempLines[i] == null) return false;
             }
             
             mColumns = tempColumns;
@@ -591,7 +595,9 @@ public final class TerminalBuffer {
             mScreenFirstRow = tempScreenFirstRow;
             mTotalRows = tempTotalRows;
             mLines = tempLines;
+            return true;
         } catch (Throwable ignored) {
+            return false;
         }
     }
 }

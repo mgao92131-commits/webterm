@@ -92,6 +92,36 @@ public final class TerminalRow {
         this.mSpaceUsed = spaceUsed;
     }
 
+    boolean restoreState(boolean lineWrap, short spaceUsed, char[] text) {
+        if (text == null || spaceUsed < 0 || spaceUsed > text.length) return false;
+
+        boolean hasNonOneWidthOrSurrogateChars = false;
+        int displayColumns = 0;
+        for (int charIndex = 0; charIndex < spaceUsed; ) {
+            char c = text[charIndex++];
+            int codePoint;
+            if (Character.isHighSurrogate(c)) {
+                if (charIndex >= spaceUsed || !Character.isLowSurrogate(text[charIndex])) return false;
+                codePoint = Character.toCodePoint(c, text[charIndex++]);
+                hasNonOneWidthOrSurrogateChars = true;
+            } else if (Character.isLowSurrogate(c)) {
+                return false;
+            } else {
+                codePoint = c;
+            }
+            int width = WcWidth.width(codePoint);
+            if (width != 1) hasNonOneWidthOrSurrogateChars = true;
+            if (width > 0) displayColumns += width;
+        }
+        if (displayColumns < mColumns) return false;
+
+        mLineWrap = lineWrap;
+        mSpaceUsed = spaceUsed;
+        mText = text;
+        mHasNonOneWidthOrSurrogateChars = hasNonOneWidthOrSurrogateChars;
+        return true;
+    }
+
     /** Note that the column may end of second half of wide character. */
     public int findStartOfColumn(int column) {
         if (column == mColumns) return getSpaceUsed();
