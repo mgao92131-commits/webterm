@@ -31,6 +31,10 @@ android {
       shaders = false
     }
 
+    testOptions {
+      unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
       resources {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -43,4 +47,6 @@ dependencies {
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("androidx.annotation:annotation:1.9.0")
   implementation("androidx.recyclerview:recyclerview:1.4.0")
+  testImplementation(libs.junit)
+  testImplementation("org.json:json:20240303")
 }

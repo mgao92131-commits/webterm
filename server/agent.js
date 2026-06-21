@@ -7,7 +7,7 @@ import {
   WS_CONNECT, WS_CONNECTED, WS_ERROR, WS_CLOSE,
   MSG_TYPE_WS_DATA,
   WS_DATA_TEXT, WS_DATA_BINARY,
-  BINARY_SUBPROTOCOL,
+  BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL,
   encodeTunnelFrame, decodeTunnelFrame,
   sendJSON, sendBinary
 } from '../shared/tunnel-protocol.js';
@@ -104,8 +104,8 @@ export class Agent {
       }
     });
 
-    this.ws.on('close', () => {
-      console.log('[Agent] Relay Server connection closed.');
+    this.ws.on('close', (code, reason) => {
+      console.log(`[Agent] Relay Server connection closed. Code: ${code}, Reason: ${reason ? reason.toString() : 'None'}`);
       this.#cleanupConnections();
       this.#scheduleReconnect();
     });

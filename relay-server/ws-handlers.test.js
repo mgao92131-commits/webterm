@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prefixSessionManagerMessage } from './client-tunnel.js';
+import { handleAgentTunnelMessage, normalizeCloseCode, prefixSessionManagerMessage } from './client-tunnel.js';
 import { createWsHandlers } from './ws-handlers.js';
 import {
   MSG_TYPE_WS_DATA,
@@ -113,6 +113,50 @@ test('relay can prefix session manager ids on tunneled text frames', () => {
   ]);
 });
 
+test('client websocket tunnels keep outbound text transform options', () => {
+  const activeWsTunnels = new Map();
+  const agent = {
+    deviceId: 'd1',
+    ws: {
+      readyState: 1,
+      sent: [],
+      send(data) {
+        this.sent.push(data);
+      },
+    },
+  };
+  const clientWs = fakeWs();
+  const transformOutboundText = (text) => prefixSessionManagerMessage(text, 'd1');
+  const { handleClientWsTunnel, handleBinaryDemux } = createWsHandlers({
+    auth: {},
+    registry: {},
+    pendingHttpResponses: new Map(),
+    activeWsTunnels,
+    pendingP2pOffers: new Map(),
+    findBySecretHash: () => null,
+    updateLastSeen: () => {},
+    text: () => {},
+  });
+
+  handleClientWsTunnel(clientWs, agent, '/ws/sessions', { headers: {} }, { transformOutboundText });
+
+  const [tunnelId, tunnel] = activeWsTunnels.entries().next().value;
+  tunnel.isConnected = true;
+
+  const sent = [];
+  tunnel.clientWs.send = (data) => sent.push(JSON.parse(data));
+  handleBinaryDemux(encodeTunnelFrame(
+    MSG_TYPE_WS_DATA,
+    tunnelId,
+    WS_DATA_TEXT,
+    Buffer.from(JSON.stringify({ type: 'session', data: { id: 's1', termTitle: 'vim' } }), 'utf8'),
+  ));
+
+  assert.deepEqual(sent, [
+    { type: 'session', data: { id: 'd1:s1', termTitle: 'vim' } },
+  ]);
+});
+
 test('prefixSessionManagerMessage rewrites local session ids for relay clients', () => {
   const messages = [
     { type: 'sessions', data: [{ id: 's1', termTitle: 'zsh' }, { id: 'd1:s2' }] },
@@ -133,3 +177,50 @@ test('prefixSessionManagerMessage rewrites local session ids for relay clients',
   ]);
   assert.equal(prefixSessionManagerMessage('not json', 'd1'), 'not json');
 });
+
+test('agent websocket errors use valid websocket close codes', () => {
+  const closed = [];
+  const activeWsTunnels = new Map([
+    ['tc_test', {
+      clientWs: {
+        readyState: 1,
+        close(code, reason) {
+          closed.push({ code, reason });
+        },
+      },
+      deviceId: 'd1',
+      connectionTimer: null,
+    }],
+  ]);
+  handleAgentTunnelMessage({
+    type: 'ws-error',
+    tunnelConnectionId: 'tc_test',
+    code: 404,
+    message: 'Session s1 not found',
+  }, { getAgent: () => null }, activeWsTunnels);
+
+  assert.deepEqual(closed, [{ code: 4404, reason: 'Session s1 not found' }]);
+  assert.equal(activeWsTunnels.has('tc_test'), false);
+});
+
+test('normalizeCloseCode preserves valid websocket close codes', () => {
+  assert.equal(normalizeCloseCode(1000), 1000);
+  assert.equal(normalizeCloseCode(4008), 4008);
+  assert.equal(normalizeCloseCode(404), 4404);
+  assert.equal(normalizeCloseCode('not-a-number', 4500), 4500);
+});
+
+function fakeWs() {
+  const handlers = new Map();
+  return {
+    readyState: 1,
+    send() {},
+    close() {},
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+    emit(event, ...args) {
+      handlers.get(event)?.(...args);
+    },
+  };
+}

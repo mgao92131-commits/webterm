@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isSensitiveInput, lastInputLines, TerminalSession, sessionDisplayTitle } from './terminal-session.js';
-import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_HELLO, MSG_INFO, MSG_INPUT, MSG_OUTPUT, MSG_PING, MSG_PONG, MSG_RESIZE, MSG_STATE, readUint64BE } from './protocol-binary.js';
+import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_HELLO, MSG_INFO, MSG_INPUT, MSG_OUTPUT, MSG_PING, MSG_PONG, MSG_RESIZE, MSG_STATE, MSG_TITLE, readUint64BE } from './protocol-binary.js';
 
 test('session display title follows terminal title when name is empty', () => {
   assert.equal(sessionDisplayTitle('', 'zsh'), 'zsh');
@@ -10,6 +10,21 @@ test('session display title follows terminal title when name is empty', () => {
 
 test('session display title prefixes terminal title with custom name', () => {
   assert.equal(sessionDisplayTitle('work', 'vim README.md'), 'work - vim README.md');
+});
+
+test('terminal title changes broadcast info immediately', () => {
+  const infos = [];
+  const session = fakeSession({ latestSeq: 0 });
+  session.info = function () {
+    return { id: 's1', termTitle: this.termTitle };
+  };
+  session.onInfo = (info) => infos.push(info);
+  session.updateTermTitle = TerminalSession.prototype.updateTermTitle;
+  session.broadcastInfo = TerminalSession.prototype.broadcastInfo;
+
+  session.updateTermTitle('vim README.md');
+
+  assert.deepEqual(infos, [{ id: 's1', termTitle: 'vim README.md' }]);
 });
 
 test('last input lines keeps the final two non-empty lines', () => {
@@ -210,6 +225,23 @@ test('binary malformed resize is ignored', () => {
   TerminalSession.prototype.attach.call(session, ws);
   ws.emitBinary(Buffer.from([MSG_RESIZE, 123]));
   assert.deepEqual(session.resizes, []);
+});
+
+test('binary title frame broadcasts updated info', () => {
+  const infos = [];
+  const session = fakeSession({ latestSeq: 0 });
+  session.termTitle = '';
+  session.info = function () {
+    return { id: 's1', termTitle: this.termTitle };
+  };
+  session.onInfo = (info) => infos.push(info);
+  session.updateTermTitle = TerminalSession.prototype.updateTermTitle;
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws, { protocolHint: BINARY_SUBPROTOCOL });
+
+  ws.emitBinary(Buffer.concat([Buffer.from([MSG_TITLE]), Buffer.from('mobile vim')]));
+
+  assert.equal(infos.at(-1).termTitle, 'mobile vim');
 });
 
 function fakeSession({ latestSeq }) {

@@ -136,7 +136,7 @@ final class TerminalLifecycleController {
         terminalAttachStarted = false;
         terminalTitle = terminalScreen.title;
         terminalSubtitle = terminalScreen.subtitle;
-        connectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton);
+        connectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton, terminalScreen.reconnectOverlay);
         host.installTerminalInsets(terminalRoot);
         terminalSession = cached != null && cached.terminalSession != null
             ? cached.terminalSession

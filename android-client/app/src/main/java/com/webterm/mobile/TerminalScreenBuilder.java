@@ -129,6 +129,58 @@ final class TerminalScreenBuilder {
         terminalViewport.setClipToPadding(true);
         terminalViewport.setBackgroundColor(Color.BLACK);
         terminalViewport.addView(terminalView, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout reconnectOverlay = new LinearLayout(activity);
+        reconnectOverlay.setOrientation(LinearLayout.VERTICAL);
+        reconnectOverlay.setGravity(Gravity.CENTER);
+        reconnectOverlay.setBackgroundColor(Color.argb(160, 0, 0, 0));
+        reconnectOverlay.setVisibility(View.GONE);
+        reconnectOverlay.setClickable(true);
+
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24));
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(Color.rgb(30, 30, 36));
+        cardBg.setCornerRadius(UIUtils.dp(activity, 12));
+        card.setBackground(cardBg);
+
+        TextView warnIcon = new TextView(activity);
+        warnIcon.setText("⚠️");
+        warnIcon.setTextSize(28);
+        warnIcon.setGravity(Gravity.CENTER);
+        warnIcon.setPadding(0, 0, 0, UIUtils.dp(activity, 8));
+
+        TextView tipText = new TextView(activity);
+        tipText.setText("与服务器连接已断开");
+        tipText.setTextColor(Color.rgb(243, 244, 246));
+        tipText.setTextSize(15);
+        tipText.setTypeface(Typeface.DEFAULT_BOLD);
+        tipText.setGravity(Gravity.CENTER);
+        tipText.setPadding(0, 0, 0, UIUtils.dp(activity, 16));
+
+        Button reconnectBtn = new Button(activity);
+        reconnectBtn.setText("重新连接");
+        reconnectBtn.setAllCaps(false);
+        reconnectBtn.setTextColor(Color.WHITE);
+        reconnectBtn.setTextSize(14);
+
+        GradientDrawable btnBg = new GradientDrawable();
+        btnBg.setColor(Color.rgb(59, 130, 246));
+        btnBg.setCornerRadius(UIUtils.dp(activity, 6));
+        reconnectBtn.setBackground(btnBg);
+        reconnectBtn.setPadding(UIUtils.dp(activity, 16), UIUtils.dp(activity, 8), UIUtils.dp(activity, 16), UIUtils.dp(activity, 8));
+        reconnectBtn.setOnClickListener((v) -> onRetry.run());
+
+        card.addView(warnIcon);
+        card.addView(tipText);
+        card.addView(reconnectBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 120), UIUtils.dp(activity, 38)));
+
+        reconnectOverlay.addView(card, new LinearLayout.LayoutParams(UIUtils.dp(activity, 240), -2));
+        terminalViewport.addView(reconnectOverlay, new FrameLayout.LayoutParams(-1, -1));
+
         content.addView(terminalViewport, new LinearLayout.LayoutParams(-1, 0, 1));
         root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -147,6 +199,7 @@ final class TerminalScreenBuilder {
         result.todoButton = todoButton;
         result.statusIndicator = statusIndicator;
         result.ctrlButton = outCtrlButton[0];
+        result.reconnectOverlay = reconnectOverlay;
         return result;
     }
 
@@ -255,5 +308,6 @@ final class TerminalScreenBuilder {
         ImageButton todoButton;
         StatusIndicatorView statusIndicator;
         Button ctrlButton;
+        View reconnectOverlay;
     }
 }

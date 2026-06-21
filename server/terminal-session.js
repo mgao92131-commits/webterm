@@ -91,6 +91,9 @@ export class TerminalSession {
     if (nextTitle === this.termTitle) return;
     this.termTitle = nextTitle;
     this.touch();
+    if (process.env.WEBTERM_TRACE_TITLE === '1') {
+      console.log(`[TitleTrace][Server] title updated session=${this.id} termTitle=${JSON.stringify(this.termTitle)}`);
+    }
     this.broadcastInfo();
   }
 

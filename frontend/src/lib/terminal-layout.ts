@@ -168,7 +168,7 @@ export class TerminalLayoutController implements IDisposable {
           rows: this.terminalView.rows,
           visible: this.isVisible(),
         };
-        if (options.reason === "container") {
+        if (options.reason === "container" || options.reason === "viewport") {
           this.debouncedSendResizeMessage(size);
         } else {
           this.sendResizeMessage(size);

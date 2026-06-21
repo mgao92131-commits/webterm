@@ -254,7 +254,14 @@ export function createRoutes(ctx) {
       const devicesList = listByUser(user.id);
       const enriched = devicesList.map(d => {
         const agent = registry.getAgent('d' + d.id);
-        return { ...d, online: !!(agent && agent.ws.readyState === 1) };
+        return {
+          id: d.id,
+          deviceId: 'd' + d.id,
+          deviceName: d.deviceName,
+          lastSeenAt: d.lastSeenAt,
+          createdAt: d.createdAt,
+          online: !!(agent && agent.ws.readyState === 1)
+        };
       });
       json(res, 200, enriched);
       return;

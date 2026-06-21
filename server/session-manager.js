@@ -53,6 +53,9 @@ export class SessionManager {
   attachManager(ws) {
     const client = new ManagerClient(ws);
     this.managerClients.add(client);
+    if (process.env.WEBTERM_TRACE_TITLE === '1') {
+      console.log(`[TitleTrace][Server] manager attached clients=${this.managerClients.size}`);
+    }
     client.send({ type: 'sessions', data: this.list() });
     ws.on('close', () => {
       this.managerClients.delete(client);
@@ -63,6 +66,12 @@ export class SessionManager {
   }
 
   broadcastManager(message) {
+    if (process.env.WEBTERM_TRACE_TITLE === '1') {
+      const info = message?.data || {};
+      const id = message?.id || info.id || '';
+      const title = info.termTitle || '';
+      console.log(`[TitleTrace][Server] manager broadcast type=${message?.type} id=${id} termTitle=${JSON.stringify(title)} clients=${this.managerClients.size}`);
+    }
     for (const client of [...this.managerClients]) {
       if (!client.send(message)) {
         this.managerClients.delete(client);

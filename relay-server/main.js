@@ -138,6 +138,10 @@ server.on('upgrade', (req, socket, head) => {
       transformOutboundText = (text) => prefixSessionManagerMessage(text, deviceId);
     }
 
+    if (process.env.WEBTERM_TRACE_TITLE === '1' && url.pathname === '/ws/sessions') {
+      console.log(`[TitleTrace][Relay] sessions ws upgrade deviceId=${deviceId || ''} targetPath=${targetPath} mode=${deviceId ? 'tunnel' : 'manager'}`);
+    }
+
     const agent = registry.getAgentForUser(user.id, deviceId);
     if (!agent) {
       socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');

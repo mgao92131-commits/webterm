@@ -172,7 +172,17 @@ export class TerminalSessionContext implements IDisposable {
     this.disposables.addEventListener(this.ws, 'open', () => {
       this.reconnectAttempts = 0;
       this.clearReconnect();
-      this.send({ type: 'hello', lastSeq: this.restored ? this.lastSeq : 0 });
+      try {
+        this.terminalView.fit();
+      } catch (e) {
+        console.warn('Failed to fit terminal on ws open', e);
+      }
+      this.send({
+        type: 'hello',
+        lastSeq: this.restored ? this.lastSeq : 0,
+        cols: this.terminalView.cols,
+        rows: this.terminalView.rows,
+      });
       this.layoutController?.sendResize({ reason: 'ws-open' });
     });
 

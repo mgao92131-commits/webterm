@@ -232,14 +232,20 @@ export class AuthManager {
     }
 
     const consumed = consume(hash);
-    if (!consumed) return null;
+    if (!consumed) {
+      console.log('[Auth Debug] Refresh failed: Token hash not found in database:', hash.substring(0, 10) + '...');
+      return null;
+    }
     
     const { userId, isExpired, isRevoked } = consumed;
     
-    if (isExpired) return null;
+    if (isExpired) {
+      console.log('[Auth Debug] Refresh failed: Token expired for userId:', userId);
+      return null;
+    }
 
     if (isRevoked) {
-      // Re-use detection: revoke all tokens for this user
+      console.warn('[Auth Debug] REUSE DETECTION TRIPPED: Token already revoked! Revoking all tokens for userId:', userId);
       revokeAllForUser(userId);
       return null;
     }
@@ -316,10 +322,17 @@ export class AuthManager {
 
   authenticate(req) {
     const token = parseCookies(req.headers.cookie || '')[COOKIE_NAME];
-    if (!token) return null;
+    if (!token) {
+      console.log(`[Auth Debug] Authentication failed: No token found in cookies for path: ${req.method} ${req.url}`);
+      console.log(`[Auth Debug] Request Headers: ${JSON.stringify(req.headers)}`);
+      return null;
+    }
     
     const payload = verifyJwt(token, getJwtSecret());
-    if (!payload) return null;
+    if (!payload) {
+      console.log('[Auth Debug] Authentication failed: JWT verification failed for token prefix:', token.substring(0, 15) + '...');
+      return null;
+    }
 
     if (payload.sub === 0) {
       const expectedUser = process.env.WEBTERM_USER || 'admin';
@@ -435,5 +448,7 @@ export function getOrCreateDeviceId(req, res) {
   return deviceId;
 }
 
-export const _testRefreshCache = process.env.NODE_ENV === 'test' ? refreshCache : null;
+export const _testRefreshCache = {
+  clear: () => refreshCache.clear()
+};
 

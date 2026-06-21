@@ -129,9 +129,13 @@ export function createWsHandlers(ctx) {
       if (tunnel && tunnel.clientWs.readyState === 1) {
         if (extraByte === WS_DATA_TEXT) {
           const text = payload.toString('utf8');
-          tunnel.clientWs.send(tunnel.transformOutboundText
+          const outgoingText = tunnel.transformOutboundText
             ? tunnel.transformOutboundText(text)
-            : text);
+            : text;
+          if (process.env.WEBTERM_TRACE_TITLE === '1') {
+            logTitleTrace(id, text, outgoingText);
+          }
+          tunnel.clientWs.send(outgoingText);
         } else if (extraByte === WS_DATA_BINARY) {
           tunnel.clientWs.send(payload);
         }
@@ -150,11 +154,27 @@ export function createWsHandlers(ctx) {
   }
 
   // Bound client WS tunnel handler for use by main.js
-  function handleClientWsTunnel(clientWs, agent, targetPath, req) {
-    createClientWsTunnel(registry, activeWsTunnels, clientWs, agent, targetPath, req);
+  function handleClientWsTunnel(clientWs, agent, targetPath, req, options = {}) {
+    createClientWsTunnel(registry, activeWsTunnels, clientWs, agent, targetPath, req, options);
   }
 
   return { handleAgentConnection, handleClientWsTunnel, handleBinaryDemux };
+}
+
+function logTitleTrace(tunnelId, incomingText, outgoingText) {
+  try {
+    const incoming = JSON.parse(incomingText);
+    const outgoing = JSON.parse(outgoingText);
+    if (incoming.type !== 'sessions' && incoming.type !== 'session' && incoming.type !== 'session-closed') return;
+    const incomingInfo = incoming.data || {};
+    const outgoingInfo = outgoing.data || {};
+    const incomingId = incoming.id || incomingInfo.id || '';
+    const outgoingId = outgoing.id || outgoingInfo.id || '';
+    const title = outgoingInfo.termTitle || '';
+    console.log(`[TitleTrace][Relay] tunnel text id=${tunnelId} type=${outgoing.type} inId=${incomingId} outId=${outgoingId} termTitle=${JSON.stringify(title)}`);
+  } catch {
+    // Ignore non-JSON tunnel frames.
+  }
 }
 
 function handleHttpResponse(msg, pendingHttpResponses) {

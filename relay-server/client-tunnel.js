@@ -103,9 +103,21 @@ export function handleAgentTunnelMessage(msg, registry, activeWsTunnels) {
     if (tunnel.connectionTimer) {
       clearTimeout(tunnel.connectionTimer);
     }
-    tunnel.clientWs.close(msg.code || 1000, String(msg.message || msg.reason || ''));
+    const closeCode = normalizeCloseCode(msg.code, msg.type === WS_ERROR ? 4500 : 1000);
+    tunnel.clientWs.close(closeCode, String(msg.message || msg.reason || ''));
     activeWsTunnels.delete(msg.tunnelConnectionId);
   }
+}
+
+export function normalizeCloseCode(code, fallback = 1000) {
+  const value = Number(code);
+  if (Number.isInteger(value) && (value === 1000 || (value >= 3000 && value <= 4999))) {
+    return value;
+  }
+  if (Number.isInteger(value) && value >= 400 && value <= 599) {
+    return 4000 + value;
+  }
+  return fallback;
 }
 
 export function prefixSessionManagerMessage(text, deviceId) {

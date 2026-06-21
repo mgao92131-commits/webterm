@@ -34,6 +34,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
 
     private boolean mInForeground = true;
+    private android.net.ConnectivityManager.NetworkCallback mNetworkCallback;
     private TerminalConnection mTerminalConnection;
     private TerminalCacheCoordinator mTerminalCache;
     private ServerConfigStore mConfigStore;
@@ -121,10 +122,15 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onResume() {
         super.onResume();
         mInForeground = true;
-        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()
-            && (mTerminalConnection == null || !mTerminalConnection.hasSocket())) {
-            mClosed.set(false);
-            mTerminalLifecycle.connectTerminal();
+        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal() && mTerminalConnection != null) {
+            TerminalConnection.State s = mTerminalConnection.getState();
+            if (s == TerminalConnection.State.RECONNECTING) {
+                mClosed.set(false);
+                mTerminalConnection.reconnectNow();
+            } else if (s == TerminalConnection.State.DISCONNECTED) {
+                mClosed.set(false);
+                mTerminalLifecycle.connectTerminal();
+            }
         } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 if (mHomeCoordinator != null) mHomeCoordinator.resume();
@@ -132,10 +138,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                 mRelayCoordinator.start();
             }
         }
+        registerNetworkCallback();
     }
 
     @Override
     protected void onPause() {
+        unregisterNetworkCallback();
         mInForeground = false;
         if (!mTerminalLifecycle.hasSession()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pause();
@@ -439,8 +447,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── TerminalConnection.Listener ─────────────────────────────────
 
     @Override
-    public void onConnectionStatus(String text, boolean connected) {
-        runOnUiThread(() -> mConnectionStatus.update(text, connected));
+    public void onConnectionStatus(TerminalConnection.State state, int reconnectAttempts) {
+        runOnUiThread(() -> mConnectionStatus.update(state, reconnectAttempts));
     }
     @Override
     public void onOutput(long seq, byte[] data) { mTerminalLifecycle.onOutput(seq, data); }
@@ -577,5 +585,39 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     int dp(int value) {
         return PageTransitionAnimator.dp(this, value);
+    }
+
+    private void registerNetworkCallback() {
+        if (mNetworkCallback != null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                mNetworkCallback = new android.net.ConnectivityManager.NetworkCallback() {
+                    @Override
+                    public void onAvailable(@androidx.annotation.NonNull android.net.Network network) {
+                        mMainHandler.post(() -> {
+                            if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
+                                TerminalConnection.State s = mTerminalConnection.getState();
+                                if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
+                                    android.util.Log.i("MainActivity", "Network online: active reconnection...");
+                                    mTerminalConnection.reconnectNow();
+                                }
+                            }
+                        });
+                    }
+                };
+                cm.registerDefaultNetworkCallback(mNetworkCallback);
+            }
+        }
+    }
+
+    private void unregisterNetworkCallback() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && mNetworkCallback != null) {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                cm.unregisterNetworkCallback(mNetworkCallback);
+            }
+            mNetworkCallback = null;
+        }
     }
 }

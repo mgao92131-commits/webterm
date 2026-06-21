@@ -3,6 +3,7 @@ package com.webterm.mobile;
 import android.app.Activity;
 import android.graphics.Color;
 import android.os.Handler;
+import android.util.Log;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -14,6 +15,8 @@ import org.json.JSONObject;
 import okhttp3.OkHttpClient;
 
 final class ServerGroupController {
+    private static final String TAG = "ServerGroupController";
+
     final ServerConfig server;
     final LinearLayout subList;
     final StatusIndicatorView status;
@@ -61,7 +64,9 @@ final class ServerGroupController {
 
                 @Override
                 public void onMonitorSession(JSONObject session) {
-                    if (belongsToCurrentServer(session)) {
+                    boolean belongs = belongsToCurrentServer(session);
+                    Log.i(TAG, "TitleTrace monitor session id=" + session.optString("id") + " termTitle=" + session.optString("termTitle") + " belongs=" + belongs);
+                    if (belongs) {
                         upsertLocalSession(session);
                     }
                 }
@@ -105,9 +110,6 @@ final class ServerGroupController {
         return monitor != null && monitor.isConnected();
     }
 
-    boolean isEnabled() {
-        return monitor != null && monitor.isEnabled();
-    }
 
     JSONArray getLastSessions() {
         return lastSessions;
@@ -160,36 +162,22 @@ final class ServerGroupController {
         if (!found) {
             lastSessions.put(newData);
         }
+        final boolean insertedNew = !found;
 
         final String rawTermTitle = newData.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = newData.optString("name", "").trim();
+        Log.i(TAG, "TitleTrace upsert row id=" + id + " termTitle=" + termTitle + " name=" + nameText + " active=" + listener.isActive(this));
         activity.runOnUiThread(() -> {
             View rowView = activity.findViewById(android.R.id.content).findViewWithTag(id);
             if (rowView != null) {
-                TextView titleView = rowView.findViewWithTag("title");
-                TextView subtitleView = rowView.findViewWithTag("subtitle");
-                if (titleView != null) {
-                    if (!nameText.isEmpty()) {
-                        titleView.setText(nameText);
-                    } else {
-                        titleView.setText(termTitle);
-                    }
+                if (activity instanceof SessionRowActions) {
+                    SessionRowHelper.updateSessionRow((SessionRowActions) activity, rowView, newData, server);
                 }
-                if (subtitleView != null) {
-                    if (!nameText.isEmpty()) {
-                        subtitleView.setText(termTitle);
-                        subtitleView.setVisibility(View.VISIBLE);
-                    } else {
-                        subtitleView.setVisibility(View.GONE);
-                    }
-                }
+            } else if (insertedNew && listener.isActive(this)) {
+                listener.onRenderSessions(server, lastSessions, subList);
             }
         });
-
-        if (listener.isActive(this)) {
-            activity.runOnUiThread(() -> listener.onRenderSessions(server, lastSessions, subList));
-        }
     }
 
     private void removeLocalSession(String id) {

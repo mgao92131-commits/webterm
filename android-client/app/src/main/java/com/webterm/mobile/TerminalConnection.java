@@ -24,16 +24,22 @@ final class TerminalConnection {
     private static final long RESIZE_DEBOUNCE_MS = 100L;
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
 
+    enum State {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        RECONNECTING
+    }
+
     private final OkHttpClient http;
+    private final OkHttpClient terminalHttp;
     private final Handler mainHandler;
     private final Listener listener;
 
     private WebSocket webSocket;
-    private boolean connected;
+    private volatile State state = State.DISCONNECTED;
     private int socketGeneration;
     private int reconnectAttempts;
-    private boolean reconnectScheduled;
-    private boolean closed = true;
 
     private String baseUrl;
     private String cookie;
@@ -45,15 +51,23 @@ final class TerminalConnection {
     private int sentRows;
 
     private final Runnable reconnectRunnable = () -> {
-        reconnectScheduled = false;
-        if (!closed && !connected) connectNow();
+        if (state == State.RECONNECTING) {
+            connectNow();
+        }
     };
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
     TerminalConnection(OkHttpClient http, Handler mainHandler, Listener listener) {
         this.http = http;
+        this.terminalHttp = http.newBuilder()
+            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build();
         this.mainHandler = mainHandler;
         this.listener = listener;
+    }
+
+    State getState() {
+        return state;
     }
 
     void connect(String baseUrl, String cookie, String sessionId, long lastSeq) {
@@ -61,40 +75,40 @@ final class TerminalConnection {
         this.cookie = cookie;
         this.sessionId = sessionId;
         this.lastSeq = lastSeq;
-        closed = false;
-        reconnectAttempts = 0;
-        reconnectScheduled = false;
+        this.state = State.CONNECTING;
+        this.reconnectAttempts = 0;
         connectNow();
     }
 
     void reconnectNow() {
         mainHandler.removeCallbacks(reconnectRunnable);
-        reconnectScheduled = false;
-        closed = false;
-        reconnectAttempts = 0;
+        this.state = State.CONNECTING;
+        this.reconnectAttempts = 0;
         connectNow();
     }
 
-    void close(String reason) {
-        connected = false;
-        reconnectScheduled = false;
-        closed = true;
-        socketGeneration++;
-        mainHandler.removeCallbacks(reconnectRunnable);
-        mainHandler.removeCallbacks(sendResizeRunnable);
+    private void releaseSocket(String reason) {
         WebSocket ws = webSocket;
         webSocket = null;
         if (ws != null) {
-            ws.close(1000, reason);
+            try {
+                ws.close(1000, reason);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to close socket gracefully: " + e.getMessage(), e);
+            }
         }
     }
 
-    boolean hasSocket() {
-        return webSocket != null;
+    void close(String reason) {
+        this.state = State.DISCONNECTED;
+        this.socketGeneration++;
+        mainHandler.removeCallbacks(reconnectRunnable);
+        mainHandler.removeCallbacks(sendResizeRunnable);
+        releaseSocket(reason);
     }
 
     boolean isConnected() {
-        return connected;
+        return state == State.CONNECTED;
     }
 
     void updateLastSeq(long lastSeq) {
@@ -118,11 +132,10 @@ final class TerminalConnection {
     private void connectNow() {
         if (sessionId == null || baseUrl == null || cookie == null) return;
         if (webSocket != null) {
-            close("reconnecting");
-            closed = false;
+            releaseSocket("reconnecting");
         }
-        listener.onConnectionStatus("Connecting", false);
-        reconnectScheduled = false;
+        state = State.CONNECTING;
+        listener.onConnectionStatus(state, reconnectAttempts);
         int generation = ++socketGeneration;
         String encodedId = WebTermUrls.encodePath(sessionId);
         Request request = new Request.Builder()
@@ -130,20 +143,19 @@ final class TerminalConnection {
             .header("Cookie", cookie)
             .header("Sec-WebSocket-Protocol", BINARY_SUBPROTOCOL)
             .build();
-        webSocket = http.newWebSocket(request, new WebSocketListener() {
+        webSocket = terminalHttp.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
                 if (generation != socketGeneration) {
                     webSocket.close(1000, "stale socket");
                     return;
                 }
-                connected = true;
-                reconnectScheduled = false;
+                state = State.CONNECTED;
                 reconnectAttempts = 0;
                 sentColumns = 0;
                 sentRows = 0;
                 Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
-                listener.onConnectionStatus("Connected", true);
+                listener.onConnectionStatus(state, reconnectAttempts);
                 JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
                 if (columns > 0 && rows > 0) {
                     WebTermProtocol.put(hello, "cols", columns);
@@ -163,35 +175,45 @@ final class TerminalConnection {
 
             @Override
             public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
-                if (generation != socketGeneration) return;
-                connected = false;
-                String reason = describeFailure(t, response);
-                Log.e(TAG, "websocket failure gen=" + generation + " reason=" + reason, t);
-                if (!closed) scheduleReconnect(reason);
+                mainHandler.post(() -> {
+                    if (generation != socketGeneration) return;
+                    if (TerminalConnection.this.webSocket == webSocket) {
+                        releaseSocket("failed");
+                    }
+                    String reason = describeFailure(t, response);
+                    Log.e(TAG, "websocket failure gen=" + generation + " reason=" + reason, t);
+                    if (state != State.DISCONNECTED) scheduleReconnect(reason);
+                });
             }
 
             @Override
             public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                if (generation != socketGeneration) return;
-                connected = false;
-                String description = "Connection closed: " + code + (reason.isEmpty() ? "" : " " + reason);
-                Log.w(TAG, "websocket closed gen=" + generation + " reason=" + description);
-                if (!closed) scheduleReconnect(description);
+                mainHandler.post(() -> {
+                    if (generation != socketGeneration) return;
+                    if (TerminalConnection.this.webSocket == webSocket) {
+                        releaseSocket("closed");
+                    }
+                    String description = "Connection closed: " + code + (reason.isEmpty() ? "" : " " + reason);
+                    Log.w(TAG, "websocket closed gen=" + generation + " reason=" + description);
+                    if (state != State.DISCONNECTED) scheduleReconnect(description);
+                });
             }
         });
     }
 
     private void scheduleReconnect(String reason) {
-        if (closed || sessionId == null || cookie == null || baseUrl == null) return;
-        if (reconnectScheduled) return;
+        if (state == State.DISCONNECTED || sessionId == null || cookie == null || baseUrl == null) return;
+        if (state == State.RECONNECTING) return;
+        Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
+        state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
-        if (attempt > 8) {
-            listener.onConnectionStatus("Failed: " + reason, false);
-            return;
-        }
-        long delayMs = Math.min(1000L * attempt, 5000L);
-        reconnectScheduled = true;
-        listener.onConnectionStatus("Disconnected; reconnecting in " + delayMs + "ms", false);
+        
+        int shift = Math.min(attempt - 1, 30);
+        long baseDelayMs = Math.min(30000L, 1000L * (1L << shift));
+        double jitterPercent = (Math.random() - 0.5) * 0.5;
+        long delayMs = Math.round(baseDelayMs * (1 + jitterPercent));
+        
+        listener.onConnectionStatus(state, reconnectAttempts);
         mainHandler.postDelayed(reconnectRunnable, delayMs);
     }
 
@@ -241,7 +263,7 @@ final class TerminalConnection {
 
     private void scheduleResize() {
         mainHandler.removeCallbacks(sendResizeRunnable);
-        if (webSocket == null || !connected) return;
+        if (webSocket == null || state != State.CONNECTED) return;
         mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
     }
 
@@ -253,7 +275,7 @@ final class TerminalConnection {
         WebTermProtocol.put(resize, "cols", columns);
         WebTermProtocol.put(resize, "rows", rows);
         sendBinary(WebTermProtocol.MSG_RESIZE, resize.toString().getBytes(StandardCharsets.UTF_8));
-        if (webSocket != null && connected) {
+        if (webSocket != null && state == State.CONNECTED) {
             sentColumns = columns;
             sentRows = rows;
         }
@@ -261,7 +283,7 @@ final class TerminalConnection {
 
     private void sendBinary(byte type, byte[] payload) {
         WebSocket ws = webSocket;
-        if (ws == null || !connected) return;
+        if (ws == null || state != State.CONNECTED) return;
         ws.send(WebTermProtocol.frame(type, payload));
     }
 
@@ -278,7 +300,7 @@ final class TerminalConnection {
     }
 
     interface Listener {
-        void onConnectionStatus(String text, boolean connected);
+        void onConnectionStatus(State state, int reconnectAttempts);
         void onOutput(long seq, byte[] data);
         void onState(long seq, byte[] data);
         void onInfo(JSONObject info);

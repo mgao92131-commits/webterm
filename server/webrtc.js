@@ -142,7 +142,7 @@ export class P2PManager {
           }
         },
         sendBinary: (f) => {
-          try { dc.sendMessage(f); } catch (err) {
+          try { dc.sendMessageBinary(f); } catch (err) {
             console.error('[Agent WebRTC] Failed to send Binary over DC:', err.message);
           }
         }

@@ -363,7 +363,6 @@ final class HomeServerCoordinator {
 
     private boolean isActiveManagerHolder(ServerGroupController holder) {
         return listener.isHomeActive()
-            && holder.isEnabled()
             && hasAttachedTarget()
             && activeGroups.contains(holder);
     }
