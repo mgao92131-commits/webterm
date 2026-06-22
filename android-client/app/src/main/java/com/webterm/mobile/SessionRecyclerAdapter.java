@@ -164,6 +164,23 @@ final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerView.Vie
         return items.size();
     }
 
+    boolean isSessionRow(int position) {
+        if (position >= 0 && position < items.size()) {
+            return items.get(position).type == TYPE_SESSION;
+        }
+        return false;
+    }
+
+    String getSessionId(int position) {
+        if (position >= 0 && position < items.size()) {
+            RowItem item = items.get(position);
+            if (item.type == TYPE_SESSION && item.session != null) {
+                return item.session.optString("id");
+            }
+        }
+        return null;
+    }
+
     private void updateItems(List<RowItem> next) {
         List<RowItem> previous = new ArrayList<>(items);
         DiffUtil.DiffResult diff = DiffUtil.calculateDiff(new DiffCallback(previous, next));
@@ -221,7 +238,12 @@ final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerView.Vie
         LinearLayout row = new LinearLayout(parent.getContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(UIUtils.dp(parent.getContext(), 4), UIUtils.dp(parent.getContext(), 10), UIUtils.dp(parent.getContext(), 2), UIUtils.dp(parent.getContext(), 8));
+        row.setPadding(
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_2 + 2),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_2)
+        );
 
         LinearLayout textArea = new LinearLayout(parent.getContext());
         textArea.setOrientation(LinearLayout.VERTICAL);
@@ -229,16 +251,17 @@ final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerView.Vie
 
         TextView title = new TextView(parent.getContext());
         title.setTag("group_title");
-        title.setTextColor(Color.rgb(243, 244, 246));
-        title.setTextSize(16);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(DesignTokens.TEXT_PRIMARY);
+        title.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        title.setTypeface(DesignTokens.fontGeistSansSemibold(parent.getContext()));
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
 
         TextView subtitle = new TextView(parent.getContext());
         subtitle.setTag("group_subtitle");
-        subtitle.setTextColor(Color.rgb(107, 114, 128));
-        subtitle.setTextSize(11);
+        subtitle.setTextColor(DesignTokens.TEXT_TERTIARY);
+        subtitle.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
+        subtitle.setTypeface(DesignTokens.fontGeistMono(parent.getContext()));
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.START);
 
@@ -248,15 +271,21 @@ final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerView.Vie
 
         TextView count = new TextView(parent.getContext());
         count.setTag("group_count");
-        count.setTextColor(Color.rgb(156, 163, 175));
-        count.setTextSize(12);
+        count.setTextColor(DesignTokens.TEXT_SECONDARY);
+        count.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        count.setTypeface(DesignTokens.fontGeistMono(parent.getContext()));
         count.setGravity(Gravity.CENTER);
         row.addView(count, new LinearLayout.LayoutParams(UIUtils.dp(parent.getContext(), 38), UIUtils.dp(parent.getContext(), 32)));
 
         ImageView arrow = new ImageView(parent.getContext());
         arrow.setTag("group_arrow");
-        arrow.setColorFilter(Color.rgb(156, 163, 175));
-        arrow.setPadding(UIUtils.dp(parent.getContext(), 4), UIUtils.dp(parent.getContext(), 4), UIUtils.dp(parent.getContext(), 4), UIUtils.dp(parent.getContext(), 4));
+        arrow.setColorFilter(DesignTokens.TEXT_SECONDARY);
+        arrow.setPadding(
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1),
+            UIUtils.dp(parent.getContext(), DesignTokens.SPACE_1)
+        );
         row.addView(arrow, new LinearLayout.LayoutParams(UIUtils.dp(parent.getContext(), 28), UIUtils.dp(parent.getContext(), 32)));
         return row;
     }

@@ -17,22 +17,22 @@ final class RenameSessionDialogHelper {
 
         LinearLayout container = new LinearLayout(host.activity());
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(host.activity(), 24), UIUtils.dp(host.activity(), 24), UIUtils.dp(host.activity(), 24), UIUtils.dp(host.activity(), 24));
+        container.setPadding(
+            UIUtils.dp(host.activity(), DesignTokens.SPACE_5),
+            UIUtils.dp(host.activity(), DesignTokens.SPACE_5),
+            UIUtils.dp(host.activity(), DesignTokens.SPACE_5),
+            UIUtils.dp(host.activity(), DesignTokens.SPACE_5)
+        );
 
-        android.graphics.drawable.GradientDrawable containerBg = new android.graphics.drawable.GradientDrawable();
-        containerBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(host.activity(), 12));
-        containerBg.setStroke(UIUtils.dp(host.activity(), 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
+        container.setBackground(UIUtils.dialogBackground(host.activity()));
 
-        TextView titleView = new TextView(host.activity());
-        titleView.setText("✏️ 重命名会话");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, UIUtils.dp(host.activity(), 16));
-        container.addView(titleView);
+        container.addView(UIUtils.dialogTitleRow(
+            host.activity(),
+            com.webterm.mobile.R.drawable.ic_edit,
+            "重命名会话",
+            DesignTokens.TEXT_PRIMARY,
+            DesignTokens.ACCENT
+        ));
 
         EditText input = UIUtils.createInput(host.activity(), "输入新名称");
         input.setText(oldName);
@@ -41,7 +41,7 @@ final class RenameSessionDialogHelper {
         LinearLayout btnBar = new LinearLayout(host.activity());
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
         btnBar.setGravity(Gravity.END);
-        btnBar.setPadding(0, UIUtils.dp(host.activity(), 8), 0, 0);
+        btnBar.setPadding(0, UIUtils.dp(host.activity(), DesignTokens.SPACE_2), 0, 0);
 
         Button cancelBtn = new Button(host.activity());
         cancelBtn.setText("取消");
@@ -52,7 +52,7 @@ final class RenameSessionDialogHelper {
         UIUtils.styleDialogButton(host.activity(), submitBtn, true);
 
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(host.activity(), 100), UIUtils.dp(host.activity(), 40));
-        btnLp.setMargins(UIUtils.dp(host.activity(), 12), 0, 0, 0);
+        btnLp.setMargins(UIUtils.dp(host.activity(), DesignTokens.SPACE_3), 0, 0, 0);
 
         btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(UIUtils.dp(host.activity(), 80), UIUtils.dp(host.activity(), 40)));
         btnBar.addView(submitBtn, btnLp);
@@ -62,9 +62,9 @@ final class RenameSessionDialogHelper {
         final AlertDialog dialog = builder.create();
         dialog.show();
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
             dialog.getWindow().clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | 
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                 android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
             );
             dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
@@ -73,7 +73,7 @@ final class RenameSessionDialogHelper {
         input.post(() -> {
             input.requestFocus();
             input.selectAll();
-            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) 
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
                 host.activity().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
             if (imm != null) {
                 imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);

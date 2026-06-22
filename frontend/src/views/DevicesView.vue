@@ -243,11 +243,32 @@ function cancelAdd() {
 
 async function copySecret() {
   try {
-    await navigator.clipboard.writeText(newSecret.value);
+    await writeClipboardText(newSecret.value);
     copied.value = true;
     setTimeout(() => { copied.value = false; }, 2000);
   } catch {
     loadError.value = '复制失败，请手动选择文本复制';
+  }
+}
+
+async function writeClipboardText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textArea = document.createElement('textarea');
+  textArea.value = value;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.left = '-9999px';
+  document.body.appendChild(textArea);
+  textArea.select();
+  try {
+    if (!document.execCommand('copy')) {
+      throw new Error('copy command failed');
+    }
+  } finally {
+    document.body.removeChild(textArea);
   }
 }
 

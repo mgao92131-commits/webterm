@@ -477,6 +477,7 @@ function connectManagerWS() {
   const currentWs = ws;
 
   ws.addEventListener("open", () => {
+    if (ws !== currentWs) return;
     store.connectionStates['manager'] = 'connected';
     reconnectAttempts = 0;
     if (reconnectTimer) {
@@ -484,9 +485,11 @@ function connectManagerWS() {
       reconnectTimer = null;
     }
     store.managerError = "";
+    stopPolling();
   });
 
   ws.addEventListener("message", (event) => {
+    if (ws !== currentWs) return;
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === "devices") {

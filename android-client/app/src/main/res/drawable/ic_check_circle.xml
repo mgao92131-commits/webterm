@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- lucide: circle-check (成功) -->
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M21.801,10A10,10 0,1 1,17 3.335"/>
+  <path
+      android:fillColor="#FF0A0A0B"
+      android:pathData="m9,11 3,3L22,4"/>
+</vector>

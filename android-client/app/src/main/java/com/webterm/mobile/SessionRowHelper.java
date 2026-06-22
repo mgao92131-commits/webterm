@@ -8,6 +8,7 @@ import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import org.json.JSONArray;
@@ -29,7 +30,12 @@ public final class SessionRowHelper {
 
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(UIUtils.dp(context, 14), UIUtils.dp(context, 12), UIUtils.dp(context, 14), UIUtils.dp(context, 12));
+        content.setPadding(
+            UIUtils.dp(context, DesignTokens.CARD_PADDING_HORIZONTAL),
+            UIUtils.dp(context, DesignTokens.CARD_PADDING_VERTICAL),
+            UIUtils.dp(context, DesignTokens.CARD_PADDING_HORIZONTAL),
+            UIUtils.dp(context, DesignTokens.CARD_PADDING_VERTICAL)
+        );
 
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -41,16 +47,16 @@ public final class SessionRowHelper {
 
         TextView titleView = new TextView(context);
         titleView.setTag("title");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(15);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setTextColor(DesignTokens.TEXT_PRIMARY);
+        titleView.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        titleView.setTypeface(DesignTokens.fontGeistSansSemibold(context));
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
 
         TextView subtitleView = new TextView(context);
         subtitleView.setTag("subtitle");
-        subtitleView.setTextColor(Color.rgb(156, 163, 175));
-        subtitleView.setTextSize(11);
+        subtitleView.setTextColor(DesignTokens.TEXT_SECONDARY);
+        subtitleView.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
         subtitleView.setSingleLine(true);
         subtitleView.setEllipsize(TextUtils.TruncateAt.END);
 
@@ -67,19 +73,6 @@ public final class SessionRowHelper {
 
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
-        TextView closeBtn = new TextView(context);
-        closeBtn.setTag("close");
-        closeBtn.setText("✕");
-        closeBtn.setTextColor(Color.rgb(107, 114, 128)); // 弱化关闭按钮颜色，避免视觉喧宾夺主
-        closeBtn.setTextSize(14);
-        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeBtn.setGravity(Gravity.CENTER);
-
-        FrameLayout.LayoutParams closeLp = new FrameLayout.LayoutParams(UIUtils.dp(context, 32), UIUtils.dp(context, 32));
-        closeLp.gravity = Gravity.TOP | Gravity.END;
-        closeLp.setMargins(0, UIUtils.dp(context, 4), UIUtils.dp(context, 4), 0);
-        row.addView(closeBtn, closeLp);
-
         return row;
     }
 
@@ -87,7 +80,6 @@ public final class SessionRowHelper {
         TextView titleView = row.findViewWithTag("title");
         TextView subtitleView = row.findViewWithTag("subtitle");
         TextView recentView = row.findViewWithTag("recent_box");
-        TextView closeBtn = row.findViewWithTag("close");
 
         String id = session.optString("id");
         row.setTag(id); // 绑定 Tag 以便差分查找
@@ -123,10 +115,6 @@ public final class SessionRowHelper {
             actions.renameSession(server, id, nameText);
             return true;
         });
-
-        if (closeBtn != null) {
-            closeBtn.setOnClickListener((v) -> actions.closeSession(server, id));
-        }
     }
 
     private static void updateRecentInput(TextView recentView, JSONObject session) {
@@ -148,20 +136,26 @@ public final class SessionRowHelper {
     private static TextView recentInputBox(android.content.Context context, String text) {
         TextView view = new TextView(context);
         view.setText(text);
-        view.setTextColor(Color.rgb(52, 211, 153));
-        view.setTextSize(11);
-        view.setTypeface(Typeface.MONOSPACE);
+        // 最近输入预览用 secondary 灰（与 Web 端 text-text-secondary 对齐），不再使用绿色（绿色暗示成功/在线）
+        view.setTextColor(DesignTokens.TEXT_SECONDARY);
+        view.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
+        view.setTypeface(DesignTokens.fontGeistMono(context));
         view.setMaxLines(2);
         view.setEllipsize(TextUtils.TruncateAt.END);
-        view.setPadding(UIUtils.dp(context, 8), UIUtils.dp(context, 6), UIUtils.dp(context, 8), UIUtils.dp(context, 6));
+        view.setPadding(
+            UIUtils.dp(context, DesignTokens.SPACE_2),
+            UIUtils.dp(context, DesignTokens.SPACE_1 + 2),
+            UIUtils.dp(context, DesignTokens.SPACE_2),
+            UIUtils.dp(context, DesignTokens.SPACE_1 + 2)
+        );
 
         GradientDrawable gd = new GradientDrawable();
-        gd.setColor(Color.rgb(10, 10, 12));
-        gd.setCornerRadius(UIUtils.dp(context, 4));
+        gd.setColor(DesignTokens.BG_PRIMARY);
+        gd.setCornerRadius(UIUtils.dp(context, DesignTokens.RADIUS_SM));
         view.setBackground(gd);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, UIUtils.dp(context, 8), 0, 0);
+        lp.setMargins(0, UIUtils.dp(context, DesignTokens.SPACE_2), 0, 0);
         view.setLayoutParams(lp);
         return view;
     }

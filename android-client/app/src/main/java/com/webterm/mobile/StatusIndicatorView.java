@@ -48,14 +48,14 @@ public final class StatusIndicatorView extends View {
         if (bg == null) return;
         switch (status) {
             case CONNECTED:
-                bg.setColor(Color.rgb(16, 185, 129)); // Green
+                bg.setColor(DesignTokens.SUCCESS);
                 break;
             case CONNECTING:
-                bg.setColor(Color.rgb(245, 158, 11)); // Yellow
+                bg.setColor(DesignTokens.WARNING);
                 startAnimation(connectingAnimation);
                 break;
             case DISCONNECTED:
-                bg.setColor(Color.rgb(239, 68, 68)); // Red
+                bg.setColor(DesignTokens.DANGER);
                 break;
         }
     }

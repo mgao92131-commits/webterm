@@ -3,9 +3,16 @@ import { constants } from 'node:fs';
 import { accessSync, existsSync, statSync } from 'node:fs';
 import { spawn } from 'node-pty';
 
-export function defaultShell(env = process.env) {
-  if (process.platform === 'win32') {
-    return { command: env.WEBTERM_SHELL || 'pwsh.exe', args: ['-NoLogo'] };
+export function defaultShell(env = process.env, platform = process.platform) {
+  if (platform === 'win32') {
+    const command = findWindowsShell(env);
+    if (!command) {
+      throw new Error('no executable shell found; set WEBTERM_SHELL to a valid shell path');
+    }
+    return {
+      command,
+      args: command.toLowerCase().endsWith('cmd.exe') ? [] : ['-NoLogo'],
+    };
   }
   const candidates = [
     env.WEBTERM_SHELL,
@@ -64,4 +71,34 @@ function isExecutableFile(candidate) {
   } catch {
     return false;
   }
+}
+
+function findWindowsShell(env) {
+  if (env.WEBTERM_SHELL) return env.WEBTERM_SHELL;
+  const candidates = [
+    env.ComSpec,
+    'pwsh.exe',
+    'powershell.exe',
+    'cmd.exe',
+  ];
+  return candidates.find((candidate) => isWindowsCommand(candidate, env));
+}
+
+function isWindowsCommand(candidate, env) {
+  if (!candidate) return false;
+  if (/[\\/]/.test(candidate)) return existsSync(candidate);
+  const pathValue = env.PATH || env.Path || '';
+  const extensions = (env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
+    .split(';')
+    .filter(Boolean);
+  const names = /\.[^\\/]+$/.test(candidate)
+    ? [candidate]
+    : extensions.map((ext) => `${candidate}${ext}`);
+  for (const dir of pathValue.split(';').filter(Boolean)) {
+    for (const name of names) {
+      if (existsSync(`${dir}\\${name}`)) return true;
+      if (existsSync(`${dir}/${name}`)) return true;
+    }
+  }
+  return false;
 }

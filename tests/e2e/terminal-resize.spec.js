@@ -1,11 +1,55 @@
 import { expect, test } from "@playwright/test";
-import { expectTerminalSized, openTerminal } from "./helpers.js";
+import { expectTerminalSized, openTerminal, sendDebugInput } from "./helpers.js";
 
 test("terminal keeps valid dimensions across desktop and mobile resizes", async ({ page }) => {
   await openTerminal(page);
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expectTerminalSized(page);
+  const tallState = await page.evaluate(() => ({
+    rows: window.__webtermDebug.termState().rows,
+    resizeMessageCount: window.__webtermDebug.layoutState().resizeMessageCount,
+  }));
+
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift");
+    return parseInt(raw, 10) || 0;
+  })).toBe(0);
+  expect(await page.evaluate(() => window.__webtermDebug.termState().rows)).toBe(tallState.rows);
+  expect(await page.evaluate(() => window.__webtermDebug.layoutState().resizeMessageCount)).toBe(tallState.resizeMessageCount);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift");
+    return parseInt(raw, 10) || 0;
+  })).toBe(0);
+  await sendDebugInput(page, "for i in $(seq 1 80); do echo DESKTOP_SHIFT_$i; done\n");
+  await expect.poll(async () => page.evaluate(() => window.__webtermDebug.termState().text)).toContain("DESKTOP_SHIFT_80");
+  await page.waitForTimeout(250);
+
+  const bottomState = await page.evaluate(() => ({
+    rows: window.__webtermDebug.termState().rows,
+    resizeMessageCount: window.__webtermDebug.layoutState().resizeMessageCount,
+  }));
+
+  await page.setViewportSize({ width: 1280, height: 520 });
+  expect(await page.evaluate(() => window.__webtermDebug.termState().rows)).toBe(bottomState.rows);
+  expect(await page.evaluate(() => window.__webtermDebug.layoutState().resizeMessageCount)).toBe(bottomState.resizeMessageCount);
+  await page.evaluate(() => {
+    window.__webtermDebug.scrollToLine(999999);
+    window.__webtermDebug.keyboardAvoidance();
+  });
+
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift");
+    return parseInt(raw, 10) || 0;
+  })).toBeGreaterThan(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const terminalBottom = document.querySelector("#terminal-container")?.getBoundingClientRect().bottom || 0;
+    const quickbarTop = document.querySelector(".quickbar")?.getBoundingClientRect().top || 0;
+    return Math.abs(quickbarTop - terminalBottom);
+  })).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectTerminalSized(page);

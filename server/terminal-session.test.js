@@ -124,6 +124,20 @@ test('broadcast closes slow clients when the send queue overflows', () => {
   assert.equal(session.clients.size, 0);
 });
 
+test('json clients batch high frequency output frames', async () => {
+  const session = fakeSession({ latestSeq: 0 });
+  const ws = fakeWebSocket();
+  TerminalSession.prototype.attach.call(session, ws);
+  ws.emitMessage({ type: 'hello', lastSeq: 0 });
+  ws.sent = [];
+
+  TerminalSession.prototype.broadcast.call(session, { type: 'output', seq: 1, data: 'a', batch: true });
+  TerminalSession.prototype.broadcast.call(session, { type: 'output', seq: 2, data: 'b', batch: true });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(ws.sent, [{ type: 'output', seq: 2, data: 'ab' }]);
+});
+
 test('binary hello replays output frames with seq prefix', () => {
   const session = fakeSession({ latestSeq: 3 });
   const ws = fakeWebSocket();

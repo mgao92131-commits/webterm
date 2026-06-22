@@ -11,23 +11,34 @@ export class EventRing {
   push(data) {
     const text = String(data ?? '');
     const bytes = Buffer.from(text, 'utf8');
+    const seq = this.nextSeq++;
     const frame = {
-      seq: this.nextSeq++,
-      data: text,
-      text,
+      seq,
       bytes,
       byteLength: bytes.length,
     };
     this.frames.push(frame);
     this.bytes += frame.byteLength;
     this.trim();
-    return frame;
+    return { seq, data: text, text, bytes, byteLength: bytes.length };
   }
 
   after(seq) {
-    return this.activeFrames()
-      .filter((frame) => frame.seq > seq)
-      .map(({ seq, data, text, bytes }) => ({ seq, data, text, bytes }));
+    const frames = this.activeFrames();
+    let low = 0;
+    let high = frames.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (frames[mid].seq <= seq) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return frames.slice(low).map(({ seq, bytes }) => {
+      const text = bytes.toString('utf8');
+      return { seq, data: text, text, bytes };
+    });
   }
 
   canReplayFrom(seq) {

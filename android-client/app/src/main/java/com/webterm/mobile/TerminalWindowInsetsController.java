@@ -22,12 +22,32 @@ final class TerminalWindowInsetsController {
         boolean avoidImeWithPadding,
         ImeOverlapCallback callback
     ) {
+        installRootInsets(activity, root, baseLeft, baseTop, baseRight, baseBottom,
+            avoidImeWithPadding, true, callback);
+    }
+
+    /**
+     * @param includeStatusBar 是否把状态栏 inset 加到 root.paddingTop。
+     *        新方案：顶栏自己吸收 statusBar inset（用 {@link UIUtils#installTopbarInset}），
+     *        root 这里传 false 避免双重 inset。
+     */
+    static void installRootInsets(
+        Activity activity,
+        View root,
+        int baseLeft,
+        int baseTop,
+        int baseRight,
+        int baseBottom,
+        boolean avoidImeWithPadding,
+        boolean includeStatusBar,
+        ImeOverlapCallback callback
+    ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             root.setPadding(baseLeft, baseTop, baseRight, baseBottom);
             return;
         }
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            int statusTop = insets.getInsets(WindowInsets.Type.statusBars()).top;
+            int statusTop = includeStatusBar ? insets.getInsets(WindowInsets.Type.statusBars()).top : 0;
             int navBottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
             int imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
             int imeOverlap = Math.max(0, imeBottom - navBottom);
@@ -49,6 +69,34 @@ final class TerminalWindowInsetsController {
                 @Override
                 public void onViewDetachedFromWindow(View view) {
                 }
+            });
+        }
+    }
+
+    /**
+     * 单独为顶栏安装 statusBar inset 监听，让 topbar 自己 paddingTop = statusBarHeight。
+     * 顶栏背景延伸到屏幕顶端（覆盖状态栏区域），与状态栏图标融为一体。
+     */
+    static void installTopbarInset(View topbar) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        topbar.setOnApplyWindowInsetsListener((view, insets) -> {
+            int statusTop = insets.getInsets(WindowInsets.Type.statusBars()).top;
+            view.setPadding(view.getPaddingLeft(), statusTop, view.getPaddingRight(), view.getPaddingBottom());
+            return insets;
+        });
+        if (topbar.isAttachedToWindow()) {
+            topbar.requestApplyInsets();
+        } else {
+            topbar.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewAttachedToWindow(View view) {
+                    view.removeOnAttachStateChangeListener(this);
+                    view.requestApplyInsets();
+                }
+                @Override
+                public void onViewDetachedFromWindow(View view) {}
             });
         }
     }

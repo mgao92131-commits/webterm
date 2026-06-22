@@ -63,7 +63,7 @@ router.beforeEach(async (to, _from, next) => {
       }
     } catch {
       if (!isPublicRoute) {
-        next({ name: 'Login' });
+        next({ name: 'Login', query: { redirect: to.fullPath } });
       } else {
         next();
       }

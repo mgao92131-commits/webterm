@@ -17,6 +17,7 @@ import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -52,14 +53,14 @@ final class TodoDialogHelper {
 
         LinearLayout container = new LinearLayout(activity);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(activity, 20), UIUtils.dp(activity, 20), UIUtils.dp(activity, 20), UIUtils.dp(activity, 20));
+        container.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5)
+        );
 
-        android.graphics.drawable.GradientDrawable containerBg = new android.graphics.drawable.GradientDrawable();
-        containerBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(activity, 12));
-        containerBg.setStroke(UIUtils.dp(activity, 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
+        container.setBackground(UIUtils.dialogBackground(activity));
 
         // 创建常驻的物理隐藏焦点锚点 (Focus Anchor)，防止重绘失焦时软键盘下落
         final EditText focusAnchor = new EditText(activity);
@@ -80,37 +81,56 @@ final class TodoDialogHelper {
         // 添加到 container 最上方，长宽设为 1px 隐藏
         container.addView(focusAnchor, 0, new LinearLayout.LayoutParams(1, 1));
 
-        // 顶部 Header: 标题 + 右上角关闭按钮 ✕
+        // 顶部 Header: 标题(图标+文字) + 右上角关闭按钮(ImageView)
         LinearLayout header = new LinearLayout(activity);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, 0, 0, UIUtils.dp(activity, 12));
+        header.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_3));
 
-        TextView titleView = new TextView(activity);
-        titleView.setText("📋 会话任务清单");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(17);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        // 标题行：ic_todo + "会话任务清单"
+        LinearLayout titleRow = new LinearLayout(activity);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView titleIcon = new ImageView(activity);
+        titleIcon.setImageResource(com.webterm.mobile.R.drawable.ic_todo);
+        titleIcon.setColorFilter(DesignTokens.ACCENT);
+        int titleIconSize = (int) DesignTokens.TEXT_DIALOG_TITLE + 2;
+        LinearLayout.LayoutParams titleIconLp = new LinearLayout.LayoutParams(
+                UIUtils.dp(activity, titleIconSize),
+                UIUtils.dp(activity, titleIconSize));
+        titleIconLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
+        titleRow.addView(titleIcon, titleIconLp);
+        TextView titleText = new TextView(activity);
+        titleText.setText("会话任务清单");
+        titleText.setTextColor(DesignTokens.TEXT_PRIMARY);
+        titleText.setTextSize(DesignTokens.TEXT_DIALOG_TITLE);
+        titleText.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
+        titleRow.addView(titleText);
 
-        TextView closeBtn = new TextView(activity);
-        closeBtn.setText("✕");
-        closeBtn.setTextColor(Color.rgb(156, 163, 175));
-        closeBtn.setTextSize(18);
-        closeBtn.setGravity(Gravity.CENTER);
-        closeBtn.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8), UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
+        // 关闭按钮：ImageView (ic_close)
+        ImageView closeBtn = new ImageView(activity);
+        closeBtn.setImageResource(com.webterm.mobile.R.drawable.ic_close);
+        closeBtn.setColorFilter(DesignTokens.TEXT_SECONDARY);
+        closeBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        closeBtn.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2)
+        );
 
-        header.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(titleRow, new LinearLayout.LayoutParams(0, -2, 1));
         header.addView(closeBtn, new LinearLayout.LayoutParams(-2, -2));
         container.addView(header);
 
         ScrollView scrollView = new ScrollView(activity);
         scrollView.setClipToPadding(false);
         scrollView.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
-        
+
         LinearLayout listLayout = new LinearLayout(activity);
         listLayout.setOrientation(LinearLayout.VERTICAL);
         scrollView.addView(listLayout, new ViewGroup.LayoutParams(-1, -2));
-        
+
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1);
         scrollView.setLayoutParams(scrollLp);
         container.addView(scrollView);
@@ -118,12 +138,12 @@ final class TodoDialogHelper {
         builder.setView(container);
         final AlertDialog dialog = builder.create();
         dialog.show();
-        
+
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
             // 确保窗口处于始终显示输入法模式
             dialog.getWindow().clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | 
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                 android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
             );
             dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -207,13 +227,13 @@ final class TodoDialogHelper {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, UIUtils.dp(activity, 4), 0, UIUtils.dp(activity, 4));
+        row.setPadding(0, UIUtils.dp(activity, DesignTokens.SPACE_1), 0, UIUtils.dp(activity, DesignTokens.SPACE_1));
         row.setTag(item);
 
         CheckBox checkBox = new CheckBox(activity);
         checkBox.setTag("checkbox");
         checkBox.setChecked(item.completed);
-        checkBox.setButtonTintList(ColorStateList.valueOf(Color.rgb(52, 211, 153))); // 极客绿
+        checkBox.setButtonTintList(ColorStateList.valueOf(DesignTokens.ACCENT));
 
         EditText editText = new EditText(activity);
         editText.setTag("edittext");
@@ -224,18 +244,23 @@ final class TodoDialogHelper {
         editText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         // 关键：拦截多行默认回车打入 \n 的行为，强制在软键盘上显示 IME_ACTION_NEXT（下一步/回车弯箭头）
         editText.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_ENTER_ACTION | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        editText.setTextSize(14);
-        editText.setTextColor(item.completed ? Color.rgb(107, 114, 128) : Color.rgb(243, 244, 246));
+        editText.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        editText.setTextColor(item.completed ? DesignTokens.TEXT_TERTIARY : DesignTokens.TEXT_PRIMARY);
         if (item.completed) {
             editText.setPaintFlags(editText.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
         }
 
-        TextView delBtn = new TextView(activity);
-        delBtn.setText("✕");
-        delBtn.setTextColor(Color.rgb(156, 163, 175));
-        delBtn.setTextSize(14);
-        delBtn.setGravity(Gravity.CENTER);
-        delBtn.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8), UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
+        // 行内删除按钮：ImageView (ic_close)
+        ImageView delBtn = new ImageView(activity);
+        delBtn.setImageResource(com.webterm.mobile.R.drawable.ic_close);
+        delBtn.setColorFilter(DesignTokens.TEXT_SECONDARY);
+        delBtn.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        delBtn.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2)
+        );
         delBtn.setVisibility(View.INVISIBLE); // 默认隐藏，获得焦点才显示
 
         // 监听焦点以控制删除按钮显示/隐藏（防抖动占位）
@@ -247,10 +272,10 @@ final class TodoDialogHelper {
         checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
             item.completed = isChecked;
             if (isChecked) {
-                editText.setTextColor(Color.rgb(107, 114, 128));
+                editText.setTextColor(DesignTokens.TEXT_TERTIARY);
                 editText.setPaintFlags(editText.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
             } else {
-                editText.setTextColor(Color.rgb(243, 244, 246));
+                editText.setTextColor(DesignTokens.TEXT_PRIMARY);
                 editText.setPaintFlags(editText.getPaintFlags() & (~Paint.STRIKE_THRU_TEXT_FLAG));
             }
             saveCurrentState(activity, sessionId, listLayout);
@@ -362,7 +387,7 @@ final class TodoDialogHelper {
 
         row.addView(checkBox, new LinearLayout.LayoutParams(UIUtils.dp(activity, 32), UIUtils.dp(activity, 32)));
         row.addView(editText, new LinearLayout.LayoutParams(0, -2, 1));
-        row.addView(delBtn, new LinearLayout.LayoutParams(-2, -2));
+        row.addView(delBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 32), UIUtils.dp(activity, 32)));
         return row;
     }
 
@@ -370,26 +395,26 @@ final class TodoDialogHelper {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, UIUtils.dp(activity, 4), 0, UIUtils.dp(activity, 4));
+        row.setPadding(0, UIUtils.dp(activity, DesignTokens.SPACE_1), 0, UIUtils.dp(activity, DesignTokens.SPACE_1));
 
         TextView addIcon = new TextView(activity);
         addIcon.setText("+");
-        addIcon.setTextColor(Color.rgb(107, 114, 128));
-        addIcon.setTextSize(18);
+        addIcon.setTextColor(DesignTokens.TEXT_TERTIARY);
+        addIcon.setTextSize(DesignTokens.TEXT_BODY_SIZE + 2);
         addIcon.setGravity(Gravity.CENTER);
-        addIcon.setPadding(UIUtils.dp(activity, 6), 0, UIUtils.dp(activity, 6), 0);
+        addIcon.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_1 + 2), 0, UIUtils.dp(activity, DesignTokens.SPACE_1 + 2), 0);
 
         EditText editText = new EditText(activity);
         editText.setTag("edittext");
         editText.setHint("新增任务...");
-        editText.setHintTextColor(Color.rgb(107, 114, 128));
-        editText.setTextColor(Color.rgb(243, 244, 246));
+        editText.setHintTextColor(DesignTokens.TEXT_TERTIARY);
+        editText.setTextColor(DesignTokens.TEXT_PRIMARY);
         editText.setBackground(null);
         // 新建输入框也设置为多行（但通过 Ime 拦截回车动作跳转）
         editText.setSingleLine(false);
         editText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         editText.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_ENTER_ACTION | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        editText.setTextSize(14);
+        editText.setTextSize(DesignTokens.TEXT_BODY_SIZE);
 
         // 监听回车，将输入变成正式任务插入到它的上方
         editText.setOnEditorActionListener((v, actionId, event) -> {

@@ -66,7 +66,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().getDecorView().setBackgroundColor(Color.rgb(15, 15, 18));
+        getWindow().getDecorView().setBackgroundColor(DesignTokens.BG_PRIMARY);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -224,7 +224,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         );
         mHomeSubtitle = home.subtitle;
         mRelayCoordinator.attachSubtitle(home.subtitle);
-        installRootInsets(home.root, dp(20), dp(8), dp(20), dp(16), true);
+        mRelayCoordinator.attachStatusDot(home.homeStatus);
+        installRootInsets(home.root, 0, 0, 0, dp(16), true, true);
         mSessionList = home.sessionList;
         loadMultiSessions();
         setContentViewAnimated(home.root, transition);
@@ -281,14 +282,90 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             () -> confirmRemoveServer(server)
         );
         mSelectedServerStatus = screen.status;
-        installRootInsets(screen.root, dp(20), dp(8), dp(20), dp(16), true);
+        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
         mSessionAdapter = new SessionRecyclerAdapter(this, this, this::loadSelectedDeviceSessions);
         screen.sessionList.setAdapter(mSessionAdapter);
+        setupSwipeToDelete(screen.sessionList, mSessionAdapter);
         if (mHomeCoordinator != null) {
             mHomeCoordinator.attachSessionAdapter(mSessionAdapter);
             mHomeCoordinator.loadDeviceSessions(server, mSelectedServerStatus);
         }
         setContentViewAnimated(screen.root, transition);
+    }
+
+    private void setupSwipeToDelete(androidx.recyclerview.widget.RecyclerView recyclerView, final SessionRecyclerAdapter adapter) {
+        androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback swipeCallback = new androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback(0, androidx.recyclerview.widget.ItemTouchHelper.LEFT) {
+            @Override
+            public boolean onMove(androidx.recyclerview.widget.RecyclerView recyclerView, androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder, androidx.recyclerview.widget.RecyclerView.ViewHolder target) {
+                return false;
+            }
+
+            @Override
+            public void onSwiped(androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder, int direction) {
+                final int position = viewHolder.getAdapterPosition();
+                if (position == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return;
+
+                String sessionId = adapter.getSessionId(position);
+                if (sessionId != null) {
+                    closeSession(mSelectedServer, sessionId);
+                }
+                adapter.notifyItemChanged(position);
+            }
+
+            @Override
+            public int getSwipeDirs(androidx.recyclerview.widget.RecyclerView recyclerView, androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder) {
+                int position = viewHolder.getAdapterPosition();
+                if (position != androidx.recyclerview.widget.RecyclerView.NO_POSITION && adapter.isSessionRow(position)) {
+                    return androidx.recyclerview.widget.ItemTouchHelper.LEFT;
+                }
+                return 0;
+            }
+
+            @Override
+            public void onChildDraw(
+                android.graphics.Canvas c,
+                androidx.recyclerview.widget.RecyclerView recyclerView,
+                androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder,
+                float dX,
+                float dY,
+                int actionState,
+                boolean isCurrentlyActive
+            ) {
+                if (actionState == androidx.recyclerview.widget.ItemTouchHelper.ACTION_STATE_SWIPE && dX < 0) {
+                    android.view.View itemView = viewHolder.itemView;
+                    android.graphics.Paint paint = new android.graphics.Paint();
+                    paint.setColor(DesignTokens.DANGER);
+                    
+                    android.graphics.RectF background = new android.graphics.RectF(
+                        itemView.getRight() + dX,
+                        itemView.getTop(),
+                        itemView.getRight(),
+                        itemView.getBottom()
+                    );
+                    c.drawRect(background, paint);
+
+                    paint.setColor(android.graphics.Color.WHITE);
+                    paint.setTextSize(UIUtils.dp(MainActivity.this, 14));
+                    paint.setAntiAlias(true);
+                    paint.setTypeface(DesignTokens.fontGeistSansSemibold(MainActivity.this));
+                    
+                    String text = "关闭会话";
+                    float textWidth = paint.measureText(text);
+                    android.graphics.Paint.FontMetrics fm = paint.getFontMetrics();
+                    float textHeight = fm.bottom - fm.top;
+                    
+                    float cardHeight = itemView.getHeight();
+                    float x = itemView.getRight() + dX / 2f - textWidth / 2f;
+                    float y = itemView.getTop() + cardHeight / 2f - textHeight / 2f - fm.top;
+                    
+                    if (-dX > textWidth + UIUtils.dp(MainActivity.this, 24)) {
+                        c.drawText(text, x, y, paint);
+                    }
+                }
+                super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive);
+            }
+        };
+        new androidx.recyclerview.widget.ItemTouchHelper(swipeCallback).attachToRecyclerView(recyclerView);
     }
 
     private void loadSelectedDeviceSessions() {
@@ -403,7 +480,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void installTerminalInsets(View root) {
-        TerminalWindowInsetsController.installRootInsets(this, root, 0, 0, 0, 0, false, (imeOverlap) -> {
+        TerminalWindowInsetsController.installRootInsets(this, root, 0, 0, 0, 0, false, true, (imeOverlap) -> {
             mImeOverlap = imeOverlap;
             updateKeyboardAvoidance();
         });
@@ -551,9 +628,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom,
-                                   boolean avoidImeWithPadding) {
+                                   boolean avoidImeWithPadding, boolean includeStatusBar) {
         TerminalWindowInsetsController.installRootInsets(this, root, baseLeft, baseTop, baseRight, baseBottom,
-            avoidImeWithPadding, (imeOverlap) -> {
+            avoidImeWithPadding, includeStatusBar, (imeOverlap) -> {
                 mImeOverlap = imeOverlap;
                 updateKeyboardAvoidance();
             });

@@ -20,22 +20,29 @@ public final class RelayConfigDialogHelper {
 
         LinearLayout container = new LinearLayout(activity);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24));
+        container.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5)
+        );
 
-        android.graphics.drawable.GradientDrawable containerBg = new android.graphics.drawable.GradientDrawable();
-        containerBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(activity, 12));
-        containerBg.setStroke(UIUtils.dp(activity, 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
+        container.setBackground(UIUtils.dialogBackground(activity));
 
-        TextView titleView = new TextView(activity);
-        titleView.setText(relayMaster == null ? "🔗 配置并登录中转服务" : "✏️ 修改中转服务配置");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, UIUtils.dp(activity, 16));
-        container.addView(titleView);
+        final LinearLayout[] titleRow = new LinearLayout[1];
+        String relayTitle = relayMaster == null ? "配置并登录中转服务" : "修改中转服务配置";
+        int relayIconRes = relayMaster == null
+            ? com.webterm.mobile.R.drawable.ic_link
+            : com.webterm.mobile.R.drawable.ic_edit;
+        titleRow[0] = UIUtils.dialogTitleRow(
+            activity,
+            relayIconRes,
+            relayTitle,
+            DesignTokens.TEXT_PRIMARY,
+            DesignTokens.ACCENT
+        );
+        titleRow[0].setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
+        container.addView(titleRow[0]);
 
         EditText url = UIUtils.createInput(activity, "中转服务 URL (如: http://10.0.0.5:9000)");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
@@ -58,16 +65,16 @@ public final class RelayConfigDialogHelper {
         container.addView(otpInput, UIUtils.matchWrap(activity));
 
         TextView errText = new TextView(activity);
-        errText.setTextColor(Color.rgb(239, 68, 68));
-        errText.setTextSize(12);
-        errText.setPadding(0, 0, 0, UIUtils.dp(activity, 12));
+        errText.setTextColor(DesignTokens.DANGER);
+        errText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        errText.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_3));
         errText.setVisibility(View.GONE);
         container.addView(errText, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout btnBar = new LinearLayout(activity);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
         btnBar.setGravity(Gravity.CENTER_VERTICAL);
-        btnBar.setPadding(0, UIUtils.dp(activity, 8), 0, 0);
+        btnBar.setPadding(0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0, 0);
 
         Button cancelBtn = new Button(activity);
         cancelBtn.setText("取消");
@@ -82,9 +89,9 @@ public final class RelayConfigDialogHelper {
             disconnectBtn = new Button(activity);
             disconnectBtn.setText("断开连接");
             UIUtils.styleDialogButton(activity, disconnectBtn, false);
-            disconnectBtn.setTextColor(Color.rgb(239, 68, 68));
+            disconnectBtn.setTextColor(DesignTokens.DANGER);
             LinearLayout.LayoutParams discLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 90), UIUtils.dp(activity, 40));
-            discLp.setMargins(0, 0, UIUtils.dp(activity, 8), 0);
+            discLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
             btnBar.addView(disconnectBtn, discLp);
         }
 
@@ -100,7 +107,7 @@ public final class RelayConfigDialogHelper {
         dialog.show();
 
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         }
 
         cancelBtn.setOnClickListener((v) -> dialog.dismiss());
@@ -132,7 +139,7 @@ public final class RelayConfigDialogHelper {
                 submitBtn.setEnabled(false);
                 cancelBtn.setEnabled(false);
                 errText.setText("Verifying OTP...");
-                errText.setTextColor(Color.rgb(245, 158, 11));
+                errText.setTextColor(DesignTokens.WARNING);
                 errText.setVisibility(View.VISIBLE);
 
                 host.verifyOtp(urlVal, userVal, codeVal, currentTargetDeviceId[0], currentCookie[0], new LoginCallback() {
@@ -153,7 +160,7 @@ public final class RelayConfigDialogHelper {
                             submitBtn.setEnabled(true);
                             cancelBtn.setEnabled(true);
                             errText.setText(message);
-                            errText.setTextColor(Color.rgb(239, 68, 68));
+                            errText.setTextColor(DesignTokens.DANGER);
                             errText.setVisibility(View.VISIBLE);
                         });
                     }
@@ -169,7 +176,7 @@ public final class RelayConfigDialogHelper {
                 if (finalDiscBtn != null) finalDiscBtn.setEnabled(false);
 
                 errText.setText("Connecting & Authenticating...");
-                errText.setTextColor(Color.rgb(245, 158, 11));
+                errText.setTextColor(DesignTokens.WARNING);
                 errText.setVisibility(View.VISIBLE);
 
                 host.loginRelay(urlVal, userVal, passVal, new LoginCallback() {
@@ -191,13 +198,23 @@ public final class RelayConfigDialogHelper {
                             user.setVisibility(View.GONE);
                             password.setVisibility(View.GONE);
                             otpInput.setVisibility(View.VISIBLE);
-                            titleView.setText("🛡️ 输入中转站验证码");
+                            // 替换标题为盾牌+OTP 文字
+                            container.removeView(titleRow[0]);
+                            titleRow[0] = UIUtils.dialogTitleRow(
+                                activity,
+                                com.webterm.mobile.R.drawable.ic_shield,
+                                "输入中转站验证码",
+                                DesignTokens.TEXT_PRIMARY,
+                                DesignTokens.ACCENT
+                            );
+                            titleRow[0].setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
+                            container.addView(titleRow[0], 0);
                             submitBtn.setText("验证并登录");
                             submitBtn.setEnabled(true);
                             cancelBtn.setEnabled(true);
                             if (finalDiscBtn != null) finalDiscBtn.setEnabled(true);
                             errText.setText("已发送验证码，请检查您的邮箱。");
-                            errText.setTextColor(Color.rgb(16, 185, 129));
+                            errText.setTextColor(DesignTokens.SUCCESS);
                             errText.setVisibility(View.VISIBLE);
                         });
                     }
@@ -209,7 +226,7 @@ public final class RelayConfigDialogHelper {
                             cancelBtn.setEnabled(true);
                             if (finalDiscBtn != null) finalDiscBtn.setEnabled(true);
                             errText.setText(message);
-                            errText.setTextColor(Color.rgb(239, 68, 68));
+                            errText.setTextColor(DesignTokens.DANGER);
                             errText.setVisibility(View.VISIBLE);
                         });
                     }

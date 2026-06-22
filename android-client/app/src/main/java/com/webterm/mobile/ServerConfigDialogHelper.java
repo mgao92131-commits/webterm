@@ -20,22 +20,32 @@ public final class ServerConfigDialogHelper {
 
         LinearLayout container = new LinearLayout(activity);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24));
+        container.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5)
+        );
 
-        android.graphics.drawable.GradientDrawable containerBg = new android.graphics.drawable.GradientDrawable();
-        containerBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(activity, 12));
-        containerBg.setStroke(UIUtils.dp(activity, 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
+        container.setBackground(UIUtils.dialogBackground(activity));
 
         TextView titleView = new TextView(activity);
-        titleView.setText(existingServer == null ? "➕ 连接并保存新电脑" : "✏️ 修改电脑配置");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, UIUtils.dp(activity, 16));
-        container.addView(titleView);
+        titleView.setText(existingServer == null ? "连接并保存新电脑" : "修改电脑配置");
+        titleView.setTextColor(DesignTokens.TEXT_PRIMARY);
+        titleView.setTextSize(DesignTokens.TEXT_DIALOG_TITLE);
+        titleView.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
+        titleView.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
+        String serverTitle = existingServer == null ? "连接并保存新电脑" : "修改电脑配置";
+        int serverIconRes = existingServer == null
+            ? com.webterm.mobile.R.drawable.ic_add
+            : com.webterm.mobile.R.drawable.ic_edit;
+        container.addView(UIUtils.dialogTitleRow(
+            activity,
+            serverIconRes,
+            serverTitle,
+            DesignTokens.TEXT_PRIMARY,
+            DesignTokens.ACCENT
+        ));
 
         EditText nickname = UIUtils.createInput(activity, "电脑名称 (如: 我的办公电脑)");
         nickname.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -58,16 +68,16 @@ public final class ServerConfigDialogHelper {
         container.addView(password, UIUtils.matchWrap(activity));
 
         TextView errText = new TextView(activity);
-        errText.setTextColor(Color.rgb(239, 68, 68));
-        errText.setTextSize(12);
-        errText.setPadding(0, 0, 0, UIUtils.dp(activity, 12));
+        errText.setTextColor(DesignTokens.DANGER);
+        errText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        errText.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_3));
         errText.setVisibility(View.GONE);
         container.addView(errText, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout btnBar = new LinearLayout(activity);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
         btnBar.setGravity(Gravity.END);
-        btnBar.setPadding(0, UIUtils.dp(activity, 8), 0, 0);
+        btnBar.setPadding(0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0, 0);
 
         Button cancelBtn = new Button(activity);
         cancelBtn.setText("取消");
@@ -78,7 +88,7 @@ public final class ServerConfigDialogHelper {
         UIUtils.styleDialogButton(activity, submitBtn, true);
 
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 100), UIUtils.dp(activity, 40));
-        btnLp.setMargins(UIUtils.dp(activity, 12), 0, 0, 0);
+        btnLp.setMargins(UIUtils.dp(activity, DesignTokens.SPACE_3), 0, 0, 0);
 
         btnBar.addView(cancelBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 80), UIUtils.dp(activity, 40)));
         btnBar.addView(submitBtn, btnLp);
@@ -89,7 +99,7 @@ public final class ServerConfigDialogHelper {
         dialog.show();
 
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         }
 
         cancelBtn.setOnClickListener((v) -> dialog.dismiss());
@@ -112,7 +122,7 @@ public final class ServerConfigDialogHelper {
             submitBtn.setEnabled(false);
             cancelBtn.setEnabled(false);
             errText.setText("Connecting...");
-            errText.setTextColor(Color.rgb(245, 158, 11));
+            errText.setTextColor(DesignTokens.WARNING);
             errText.setVisibility(View.VISIBLE);
 
             final String finalName = nameVal;
@@ -131,7 +141,7 @@ public final class ServerConfigDialogHelper {
                         submitBtn.setEnabled(true);
                         cancelBtn.setEnabled(true);
                         errText.setText(message);
-                        errText.setTextColor(Color.rgb(239, 68, 68));
+                        errText.setTextColor(DesignTokens.DANGER);
                         errText.setVisibility(View.VISIBLE);
                     });
                 }

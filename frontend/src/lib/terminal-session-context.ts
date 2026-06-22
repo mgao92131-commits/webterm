@@ -589,6 +589,10 @@ export class TerminalSessionContext implements IDisposable {
           wsReadyState: this.ws?.readyState ?? null,
         };
       },
+      keyboardAvoidance: () => {
+        this.layoutController?.debugKeyboardAvoidance();
+        return (window as any).__webtermDebug.scroll();
+      },
       writeQueue: () => {
         return this.terminalView?.stats() || null;
       },

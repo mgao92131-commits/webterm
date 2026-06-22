@@ -17,33 +17,39 @@ public final class SettingsDialogHelper {
 
         LinearLayout container = new LinearLayout(activity);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24));
+        container.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5)
+        );
 
-        android.graphics.drawable.GradientDrawable containerBg = new android.graphics.drawable.GradientDrawable();
-        containerBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        containerBg.setColor(Color.rgb(30, 30, 36));
-        containerBg.setCornerRadius(UIUtils.dp(activity, 12));
-        containerBg.setStroke(UIUtils.dp(activity, 1), Color.rgb(55, 65, 81));
-        container.setBackground(containerBg);
+        container.setBackground(UIUtils.dialogBackground(activity));
 
         TextView titleView = new TextView(activity);
-        titleView.setText("⚙️ 终端显示设置");
-        titleView.setTextColor(Color.rgb(243, 244, 246));
-        titleView.setTextSize(18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setPadding(0, 0, 0, UIUtils.dp(activity, 24));
-        container.addView(titleView);
+        titleView.setText("终端显示设置");
+        titleView.setTextColor(DesignTokens.TEXT_PRIMARY);
+        titleView.setTextSize(DesignTokens.TEXT_DIALOG_TITLE);
+        titleView.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
+        titleView.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_5));
+        container.addView(UIUtils.dialogTitleRow(
+            activity,
+            com.webterm.mobile.R.drawable.ic_settings,
+            "终端显示设置",
+            DesignTokens.TEXT_PRIMARY,
+            DesignTokens.TEXT_SECONDARY
+        ));
 
         // ----------------- 字号设置 (Stepper) -----------------
         LinearLayout fontSizeRow = new LinearLayout(activity);
         fontSizeRow.setOrientation(LinearLayout.HORIZONTAL);
         fontSizeRow.setGravity(Gravity.CENTER_VERTICAL);
-        fontSizeRow.setPadding(0, 0, 0, UIUtils.dp(activity, 16));
+        fontSizeRow.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
 
         TextView sizeLabel = new TextView(activity);
         sizeLabel.setText("终端字号");
-        sizeLabel.setTextColor(Color.rgb(229, 231, 235));
-        sizeLabel.setTextSize(14);
+        sizeLabel.setTextColor(DesignTokens.TEXT_PRIMARY);
+        sizeLabel.setTextSize(DesignTokens.TEXT_BODY_SIZE);
         fontSizeRow.addView(sizeLabel, new LinearLayout.LayoutParams(0, -2, 1));
 
         LinearLayout sizeStepper = new LinearLayout(activity);
@@ -56,9 +62,9 @@ public final class SettingsDialogHelper {
 
         TextView sizeValText = new TextView(activity);
         sizeValText.setText(String.valueOf(host.getSavedFontSize()));
-        sizeValText.setTextColor(Color.rgb(243, 244, 246));
-        sizeValText.setTextSize(16);
-        sizeValText.setTypeface(Typeface.MONOSPACE);
+        sizeValText.setTextColor(DesignTokens.TEXT_PRIMARY);
+        sizeValText.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        sizeValText.setTypeface(DesignTokens.fontGeistMono(activity));
         sizeValText.setGravity(Gravity.CENTER);
 
         Button sizeIncBtn = new Button(activity);
@@ -98,12 +104,12 @@ public final class SettingsDialogHelper {
         LinearLayout fontTypeRow = new LinearLayout(activity);
         fontTypeRow.setOrientation(LinearLayout.HORIZONTAL);
         fontTypeRow.setGravity(Gravity.CENTER_VERTICAL);
-        fontTypeRow.setPadding(0, 0, 0, UIUtils.dp(activity, 24));
+        fontTypeRow.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_5));
 
         TextView fontLabel = new TextView(activity);
         fontLabel.setText("终端字体");
-        fontLabel.setTextColor(Color.rgb(229, 231, 235));
-        fontLabel.setTextSize(14);
+        fontLabel.setTextColor(DesignTokens.TEXT_PRIMARY);
+        fontLabel.setTextSize(DesignTokens.TEXT_BODY_SIZE);
         fontTypeRow.addView(fontLabel, new LinearLayout.LayoutParams(0, -2, 1));
 
         LinearLayout fontStepper = new LinearLayout(activity);
@@ -116,9 +122,9 @@ public final class SettingsDialogHelper {
 
         TextView fontValText = new TextView(activity);
         fontValText.setText(host.getFontDisplayName(host.getSavedFontType()));
-        fontValText.setTextColor(Color.rgb(243, 244, 246));
-        fontValText.setTextSize(14);
-        fontValText.setTypeface(Typeface.DEFAULT_BOLD);
+        fontValText.setTextColor(DesignTokens.TEXT_PRIMARY);
+        fontValText.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        fontValText.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
         fontValText.setGravity(Gravity.CENTER);
 
         Button fontNextBtn = new Button(activity);
@@ -184,7 +190,7 @@ public final class SettingsDialogHelper {
         dialog.show();
 
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         }
         closeBtn.setOnClickListener((v) -> dialog.dismiss());
     }

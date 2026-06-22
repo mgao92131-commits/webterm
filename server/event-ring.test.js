@@ -39,3 +39,14 @@ test('event ring trims by byte count', () => {
   ring.push('c');
   assert.deepEqual(ring.after(0).map((f) => f.data), ['bb', 'c']);
 });
+
+test('event ring returns replay frames with decoded text from bytes', () => {
+  const ring = new EventRing(10, 1024);
+  const pushed = ring.push('α');
+  assert.equal(pushed.data, 'α');
+  assert.equal(pushed.text, 'α');
+  const [frame] = ring.after(0);
+  assert.equal(frame.data, 'α');
+  assert.equal(frame.text, 'α');
+  assert.ok(Buffer.isBuffer(frame.bytes));
+});

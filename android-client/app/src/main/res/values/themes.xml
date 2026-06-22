@@ -1,11 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.WebTermMobile" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#0F0F12</item>
-        <item name="android:colorAccent">#10B981</item>
-        <item name="android:navigationBarColor">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
+    <!--
+        WebTerm 主题（设计系统 v2）
+
+        父主题从 android:Theme.Material.Light.NoActionBar 改为 android:Theme.Material.NoActionBar，
+        避免系统级组件（PopupMenu、AlertDialog 默认样式）继承 Material Light 的浅色基调。
+
+        所有颜色均与 docs/design-system.md 一致（见 DesignTokens.java）：
+        - windowBackground = bg-primary    #0A0A0B
+        - colorAccent       = accent       #10B981
+        - statusBarColor    = bg-primary   沉浸式暗色
+        - navigationBarColor = bg-primary  沉浸式暗色
+    -->
+    <style name="Theme.WebTermMobile" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg_primary</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <!--
+            状态栏：bg_secondary (#111113)，与顶栏同色，视觉上连为一体。
+            导航栏：bg_primary (#0A0A0B)，与页面底色融合。
+        -->
+        <item name="android:statusBarColor">@color/bg_secondary</item>
+        <item name="android:navigationBarColor">@color/bg_primary</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>

@@ -1,10 +1,11 @@
 import { TerminalSession } from './terminal-session.js';
 
 export class SessionManager {
-  constructor() {
+  constructor({ SessionClass = TerminalSession } = {}) {
     this.sessions = new Map();
     this.managerClients = new Set();
     this.nextID = 1;
+    this.SessionClass = SessionClass;
   }
 
   list() {
@@ -16,14 +17,20 @@ export class SessionManager {
   }
 
   create({ name, cwd }) {
-    const id = `s${this.nextID++}`;
-    const session = new TerminalSession({
-      id,
-      name,
-      cwd,
-      onExit: (sessionID) => this.removeExited(sessionID),
-      onInfo: (info) => this.broadcastManager({ type: 'session', data: info }),
-    });
+    const id = `s${this.nextID}`;
+    let session;
+    try {
+      session = new this.SessionClass({
+        id,
+        name,
+        cwd,
+        onExit: (sessionID) => this.removeExited(sessionID),
+        onInfo: (info) => this.broadcastManager({ type: 'session', data: info }),
+      });
+    } catch (err) {
+      throw new Error(`failed to start terminal session: ${err.message}`);
+    }
+    this.nextID += 1;
     this.sessions.set(id, session);
     this.broadcastManager({ type: 'session', data: session.info() });
     return session;

@@ -45,7 +45,8 @@ export class AgentRegistry {
         userDevices.push({
           deviceId: agent.deviceId,
           deviceName: agent.deviceName,
-          status: 'online'
+          status: 'online',
+          online: true
         });
       }
     }
@@ -86,27 +87,33 @@ export class AgentRegistry {
 
   // Cleanup all tunnels/resources for a disconnected agent
   cleanupAgentState(deviceId, { activeWsTunnels, pendingHttpResponses, pendingP2pOffers, text }) {
+    const tunnelIdsToDelete = [];
     activeWsTunnels.forEach((tunnel, tunnelId) => {
       if (tunnel.deviceId === deviceId) {
         tunnel.clientWs.close(4000, 'PC Agent offline');
-        activeWsTunnels.delete(tunnelId);
+        tunnelIdsToDelete.push(tunnelId);
       }
     });
+    for (const tunnelId of tunnelIdsToDelete) activeWsTunnels.delete(tunnelId);
 
+    const requestIdsToDelete = [];
     pendingHttpResponses.forEach((pending, reqId) => {
       if (pending.deviceId === deviceId) {
         clearTimeout(pending.timer);
         text(pending.res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。');
-        pendingHttpResponses.delete(reqId);
+        requestIdsToDelete.push(reqId);
       }
     });
+    for (const reqId of requestIdsToDelete) pendingHttpResponses.delete(reqId);
 
+    const p2pClientIdsToDelete = [];
     pendingP2pOffers.forEach((pending, clientId) => {
       if (pending.deviceId === deviceId) {
         clearTimeout(pending.timer);
         text(pending.res, 503, '目标 PC Agent 离线，请先在电脑端启动 PC Agent。');
-        pendingP2pOffers.delete(clientId);
+        p2pClientIdsToDelete.push(clientId);
       }
     });
+    for (const clientId of p2pClientIdsToDelete) pendingP2pOffers.delete(clientId);
   }
 }

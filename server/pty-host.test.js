@@ -23,6 +23,12 @@ test('WEBTERM_SHELL overrides the default unix shell', { skip: process.platform 
   assert.equal(shell.command, '/bin/sh');
 });
 
+test('WEBTERM_SHELL overrides the default windows shell', () => {
+  const shell = defaultShell({ WEBTERM_SHELL: 'C:\\Tools\\pwsh.exe' }, 'win32');
+  assert.equal(shell.command, 'C:\\Tools\\pwsh.exe');
+  assert.deepEqual(shell.args, ['-NoLogo']);
+});
+
 test('pty env does not inherit NO_COLOR', () => {
   const env = buildPtyEnv({ NO_COLOR: '1', PATH: '/bin' });
   assert.equal(env.NO_COLOR, undefined);

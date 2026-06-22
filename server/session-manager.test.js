@@ -30,6 +30,33 @@ test('manager websocket is removed on close', () => {
   assert.equal(ws.sent.length, 1);
 });
 
+test('failed session creation does not consume the next session id', () => {
+  let shouldFail = true;
+  class FakeSession {
+    constructor({ id, onExit, onInfo }) {
+      if (shouldFail) throw new Error('spawn ENOENT');
+      this.id = id;
+      this.onExit = onExit;
+      this.onInfo = onInfo;
+    }
+
+    info() {
+      return { id: this.id };
+    }
+  }
+
+  const manager = new SessionManager({ SessionClass: FakeSession });
+  assert.throws(
+    () => manager.create({}),
+    /failed to start terminal session: spawn ENOENT/,
+  );
+  assert.equal(manager.list().length, 0);
+
+  shouldFail = false;
+  const session = manager.create({});
+  assert.equal(session.info().id, 's1');
+});
+
 function fakeWebSocket() {
   const handlers = new Map();
   return {

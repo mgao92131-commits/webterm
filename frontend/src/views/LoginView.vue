@@ -210,7 +210,11 @@ async function bootstrapUser() {
 }
 
 function redirectToNext() {
-  const next = router.currentRoute.value.redirectedFrom?.fullPath || "/";
+  const route = router.currentRoute.value;
+  const queryRedirect = Array.isArray(route.query.redirect)
+    ? route.query.redirect[0]
+    : route.query.redirect;
+  const next = queryRedirect || route.redirectedFrom?.fullPath || "/";
   router.push(next);
 }
 

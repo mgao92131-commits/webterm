@@ -13,6 +13,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -37,85 +38,87 @@ final class TerminalScreenBuilder {
     ) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.BLACK);
+        root.setBackgroundColor(DesignTokens.TERMINAL_BG);
 
         LinearLayout content = new LinearLayout(activity);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setBackgroundColor(Color.BLACK);
+        content.setBackgroundColor(DesignTokens.TERMINAL_BG);
 
-        LinearLayout topBar = new LinearLayout(activity);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 6), UIUtils.dp(activity, 8), UIUtils.dp(activity, 6));
-        topBar.setBackgroundColor(Color.rgb(30, 30, 36));
+        // 统一顶栏（bg_secondary 背景 + 分割线）
+        View topbarWrapper = UIUtils.createTopbar(activity, DesignTokens.TOPBAR_HEIGHT_TERMINAL);
+        LinearLayout topBar = UIUtils.topbarFromWrapper(topbarWrapper);
 
         ImageButton sessions = new ImageButton(activity);
         sessions.setImageResource(com.webterm.mobile.R.drawable.ic_arrow_back);
-        sessions.setColorFilter(Color.rgb(243, 244, 246));
-        sessions.setBackground(iconButtonBackground(activity, UIUtils.dp(activity, 20)));
+        sessions.setColorFilter(DesignTokens.TEXT_PRIMARY);
+        sessions.setBackground(UIUtils.iconButtonBackground(activity, 18));
         sessions.setPadding(0, 0, 0, 0);
         sessions.setOnClickListener((v) -> onBack.run());
+        topBar.addView(sessions, new LinearLayout.LayoutParams(UIUtils.dp(activity, 40), UIUtils.dp(activity, 40)));
+
+        // 标题区域
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView title = new TextView(activity);
         title.setText(headerTitle);
-        title.setTextColor(Color.rgb(243, 244, 246));
+        title.setTextColor(DesignTokens.TEXT_PRIMARY);
         title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setTextSize(15);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextSize(DesignTokens.TEXT_HEADING_SIZE);
+        title.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
+        labels.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        // 副标题容器：[指示灯] + [副标题]
+        LinearLayout subtitleContainer = new LinearLayout(activity);
+        subtitleContainer.setOrientation(LinearLayout.HORIZONTAL);
+        subtitleContainer.setGravity(Gravity.CENTER_VERTICAL);
+
+        StatusIndicatorView statusIndicator = new StatusIndicatorView(activity);
+        LinearLayout.LayoutParams indicatorLp = new LinearLayout.LayoutParams(
+            UIUtils.dp(activity, DesignTokens.STATUS_DOT_SIZE),
+            UIUtils.dp(activity, DesignTokens.STATUS_DOT_SIZE));
+        indicatorLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
+        subtitleContainer.addView(statusIndicator, indicatorLp);
 
         TextView subtitle = new TextView(activity);
         subtitle.setText(headerSubtitle);
-        subtitle.setTextColor(Color.rgb(156, 163, 175));
-        subtitle.setTextSize(11);
+        subtitle.setTextColor(DesignTokens.TEXT_SECONDARY);
+        subtitle.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        subtitleContainer.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout statusContainer = new LinearLayout(activity);
-        statusContainer.setOrientation(LinearLayout.HORIZONTAL);
-        statusContainer.setGravity(Gravity.CENTER_VERTICAL);
+        labels.addView(subtitleContainer, new LinearLayout.LayoutParams(-1, -2));
+        topBar.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        // 右侧按钮组（todo + retry）
+        LinearLayout buttonGroup = new LinearLayout(activity);
+        buttonGroup.setOrientation(LinearLayout.HORIZONTAL);
+        buttonGroup.setGravity(Gravity.CENTER_VERTICAL);
 
         ImageButton todoButton = new ImageButton(activity);
         todoButton.setImageResource(com.webterm.mobile.R.drawable.ic_todo);
-        todoButton.setColorFilter(Color.rgb(243, 244, 246));
-        todoButton.setBackground(iconButtonBackground(activity, UIUtils.dp(activity, 18)));
+        todoButton.setColorFilter(DesignTokens.TEXT_PRIMARY);
+        todoButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
         todoButton.setPadding(0, 0, 0, 0);
         todoButton.setOnClickListener((v) -> onTodo.run());
 
         ImageButton retryButton = new ImageButton(activity);
         retryButton.setImageResource(com.webterm.mobile.R.drawable.ic_refresh);
-        retryButton.setColorFilter(Color.rgb(243, 244, 246));
+        retryButton.setColorFilter(DesignTokens.TEXT_PRIMARY);
         retryButton.setVisibility(View.GONE);
-        retryButton.setBackground(iconButtonBackground(activity, UIUtils.dp(activity, 18)));
+        retryButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
         retryButton.setPadding(0, 0, 0, 0);
         retryButton.setOnClickListener((v) -> onRetry.run());
 
-        StatusIndicatorView statusIndicator = new StatusIndicatorView(activity);
-
-        LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
-        todoLp.setMargins(0, 0, UIUtils.dp(activity, 10), 0);
-        statusContainer.addView(todoButton, todoLp);
-
-        LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
-        retryLp.setMargins(0, 0, UIUtils.dp(activity, 10), 0);
-        statusContainer.addView(retryButton, retryLp);
-
-        LinearLayout.LayoutParams indicatorLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
-        indicatorLp.setMargins(0, 0, UIUtils.dp(activity, 6), 0);
-        statusContainer.addView(statusIndicator, indicatorLp);
-
-        LinearLayout labels = new LinearLayout(activity);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setGravity(Gravity.CENTER_VERTICAL);
-        labels.setPadding(UIUtils.dp(activity, 10), 0, UIUtils.dp(activity, 8), 0);
-        labels.addView(title, new LinearLayout.LayoutParams(-1, 0, 1));
-        labels.addView(subtitle, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        topBar.addView(sessions, new LinearLayout.LayoutParams(UIUtils.dp(activity, 40), UIUtils.dp(activity, 40)));
-        topBar.addView(labels, new LinearLayout.LayoutParams(0, UIUtils.dp(activity, 44), 1));
-        topBar.addView(statusContainer, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(topBar, new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, 54)));
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE), UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE));
+        buttonGroup.addView(todoButton, btnLp);
+        buttonGroup.addView(retryButton, btnLp);
+        topBar.addView(buttonGroup, new LinearLayout.LayoutParams(-2, -2));
+        content.addView(topbarWrapper, new LinearLayout.LayoutParams(-1, -2));
 
         TerminalView terminalView = new TerminalView(activity, null);
         terminalView.setFocusable(true);
@@ -127,54 +130,56 @@ final class TerminalScreenBuilder {
         FrameLayout terminalViewport = new FrameLayout(activity);
         terminalViewport.setClipChildren(true);
         terminalViewport.setClipToPadding(true);
-        terminalViewport.setBackgroundColor(Color.BLACK);
+        terminalViewport.setBackgroundColor(DesignTokens.TERMINAL_BG);
         terminalViewport.addView(terminalView, new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout reconnectOverlay = new LinearLayout(activity);
         reconnectOverlay.setOrientation(LinearLayout.VERTICAL);
         reconnectOverlay.setGravity(Gravity.CENTER);
-        reconnectOverlay.setBackgroundColor(Color.argb(160, 0, 0, 0));
+        reconnectOverlay.setBackgroundColor(DesignTokens.OVERLAY);
         reconnectOverlay.setVisibility(View.GONE);
         reconnectOverlay.setClickable(true);
 
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.setPadding(UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24), UIUtils.dp(activity, 24));
+        card.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5),
+            UIUtils.dp(activity, DesignTokens.SPACE_5)
+        );
 
-        GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.rgb(30, 30, 36));
-        cardBg.setCornerRadius(UIUtils.dp(activity, 12));
-        card.setBackground(cardBg);
+        card.setBackground(UIUtils.dialogBackground(activity));
 
-        TextView warnIcon = new TextView(activity);
-        warnIcon.setText("⚠️");
-        warnIcon.setTextSize(28);
-        warnIcon.setGravity(Gravity.CENTER);
-        warnIcon.setPadding(0, 0, 0, UIUtils.dp(activity, 8));
+        // 警告图标：ImageView (ic_warning)
+        ImageView warnIcon = new ImageView(activity);
+        warnIcon.setImageResource(com.webterm.mobile.R.drawable.ic_warning);
+        warnIcon.setColorFilter(DesignTokens.WARNING);
+        warnIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams warnLp = new LinearLayout.LayoutParams(
+                UIUtils.dp(activity, 40), UIUtils.dp(activity, 40));
+        warnLp.gravity = Gravity.CENTER_HORIZONTAL;
+        warnLp.setMargins(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2));
+        card.addView(warnIcon, warnLp);
 
         TextView tipText = new TextView(activity);
         tipText.setText("与服务器连接已断开");
-        tipText.setTextColor(Color.rgb(243, 244, 246));
-        tipText.setTextSize(15);
-        tipText.setTypeface(Typeface.DEFAULT_BOLD);
+        tipText.setTextColor(DesignTokens.TEXT_PRIMARY);
+        tipText.setTextSize(DesignTokens.TEXT_HEADING_SIZE);
+        tipText.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
         tipText.setGravity(Gravity.CENTER);
-        tipText.setPadding(0, 0, 0, UIUtils.dp(activity, 16));
+        tipText.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
 
         Button reconnectBtn = new Button(activity);
         reconnectBtn.setText("重新连接");
         reconnectBtn.setAllCaps(false);
-        reconnectBtn.setTextColor(Color.WHITE);
-        reconnectBtn.setTextSize(14);
+        // 重新连接按钮改用强调色（设计系统统一）
+        UIUtils.styleDialogButton(activity, reconnectBtn, true);
 
-        GradientDrawable btnBg = new GradientDrawable();
-        btnBg.setColor(Color.rgb(59, 130, 246));
-        btnBg.setCornerRadius(UIUtils.dp(activity, 6));
-        reconnectBtn.setBackground(btnBg);
-        reconnectBtn.setPadding(UIUtils.dp(activity, 16), UIUtils.dp(activity, 8), UIUtils.dp(activity, 16), UIUtils.dp(activity, 8));
+        reconnectBtn.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_4), UIUtils.dp(activity, DesignTokens.SPACE_2), UIUtils.dp(activity, DesignTokens.SPACE_4), UIUtils.dp(activity, DesignTokens.SPACE_2));
         reconnectBtn.setOnClickListener((v) -> onRetry.run());
 
-        card.addView(warnIcon);
         card.addView(tipText);
         card.addView(reconnectBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 120), UIUtils.dp(activity, 38)));
 
@@ -186,7 +191,7 @@ final class TerminalScreenBuilder {
 
         Button[] outCtrlButton = new Button[1];
         View quickBar = createQuickBar(activity, terminalView, onCtrl, textSender, outCtrlButton);
-        root.addView(quickBar, new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, 92)));
+        root.addView(quickBar, new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, DesignTokens.QUICKBAR_HEIGHT)));
 
         Result result = new Result();
         result.root = root;
@@ -204,19 +209,19 @@ final class TerminalScreenBuilder {
     }
 
     private static Drawable iconButtonBackground(Activity activity, int radius) {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
-        bg.setColor(Color.TRANSPARENT);
-        bg.setCornerRadius(radius);
-        bg.setStroke(UIUtils.dp(activity, 1), Color.rgb(55, 65, 81));
-        return bg;
+        return UIUtils.iconButtonBackground(activity, radius);
     }
 
     private static View createQuickBar(Activity activity, TerminalView terminalView, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {
         LinearLayout bar = new LinearLayout(activity);
         bar.setOrientation(LinearLayout.VERTICAL);
-        bar.setPadding(UIUtils.dp(activity, 8), UIUtils.dp(activity, 7), UIUtils.dp(activity, 8), UIUtils.dp(activity, 7));
-        bar.setBackgroundColor(Color.rgb(20, 20, 24));
+        bar.setPadding(
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2),
+            UIUtils.dp(activity, DesignTokens.SPACE_2)
+        );
+        bar.setBackgroundColor(DesignTokens.BG_SECONDARY);
 
         LinearLayout firstRow = quickBarRow(activity);
         LinearLayout secondRow = quickBarRow(activity);
@@ -255,11 +260,12 @@ final class TerminalScreenBuilder {
         button.setFocusable(false);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setTextColor(Color.rgb(243, 244, 246));
+        button.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        button.setTextColor(DesignTokens.TEXT_PRIMARY);
+        button.setTypeface(DesignTokens.fontGeistMono(activity));
         button.setMinWidth(0);
         button.setMinHeight(0);
-        button.setPadding(UIUtils.dp(activity, 4), 0, UIUtils.dp(activity, 4), 0);
+        button.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_1), 0, UIUtils.dp(activity, DesignTokens.SPACE_1), 0);
         button.setBackground(quickBarButtonBackground(activity, false));
         button.setOnClickListener((v) -> {
             if (!terminalView.isFocused()) terminalView.requestFocus();
@@ -271,19 +277,31 @@ final class TerminalScreenBuilder {
         return button;
     }
 
+    /**
+     * 快捷栏按钮背景。
+     *   - 未激活：BG_PRIMARY 填充 + BORDER_PRIMARY 边框
+     *   - Ctrl 激活：BORDER_HOVER 边框（hover 态强调），与设计系统强调色 #10B981 对齐
+     *   - 圆角 4dp（与 Web 端 radius-sm 一致）
+     */
     private static Drawable quickBarButtonBackground(Activity activity, boolean active) {
         GradientDrawable content = new GradientDrawable();
         content.setShape(GradientDrawable.RECTANGLE);
-        content.setColor(Color.rgb(15, 15, 18));
-        content.setStroke(UIUtils.dp(activity, 1), active ? Color.rgb(99, 102, 241) : Color.rgb(55, 65, 81));
-        content.setCornerRadius(UIUtils.dp(activity, 4));
+        content.setColor(DesignTokens.BG_PRIMARY);
+        content.setStroke(
+            UIUtils.dp(activity, 1),
+            active ? DesignTokens.ACCENT : DesignTokens.BORDER_PRIMARY
+        );
+        content.setCornerRadius(UIUtils.dp(activity, DesignTokens.RADIUS_SM));
 
         GradientDrawable mask = new GradientDrawable();
         mask.setShape(GradientDrawable.RECTANGLE);
-        mask.setColor(Color.WHITE);
-        mask.setCornerRadius(UIUtils.dp(activity, 4));
+        mask.setColor(android.graphics.Color.WHITE);
+        mask.setCornerRadius(UIUtils.dp(activity, DesignTokens.RADIUS_SM));
 
-        ColorStateList colorStateList = ColorStateList.valueOf(Color.argb(36, 243, 244, 246));
+        // 水波纹用主文字色 15% 透明
+        ColorStateList colorStateList = ColorStateList.valueOf(
+            DesignTokens.withAlpha(DesignTokens.TEXT_PRIMARY, 0x24) // 14%
+        );
         return new RippleDrawable(colorStateList, content, mask);
     }
 

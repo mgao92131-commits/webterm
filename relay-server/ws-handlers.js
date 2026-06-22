@@ -182,9 +182,14 @@ function handleHttpResponse(msg, pendingHttpResponses) {
   if (!pending) return;
 
   clearTimeout(pending.timer);
-  pendingHttpResponses.delete(msg.requestId);
 
   if (msg.type === HTTP_RESPONSE) {
+    if (msg.hasChunks) {
+      pending.res.writeHead(msg.statusCode, msg.headers);
+      return;
+    }
+
+    pendingHttpResponses.delete(msg.requestId);
     if (!msg.hasChunks && msg.body) {
       let payload = msg.bodyEncoding === 'base64'
         ? Buffer.from(msg.body, 'base64')
@@ -216,6 +221,7 @@ function handleHttpResponse(msg, pendingHttpResponses) {
       pending.res.end();
     }
   } else if (msg.type === HTTP_ERROR) {
+    pendingHttpResponses.delete(msg.requestId);
     pending.res.writeHead(msg.error === 'timeout' ? 504 : 502, { 'content-type': 'text/plain; charset=utf-8' });
     pending.res.end(msg.message || 'PC Agent request failed');
   }

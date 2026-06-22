@@ -55,14 +55,54 @@ class JsonClientConnection {
     this.queue = [];
     this.sending = false;
     this.maxQueue = 200;
+    this.pendingOutputText = [];
+    this.pendingOutputBytes = 0;
+    this.pendingOutputSeq = 0;
+    this.outputBatchTimer = null;
   }
 
   send(message) {
     if (this.ws.readyState !== 1) return false;
+    if (message.type === 'output' && message.batch === true) {
+      return this.sendBatchedOutput(message);
+    }
+    this.flushPendingOutput();
     this.queue.push(JSON.stringify(jsonWireMessage(message)));
     if (this.queue.length > this.maxQueue) return false;
     this.flush();
     return true;
+  }
+
+  sendBatchedOutput(message) {
+    const data = message.data ?? (message.bytes ? Buffer.from(message.bytes).toString('utf8') : '');
+    const text = String(data || '');
+    if (!text) return true;
+    this.pendingOutputText.push(text);
+    this.pendingOutputBytes += Buffer.byteLength(text, 'utf8');
+    this.pendingOutputSeq = message.seq;
+    if (this.pendingOutputBytes >= OUTPUT_BATCH_MAX_BYTES) {
+      this.flushPendingOutput();
+    } else if (!this.outputBatchTimer) {
+      this.outputBatchTimer = setTimeout(() => this.flushPendingOutput(), OUTPUT_BATCH_DELAY_MS);
+    }
+    return this.queue.length <= this.maxQueue;
+  }
+
+  flushPendingOutput() {
+    if (this.outputBatchTimer) {
+      clearTimeout(this.outputBatchTimer);
+      this.outputBatchTimer = null;
+    }
+    if (!this.pendingOutputText.length) return;
+    this.queue.push(JSON.stringify({
+      type: 'output',
+      seq: this.pendingOutputSeq,
+      data: this.pendingOutputText.join(''),
+    }));
+    this.pendingOutputText = [];
+    this.pendingOutputBytes = 0;
+    this.pendingOutputSeq = 0;
+    this.flush();
   }
 
   flush() {
@@ -81,6 +121,10 @@ class JsonClientConnection {
   }
 
   close() {
+    if (this.outputBatchTimer) {
+      clearTimeout(this.outputBatchTimer);
+      this.outputBatchTimer = null;
+    }
     try {
       this.ws.close();
     } catch {

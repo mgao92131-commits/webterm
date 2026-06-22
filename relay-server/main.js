@@ -16,7 +16,7 @@ import {
 import { verifySmtpConfig } from '../server/mail.js';
 import { verifyOtp as verifyOtpInStore } from '../server/stores/email-verification-store.js';
 import { addTrustedDevice, listTrustedDevices, deleteTrustedDevice } from '../server/stores/trusted-device-store.js';
-import { serveStatic, text } from '../server/http-utils.js';
+import { sameHostOrigin, serveStatic, text } from '../server/http-utils.js';
 import { delay, loadLocalEnv } from '../shared/utils.js';
 import { sendJSON } from '../shared/tunnel-protocol.js';
 import { AgentRegistry, getDeviceNameFromUa } from './agent-registry.js';
@@ -102,7 +102,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   const user = auth.authenticate(req);
-  if (!user) {
+  if (!user || !sameHostOrigin(req)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
     return;

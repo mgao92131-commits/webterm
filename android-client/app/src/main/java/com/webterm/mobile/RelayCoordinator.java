@@ -1,8 +1,13 @@
 package com.webterm.mobile;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.ImageSpan;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -37,6 +42,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     private ServerSessionMonitor relayMonitor;
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private TextView homeSubtitle;
+    private StatusIndicatorView homeStatusDot;
     private RelayState relayState = RelayState.NOT_CONFIGURED;
     private int httpAuthFailures;
 
@@ -62,8 +68,17 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
         updateSubtitleState(relayState);
     }
 
+    void attachStatusDot(StatusIndicatorView statusDot) {
+        this.homeStatusDot = statusDot;
+        updateStatusDot();
+    }
+
     void detachSubtitle() {
         this.homeSubtitle = null;
+    }
+
+    void detachStatusDot() {
+        this.homeStatusDot = null;
     }
 
     void loadMasterFromServers(List<ServerConfig> servers) {
@@ -136,7 +151,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                         String deviceId = deviceObj.optString("deviceId");
                         String deviceName = deviceObj.optString("deviceName");
                         if (deviceId.isEmpty()) continue;
-                        if (!deviceObj.optBoolean("online", false)) continue;
+                        if (!isDeviceOnline(deviceObj)) continue;
 
                         relayDevices.add(new ServerConfig(
                             "relay_dev_" + deviceId,
@@ -242,8 +257,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                         String deviceName = deviceObj.optString("deviceName");
                         if (deviceId.isEmpty()) continue;
 
-                        // online == true 一致性逻辑
-                        if (!deviceObj.optBoolean("online", false)) continue;
+                        if (!isDeviceOnline(deviceObj)) continue;
 
                         relayDevices.add(new ServerConfig(
                             "relay_dev_" + deviceId,
@@ -433,43 +447,81 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
 
     private void updateSubtitleState(RelayState state) {
         relayState = state;
+        updateStatusDot();
         if (homeSubtitle == null) return;
         mainHandler.post(() -> {
             switch (state) {
                 case NOT_CONFIGURED:
-                    homeSubtitle.setText("⚠️ 中转服务未连接");
-                    homeSubtitle.setTextColor(Color.rgb(245, 158, 11));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_warning,
+                        "中转服务未连接", DesignTokens.WARNING);
                     break;
                 case CONNECTING:
-                    homeSubtitle.setText("⏳ 正在连接中转服务...");
-                    homeSubtitle.setTextColor(Color.rgb(245, 158, 11));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_loader,
+                        "正在连接中转服务...", DesignTokens.WARNING);
                     break;
                 case AUTH_FAILED:
-                    homeSubtitle.setText("🚨 中转服务登录失败");
-                    homeSubtitle.setTextColor(Color.rgb(239, 68, 68));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_alert,
+                        "中转服务登录失败", DesignTokens.DANGER);
                     break;
                 case CONNECT_FAILED:
-                    homeSubtitle.setText("🚨 无法连接中转服务，正在重连...");
-                    homeSubtitle.setTextColor(Color.rgb(239, 68, 68));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_alert,
+                        "无法连接中转服务，正在重连...", DesignTokens.DANGER);
                     break;
                 case CONNECTED_FETCHING_DEVICES:
-                    homeSubtitle.setText("🟢 已连接中转，正在获取电脑...");
-                    homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
+                        "已连接中转，正在获取电脑...", DesignTokens.SUCCESS);
                     break;
                 case CONNECTED_NO_DEVICES:
-                    homeSubtitle.setText("🟢 中转服务已连接 (无在线电脑)");
-                    homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
+                        "中转服务已连接 (无在线电脑)", DesignTokens.SUCCESS);
                     break;
                 case CONNECTED_WITH_DEVICES:
-                    homeSubtitle.setText("🟢 已连接中转服务");
-                    homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
+                        "已连接中转服务", DesignTokens.SUCCESS);
                     break;
                 case CONNECTED_POLLING:
-                    homeSubtitle.setText("🟢 已连接中转服务 (轮询模式)");
-                    homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
+                        "已连接中转服务 (轮询模式)", DesignTokens.SUCCESS);
                     break;
             }
         });
+    }
+
+    /**
+     * 用 ImageSpan 在 homeSubtitle 文字前嵌入矢量图标，取代之前的 emoji 前缀。
+     * 图标与文字共用同一个 TextView，无需侵入式改 homeSubtitle 类型。
+     */
+    private void setSubtitleWithIcon(int iconRes, String text, int color) {
+        if (homeSubtitle == null) return;
+        homeSubtitle.setText(text);
+        homeSubtitle.setTextColor(color);
+    }
+
+    private void updateStatusDot() {
+        if (homeStatusDot == null) return;
+        mainHandler.post(() -> {
+            switch (relayState) {
+                case NOT_CONFIGURED:
+                case CONNECTING:
+                    homeStatusDot.setStatus(StatusIndicatorView.Status.CONNECTING);
+                    break;
+                case AUTH_FAILED:
+                case CONNECT_FAILED:
+                    homeStatusDot.setStatus(StatusIndicatorView.Status.DISCONNECTED);
+                    break;
+                case CONNECTED_FETCHING_DEVICES:
+                case CONNECTED_NO_DEVICES:
+                case CONNECTED_WITH_DEVICES:
+                case CONNECTED_POLLING:
+                    homeStatusDot.setStatus(StatusIndicatorView.Status.CONNECTED);
+                    break;
+            }
+        });
+    }
+
+    private boolean isDeviceOnline(JSONObject deviceObj) {
+        return deviceObj.optBoolean("online", false)
+            || "online".equalsIgnoreCase(deviceObj.optString("status", ""));
     }
 
     private void scheduleHttpPoll(long delayMs) {

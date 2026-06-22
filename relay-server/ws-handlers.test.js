@@ -4,8 +4,12 @@ import { handleAgentTunnelMessage, normalizeCloseCode, prefixSessionManagerMessa
 import { createWsHandlers } from './ws-handlers.js';
 import {
   MSG_TYPE_WS_DATA,
+  MSG_TYPE_HTTP_CHUNK,
   WS_DATA_TEXT,
   WS_DATA_BINARY,
+  HTTP_CHUNK_DATA,
+  HTTP_CHUNK_FIN,
+  HTTP_RESPONSE,
   encodeTunnelFrame,
 } from '../shared/tunnel-protocol.js';
 
@@ -113,6 +117,87 @@ test('relay can prefix session manager ids on tunneled text frames', () => {
   ]);
 });
 
+test('relay keeps pending http responses open until chunk fin', () => {
+  const timer = setTimeout(() => {}, 1000);
+  const res = {
+    head: null,
+    writes: [],
+    ended: false,
+    writeHead(statusCode, headers) {
+      this.head = { statusCode, headers };
+    },
+    write(payload) {
+      this.writes.push(Buffer.from(payload));
+    },
+    end(payload) {
+      this.ended = true;
+      if (payload) this.write(payload);
+    },
+  };
+  const pendingHttpResponses = new Map([
+    ['req_test', {
+      res,
+      timer,
+      deviceId: 'd1',
+      method: 'GET',
+      path: '/api/files/big.bin',
+    }],
+  ]);
+  const { handleAgentConnection, handleBinaryDemux } = createWsHandlers({
+    auth: {},
+    registry: {
+      getAgent: () => null,
+      registerAgent: () => {},
+      pushDevicesToUser: () => {},
+    },
+    pendingHttpResponses,
+    activeWsTunnels: new Map(),
+    pendingP2pOffers: new Map(),
+    findBySecretHash: () => ({ id: 1, userId: 1, username: 'u1', deviceName: 'd1' }),
+    updateLastSeen: () => {},
+    text: () => {},
+  });
+  const agentWs = fakeWs();
+
+  handleAgentConnection(agentWs);
+  agentWs.emit('message', Buffer.from(JSON.stringify({
+    type: 'agent-register',
+    secret: 'secret',
+  })), false);
+  agentWs.emit('message', Buffer.from(JSON.stringify({
+    type: HTTP_RESPONSE,
+    requestId: 'req_test',
+    statusCode: 200,
+    headers: { 'content-type': 'application/octet-stream' },
+    hasChunks: true,
+  })), false);
+
+  assert.deepEqual(res.head, {
+    statusCode: 200,
+    headers: { 'content-type': 'application/octet-stream' },
+  });
+  assert.equal(res.ended, false);
+  assert.equal(pendingHttpResponses.has('req_test'), true);
+
+  handleBinaryDemux(encodeTunnelFrame(
+    MSG_TYPE_HTTP_CHUNK,
+    'req_test',
+    HTTP_CHUNK_DATA,
+    Buffer.from('abc'),
+  ));
+  handleBinaryDemux(encodeTunnelFrame(
+    MSG_TYPE_HTTP_CHUNK,
+    'req_test',
+    HTTP_CHUNK_FIN,
+    Buffer.alloc(0),
+  ));
+
+  clearTimeout(timer);
+  assert.equal(Buffer.concat(res.writes).toString('utf8'), 'abc');
+  assert.equal(res.ended, true);
+  assert.equal(pendingHttpResponses.has('req_test'), false);
+});
+
 test('client websocket tunnels keep outbound text transform options', () => {
   const activeWsTunnels = new Map();
   const agent = {
@@ -162,7 +247,7 @@ test('prefixSessionManagerMessage rewrites local session ids for relay clients',
     { type: 'sessions', data: [{ id: 's1', termTitle: 'zsh' }, { id: 'd1:s2' }] },
     { type: 'session', data: { id: 's1', termTitle: 'vim' } },
     { type: 'session-closed', id: 's1' },
-    { type: 'devices', devices: [{ deviceId: 'd1' }] },
+    { type: 'devices', devices: [{ deviceId: 'd1', status: 'online', online: true }] },
   ];
 
   const rewritten = messages.map((message) => JSON.parse(
@@ -173,7 +258,7 @@ test('prefixSessionManagerMessage rewrites local session ids for relay clients',
     { type: 'sessions', data: [{ id: 'd1:s1', termTitle: 'zsh' }, { id: 'd1:s2' }] },
     { type: 'session', data: { id: 'd1:s1', termTitle: 'vim' } },
     { type: 'session-closed', id: 'd1:s1' },
-    { type: 'devices', devices: [{ deviceId: 'd1' }] },
+    { type: 'devices', devices: [{ deviceId: 'd1', status: 'online', online: true }] },
   ]);
   assert.equal(prefixSessionManagerMessage('not json', 'd1'), 'not json');
 });

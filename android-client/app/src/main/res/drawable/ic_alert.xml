@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- lucide: octagon-alert (高优先级警告) -->
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M7.86,2h8.28L22,7.86v8.28L16.14,22H7.86L2,16.14V7.86z"/>
+  <path
+      android:fillColor="#FF0A0A0B"
+      android:pathData="M12,8v4"/>
+  <path
+      android:fillColor="#FF0A0A0B"
+      android:pathData="M12,16h0.01"/>
+</vector>

@@ -1,5 +1,5 @@
 <template>
-  <section :class="['terminal-page min-h-screen flex flex-col bg-app-bg select-none overflow-x-hidden relative', { 'selection-mode': isSelectionMode }]">
+  <section :class="['terminal-page flex flex-col bg-app-bg select-none overflow-x-hidden relative', { 'selection-mode': isSelectionMode }]">
     <!-- Header bar -->
     <header class="terminal-bar w-full h-10 px-3 border-b border-border bg-app-bg flex items-center justify-between z-10 gap-2 flex-shrink-0">
       <router-link
