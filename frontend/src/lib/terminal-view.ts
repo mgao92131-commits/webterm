@@ -81,6 +81,14 @@ export class TerminalView implements IDisposable {
     return this.term.options;
   }
 
+  setFontSize(size: number): void {
+    this.term.options.fontSize = size;
+  }
+
+  writeSync(data: string, callback?: () => void): void {
+    this.term.write(data, callback);
+  }
+
   enqueueWrite(data: string, callback?: () => void): void {
     this.writeQueue.enqueue(data, callback);
   }

@@ -55,6 +55,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private int mImeOverlap;
     private RelayCoordinator mRelayCoordinator;
     private TextView mHomeSubtitle;
+    private long lastNetworkAvailableTime = 0;
 
     private enum ScreenMode {
         DEVICES,
@@ -596,11 +597,22 @@ public final class MainActivity extends Activity implements SessionRowActions, T
                     @Override
                     public void onAvailable(@androidx.annotation.NonNull android.net.Network network) {
                         mMainHandler.post(() -> {
-                            if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
-                                TerminalConnection.State s = mTerminalConnection.getState();
-                                if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
-                                    android.util.Log.i("MainActivity", "Network online: active reconnection...");
-                                    mTerminalConnection.reconnectNow();
+                            long now = System.currentTimeMillis();
+                            if (now - lastNetworkAvailableTime > 2000) { // 2秒防抖
+                                lastNetworkAvailableTime = now;
+                                android.util.Log.i("MainActivity", "Network available: trigger recovery...");
+
+                                // 1. 中转连接重试启动
+                                if (mRelayCoordinator != null) {
+                                    mRelayCoordinator.resetReconnectAndStart();
+                                }
+
+                                // 2. 终端长连接自愈
+                                if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
+                                    TerminalConnection.State s = mTerminalConnection.getState();
+                                    if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
+                                        mTerminalConnection.reconnectNow();
+                                    }
                                 }
                             }
                         });

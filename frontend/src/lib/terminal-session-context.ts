@@ -1,10 +1,24 @@
-import { store, api } from '../store';
+import { api } from '../store';
 import { p2pManager } from './p2p';
 import { DisposableStore, IDisposable } from './disposable';
 import { TerminalView } from './terminal-view';
 import { TerminalInputController } from './terminal-input-controller';
 import { TerminalLayoutController } from './terminal-layout';
 import { TerminalSelectionController } from './terminal-selection';
+
+function getInitialFontSize(): number {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('webterm:fontSize');
+    if (saved) {
+      const size = parseInt(saved, 10);
+      if (!isNaN(size) && size >= 8 && size <= 30) {
+        return size;
+      }
+    }
+    return window.innerWidth < 768 ? 12 : 14;
+  }
+  return 12;
+}
 
 export interface TerminalSessionState {
   isSelectionMode: boolean;
@@ -25,6 +39,8 @@ export interface TerminalSessionContextOptions {
 }
 
 export class TerminalSessionContext implements IDisposable {
+  private static readonly RECONNECT_BLOCKED_CLOSE_CODES = [1000, 1008, 1011];
+
   private disposables = new DisposableStore();
   public terminalView!: TerminalView;
   public inputController!: TerminalInputController;
@@ -35,6 +51,7 @@ export class TerminalSessionContext implements IDisposable {
   private reconnectTimer: any = null;
   private reconnectAttempts = 0;
   private manualClose = false;
+  private lastCloseCode: number | null = null;
   private lastSeq = 0;
   private restored = false;
 
@@ -70,7 +87,7 @@ export class TerminalSessionContext implements IDisposable {
       options: {
         cursorBlink: true,
         fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-        fontSize: 10,
+        fontSize: getInitialFontSize(),
         convertEol: true,
         scrollback: 20000,
         overviewRuler: { width: 4 },
@@ -135,12 +152,23 @@ export class TerminalSessionContext implements IDisposable {
     this.disposables.add(this.terminalView.onData((data) => this.handleTerminalData(data)));
 
     // 绑定全局浏览器标签可见性事件，恢复网络与重算视口
-    this.disposables.add(this.disposables.addEventListener(document, 'visibilitychange', () => {
+    this.disposables.addEventListener(document, 'visibilitychange', () => {
       if (!document.hidden) {
         this.ensureConnected();
         this.disposables.addTimeout(setTimeout(() => this.layoutController?.sendResize({ reason: 'visibility' }), 150));
       }
-    }));
+    });
+
+    // 监听网络连接状态变化
+    this.disposables.addEventListener(window, 'online', () => {
+      if (this.canReconnect()) {
+        this.reconnectAttempts = 0;
+        this.ensureConnected();
+      }
+    });
+    this.disposables.addEventListener(window, 'offline', () => {
+      this.clearReconnect();
+    });
 
     // 初始化移动端快捷栏高度动态计算
     this.setupQuickbarMetrics();
@@ -170,6 +198,7 @@ export class TerminalSessionContext implements IDisposable {
     }
 
     this.disposables.addEventListener(this.ws, 'open', () => {
+      this.lastCloseCode = null;
       this.reconnectAttempts = 0;
       this.clearReconnect();
       try {
@@ -186,7 +215,7 @@ export class TerminalSessionContext implements IDisposable {
       this.layoutController?.sendResize({ reason: 'ws-open' });
     });
 
-    this.disposables.addEventListener(this.ws, 'message', (event) => {
+    this.disposables.addEventListener(this.ws, 'message', (event: any) => {
       let msg: any;
       try {
         msg = JSON.parse(event.data);
@@ -198,12 +227,16 @@ export class TerminalSessionContext implements IDisposable {
         this.terminalView.reset();
         this.beginTerminalRestore();
         if (msg.data) {
-          this.terminalView.enqueueWrite(msg.data, () => this.finishTerminalRestore({ seq: msg.seq }));
+          this.terminalView.writeSync(msg.data, () => {
+            this.finishTerminalRestore({ fit: true, seq: msg.seq });
+            this.terminalView.refreshAll();
+            this.restored = true;
+          });
         } else {
           this.finishTerminalRestore({ fit: true, seq: msg.seq });
+          this.terminalView.refreshAll();
+          this.restored = true;
         }
-        this.terminalView.refreshAll();
-        this.restored = true;
       } else if (msg.type === 'replay') {
         if (!this.restored || msg.from === 0) {
           this.terminalView.reset();
@@ -234,9 +267,12 @@ export class TerminalSessionContext implements IDisposable {
       }
     });
 
-    this.disposables.addEventListener(this.ws, 'close', () => {
+    this.disposables.addEventListener(this.ws, 'close', (event: any) => {
       this.ws = null;
-      if (!this.manualClose) this.scheduleReconnect();
+      this.lastCloseCode = typeof event.code === 'number' ? event.code : null;
+      if (this.canReconnect()) {
+        this.scheduleReconnect();
+      }
     });
   }
 
@@ -263,7 +299,7 @@ export class TerminalSessionContext implements IDisposable {
   }
 
   private ensureConnected() {
-    if (this.manualClose) return;
+    if (!this.canReconnect()) return;
     if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
       this.connectWS();
     }
@@ -271,7 +307,8 @@ export class TerminalSessionContext implements IDisposable {
 
   private scheduleReconnect() {
     this.clearReconnect();
-    const delay = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts++), 8000);
+    const cap = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts++), 8000);
+    const delay = Math.max(200, Math.random() * cap);
     this.reconnectTimer = setTimeout(() => {
       this.ws = null;
       this.ensureConnected();
@@ -283,6 +320,11 @@ export class TerminalSessionContext implements IDisposable {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+  }
+
+  private canReconnect() {
+    return !this.manualClose
+      && !TerminalSessionContext.RECONNECT_BLOCKED_CLOSE_CODES.includes(this.lastCloseCode || 0);
   }
 
   private beginTerminalRestore() {
@@ -337,6 +379,17 @@ export class TerminalSessionContext implements IDisposable {
       sessionPlaceholder,
       displayTitle,
     });
+  }
+
+  // --- 字体大小动态调整 ---
+
+  public changeFontSize(delta: number): void {
+    const current = this.terminalView.options.fontSize || 12;
+    const next = Math.min(30, Math.max(8, current + delta));
+    if (this.layoutController) {
+      this.layoutController.setFontSize(next);
+      localStorage.setItem('webterm:fontSize', String(next));
+    }
   }
 
   // --- 标题就地编辑 API 调用 ---

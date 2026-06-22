@@ -1,57 +1,51 @@
 <template>
-  <section class="register-shell min-h-screen w-full flex items-center justify-center p-6 bg-gradient-to-tr from-slate-950 via-slate-900 to-indigo-950 relative overflow-hidden">
-    <div class="absolute w-[500px] h-[500px] rounded-full bg-indigo-500/10 blur-[120px] top-[-10%] left-[-10%] pointer-events-none"></div>
-    <div class="absolute w-[400px] h-[400px] rounded-full bg-cyan-500/5 blur-[100px] bottom-[-5%] right-[-5%] pointer-events-none"></div>
-
-    <div
-      class="register-card w-full max-w-[380px] p-8 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl shadow-2xl relative z-10 transition-all duration-300 hover:border-slate-700/80 flex flex-col gap-6"
-    >
-      <div class="text-center">
-        <h1 class="text-3xl font-bold tracking-wider bg-gradient-to-r from-indigo-400 via-cyan-400 to-white bg-clip-text text-transparent">
-          WebTerm
-        </h1>
-        <p class="text-xs text-slate-500 mt-2 font-mono">CREATE NEW ACCOUNT</p>
+  <section class="min-h-screen w-full flex items-center justify-center p-6 bg-app-bg">
+    <div class="w-full max-w-[360px] flex flex-col gap-8">
+      <!-- Brand -->
+      <div class="text-center flex flex-col gap-2">
+        <h1 class="text-2xl font-semibold tracking-tight text-fg">WebTerm</h1>
+        <p class="text-[13px] text-fg-subtle font-mono">创建新账户</p>
       </div>
 
-      <!-- 凭据注册态 -->
+      <!-- Credentials form -->
       <form v-if="mode === 'credentials'" @submit.prevent="handleRegister" class="flex flex-col gap-6">
-        <div class="flex flex-col gap-4">
-          <label class="flex flex-col gap-2 text-sm text-slate-400 font-medium cursor-pointer">
-            <span>邮箱</span>
+        <div class="flex flex-col gap-5">
+          <label class="flex flex-col gap-1.5 cursor-pointer">
+            <span class="text-[13px] text-fg-muted font-medium">邮箱</span>
             <input
               v-model="form.email"
               name="email"
               type="email"
               autocomplete="email"
               placeholder="you@example.com"
-              class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
               required
             />
           </label>
 
-          <label class="flex flex-col gap-2 text-sm text-slate-400 font-medium cursor-pointer">
-            <span>密码</span>
+          <label class="flex flex-col gap-1.5 cursor-pointer">
+            <span class="text-[13px] text-fg-muted font-medium">密码</span>
             <input
               v-model="form.password"
               name="new-password"
               type="password"
               autocomplete="new-password"
               placeholder="至少 6 位"
-              class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
               autofocus
               required
             />
           </label>
 
-          <label class="flex flex-col gap-2 text-sm text-slate-400 font-medium cursor-pointer">
-            <span>确认密码</span>
+          <label class="flex flex-col gap-1.5 cursor-pointer">
+            <span class="text-[13px] text-fg-muted font-medium">确认密码</span>
             <input
               v-model="form.confirmPassword"
               name="confirm-password"
               type="password"
               autocomplete="new-password"
               placeholder="再次输入密码"
-              class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
               required
             />
           </label>
@@ -60,25 +54,25 @@
         <button
           type="submit"
           :disabled="loading"
-          class="w-full py-3 px-4 mt-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none hover:shadow-lg hover:shadow-indigo-500/20"
+          class="h-10 w-full rounded-sm bg-accent hover:bg-accent-hover text-black font-medium text-[14px] transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40 active:scale-[0.99] disabled:opacity-40 disabled:pointer-events-none"
         >
           {{ loading ? '发送验证码中...' : '注册' }}
         </button>
 
-        <div class="text-center text-xs text-slate-500">
+        <div class="text-center text-[13px] text-fg-subtle">
           已有账号？
-          <router-link to="/login" class="text-indigo-400 hover:text-indigo-300 transition-colors">去登录</router-link>
+          <router-link to="/login" class="text-accent hover:text-accent-hover transition-colors">登录</router-link>
         </div>
 
         <p
           v-if="errorMessage"
-          class="error text-sm text-rose-500 bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg font-mono text-center"
+          class="text-[13px] text-status-danger bg-status-danger/10 border border-status-danger/20 px-3 py-2 rounded-sm font-mono text-center"
         >
           {{ errorMessage }}
         </p>
       </form>
 
-      <!-- OTP 态 -->
+      <!-- OTP mode -->
       <template v-else>
         <OtpInput
           :email="form.email"
@@ -88,7 +82,7 @@
         <button
           type="button"
           @click="backToCredentials"
-          class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          class="text-[13px] text-fg-subtle hover:text-fg-muted transition-colors text-center"
         >
           ← 返回修改注册信息
         </button>
@@ -172,6 +166,3 @@ function backToCredentials() {
   errorMessage.value = '';
 }
 </script>
-
-<style scoped>
-</style>

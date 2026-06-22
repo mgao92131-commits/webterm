@@ -14,6 +14,10 @@ import java.util.List;
 import okhttp3.OkHttpClient;
 
 final class RelayCoordinator implements RelayConfigDialogHelper.Host {
+    private static final int MAX_HTTP_AUTH_RETRIES = 2;
+    private static final long HTTP_POLL_INTERVAL_MS = 3000L;
+    private static final long HTTP_RETRY_INTERVAL_MS = 5000L;
+
     private enum RelayState {
         NOT_CONFIGURED,
         CONNECTING,
@@ -21,7 +25,8 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
         CONNECT_FAILED,
         CONNECTED_FETCHING_DEVICES,
         CONNECTED_NO_DEVICES,
-        CONNECTED_WITH_DEVICES
+        CONNECTED_WITH_DEVICES,
+        CONNECTED_POLLING
     }
     private final OkHttpClient http;
     private final Handler mainHandler;
@@ -33,6 +38,17 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private TextView homeSubtitle;
     private RelayState relayState = RelayState.NOT_CONFIGURED;
+    private int httpAuthFailures;
+
+    private final Runnable pollDevicesRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
+                return;
+            }
+            fetchDevicesHttp();
+        }
+    };
 
     RelayCoordinator(OkHttpClient http, Handler mainHandler, WebTermApi api, Host host) {
         this.http = http;
@@ -86,12 +102,19 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
         relayMonitor = new ServerSessionMonitor(http, mainHandler, relayMasterConfig, new ServerSessionMonitor.Listener() {
             @Override
             public void onMonitorConnected() {
-                host.activity().runOnUiThread(() -> updateSubtitleState(RelayState.CONNECTED_FETCHING_DEVICES));
+                host.activity().runOnUiThread(() -> {
+                    mainHandler.removeCallbacks(pollDevicesRunnable);
+                    updateSubtitleState(RelayState.CONNECTED_FETCHING_DEVICES);
+                });
             }
 
             @Override
             public void onMonitorPollingFallback() {
-                host.activity().runOnUiThread(() -> updateSubtitleState(RelayState.CONNECTING));
+                host.activity().runOnUiThread(() -> {
+                    updateSubtitleState(RelayState.CONNECTING);
+                    mainHandler.removeCallbacks(pollDevicesRunnable);
+                    mainHandler.post(pollDevicesRunnable);
+                });
             }
 
             @Override
@@ -113,6 +136,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                         String deviceId = deviceObj.optString("deviceId");
                         String deviceName = deviceObj.optString("deviceName");
                         if (deviceId.isEmpty()) continue;
+                        if (!deviceObj.optBoolean("online", false)) continue;
 
                         relayDevices.add(new ServerConfig(
                             "relay_dev_" + deviceId,
@@ -127,6 +151,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                     updateSubtitleState(relayDevices.isEmpty()
                         ? RelayState.CONNECTED_NO_DEVICES
                         : RelayState.CONNECTED_WITH_DEVICES);
+                    httpAuthFailures = 0;
                     host.onRelayDevicesChanged();
                 });
             }
@@ -142,7 +167,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                                 public void onReady(String url, String cookie) {
                                     relayMasterConfig.setCookie(cookie);
                                     host.saveServers();
-                                    start();
+                                    resetReconnectAndStart();
                                 }
 
                                 @Override
@@ -172,7 +197,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                 public void onReady(String url, String cookie) {
                     relayMasterConfig.setCookie(cookie);
                     host.saveServers();
-                    start();
+                    resetReconnectAndStart();
                 }
 
                 @Override
@@ -186,9 +211,123 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     }
 
     void stop() {
+        mainHandler.removeCallbacks(pollDevicesRunnable);
+        httpAuthFailures = 0;
         if (relayMonitor != null) {
             relayMonitor.stop();
             relayMonitor = null;
+        }
+    }
+
+    void resetReconnectAndStart() {
+        stop();
+        start();
+    }
+
+    private void fetchDevicesHttp() {
+        if (relayMasterConfig == null) return;
+        api.fetchDevices(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.SessionsCallback() {
+            @Override
+            public void onReady(JSONArray devices) {
+                mainHandler.post(() -> {
+                    if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
+                        return;
+                    }
+                    httpAuthFailures = 0;
+                    relayDevices.clear();
+                    for (int i = 0; i < devices.length(); i++) {
+                        JSONObject deviceObj = devices.optJSONObject(i);
+                        if (deviceObj == null) continue;
+                        String deviceId = deviceObj.optString("deviceId");
+                        String deviceName = deviceObj.optString("deviceName");
+                        if (deviceId.isEmpty()) continue;
+
+                        // online == true 一致性逻辑
+                        if (!deviceObj.optBoolean("online", false)) continue;
+
+                        relayDevices.add(new ServerConfig(
+                            "relay_dev_" + deviceId,
+                            deviceName,
+                            relayMasterConfig.getUrl(),
+                            relayMasterConfig.getCookie(),
+                            relayMasterConfig.getUsername(),
+                            relayMasterConfig.getPassword(),
+                            false, true, deviceId
+                        ));
+                    }
+                    updateSubtitleState(RelayState.CONNECTED_POLLING);
+                    host.onRelayDevicesChanged();
+
+                    scheduleHttpPoll(HTTP_POLL_INTERVAL_MS);
+                });
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                mainHandler.post(() -> {
+                    if (code == 401) {
+                        httpAuthFailures++;
+                        if (httpAuthFailures > MAX_HTTP_AUTH_RETRIES) {
+                            mainHandler.removeCallbacks(pollDevicesRunnable);
+                            updateSubtitleState(RelayState.AUTH_FAILED);
+                            return;
+                        }
+                        performSilentLoginOrPasswordLogin();
+                    } else {
+                        updateSubtitleState(RelayState.CONNECT_FAILED);
+                        scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
+                    }
+                });
+            }
+
+            @Override
+            public void onParseError(String message) {
+                mainHandler.post(() -> {
+                    scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
+                });
+            }
+        });
+    }
+
+    private void performSilentLoginOrPasswordLogin() {
+        if (relayMasterConfig != null && relayMasterConfig.getCookie() != null && !relayMasterConfig.getCookie().isEmpty()) {
+            api.refresh(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.LoginCallback() {
+                @Override
+                public void onReady(String url, String cookie) {
+                    relayMasterConfig.setCookie(cookie);
+                    host.saveServers();
+                    scheduleHttpPoll(authRetryDelayMs());
+                }
+
+                @Override
+                public void onError(String message) {
+                    performPasswordLoginForHttp();
+                }
+            });
+        } else {
+            performPasswordLoginForHttp();
+        }
+    }
+
+    private void performPasswordLoginForHttp() {
+        if (relayMasterConfig != null
+            && relayMasterConfig.getUsername() != null && !relayMasterConfig.getUsername().isEmpty()
+            && relayMasterConfig.getPassword() != null && !relayMasterConfig.getPassword().isEmpty()) {
+            api.login(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), relayMasterConfig.getUsername(), relayMasterConfig.getPassword(), new WebTermApi.LoginCallback() {
+                @Override
+                public void onReady(String url, String cookie) {
+                    relayMasterConfig.setCookie(cookie);
+                    host.saveServers();
+                    scheduleHttpPoll(authRetryDelayMs());
+                }
+
+                @Override
+                public void onError(String message) {
+                    updateSubtitleState(RelayState.AUTH_FAILED);
+                }
+            });
+        } else {
+            updateSubtitleState(RelayState.AUTH_FAILED);
         }
     }
 
@@ -265,6 +404,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
             existingMaster.setPassword(password);
         }
         relayMasterConfig = existingMaster;
+        httpAuthFailures = 0;
         host.saveServers();
         start();
         host.onRelayAuthDone();
@@ -283,6 +423,7 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
             host.serverConfigs().servers().remove(existingMaster);
         }
         relayMasterConfig = null;
+        httpAuthFailures = 0;
         host.saveServers();
         stop();
         relayDevices.clear();
@@ -323,8 +464,21 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                     homeSubtitle.setText("🟢 已连接中转服务");
                     homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
                     break;
+                case CONNECTED_POLLING:
+                    homeSubtitle.setText("🟢 已连接中转服务 (轮询模式)");
+                    homeSubtitle.setTextColor(Color.rgb(16, 185, 129));
+                    break;
             }
         });
+    }
+
+    private void scheduleHttpPoll(long delayMs) {
+        mainHandler.removeCallbacks(pollDevicesRunnable);
+        mainHandler.postDelayed(pollDevicesRunnable, delayMs);
+    }
+
+    private long authRetryDelayMs() {
+        return Math.min(HTTP_RETRY_INTERVAL_MS, 500L * httpAuthFailures);
     }
 
     interface Host {

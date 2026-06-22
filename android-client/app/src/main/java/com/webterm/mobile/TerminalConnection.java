@@ -208,10 +208,9 @@ final class TerminalConnection {
         state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
         
-        int shift = Math.min(attempt - 1, 30);
-        long baseDelayMs = Math.min(30000L, 1000L * (1L << shift));
-        double jitterPercent = (Math.random() - 0.5) * 0.5;
-        long delayMs = Math.round(baseDelayMs * (1 + jitterPercent));
+        int shift = Math.min(attempt - 1, 15);
+        long cap = Math.min(15000L, 1000L * (1L << shift));
+        long delayMs = Math.max(200L, (long) (Math.random() * cap));
         
         listener.onConnectionStatus(state, reconnectAttempts);
         mainHandler.postDelayed(reconnectRunnable, delayMs);

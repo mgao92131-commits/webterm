@@ -142,6 +142,37 @@ final class WebTermApi {
         });
     }
 
+
+    void fetchDevices(String baseUrl, String cookie, SessionsCallback callback) {
+        Request request = new Request.Builder()
+            .url(baseUrl + "/api/devices")
+            .header("Cookie", cookie != null ? cookie : "")
+            .get()
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError(0, e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body().string();
+                    if (!response.isSuccessful()) {
+                        callback.onError(response.code(), text);
+                        return;
+                    }
+                    try {
+                        callback.onReady(new JSONArray(text));
+                    } catch (JSONException e) {
+                        callback.onParseError(e.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
     void fetchSessions(ServerConfig server, SessionsCallback callback) {
         Request.Builder builder = new Request.Builder()
             .url(server.getUrl() + "/api/sessions")

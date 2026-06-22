@@ -8,11 +8,14 @@ import {
 } from '@shared/constants.js';
 
 export class P2PConnectionManager {
+  private static readonly DISCONNECTED_GRACE_MS = 8000;
+
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
   private targetDeviceId: string | null = null;
   private connectionState: 'disconnected' | 'connecting' | 'connected' = 'disconnected';
   private connectTimeoutTimer: any = null;
+  private disconnectedGraceTimer: any = null;
 
   private pendingHttpResponses = new Map<string, {
     resolve: (val: any) => void;
@@ -60,6 +63,18 @@ export class P2PConnectionManager {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
       this.pc = pc;
+
+      // 监听 PeerConnection 连接状态变化，捕获物理层断连并重置假死状态
+      pc.addEventListener('connectionstatechange', () => {
+        console.log(`[P2P] RTCPeerConnection state changed to: ${pc.connectionState}`);
+        if (pc.connectionState === 'connected') {
+          this.clearDisconnectedGraceTimer();
+        } else if (pc.connectionState === 'disconnected') {
+          this.scheduleDisconnectedGraceTimeout(pc);
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          this.disconnect();
+        }
+      });
 
       // 监听本地 ICE candidates，并立即向中转信令接口进行推流 (Trickle ICE)
       pc.addEventListener('icecandidate', (event) => {
@@ -137,6 +152,7 @@ export class P2PConnectionManager {
       console.log('[P2P] DataChannel opened successfully');
       this.connectionState = 'connected';
       store.p2pActive = true; // 同步前端 UI 状态指示灯
+      this.clearDisconnectedGraceTimer();
       if (this.connectTimeoutTimer) {
         clearTimeout(this.connectTimeoutTimer);
         this.connectTimeoutTimer = null;
@@ -307,6 +323,7 @@ export class P2PConnectionManager {
     this.connectionState = 'disconnected';
     store.p2pActive = false; // 同步前端 UI 状态指示灯
 
+    this.clearDisconnectedGraceTimer();
     if (this.connectTimeoutTimer) {
       clearTimeout(this.connectTimeoutTimer);
       this.connectTimeoutTimer = null;
@@ -332,6 +349,24 @@ export class P2PConnectionManager {
       try { wsMock.onClose(1006, 'P2P disconnected'); } catch {}
     }
     this.activeWsMocks.clear();
+  }
+
+  private scheduleDisconnectedGraceTimeout(pc: RTCPeerConnection) {
+    if (this.disconnectedGraceTimer) return;
+    this.disconnectedGraceTimer = setTimeout(() => {
+      this.disconnectedGraceTimer = null;
+      if (this.pc === pc && pc.connectionState === 'disconnected') {
+        console.warn('[P2P] WebRTC remained disconnected, falling back to relay.');
+        this.disconnect();
+      }
+    }, P2PConnectionManager.DISCONNECTED_GRACE_MS);
+  }
+
+  private clearDisconnectedGraceTimer() {
+    if (this.disconnectedGraceTimer) {
+      clearTimeout(this.disconnectedGraceTimer);
+      this.disconnectedGraceTimer = null;
+    }
   }
 }
 

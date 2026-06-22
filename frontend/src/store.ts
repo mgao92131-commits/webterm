@@ -33,6 +33,7 @@ export interface AppStore {
   clientId: string;
   managerError: string;
   p2pActive: boolean;
+  connectionStates: Record<string, 'connected' | 'connecting' | 'disconnected' | 'polling'>;
 }
 
 // 初始化 Client ID
@@ -58,6 +59,7 @@ export const store = reactive<AppStore>({
   clientId: getClientId(),
   managerError: '',
   p2pActive: false,
+  connectionStates: {},
 });
 
 // 监听主题变化，并应用到 html 元素
@@ -83,6 +85,7 @@ export function resetStore() {
   store.selectedDeviceId = null;
   store.managerError = '';
   store.p2pActive = false;
+  store.connectionStates = {};
 }
 
 let isRefreshing = false;

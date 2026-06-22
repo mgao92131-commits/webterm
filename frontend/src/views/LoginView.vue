@@ -1,101 +1,98 @@
 <template>
-  <section class="login-shell min-h-screen w-full flex items-center justify-center p-6 bg-gradient-to-tr from-slate-950 via-slate-900 to-indigo-950 relative overflow-hidden">
-    <div class="absolute w-[500px] h-[500px] rounded-full bg-indigo-500/10 blur-[120px] top-[-10%] left-[-10%] pointer-events-none"></div>
-    <div class="absolute w-[400px] h-[400px] rounded-full bg-cyan-500/5 blur-[100px] bottom-[-5%] right-[-5%] pointer-events-none"></div>
-
-    <div
-      class="login-card w-full max-w-[380px] p-8 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl shadow-2xl relative z-10 transition-all duration-300 hover:border-slate-700/80 flex flex-col gap-6"
-    >
-      <div class="text-center">
-        <h1 class="text-3xl font-bold tracking-wider bg-gradient-to-r from-indigo-400 via-cyan-400 to-white bg-clip-text text-transparent">
-          WebTerm
-        </h1>
-        <p class="text-xs text-slate-500 mt-2 font-mono">SECURE CONSOLE CONNECTION</p>
+  <section class="min-h-screen w-full flex items-center justify-center p-6 bg-app-bg">
+    <div class="w-full max-w-[360px] flex flex-col gap-8">
+      <!-- Brand -->
+      <div class="text-center flex flex-col gap-2">
+        <h1 class="text-2xl font-semibold tracking-tight text-fg">WebTerm</h1>
+        <p class="text-[13px] text-fg-subtle font-mono">登录到远程终端</p>
       </div>
 
-      <!-- 凭据态：邮箱 + 密码 -->
+      <!-- Credentials form -->
       <form v-if="mode === 'credentials'" @submit.prevent="handleLogin" class="flex flex-col gap-6" novalidate>
-        <div class="flex flex-col gap-4">
-          <label class="flex flex-col gap-2 text-sm text-slate-400 font-medium cursor-pointer">
-            <span>邮箱</span>
+        <div class="flex flex-col gap-5">
+          <label class="flex flex-col gap-1.5 cursor-pointer">
+            <span class="text-[13px] text-fg-muted font-medium">邮箱</span>
             <input
               v-model="form.email"
               name="email"
               type="email"
               autocomplete="email"
               placeholder="you@example.com"
-              class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
               required
             />
+            <p v-if="errorField === 'email'" class="text-[12px] text-status-danger">{{ errorMessage }}</p>
           </label>
 
-          <label class="flex flex-col gap-2 text-sm text-slate-400 font-medium cursor-pointer">
-            <span>密码</span>
+          <label class="flex flex-col gap-1.5 cursor-pointer">
+            <span class="text-[13px] text-fg-muted font-medium">密码</span>
             <input
               v-model="form.password"
               name="password"
               type="password"
               autocomplete="current-password"
               placeholder="••••••••"
-              class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
               autofocus
               required
             />
+            <p v-if="errorField === 'password'" class="text-[12px] text-status-danger">{{ errorMessage }}</p>
           </label>
         </div>
 
         <button
           type="submit"
           :disabled="loading"
-          class="w-full py-3 px-4 mt-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none hover:shadow-lg hover:shadow-indigo-500/20"
+          class="h-10 w-full rounded-sm bg-accent hover:bg-accent-hover text-black font-medium text-[14px] transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40 active:scale-[0.99] disabled:opacity-40 disabled:pointer-events-none"
         >
           {{ loading ? '验证中...' : '登录' }}
         </button>
 
-        <div class="text-center text-xs text-slate-500">
+        <div class="text-center text-[13px] text-fg-subtle">
           还没有账号？
-          <router-link to="/register" class="text-indigo-400 hover:text-indigo-300 transition-colors">立即注册</router-link>
+          <router-link to="/register" class="text-accent hover:text-accent-hover transition-colors">注册</router-link>
         </div>
 
+        <!-- General error -->
         <p
-          v-if="errorMessage"
-          class="error text-sm text-rose-500 bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg font-mono text-center"
+          v-if="errorMessage && !errorField"
+          class="text-[13px] text-status-danger bg-status-danger/10 border border-status-danger/20 px-3 py-2 rounded-sm font-mono text-center"
         >
           {{ errorMessage }}
         </p>
 
-        <div v-if="inactiveEmail" class="flex flex-col gap-2">
-          <p class="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-lg text-center">
+        <!-- Inactive email hint -->
+        <div v-if="inactiveEmail" class="flex flex-col gap-2 items-center">
+          <p class="text-[12px] text-status-warning bg-status-warning/10 border border-status-warning/20 px-3 py-2 rounded-sm text-center">
             账户尚未激活，请查收邮箱验证码
           </p>
           <button
             type="button"
             :disabled="resending"
             @click="resendActivation"
-            class="text-xs text-indigo-400 hover:text-indigo-300 disabled:text-slate-600 transition-colors"
+            class="text-[13px] text-accent hover:text-accent-hover disabled:text-fg-disabled transition-colors"
           >
             {{ resending ? '发送中...' : '重新发送激活邮件' }}
           </button>
         </div>
       </form>
 
-      <!-- OTP 态 -->
-      <OtpInput
-        v-else-if="mode === 'otp'"
-        :email="form.email"
-        purpose="new_device"
-        :target-device-id="targetDeviceId || ''"
-        @verified="handleOtpVerified"
-      />
-
-      <button
-        v-if="mode === 'otp'"
-        type="button"
-        @click="backToCredentials"
-        class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-      >
-        ← 返回重新登录
-      </button>
+      <!-- OTP mode -->
+      <template v-else>
+        <OtpInput
+          :email="form.email"
+          purpose="new_device"
+          :target-device-id="targetDeviceId || ''"
+          @verified="handleOtpVerified"
+        />
+        <button
+          type="button"
+          @click="backToCredentials"
+          class="text-[13px] text-fg-subtle hover:text-fg-muted transition-colors text-center"
+        >
+          ← 返回重新登录
+        </button>
+      </template>
     </div>
   </section>
 </template>
@@ -111,6 +108,7 @@ const router = useRouter();
 const loading = ref(false);
 const resending = ref(false);
 const errorMessage = ref('');
+const errorField = ref('');
 const inactiveEmail = ref(false);
 
 type Mode = 'credentials' | 'otp';
@@ -130,9 +128,24 @@ onMounted(() => {
 async function handleLogin() {
   loading.value = true;
   errorMessage.value = '';
+  errorField.value = '';
   inactiveEmail.value = false;
+  const email = form.email.trim();
+  const password = form.password;
+  if (!email) {
+    errorField.value = 'email';
+    errorMessage.value = '请输入邮箱';
+    loading.value = false;
+    return;
+  }
+  if (!password) {
+    errorField.value = 'password';
+    errorMessage.value = '请输入密码';
+    loading.value = false;
+    return;
+  }
   try {
-    const res = await apiLogin(form.email, form.password);
+    const res = await apiLogin(email, password);
     if (res.otp_required) {
       targetDeviceId.value = res.target_device_id || '';
       if (res.error) {
@@ -141,10 +154,9 @@ async function handleLogin() {
       mode.value = 'otp';
       return;
     }
-    // 正常登录成功
     store.user = {
       id: 0,
-      username: res.email || res.username || form.email,
+      username: res.email || res.username || email,
       role: res.role || 'user',
       mode: 'relay',
     };
@@ -156,6 +168,9 @@ async function handleLogin() {
       inactiveEmail.value = true;
       errorMessage.value = '账户尚未激活，请先完成邮箱验证';
     } else {
+      if (err.status === 401) {
+        errorField.value = 'password';
+      }
       errorMessage.value = err.message || '登录失败，请检查邮箱和密码';
     }
   } finally {
@@ -190,7 +205,7 @@ async function bootstrapUser() {
       store.devices = [{ deviceId: 'local', deviceName: '本机', status: 'online' }];
     }
   } catch {
-    // 拉取 /me 失败不阻塞跳转，后续请求若 401 会被拦截器处理
+    // 拉取 /me 失败不阻塞跳转
   }
 }
 
@@ -203,6 +218,7 @@ function backToCredentials() {
   mode.value = 'credentials';
   targetDeviceId.value = '';
   errorMessage.value = '';
+  errorField.value = '';
 }
 
 async function resendActivation() {
@@ -219,6 +235,3 @@ async function resendActivation() {
   }
 }
 </script>
-
-<style scoped>
-</style>

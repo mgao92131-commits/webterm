@@ -1,114 +1,102 @@
 <template>
-  <div class="devices-layout min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-slate-100 flex flex-col font-sans">
-    <div class="absolute w-[500px] h-[500px] rounded-full bg-indigo-500/5 blur-[120px] top-[-10%] right-[-10%] pointer-events-none"></div>
-
-    <header class="w-full px-4 md:px-6 py-4 border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md flex items-center justify-between z-10">
-      <div class="flex items-center gap-3">
-        <button
-          @click="router.push('/')"
-          class="text-slate-400 hover:text-white transition-colors flex items-center gap-1 text-sm"
-        >
-          <ArrowLeft class="w-4 h-4" />
-          <span>返回</span>
-        </button>
-        <h1 class="text-xl font-bold tracking-wider bg-gradient-to-r from-indigo-400 to-white bg-clip-text text-transparent">
-          设备管理
-        </h1>
-      </div>
+  <div class="min-h-screen bg-app-bg text-fg flex flex-col">
+    <!-- Header -->
+    <header class="flex items-center h-11 px-4 border-b border-border bg-app-bg flex-shrink-0 gap-3">
+      <button
+        @click="router.push('/')"
+        class="flex items-center gap-1.5 text-[13px] text-fg-muted hover:text-fg transition-colors"
+      >
+        <ArrowLeft class="w-4 h-4" />
+        <span>返回</span>
+      </button>
+      <span class="text-[15px] font-semibold tracking-tight text-fg">设备管理</span>
     </header>
 
-    <main class="flex-1 p-4 md:p-6 z-10 overflow-y-auto max-w-4xl w-full mx-auto flex flex-col gap-6">
-      <!-- 区块 A：PC Agent 设备 -->
-      <section class="bg-slate-900/40 border border-slate-800/80 backdrop-blur-md rounded-xl p-5 flex flex-col gap-4">
-        <div class="flex items-center justify-between border-b border-slate-850 pb-3">
+    <main class="flex-1 p-4 sm:p-6 max-w-3xl w-full mx-auto flex flex-col gap-8 overflow-y-auto">
+      <!-- Section A: PC Agent Devices -->
+      <section class="flex flex-col gap-4">
+        <div class="flex items-start justify-between gap-4">
           <div>
-            <h3 class="text-sm font-bold text-slate-300 tracking-wider font-mono">PC Agent 设备</h3>
-            <p class="text-xs text-slate-500 mt-1">用于远程登录你电脑的终端 Agent，每个设备需要一个独立的 secret</p>
+            <h3 class="text-[13px] font-semibold text-fg">PC Agent 设备</h3>
+            <p class="text-[12px] text-fg-subtle mt-1">用于远程登录你电脑的终端 Agent，每个设备需要一个独立的 secret</p>
           </div>
           <button
             @click="showAddForm = !showAddForm"
-            class="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all active:scale-[0.98]"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover text-black transition-colors flex-shrink-0 active:scale-[0.99]"
           >
-            <Plus class="w-4 h-4" />
+            <Plus class="w-3.5 h-3.5" />
             <span>添加设备</span>
           </button>
         </div>
 
-        <!-- 添加表单 -->
-        <div v-if="showAddForm" class="bg-slate-950/40 border border-slate-800 rounded-lg p-4 flex flex-col gap-3">
-          <label class="flex flex-col gap-2 text-sm text-slate-400">
-            <span>设备名称</span>
+        <!-- Add form -->
+        <div v-if="showAddForm" class="flex flex-col gap-3 p-4 rounded-md bg-app-panel border border-border">
+          <label class="flex flex-col gap-1.5">
+            <span class="text-[13px] text-fg-muted">设备名称</span>
             <input
               v-model="newDeviceName"
               placeholder="如：MacBook Pro"
-              class="px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono text-sm"
+              class="h-10 px-3 rounded-sm bg-app-bg border border-border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-[13px]"
             />
           </label>
           <div class="flex gap-2">
             <button
               :disabled="creating || !newDeviceName.trim()"
               @click="createDevice"
-              class="px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-all"
+              class="px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover disabled:opacity-40 text-black transition-colors"
             >
               {{ creating ? '生成中...' : '生成 secret' }}
             </button>
             <button
               @click="cancelAdd"
-              class="px-3 py-2 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
-            >
-              取消
-            </button>
+              class="px-3 py-1.5 text-[12px] rounded-sm bg-bg-tertiary text-fg-muted hover:text-fg hover:bg-border transition-colors"
+            >取消</button>
           </div>
         </div>
 
-        <!-- 新生成的 secret 展示 -->
-        <div v-if="newSecret" class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex flex-col gap-3">
-          <div class="flex items-center gap-2 text-amber-400 text-sm font-semibold">
+        <!-- Secret reveal -->
+        <div v-if="newSecret" class="flex flex-col gap-3 p-4 rounded-md border border-status-danger/30 bg-status-danger/5">
+          <div class="flex items-center gap-2 text-status-danger text-[13px] font-medium">
             <AlertTriangle class="w-4 h-4" />
             <span>secret 仅显示一次，请立即复制保存</span>
           </div>
-          <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 font-mono text-xs text-amber-300 break-all">
+          <div class="p-3 rounded-sm bg-app-bg border border-border font-mono text-[12px] text-fg break-all">
             {{ newSecret }}
           </div>
           <div class="flex gap-2">
             <button
               @click="copySecret"
-              class="px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-2"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover text-black transition-colors"
             >
               <Copy class="w-3.5 h-3.5" />
-              <span>{{ copied ? '已复制' : '复制到剪贴板' }}</span>
+              <span>{{ copied ? '已复制' : '复制' }}</span>
             </button>
             <button
               @click="dismissSecret"
-              class="px-3 py-2 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
-            >
-              我已保存
-            </button>
+              class="px-3 py-1.5 text-[12px] rounded-sm bg-bg-tertiary text-fg-muted hover:text-fg hover:bg-border transition-colors"
+            >我已保存</button>
           </div>
-          <p class="text-xs text-slate-500">
-            将此 secret 配置到 PC Agent 的 <code class="text-indigo-400">RELAY_SECRET</code> 环境变量后启动 Agent。
+          <p class="text-[12px] text-fg-subtle">
+            将此 secret 配置到 PC Agent 的 <code class="text-accent font-mono">RELAY_SECRET</code> 环境变量后启动 Agent。
           </p>
         </div>
 
-        <!-- 设备列表 -->
-        <div v-if="agentDevices.length === 0" class="text-xs text-slate-500 text-center py-6 font-mono">
-          暂无 PC Agent 设备，点击右上角添加。
-        </div>
-        <div v-else class="flex flex-col gap-2">
+        <!-- Device list -->
+        <div class="flex flex-col gap-0.5">
+          <div v-if="agentDevices.length === 0" class="text-center py-8 text-[13px] text-fg-subtle font-mono">
+            暂无 PC Agent 设备
+          </div>
           <div
             v-for="d in agentDevices"
             :key="d.deviceId"
-            class="flex items-center gap-3 p-3 rounded-lg bg-slate-950/20 border border-slate-850/50"
+            class="flex items-center gap-3 px-3 py-2.5 rounded-sm hover:bg-bg-tertiary transition-colors group"
           >
-            <div class="text-2xl">💻</div>
-            <div class="flex-1 overflow-hidden">
-              <div class="font-medium text-sm text-slate-200 truncate">{{ d.deviceName }}</div>
-              <div class="text-xs text-slate-500 font-mono mt-1 flex items-center gap-2">
-                <span
-                  :class="['inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]',
-                    d.online ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500']"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full" :class="d.online ? 'bg-emerald-500' : 'bg-slate-600'"></span>
+            <Monitor class="w-4 h-4 flex-shrink-0" :class="d.online ? 'text-status-success' : 'text-fg-disabled'" />
+            <div class="flex-1 min-w-0">
+              <div class="text-[13px] text-fg truncate">{{ d.deviceName }}</div>
+              <div class="text-[11px] text-fg-subtle font-mono mt-0.5 flex items-center gap-2">
+                <span class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full" :class="d.online ? 'bg-status-success' : 'bg-fg-disabled'"></span>
                   {{ d.online ? '在线' : '离线' }}
                 </span>
                 <span v-if="d.lastSeenAt">最后在线: {{ formatTime(d.lastSeenAt) }}</span>
@@ -117,35 +105,38 @@
             </div>
             <button
               @click="deleteAgentDevice(d)"
-              class="text-slate-500 hover:text-rose-400 transition-colors p-1"
+              class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-sm text-fg-disabled hover:text-status-danger hover:bg-status-danger/10 transition-colors opacity-0 group-hover:opacity-100"
               title="删除设备"
             >
-              <Trash2 class="w-4 h-4" />
+              <Trash2 class="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </section>
 
-      <!-- 区块 B：信任的浏览器/移动设备 -->
-      <section class="bg-slate-900/40 border border-slate-800/80 backdrop-blur-md rounded-xl p-5 flex flex-col gap-4">
-        <div class="border-b border-slate-850 pb-3">
-          <h3 class="text-sm font-bold text-slate-300 tracking-wider font-mono">信任的浏览器/移动设备</h3>
-          <p class="text-xs text-slate-500 mt-1">已通过邮箱验证的设备。撤销信任后，该设备下次登录需重新输入验证码</p>
+      <!-- Divider -->
+      <div class="h-px bg-border"></div>
+
+      <!-- Section B: Trusted devices -->
+      <section class="flex flex-col gap-4">
+        <div>
+          <h3 class="text-[13px] font-semibold text-fg">信任的浏览器/移动设备</h3>
+          <p class="text-[12px] text-fg-subtle mt-1">已通过邮箱验证的设备。撤销信任后，该设备下次登录需重新输入验证码</p>
         </div>
 
-        <div v-if="trustedDevices.length === 0" class="text-xs text-slate-500 text-center py-6 font-mono">
-          暂无信任设备
-        </div>
-        <div v-else class="flex flex-col gap-2">
+        <div class="flex flex-col gap-0.5">
+          <div v-if="trustedDevices.length === 0" class="text-center py-8 text-[13px] text-fg-subtle font-mono">
+            暂无信任设备
+          </div>
           <div
             v-for="d in trustedDevices"
             :key="d.id"
-            class="flex items-center gap-3 p-3 rounded-lg bg-slate-950/20 border border-slate-850/50"
+            class="flex items-center gap-3 px-3 py-2.5 rounded-sm hover:bg-bg-tertiary transition-colors group"
           >
-            <div class="text-2xl">🌐</div>
-            <div class="flex-1 overflow-hidden">
-              <div class="font-medium text-sm text-slate-200 truncate">{{ d.deviceName || '未知设备' }}</div>
-              <div class="text-xs text-slate-500 font-mono mt-1">
+            <Globe class="w-4 h-4 flex-shrink-0 text-fg-subtle" />
+            <div class="flex-1 min-w-0">
+              <div class="text-[13px] text-fg truncate">{{ d.deviceName || '未知设备' }}</div>
+              <div class="text-[11px] text-fg-subtle font-mono mt-0.5">
                 <span v-if="d.lastSeenAt">最后活跃: {{ formatTime(d.lastSeenAt) }}</span>
                 <span v-else>从未活跃</span>
                 <span class="ml-2">添加于: {{ formatTime(d.createdAt) }}</span>
@@ -153,15 +144,14 @@
             </div>
             <button
               @click="deleteTrusted(d)"
-              class="text-xs px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors"
-            >
-              撤销信任
-            </button>
+              class="flex-shrink-0 px-2 py-1 text-[11px] rounded-sm text-status-danger hover:bg-status-danger/10 transition-colors opacity-0 group-hover:opacity-100"
+            >撤销信任</button>
           </div>
         </div>
       </section>
 
-      <p v-if="loadError" class="text-sm text-rose-500 bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg font-mono text-center">
+      <!-- Error -->
+      <p v-if="loadError" class="text-[13px] text-status-danger bg-status-danger/10 border border-status-danger/20 px-3 py-2 rounded-sm font-mono text-center">
         {{ loadError }}
       </p>
     </main>
@@ -171,7 +161,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { ArrowLeft, Plus, AlertTriangle, Copy, Trash2 } from '@lucide/vue';
+import { ArrowLeft, Plus, AlertTriangle, Copy, Trash2, Monitor, Globe } from '@lucide/vue';
 import { getDevices, registerDevice, deleteDevice } from '../api/devices';
 import { getTrustedDevices, deleteTrustedDevice } from '../api/auth';
 
@@ -207,9 +197,14 @@ async function refreshAll() {
 
 async function refreshAgentDevices() {
   try {
-    agentDevices.value = await getDevices();
+    const data = await getDevices();
+    agentDevices.value = data;
   } catch (err: any) {
-    loadError.value = err.message || '加载 PC Agent 设备失败';
+    // direct 模式没有 /api/devices 端点，静默处理
+    if (err.status !== 404) {
+      loadError.value = err.message || '加载 PC Agent 设备失败';
+    }
+    agentDevices.value = [];
   }
 }
 
@@ -217,7 +212,10 @@ async function refreshTrustedDevices() {
   try {
     trustedDevices.value = await getTrustedDevices();
   } catch (err: any) {
-    loadError.value = err.message || '加载信任设备失败';
+    if (err.status !== 404) {
+      loadError.value = err.message || '加载信任设备失败';
+    }
+    trustedDevices.value = [];
   }
 }
 
@@ -289,6 +287,3 @@ function formatTime(iso: string | null): string {
   }
 }
 </script>
-
-<style scoped>
-</style>

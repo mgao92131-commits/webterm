@@ -20,6 +20,7 @@ final class ServerSessionMonitor {
     private static final String TAG = "ServerSessionMonitor";
 
     private final OkHttpClient http;
+    private final OkHttpClient monitorHttp;
     private final Handler mainHandler;
     private final ServerConfig server;
     private final Listener listener;
@@ -31,6 +32,9 @@ final class ServerSessionMonitor {
 
     ServerSessionMonitor(OkHttpClient http, Handler mainHandler, ServerConfig server, Listener listener) {
         this.http = http;
+        this.monitorHttp = http.newBuilder()
+            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build();
         this.mainHandler = mainHandler;
         this.server = server;
         this.listener = listener;
@@ -55,7 +59,7 @@ final class ServerSessionMonitor {
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .build();
 
-        webSocket = http.newWebSocket(request, new WebSocketListener() {
+        webSocket = monitorHttp.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
                 if (!enabled) {
@@ -238,7 +242,8 @@ final class ServerSessionMonitor {
     private void scheduleReconnect() {
         if (!enabled) return;
         int attempt = ++reconnectAttempts;
-        long delayMs = Math.min(1000L * attempt, 8000L);
+        long cap = Math.min(1000L * attempt, 8000L);
+        long delayMs = Math.max(200L, (long) (Math.random() * cap));
         mainHandler.postDelayed(() -> {
             if (enabled) start();
         }, delayMs);

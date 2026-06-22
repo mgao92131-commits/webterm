@@ -1,5 +1,7 @@
 import { DisposableStore, IDisposable } from './disposable';
 
+const DEBUG_KEYBOARD_METRICS = Boolean((import.meta as any).env?.DEV);
+
 export interface TerminalViewInterface {
   fit(): void;
   rows?: number;
@@ -8,10 +10,13 @@ export interface TerminalViewInterface {
     active: {
       viewportY: number;
       baseY: number;
+      cursorY: number;
+      cursorX: number;
     };
   };
   scrollToBottom(): void;
   refreshAll?(): void;
+  setFontSize?(size: number): void;
 }
 
 export interface ResizeMessage {
@@ -54,7 +59,13 @@ export class TerminalLayoutController implements IDisposable {
   private resizingTerminal = false;
   private disposed = false;
   private resizeRafId: any | null = null;
-  
+  private sharedResizeTimer: IDisposable | null = null;
+  private lastWidth = 0;
+  private keyboardScrollTimer: any = null;
+  private lastKeyboardOffset = 0;
+  private lastKeyboardActive = false;
+  private initialHeight = 0;
+
   private bottomPin: BottomPinState = {
     active: false,
     until: 0,
@@ -76,25 +87,35 @@ export class TerminalLayoutController implements IDisposable {
     this.sendResizeMessage = options.sendResizeMessage;
     this.debouncedSendResizeMessage = debounce(options.sendResizeMessage, 150);
     this.isVisible = options.isVisible || (() => !document.hidden);
+    this.initialHeight = this.windowObject.innerHeight || 0;
+  }
+
+  setFontSize(size: number): void {
+    if (this.terminalView && typeof this.terminalView.setFontSize === 'function') {
+      this.terminalView.setFontSize(size);
+      this.sendResize({ reason: "fontsize-change" });
+    }
   }
 
   attach(): void {
     this.updateViewportMetrics();
+    this.lastWidth = this.windowObject.innerWidth;
 
     const viewport = this.windowObject.visualViewport;
     if (viewport) {
-      this.store.addEventListener(viewport, "resize", debounce(() => this.handleViewportResize(), 16));
+      this.store.addEventListener(viewport, "resize", () => {
+        this.handleResizeDebounced("viewport", () => this.updateViewportMetrics());
+      });
       this.store.addEventListener(viewport, "scroll", debounce(() => this.updateViewportMetrics({ height: false }), 16));
     }
-    this.store.addEventListener(this.windowObject, "resize", debounce(() => this.handleViewportResize(), 16));
+    this.store.addEventListener(this.windowObject, "resize", () => {
+      this.handleResizeDebounced("viewport", () => this.updateViewportMetrics());
+    });
 
     if (this.windowObject.ResizeObserver && this.container) {
-      const observer = new this.windowObject.ResizeObserver(debounce(() => {
-        this.sendResize({
-          reason: "container",
-          beforeFit: () => this.updateViewportMetrics(),
-        });
-      }, 16));
+      const observer = new this.windowObject.ResizeObserver(() => {
+        this.handleResizeDebounced("container", () => this.updateViewportMetrics());
+      });
       observer.observe(this.container);
       this.store.add({ dispose: () => observer.disconnect() });
     }
@@ -110,11 +131,18 @@ export class TerminalLayoutController implements IDisposable {
     }
   }
 
-  handleViewportResize(): void {
-    this.sendResize({
-      reason: "viewport",
-      beforeFit: () => this.updateViewportMetrics(),
-    });
+  handleResizeDebounced(reason: string, beforeFit?: () => void): void {
+    if (this.sharedResizeTimer) {
+      this.sharedResizeTimer.dispose();
+      this.sharedResizeTimer = null;
+    }
+    this.sharedResizeTimer = this.store.setTimeout(() => {
+      this.sharedResizeTimer = null;
+      this.sendResize({
+        reason,
+        beforeFit,
+      });
+    }, 100);
   }
 
   updateViewportMetrics(options: { height?: boolean } = {}): void {
@@ -127,8 +155,40 @@ export class TerminalLayoutController implements IDisposable {
       viewportHeight: height,
       viewportOffsetTop: offsetTop,
     });
-    if (updateHeight) this.documentElement.style.setProperty("--viewport-height", `${height}px`);
+
+    const isTouchDevice = this.isTouchDevice();
+    const scale = viewport?.scale || 1;
+    const isKeyboardActive = isTouchDevice
+                          && Math.abs(scale - 1) < 0.05
+                          && (this.initialHeight - height) > 150;
+
+    if (DEBUG_KEYBOARD_METRICS) {
+      (this.windowObject as any).__webtermKeyboardDebug = {
+        ...(this.windowObject as any).__webtermKeyboardDebug,
+        isTouchDevice,
+        scale,
+        innerHeight: this.windowObject.innerHeight,
+        height,
+        offsetTop,
+        keyboardOffset,
+        isKeyboardActive,
+        lastKeyboardOffset: this.lastKeyboardOffset,
+        initialHeight: this.initialHeight
+      };
+    }
+
+    if (updateHeight) {
+      this.documentElement.style.setProperty("--viewport-height", `${height}px`);
+    }
     this.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+
+    // 键盘收起时恢复滚动位置。部分 Android 浏览器会让 innerHeight
+    // 和 visualViewport.height 一起变化，keyboardOffset 可能始终为 0。
+    if ((!isKeyboardActive && this.lastKeyboardActive) || (keyboardOffset === 0 && this.lastKeyboardOffset > 0)) {
+      this.resetPageScroll();
+    }
+    this.lastKeyboardOffset = keyboardOffset;
+    this.lastKeyboardActive = isKeyboardActive;
   }
 
   sendResize(options: { pinBottom?: boolean; beforeFit?: () => void; reason?: string } = {}): void {
@@ -137,6 +197,51 @@ export class TerminalLayoutController implements IDisposable {
     const beforeRows = this.terminalView.rows || 0;
     const domViewport = this.domViewport();
     const shouldPinBottom = options.pinBottom ?? (this.isNearBottom() || Boolean(domViewport && this.isDomViewportAtBottom()));
+
+    // 统一检测软键盘弹起事件（物理高度缩短 > 150px 且宽度未改变，同时满足安全网条件）
+    const currentWidth = this.windowObject.innerWidth;
+    const viewport = this.windowObject.visualViewport;
+    const vvHeight = viewport?.height || this.windowObject.innerHeight;
+    const vvOffsetTop = viewport?.offsetTop || 0;
+    const keyboardOffset = keyboardOffsetFor({
+      innerHeight: this.windowObject.innerHeight,
+      viewportHeight: vvHeight,
+      viewportOffsetTop: vvOffsetTop,
+    });
+
+    const isTouchDevice = this.isTouchDevice();
+    const scale = viewport?.scale || 1;
+    const isKeyboardActive = isTouchDevice
+                          && Math.abs(scale - 1) < 0.05
+                          && (this.initialHeight - vvHeight) > 150;
+    const isKeyboardEvent = isKeyboardActive && currentWidth === this.lastWidth;
+
+    if (DEBUG_KEYBOARD_METRICS) {
+      (this.windowObject as any).__webtermKeyboardDebug = {
+        ...(this.windowObject as any).__webtermKeyboardDebug,
+        isTouchDevice,
+        scale,
+        vvHeight,
+        vvOffsetTop,
+        keyboardOffset,
+        isKeyboardActive,
+        isKeyboardEvent,
+        lastWidth: this.lastWidth,
+        currentWidth,
+        initialHeight: this.initialHeight
+      };
+    }
+
+    this.lastWidth = currentWidth;
+
+    if (isKeyboardEvent) {
+      // 纯键盘触发：保持终端不重新 fit、不向后端发送 resize 消息
+      options.beforeFit?.();
+      // 统一用 visualViewport 高度和光标/最后非空行计算避让位置。
+      // Android 上 keyboardOffset 经常为 0，不能把它作为是否滚动的门槛。
+      this.scrollPageToCursor();
+      return;
+    }
 
     if (this.resizeRafId !== null) {
       this.safeCancelRaf(this.resizeRafId);
@@ -409,7 +514,95 @@ export class TerminalLayoutController implements IDisposable {
       this.safeCancelRaf(this.resizeRafId);
       this.resizeRafId = null;
     }
+    if (this.sharedResizeTimer) {
+      this.sharedResizeTimer.dispose();
+      this.sharedResizeTimer = null;
+    }
+    if (this.keyboardScrollTimer) {
+      clearTimeout(this.keyboardScrollTimer);
+      this.keyboardScrollTimer = null;
+    }
     this.terminalView = null;
+  }
+
+  /**
+   * 精准将页面滚动到使光标及最后一行文字正好出现在键盘 + quickbar 的上方。
+   */
+  private scrollPageToCursor(): void {
+    const page = this.container?.closest?.('.terminal-page') as HTMLElement | null;
+    if (!page || !this.terminalView) return;
+
+    const buffer = this.terminalView.buffer?.active;
+    const rows = this.terminalView.rows || 0;
+    if (!buffer || !rows) return;
+
+    // 1. 获取光标在当前可视区内的相对 Y 坐标 (0-based)
+    const cursorY = buffer.cursorY;
+    if (typeof cursorY !== 'number') return;
+
+    // 2. 从视口最底部开始向上扫描，获取可视区内最后一行非空正常文字的相对 Y 坐标
+    let lastNonEmptyRow = 0;
+    for (let i = rows - 1; i >= 0; i--) {
+      const line = buffer.getLine(buffer.viewportY + i);
+      if (line && line.translateToString(true).trim().length > 0) {
+        lastNonEmptyRow = i;
+        break;
+      }
+    }
+
+    // 3. 双重保险：取两者的较大行号，确保光标闪烁处和最后非空内容均不会被软键盘遮挡
+    let viewportRelativeRow = Math.max(cursorY, lastNonEmptyRow);
+    viewportRelativeRow = Math.max(0, Math.min(rows - 1, viewportRelativeRow));
+
+    // 获取 xterm-screen 渲染高度
+    const screen = this.container?.querySelector?.('.xterm-screen') as HTMLElement | null;
+    if (!screen || screen.clientHeight <= 0) return;
+    const rowHeight = screen.clientHeight / rows;
+
+    // 计算这一行底部在 layout viewport 中的 Y 坐标
+    const containerRect = this.container.getBoundingClientRect();
+    const cursorBottomInViewport = containerRect.top + (viewportRelativeRow + 1) * rowHeight;
+
+    // 实际可见可视区域高度
+    const visibleHeight = this.windowObject.visualViewport?.height || this.windowObject.innerHeight;
+
+    // Quickbar 快捷键栏高度
+    const quickbar = page.querySelector('.quickbar') as HTMLElement | null;
+    const quickbarHeight = quickbar?.getBoundingClientRect().height || 54;
+
+    // 目标位置：目标行底部应该停留在 quickbar 上方 4px 处
+    const targetY = visibleHeight - quickbarHeight - 4;
+    const overflow = cursorBottomInViewport - targetY;
+
+    if (this.keyboardScrollTimer) {
+      clearTimeout(this.keyboardScrollTimer);
+    }
+
+    this.keyboardScrollTimer = setTimeout(() => {
+      this.keyboardScrollTimer = null;
+      const maxScroll = Math.max(0, page.scrollHeight - page.clientHeight);
+      const newScrollTop = Math.max(0, Math.min(maxScroll, page.scrollTop + overflow));
+
+      page.scrollTo({
+        top: newScrollTop,
+        behavior: 'instant', // instant 可最大化避免与 iOS 键盘自带滚动弹簧动画冲突
+      });
+    }, 16);
+  }
+
+  /**
+   * 键盘收起时，复位页面滚动条位置为 0
+   */
+  private resetPageScroll(): void {
+    const page = this.container?.closest?.('.terminal-page') as HTMLElement | null;
+    if (page && page.scrollTop > 0) {
+      page.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }
+
+  private isTouchDevice(): boolean {
+    return 'ontouchstart' in this.windowObject
+        || (this.windowObject.navigator.maxTouchPoints > 0);
   }
 }
 

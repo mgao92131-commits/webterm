@@ -3,44 +3,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS Variables ── */
 :root {
   color-scheme: dark;
   --quickbar-height: 54px;
   --keyboard-offset: 0px;
-  --bg: #002b36;
-  --panel: #073642;
-  --line: #586e75;
-  --text: #eee8d5;
-  --muted: #93a1a1;
-  --accent: #268bd2;
-  --danger: #dc322f;
-  --terminal: #002b36;
-  --card-title: #fdf6e3;
-  --card-name: #93a1a1;
-  --card-input: #eee8d5;
-  --card-path: #657b83;
+
+  /* App chrome */
+  --bg-primary:    #0A0A0B;
+  --bg-secondary:  #111113;
+  --bg-tertiary:   #18181B;
+
+  /* Borders */
+  --border-primary:   #27272A;
+  --border-secondary: #1F1F23;
+  --border-hover:     #3F3F46;
+
+  /* Text */
+  --text-primary:    #FAFAFA;
+  --text-secondary:  #A1A1AA;
+  --text-tertiary:   #71717A;
+  --text-disabled:   #52525B;
+
+  /* Accent */
+  --accent:        #10B981;
+  --accent-hover:  #34D399;
+  --accent-muted:  rgba(16, 185, 129, 0.10);
+  --accent-text:   #6EE7B7;
+
+  /* Status */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger:  #EF4444;
+  --info:    #3B82F6;
+
+  /* Terminal — Solarized defaults */
+  --terminal-bg: #002b36;
+  --terminal-fg: #eee8d5;
 }
 
+/* ── Theme: Dracula (terminal canvas only) ── */
 :root[data-theme="dracula"] {
-  color-scheme: dark;
-  --bg: #282a36;
-  --panel: #21222c;
-  --line: #44475a;
-  --text: #f8f8f2;
-  --muted: #bd93f9;
-  --accent: #8be9fd;
-  --danger: #ff5555;
-  --terminal: #282a36;
-  --card-title: #ffffff;
-  --card-name: #bd93f9;
-  --card-input: #f8f8f2;
-  --card-path: #6272a4;
+  --terminal-bg: #282a36;
+  --terminal-fg: #f8f8f2;
 }
 
+/* ── Base ── */
 body {
-  background: var(--bg);
-  color: var(--text);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Geist Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body.terminal-mode {
@@ -51,25 +65,49 @@ body.terminal-mode {
   inset: 0;
 }
 
+/* ── Typography defaults ── */
+@layer base {
+  input, textarea, select, button {
+    font-family: inherit;
+  }
+  code, pre, kbd, samp {
+    font-family: 'Geist Mono', ui-monospace, SF Mono, monospace;
+  }
+}
+
+/* ── Utilities ── */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Terminal overrides ── */
 .terminal-page {
+  box-sizing: content-box;
   height: var(--viewport-height, 100dvh);
   width: 100dvw;
-  overflow: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--keyboard-offset, 0px);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+
+.terminal-page::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 #terminal .xterm {
   height: 100%;
   width: 100%;
   max-width: 100%;
   padding: 0;
-  background: var(--terminal);
+  background: var(--terminal-bg);
   overflow: hidden;
   contain: paint;
 }
 
-/* Keep xterm's scroll surface inside the fixed app viewport on mobile. */
 #terminal .xterm-viewport {
-  background: var(--terminal) !important;
+  background: var(--terminal-bg) !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch;
@@ -78,19 +116,18 @@ body.terminal-mode {
   touch-action: pan-y;
 }
 
-#terminal .xterm-viewport::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
+#terminal .xterm-viewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 #terminal .xterm-screen {
   max-width: 100%;
   overflow: hidden;
+  touch-action: pan-y;
+}
+
+.terminal-page.selection-mode #terminal .xterm-screen {
   touch-action: none;
 }
 
-/* The custom mobile scrollbar/quickbar make xterm's overview ruler redundant. */
 #terminal .xterm-decoration-overview-ruler {
   display: none !important;
 }
@@ -100,13 +137,11 @@ body.terminal-mode {
   overflow: hidden;
 }
 
-/* xterm positions this off-screen input itself; constrain width to avoid iOS overflow. */
 #terminal .xterm-helper-textarea {
   max-width: 1px !important;
   width: 1px !important;
 }
 
-/* Prevent IME composition text from spilling outside the terminal viewport. */
 #terminal .composition-view {
   max-width: calc(100dvw - 24px);
   overflow: hidden;
@@ -116,10 +151,23 @@ body.terminal-mode {
   cursor: crosshair;
 }
 
-/* Custom transitions */
+/* ── Terminal chrome ── */
+.terminal-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.quickbar {
+  position: sticky;
+  bottom: var(--keyboard-offset, 0px);
+  z-index: 20;
+}
+
+/* ── Transitions ── */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.15s ease;
 }
 
 .fade-enter-from,
@@ -129,8 +177,8 @@ body.terminal-mode {
 
 .slide-down-enter-active,
 .slide-down-leave-active {
-  transition: all 0.3s ease;
-  max-height: 300px;
+  transition: all 0.25s ease;
+  max-height: 400px;
   opacity: 1;
 }
 
@@ -138,17 +186,21 @@ body.terminal-mode {
 .slide-down-leave-to {
   max-height: 0;
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(-8px);
 }
 
-
-/* Hide scrollbar for Chrome, Safari and Opera */
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
+/* ── Staggered list animation ── */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Hide scrollbar for IE, Edge and Firefox */
-.scrollbar-none {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+.stagger-item {
+  animation: cardIn 0.3s ease-out both;
+}
+
+/* ── Quickbar scroll hint ── */
+.quickbar-scroll-hint {
+  mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
 }

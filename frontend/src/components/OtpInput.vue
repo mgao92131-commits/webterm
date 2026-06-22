@@ -1,43 +1,48 @@
 <template>
-  <div class="otp-section flex flex-col gap-4">
-    <div class="text-center">
-      <p class="text-sm text-slate-400">
-        验证码已发送至
-      </p>
-      <p class="text-sm text-slate-200 font-mono mt-1 break-all">{{ email }}</p>
-      <p class="text-xs text-slate-500 mt-2">请输入 6 位数字验证码，10 分钟内有效</p>
+  <div class="flex flex-col gap-5">
+    <div class="text-center flex flex-col gap-1">
+      <p class="text-[13px] text-fg-muted">验证码已发送至</p>
+      <p class="text-[13px] text-fg font-mono break-all">{{ email }}</p>
+      <p class="text-[12px] text-fg-subtle mt-1">请输入 6 位数字，10 分钟内有效</p>
     </div>
 
-    <input
-      ref="codeInputRef"
-      v-model="code"
-      name="otp-code"
-      autocomplete="one-time-code"
-      inputmode="numeric"
-      pattern="[0-9]*"
-      maxlength="6"
-      placeholder="······"
-      :disabled="verifying"
-      autofocus
-      class="px-4 py-3 rounded-lg bg-slate-950/50 border border-slate-800 text-slate-100 placeholder:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all font-mono text-center text-2xl tracking-[0.5em]"
-      @keydown.enter="handleSubmit"
-    />
+    <!-- 6 individual digit inputs -->
+    <div class="flex gap-2 justify-center">
+      <input
+        v-for="(_, i) in 6"
+        :key="i"
+        :ref="(el) => { if (el) digitRefs[i] = el as HTMLInputElement }"
+        v-model="digits[i]"
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]"
+        maxlength="1"
+        autocomplete="one-time-code"
+        :disabled="verifying"
+        class="w-11 h-12 rounded-sm bg-app-bg border text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-xl text-center"
+        :class="verifying && digits[i] ? 'border-accent/50' : 'border-border'"
+        @input="onDigitInput(i, $event)"
+        @keydown="onDigitKeydown(i, $event)"
+        @paste="onPaste"
+        @focus="$event.target.select()"
+      />
+    </div>
 
     <button
       type="button"
-      :disabled="verifying || code.length !== 6"
+      :disabled="verifying || !allDigitsFilled"
       @click="handleSubmit"
-      class="w-full py-3 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none hover:shadow-lg hover:shadow-indigo-500/20"
+      class="h-10 w-full rounded-sm bg-accent hover:bg-accent-hover text-black font-medium text-[14px] transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40 active:scale-[0.99] disabled:opacity-40 disabled:pointer-events-none"
     >
       {{ verifying ? '验证中...' : '验证' }}
     </button>
 
-    <div class="flex items-center justify-between text-xs">
+    <div class="flex items-center justify-center">
       <button
         type="button"
         :disabled="resendCooldown > 0 || resending"
         @click="handleResend"
-        class="text-indigo-400 hover:text-indigo-300 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors"
+        class="text-[13px] text-accent hover:text-accent-hover disabled:text-fg-disabled disabled:cursor-not-allowed transition-colors"
       >
         {{ resending ? '发送中...' : resendCooldown > 0 ? `重新发送 (${resendCooldown}s)` : '重新发送验证码' }}
       </button>
@@ -45,7 +50,7 @@
 
     <p
       v-if="errorMessage"
-      class="error text-sm text-rose-500 bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg font-mono text-center"
+      class="text-[13px] text-status-danger bg-status-danger/10 border border-status-danger/20 px-3 py-2 rounded-sm font-mono text-center"
     >
       {{ errorMessage }}
     </p>
@@ -53,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { verifyEmail, verifyOtp, resendOtp } from '../api/auth';
 
 const props = defineProps<{
@@ -67,13 +72,15 @@ const emit = defineEmits<{
   (e: 'resend-required'): void;
 }>();
 
-const code = ref('');
+const digits = ref<string[]>(['', '', '', '', '', '']);
+const digitRefs = ref<(HTMLInputElement | null)[]>(Array(6).fill(null));
 const errorMessage = ref('');
 const verifying = ref(false);
 const resending = ref(false);
 const resendCooldown = ref(60);
-const codeInputRef = ref<HTMLInputElement | null>(null);
 let cooldownTimer: any = null;
+
+const allDigitsFilled = computed(() => digits.value.every(d => d.length === 1));
 
 function startCooldown() {
   resendCooldown.value = 60;
@@ -87,22 +94,68 @@ function startCooldown() {
   }, 1000);
 }
 
+function focusNext(fromIndex: number) {
+  const next = digitRefs.value[fromIndex + 1];
+  next?.focus();
+}
+
+function focusPrev(fromIndex: number) {
+  const prev = digitRefs.value[fromIndex - 1];
+  prev?.focus();
+}
+
+function onDigitInput(index: number, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const val = input.value.replace(/\D/g, '');
+  if (val.length > 0) {
+    digits.value[index] = val[val.length - 1];
+    if (index < 5) focusNext(index);
+  } else {
+    digits.value[index] = '';
+  }
+}
+
+function onDigitKeydown(index: number, event: KeyboardEvent) {
+  if (event.key === 'Enter') {
+    if (allDigitsFilled.value) handleSubmit();
+  } else if (event.key === 'Backspace' && !digits.value[index] && index > 0) {
+    focusPrev(index);
+  } else if (event.key === 'ArrowLeft' && index > 0) {
+    focusPrev(index);
+  } else if (event.key === 'ArrowRight' && index < 5) {
+    focusNext(index);
+  }
+}
+
+function onPaste(event: ClipboardEvent) {
+  event.preventDefault();
+  const pasted = event.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 6) || '';
+  for (let i = 0; i < 6; i++) {
+    digits.value[i] = pasted[i] || '';
+  }
+  // Focus the next empty or last
+  const nextEmpty = digits.value.findIndex(d => d === '');
+  const target = nextEmpty >= 0 ? nextEmpty : 5;
+  digitRefs.value[target]?.focus();
+}
+
 async function handleSubmit() {
-  if (code.value.length !== 6 || verifying.value) return;
+  if (!allDigitsFilled.value || verifying.value) return;
   verifying.value = true;
   errorMessage.value = '';
+  const code = digits.value.join('');
   try {
     if (props.purpose === 'register') {
-      const res = await verifyEmail(props.email, code.value);
+      const res = await verifyEmail(props.email, code);
       emit('verified', { email: res.email || props.email, role: res.role || 'user' });
     } else {
-      const res = await verifyOtp(props.email, code.value, props.targetDeviceId || '');
+      const res = await verifyOtp(props.email, code, props.targetDeviceId || '');
       emit('verified', { email: res.email || props.email, role: res.role || 'user' });
     }
   } catch (err: any) {
     errorMessage.value = err.message || '验证失败';
-    code.value = '';
-    nextTickFocus();
+    digits.value = ['', '', '', '', '', ''];
+    digitRefs.value[0]?.focus();
   } finally {
     verifying.value = false;
   }
@@ -122,21 +175,15 @@ async function handleResend() {
   }
 }
 
-function nextTickFocus() {
-  requestAnimationFrame(() => {
-    codeInputRef.value?.focus();
-  });
-}
-
 watch(() => props.email, () => {
-  code.value = '';
+  digits.value = ['', '', '', '', '', ''];
   errorMessage.value = '';
   startCooldown();
 });
 
 onMounted(() => {
   startCooldown();
-  nextTickFocus();
+  digitRefs.value[0]?.focus();
 });
 
 onUnmounted(() => {

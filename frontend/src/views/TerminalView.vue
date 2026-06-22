@@ -1,72 +1,88 @@
 <template>
-  <section :class="['terminal-page min-h-screen flex flex-col bg-slate-950 select-none overflow-hidden relative', { 'selection-mode': isSelectionMode }]">
-    <!-- 顶部状态栏 -->
-    <header class="terminal-bar w-full px-4 py-2 border-b border-slate-900 bg-slate-950/60 backdrop-blur-md flex items-center justify-between z-10 gap-3">
-      <router-link 
-        to="/" 
-        class="button font-mono text-xs px-3 py-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 bg-slate-900/30 transition-all flex items-center gap-1"
+  <section :class="['terminal-page min-h-screen flex flex-col bg-app-bg select-none overflow-x-hidden relative', { 'selection-mode': isSelectionMode }]">
+    <!-- Header bar -->
+    <header class="terminal-bar w-full h-10 px-3 border-b border-border bg-app-bg flex items-center justify-between z-10 gap-2 flex-shrink-0">
+      <router-link
+        to="/"
+        class="flex items-center gap-1.5 px-2 py-1 text-[12px] rounded-sm text-fg-muted hover:text-fg hover:bg-bg-tertiary transition-colors flex-shrink-0"
       >
         <ArrowLeft class="w-3.5 h-3.5" />
-        <span>返回</span>
+        <span class="hidden sm:inline">返回</span>
       </router-link>
 
-      <div class="terminal-title flex-1 flex justify-center max-w-[400px]">
-        <input 
-          id="sessionName" 
-          autocomplete="off" 
-          maxlength="80" 
+      <!-- Title input -->
+      <div class="flex-1 flex justify-center min-w-0 px-2">
+        <input
+          id="sessionName"
+          autocomplete="off"
+          maxlength="80"
           v-model="sessionNameVal"
           @focus="onTitleFocus"
           @blur="onTitleBlur"
           @keydown.enter="onTitleEnter"
           @keydown.escape="onTitleEsc"
-          class="w-full text-center px-3 py-1.5 bg-slate-900/30 border border-transparent rounded-lg text-slate-200 hover:border-slate-850/60 focus:border-indigo-500 focus:bg-slate-900/80 focus:outline-none transition-all font-sans text-sm font-semibold truncate"
-          :placeholder="sessionPlaceholder" 
-          aria-label="会话名称" 
-          title="会话名称，留空时显示终端标题" 
+          class="w-full max-w-[360px] text-center h-7 px-2 bg-transparent border border-transparent rounded-sm text-fg hover:border-border focus:border-accent focus:bg-app-bg focus:outline-none transition-colors font-mono text-[13px] truncate"
+          :placeholder="sessionPlaceholder"
+          aria-label="会话名称"
+          title="会话名称，留空时显示终端标题"
         />
       </div>
 
-      <div class="flex items-center gap-2">
-        <span v-if="store.mode === 'relay'" :class="['text-[10px] px-2.5 py-1 rounded-full font-semibold border font-mono tracking-normal leading-none mr-1', store.p2pActive ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20']">
-          {{ store.p2pActive ? '🟢 直连' : '🟡 中继' }}
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <!-- P2P/Relay badge -->
+        <span v-if="store.mode === 'relay'" :class="['text-[10px] px-1.5 py-0.5 rounded-sm font-medium font-mono hidden sm:inline-flex',
+          store.p2pActive ? 'bg-accent-muted text-accent border border-accent/30' : 'bg-bg-tertiary text-fg-subtle border border-border']">
+          {{ store.p2pActive ? 'P2P' : 'RELAY' }}
         </span>
-        <button 
-          id="copySelection" 
-          class="selection-copy font-mono text-xs px-3 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all"
-          type="button" 
+
+        <!-- Copy selection — bound by terminal-selection.ts via #copySelection -->
+        <button
+          id="copySelection"
           v-show="isSelectionMode"
           @click="copySelection"
-        >
-          拷贝
-        </button>
-        <button 
-          id="selectMode" 
-          class="font-mono text-xs px-3 py-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 bg-slate-900/30 transition-all"
-          type="button"
-        >
-          选择
-        </button>
+          class="text-[11px] px-2 py-1 rounded-sm bg-accent-muted text-accent border border-accent/30 hover:bg-accent/20 transition-colors font-mono"
+        >拷贝</button>
+
+        <!-- Font size -->
+        <div class="flex items-center rounded-sm border border-border overflow-hidden flex-shrink-0">
+          <button
+            @click="adjustFontSize(-1)"
+            class="px-2 h-7 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-tertiary transition-colors font-mono"
+            title="减小字号"
+          >A-</button>
+          <div class="w-px h-3 bg-border"></div>
+          <button
+            @click="adjustFontSize(1)"
+            class="px-2 h-7 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-tertiary transition-colors font-mono"
+            title="增大字号"
+          >A+</button>
+        </div>
+
+        <!-- Selection mode — bound by terminal-selection.ts via #selectMode -->
+        <button
+          id="selectMode"
+          class="text-[11px] px-2 py-1 rounded-sm text-fg-muted hover:text-fg hover:bg-bg-tertiary transition-colors font-mono"
+        >选择</button>
       </div>
     </header>
 
-    <!-- 终端容器 -->
-    <div id="terminal-container" class="flex-1 w-full relative overflow-hidden bg-slate-950">
+    <!-- Terminal container -->
+    <div id="terminal-container" class="flex-1 w-full relative overflow-hidden">
       <div id="terminal" ref="terminalRef" class="w-full h-full"></div>
     </div>
 
-    <!-- 移动端快捷输入栏 -->
-    <nav class="quickbar z-20 w-full border-t border-slate-900 bg-slate-950/90 py-2 px-3 select-none">
-      <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-none py-1 w-full max-w-lg mx-auto">
-        <button 
-          v-for="k in ['Ctrl', 'Esc', 'Tab', 'Enter', 'Ctrl C', 'Ctrl D', 'Ctrl Z', 'Ctrl X', '/', '-', '|', '>', '\\', '$', '&', '←', '↓', '↑', '→']" 
+    <!-- Quickbar (mobile) -->
+    <nav class="quickbar z-20 w-full border-t border-border bg-app-bg py-2 px-2 select-none flex-shrink-0">
+      <div class="quickbar-scroll-hint flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none py-1 w-full max-w-lg mx-auto">
+        <button
+          v-for="k in quickKeys"
           :key="k"
-          type="button" 
+          type="button"
           :data-key="k"
-          :class="['font-mono text-xs font-semibold py-2.5 px-3 rounded-lg border transition-all active:scale-95 leading-none text-center flex-shrink-0 min-w-[42px]',
-                   k === 'Ctrl' && isCtrlActive 
-                     ? 'bg-indigo-600 border-indigo-500 text-white active shadow-md shadow-indigo-600/20' 
-                     : 'bg-slate-900/60 border-slate-850/60 text-slate-400 hover:text-slate-200 hover:border-slate-800']"
+          :class="['font-mono text-[11px] font-medium py-2 px-2.5 rounded-sm border transition-all active:scale-95 leading-none text-center flex-shrink-0',
+            k === 'Ctrl' && isCtrlActive
+              ? 'bg-accent border-accent text-black'
+              : 'bg-app-bg border-border text-fg-muted hover:text-fg hover:border-border-hover']"
         >
           {{ k }}
         </button>
@@ -76,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ArrowLeft } from '@lucide/vue';
 import { store } from '../store';
@@ -84,29 +100,31 @@ import { TerminalSessionContext } from '../lib/terminal-session-context';
 
 const route = useRoute();
 
-// 页面绑定 refs
+const quickKeys = ['Ctrl', 'Esc', 'Tab', 'Enter', 'Ctrl C', 'Ctrl D', 'Ctrl Z', 'Ctrl X', '/', '-', '|', '>', '\\', '$', '&', '←', '↓', '↑', '→'];
+
 const terminalRef = ref<HTMLElement | null>(null);
 const sessionNameVal = ref('');
 const sessionPlaceholder = ref('Terminal');
 const isSelectionMode = ref(false);
 const isCtrlActive = ref(false);
 
-const sessionId = decodeURIComponent(route.params.id as string);
 let context: TerminalSessionContext | null = null;
 
-// 标题修改状态变量
 let titleEditing = false;
 let skipTitleCommit = false;
 
-onMounted(() => {
-  document.body.classList.add("terminal-mode");
-  
+function getSessionId(): string {
+  return decodeURIComponent(route.params.id as string);
+}
+
+function createContext(): void {
+  const sessionId = getSessionId();
+
   if (!terminalRef.value) {
     console.error("Terminal container not found");
     return;
   }
 
-  // 1. 初始化协调管理器 TerminalSessionContext 并订阅其状态
   context = new TerminalSessionContext({
     element: terminalRef.value,
     sessionId,
@@ -125,10 +143,34 @@ onMounted(() => {
     }
   });
 
-  // 2. 挂载 Playwright Debug 测试调试钩子
   if (debugEnabled()) {
     (window as any).__webtermDebug = context.getDebugHooks();
   }
+}
+
+onMounted(() => {
+  document.body.classList.add("terminal-mode");
+  createContext();
+});
+
+// 监听路由参数变化：同一组件在 /terminal/A 和 /terminal/B 之间导航时，
+// Vue Router 复用组件实例，onMounted/onUnmounted 不会触发。
+// 必须手动 watch route.params.id 来替换 TerminalSessionContext。
+watch(() => route.params.id, (newId, oldId) => {
+  if (!oldId || newId === oldId) return;
+
+  if (context) {
+    context.dispose();
+    context = null;
+  }
+
+  // 重置编辑状态，避免旧会话标题残留
+  titleEditing = false;
+  skipTitleCommit = false;
+  sessionNameVal.value = '';
+  sessionPlaceholder.value = 'Terminal';
+
+  createContext();
 });
 
 onUnmounted(() => {
@@ -139,8 +181,6 @@ onUnmounted(() => {
   }
 });
 
-// --- 标题就地编辑逻辑 ---
-
 function onTitleFocus() {
   titleEditing = true;
   if (context) {
@@ -150,9 +190,7 @@ function onTitleFocus() {
   titleInput?.select();
 }
 
-function onTitleBlur() {
-  commitTitle();
-}
+function onTitleBlur() { commitTitle(); }
 
 function onTitleEnter() {
   const titleInput = document.getElementById("sessionName") as HTMLInputElement;
@@ -181,9 +219,12 @@ async function commitTitle() {
   }
 }
 
-// 拷贝选区
 function copySelection(event?: Event) {
   context?.selectionController?.copySelection(event);
+}
+
+function adjustFontSize(delta: number) {
+  context?.changeFontSize(delta);
 }
 
 function debugEnabled() {
@@ -191,7 +232,3 @@ function debugEnabled() {
     || localStorage.getItem("webtermDebug") === "1";
 }
 </script>
-
-<style scoped>
-/* 可以在此针对单屏渲染做微调 */
-</style>
