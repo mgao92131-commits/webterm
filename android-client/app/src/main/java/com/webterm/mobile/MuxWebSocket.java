@@ -141,7 +141,13 @@ final class MuxWebSocket {
         ChannelInfo info = new ChannelInfo(id, path, protocols, callback);
         channels.put(id, info);
 
-        // If physical socket is connected, send ws-connect immediately
+        // If physical socket is disconnected and we now have a reason to connect, do so.
+        if (state == State.DISCONNECTED && baseUrl != null && cookie != null) {
+            connectNow();
+            return;
+        }
+
+        // If already connected, send ws-connect immediately
         if (state == State.CONNECTED && physicalSocket != null) {
             sendWSConnect(physicalSocket, id, path, protocols);
         }
@@ -258,6 +264,11 @@ final class MuxWebSocket {
                     String reason = t.getClass().getSimpleName()
                             + (t.getMessage() != null ? ": " + t.getMessage() : "");
                     Log.e(TAG, "socket failure gen=" + generation + " " + reason, t);
+                    // Notify all channels immediately — don't wait for onClosed
+                    // which may be delayed or never arrive.
+                    for (ChannelInfo info : new ArrayList<>(channels.values())) {
+                        try { info.callback.onClosed(1006, reason); } catch (Exception ignored) {}
+                    }
                     if (state != State.DISCONNECTED) scheduleReconnect(reason);
                 });
             }
@@ -342,6 +353,12 @@ final class MuxWebSocket {
     private void scheduleReconnect(String reason) {
         if (state == State.DISCONNECTED || baseUrl == null || cookie == null) return;
         if (state == State.RECONNECTING) return;
+        // Don't waste battery reconnecting when no active channels need it.
+        // openChannel() will reconnect when a channel is registered.
+        if (channels.isEmpty()) {
+            Log.i(TAG, "No active channels, skipping reconnect");
+            return;
+        }
         Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
         state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
