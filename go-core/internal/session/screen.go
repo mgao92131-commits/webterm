@@ -322,6 +322,9 @@ func lastActiveCol(line []headlessterm.Cell) int {
 		if cell.Char != ' ' && cell.Char != 0 {
 			return c
 		}
+		if !isDefaultFg(cell.Fg) {
+			return c
+		}
 		if !isDefaultBg(cell.Bg) {
 			return c
 		}
@@ -442,6 +445,15 @@ func (screen *ScreenState) AnsiText() string {
 
 			isEmpty := cell.Char == ' ' || cell.Char == 0
 			if isEmpty && isDefaultStyle(cell) {
+				// 如果当前活动样式不是默认的，需要在跳过之前将其重置为默认，
+				// 否则在后续输出跳过的单元格（如 ECH \x1b[NX）时会发生样式（背景色）泄漏。
+				if (activeFlags & styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
+					buf.WriteString("\x1b[0m")
+					activeFg = defaultFg
+					activeBg = defaultBg
+					activeUlColor = nil
+					activeFlags = 0
+				}
 				nullCellCount++
 				continue
 			}
