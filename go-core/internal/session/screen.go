@@ -280,6 +280,21 @@ func appendUnderlineColorSGR(sgrParams []string, uc color.Color) []string {
 	return sgrParams
 }
 
+var ambiguousWideRunes = map[rune]bool{
+	'✔': true,
+	'❯': true,
+}
+
+func isDefaultFg(fg color.Color) bool {
+	if fg == nil {
+		return true
+	}
+	if nc, ok := fg.(*headlessterm.NamedColor); ok {
+		return nc.Name == headlessterm.NamedColorForeground
+	}
+	return false
+}
+
 func isDefaultBg(bg color.Color) bool {
 	if bg == nil {
 		return true
@@ -288,6 +303,14 @@ func isDefaultBg(bg color.Color) bool {
 		return nc.Name == headlessterm.NamedColorBackground
 	}
 	return false
+}
+
+func isDefaultStyle(cell headlessterm.Cell) bool {
+	cellStyleFlags := cell.Flags & styleFlagsMask
+	return cellStyleFlags == 0 &&
+		isDefaultFg(cell.Fg) &&
+		isDefaultBg(cell.Bg) &&
+		cell.UnderlineColor == nil
 }
 
 func lastActiveCol(line []headlessterm.Cell) int {
@@ -322,31 +345,65 @@ func (screen *ScreenState) AnsiText() string {
 	screen.mu.Lock()
 	rows := screen.terminal.Rows()
 	cols := screen.terminal.Cols()
+	scrollbackLen := screen.terminal.ScrollbackLen()
 
-	cells := make([][]headlessterm.Cell, rows)
-	wrapped := make([]bool, rows)
-	for r := 0; r < rows; r++ {
+	totalRows := scrollbackLen + rows
+	cells := make([][]headlessterm.Cell, totalRows)
+	wrapped := make([]bool, totalRows)
+
+	for r := 0; r < scrollbackLen; r++ {
+		historyLine := screen.terminal.ScrollbackLine(r)
 		cells[r] = make([]headlessterm.Cell, cols)
 		for c := 0; c < cols; c++ {
-			cellPtr := screen.terminal.Cell(r, c)
-			if cellPtr != nil {
-				cells[r][c] = cellPtr.Copy()
+			if c < len(historyLine) {
+				cells[r][c] = historyLine[c].Copy()
 			} else {
 				cells[r][c] = headlessterm.NewCell()
 			}
 		}
-		wrapped[r] = screen.terminal.IsWrapped(r)
+		wrapped[r] = false
+	}
+
+	for r := 0; r < rows; r++ {
+		targetRowIdx := scrollbackLen + r
+		cells[targetRowIdx] = make([]headlessterm.Cell, cols)
+		for c := 0; c < cols; c++ {
+			cellPtr := screen.terminal.Cell(r, c)
+			if cellPtr != nil {
+				cells[targetRowIdx][c] = cellPtr.Copy()
+			} else {
+				cells[targetRowIdx][c] = headlessterm.NewCell()
+			}
+		}
+		wrapped[targetRowIdx] = screen.terminal.IsWrapped(r)
 	}
 
 	curRow, curCol := screen.terminal.CursorPos()
 	cursorVisible := screen.terminal.CursorVisible()
 	screen.mu.Unlock()
 
-	lastRow := lastActiveRow(cells)
+	// 转换 Ambiguous 宽字符为单宽，以对齐 Node 端的 xterm.js 宽度映射
+	for r := 0; r < len(cells); r++ {
+		for c := 0; c < cols; c++ {
+			cell := &cells[r][c]
+			if ambiguousWideRunes[cell.Char] {
+				cell.ClearFlag(headlessterm.CellFlagWideChar)
+				if c+1 < cols && cells[r][c+1].HasFlag(headlessterm.CellFlagWideCharSpacer) {
+					cells[r][c+1] = headlessterm.NewCell()
+				}
+			}
+		}
+	}
+
+	lastRow := totalRows - 1
+	if scrollbackLen == 0 {
+		lastRow = lastActiveRow(cells)
+	}
 	if lastRow < 0 {
-		if curRow > 0 || curCol > 0 {
+		absRow := scrollbackLen + curRow
+		if absRow > 0 || curCol > 0 {
 			var buf strings.Builder
-			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
+			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", absRow+1, curCol+1))
 			if cursorVisible {
 				buf.WriteString("\x1b[?25h")
 			} else {
@@ -358,8 +415,12 @@ func (screen *ScreenState) AnsiText() string {
 	}
 
 	var buf strings.Builder
-	var activeFg color.Color = nil
-	var activeBg color.Color = nil
+
+	defaultFg := &headlessterm.NamedColor{Name: headlessterm.NamedColorForeground}
+	defaultBg := &headlessterm.NamedColor{Name: headlessterm.NamedColorBackground}
+
+	var activeFg color.Color = defaultFg
+	var activeBg color.Color = defaultBg
 	var activeUlColor color.Color = nil
 	var activeFlags headlessterm.CellFlags = 0
 
@@ -373,14 +434,8 @@ func (screen *ScreenState) AnsiText() string {
 				continue
 			}
 
-			cellStyleFlags := cell.Flags & styleFlagsMask
 			isEmpty := cell.Char == ' ' || cell.Char == 0
-			isDefaultStyle := cellStyleFlags == 0 &&
-				colorEquals(cell.Fg, nil) &&
-				isDefaultBg(cell.Bg) &&
-				colorEquals(cell.UnderlineColor, nil)
-
-			if isEmpty && isDefaultStyle {
+			if isEmpty && isDefaultStyle(cell) {
 				nullCellCount++
 				continue
 			}
@@ -393,6 +448,7 @@ func (screen *ScreenState) AnsiText() string {
 				nullCellCount = 0
 			}
 
+			cellStyleFlags := cell.Flags & styleFlagsMask
 			activeStyleFlags := activeFlags & styleFlagsMask
 
 			if !colorEquals(cell.Fg, activeFg) || !colorEquals(cell.Bg, activeBg) || !colorEquals(cell.UnderlineColor, activeUlColor) || cellStyleFlags != activeStyleFlags {
@@ -461,10 +517,10 @@ func (screen *ScreenState) AnsiText() string {
 			}
 		}
 
-		if (activeFlags & styleFlagsMask) != 0 || activeFg != nil || activeBg != nil || activeUlColor != nil {
+		if (activeFlags & styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
 			buf.WriteString("\x1b[0m")
-			activeFg = nil
-			activeBg = nil
+			activeFg = defaultFg
+			activeBg = defaultBg
 			activeUlColor = nil
 			activeFlags = 0
 		}
@@ -472,16 +528,16 @@ func (screen *ScreenState) AnsiText() string {
 			if wrapped[r] {
 				// line wrap, omit newline character for reflow
 			} else {
-				buf.WriteRune('\n')
+				buf.WriteString("\r\n") // 行尾分隔符完全对齐为 CRLF
 			}
 		}
 	}
 
-	buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
-	if cursorVisible {
-		buf.WriteString("\x1b[?25h")
-	} else {
-		buf.WriteString("\x1b[?25l")
+	absRow := scrollbackLen + curRow
+	if absRow > 0 || curCol > 0 {
+		if activeFg != defaultFg || activeBg != defaultBg || activeUlColor != nil || activeFlags != 0 {
+			buf.WriteString("\x1b[0m")
+		}
 	}
 
 	return buf.String()
