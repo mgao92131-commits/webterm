@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	headlessterm "github.com/danielgatis/go-headless-term"
 )
 
 const (
@@ -230,6 +231,55 @@ func (terminal *TerminalSession) Detach(client *Client) {
 	terminal.mu.Unlock()
 }
 
+// terminalModes 生成终端模式恢复 ANSI 序列（与 @xterm/addon-serialize 对齐）
+func (terminal *TerminalSession) terminalModes() []byte {
+	terminal.mu.RLock()
+	screen := terminal.screen
+	terminal.mu.RUnlock()
+	if screen == nil {
+		return nil
+	}
+
+	var buf []byte
+	t := screen.terminal
+
+	// 默认 false 的模式，启用时输出 set 序列
+	if t.HasMode(headlessterm.ModeCursorKeys) {
+		buf = append(buf, "\x1b[?1h"...)
+	}
+	if t.HasMode(headlessterm.ModeKeypadApplication) {
+		buf = append(buf, "\x1b[?66h"...)
+	}
+	if t.HasMode(headlessterm.ModeBracketedPaste) {
+		buf = append(buf, "\x1b[?2004h"...)
+	}
+	if t.HasMode(headlessterm.ModeInsert) {
+		buf = append(buf, "\x1b[4h"...)
+	}
+	if t.HasMode(headlessterm.ModeOrigin) {
+		buf = append(buf, "\x1b[?6h"...)
+	}
+	if t.HasMode(headlessterm.ModeReportFocusInOut) {
+		buf = append(buf, "\x1b[?1004h"...)
+	}
+
+	// 鼠标上报模式
+	if t.HasMode(headlessterm.ModeReportAllMouseMotion) {
+		buf = append(buf, "\x1b[?1003h"...)
+	} else if t.HasMode(headlessterm.ModeReportCellMouseMotion) {
+		buf = append(buf, "\x1b[?1002h"...)
+	} else if t.HasMode(headlessterm.ModeReportMouseClicks) {
+		buf = append(buf, "\x1b[?1000h"...)
+	}
+
+	// 默认 true 的模式，禁用时输出 reset 序列
+	if !t.HasMode(headlessterm.ModeLineWrap) {
+		buf = append(buf, "\x1b[?7l"...)
+	}
+
+	return buf
+}
+
 func (terminal *TerminalSession) StateBytes() []byte {
 	terminal.mu.RLock()
 	screen := terminal.screen
@@ -239,6 +289,10 @@ func (terminal *TerminalSession) StateBytes() []byte {
 		out := []byte("\x1b[3J\x1b[2J\x1b[H")
 		if text != "" {
 			out = append(out, []byte(text)...)
+		}
+		// 追加终端模式恢复序列（与 @xterm/addon-serialize 对齐）
+		if modes := terminal.terminalModes(); len(modes) > 0 {
+			out = append(out, modes...)
 		}
 		return out
 	}

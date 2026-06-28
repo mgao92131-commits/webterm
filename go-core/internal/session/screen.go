@@ -380,6 +380,7 @@ func (screen *ScreenState) AnsiText() string {
 
 	curRow, curCol := screen.terminal.CursorPos()
 	cursorVisible := screen.terminal.CursorVisible()
+	isAltScreen := screen.terminal.IsAlternateScreen()
 	screen.mu.Unlock()
 
 	// 转换 Ambiguous 宽字符为单宽，以对齐 Node 端的 xterm.js 宽度映射
@@ -415,6 +416,11 @@ func (screen *ScreenState) AnsiText() string {
 	}
 
 	var buf strings.Builder
+
+	// Alt Buffer 切换（与 Node.js 端一致）
+	if isAltScreen {
+		buf.WriteString("\x1b[?1049h\x1b[H")
+	}
 
 	defaultFg := &headlessterm.NamedColor{Name: headlessterm.NamedColorForeground}
 	defaultBg := &headlessterm.NamedColor{Name: headlessterm.NamedColorBackground}
@@ -538,6 +544,18 @@ func (screen *ScreenState) AnsiText() string {
 		if activeFg != defaultFg || activeBg != defaultBg || activeUlColor != nil || activeFlags != 0 {
 			buf.WriteString("\x1b[0m")
 		}
+	}
+
+	// 检查是否需要恢复光标位置。仅在实际光标位置不在文本自然结束处时，才追加定位序列
+	lastCol := lastActiveCol(cells[lastRow])
+	if absRow != lastRow || curCol != lastCol+1 {
+		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", absRow+1, curCol+1))
+	}
+
+	if !cursorVisible {
+		buf.WriteString("\x1b[?25l")
+	} else if absRow != lastRow || curCol != lastCol+1 {
+		buf.WriteString("\x1b[?25h")
 	}
 
 	return buf.String()
