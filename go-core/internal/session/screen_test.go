@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScreenStateTracksSnapshotAndANSIState(t *testing.T) {
 	screen := NewScreenState(4, 20, nil, nil)
@@ -43,5 +46,30 @@ func TestScreenStateReturnsDirtyCells(t *testing.T) {
 	next := screen.DirtyDelta(8)
 	if len(next.Cells) != 0 {
 		t.Fatalf("expected dirty cells to clear; got %#v", next.Cells)
+	}
+}
+
+func TestAnsiTextRoundTrip(t *testing.T) {
+	screenA := NewScreenState(5, 50, nil, nil)
+
+	inputData := []byte("Hello \x1b[31;1mRedBold\x1b[0m \x1b[42;3mGreenBgItalic\x1b[0m \x1b[4:3;58;2;255;0;0mCurlyRedUnderline\x1b[0m normal \x1b[7mReverse\x1b[0m")
+	if err := screenA.Write(inputData); err != nil {
+		t.Fatalf("Write to screenA failed: %v", err)
+	}
+
+	snapshotA := screenA.AnsiText()
+	t.Logf("Snapshot A: %q", snapshotA)
+
+	screenB := NewScreenState(5, 50, nil, nil)
+	snapshotA_CRLF := strings.ReplaceAll(snapshotA, "\n", "\r\n")
+	if err := screenB.Write([]byte(snapshotA_CRLF)); err != nil {
+		t.Fatalf("Write to screenB failed: %v", err)
+	}
+
+	snapshotB := screenB.AnsiText()
+	t.Logf("Snapshot B: %q", snapshotB)
+
+	if snapshotA != snapshotB {
+		t.Errorf("Round-trip failed!\nSnapshot A: %q\nSnapshot B: %q", snapshotA, snapshotB)
 	}
 }
