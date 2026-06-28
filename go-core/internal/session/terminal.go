@@ -235,7 +235,7 @@ func (terminal *TerminalSession) StateBytes() []byte {
 	screen := terminal.screen
 	if screen != nil {
 		terminal.mu.RUnlock()
-		text := screen.Text()
+		text := screen.AnsiText()
 		out := []byte("\x1b[3J\x1b[2J\x1b[H")
 		if text != "" {
 			out = append(out, []byte(text)...)
