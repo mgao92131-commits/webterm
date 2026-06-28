@@ -324,6 +324,7 @@ func (screen *ScreenState) AnsiText() string {
 	cols := screen.terminal.Cols()
 
 	cells := make([][]headlessterm.Cell, rows)
+	wrapped := make([]bool, rows)
 	for r := 0; r < rows; r++ {
 		cells[r] = make([]headlessterm.Cell, cols)
 		for c := 0; c < cols; c++ {
@@ -334,11 +335,25 @@ func (screen *ScreenState) AnsiText() string {
 				cells[r][c] = headlessterm.NewCell()
 			}
 		}
+		wrapped[r] = screen.terminal.IsWrapped(r)
 	}
+
+	curRow, curCol := screen.terminal.CursorPos()
+	cursorVisible := screen.terminal.CursorVisible()
 	screen.mu.Unlock()
 
 	lastRow := lastActiveRow(cells)
 	if lastRow < 0 {
+		if curRow > 0 || curCol > 0 {
+			var buf strings.Builder
+			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
+			if cursorVisible {
+				buf.WriteString("\x1b[?25h")
+			} else {
+				buf.WriteString("\x1b[?25l")
+			}
+			return buf.String()
+		}
 		return ""
 	}
 
@@ -350,6 +365,8 @@ func (screen *ScreenState) AnsiText() string {
 
 	for r := 0; r <= lastRow; r++ {
 		lastCol := lastActiveCol(cells[r])
+		nullCellCount := 0
+
 		for c := 0; c <= lastCol; c++ {
 			cell := cells[r][c]
 			if cell.IsWideSpacer() {
@@ -357,6 +374,25 @@ func (screen *ScreenState) AnsiText() string {
 			}
 
 			cellStyleFlags := cell.Flags & styleFlagsMask
+			isEmpty := cell.Char == ' ' || cell.Char == 0
+			isDefaultStyle := cellStyleFlags == 0 &&
+				colorEquals(cell.Fg, nil) &&
+				isDefaultBg(cell.Bg) &&
+				colorEquals(cell.UnderlineColor, nil)
+
+			if isEmpty && isDefaultStyle {
+				nullCellCount++
+				continue
+			}
+
+			if nullCellCount > 0 {
+				if !isDefaultBg(activeBg) {
+					buf.WriteString(fmt.Sprintf("\x1b[%dX", nullCellCount))
+				}
+				buf.WriteString(fmt.Sprintf("\x1b[%dC", nullCellCount))
+				nullCellCount = 0
+			}
+
 			activeStyleFlags := activeFlags & styleFlagsMask
 
 			if !colorEquals(cell.Fg, activeFg) || !colorEquals(cell.Bg, activeBg) || !colorEquals(cell.UnderlineColor, activeUlColor) || cellStyleFlags != activeStyleFlags {
@@ -419,6 +455,12 @@ func (screen *ScreenState) AnsiText() string {
 			}
 		}
 
+		if nullCellCount > 0 {
+			if !isDefaultBg(activeBg) {
+				buf.WriteString(fmt.Sprintf("\x1b[%dX", nullCellCount))
+			}
+		}
+
 		if (activeFlags & styleFlagsMask) != 0 || activeFg != nil || activeBg != nil || activeUlColor != nil {
 			buf.WriteString("\x1b[0m")
 			activeFg = nil
@@ -427,8 +469,19 @@ func (screen *ScreenState) AnsiText() string {
 			activeFlags = 0
 		}
 		if r < lastRow {
-			buf.WriteRune('\n')
+			if wrapped[r] {
+				// line wrap, omit newline character for reflow
+			} else {
+				buf.WriteRune('\n')
+			}
 		}
+	}
+
+	buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
+	if cursorVisible {
+		buf.WriteString("\x1b[?25h")
+	} else {
+		buf.WriteString("\x1b[?25l")
 	}
 
 	return buf.String()

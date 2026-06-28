@@ -52,7 +52,12 @@ func TestScreenStateReturnsDirtyCells(t *testing.T) {
 func TestAnsiTextRoundTrip(t *testing.T) {
 	screenA := NewScreenState(5, 50, nil, nil)
 
-	inputData := []byte("Hello \x1b[31;1mRedBold\x1b[0m \x1b[42;3mGreenBgItalic\x1b[0m \x1b[4:3;58;2;255;0;0mCurlyRedUnderline\x1b[0m normal \x1b[7mReverse\x1b[0m")
+	inputData := []byte(
+		"Hello \x1b[31;1mRedBold\x1b[0m \x1b[42;3mGreenBg\x1b[0m normal\r\n" +
+		"This is an extremely long line that will automatically wrap on a fifty columns screen boundary to see if wrap state is preserved properly." +
+		"\x1b[5;10H\x1b[32m[GreenTextRow5Col10]\x1b[0m" +
+		"\x1b[5;30H\x1b[5X",
+	)
 	if err := screenA.Write(inputData); err != nil {
 		t.Fatalf("Write to screenA failed: %v", err)
 	}
