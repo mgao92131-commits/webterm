@@ -280,6 +280,44 @@ func appendUnderlineColorSGR(sgrParams []string, uc color.Color) []string {
 	return sgrParams
 }
 
+func isDefaultBg(bg color.Color) bool {
+	if bg == nil {
+		return true
+	}
+	if nc, ok := bg.(*headlessterm.NamedColor); ok {
+		return nc.Name == headlessterm.NamedColorBackground
+	}
+	return false
+}
+
+func lastActiveCol(line []headlessterm.Cell) int {
+	for c := len(line) - 1; c >= 0; c-- {
+		cell := line[c]
+		if cell.IsWideSpacer() {
+			continue
+		}
+		if cell.Char != ' ' && cell.Char != 0 {
+			return c
+		}
+		if !isDefaultBg(cell.Bg) {
+			return c
+		}
+		if (cell.Flags & styleFlagsMask) != 0 {
+			return c
+		}
+	}
+	return -1
+}
+
+func lastActiveRow(cells [][]headlessterm.Cell) int {
+	for r := len(cells) - 1; r >= 0; r-- {
+		if lastActiveCol(cells[r]) >= 0 {
+			return r
+		}
+	}
+	return -1
+}
+
 func (screen *ScreenState) AnsiText() string {
 	screen.mu.Lock()
 	rows := screen.terminal.Rows()
@@ -299,14 +337,20 @@ func (screen *ScreenState) AnsiText() string {
 	}
 	screen.mu.Unlock()
 
+	lastRow := lastActiveRow(cells)
+	if lastRow < 0 {
+		return ""
+	}
+
 	var buf strings.Builder
 	var activeFg color.Color = nil
 	var activeBg color.Color = nil
 	var activeUlColor color.Color = nil
 	var activeFlags headlessterm.CellFlags = 0
 
-	for r := 0; r < rows; r++ {
-		for c := 0; c < cols; c++ {
+	for r := 0; r <= lastRow; r++ {
+		lastCol := lastActiveCol(cells[r])
+		for c := 0; c <= lastCol; c++ {
 			cell := cells[r][c]
 			if cell.IsWideSpacer() {
 				continue
@@ -382,7 +426,7 @@ func (screen *ScreenState) AnsiText() string {
 			activeUlColor = nil
 			activeFlags = 0
 		}
-		if r < rows-1 {
+		if r < lastRow {
 			buf.WriteRune('\n')
 		}
 	}
