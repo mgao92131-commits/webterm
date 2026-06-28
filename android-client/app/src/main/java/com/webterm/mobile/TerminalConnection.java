@@ -13,12 +13,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 import okio.ByteString;
 
 final class TerminalConnection {
     private static final String TAG = "TerminalConnection";
     private static final long RESIZE_DEBOUNCE_MS = 100L;
-    private static final String CELL_SUBPROTOCOL = "webterm.cell.v1";
+    private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
 
     enum State {
         DISCONNECTED,
@@ -28,32 +32,38 @@ final class TerminalConnection {
     }
 
     private final OkHttpClient http;
+    private final OkHttpClient terminalHttp;
     private final Handler mainHandler;
     private final Listener listener;
-    private final MuxWebSocket muxSocket;
 
+    private WebSocket webSocket;
     private volatile State state = State.DISCONNECTED;
+    private int socketGeneration;
     private int reconnectAttempts;
 
     private String baseUrl;
     private String cookie;
     private String sessionId;
-    private String channelId;
     private long lastSeq;
     private int columns;
     private int rows;
     private int sentColumns;
     private int sentRows;
 
-    private final Runnable reconnectRunnable = this::connectNow;
+    private final Runnable reconnectRunnable = () -> {
+        if (state == State.RECONNECTING) {
+            connectNow();
+        }
+    };
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
-    TerminalConnection(OkHttpClient http, Handler mainHandler, Listener listener,
-                       MuxWebSocket muxSocket) {
+    TerminalConnection(OkHttpClient http, Handler mainHandler, Listener listener) {
         this.http = http;
+        this.terminalHttp = http.newBuilder()
+            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build();
         this.mainHandler = mainHandler;
         this.listener = listener;
-        this.muxSocket = muxSocket;
     }
 
     State getState() {
@@ -64,16 +74,9 @@ final class TerminalConnection {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
-        this.channelId = "terminal-" + sessionId;
         this.lastSeq = lastSeq;
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
-        listener.onConnectionStatus(state, reconnectAttempts);
-
-        // Ensure physical MuxWebSocket is connected before opening channels
-        if (muxSocket.getState() == MuxWebSocket.State.DISCONNECTED) {
-            muxSocket.connect(baseUrl, cookie);
-        }
         connectNow();
     }
 
@@ -81,17 +84,27 @@ final class TerminalConnection {
         mainHandler.removeCallbacks(reconnectRunnable);
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
-        listener.onConnectionStatus(state, reconnectAttempts);
         connectNow();
+    }
+
+    private void releaseSocket(String reason) {
+        WebSocket ws = webSocket;
+        webSocket = null;
+        if (ws != null) {
+            try {
+                ws.close(1000, reason);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to close socket gracefully: " + e.getMessage(), e);
+            }
+        }
     }
 
     void close(String reason) {
         this.state = State.DISCONNECTED;
+        this.socketGeneration++;
         mainHandler.removeCallbacks(reconnectRunnable);
         mainHandler.removeCallbacks(sendResizeRunnable);
-        if (channelId != null) {
-            muxSocket.closeChannel(channelId);
-        }
+        releaseSocket(reason);
     }
 
     boolean isConnected() {
@@ -117,61 +130,75 @@ final class TerminalConnection {
     }
 
     private void connectNow() {
-        if (sessionId == null || baseUrl == null || cookie == null || channelId == null) return;
-
+        if (sessionId == null || baseUrl == null || cookie == null) return;
+        if (webSocket != null) {
+            releaseSocket("reconnecting");
+        }
         state = State.CONNECTING;
         listener.onConnectionStatus(state, reconnectAttempts);
+        int generation = ++socketGeneration;
+        String encodedId = WebTermUrls.encodePath(sessionId);
+        Request request = new Request.Builder()
+            .url(WebTermUrls.toWebSocketUrl(baseUrl) + "/ws/sessions/" + encodedId)
+            .header("Cookie", cookie)
+            .header("Sec-WebSocket-Protocol", BINARY_SUBPROTOCOL)
+            .build();
+        webSocket = terminalHttp.newWebSocket(request, new WebSocketListener() {
+            @Override
+            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
+                if (generation != socketGeneration) {
+                    webSocket.close(1000, "stale socket");
+                    return;
+                }
+                state = State.CONNECTED;
+                reconnectAttempts = 0;
+                sentColumns = 0;
+                sentRows = 0;
+                Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
+                listener.onConnectionStatus(state, reconnectAttempts);
+                JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
+                if (columns > 0 && rows > 0) {
+                    WebTermProtocol.put(hello, "cols", columns);
+                    WebTermProtocol.put(hello, "rows", rows);
+                    sentColumns = columns;
+                    sentRows = rows;
+                }
+                sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
+                sendResizeNow();
+            }
 
-        muxSocket.openChannel(channelId, "/ws/sessions/" + sessionId,
-                new String[]{CELL_SUBPROTOCOL},
-                new MuxWebSocket.ChannelCallback() {
+            @Override
+            public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
+                if (generation != socketGeneration) return;
+                handleServerMessage(bytes.toByteArray());
+            }
 
-                    @Override
-                    public void onConnected() {
-                        state = State.CONNECTED;
-                        reconnectAttempts = 0;
-                        sentColumns = 0;
-                        sentRows = 0;
-                        Log.i(TAG, "tunnel connected channel=" + channelId);
-                        listener.onConnectionStatus(state, reconnectAttempts);
-
-                        JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
-                        if (columns > 0 && rows > 0) {
-                            WebTermProtocol.put(hello, "cols", columns);
-                            WebTermProtocol.put(hello, "rows", rows);
-                            sentColumns = columns;
-                            sentRows = rows;
-                        }
-                        sendBinary(WebTermProtocol.MSG_HELLO,
-                                hello.toString().getBytes(StandardCharsets.UTF_8));
-                        sendResizeNow();
+            @Override
+            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+                mainHandler.post(() -> {
+                    if (generation != socketGeneration) return;
+                    if (TerminalConnection.this.webSocket == webSocket) {
+                        releaseSocket("failed");
                     }
-
-                    @Override
-                    public void onBinaryMessage(byte[] data) {
-                        handleServerMessage(data);
-                    }
-
-                    @Override
-                    public void onTextMessage(String text) {
-                        // Terminal data is always binary; text on terminal channel
-                        // is unexpected but handle gracefully.
-                        Log.w(TAG, "unexpected text on terminal channel: "
-                                + (text.length() > 100 ? text.substring(0, 100) : text));
-                    }
-
-                    @Override
-                    public void onClosed(int code, String reason) {
-                        mainHandler.post(() -> {
-                            String description = "Channel closed: " + code
-                                    + (reason.isEmpty() ? "" : " " + reason);
-                            Log.w(TAG, "channel closed channel=" + channelId + " " + description);
-                            if (state != State.DISCONNECTED) {
-                                scheduleReconnect(description);
-                            }
-                        });
-                    }
+                    String reason = describeFailure(t, response);
+                    Log.e(TAG, "websocket failure gen=" + generation + " reason=" + reason, t);
+                    if (state != State.DISCONNECTED) scheduleReconnect(reason);
                 });
+            }
+
+            @Override
+            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+                mainHandler.post(() -> {
+                    if (generation != socketGeneration) return;
+                    if (TerminalConnection.this.webSocket == webSocket) {
+                        releaseSocket("closed");
+                    }
+                    String description = "Connection closed: " + code + (reason.isEmpty() ? "" : " " + reason);
+                    Log.w(TAG, "websocket closed gen=" + generation + " reason=" + description);
+                    if (state != State.DISCONNECTED) scheduleReconnect(description);
+                });
+            }
+        });
     }
 
     private void scheduleReconnect(String reason) {
@@ -180,11 +207,11 @@ final class TerminalConnection {
         Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
         state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
-
+        
         int shift = Math.min(attempt - 1, 15);
         long cap = Math.min(15000L, 1000L * (1L << shift));
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
-
+        
         listener.onConnectionStatus(state, reconnectAttempts);
         mainHandler.postDelayed(reconnectRunnable, delayMs);
     }
@@ -193,18 +220,6 @@ final class TerminalConnection {
         if (frame.length == 0) return;
         byte type = frame[0];
         byte[] payload = Arrays.copyOfRange(frame, 1, frame.length);
-        if (type == WebTermProtocol.MSG_SNAPSHOT) {
-            listener.onSnapshot(payload);
-            return;
-        }
-        if (type == WebTermProtocol.MSG_PATCH) {
-            listener.onPatch(payload);
-            return;
-        }
-        if (type == WebTermProtocol.MSG_SCROLLBACK) {
-            listener.onScrollback(payload);
-            return;
-        }
         if (type == WebTermProtocol.MSG_OUTPUT) {
             if (payload.length >= 8) {
                 long seq = WebTermProtocol.readUint64(payload, 0);
@@ -247,7 +262,7 @@ final class TerminalConnection {
 
     private void scheduleResize() {
         mainHandler.removeCallbacks(sendResizeRunnable);
-        if (state != State.CONNECTED) return;
+        if (webSocket == null || state != State.CONNECTED) return;
         mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
     }
 
@@ -259,18 +274,29 @@ final class TerminalConnection {
         WebTermProtocol.put(resize, "cols", columns);
         WebTermProtocol.put(resize, "rows", rows);
         sendBinary(WebTermProtocol.MSG_RESIZE, resize.toString().getBytes(StandardCharsets.UTF_8));
-        if (state == State.CONNECTED) {
+        if (webSocket != null && state == State.CONNECTED) {
             sentColumns = columns;
             sentRows = rows;
         }
     }
 
     private void sendBinary(byte type, byte[] payload) {
-        if (state != State.CONNECTED || channelId == null) return;
-        muxSocket.sendBinary(channelId, WebTermProtocol.frame(type, payload).toByteArray());
+        WebSocket ws = webSocket;
+        if (ws == null || state != State.CONNECTED) return;
+        ws.send(WebTermProtocol.frame(type, payload));
     }
 
-    // ── Listener interface (unchanged) ──────────────────────────────
+    private String describeFailure(Throwable t, @Nullable Response response) {
+        StringBuilder message = new StringBuilder();
+        message.append(t.getClass().getSimpleName());
+        if (t.getMessage() != null && !t.getMessage().trim().isEmpty()) {
+            message.append(": ").append(t.getMessage().trim());
+        }
+        if (response != null) {
+            message.append(" (HTTP ").append(response.code()).append(")");
+        }
+        return message.toString();
+    }
 
     interface Listener {
         void onConnectionStatus(State state, int reconnectAttempts);
@@ -279,8 +305,5 @@ final class TerminalConnection {
         void onInfo(JSONObject info);
         void onExit(int code);
         void onProtocolError(String message);
-        void onSnapshot(byte[] data);
-        void onPatch(byte[] data);
-        void onScrollback(byte[] data);
     }
 }

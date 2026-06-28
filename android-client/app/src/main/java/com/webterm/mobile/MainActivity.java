@@ -35,7 +35,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private boolean mInForeground = true;
     private android.net.ConnectivityManager.NetworkCallback mNetworkCallback;
-    private MuxWebSocket mMuxSocket;
     private TerminalConnection mTerminalConnection;
     private TerminalCacheCoordinator mTerminalCache;
     private ServerConfigStore mConfigStore;
@@ -94,8 +93,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             @Override
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
-        mMuxSocket = new MuxWebSocket(mHttp, mMainHandler);
-        mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this, mMuxSocket);
+        mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
         mTitleSynchronizer = new TerminalTitleSynchronizer(mMainHandler, () -> mTerminalConnection);
         mClipboardController = new TerminalClipboardController(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
@@ -167,7 +165,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             mTerminalLifecycle.closeTerminal(false);
         }
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
-        if (mMuxSocket != null) mMuxSocket.close("activity closed");
         if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
         if (mTerminalCache != null) mTerminalCache.shutdown(mTerminalLifecycle.terminalSession());
         mHttp.dispatcher().cancelAll();
@@ -539,12 +536,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     public void onInfo(JSONObject info) { mTerminalLifecycle.onInfo(info); }
     @Override
     public void onExit(int code) { mTerminalLifecycle.onExit(code); }
-    @Override
-    public void onSnapshot(byte[] data) { mTerminalLifecycle.onSnapshot(data); }
-    @Override
-    public void onPatch(byte[] data) { mTerminalLifecycle.onPatch(data); }
-    @Override
-    public void onScrollback(byte[] data) { mTerminalLifecycle.onScrollback(data); }
     @Override
     public void onProtocolError(String message) {
         mTerminalLifecycle.appendOutput("\r\n[" + message + "]\r\n");

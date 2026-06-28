@@ -51,6 +51,10 @@ public final class TerminalRenderer {
             sb.setCharAt(0, (char) i);
             asciiMeasures[i] = mTextPaint.measureText(sb, 0, 1);
         }
+
+        // Pre-warm the emoji font fallback chain so the first emoji measured during
+        // rendering gets the correct physical width instead of a default monospace width.
+        mTextPaint.measureText("😀");
     }
 
     /** Render the terminal to a canvas with at a specified row scroll, and an optional rectangular selection. */
@@ -87,7 +91,7 @@ public final class TerminalRenderer {
             long lastRunStyle = 0;
             boolean lastRunInsideCursor = false;
             boolean lastRunInsideSelection = false;
-            int lastRunStartColumn = -1;
+            int lastRunStartColumn = 0;
             int lastRunStartIndex = 0;
             boolean lastRunFontWidthMismatch = false;
             boolean lastRunPreserveGlyphAspect = false;
@@ -255,8 +259,13 @@ public final class TerminalRenderer {
                                               int charIndex, int charsForCodePoint, int column, int columns,
                                               int codePoint, int codePointWcWidth, long style, boolean fontWidthMismatch) {
         if (!fontWidthMismatch || !isAspectPreservedGlyph(codePoint)) return false;
-        return isPowerlineGlyph(codePoint) || hasRightPaddingSpace(lineObject, line, charsUsedInLine,
-            charIndex, charsForCodePoint, column, columns, codePointWcWidth, style);
+        // Powerline glyphs are designed to connect seamlessly at their native width,
+        // so always preserve their aspect ratio regardless of wcwidth.
+        // For all other glyphs, only preserve aspect when wcwidth >= 2 (e.g. emoji).
+        // wcwidth=1 symbols that render wider (like ● U+25CF) should be scaled to fit.
+        return isPowerlineGlyph(codePoint)
+            || (codePointWcWidth >= 2 && hasRightPaddingSpace(lineObject, line, charsUsedInLine,
+                charIndex, charsForCodePoint, column, columns, codePointWcWidth, style));
     }
 
     private boolean hasRightPaddingSpace(TerminalRow lineObject, char[] line, int charsUsedInLine,

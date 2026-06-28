@@ -4,10 +4,15 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(__dirname, '../data');
-const dbPath = process.env.NODE_ENV === 'test'
-  ? path.join(dataDir, 'webterm_test.db')
-  : path.join(dataDir, 'webterm.db');
+const overrideDbPath = process.env.WEBTERM_DB_PATH;
+const dataDir = overrideDbPath
+  ? path.dirname(path.resolve(overrideDbPath))
+  : path.resolve(__dirname, '../data');
+const dbPath = overrideDbPath
+  ? path.resolve(overrideDbPath)
+  : process.env.NODE_ENV === 'test'
+    ? path.join(dataDir, 'webterm_test.db')
+    : path.join(dataDir, 'webterm.db');
 
 // Ensure data directory exists
 if (!fs.existsSync(dataDir)) {
@@ -47,7 +52,7 @@ export function runMigrations() {
       // Execute within transaction
       db.transaction(() => {
         db.exec(sqlText);
-        db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(version);
+        db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(version);
       })();
     }
   }

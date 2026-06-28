@@ -198,6 +198,59 @@ test('relay keeps pending http responses open until chunk fin', () => {
   assert.equal(pendingHttpResponses.has('req_test'), false);
 });
 
+test('relay ends pending p2p offer when agent reports unavailable', () => {
+  const res = {
+    statusCode: null,
+    body: '',
+    headers: null,
+    writeHead(statusCode, headers) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    },
+    end(body = '') {
+      this.body = body;
+    },
+  };
+  const timer = setTimeout(() => {}, 10000);
+  const pendingP2pOffers = new Map([
+    ['client_1', { res, timer, deviceId: 'd1' }],
+  ]);
+  const { handleAgentConnection } = createWsHandlers({
+    auth: {},
+    registry: {
+      getAgent: () => null,
+      registerAgent: () => {},
+      pushDevicesToUser: () => {},
+    },
+    pendingHttpResponses: new Map(),
+    activeWsTunnels: new Map(),
+    pendingP2pOffers,
+    findBySecretHash: () => ({ id: 1, userId: 1, username: 'u1', deviceName: 'd1' }),
+    updateLastSeen: () => {},
+    text: (response, status, value) => {
+      response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end(value);
+    },
+  });
+  const agentWs = fakeWs();
+
+  handleAgentConnection(agentWs);
+  agentWs.emit('message', Buffer.from(JSON.stringify({
+    type: 'agent-register',
+    secret: 'secret',
+  })), false);
+  agentWs.emit('message', Buffer.from(JSON.stringify({
+    type: 'p2p-unavailable',
+    to: 'client_1',
+    message: 'P2P disabled',
+  })), false);
+
+  clearTimeout(timer);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body, 'P2P disabled');
+  assert.equal(pendingP2pOffers.has('client_1'), false);
+});
+
 test('client websocket tunnels keep outbound text transform options', () => {
   const activeWsTunnels = new Map();
   const agent = {

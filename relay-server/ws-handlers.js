@@ -82,6 +82,16 @@ export function createWsHandlers(ctx) {
         return;
       }
 
+      if (msg.type === 'p2p-unavailable') {
+        const pending = pendingP2pOffers.get(msg.to);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingP2pOffers.delete(msg.to);
+          text(pending.res, 503, msg.message || 'PC Agent P2P unavailable; falling back to relay tunnel');
+        }
+        return;
+      }
+
       if (msg.type === 'p2p-ice') {
         for (const [clientWs, info] of registry.getManagerClients()) {
           if (info.clientId === msg.to && clientWs.readyState === 1) {

@@ -12,6 +12,7 @@
     "test": "node --test",
     "test:e2e": "playwright test",
     "smoke:binary": "node scripts/smoke-node-binary-ws.cjs",
+    "smoke:go-relay-server": "node scripts/smoke-go-relay-server.mjs",
     "build": "vite build",
     "dev": "vite"
   },
