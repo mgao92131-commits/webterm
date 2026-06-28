@@ -1,8 +1,12 @@
 package session
 
 import (
+	"io"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/creack/pty"
 )
 
 func TestScreenStateTracksSnapshotAndANSIState(t *testing.T) {
@@ -76,5 +80,43 @@ func TestAnsiTextRoundTrip(t *testing.T) {
 
 	if snapshotA != snapshotB {
 		t.Errorf("Round-trip failed!\nSnapshot A: %q\nSnapshot B: %q", snapshotA, snapshotB)
+	}
+}
+
+func TestAnsiTextClaudeCliRoundTrip(t *testing.T) {
+	cmd := exec.Command("/Users/gao/.local/bin/claude", "plugins", "list")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("Failed to start command in PTY: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	rawOutput, err := io.ReadAll(ptmx)
+	_ = cmd.Wait()
+
+	if len(rawOutput) == 0 {
+		t.Fatalf("PTY output is empty")
+	}
+	t.Logf("Captured PTY output size: %d bytes", len(rawOutput))
+
+	screenA := NewScreenState(30, 100, nil, nil)
+	if err := screenA.Write(rawOutput); err != nil {
+		t.Fatalf("Write to screenA failed: %v", err)
+	}
+
+	snapshotA := screenA.AnsiText()
+
+	screenB := NewScreenState(30, 100, nil, nil)
+	snapshotA_CRLF := strings.ReplaceAll(snapshotA, "\n", "\r\n")
+	if err := screenB.Write([]byte(snapshotA_CRLF)); err != nil {
+		t.Fatalf("Write to screenB failed: %v", err)
+	}
+
+	snapshotB := screenB.AnsiText()
+
+	if snapshotA != snapshotB {
+		t.Errorf("Round-trip failed on real Claude CLI output!\nSnapshot A: %q\nSnapshot B: %q", snapshotA, snapshotB)
+	} else {
+		t.Logf("Round-trip test SUCCESS for real Claude CLI output!")
 	}
 }
