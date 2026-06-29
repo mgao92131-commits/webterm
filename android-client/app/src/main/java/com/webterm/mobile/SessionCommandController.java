@@ -19,7 +19,7 @@ final class SessionCommandController {
         api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
-                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", ""));
+                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", "", server.isRelayDevice()));
             }
 
             @Override
@@ -136,7 +136,7 @@ final class SessionCommandController {
 
     interface Listener {
         void onAuthenticated(ServerConfig server);
-        void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName);
+        void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
         void onSessionClosed(ServerConfig server, String sessionId);
         void onShowHome();

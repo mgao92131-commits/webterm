@@ -79,8 +79,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
-            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName);
+            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice) {
+                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice);
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -436,21 +436,21 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── Terminal ───────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "");
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false);
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false);
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false);
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
-                      String createdAt, String instanceId) {
+                      String createdAt, String instanceId, boolean relayDevice) {
         if (mHomeCoordinator != null) mHomeCoordinator.pause();
         mScreenMode = ScreenMode.TERMINAL;
         mTerminalLifecycle.showTerminal(
-            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice,
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
@@ -460,7 +460,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName,
                             String createdAt, String instanceId) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId);
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice());
     }
 
     // ── TerminalLifecycleController.Host ───────────────────────────

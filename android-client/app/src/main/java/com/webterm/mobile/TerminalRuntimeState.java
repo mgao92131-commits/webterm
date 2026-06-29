@@ -8,6 +8,7 @@ final class TerminalRuntimeState {
     private String baseUrl;
     private String cookie;
     private String sessionId;
+    private boolean relayDevice;
     private String instanceId = "";
     private String createdAt = "";
     private long lastSeq;
@@ -28,6 +29,10 @@ final class TerminalRuntimeState {
 
     String sessionId() {
         return sessionId;
+    }
+
+    boolean isRelayDevice() {
+        return relayDevice;
     }
 
     String instanceId() {
@@ -54,10 +59,11 @@ final class TerminalRuntimeState {
         return rows;
     }
 
-    void setServerSession(String baseUrl, String cookie, String sessionId) {
+    void setServerSession(String baseUrl, String cookie, String sessionId, boolean relayDevice) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
+        this.relayDevice = relayDevice;
     }
 
     void applyLaunchState(TerminalLaunchState launchState) {
@@ -91,6 +97,7 @@ final class TerminalRuntimeState {
         baseUrl = null;
         cookie = null;
         sessionId = null;
+        relayDevice = false;
     }
 
     void clearTerminalDetails() {
