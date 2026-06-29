@@ -164,7 +164,8 @@ final class MuxSession {
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull okio.ByteString bytes) {
                 if (!enabled) return;
-                dispatchBinaryFrame(bytes.toByteArray(), listener);
+                byte[] data = bytes.toByteArray();
+                mainHandler.post(() -> dispatchBinaryFrame(data, listener));
             }
 
             @Override
