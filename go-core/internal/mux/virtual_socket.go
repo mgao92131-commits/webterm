@@ -1,4 +1,4 @@
-package relay
+package mux
 
 import (
 	"context"
@@ -12,38 +12,33 @@ import (
 	"webterm/go-core/internal/session"
 )
 
-type relayTransport interface {
-	sendJSON(context.Context, any) error
-	sendBinary(context.Context, []byte) error
+type virtualMessage struct {
+	messageType session.MessageType
+	payload     []byte
 }
 
-type virtualSocket struct {
+type VirtualSocket struct {
 	id        string
 	protocol  string
-	transport relayTransport
+	session   *Session
 	incoming  chan virtualMessage
 	done      chan struct{}
 	closeOnce sync.Once
 	onClose   func()
 }
 
-type virtualMessage struct {
-	messageType session.MessageType
-	payload     []byte
-}
-
-func newVirtualSocket(id string, protocolName string, transport relayTransport, onClose func()) *virtualSocket {
-	return &virtualSocket{
+func newVirtualSocket(id string, protocolName string, s *Session, onClose func()) *VirtualSocket {
+	return &VirtualSocket{
 		id:        id,
 		protocol:  protocolName,
-		transport: transport,
+		session:   s,
 		incoming:  make(chan virtualMessage, 256),
 		done:      make(chan struct{}),
 		onClose:   onClose,
 	}
 }
 
-func (socket *virtualSocket) Read(ctx context.Context) (session.MessageType, []byte, error) {
+func (socket *VirtualSocket) Read(ctx context.Context) (session.MessageType, []byte, error) {
 	select {
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
@@ -54,7 +49,7 @@ func (socket *virtualSocket) Read(ctx context.Context) (session.MessageType, []b
 	}
 }
 
-func (socket *virtualSocket) Write(ctx context.Context, messageType session.MessageType, data []byte) error {
+func (socket *VirtualSocket) Write(ctx context.Context, messageType session.MessageType, data []byte) error {
 	extra := protocol.WSDataText
 	if messageType == session.MessageBinary {
 		extra = protocol.WSDataBinary
@@ -63,21 +58,21 @@ func (socket *virtualSocket) Write(ctx context.Context, messageType session.Mess
 	if err != nil {
 		return err
 	}
-	return socket.transport.sendBinary(ctx, frame)
+	return socket.session.writeBinary(ctx, frame)
 }
 
-func (socket *virtualSocket) Close() error {
+func (socket *VirtualSocket) Close() error {
 	socket.close(false)
 	return nil
 }
 
-func (socket *virtualSocket) CloseWithNotify(ctx context.Context, code int, reason string) {
+func (socket *VirtualSocket) CloseWithNotify(ctx context.Context, code int, reason string) {
 	socket.closeOnce.Do(func() {
 		close(socket.done)
 		if socket.onClose != nil {
 			socket.onClose()
 		}
-		_ = socket.transport.sendJSON(ctx, map[string]any{
+		_ = socket.session.sendJSON(ctx, map[string]any{
 			"type":               protocol.WSClose,
 			"tunnelConnectionId": socket.id,
 			"code":               code,
@@ -86,11 +81,11 @@ func (socket *virtualSocket) CloseWithNotify(ctx context.Context, code int, reas
 	})
 }
 
-func (socket *virtualSocket) Subprotocol() string {
+func (socket *VirtualSocket) Subprotocol() string {
 	return socket.protocol
 }
 
-func (socket *virtualSocket) Emit(payload []byte, binary bool) bool {
+func (socket *VirtualSocket) Emit(payload []byte, binary bool) bool {
 	messageType := session.MessageText
 	if binary {
 		messageType = session.MessageBinary
@@ -106,7 +101,7 @@ func (socket *virtualSocket) Emit(payload []byte, binary bool) bool {
 	}
 }
 
-func (socket *virtualSocket) close(notify bool) {
+func (socket *VirtualSocket) close(notify bool) {
 	socket.closeOnce.Do(func() {
 		close(socket.done)
 		if socket.onClose != nil {
@@ -115,7 +110,7 @@ func (socket *virtualSocket) close(notify bool) {
 		if notify {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_ = socket.transport.sendJSON(ctx, map[string]any{
+			_ = socket.session.sendJSON(ctx, map[string]any{
 				"type":               protocol.WSClose,
 				"tunnelConnectionId": socket.id,
 				"code":               websocket.StatusNormalClosure,

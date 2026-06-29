@@ -16,6 +16,7 @@ import (
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
@@ -110,8 +111,19 @@ func (direct *Server) route(w http.ResponseWriter, r *http.Request) {
 
 func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, path string) {
 	if path == "/ws/sessions" {
-		conn, err := websocket.Accept(w, r, nil)
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			Subprotocols: []string{protocol.MuxSubprotocol},
+		})
 		if err != nil {
+			return
+		}
+		if conn.Subprotocol() == protocol.MuxSubprotocol {
+			sess := mux.Serve(conn, &mux.ServeOpts{
+				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) error {
+					return mux.OpenSessionOrManager(ctx, direct.app.Sessions(), vs, p, protos)
+				},
+			})
+			sess.Run(r.Context())
 			return
 		}
 		client := session.NewManagerClient(session.NewWebSocketAdapter(conn))

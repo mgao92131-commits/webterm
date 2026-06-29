@@ -9,19 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
-	"webterm/go-core/internal/session"
 )
 
 type Client struct {
-	cfg config.RelayConfig
-	app *app.App
+	cfg  config.RelayConfig
+	app  *app.App
+	mu   sync.Mutex
+	conn *websocket.Conn
 }
 
 func New(cfg config.RelayConfig, application *app.App) *Client {
@@ -38,6 +41,7 @@ func (client *Client) Run(ctx context.Context) error {
 	delay := time.Second
 	for {
 		err := client.runOnce(ctx)
+		client.setConn(nil)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -63,7 +67,38 @@ func (client *Client) runOnce(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	client.setConn(conn)
 
+	if err := client.register(ctx, conn); err != nil {
+		return err
+	}
+
+	sess := mux.Serve(conn, &mux.ServeOpts{
+		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, path string, protocols []string) error {
+			return mux.OpenSessionOrManager(ctx, client.app.Sessions(), vs, path, protocols)
+		},
+		OnControl: client.handleControl,
+	})
+	return sess.Run(ctx)
+}
+
+func (client *Client) setConn(conn *websocket.Conn) {
+	client.mu.Lock()
+	client.conn = conn
+	client.mu.Unlock()
+}
+
+func (client *Client) writeControl(ctx context.Context, value any) error {
+	client.mu.Lock()
+	conn := client.conn
+	client.mu.Unlock()
+	if conn == nil {
+		return errors.New("relay connection closed")
+	}
+	return writeJSON(ctx, conn, value)
+}
+
+func (client *Client) register(ctx context.Context, conn *websocket.Conn) error {
 	if err := writeJSON(ctx, conn, map[string]any{
 		"type":       protocol.AgentRegister,
 		"deviceName": client.cfg.DeviceName,
@@ -71,117 +106,55 @@ func (client *Client) runOnce(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-
-	transport := newConnectionTransport(conn)
-	defer transport.closeAll()
-
-	for {
-		messageType, data, err := conn.Read(ctx)
-		if err != nil {
-			return err
-		}
-		if messageType == websocket.MessageBinary {
-			transport.handleBinaryFrame(data)
-			continue
-		}
-		if messageType != websocket.MessageText {
-			continue
-		}
-		var msg map[string]any
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		switch stringValue(msg["type"]) {
-		case protocol.Registered:
-			deviceID := stringValue(msg["deviceId"])
-			client.app.SetRelayConnected(true, deviceID, "")
-		case protocol.HTTPRequest:
-			client.handleHTTPRequest(ctx, conn, msg)
-		case protocol.WSConnect:
-			client.handleWSConnect(ctx, transport, msg)
-		case protocol.WSClose:
-			transport.closeSocket(stringValue(msg["tunnelConnectionId"]))
-		case "p2p-offer":
-			client.handleP2POffer(ctx, conn, msg)
-		case "p2p-ice":
-			// Go Core does not implement WebRTC/P2P yet. ICE candidates can be
-			// ignored after the offer has been rejected with p2p-unavailable.
-		case protocol.Error:
-			return fmt.Errorf("relay error: %s", stringValue(msg["message"]))
-		}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		return err
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return errors.New("bad register response")
+	}
+	switch stringValue(msg["type"]) {
+	case protocol.Registered:
+		client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
+		return nil
+	case protocol.Error:
+		return fmt.Errorf("relay error: %s", stringValue(msg["message"]))
+	default:
+		return fmt.Errorf("unexpected register response: %s", stringValue(msg["type"]))
 	}
 }
 
-func (client *Client) handleP2POffer(ctx context.Context, conn *websocket.Conn, msg map[string]any) {
+func (client *Client) handleControl(ctx context.Context, msg map[string]any) {
+	switch stringValue(msg["type"]) {
+	case protocol.HTTPRequest:
+		client.handleHTTPRequest(ctx, msg)
+	case "p2p-offer":
+		client.handleP2POffer(ctx, msg)
+	case "p2p-ice":
+		// Go Core 不实现 WebRTC/P2P。ICE candidates 在 offer 被拒后可忽略。
+	}
+}
+
+func (client *Client) handleP2POffer(ctx context.Context, msg map[string]any) {
 	clientID := stringValue(msg["from"])
 	if clientID == "" {
 		return
 	}
-	_ = writeJSON(ctx, conn, map[string]any{
+	_ = client.writeControl(ctx, map[string]any{
 		"type":    "p2p-unavailable",
 		"to":      clientID,
 		"message": "Go Core relay agent does not support P2P yet; falling back to relay tunnel",
 	})
 }
 
-func (client *Client) handleWSConnect(ctx context.Context, transport *connectionTransport, msg map[string]any) {
-	tunnelID := stringValue(msg["tunnelConnectionId"])
-	path := stringValue(msg["path"])
-	pathname := path
-	if parsed, err := url.Parse(path); err == nil {
-		pathname = parsed.Path
-	}
-	if tunnelID == "" {
-		return
-	}
-
-	protocolName := selectedProtocol(protocolsValue(msg["protocols"]))
-	socket := transport.newSocket(tunnelID, protocolName)
-
-	if pathname == "/ws/sessions" {
-		_ = transport.sendJSON(ctx, map[string]any{"type": protocol.WSConnected, "tunnelConnectionId": tunnelID})
-		managerClient := session.NewManagerClient(socket)
-		go managerClient.Run(ctx, client.app.Sessions())
-		return
-	}
-
-	if !strings.HasPrefix(pathname, "/ws/sessions/") {
-		transport.removeSocket(tunnelID)
-		_ = transport.sendJSON(ctx, map[string]any{
-			"type":               protocol.WSError,
-			"tunnelConnectionId": tunnelID,
-			"code":               http.StatusNotFound,
-			"message":            "Session path match failed",
-		})
-		return
-	}
-
-	id := strings.TrimPrefix(pathname, "/ws/sessions/")
-	id, _ = url.PathUnescape(id)
-	terminal, ok := client.app.Sessions().Get(id)
-	if !ok {
-		transport.removeSocket(tunnelID)
-		_ = transport.sendJSON(ctx, map[string]any{
-			"type":               protocol.WSError,
-			"tunnelConnectionId": tunnelID,
-			"code":               http.StatusNotFound,
-			"message":            fmt.Sprintf("Session %s not found", id),
-		})
-		return
-	}
-
-	_ = transport.sendJSON(ctx, map[string]any{"type": protocol.WSConnected, "tunnelConnectionId": tunnelID})
-	terminalClient := session.NewClient(socket, terminal, session.ClientModeFromProtocol(protocolName))
-	go terminalClient.Run(ctx)
-}
-
-func (client *Client) handleHTTPRequest(ctx context.Context, conn *websocket.Conn, msg map[string]any) {
+func (client *Client) handleHTTPRequest(ctx context.Context, msg map[string]any) {
 	requestID := stringValue(msg["requestId"])
 	method := stringValue(msg["method"])
 	path := stringValue(msg["path"])
 	status, payload, err := client.routeMemoryAPI(method, path, decodeBody(msg))
 	if err != nil {
-		_ = writeJSON(ctx, conn, map[string]any{
+		_ = client.writeControl(ctx, map[string]any{
 			"type":      protocol.HTTPError,
 			"requestId": requestID,
 			"error":     errorCode(status),
@@ -190,7 +163,7 @@ func (client *Client) handleHTTPRequest(ctx context.Context, conn *websocket.Con
 		return
 	}
 	encoded := base64.StdEncoding.EncodeToString(payload)
-	_ = writeJSON(ctx, conn, map[string]any{
+	_ = client.writeControl(ctx, map[string]any{
 		"type":         protocol.HTTPResponse,
 		"requestId":    requestID,
 		"statusCode":   status,
