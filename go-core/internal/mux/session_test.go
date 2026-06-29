@@ -97,7 +97,7 @@ func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager)
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		sess := Serve(conn, &ServeOpts{
-			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) error {
+			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (func(), error) {
 				return OpenSessionOrManager(ctx, manager, vs, path, protocols)
 			},
 		})
