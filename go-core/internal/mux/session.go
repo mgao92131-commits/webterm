@@ -14,8 +14,11 @@ import (
 	"webterm/go-core/internal/protocol"
 )
 
-// OpenHandler 处理一个新建立的虚拟通道。返回 error 时 mux 负责发 ws-error。
-type OpenHandler func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) error
+// OpenHandler 处理一个新建立的虚拟通道：创建上层客户端但暂不启动。
+// 返回的 start 在 ws-connected 发送成功后由 mux 调用，确保握手 ack 先于
+// 任何通道数据落线（否则 client.Run 的 SendInfo / manager 初始列表可能抢在
+// ws-connected 之前写出，违反握手顺序）。返回 error 时由 mux 发 ws-error。
+type OpenHandler func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (start func(), err error)
 
 // ControlHandler 处理 mux 不识别的控制消息（透传给上层，如 relay 的 http-request/p2p-*）。
 type ControlHandler func(ctx context.Context, msg map[string]any)
@@ -94,7 +97,8 @@ func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 		return
 	}
 	vs := s.newSocket(tunnelID, selectProtocol(protocols))
-	if err := s.onOpen(ctx, vs, cleanPath(path), protocols); err != nil {
+	start, err := s.onOpen(ctx, vs, cleanPath(path), protocols)
+	if err != nil {
 		s.removeSocket(tunnelID)
 		_ = s.sendJSON(ctx, map[string]any{
 			"type":               protocol.WSError,
@@ -104,10 +108,17 @@ func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 		})
 		return
 	}
-	_ = s.sendJSON(ctx, map[string]any{
+	// 先发 ws-connected 并等其写出成功，再启动客户端，保证 ack 先于通道数据。
+	if err := s.sendJSON(ctx, map[string]any{
 		"type":               protocol.WSConnected,
 		"tunnelConnectionId": tunnelID,
-	})
+	}); err != nil {
+		s.removeSocket(tunnelID)
+		return
+	}
+	if start != nil {
+		go start()
+	}
 }
 
 func (s *Session) handleBinaryFrame(data []byte) {

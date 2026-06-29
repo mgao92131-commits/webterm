@@ -119,7 +119,7 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		}
 		if conn.Subprotocol() == protocol.MuxSubprotocol {
 			sess := mux.Serve(conn, &mux.ServeOpts{
-				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) error {
+				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 					return mux.OpenSessionOrManager(ctx, direct.app.Sessions(), vs, p, protos)
 				},
 			})

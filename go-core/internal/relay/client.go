@@ -74,7 +74,7 @@ func (client *Client) runOnce(ctx context.Context) error {
 	}
 
 	sess := mux.Serve(conn, &mux.ServeOpts{
-		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, path string, protocols []string) error {
+		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, path string, protocols []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, client.app.Sessions(), vs, path, protocols)
 		},
 		OnControl: client.handleControl,
