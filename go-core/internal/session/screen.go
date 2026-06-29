@@ -407,7 +407,7 @@ func (screen *ScreenState) AnsiText() string {
 		absRow := scrollbackLen + curRow
 		if absRow > 0 || curCol > 0 {
 			var buf strings.Builder
-			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", absRow+1, curCol+1))
+			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
 			if cursorVisible {
 				buf.WriteString("\x1b[?25h")
 			} else {
@@ -561,7 +561,7 @@ func (screen *ScreenState) AnsiText() string {
 	// 检查是否需要恢复光标位置。仅在实际光标位置不在文本自然结束处时，才追加定位序列
 	lastCol := lastActiveCol(cells[lastRow])
 	if absRow != lastRow || curCol != lastCol+1 {
-		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", absRow+1, curCol+1))
+		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
 	}
 
 	if !cursorVisible {
