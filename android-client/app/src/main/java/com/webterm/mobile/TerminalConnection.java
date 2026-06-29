@@ -277,8 +277,16 @@ final class TerminalConnection {
     private void scheduleReconnect(String reason) {
         if (state == State.DISCONNECTED || sessionId == null || cookie == null || baseUrl == null) return;
         if (state == State.RECONNECTING) return;
-        // mux path: reconnection is handled internally by MuxSession
-        if (!relayDevice) return;
+        // mux path: reconnection is handled internally by MuxSession. Surface RECONNECTING
+        // so the UI leaves CONNECTED, the status bar shows a reconnecting state, and user
+        // input is explicitly dropped (sendBinary guards on state==CONNECTED) instead of
+        // being silently swallowed while the physical socket is down.
+        if (!relayDevice) {
+            state = State.RECONNECTING;
+            Log.i(TAG, "mux disconnected, awaiting MuxSession reconnect. Reason: " + reason);
+            listener.onConnectionStatus(state, reconnectAttempts);
+            return;
+        }
         Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
         state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
