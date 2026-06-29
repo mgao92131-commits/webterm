@@ -188,7 +188,7 @@ final class TerminalLifecycleController {
     void connectTerminal() {
         if (terminalConnection == null || !terminalState.hasSession() || terminalState.baseUrl() == null || terminalState.cookie() == null) return;
         terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
-        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq());
+        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq(), terminalState.isRelayDevice());
     }
 
     void showKeyboard() {
