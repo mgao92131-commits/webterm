@@ -37,6 +37,8 @@ final class TerminalConnection {
     private final Listener listener;
 
     private WebSocket webSocket;
+    private MuxSession muxSession;
+    private boolean relayDevice;
     private volatile State state = State.DISCONNECTED;
     private int socketGeneration;
     private int reconnectAttempts;
@@ -70,11 +72,12 @@ final class TerminalConnection {
         return state;
     }
 
-    void connect(String baseUrl, String cookie, String sessionId, long lastSeq) {
+    void connect(String baseUrl, String cookie, String sessionId, long lastSeq, boolean isRelayDevice) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
         this.lastSeq = lastSeq;
+        this.relayDevice = isRelayDevice;
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
         connectNow();
@@ -104,7 +107,13 @@ final class TerminalConnection {
         this.socketGeneration++;
         mainHandler.removeCallbacks(reconnectRunnable);
         mainHandler.removeCallbacks(sendResizeRunnable);
-        releaseSocket(reason);
+        if (relayDevice) {
+            releaseSocket(reason);
+        } else if (muxSession != null) {
+            muxSession.sendWsClose(channelId());
+            muxSession.stop();
+            muxSession = null;
+        }
     }
 
     boolean isConnected() {
@@ -131,6 +140,14 @@ final class TerminalConnection {
 
     private void connectNow() {
         if (sessionId == null || baseUrl == null || cookie == null) return;
+        if (relayDevice) {
+            connectRelayLegacy();
+            return;
+        }
+        connectDirectMux();
+    }
+
+    private void connectRelayLegacy() {
         if (webSocket != null) {
             releaseSocket("reconnecting");
         }
@@ -201,17 +218,83 @@ final class TerminalConnection {
         });
     }
 
+    private void connectDirectMux() {
+        if (muxSession == null || !muxSession.isConnected()) {
+            if (muxSession != null) muxSession.stop();
+            String wsUrl = WebTermUrls.toWebSocketUrl(baseUrl) + "/ws/sessions";
+            muxSession = new MuxSession(http, mainHandler, wsUrl, cookie, new MuxSession.Listener() {
+                @Override public void onMuxConnected() {
+                    openTerminalChannel();
+                }
+                @Override public void onMuxDisconnected(String reason) {
+                    if (state != State.DISCONNECTED) scheduleReconnect(reason);
+                }
+                @Override public void onTunnelConnected(String tunnelId) {
+                    if (!tunnelId.equals(channelId())) return;
+                    state = State.CONNECTED;
+                    reconnectAttempts = 0;
+                    sentColumns = 0;
+                    sentRows = 0;
+                    listener.onConnectionStatus(state, reconnectAttempts);
+                    sendHello();
+                    sendResizeNow();
+                }
+                @Override public void onTunnelError(String tunnelId, String message) {
+                    listener.onProtocolError("tunnel error: " + message);
+                }
+                @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
+                    if (!tunnelId.equals(channelId())) return;
+                    handleServerMessage(payload);
+                }
+            });
+            muxSession.start();
+        } else {
+            openTerminalChannel();
+        }
+    }
+
+    private String channelId() {
+        return "term:" + sessionId;
+    }
+
+    private void openTerminalChannel() {
+        if (muxSession == null || !muxSession.isConnected()) return;
+        muxSession.sendWsConnect(channelId(), "/ws/sessions/" + WebTermUrls.encodePath(sessionId),
+            new String[]{BINARY_SUBPROTOCOL});
+    }
+
+    private void sendHello() {
+        JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
+        if (columns > 0 && rows > 0) {
+            WebTermProtocol.put(hello, "cols", columns);
+            WebTermProtocol.put(hello, "rows", rows);
+            sentColumns = columns;
+            sentRows = rows;
+        }
+        sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
     private void scheduleReconnect(String reason) {
         if (state == State.DISCONNECTED || sessionId == null || cookie == null || baseUrl == null) return;
         if (state == State.RECONNECTING) return;
+        // mux path: reconnection is handled internally by MuxSession. Surface RECONNECTING
+        // so the UI leaves CONNECTED, the status bar shows a reconnecting state, and user
+        // input is explicitly dropped (sendBinary guards on state==CONNECTED) instead of
+        // being silently swallowed while the physical socket is down.
+        if (!relayDevice) {
+            state = State.RECONNECTING;
+            Log.i(TAG, "mux disconnected, awaiting MuxSession reconnect. Reason: " + reason);
+            listener.onConnectionStatus(state, reconnectAttempts);
+            return;
+        }
         Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
         state = State.RECONNECTING;
         int attempt = ++reconnectAttempts;
-        
+
         int shift = Math.min(attempt - 1, 15);
         long cap = Math.min(15000L, 1000L * (1L << shift));
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
-        
+
         listener.onConnectionStatus(state, reconnectAttempts);
         mainHandler.postDelayed(reconnectRunnable, delayMs);
     }
@@ -262,7 +345,8 @@ final class TerminalConnection {
 
     private void scheduleResize() {
         mainHandler.removeCallbacks(sendResizeRunnable);
-        if (webSocket == null || state != State.CONNECTED) return;
+        if (state != State.CONNECTED) return;
+        if (relayDevice && webSocket == null) return;
         mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
     }
 
@@ -274,16 +358,22 @@ final class TerminalConnection {
         WebTermProtocol.put(resize, "cols", columns);
         WebTermProtocol.put(resize, "rows", rows);
         sendBinary(WebTermProtocol.MSG_RESIZE, resize.toString().getBytes(StandardCharsets.UTF_8));
-        if (webSocket != null && state == State.CONNECTED) {
+        if (state == State.CONNECTED) {
             sentColumns = columns;
             sentRows = rows;
         }
     }
 
     private void sendBinary(byte type, byte[] payload) {
-        WebSocket ws = webSocket;
-        if (ws == null || state != State.CONNECTED) return;
-        ws.send(WebTermProtocol.frame(type, payload));
+        if (relayDevice) {
+            WebSocket ws = webSocket;
+            if (ws == null || state != State.CONNECTED) return;
+            ws.send(WebTermProtocol.frame(type, payload));
+            return;
+        }
+        // direct mux: wrap in tunnel frame
+        if (muxSession == null || !muxSession.isConnected() || state != State.CONNECTED) return;
+        muxSession.sendTunnelFrame(channelId(), WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
     private String describeFailure(Throwable t, @Nullable Response response) {

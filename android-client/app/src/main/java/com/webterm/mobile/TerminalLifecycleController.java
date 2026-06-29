@@ -96,6 +96,7 @@ final class TerminalLifecycleController {
     void showTerminal(
         String baseUrl, String cookie, String sessionId,
         String termTitle, String sessionName, String createdAt, String instanceId,
+        boolean relayDevice,
         WebTermTerminalViewClient.Host viewClientHost,
         WebTermTerminalSessionClient sessionClient,
         Runnable onBack
@@ -107,7 +108,7 @@ final class TerminalLifecycleController {
         if (cached == null && terminalCache != null && !SessionIdentity.cacheKey(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt).isEmpty()) {
             diskRestore[0] = terminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
         }
-        terminalState.setServerSession(baseUrl, cookie, sessionId);
+        terminalState.setServerSession(baseUrl, cookie, sessionId, relayDevice);
         TerminalLaunchState launchState = TerminalLaunchState.resolve(
             sessionId, termTitle, sessionName, normalizedCreatedAt, normalizedInstanceId, cached, diskRestore[0]
         );
@@ -187,7 +188,7 @@ final class TerminalLifecycleController {
     void connectTerminal() {
         if (terminalConnection == null || !terminalState.hasSession() || terminalState.baseUrl() == null || terminalState.cookie() == null) return;
         terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
-        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq());
+        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq(), terminalState.isRelayDevice());
     }
 
     void showKeyboard() {
