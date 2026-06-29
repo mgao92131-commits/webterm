@@ -44,8 +44,8 @@ final class MuxSession {
     private final Listener listener;
 
     private WebSocket webSocket;
-    private boolean connected;
-    private boolean enabled;
+    private volatile boolean connected;
+    private volatile boolean enabled;
     private int reconnectAttempts;
 
     // 待发 ws-connect 后等待 ws-connected 的回调登记（仅记录已发 connect 的 tunnelId）。
@@ -231,7 +231,7 @@ final class MuxSession {
         long cap = Math.min(1000L * attempt, 8000L);
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
         mainHandler.postDelayed(() -> {
-            if (enabled) connectNow();
+            if (enabled && webSocket == null) connectNow();
         }, delayMs);
     }
 }
