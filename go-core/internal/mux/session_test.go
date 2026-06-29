@@ -239,6 +239,58 @@ func minInt(a, b int) int {
 	return b
 }
 
+// TestMuxWSConnectedIsFirstMessage 守住握手顺序不变量：ws-connect 之后服务端
+// 落线的第一条消息必须是 text 类型的 ws-connected，不能是 tunnel data 帧
+// （Client.SendInfo / manager 初始 sessions 列表不得抢在 ack 之前）。
+func TestMuxWSConnectedIsFirstMessage(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	terminal, err := manager.Create("mux-order", ".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer manager.Close(terminal.Info().ID)
+
+	wsURL, cleanup := startMuxServer(t, ctx, manager)
+	defer cleanup()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeJSONMsg(t, ctx, conn, map[string]any{
+		"type":               protocol.WSConnect,
+		"tunnelConnectionId": "term1",
+		"path":               "/ws/sessions/" + terminal.Info().ID,
+		"protocols":          []string{protocol.BinarySubprotocol},
+	})
+
+	readCtx, readCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer readCancel()
+	msgType, data, err := conn.Read(readCtx)
+	if err != nil {
+		t.Fatalf("read first message: %v", err)
+	}
+	if msgType != websocket.MessageText {
+		t.Fatalf("first message must be text ws-connected, got binary tunnel frame: % x", data[:minInt(len(data), 8)])
+	}
+	var first map[string]any
+	if err := json.Unmarshal(data, &first); err != nil {
+		t.Fatalf("first message is not JSON: %v (raw: % x)", err, data[:minInt(len(data), 8)])
+	}
+	if first["type"] != protocol.WSConnected || first["tunnelConnectionId"] != "term1" {
+		t.Fatalf("first message = %#v, want ws-connected/term1", first)
+	}
+	cancel()
+}
+
 func TestMuxWSCloseClosesChannel(t *testing.T) {
 	testutil.SkipIfLoopbackListenUnavailable(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
