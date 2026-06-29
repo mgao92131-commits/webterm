@@ -1,58 +1,59 @@
-# 直连单连接复用（mux-only）设计：go-core + Android
+# 直连单连接复用（mux）设计：go-core + Android（阶段化）
 
-## 0. 范围声明
+## 0. 范围声明（修订）
 
-本设计让 **go-core direct server** 与 **Android 原生客户端** 支持「一条 WebSocket 连接复用多个终端通道」。复用 relay agent 已被验证的隧道机制。
+本设计分两阶段。**只有第一阶段是本期可实施范围**。第二阶段明确标注为未决，不假装「relay server 一行不改」。
 
-| 端 | 是否纳入本次 | 说明 |
-|----|------------|------|
-| go-core direct server | ✅ | `/ws/sessions` 升级为 mux-only |
-| go-core relay agent | ✅ | 内部重构为 `mux.Serve`，对外协议不变 |
-| Android 原生客户端 | ✅ | 整体改为 mux 单连接客户端 |
-| Node.js relay server | ❌ | 一行不改（本来就支持 ws-connect/tunnel frame） |
-| Node.js direct server（参考实现） | ❌ | 不动 |
-| 浏览器前端（Vue） | ❌ | 本期不碰，保留现有 `/ws/sessions/{id}` 旧路径消费者 |
-| Flutter 客户端 | ❌ | 本期不碰 |
+| 端 | 第一阶段 | 第二阶段（未决） |
+|----|---------|----------------|
+| go-core direct server | ✅ `/ws/sessions` 新增 mux 入口；**保留** `/ws/sessions/{id}` 旧入口 | 最终目标 mux-only，待其他客户端迁移后删旧入口 |
+| go-core relay agent | ✅ 内部重构为 `mux.Serve`，对外协议完全不变 | — |
+| Android 直连 | ✅ 终端页迁到 mux 单连接 | — |
+| Android 中继 | ❌ 保持现状（每终端独立 WS） | 待定：改 relay server 支持客户端侧 mux，或中继终端维持每终端 WS |
+| Node.js relay server | ❌ 不动 | 可能需改（见第二阶段） |
+| 浏览器前端 / Flutter | ❌ 不动，继续用 `/ws/sessions/{id}` | 后续单独迁移 |
 
-**为什么是这个范围**：用户明确要「更合理的架构」，且客户端跟着改；但本期只做 go-core + Android。relay server 是协议翻译代理，tunnel ID 段内局部，Android 作为中继客户端连 relay master，relay server 透传 ws-connect/tunnel frame 给 agent——这条中继路径天然走单连接，无需改 relay server。
+### 为什么改成分阶段
 
----
+初版 spec 假设「relay server 一行不改 + Android 中继单连接」，**经核实不成立**（见 §1 blocker）。relay server 对 `/ws/sessions?deviceId=` 是「一条客户端 WS → agent 侧一个 tunnel」的 1:1 包装模式（`relay-server/client-tunnel.js:38-50`、`relay-server/main.js:122-155`）：客户端在这条 WS 上发的文本会被当作该 tunnel 的普通 payload 转给 agent，不会被当作新 `ws-connect` 控制消息。因此 Android 中继单连接要么改 relay server，要么不做——不能糊。
 
-## 1. 问题与动机
-
-### 现状
-
-| 端 | 文件 | 当前行为 |
-|----|------|---------|
-| direct server | `direct/server.go:111-140` | `/ws/sessions` 裸 JSON 建 ManagerClient；`/ws/sessions/{id}` 每终端独立 WS |
-| relay agent | `relay/client.go:56-176` + `transport.go` + `virtual_socket.go` | 单 WS 接 `ws-connect`，`connectionTransport`+`virtualSocket` 多路复用 |
-| Android `TerminalConnection` | `TerminalConnection.java:132-202` | 每终端独立 `/ws/sessions/{id}` WS（binary 子协议） |
-| Android `ServerSessionMonitor` | `ServerSessionMonitor.java:51-109` | 独立 `/ws/sessions` 裸 JSON 收会话列表 |
-
-**核心重复**：`relay/client.go:handleWSConnect`（127-176）与 `direct/server.go:routeWebSocket` 做完全相同的事——按 path 决定建 `ManagerClient` 还是 `Client`。`connectionTransport` 是通用 tunnel frame 路由，但锁在 relay 包内，direct 无法复用。
-
-**Android 现状**：两个模式（直连/中继）都是「manager 一条 WS + 每终端一条独立 WS」，终端数据不复用 manager 连接。
-
-### 目标
-
-1. 提取 `relay/connectionTransport` + `virtualSocket` 为独立 `mux` 包，direct server 与 relay agent 共用。
-2. direct server 的 `/ws/sessions` 升级为 **mux-only**：删除 `/ws/sessions/{id}` 路由与重复分流代码，统一 `mux.Serve`。
-3. `session.Client` / `ManagerClient` / `Socket` **零改动**。
-4. relay server 与中继客户端协议层**一行不改**。
-5. Android 改为 mux 单连接客户端：`ServerSessionMonitor` 与所有终端共用一条 WS。
-
-### 非目标（明确排除）
-
-- ❌ 浏览器前端、Flutter 客户端迁移——本期不碰。
-- ❌ 让 relay server 变透明转发器（端到端 tunnel ID）——超出范围。
-- ❌ Android 引入 screen 模式——统一 binary，YAGNI。
-- ❌ 把 session CRUD（REST API）搬进 mux 控制面——直连能 serve 真 HTTP，CRUD 留 REST，只有实时流走 mux。
+同时，初版「删 `/ws/sessions/{id}`」与「不碰浏览器/Flutter」直接冲突（浏览器终端仍连 `/ws/sessions/{id}`，`frontend/src/lib/terminal-session-context.ts:189`）。第一阶段保留旧入口，避免牵连其他客户端。
 
 ---
 
-## 2. 核心架构
+## 1. 关键事实核实（blocker 说明）
 
-### 2.1 提取 `mux` 包（direct 与 relay agent 共用）
+### 1.1 relay server 不是客户端 mux 透传器
+
+`relay-server/main.js:122-155` + `client-tunnel.js`：
+
+- 客户端每条 WS 升级到 `/ws/sessions?deviceId=` 或 `/ws/sessions/{id}?deviceId=`，relay server 向 agent 发**一条** `ws-connect`（带唯一 `tc_xxx`），把这条客户端 WS 1:1 包成 agent 侧的单个 tunnel。
+- 客户端在这条 WS 上的所有消息（文本/二进制）被包成 `MSG_TYPE_WS_DATA` tunnel frame，用同一个 `tc_xxx` 转给 agent。
+- manager 通道（`/ws/sessions?deviceId=`）还有 `transformOutboundText` 给会话 id 加 `deviceId:` 前缀（`main.js:136-139`）。
+
+**后果**：若 Android 在一条中继 WS 上发 `ws-connect` JSON 想开第二个终端通道，relay server 会把它当作 manager tunnel 的文本 payload 转给 agent 的 manager VirtualSocket。agent 的 `mux.Session` 收到的是 manager 通道的 tunnel frame **数据**，不是控制消息，**不会开新终端通道**。这是 blocker。
+
+**结论**：Android 中继单连接不在第一阶段。第二阶段需独立决策（§7）。
+
+### 1.2 Android 终端连接归属
+
+- `MainActivity` 持有**一个全局** `mTerminalConnection`（`MainActivity.java:96`），终端页一次只显示一个终端。
+- `ServerGroupController` 每个 server/group 各建一个 `ServerSessionMonitor`（`ServerGroupController.java:49`），用于首页列表，与终端页分离。
+- 终端页用 `terminalState.baseUrl()/cookie()/sessionId()` 独立连接（`TerminalLifecycleController.java:188-190`），不依赖任何首页 monitor。
+
+→ 第一阶段 MuxSession 归属见 §4.6。
+
+### 1.3 relay session id 前缀
+
+Android 给中继 session id 加 `deviceId:` 前缀（`ServerSessionMonitor.java:145`）。relay server 拆前缀（`main.js:128-135`）转成本地 id 给 agent。
+
+第一阶段只做 **direct**，Android 用本地 id（无前缀），不涉及前缀问题。第二阶段若做中继 mux，需在 Android 或 relay server mux 层明确拆前缀（§7）。
+
+---
+
+## 2. 核心架构（go-core 侧，两阶段共用）
+
+### 2.1 提取 `mux` 包
 
 把 relay 现有 `connectionTransport` + `virtualSocket` 泛化为 `mux.Session`：
 
@@ -64,121 +65,115 @@ go-core/internal/mux/
   session_test.go     # 单测
 ```
 
-`mux.Session` 职责（与 relay 现有行为一致，已被 relay 验证）：
-- `Serve(conn, opts)` 包装一条已建立的 WS；`Run(ctx)` 启动 readLoop，**不自动建任何通道**。
+`mux.Session` 职责（与 relay 现有行为一致）：
+- `Serve(conn, opts)` 包装一条已建立 WS；`Run(ctx)` 启动 readLoop，**不自动建任何通道**。
 - 收 `ws-connect` → 建 VirtualSocket → 调 `OnOpen` → 成功回 `ws-connected`，失败回 `ws-error`。
 - 收 `ws-close` → 关对应通道。
 - 收二进制 tunnel frame → 解码按 ID 路由到 VirtualSocket.Emit。
 - 物理连接断开 → 关闭所有 VirtualSocket。
 - `OnControl` hook（可选）：mux 不识别的控制消息（relay 的 `http-request`/`p2p-*`）透传上层。direct 不设。
 
-`VirtualSocket` 实现现有 `session.Socket` 接口 → `session.Client` / `ManagerClient` **零改动**即可使用。
+`VirtualSocket` 实现现有 `session.Socket` 接口 → `session.Client` / `ManagerClient` **零改动**。
 
 ### 2.2 manager 通道由 `ws-connect` 显式建立
 
-**`mux.Session.Run()` 不自动创建任何 manager 通道**。manager 与终端通道一样，由客户端发 `ws-connect path=/ws/sessions` 显式建立。这与 Node relay agent（`server/agent.js:228-232`）一致——relay 主动发 `ws-connect path=/ws/sessions` 建 manager，agent 不自动建。自动建会造成 relay 侧双重 manager。
-
-三种场景的处理：
-
-| 场景 | manager 怎么建立 | mux.Session 角色 |
-|------|----------------|-----------------|
-| relay agent（relay 发 `ws-connect path=/ws/sessions`） | onOpen 收到 → 建 ManagerClient | 纯被动 |
-| direct server + Android mux 客户端（客户端发 `ws-connect path=/ws/sessions`） | 同上 | 纯被动 |
+`mux.Session.Run()` 不自动创建 manager 通道。manager 与终端通道一样由 `ws-connect path=/ws/sessions` 显式建立，与 Node relay agent（`server/agent.js:228-232`）一致。自动建会造成 relay 侧双重 manager。
 
 ### 2.3 `OpenSessionOrManager` — direct/relay 共用
 
-从 `relay/client.go:handleWSConnect` 提取，去掉 sendJSON（由 mux 负责）：
-
+从 `relay/client.go:handleWSConnect` 提取（去掉 sendJSON，由 mux 负责）：
 - `path == /ws/sessions` → `session.NewManagerClient(vs)` + `go mc.Run(ctx, manager)`
 - `path == /ws/sessions/{id}` → 取终端，`session.NewClient(vs, terminal, mode)` + `go client.Run(ctx)`
 - 其余 → 返回 error，mux 发 `ws-error`
 
-`mode` 由 `ws-connect.protocols` 经 `selectProtocol` + `session.ClientModeFromProtocol` 得到。这是最大复用收益：direct 与 relay agent 用同一段通道建立逻辑。
+`mode` 由 `ws-connect.protocols` 经 `selectProtocol` + `session.ClientModeFromProtocol` 得到。direct 与 relay agent 用同一段通道建立逻辑。
 
 ---
 
-## 3. go-core 服务端落地
+## 3. 第一阶段：go-core 服务端
 
-### 3.1 direct server — mux-only
-
-- `/ws/sessions` 成为**唯一** WS 入口，始终 `mux.Serve`。
-- WS 握手**不协商子协议**；终端子协议（binary/screen/json）改由 `ws-connect.protocols` 携带。
-- **删除** `/ws/sessions/{id}` 路由分支。
-- **删除** `routeWebSocket` 里按 path 分流建 ManagerClient/Client 的重复代码，统一 `mux.Serve(conn, OnOpen=OpenSessionOrManager)`。
-- REST API（`/api/login`、`/api/sessions` CRUD、`/api/me`）**保留不动**。直连能 serve 真 HTTP，CRUD 留 REST，只有实时流（manager 推送 + 终端流）走 mux。
-- 鉴权不变：升级 `/ws/sessions` 时验 cookie，整条 mux 连接及所有通道继承鉴权。
-
-### 3.2 relay agent — 改用 `mux.Serve`
+### 3.1 relay agent — 改用 `mux.Serve`（内部重构，协议不变）
 
 - `runOnce` 同步完成 `agent-register`/`registered` 握手后，`mux.Serve(conn, OnOpen=OpenSessionOrManager, OnControl=client.handleControl)`。
-- `handleControl` 处理 `http-request`（调 `routeMemoryAPI` 回 JSON）、`p2p-offer`（回 `p2p-unavailable`）——逻辑从现有 `relay/client.go` 搬过来。
+- `handleControl` 处理 `http-request`（调 `routeMemoryAPI` 回 JSON）、`p2p-offer`（回 `p2p-unavailable`）——从现有 `relay/client.go` 搬过来。
 - **删除** `relay/transport.go`、`relay/virtual_socket.go`。
-- **relay server（Node）和中继客户端协议层一行不改**——agent 内部重构对外无感。
+- **relay server 与中继客户端协议层一行不改**——agent 内部重构对外无感。这是第一阶段风险最高处，必须用中继回归验证。
+
+### 3.2 direct server — 新增 mux 入口，保留旧入口
+
+- `/ws/sessions`：**按是否带 mux 协商分流**。由于不能删旧入口（浏览器/Flutter 还在用 `/ws/sessions/{id}`，但 `/ws/sessions` 本身浏览器用于 manager 裸 JSON），需在 `/ws/sessions` 上区分新旧：
+  - **首条消息嗅探**会复杂且易错；采用 **子协议协商**：握手时客户端带 `webterm.mux.v1` → `mux.Serve`；不带 → 旧裸 JSON ManagerClient（现有逻辑）。
+  - 新增常量 `protocol.MuxSubprotocol = "webterm.mux.v1"`。
+- `/ws/sessions/{id}`：**保留不动**，浏览器/Flutter 每终端独立 WS 照旧。
+- REST API（`/api/login`、`/api/sessions` CRUD、`/api/me`）**保留不动**。直连 serve 真 HTTP，CRUD 留 REST，只有实时流走 mux。
+- 鉴权不变：升级 `/ws/sessions` 时验 cookie，整条 mux 连接及所有通道继承鉴权。
+
+> 注：第一阶段 direct 是「mux opt-in + 旧入口保留」，不是 mux-only。mux-only 是最终目标，待浏览器/Flutter 迁移后在后续工作中删旧入口。
 
 ### 3.3 协议层
 
-- `protocol/tunnel.go`（tunnel frame 编解码）保留在 `protocol/`，mux 与 relay 共用。
-- **不需要** `webterm.mux.v1` 子协议常量——mux-only 无需区分新旧，比原 spec 更简。
+- `protocol/tunnel.go` 保留在 `protocol/`，mux 与 relay 共用。
+- 新增 `protocol.MuxSubprotocol = "webterm.mux.v1"`（仅 direct `/ws/sessions` 用于区分新旧客户端）。
 
 ### 3.4 smoke 测试
 
-- `cmd/webterm-flow-smoke`（直连）当前连 `/ws/sessions/{id}`——改用 `/ws/sessions` + `ws-connect` + tunnel frame。
-- `cmd/webterm-relay-flow-smoke`（中继）已用 `ws-connect`——agent 侧重构后回归验证。
+- `cmd/webterm-flow-smoke`（直连）：新增一条 mux 路径用例（`/ws/sessions` + `webterm.mux.v1` + `ws-connect` + tunnel frame）；旧 `/ws/sessions/{id}` 用例保留。
+- `cmd/webterm-relay-flow-smoke`（中继）：已用 `ws-connect`，agent 侧重构后回归验证。
 
 ---
 
-## 4. Android 客户端落地
+## 4. 第一阶段：Android 直连
 
-### 4.1 新增 `MuxSession`（核心新组件）
+### 4.1 新增 `MuxSession`（客户端角色）
 
-对应 go-core 的 `mux.Session`，但为**客户端角色**（发起 `ws-connect`、解码 tunnel frame、把每个虚拟通道的帧分发回上层）。职责：
-
-- 维护单条 `/ws/sessions` WS 连接（带 cookie 鉴权，复用现有 `monitorHttp` 的 ping interval）。
+对应 go-core `mux.Session`，客户端角色：发起 `ws-connect`、解码 tunnel frame、把每个虚拟通道的帧分发回上层。职责：
+- 维护单条 `/ws/sessions` WS（带 cookie + `webterm.mux.v1` 子协议，复用现有 `monitorHttp` 的 ping interval）。
 - **二进制帧**：解码 tunnel frame → 按 `tunnelId` 路由到对应通道回调。
 - **文本帧**：处理 `ws-connected`/`ws-error`（通道建立结果），其余透传。
-- 重连（复用现有指数退避）+ 重连后重建所有活动通道（沿用现有 `_recoverActiveTerminals` 思路）。
+- 重连（复用现有指数退避）+ 重连后重建所有活动通道。
 
 ### 4.2 `WebTermProtocol` 扩展
 
 新增 tunnel frame 编解码（对应 go-core `protocol/tunnel.go`）：
-
 - `encodeTunnelFrame(tunnelId, payload, binary)` → `[0x01 | idLen | id | extraByte | payload]`
 - `decodeTunnelFrame(data)` → `(tunnelId, extraByte, payload)`
 - 常量：`MSG_TYPE_WS_DATA=0x01`、`WS_DATA_TEXT=0x01`、`WS_DATA_BINARY=0x02`
 
-### 4.3 `ServerSessionMonitor` 改造为基于 `MuxSession`
+### 4.3 终端页改造（direct 路径）
 
-- 现状：独立 `/ws/sessions` 裸 JSON 收列表。
-- 改造：`MuxSession` 建连后，**发一条 `ws-connect`（`tunnelId="manager"`, `path="/ws/sessions"`, 无 protocols）** 建 manager 通道；manager 通道的 tunnel frame payload 是裸 JSON，复用现有 `dispatchMessage` 解析。
-- 列表/会话/设备推送逻辑（`dispatchMessage`、`prefixRelaySessionIds`）**完全保留**。
-
-### 4.4 `TerminalConnection` 改造为复用通道
-
-- 现状：每终端独立 `/ws/sessions/{id}` WS。
-- 改造：不再自己建 WS。`connect()` 调用 `MuxSession.openTerminal(sessionId, lastSeq, cols, rows)`：
+`TerminalConnection` 直连路径改为复用通道：
+- `connect()` 调用 `MuxSession.openTerminal(sessionId, lastSeq, cols, rows)`：
   - 发 `ws-connect`（`tunnelId="term:{sessionId}"`, `path="/ws/sessions/{id}"`, `protocols=["webterm.binary.v1"]`）
-  - 等 `ws-connected` 后发 `MSG_HELLO`（封装进 tunnel frame）
-- 输入/resize/title：封装进 tunnel frame 经 `MuxSession` 发送。现有 `MSG_INPUT`/`MSG_RESIZE` 二进制帧不变，只是外面包一层 tunnel frame。
-- 收数据：`MuxSession` 把 `tunnelId="term:{sessionId}"` 的 tunnel frame payload 投递给 `TerminalConnection.handleServerMessage`——**现有帧解析逻辑零改动**（`MSG_OUTPUT`/`MSG_STATE`/`MSG_INFO`/`MSG_EXIT` 照旧）。
+  - **等 `ws-connected` 后**再发 `MSG_HELLO`（封装进 tunnel frame）——顺序约束，单测覆盖。
+- 输入/resize/title：封装进 tunnel frame 经 `MuxSession` 发送。现有 `MSG_INPUT`/`MSG_RESIZE` 二进制帧不变，外面包一层 tunnel frame。
+- 收数据：`MuxSession` 把 `tunnelId="term:{sessionId}"` 的 payload 投递给 `handleServerMessage`——**现有帧解析零改动**（`MSG_OUTPUT`/`MSG_STATE`/`MSG_INFO`/`MSG_EXIT` 照旧）。
 - `close()`：发 `ws-close` 关闭该通道。
-- **重连**：由 `MuxSession` 统一负责；终端通道在 manager 重连后自动重建，`lastSeq` 保留，靠 `MSG_HELLO.lastSeq` 增量恢复（沿用现有 EventRing 机制）。
+- **重连**：由 `MuxSession` 统一负责；终端通道重连后自动重建，`lastSeq` 保留，靠 `MSG_HELLO.lastSeq` 增量恢复。
 
-### 4.5 终端子协议统一为 binary
+### 4.4 manager 通道
 
-Android 现状用 `webterm.binary.v1`（`BINARY_SUBPROTOCOL`）。`ws-connect.protocols` 携带它，服务端 `OpenSessionOrManager` 经 `selectProtocol` 选 binary → `ClientModeFromProtocol` → binary 模式。**Android 不引入 screen 模式**（YAGNI），保持单一模式降低复杂度。
+终端页的 `MuxSession` 建连后发 `ws-connect`（`tunnelId="manager"`, `path="/ws/sessions"`, 无 protocols）建 manager 通道，收会话列表推送。终端页是否需要 manager 通道取决于是否要实时刷新终端元信息（标题等）；若不需要，可只开终端通道。**第一阶段终端页只开终端通道**，manager 列表仍由首页 `ServerSessionMonitor` 负责（保持现状），避免终端页与首页重复订阅。
 
-### 4.6 生命周期与连接归属
+### 4.5 终端子协议统一 binary
 
-- 一个 `ServerConfig`（一台服务器/一台设备）→ 一个 `MuxSession` → 一条 WS。
-- 直连：`MuxSession` 连 `baseUrl/ws/sessions`。
-- 中继：`MuxSession` 连 relay master URL `/ws/sessions?deviceId=xxx`。relay server 透传 ws-connect/tunnel frame 给 agent，agent 侧 `mux.Serve` 处理——**Android 中继路径天然走单连接，无需改 relay server**。
-- 多终端共用同一 `MuxSession`，各自独立 `tunnelId` 通道。
+Android 用 `webterm.binary.v1`，`ws-connect.protocols` 携带。不引入 screen（YAGNI）。
+
+### 4.6 MuxSession 归属与生命周期（回答 reviewer #3）
+
+- **归属**：终端页持有自己的 `MuxSession`（与全局 `TerminalConnection` 绑定，生命周期随终端页）。首页 `ServerSessionMonitor`（每 server/group 一个）**第一阶段不变**，仍走旧裸 JSON `/ws/sessions`。两者分离，互不影响。
+- **隔离**：一个 `ServerConfig` → 终端页一个 `MuxSession` → 一条 WS。切换服务器/设备时关闭旧 `MuxSession`、建新的。
+- **生命周期**：进入终端页建 `MuxSession`；离开终端页（`closeTerminalConnection`，`TerminalLifecycleController.java:157/184`）关闭 `MuxSession`，发 `ws-close` 关所有通道。首页 monitor 关闭**不影响**终端页。
+- **多终端**：Android 一次只显示一个终端，但 `MuxSession` 设计上支持多 `tunnelId` 通道，为未来多终端预留。
+- **direct/中继分流**：`TerminalConnection` 根据 `ServerConfig.isRelayDevice()` 判断——direct 走 `MuxSession`，中继走旧每终端 WS（第一阶段中继不变）。
+
+### 4.7 sessionId 前缀（回答 reviewer #4）
+
+- direct：Android 用本地 id（无前缀）拼 `path="/ws/sessions/{id}"`。
+- 中继（第一阶段不变）：前缀 `deviceId:` 由 relay server 拆。第二阶段若做中继 mux，需明确拆前缀点（§7）。
 
 ---
 
 ## 5. 物理连接消息分层（per-leg）
-
-注意：tunnel ID 是**段内局部**的，不端到端。
 
 ```
 一段物理 WebSocket 连接（direct server 或 relay agent 侧）
@@ -201,65 +196,81 @@ manager 通道不特殊：path=/ws/sessions 的 ws-connect 建立的普通 Virtu
 
 ---
 
-## 6. 向后兼容
+## 6. 测试计划（回答 reviewer #5）
 
-```
-go-core direct server /ws/sessions:   mux-only（唯一入口，旧 /ws/sessions/{id} 删除）
-go-core relay agent:                  ws-connect 行为不变（relay server 不感知 agent 内部重构）
-Node.js relay server:                 不动
-Android 客户端:                        整体迁移到 mux
-浏览器前端 / Flutter:                  本期不碰（go-core 删除 /ws/sessions/{id} 后它们会断——
-                                      属已知范围外影响，本期不修复，后续单独迁移）
-```
+### 6.1 go-core
 
-**已知范围外影响**：go-core direct server 删除 `/ws/sessions/{id}` 后，浏览器前端与 Flutter 的直连终端会断。本期明确不修复，作为后续单独工作项。
+- `mux/session_test.go`：ws-connect 建通道 / ws-close 关通道 / tunnel frame 路由 / onOpen error→ws-error / 物理连接断开关所有通道。
+- relay agent 中继回归：`webterm-relay-flow-smoke` + 真实中继（agent 内部换 mux 后对 relay server 协议不变）。
+- direct 兼容测试：`/ws/sessions` 带 `webterm.mux.v1` 走 mux；不带走旧裸 JSON；`/ws/sessions/{id}` 旧入口仍可用。**明确 `/ws/sessions/{id}` 第一阶段保留**。
+
+### 6.2 Android
+
+- `WebTermProtocol` tunnel frame encode/decode 单测（含 idLen 边界、extraByte、payload 截取）。
+- `MuxSession` 单测：`ws-connected` 后才发 HELLO 的顺序；重连后重建活动通道；多 tunnelId 路由。
+- 端到端：直连单终端 / 重连恢复 / 切换服务器隔离。中继路径不在第一阶段测试范围（维持现状）。
+
+### 6.3 relay-server 层（第二阶段才需要）
+
+第二阶段若做 Android 中继单连接，需补 relay-server 层测试，验证客户端 mux 控制帧（ws-connect）能到 agent 并开新通道。第一阶段不需要。
 
 ---
 
-## 7. 实施顺序与测试
+## 7. 第二阶段（未决，不在本期实施）
+
+Android 中继单连接。两个选项，需独立 spec 决策：
+
+- **选项 A**：改 relay server 支持客户端侧 mux passthrough——`client-tunnel.js`/`main.js` 识别客户端 WS 上的 `ws-connect` 控制帧，转成 agent 侧多条 `ws-connect`（多个 `tc_xxx`）。这是对 relay server 的实质性改动，需单独设计与测试。
+- **选项 B**：Android 中继维持每终端独立 WS（现状），只让 direct 走 mux。
+
+无论哪个，都不能用「relay server 一行不改」糊。本期不实施，标记为后续工作项。
+
+---
+
+## 8. 实施顺序（第一阶段）
 
 | 阶段 | 内容 | 风险 |
 |------|------|------|
 | 1 | 新建 `mux/` 包：`session.go`+`virtual_socket.go`+`handler.go`，从 relay 移出并改回指 | 低 |
-| 2 | `mux/session_test.go`：ws-connect/ws-close/tunnel frame 路由/onOpen error→ws-error | 低 |
+| 2 | `mux/session_test.go` | 低 |
 | 3 | relay agent 改用 `mux.Serve`+`OnControl`，删 `transport.go`/`virtual_socket.go` | 中 |
-| 4 | 中继模式回归（relay-flow-smoke + 真实中继） | 中 |
-| 5 | direct server `/ws/sessions` mux-only，删 `{id}` 路由与重复分流代码 | 中 |
-| 6 | flow-smoke 改造为 ws-connect 客户端 | 低 |
-| 7 | Android：`WebTermProtocol` 加 tunnel frame；新建 `MuxSession` | 中 |
-| 8 | Android：`ServerSessionMonitor` 改 manager 通道；`TerminalConnection` 改复用通道 | 中 |
-| 9 | Android 端到端：直连单终端/多终端/重连；中继单终端/多终端/重连 | 中 |
+| 4 | 中继模式回归（relay-flow-smoke + 真实中继） | 中（最高风险） |
+| 5 | direct server `/ws/sessions` 加 mux 分支（子协议区分），旧入口保留 | 低 |
+| 6 | flow-smoke 加 mux 用例 | 低 |
+| 7 | Android：`WebTermProtocol` 加 tunnel frame；新建 `MuxSession` + 单测 | 中 |
+| 8 | Android：`TerminalConnection` direct 路径改复用通道；中继路径不变 | 中 |
+| 9 | Android 端到端：直连单终端/重连/切换服务器隔离 | 中 |
 
-阶段 1-2 纯新增+测试，不碰现有逻辑。3-4 中继侧重构（**最大风险点**：agent 内部从手写 transport 换成 mux，必须保证对 relay server 协议完全不变）。5-6 直连侧。7-9 Android。
+阶段 1-2 纯新增+测试。3-4 中继侧重构（最大风险：agent 内部换 mux，必须保证对 relay server 协议不变）。5-6 直连侧加分支不破坏旧入口。7-9 Android 直连迁移。
 
 ---
 
-## 8. 设计决策记录
+## 9. 设计决策记录
+
+### Q: 为什么第一阶段不删 `/ws/sessions/{id}`？
+浏览器终端仍连 `/ws/sessions/{id}`（`frontend/src/lib/terminal-session-context.ts:189`），Flutter 同。删了会断它们。第一阶段保留旧入口，Android 直连迁到 mux，其他客户端不受牵连。mux-only 是最终目标，待后续迁移。
+
+### Q: 为什么 direct `/ws/sessions` 用子协议区分新旧，而非首条消息嗅探？
+握手时协商子协议是 WebSocket 标准做法，干净无歧义。旧客户端不带 `webterm.mux.v1` → 自动走旧裸 JSON 分支。首条消息嗅探需缓冲/超时/协议判定，复杂易错。
+
+### Q: 为什么 Android 中继第一阶段不做单连接？
+relay server 是 1:1 tunnel 包装（§1.1），不是客户端 mux 透传器。Android 中继单连接需改 relay server，超出第一阶段范围。中继终端维持每终端独立 WS。
 
 ### Q: 为什么 `Run()` 不自动建 manager 通道？
-relay agent 侧，manager 由 relay 主动发 `ws-connect path=/ws/sessions` 建立。自动建会造成 relay 侧双重 manager。所有通道统一由 ws-connect 建立，与 Node relay agent 一致。
+relay agent 侧 manager 由 relay 主动发 `ws-connect path=/ws/sessions` 建立。自动建会造成双重 manager。所有通道统一由 ws-connect 建立，与 Node relay agent 一致。
 
-### Q: 为什么需要 `OnControl` hook？
-relay agent 物理连接上除 `ws-*` 还有 `http-request`/`p2p-offer` 等控制消息。mux 只认 `ws-*`，其余透传给 `relay.Client`。direct server 不设此 hook。
-
-### Q: 为什么 direct server 不用子协议区分新旧客户端？
-mux-only，无新旧之分，比 opt-in 方案更简。终端子协议改由 `ws-connect.protocols` 携带（relay 已如此）。
+### Q: 为什么终端页第一阶段只开终端通道、不订阅 manager？
+首页 `ServerSessionMonitor` 已负责会话列表。终端页只显示一个终端，不需要列表推送，避免重复订阅。`MuxSession` 设计支持后续按需加 manager 通道。
 
 ### Q: 为什么 REST API 保留、不搬进 mux 控制面？
-直连能 serve 真 HTTP；只有实时流（manager 推送 + 终端流）才需要长连接复用。CRUD 留 REST，职责清晰。relay 才需要 `http-request` 隧道（agent 不能 serve HTTP）。
-
-### Q: 为什么 Android 终端统一 binary、不引入 screen？
-现有 binary 用得好；引入 screen 增加复杂度，YAGNI。
-
-### Q: 中继模式下 Android 单连接为何不用改 relay server？
-relay server 本来就支持 ws-connect/tunnel frame 透传（agent 的 `server/agent.js` 即被它驱动）。Android 作为中继客户端连 relay master，relay server 把 ws-connect/tunnel frame 转给 agent，agent 侧 `mux.Serve` 处理。tunnel ID 段内局部，relay server 协议层无需改。
+直连 serve 真 HTTP；只有实时流才需长连接复用。CRUD 留 REST，职责清晰。relay 才需 `http-request` 隧道（agent 不能 serve HTTP）。
 
 ### Q: 背压如何处理？
-**读侧**（VirtualSocket.incoming）：buffer 256，满则丢帧+关闭该通道（沿用现有 `Emit` 行为），不阻塞物理 ReadLoop。**写侧**：单 writeMu + 每写 10s 超时（沿用现有 `sendBinary`）。一个慢通道的写最坏阻塞所有通道 10s——这是现有行为，本设计未改变也未声称解决。
+**读侧**（VirtualSocket.incoming）：buffer 256，满则丢帧+关闭该通道（沿用现有 `Emit`），不阻塞物理 ReadLoop。**写侧**：单 writeMu + 每写 10s 超时（沿用现有 `sendBinary`）。一个慢通道最坏阻塞所有通道 10s——现有行为，本设计未改变也未声称解决。
 
 ---
 
-## 9. 文件变更清单
+## 10. 文件变更清单（第一阶段）
 
 ```
 go-core 新增:
@@ -269,22 +280,24 @@ go-core 新增:
   internal/mux/session_test.go
 
 go-core 修改:
-  internal/relay/client.go            # 改用 mux.Serve + OnControl；register 独立
-  internal/direct/server.go           # /ws/sessions mux-only，删 {id} 路由与重复分流
+  internal/protocol/constants.go        # 加 MuxSubprotocol = "webterm.mux.v1"
+  internal/relay/client.go              # 改用 mux.Serve + OnControl；register 独立
+  internal/direct/server.go             # /ws/sessions 加 mux 分支（子协议区分），旧入口保留
 
 go-core 删除:
-  internal/relay/transport.go         # 逻辑移入 mux.Session
-  internal/relay/virtual_socket.go    # 移入 mux 包
+  internal/relay/transport.go           # 逻辑移入 mux.Session
+  internal/relay/virtual_socket.go      # 移入 mux 包
 
 go-core smoke:
-  cmd/webterm-flow-smoke/main.go      # 改为 ws-connect 客户端
-  cmd/webterm-relay-flow-smoke/main.go # 回归验证
+  cmd/webterm-flow-smoke/main.go        # 加 mux 用例，旧用例保留
+  cmd/webterm-relay-flow-smoke/main.go  # 回归验证
 
 Android 新增:
   app/src/main/java/com/webterm/mobile/MuxSession.java
+  app/src/test/... (WebTermProtocol / MuxSession 单测)
 
 Android 修改:
-  app/src/main/java/com/webterm/mobile/WebTermProtocol.java   # 加 tunnel frame 编解码
-  app/src/main/java/com/webterm/mobile/ServerSessionMonitor.java # 改 manager 通道
-  app/src/main/java/com/webterm/mobile/TerminalConnection.java   # 改复用通道
+  app/src/main/java/com/webterm/mobile/WebTermProtocol.java     # 加 tunnel frame 编解码
+  app/src/main/java/com/webterm/mobile/TerminalConnection.java  # direct 路径改复用通道；中继路径不变
+  （ServerSessionMonitor.java 第一阶段不变）
 ```
