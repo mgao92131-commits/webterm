@@ -17,6 +17,7 @@ const (
 	BinarySubprotocol = "webterm.binary.v1"
 	JSONSubprotocol   = "webterm.json.v1"
 	ScreenSubprotocol = "webterm.screen.v1"
+	MuxSubprotocol    = "webterm.mux.v1"
 )
 
 const (
