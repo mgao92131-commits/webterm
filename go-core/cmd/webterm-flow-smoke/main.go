@@ -58,6 +58,9 @@ func run(ctx context.Context, baseURL string, username string, password string, 
 	if err := smokeTerminal(ctx, client, base, sessionID); err != nil {
 		return err
 	}
+	if err := runMuxSmoke(ctx, client, base, sessionID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -154,6 +157,64 @@ func smokeTerminal(ctx context.Context, client *http.Client, base *url.URL, sess
 			}
 		}
 	}
+}
+
+func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessionID string) error {
+	wsURL := *base
+	if wsURL.Scheme == "https" {
+		wsURL.Scheme = "wss"
+	} else {
+		wsURL.Scheme = "ws"
+	}
+	wsURL.Path = strings.TrimRight(base.Path, "/") + "/ws/sessions"
+
+	header := http.Header{}
+	for _, cookie := range client.Jar.Cookies(base) {
+		header.Add("Cookie", cookie.String())
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL.String(), &websocket.DialOptions{
+		HTTPHeader:   header,
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		return fmt.Errorf("mux dial: %w", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	connectMsg, _ := json.Marshal(map[string]any{
+		"type":               protocol.WSConnect,
+		"tunnelConnectionId": "term1",
+		"path":               "/ws/sessions/" + sessionID,
+		"protocols":          []string{protocol.BinarySubprotocol},
+	})
+	if err := conn.Write(ctx, websocket.MessageText, connectMsg); err != nil {
+		return fmt.Errorf("mux ws-connect write: %w", err)
+	}
+
+	// read ws-connected
+	if _, _, err := conn.Read(ctx); err != nil {
+		return fmt.Errorf("mux ws-connected read: %w", err)
+	}
+
+	// send hello
+	helloPayload, _ := json.Marshal(map[string]any{"lastSeq": 0})
+	helloFrame := append([]byte{protocol.MsgHello}, helloPayload...)
+	tunnel, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, "term1", protocol.WSDataBinary, helloFrame)
+	if err != nil {
+		return fmt.Errorf("mux encode tunnel: %w", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, tunnel); err != nil {
+		return fmt.Errorf("mux hello write: %w", err)
+	}
+
+	// read one response (tunnel frame) to prove the channel is working
+	if _, _, err := conn.Read(ctx); err != nil {
+		return fmt.Errorf("mux response read: %w", err)
+	}
+
+	fmt.Println("mux smoke OK")
+	return nil
 }
 
 func postJSON(ctx context.Context, client *http.Client, endpoint *url.URL, body any) (*http.Response, error) {
