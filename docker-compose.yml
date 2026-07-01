@@ -1,19 +1,26 @@
 services:
-  webterm-relay:
-    build: .
-    container_name: webterm-relay
-    ports:
-      - "9000:9000"
+  go-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-relay
+    container_name: webterm-go-relay
     volumes:
       - ./data:/app/data
     environment:
-      - RELAY_PORT=9000
-      - JWT_SECRET=a2489c170288d1b662efccc48e8d776d9278f0a61e5cbbdffcf12e4b03cc9ad
-      
-      - NODE_ENV=production
-      - SMTP_HOST=smtp.qq.com
-      - SMTP_PORT=465
-      - SMTP_USER=a18118053911@qq.com
-      - SMTP_PASS=rckjbrwkecrucbhd
-      - SMTP_FROM=a18118053911@qq.com
+      - WEBTERM_RELAY_ADDR=0.0.0.0:19090
+      - WEBTERM_RELAY_STORE_PATH=/app/data/relay.db
+      - WEBTERM_RELAY_BOOTSTRAP_USER=${RELAY_BOOTSTRAP_USER:-admin}
+      - WEBTERM_RELAY_BOOTSTRAP_PASSWORD=${RELAY_BOOTSTRAP_PASSWORD:?required}
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    container_name: webterm-nginx
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./web:/app/web:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - go-relay
     restart: always
