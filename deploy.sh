@@ -58,7 +58,7 @@ ssh -p "${SERVER_PORT}" -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}
     mkdir -p data && \
     echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
     docker compose down && \
-    RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD=changeme docker compose up -d --build
+    export RELAY_BOOTSTRAP_USER=admin && export RELAY_BOOTSTRAP_PASSWORD=changeme && docker compose up -d --build
 "
 
 echo "=========================================="
@@ -68,7 +68,7 @@ echo ""
 echo "⚠️  重要：请立即修改默认管理员密码！"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP}"
 echo "  cd ${REMOTE_DIR}"
-echo "  RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD=你的新密码 docker compose down && docker compose up -d --build"
+echo "  export RELAY_BOOTSTRAP_USER=admin && export RELAY_BOOTSTRAP_PASSWORD=你的新密码 && docker compose down && docker compose up -d --build"
 echo ""
 echo "查看容器日志:"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"
