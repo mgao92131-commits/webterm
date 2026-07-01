@@ -174,7 +174,7 @@ func (server *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"deviceId":        device.ID,
 			"deviceName":      device.Name,
-			"agentCredential": secret,
+			"agentSecret": secret,
 		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -231,7 +231,7 @@ func (server *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
 		server.dropDevice(device.ID, "device credential rotated")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"deviceId":        device.ID,
-			"agentCredential": secret,
+			"agentSecret": secret,
 		})
 	case r.Method == http.MethodDelete && action == "":
 		if err := server.store.DeleteDevice(user.ID, deviceID); err != nil {
