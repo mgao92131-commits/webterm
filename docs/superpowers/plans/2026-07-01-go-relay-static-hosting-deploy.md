@@ -4,7 +4,7 @@
 
 **Goal:** 将 WebTerm 生产部署从 Node 单容器切换为 Nginx + Go Relay 双容器架构，由 Nginx 托管前端静态文件并反向代理 API/WS 到 Go Relay。
 
-**Architecture:** 两个 Docker 容器 — `nginx`（对外 :9000，托管 web/ 静态文件，代理 /api/* 和 /ws/* 到 Go）和 `go-relay`（仅容器内网可达，处理认证、设备管理、WebSocket 中转）。
+**Architecture:** 两个 Docker 容器 — `nginx`（对外 :9001，托管 web/ 静态文件，代理 /api/* 和 /ws/* 到 Go）和 `go-relay`（仅容器内网可达，处理认证、设备管理、WebSocket 中转）。独立部署到 `/opt/webterm-relay-go`，与现有 Node 部署（`/opt/webterm-relay`，端口 9000）完全隔离。
 
 **Tech Stack:** Nginx Alpine, Go 1.25, Docker Compose
 
@@ -12,10 +12,10 @@
 
 - Go 代码不做任何改动（`app.go`、`main.go` 保持原样）
 - 前端 `web/` 目录不做任何改动
-- 保留现有 `deploy.sh` 的远程部署流程
+- 独立部署到 `/opt/webterm-relay-go`，与现有 Node 部署（`/opt/webterm-relay`）互不干扰
 - 环境变量 `RELAY_BOOTSTRAP_USER` / `RELAY_BOOTSTRAP_PASSWORD` 用于初始化管理员账号
 - Go Relay 监听 `0.0.0.0:19090`（容器内网），不暴露到宿主机
-- Nginx 监听 `9000`，对外暴露
+- Nginx 监听 `9001`，对外暴露（与旧 Node 部署的 9000 不冲突）
 
 ---
 
@@ -37,7 +37,7 @@
 ```bash
 cat > nginx.conf << 'NGINX_EOF'
 server {
-    listen 9000;
+    listen 9001;
     server_name _;
 
     root /app/web;
@@ -224,7 +224,7 @@ services:
     image: nginx:alpine
     container_name: webterm-nginx
     ports:
-      - "9000:9000"
+      - "9001:9001"
     volumes:
       - ./web:/app/web:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -269,9 +269,21 @@ git commit -m "feat: switch docker-compose to Nginx + Go Relay dual-container"
 
 用 Edit 工具做以下修改：
 
+**修改 0：更改部署目录**
+
+将：
+```bash
+REMOTE_DIR="/opt/webterm-relay"
+```
+
+改为：
+```bash
+REMOTE_DIR="/opt/webterm-relay-go"
+```
+
 **修改 1：在 `# 1. 部署配置` 之后增加 web/ 目录检查**
 
-在 `SERVER_PORT="22"` 之后、`REMOTE_DIR="/opt/webterm-relay"` 之前插入：
+在 `SERVER_PORT="22"` 之后、`REMOTE_DIR="/opt/webterm-relay-go"` 之前插入：
 
 ```bash
 # 检查前端构建产物是否存在
@@ -356,7 +368,7 @@ echo "=========================================="
 ```bash
 echo "=========================================="
 echo "🎉 部署完成！"
-echo "您可以尝试访问: http://${SERVER_IP}:9000"
+echo "您可以尝试访问: http://${SERVER_IP}:9001"
 echo ""
 echo "⚠️  重要：请立即修改默认管理员密码！"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP}"
@@ -399,7 +411,7 @@ sleep 5
 
 ```bash
 # 验证首页返回 HTML
-curl -s http://localhost:9000/ | head -1
+curl -s http://localhost:9001/ | head -1
 ```
 
 Expected: `<!doctype html>`
@@ -408,7 +420,7 @@ Expected: `<!doctype html>`
 
 ```bash
 # 验证 API 代理（应返回 401，说明代理通了但未认证）
-curl -s http://localhost:9000/api/devices
+curl -s http://localhost:9001/api/devices
 ```
 
 Expected: `{"error":"unauthorized"}`（JSON 格式，说明请求到达了 Go Relay）
@@ -417,7 +429,7 @@ Expected: `{"error":"unauthorized"}`（JSON 格式，说明请求到达了 Go Re
 
 ```bash
 # 登录
-curl -s -X POST http://localhost:9000/api/auth/login \
+curl -s -X POST http://localhost:9001/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"test123"}'
 ```
@@ -428,7 +440,7 @@ Expected: 返回 `{"id":"...","username":"admin","role":"admin","mode":"relay"}`
 
 ```bash
 # 访问一个前端路由路径（非文件）
-curl -s http://localhost:9000/devices | head -1
+curl -s http://localhost:9001/devices | head -1
 ```
 
 Expected: `<!doctype html>`（返回 index.html，非 404）
