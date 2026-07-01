@@ -8,7 +8,15 @@
 SERVER_IP="120.46.85.237"
 SERVER_USER="root"
 SERVER_PORT="22"
-REMOTE_DIR="/opt/webterm-relay"
+
+# 检查前端构建产物是否存在
+if [ ! -f "web/index.html" ]; then
+    echo "❌ 错误: web/ 目录下没有找到前端构建产物。"
+    echo "请先运行: npm run build"
+    exit 1
+fi
+
+REMOTE_DIR="/opt/webterm-relay-go"
 
 # 检查服务器 IP 是否被修改
 if [ "$SERVER_IP" = "您的服务器IP" ]; then
@@ -26,6 +34,9 @@ tar --exclude='node_modules' \
     --exclude='.npm-cache' \
     --exclude='test-results' \
     --exclude='tests' \
+    --exclude='go-core/webterm-agent' \
+    --exclude='go-core/webterm-flow-smoke' \
+    --exclude='go-core/webterm-relay-flow-smoke' \
     -czf "$TEMP_TAR" .
 
 echo "🚀 [2/3] 正在上传压缩包到服务器 (${SERVER_USER}@${SERVER_IP}:${SERVER_PORT})..."
@@ -39,23 +50,26 @@ scp -P "${SERVER_PORT}" -o StrictHostKeyChecking=no "$TEMP_TAR" "${SERVER_USER}@
 rm -f "$TEMP_TAR"
 
 echo "⚙️ [3/3] 正在远程执行部署指令..."
-# 远程解压、创建证书（如果不存在）、清理压缩包、构建并启动 Docker 容器
+# 远程解压、清理压缩包、构建并启动 Docker 容器
 ssh -p "${SERVER_PORT}" -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" "
     cd ${REMOTE_DIR} && \
-    mkdir -p data/certs && \
-    if [ ! -f data/certs/key.pem ] || [ ! -f data/certs/cert.pem ]; then
-        echo '🔑 正在服务器生成自签名 SSL 证书...' && \
-        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout data/certs/key.pem -out data/certs/cert.pem -subj '/CN=${SERVER_IP}'
-    fi && \
     tar -xzf webterm_deploy_temp.tar.gz && \
     rm -f webterm_deploy_temp.tar.gz && \
-    echo '🐳 正在启动 Docker Compose...' && \
+    mkdir -p data && \
+    echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
     docker compose down && \
-    docker compose up -d --build
+    RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD=changeme docker compose up -d --build
 "
 
 echo "=========================================="
 echo "🎉 部署完成！"
-echo "您可以尝试访问: https://${SERVER_IP}:9000"
-echo "如果需要查看服务器容器日志，请运行: ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"
+echo "您可以尝试访问: http://${SERVER_IP}:9001"
+echo ""
+echo "⚠️  重要：请立即修改默认管理员密码！"
+echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP}"
+echo "  cd ${REMOTE_DIR}"
+echo "  RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD=你的新密码 docker compose up -d"
+echo ""
+echo "查看容器日志:"
+echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"
 echo "=========================================="
