@@ -1,0 +1,15 @@
+# 阶段一：编译 Go 二进制
+FROM golang:1.25-alpine AS go-builder
+WORKDIR /src
+COPY go-core/go.mod go-core/go.sum ./
+RUN go mod download
+COPY go-core/ ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /webterm-relay ./cmd/webterm-relay
+
+# 阶段二：最小运行镜像
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+COPY --from=go-builder /webterm-relay .
+EXPOSE 19090
+CMD ["./webterm-relay"]
