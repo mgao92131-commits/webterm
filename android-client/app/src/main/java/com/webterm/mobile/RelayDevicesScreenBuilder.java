@@ -199,12 +199,13 @@ public final class RelayDevicesScreenBuilder {
         root.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
 
         // === 刷新逻辑 ===
-        Runnable refresh = () -> {
+        final Runnable[] refreshHolder = {null};
+        refreshHolder[0] = () -> {
             errorText.setVisibility(View.GONE);
             host.onFetchDevices(new DevicesCallback() {
                 @Override
                 public void onReady(JSONArray devices) {
-                    activity.runOnUiThread(() -> rebuildAgentDeviceList(activity, host, agentDeviceList, devices, errorText));
+                    activity.runOnUiThread(() -> rebuildAgentDeviceList(activity, host, agentDeviceList, devices, errorText, refreshHolder[0]));
                 }
                 @Override
                 public void onError(String message) {
@@ -217,7 +218,7 @@ public final class RelayDevicesScreenBuilder {
             host.onFetchTrustedDevices(new TrustedDevicesCallback() {
                 @Override
                 public void onReady(JSONArray devices) {
-                    activity.runOnUiThread(() -> rebuildTrustedDeviceList(activity, host, trustedDeviceList, devices, errorText));
+                    activity.runOnUiThread(() -> rebuildTrustedDeviceList(activity, host, trustedDeviceList, devices, errorText, refreshHolder[0]));
                 }
                 @Override
                 public void onError(String message) {
@@ -225,6 +226,7 @@ public final class RelayDevicesScreenBuilder {
                 }
             });
         };
+        Runnable refresh = refreshHolder[0];
 
         // 添加设备按钮
         addDeviceBtn.setOnClickListener(v -> {
@@ -391,10 +393,9 @@ public final class RelayDevicesScreenBuilder {
 
         return reveal;
     }
-
     private static void rebuildAgentDeviceList(Activity activity, Host host,
                                                 LinearLayout container, JSONArray devices,
-                                                TextView errorText) {
+                                                TextView errorText, Runnable onRefresh) {
         container.removeAllViews();
         if (devices == null || devices.length() == 0) {
             TextView empty = new TextView(activity);
@@ -424,7 +425,7 @@ public final class RelayDevicesScreenBuilder {
                                 @Override
                                 public void onReady() {
                                     activity.runOnUiThread(() -> {
-                                        // 触发宿主刷新，宿主重新调用 refresh
+                                        onRefresh.run();
                                     });
                                 }
                                 @Override
@@ -504,7 +505,7 @@ public final class RelayDevicesScreenBuilder {
 
     private static void rebuildTrustedDeviceList(Activity activity, Host host,
                                                   LinearLayout container, JSONArray devices,
-                                                  TextView errorText) {
+                                                  TextView errorText, Runnable onRefresh) {
         container.removeAllViews();
         if (devices == null || devices.length() == 0) {
             TextView empty = new TextView(activity);
@@ -534,7 +535,7 @@ public final class RelayDevicesScreenBuilder {
                                 @Override
                                 public void onReady() {
                                     activity.runOnUiThread(() -> {
-                                        // 触发宿主刷新
+                                        onRefresh.run();
                                     });
                                 }
                                 @Override
