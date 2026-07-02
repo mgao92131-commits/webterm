@@ -142,6 +142,56 @@ final class WebTermApi {
         });
     }
 
+    void register(String baseUrl, String email, String username, String password, ExtendedLoginCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("email", email);
+            body.put("username", username);
+            body.put("password", password);
+        } catch (JSONException e) {
+            callback.onError(e.getMessage());
+            return;
+        }
+        Request request = new Request.Builder()
+            .url(baseUrl + "/api/auth/register")
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("Register failed: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    if (!response.isSuccessful()) {
+                        String bodyStr = response.body() != null ? response.body().string() : "";
+                        String msg = parseErrorMessage(bodyStr);
+                        if (msg.isEmpty()) msg = "Register failed: " + response.code();
+                        callback.onError(msg);
+                        return;
+                    }
+                    String text = response.body().string();
+                    JSONObject json = null;
+                    try {
+                        json = new JSONObject(text);
+                    } catch (JSONException ignored) {}
+                    String mergedCookie = parseAndMergeCookies(null, response);
+                    if (json != null && json.optBoolean("otp_required", false)) {
+                        String targetDeviceId = json.optString("target_device_id", "");
+                        callback.onOtpRequired(targetDeviceId, mergedCookie);
+                        return;
+                    }
+                    if (mergedCookie.isEmpty()) {
+                        callback.onError("Register did not return an auth cookie.");
+                        return;
+                    }
+                    callback.onReady(baseUrl, mergedCookie);
+                }
+            }
+        });
+    }
 
     void fetchDevices(String baseUrl, String cookie, SessionsCallback callback) {
         Request request = new Request.Builder()
@@ -378,6 +428,175 @@ final class WebTermApi {
         http.newCall(request).enqueue(simpleCallback(callback, "P2P ICE failed"));
     }
 
+    // --- Device management ---
+
+    void registerDevice(String baseUrl, String cookie, String deviceName, DeviceCreateCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("deviceName", deviceName);
+        } catch (Exception e) {
+            callback.onError("构造请求失败: " + e.getMessage());
+            return;
+        }
+        post(baseUrl + "/api/devices", cookie, body, new RawCallback() {
+            @Override
+            public void onSuccess(JSONObject data) {
+                String deviceId = data.optString("deviceId", "");
+                String name = data.optString("deviceName", deviceName);
+                String agentSecret = data.optString("agentSecret", "");
+                callback.onReady(deviceId, name, agentSecret);
+            }
+            @Override
+            public void onFailure(int code, String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    void deleteDevice(String baseUrl, String cookie, String deviceId, SimpleCallback callback) {
+        delete(baseUrl + "/api/devices/" + deviceId, cookie, new RawCallback() {
+            @Override
+            public void onSuccess(JSONObject data) {
+                callback.onReady();
+            }
+            @Override
+            public void onFailure(int code, String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    void fetchTrustedDevices(String baseUrl, String cookie, TrustedDevicesCallback callback) {
+        getJSONArray(baseUrl + "/api/auth/devices", cookie, new RawArrayCallback() {
+            @Override
+            public void onSuccess(JSONArray data) {
+                callback.onReady(data);
+            }
+            @Override
+            public void onFailure(int code, String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    void deleteTrustedDevice(String baseUrl, String cookie, String trustedDeviceId, SimpleCallback callback) {
+        delete(baseUrl + "/api/auth/devices/" + trustedDeviceId, cookie, new RawCallback() {
+            @Override
+            public void onSuccess(JSONObject data) {
+                callback.onReady();
+            }
+            @Override
+            public void onFailure(int code, String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    // --- HTTP helpers ---
+
+    private void post(String url, String cookie, JSONObject body, RawCallback callback) {
+        Request.Builder rb = new Request.Builder().url(url);
+        if (cookie != null && !cookie.isEmpty()) {
+            rb.header("Cookie", "webterm_relay_token=" + cookie);
+        }
+        rb.post(RequestBody.create(body.toString(), JSON));
+        http.newCall(rb.build()).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onFailure(0, "网络错误: " + e.getMessage());
+            }
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String bodyStr = response.body() != null ? response.body().string() : "";
+                    try {
+                        if (response.isSuccessful()) {
+                            JSONObject obj = bodyStr.isEmpty() ? new JSONObject() : new JSONObject(bodyStr);
+                            callback.onSuccess(obj);
+                        } else {
+                            String msg = parseErrorMessage(bodyStr);
+                            callback.onFailure(response.code(), msg);
+                        }
+                    } catch (Exception e) {
+                        callback.onFailure(response.code(), "解析响应失败");
+                    }
+                }
+            }
+        });
+    }
+
+    private void delete(String url, String cookie, RawCallback callback) {
+        Request.Builder rb = new Request.Builder().url(url).delete();
+        if (cookie != null && !cookie.isEmpty()) {
+            rb.header("Cookie", "webterm_relay_token=" + cookie);
+        }
+        http.newCall(rb.build()).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onFailure(0, "网络错误: " + e.getMessage());
+            }
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String bodyStr = response.body() != null ? response.body().string() : "";
+                    try {
+                        if (response.isSuccessful()) {
+                            JSONObject obj = bodyStr.isEmpty() ? new JSONObject() : new JSONObject(bodyStr);
+                            callback.onSuccess(obj);
+                        } else {
+                            String msg = parseErrorMessage(bodyStr);
+                            callback.onFailure(response.code(), msg);
+                        }
+                    } catch (Exception e) {
+                        callback.onFailure(response.code(), "解析响应失败");
+                    }
+                }
+            }
+        });
+    }
+
+    private void getJSONArray(String url, String cookie, RawArrayCallback callback) {
+        Request.Builder rb = new Request.Builder().url(url).get();
+        if (cookie != null && !cookie.isEmpty()) {
+            rb.header("Cookie", "webterm_relay_token=" + cookie);
+        }
+        http.newCall(rb.build()).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onFailure(0, "网络错误: " + e.getMessage());
+            }
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String bodyStr = response.body() != null ? response.body().string() : "";
+                    try {
+                        if (response.isSuccessful()) {
+                            JSONArray arr = bodyStr.isEmpty() ? new JSONArray() : new JSONArray(bodyStr);
+                            callback.onSuccess(arr);
+                        } else {
+                            String msg = parseErrorMessage(bodyStr);
+                            callback.onFailure(response.code(), msg);
+                        }
+                    } catch (Exception e) {
+                        callback.onFailure(response.code(), "解析响应失败");
+                    }
+                }
+            }
+        });
+    }
+
+    private static String parseErrorMessage(String body) {
+        if (body == null || body.isEmpty()) return "";
+        try {
+            JSONObject obj = new JSONObject(body);
+            if (obj.has("error")) return obj.optString("error");
+            if (obj.has("message")) return obj.optString("message");
+            return body;
+        } catch (JSONException e) {
+            return body;
+        }
+    }
+
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {
         return new Callback() {
             @Override
@@ -462,6 +681,26 @@ final class WebTermApi {
 
     interface SimpleCallback {
         void onReady();
+        void onError(String message);
+    }
+
+    interface RawCallback {
+        void onSuccess(JSONObject data);
+        void onFailure(int code, String message);
+    }
+
+    interface RawArrayCallback {
+        void onSuccess(JSONArray data);
+        void onFailure(int code, String message);
+    }
+
+    interface DeviceCreateCallback {
+        void onReady(String deviceId, String deviceName, String agentSecret);
+        void onError(String message);
+    }
+
+    interface TrustedDevicesCallback {
+        void onReady(JSONArray devices);
         void onError(String message);
     }
 }
