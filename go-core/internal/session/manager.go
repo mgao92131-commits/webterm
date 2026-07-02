@@ -86,6 +86,14 @@ func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error
 		Name:    name,
 		CWD:     cwd,
 		Command: manager.defaults.Command,
+		OnTitle: func() {
+			manager.mu.RLock()
+			term, ok := manager.sessions[id]
+			manager.mu.RUnlock()
+			if ok {
+				manager.broadcastManager(ManagerMessage{Type: "session", Data: term.Info()})
+			}
+		},
 	})
 	if err != nil {
 		manager.mu.Unlock()

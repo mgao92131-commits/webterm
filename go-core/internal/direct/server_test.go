@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,41 +202,23 @@ func TestDirectManagerWebSocketReceivesSessionUpdates(t *testing.T) {
 	httpServer := httptest.NewServer(http.HandlerFunc(directServer.route))
 	defer httpServer.Close()
 
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("cookiejar.New: %v", err)
-	}
-	client := httpServer.Client()
-	client.Jar = jar
-	loginBody := bytes.NewBufferString(`{"username":"admin","password":"pw"}`)
-	loginRequest, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/login", loginBody)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	loginRequest.Header.Set("Content-Type", "application/json")
-	loginResponse, err := client.Do(loginRequest)
-	if err != nil {
-		t.Fatalf("login request: %v", err)
-	}
-	_ = loginResponse.Body.Close()
-	if loginResponse.StatusCode != http.StatusOK {
-		t.Fatalf("login status = %d", loginResponse.StatusCode)
-	}
+	jar, client := authenticatedClient(t, httpServer)
+	defer client.CloseIdleConnections()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	headers := http.Header{}
-	for _, cookie := range jar.Cookies(loginRequest.URL) {
-		headers.Add("Cookie", cookie.String())
-	}
-	wsURL := "ws" + httpServer.URL[len("http"):] + "/ws/sessions"
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
+	headers := authHeaders(jar, httpServer.URL)
+	conn, err := dialMux(ctx, httpServer.URL, headers)
 	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
+		t.Fatalf("dial mux: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	_, first, err := conn.Read(ctx)
+	if err := openMuxChannel(ctx, conn, "manager", "/ws/sessions", nil); err != nil {
+		t.Fatalf("open manager channel: %v", err)
+	}
+
+	_, first, err := readMuxText(ctx, conn, "manager")
 	if err != nil {
 		t.Fatalf("read initial manager message: %v", err)
 	}
@@ -261,7 +245,7 @@ func TestDirectManagerWebSocketReceivesSessionUpdates(t *testing.T) {
 		t.Fatalf("create status = %d", createResponse.StatusCode)
 	}
 
-	_, update, err := conn.Read(ctx)
+	_, update, err := readMuxText(ctx, conn, "manager")
 	if err != nil {
 		t.Fatalf("read session update: %v", err)
 	}
@@ -271,76 +255,6 @@ func TestDirectManagerWebSocketReceivesSessionUpdates(t *testing.T) {
 	}
 	if message.Type != "session" {
 		t.Fatalf("update type = %q, want session", message.Type)
-	}
-}
-
-func TestDirectTerminalWebSocketAcceptsScreenProtocol(t *testing.T) {
-	testutil.SkipIfLoopbackListenUnavailable(t)
-
-	cfg := config.Config{
-		Mode:   config.ModeDirect,
-		Direct: config.DirectConfig{Addr: "127.0.0.1:0", User: "admin", Password: "pw"},
-		Shell:  config.ShellConfig{Command: "/bin/sh", CWD: "."},
-	}
-	application := app.New(cfg, "test")
-	directServer := New(cfg.Direct, application)
-	httpServer := httptest.NewServer(http.HandlerFunc(directServer.route))
-	defer httpServer.Close()
-
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("cookiejar.New: %v", err)
-	}
-	client := httpServer.Client()
-	client.Jar = jar
-	loginBody := bytes.NewBufferString(`{"username":"admin","password":"pw"}`)
-	loginRequest, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/login", loginBody)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	loginRequest.Header.Set("Content-Type", "application/json")
-	loginResponse, err := client.Do(loginRequest)
-	if err != nil {
-		t.Fatalf("login request: %v", err)
-	}
-	_ = loginResponse.Body.Close()
-	if loginResponse.StatusCode != http.StatusOK {
-		t.Fatalf("login status = %d", loginResponse.StatusCode)
-	}
-
-	createBody := bytes.NewBufferString(`{"name":"screen-ws","cwd":"."}`)
-	createRequest, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/sessions", createBody)
-	if err != nil {
-		t.Fatalf("create NewRequest: %v", err)
-	}
-	createRequest.Header.Set("Content-Type", "application/json")
-	createResponse, err := client.Do(createRequest)
-	if err != nil {
-		t.Fatalf("create request: %v", err)
-	}
-	_ = createResponse.Body.Close()
-	if createResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("create status = %d", createResponse.StatusCode)
-	}
-	defer application.Sessions().Close("s1")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	headers := http.Header{}
-	for _, cookie := range jar.Cookies(loginRequest.URL) {
-		headers.Add("Cookie", cookie.String())
-	}
-	wsURL := "ws" + httpServer.URL[len("http"):] + "/ws/sessions/s1"
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
-		HTTPHeader:   headers,
-		Subprotocols: []string{protocol.ScreenSubprotocol},
-	})
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if conn.Subprotocol() != protocol.ScreenSubprotocol {
-		t.Fatalf("subprotocol = %q, want %q", conn.Subprotocol(), protocol.ScreenSubprotocol)
 	}
 }
 
@@ -424,7 +338,7 @@ func TestDirectMuxEndpointManagerChannel(t *testing.T) {
 	cancel()
 }
 
-func TestDirectLegacyManagerStillWorks(t *testing.T) {
+func TestDirectMuxTerminalChannel(t *testing.T) {
 	testutil.SkipIfLoopbackListenUnavailable(t)
 
 	cfg := config.Config{
@@ -437,6 +351,57 @@ func TestDirectLegacyManagerStillWorks(t *testing.T) {
 	httpServer := httptest.NewServer(http.HandlerFunc(directServer.route))
 	defer httpServer.Close()
 
+	jar, client := authenticatedClient(t, httpServer)
+	defer client.CloseIdleConnections()
+
+	sessionID, err := createSession(client, httpServer.URL, "mux-term", ".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer application.Sessions().Close(sessionID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	conn, err := dialMux(ctx, httpServer.URL, authHeaders(jar, httpServer.URL))
+	if err != nil {
+		t.Fatalf("dial mux: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := openMuxChannel(ctx, conn, "term1", "/ws/sessions/"+sessionID, []string{protocol.ScreenSubprotocol}); err != nil {
+		t.Fatalf("open terminal channel: %v", err)
+	}
+
+	hello, _ := json.Marshal(map[string]any{"type": "hello", "cols": 100, "rows": 30, "lastSeq": 0})
+	if err := writeMuxText(ctx, conn, "term1", hello); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+
+	var sawScreenState, sawInfo bool
+	for i := 0; i < 2; i++ {
+		_, data, err := readMuxText(ctx, conn, "term1")
+		if err != nil {
+			t.Fatalf("read terminal message: %v", err)
+		}
+		switch {
+		case strings.Contains(string(data), `"type":"screen-state"`):
+			sawScreenState = true
+		case strings.Contains(string(data), `"type":"info"`):
+			sawInfo = true
+		default:
+			t.Fatalf("unexpected message: %s", data)
+		}
+	}
+	if !sawScreenState {
+		t.Fatalf("did not receive screen-state")
+	}
+	if !sawInfo {
+		t.Fatalf("did not receive info")
+	}
+}
+
+func authenticatedClient(t *testing.T, httpServer *httptest.Server) (*cookiejar.Jar, *http.Client) {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatalf("cookiejar.New: %v", err)
@@ -444,12 +409,7 @@ func TestDirectLegacyManagerStillWorks(t *testing.T) {
 	client := httpServer.Client()
 	client.Jar = jar
 	loginBody := bytes.NewBufferString(`{"username":"admin","password":"pw"}`)
-	loginRequest, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/login", loginBody)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	loginRequest.Header.Set("Content-Type", "application/json")
-	loginResponse, err := client.Do(loginRequest)
+	loginResponse, err := client.Post(httpServer.URL+"/api/login", "application/json", loginBody)
 	if err != nil {
 		t.Fatalf("login request: %v", err)
 	}
@@ -457,29 +417,100 @@ func TestDirectLegacyManagerStillWorks(t *testing.T) {
 	if loginResponse.StatusCode != http.StatusOK {
 		t.Fatalf("login status = %d", loginResponse.StatusCode)
 	}
+	return jar, client
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
+func authHeaders(jar *cookiejar.Jar, serverURL string) http.Header {
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return http.Header{}
+	}
 	headers := http.Header{}
-	for _, cookie := range jar.Cookies(loginRequest.URL) {
+	for _, cookie := range jar.Cookies(parsed) {
 		headers.Add("Cookie", cookie.String())
 	}
-	// 旧客户端：不带子协议，应连上并收到裸 JSON sessions 推送。
-	wsURL := "ws" + httpServer.URL[len("http"):] + "/ws/sessions"
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
+	return headers
+}
+
+func createSession(client *http.Client, serverURL, name, cwd string) (string, error) {
+	body := bytes.NewBufferString(fmt.Sprintf(`{"name":%q,"cwd":%q}`, name, cwd))
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/sessions", body)
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		return "", err
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if conn.Subprotocol() != "" {
-		t.Fatalf("legacy subprotocol = %q, want empty", conn.Subprotocol())
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create status %d", res.StatusCode)
+	}
+	var info session.Info
+	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
+		return "", err
+	}
+	return info.ID, nil
+}
+
+func dialMux(ctx context.Context, serverURL string, headers http.Header) (*websocket.Conn, error) {
+	wsURL := "ws" + serverURL[len("http"):] + "/ws/sessions"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader:   headers,
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	return conn, err
+}
+
+func openMuxChannel(ctx context.Context, conn *websocket.Conn, id, path string, protocols []string) error {
+	msgBytes, _ := json.Marshal(map[string]any{
+		"type":               protocol.WSConnect,
+		"tunnelConnectionId": id,
+		"path":               path,
+		"protocols":          protocols,
+	})
+	if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
+		return err
 	}
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		t.Fatalf("read legacy sessions: %v", err)
+		return err
 	}
-	if !strings.Contains(string(data), `"type":"sessions"`) {
-		t.Fatalf("legacy payload = %s", data)
+	var connected map[string]any
+	if err := json.Unmarshal(data, &connected); err != nil {
+		return err
 	}
-	cancel()
+	if connected["type"] != protocol.WSConnected {
+		return fmt.Errorf("expected ws-connected, got %#v", connected)
+	}
+	return nil
+}
+
+func readMuxText(ctx context.Context, conn *websocket.Conn, id string) (websocket.MessageType, []byte, error) {
+	for {
+		mt, data, err := conn.Read(ctx)
+		if err != nil {
+			return 0, nil, err
+		}
+		if mt != websocket.MessageBinary {
+			continue
+		}
+		frame, err := protocol.DecodeTunnelFrame(data)
+		if err != nil {
+			continue
+		}
+		if frame.MsgType != protocol.MsgTypeWSData || frame.ID != id || frame.ExtraByte != protocol.WSDataText {
+			continue
+		}
+		return mt, frame.Payload, nil
+	}
+}
+
+func writeMuxText(ctx context.Context, conn *websocket.Conn, id string, payload []byte) error {
+	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, id, protocol.WSDataText, payload)
+	if err != nil {
+		return err
+	}
+	return conn.Write(ctx, websocket.MessageBinary, frame)
 }

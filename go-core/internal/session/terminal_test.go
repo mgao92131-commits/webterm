@@ -43,3 +43,31 @@ func stringContains(value string, needle string) bool {
 	}
 	return false
 }
+
+func TestTerminalSessionTitleUpdate(t *testing.T) {
+	var titleUpdated bool
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+		OnTitle: func() {
+			titleUpdated = true
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	// 模拟终端输出 ANSI 设置标题转义序列：\x1b]0;TestTitle\x07
+	terminal.PushOutput([]byte("\x1b]0;TestTitle\x07"))
+
+	if !titleUpdated {
+		t.Errorf("expected OnTitle callback to be triggered")
+	}
+
+	info := terminal.Info()
+	if info.TermTitle != "TestTitle" {
+		t.Errorf("expected TermTitle to be %q, got %q", "TestTitle", info.TermTitle)
+	}
+}

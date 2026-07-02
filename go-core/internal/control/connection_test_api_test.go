@@ -13,7 +13,6 @@ import (
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/testutil"
 )
 
@@ -102,10 +101,10 @@ func TestConnectionTestRelayLiveRegistration(t *testing.T) {
 		if err := json.Unmarshal(data, &register); err != nil {
 			t.Fatalf("decode register: %v", err)
 		}
-		if register["type"] != protocol.AgentRegister || register["secret"] != "secret" || register["test"] != true {
+		if register["type"] != agentRegisterMessage || register["credential"] != "secret" || register["test"] != true {
 			t.Fatalf("unexpected register: %#v", register)
 		}
-		bytes, _ := json.Marshal(map[string]any{"type": protocol.Registered, "deviceId": "test-device"})
+		bytes, _ := json.Marshal(map[string]any{"type": agentRegisteredMessage, "deviceId": "test-device"})
 		if err := conn.Write(ctx, websocket.MessageText, bytes); err != nil {
 			t.Fatalf("Write: %v", err)
 		}

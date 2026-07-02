@@ -16,7 +16,12 @@ import (
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
-	"webterm/go-core/internal/protocol"
+)
+
+const (
+	agentRegisterMessage   = "agent.register"
+	agentRegisteredMessage = "agent.registered"
+	agentErrorMessage      = "agent.error"
 )
 
 type connectionTestRequest struct {
@@ -107,9 +112,9 @@ func testRelayConnection(ctx context.Context, relay config.RelayConfig, live boo
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	register := map[string]any{
-		"type":       protocol.AgentRegister,
+		"type":       agentRegisterMessage,
 		"deviceName": emptyDefault(relay.DeviceName, "webterm-agent-test"),
-		"secret":     relay.Secret,
+		"credential": relay.Secret,
 		"test":       true,
 	}
 	if err := wsWriteJSON(dialCtx, conn, register); err != nil {
@@ -127,9 +132,9 @@ func testRelayConnection(ctx context.Context, relay config.RelayConfig, live boo
 		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: err.Error()}
 	}
 	switch fmt.Sprint(response["type"]) {
-	case protocol.Registered:
+	case agentRegisteredMessage:
 		return connectionTestResult{OK: true, Mode: config.ModeRelay, Live: true, Message: "relay registration succeeded"}
-	case protocol.Error:
+	case agentErrorMessage:
 		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: fmt.Sprint(response["message"])}
 	default:
 		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: fmt.Sprintf("unexpected relay response type %q", response["type"])}

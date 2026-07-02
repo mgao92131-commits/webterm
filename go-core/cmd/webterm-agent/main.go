@@ -60,7 +60,7 @@ func main() {
 	if cfg.Mode == config.ModeDirect {
 		fmt.Printf("direct runtime scaffold configured for %s\n", cfg.Direct.Addr)
 	} else {
-		fmt.Printf("relay runtime scaffold configured for %s\n", cfg.Relay.URL)
+		fmt.Printf("relay runtime scaffold configured for %s protocol=%s\n", cfg.Relay.URL, cfg.Relay.Protocol)
 	}
 
 	errCh := make(chan error, 2)

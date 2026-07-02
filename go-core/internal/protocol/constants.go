@@ -21,16 +21,10 @@ const (
 )
 
 const (
-	AgentRegister = "agent-register"
-	Registered    = "registered"
-	Error         = "error"
-	HTTPRequest   = "http-request"
-	HTTPResponse  = "http-response"
-	HTTPError     = "http-error"
-	WSConnect     = "ws-connect"
-	WSConnected   = "ws-connected"
-	WSError       = "ws-error"
-	WSClose       = "ws-close"
+	WSConnect   = "ws-connect"
+	WSConnected = "ws-connected"
+	WSError     = "ws-error"
+	WSClose     = "ws-close"
 )
 
 const (

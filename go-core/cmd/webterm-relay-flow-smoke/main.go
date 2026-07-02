@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,6 +17,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/protocol"
+	"webterm/go-core/internal/relaycore"
 )
 
 func main() {
@@ -56,6 +56,7 @@ func run(ctx context.Context, agentPath string, cwd string) error {
 		"RELAY_URL=ws"+strings.TrimPrefix(server.URL, "http"),
 		"RELAY_SECRET=smoke-secret",
 		"DEVICE_NAME=relay-smoke-device",
+		"WEBTERM_RELAY_PROTOCOL=v2",
 		"WEBTERM_CONTROL_ADDR=127.0.0.1:0",
 		"WEBTERM_SHELL=/bin/sh",
 	)
@@ -98,69 +99,63 @@ func handleAgent(ctx context.Context, w http.ResponseWriter, r *http.Request, cw
 	if err != nil {
 		return fmt.Errorf("read register: %w", err)
 	}
-	if register["type"] != protocol.AgentRegister || register["secret"] != "smoke-secret" {
+	if register["type"] != "agent.register" || register["credential"] != "smoke-secret" {
 		return fmt.Errorf("bad register: %#v", register)
 	}
-	if err := writeJSON(ctx, conn, map[string]any{"type": protocol.Registered, "deviceId": "relay-smoke-device-id"}); err != nil {
+	if err := writeJSON(ctx, conn, map[string]any{"type": "agent.registered", "deviceId": "relay-smoke-device-id"}); err != nil {
 		return err
 	}
 
-	createBody := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`{"name":"relay-flow-smoke","cwd":%q}`, cwd)))
-	if err := writeJSON(ctx, conn, map[string]any{
-		"type":         protocol.HTTPRequest,
-		"requestId":    "req_create",
-		"method":       http.MethodPost,
-		"path":         "/api/sessions",
-		"body":         createBody,
-		"bodyEncoding": "base64",
-	}); err != nil {
+	createID := "req_create"
+	createMeta, _ := json.Marshal(relaycore.HTTPRequestMeta{
+		Method:  http.MethodPost,
+		Path:    "/api/sessions",
+		Headers: map[string]string{"content-type": "application/json"},
+	})
+	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, createID, 0, createMeta)); err != nil {
 		return err
 	}
-	response, err := readJSON(ctx, conn)
-	if err != nil {
-		return fmt.Errorf("read create response: %w", err)
+	createBody := []byte(fmt.Sprintf(`{"name":"relay-flow-smoke","cwd":%q}`, cwd))
+	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, createID, relaycore.FrameFlagFin, createBody)); err != nil {
+		return err
 	}
-	sessionID, err := decodeCreatedSession(response)
+	responseHeaders, err := readFrame(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("read create response headers: %w", err)
+	}
+	responseChunk, err := readFrame(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("read create response body: %w", err)
+	}
+	sessionID, err := decodeCreatedSession(responseHeaders, responseChunk)
 	if err != nil {
 		return err
 	}
 
 	tunnelID := "tc_relay_flow"
-	if err := writeJSON(ctx, conn, map[string]any{
-		"type":               protocol.WSConnect,
-		"tunnelConnectionId": tunnelID,
-		"path":               "/ws/sessions/" + sessionID,
-		"protocols":          []string{protocol.BinarySubprotocol},
-	}); err != nil {
+	route, _ := json.Marshal(relaycore.StreamRoute{
+		Path:        "/ws/sessions/" + sessionID,
+		Subprotocol: protocol.BinarySubprotocol,
+	})
+	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamOpen, tunnelID, 0, route)); err != nil {
 		return err
-	}
-	connected, err := readJSON(ctx, conn)
-	if err != nil {
-		return fmt.Errorf("read ws-connected: %w", err)
-	}
-	if connected["type"] != protocol.WSConnected || connected["tunnelConnectionId"] != tunnelID {
-		return fmt.Errorf("bad ws-connected: %#v", connected)
 	}
 
 	helloPayload, _ := json.Marshal(map[string]any{"lastSeq": 0, "cols": 100, "rows": 30})
-	if err := writeTunnelBinary(ctx, conn, tunnelID, append([]byte{protocol.MsgHello}, helloPayload...)); err != nil {
+	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeWSBinary, tunnelID, 0, append([]byte{protocol.MsgHello}, helloPayload...))); err != nil {
 		return err
 	}
 	marker := fmt.Sprintf("GO_CORE_RELAY_FLOW_OK_%d", time.Now().UnixNano())
-	if err := writeTunnelBinary(ctx, conn, tunnelID, append([]byte{protocol.MsgInput}, []byte("printf "+marker+"\\n")...)); err != nil {
+	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeWSBinary, tunnelID, 0, append([]byte{protocol.MsgInput}, []byte("printf "+marker+"\\n")...))); err != nil {
 		return err
 	}
 
 	for {
-		messageType, data, err := conn.Read(ctx)
+		frame, err := readFrame(ctx, conn)
 		if err != nil {
 			return err
 		}
-		if messageType != websocket.MessageBinary {
-			continue
-		}
-		frame, err := protocol.DecodeTunnelFrame(data)
-		if err != nil || frame.ID != tunnelID || frame.ExtraByte != protocol.WSDataBinary {
+		if frame.StreamID != tunnelID || frame.Type != relaycore.FrameTypeWSBinary {
 			continue
 		}
 		if len(frame.Payload) > 9 && (frame.Payload[0] == protocol.MsgOutput || frame.Payload[0] == protocol.MsgState) {
@@ -172,22 +167,24 @@ func handleAgent(ctx context.Context, w http.ResponseWriter, r *http.Request, cw
 	}
 }
 
-func decodeCreatedSession(response map[string]any) (string, error) {
-	if response["type"] != protocol.HTTPResponse || response["requestId"] != "req_create" {
-		return "", fmt.Errorf("bad create response: %#v", response)
+func decodeCreatedSession(headers relaycore.Frame, chunk relaycore.Frame) (string, error) {
+	if headers.Type != relaycore.FrameTypeHTTPHeaders || headers.StreamID != "req_create" {
+		return "", fmt.Errorf("bad create response headers: %#v", headers)
 	}
-	if code, ok := response["statusCode"].(float64); !ok || int(code) != http.StatusCreated {
-		return "", fmt.Errorf("bad create status: %#v", response["statusCode"])
-	}
-	encoded, _ := response["body"].(string)
-	body, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
+	var meta relaycore.HTTPResponseMeta
+	if err := json.Unmarshal(headers.Payload, &meta); err != nil {
 		return "", err
+	}
+	if meta.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("bad create status: %d", meta.StatusCode)
+	}
+	if chunk.Type != relaycore.FrameTypeHTTPChunk || chunk.StreamID != "req_create" {
+		return "", fmt.Errorf("bad create response body: %#v", chunk)
 	}
 	var created struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(body, &created); err != nil {
+	if err := json.Unmarshal(chunk.Payload, &created); err != nil {
 		return "", err
 	}
 	if created.ID == "" {
@@ -196,12 +193,29 @@ func decodeCreatedSession(response map[string]any) (string, error) {
 	return created.ID, nil
 }
 
-func writeTunnelBinary(ctx context.Context, conn *websocket.Conn, tunnelID string, payload []byte) error {
-	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, tunnelID, protocol.WSDataBinary, payload)
+func writeFrame(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) error {
+	data, err := relaycore.EncodeFrame(frame)
 	if err != nil {
 		return err
 	}
-	return conn.Write(ctx, websocket.MessageBinary, frame)
+	return conn.Write(ctx, websocket.MessageBinary, data)
+}
+
+func readFrame(ctx context.Context, conn *websocket.Conn) (relaycore.Frame, error) {
+	for {
+		messageType, data, err := conn.Read(ctx)
+		if err != nil {
+			return relaycore.Frame{}, err
+		}
+		if messageType != websocket.MessageBinary {
+			continue
+		}
+		frame, err := relaycore.DecodeFrame(data)
+		if err != nil {
+			return relaycore.Frame{}, err
+		}
+		return frame, nil
+	}
 }
 
 func writeJSON(ctx context.Context, conn *websocket.Conn, value any) error {

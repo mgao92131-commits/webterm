@@ -96,7 +96,7 @@ func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager)
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		sess := Serve(conn, &ServeOpts{
+		sess := Serve(session.NewWebSocketAdapter(conn), &ServeOpts{
 			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (func(), error) {
 				return OpenSessionOrManager(ctx, manager, vs, path, protocols)
 			},
@@ -314,8 +314,8 @@ func TestMuxWSCloseClosesChannel(t *testing.T) {
 		"path":               "/ws/sessions",
 		"protocols":          []string{},
 	})
-	readJSON(t, ctx, conn)    // ws-connected
-	readTunnel(t, ctx, conn)  // initial sessions push
+	readJSON(t, ctx, conn)   // ws-connected
+	readTunnel(t, ctx, conn) // initial sessions push
 
 	// 发 ws-close，服务端应关闭该 virtual socket（无 panic 即可）。
 	writeJSONMsg(t, ctx, conn, map[string]any{

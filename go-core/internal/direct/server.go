@@ -110,45 +110,26 @@ func (direct *Server) route(w http.ResponseWriter, r *http.Request) {
 }
 
 func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, path string) {
-	if path == "/ws/sessions" {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			Subprotocols: []string{protocol.MuxSubprotocol},
-		})
-		if err != nil {
-			return
-		}
-		if conn.Subprotocol() == protocol.MuxSubprotocol {
-			sess := mux.Serve(conn, &mux.ServeOpts{
-				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
-					return mux.OpenSessionOrManager(ctx, direct.app.Sessions(), vs, p, protos)
-				},
-			})
-			sess.Run(r.Context())
-			return
-		}
-		client := session.NewManagerClient(session.NewWebSocketAdapter(conn))
-		client.Run(r.Context(), direct.app.Sessions())
-		return
-	}
-	if !strings.HasPrefix(path, "/ws/sessions/") {
+	if path != "/ws/sessions" {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	id := strings.TrimPrefix(path, "/ws/sessions/")
-	terminal, ok := direct.app.Sessions().Get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: []string{protocol.ScreenSubprotocol, protocol.BinarySubprotocol, protocol.JSONSubprotocol},
+		Subprotocols: []string{protocol.MuxSubprotocol},
 	})
 	if err != nil {
 		return
 	}
-	socket := session.NewWebSocketAdapter(conn)
-	client := session.NewClient(socket, terminal, session.ClientModeFromProtocol(socket.Subprotocol()))
-	client.Run(r.Context())
+	if conn.Subprotocol() != protocol.MuxSubprotocol {
+		_ = conn.Close(websocket.StatusPolicyViolation, "mux subprotocol required")
+		return
+	}
+	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
+		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
+			return mux.OpenSessionOrManager(ctx, direct.app.Sessions(), vs, p, protos)
+		},
+	})
+	sess.Run(r.Context())
 }
 
 func (direct *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

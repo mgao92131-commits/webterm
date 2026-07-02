@@ -29,6 +29,7 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	t.Setenv("WEBTERM_CONTROL_ADDR", "127.0.0.1:19000")
 	t.Setenv("RELAY_URL", "https://relay.example")
 	t.Setenv("DEVICE_NAME", "test-mac")
+	t.Setenv("WEBTERM_RELAY_PROTOCOL", "v1")
 
 	cfg := Load(Options{})
 	if cfg.Mode != ModeRelay {
@@ -49,8 +50,19 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	if cfg.Relay.DeviceName != "test-mac" {
 		t.Fatalf("Relay.DeviceName = %q", cfg.Relay.DeviceName)
 	}
+	if cfg.Relay.Protocol != RelayProtocolV2 {
+		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
+	}
 	if cfg.Control.Addr != "127.0.0.1:19000" {
 		t.Fatalf("Control.Addr = %q", cfg.Control.Addr)
+	}
+}
+
+func TestLoadDefaultsRelayProtocolToV2(t *testing.T) {
+	clearConfigEnv(t)
+	cfg := Load(Options{})
+	if cfg.Relay.Protocol != RelayProtocolV2 {
+		t.Fatalf("Relay.Protocol = %q, want v2", cfg.Relay.Protocol)
 	}
 }
 
@@ -127,7 +139,7 @@ func TestSaveAndLoadConfigFile(t *testing.T) {
 	want := Config{
 		Mode:    ModeRelay,
 		Direct:  DirectConfig{Addr: "127.0.0.1:8088", User: "admin", Password: "pw"},
-		Relay:   RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac"},
+		Relay:   RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
 		Control: ControlConfig{Addr: "127.0.0.1:18081"},
 		Shell:   ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
 	}
@@ -170,6 +182,7 @@ func clearConfigEnv(t *testing.T) {
 		"RELAY_URL",
 		"RELAY_SECRET",
 		"DEVICE_NAME",
+		"WEBTERM_RELAY_PROTOCOL",
 		"WEBTERM_SHELL",
 	} {
 		t.Setenv(key, "")

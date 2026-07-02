@@ -55,9 +55,6 @@ func run(ctx context.Context, baseURL string, username string, password string, 
 	if err != nil {
 		return err
 	}
-	if err := smokeTerminal(ctx, client, base, sessionID); err != nil {
-		return err
-	}
 	if err := runMuxSmoke(ctx, client, base, sessionID); err != nil {
 		return err
 	}
@@ -99,66 +96,6 @@ func createSession(ctx context.Context, client *http.Client, base *url.URL, cwd 
 	return payload.ID, nil
 }
 
-func smokeTerminal(ctx context.Context, client *http.Client, base *url.URL, sessionID string) error {
-	wsURL := *base
-	if wsURL.Scheme == "https" {
-		wsURL.Scheme = "wss"
-	} else {
-		wsURL.Scheme = "ws"
-	}
-	wsURL.Path = strings.TrimRight(base.Path, "/") + "/ws/sessions/" + sessionID
-	header := http.Header{}
-	for _, cookie := range client.Jar.Cookies(base) {
-		header.Add("Cookie", cookie.String())
-	}
-	conn, _, err := websocket.Dial(ctx, wsURL.String(), &websocket.DialOptions{
-		HTTPHeader:   header,
-		Subprotocols: []string{protocol.BinarySubprotocol},
-	})
-	if err != nil {
-		return err
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	hello, err := protocol.EncodeJSONMessage(protocol.MsgHello, map[string]int{"cols": 100, "rows": 30})
-	if err != nil {
-		return err
-	}
-	if err := conn.Write(ctx, websocket.MessageBinary, hello); err != nil {
-		return err
-	}
-
-	marker := fmt.Sprintf("GO_CORE_FLOW_OK_%d", time.Now().UnixNano())
-	input := append([]byte{protocol.MsgInput}, []byte("printf "+marker+"\\n")...)
-	if err := conn.Write(ctx, websocket.MessageBinary, input); err != nil {
-		return err
-	}
-
-	for {
-		messageType, data, err := conn.Read(ctx)
-		if err != nil {
-			return err
-		}
-		if messageType == websocket.MessageText && strings.Contains(string(data), marker) {
-			return nil
-		}
-		if messageType != websocket.MessageBinary || len(data) == 0 {
-			continue
-		}
-		switch data[0] {
-		case protocol.MsgOutput, protocol.MsgState:
-			_, _, payload, err := protocol.DecodeSequencedData(data)
-			if err == nil && bytes.Contains(payload, []byte(marker)) {
-				return nil
-			}
-		case protocol.MsgInfo:
-			if bytes.Contains(data[1:], []byte(marker)) {
-				return nil
-			}
-		}
-	}
-}
-
 func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessionID string) error {
 	wsURL := *base
 	if wsURL.Scheme == "https" {
@@ -198,7 +135,7 @@ func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessio
 	}
 
 	// send hello
-	helloPayload, _ := json.Marshal(map[string]any{"lastSeq": 0})
+	helloPayload, _ := json.Marshal(map[string]any{"lastSeq": 0, "cols": 100, "rows": 30})
 	helloFrame := append([]byte{protocol.MsgHello}, helloPayload...)
 	tunnel, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, "term1", protocol.WSDataBinary, helloFrame)
 	if err != nil {
@@ -208,13 +145,45 @@ func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessio
 		return fmt.Errorf("mux hello write: %w", err)
 	}
 
-	// read one response (tunnel frame) to prove the channel is working
-	if _, _, err := conn.Read(ctx); err != nil {
-		return fmt.Errorf("mux response read: %w", err)
+	marker := fmt.Sprintf("GO_CORE_FLOW_OK_%d", time.Now().UnixNano())
+	input := append([]byte{protocol.MsgInput}, []byte("printf "+marker+"\\n")...)
+	inputTunnel, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, "term1", protocol.WSDataBinary, input)
+	if err != nil {
+		return fmt.Errorf("mux encode input: %w", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, inputTunnel); err != nil {
+		return fmt.Errorf("mux input write: %w", err)
 	}
 
-	fmt.Println("mux smoke OK")
-	return nil
+	for {
+		messageType, data, err := conn.Read(ctx)
+		if err != nil {
+			return fmt.Errorf("mux read: %w", err)
+		}
+		if messageType != websocket.MessageBinary {
+			continue
+		}
+		frame, err := protocol.DecodeTunnelFrame(data)
+		if err != nil || frame.MsgType != protocol.MsgTypeWSData || frame.ID != "term1" {
+			continue
+		}
+		if frame.ExtraByte != protocol.WSDataBinary || len(frame.Payload) == 0 {
+			continue
+		}
+		switch frame.Payload[0] {
+		case protocol.MsgOutput, protocol.MsgState:
+			_, _, payload, err := protocol.DecodeSequencedData(frame.Payload)
+			if err == nil && bytes.Contains(payload, []byte(marker)) {
+				fmt.Println("mux smoke OK")
+				return nil
+			}
+		case protocol.MsgInfo:
+			if bytes.Contains(frame.Payload[1:], []byte(marker)) {
+				fmt.Println("mux smoke OK")
+				return nil
+			}
+		}
+	}
 }
 
 func postJSON(ctx context.Context, client *http.Client, endpoint *url.URL, body any) (*http.Response, error) {

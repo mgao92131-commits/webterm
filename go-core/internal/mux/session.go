@@ -9,9 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"nhooyr.io/websocket"
-
 	"webterm/go-core/internal/protocol"
+	termsession "webterm/go-core/internal/session"
 )
 
 // OpenHandler 处理一个新建立的虚拟通道：创建上层客户端但暂不启动。
@@ -20,7 +19,7 @@ import (
 // ws-connected 之前写出，违反握手顺序）。返回 error 时由 mux 发 ws-error。
 type OpenHandler func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (start func(), err error)
 
-// ControlHandler 处理 mux 不识别的控制消息（透传给上层，如 relay 的 http-request/p2p-*）。
+// ControlHandler 处理 mux 不识别的控制消息，必要时透传给上层。
 type ControlHandler func(ctx context.Context, msg map[string]any)
 
 type ServeOpts struct {
@@ -29,7 +28,7 @@ type ServeOpts struct {
 }
 
 type Session struct {
-	conn       *websocket.Conn
+	conn       termsession.Socket
 	writeMu    sync.Mutex
 	channels   map[string]*VirtualSocket
 	channelsMu sync.RWMutex
@@ -39,7 +38,7 @@ type Session struct {
 
 // Serve 包装一个已建立的 WebSocket 连接，启动多路复用。
 // 调用方负责 conn 的建立（direct 用 websocket.Accept；relay 用 websocket.Dial + register）。
-func Serve(conn *websocket.Conn, opts *ServeOpts) *Session {
+func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 	return &Session{
 		conn:      conn,
 		channels:  make(map[string]*VirtualSocket),
@@ -62,9 +61,9 @@ func (s *Session) readLoop(ctx context.Context) error {
 			return err
 		}
 		switch msgType {
-		case websocket.MessageText:
+		case termsession.MessageText:
 			s.handleControlMessage(ctx, data)
-		case websocket.MessageBinary:
+		case termsession.MessageBinary:
 			s.handleBinaryFrame(data)
 		}
 	}
@@ -180,7 +179,7 @@ func (s *Session) writeBinary(ctx context.Context, data []byte) error {
 	defer cancel()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.Write(writeCtx, websocket.MessageBinary, data)
+	return s.conn.Write(writeCtx, termsession.MessageBinary, data)
 }
 
 func (s *Session) sendJSON(ctx context.Context, value any) error {
@@ -192,7 +191,7 @@ func (s *Session) sendJSON(ctx context.Context, value any) error {
 	defer cancel()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.Write(writeCtx, websocket.MessageText, bytes)
+	return s.conn.Write(writeCtx, termsession.MessageText, bytes)
 }
 
 func cleanPath(raw string) string {

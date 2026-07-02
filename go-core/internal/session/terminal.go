@@ -30,26 +30,29 @@ type TerminalOptions struct {
 	Command string
 	Cols    int
 	Rows    int
+	OnTitle func()
 }
 
 type TerminalSession struct {
-	mu        sync.RWMutex
-	id        string
-	instance  string
-	name      string
-	termTitle string
-	cwd       string
-	command   string
-	status    string
-	cols      int
-	rows      int
-	createdAt time.Time
-	activeAt  time.Time
-	ring      *EventRing
-	screen    *ScreenState
-	pty       *os.File
-	cmd       *exec.Cmd
-	clients   map[*Client]struct{}
+	mu             sync.RWMutex
+	id             string
+	instance       string
+	name           string
+	termTitle      string
+	cwd            string
+	command        string
+	status         string
+	cols           int
+	rows           int
+	createdAt      time.Time
+	activeAt       time.Time
+	ring           *EventRing
+	screen         *ScreenState
+	pty            *os.File
+	cmd            *exec.Cmd
+	clients        map[*Client]struct{}
+	onTitleChanged func()
+	titleChanged   bool
 }
 
 func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
@@ -81,22 +84,38 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		return nil, err
 	}
 
-	terminal := &TerminalSession{
-		id:        options.ID,
-		instance:  randomID(),
-		name:      normalize(options.Name),
-		cwd:       cwd,
-		command:   strings.Join(append([]string{command}, args...), " "),
-		status:    StatusRunning,
-		cols:      cols,
-		rows:      rows,
-		createdAt: now,
-		activeAt:  now,
-		ring:      NewEventRing(0, 0),
-		screen:    NewScreenState(rows, cols, ptmx, nil),
-		pty:       ptmx,
-		cmd:       cmd,
-		clients:   make(map[*Client]struct{}),
+	var terminal *TerminalSession
+	// Note: onTitle is triggered synchronously inside screen.Write, which is called
+	// within pushOutputLocked while terminal.mu is held. Thus directly updating the
+	// terminal fields here is thread-safe and free from data races.
+	// WARNING: Do NOT attempt to acquire terminal.mu.Lock() inside this callback,
+	// as that will cause a deadlock since the lock is already held by the caller.
+	titleProvider := &terminalTitleProvider{
+		onTitle: func(title string) {
+			if terminal != nil {
+				terminal.termTitle = title
+				terminal.titleChanged = true
+			}
+		},
+	}
+
+	terminal = &TerminalSession{
+		id:             options.ID,
+		instance:       randomID(),
+		name:           normalize(options.Name),
+		cwd:            cwd,
+		command:        strings.Join(append([]string{command}, args...), " "),
+		status:         StatusRunning,
+		cols:           cols,
+		rows:           rows,
+		createdAt:      now,
+		activeAt:       now,
+		ring:           NewEventRing(0, 0),
+		screen:         NewScreenState(rows, cols, ptmx, titleProvider),
+		pty:            ptmx,
+		cmd:            cmd,
+		clients:        make(map[*Client]struct{}),
+		onTitleChanged: options.OnTitle,
 	}
 	go terminal.readLoop()
 	go terminal.waitLoop()
@@ -158,8 +177,16 @@ func (terminal *TerminalSession) Close() {
 
 func (terminal *TerminalSession) PushOutput(data []byte) EventFrame {
 	terminal.mu.Lock()
-	defer terminal.mu.Unlock()
-	return terminal.pushOutputLocked(data)
+	frame := terminal.pushOutputLocked(data)
+	changed := terminal.titleChanged
+	terminal.titleChanged = false
+	onTitleChanged := terminal.onTitleChanged
+	terminal.mu.Unlock()
+
+	if changed && onTitleChanged != nil {
+		onTitleChanged()
+	}
+	return frame
 }
 
 func (terminal *TerminalSession) ReplayAfter(seq uint64) []EventFrame {
@@ -368,6 +395,10 @@ func (terminal *TerminalSession) waitLoop() {
 	terminal.broadcastExit(code)
 }
 
+// Note: pushOutputLocked must only be called while terminal.mu is held.
+// Any caller invoking this method is responsible for checking and resetting
+// the terminal.titleChanged flag (as done in PushOutput) to ensure title updates
+// are properly broadcasted and titleChanged state does not leak.
 func (terminal *TerminalSession) pushOutputLocked(data []byte) EventFrame {
 	if terminal.screen != nil {
 		_ = terminal.screen.Write(data)

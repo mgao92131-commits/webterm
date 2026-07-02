@@ -98,6 +98,9 @@ func (screen *ScreenState) DirtyDelta(seq uint64) ScreenDelta {
 	return ScreenDelta{Seq: seq, Cells: cells}
 }
 
+// Note: The thread-safety of terminalTitleProvider (SetTitle, PushTitle, PopTitle)
+// relies entirely on the caller holding screen.mu. In the current design, all calls
+// originate from screen.Write, which is protected by screen.mu.
 type terminalTitleProvider struct {
 	onTitle func(string)
 	stack   []string
@@ -435,6 +438,11 @@ func (screen *ScreenState) AnsiText() string {
 
 	for r := 0; r <= lastRow; r++ {
 		lastCol := lastActiveCol(cells[r])
+		// 对于折行行，强制遍历到行末，以便将行尾空白也推进到行末，
+		// 确保物理光标到达行尾从而让客户端能正确自动折行
+		if wrapped[r] && r < lastRow {
+			lastCol = cols - 1
+		}
 		nullCellCount := 0
 
 		for c := 0; c <= lastCol; c++ {
@@ -533,6 +541,11 @@ func (screen *ScreenState) AnsiText() string {
 			if !isDefaultBg(activeBg) {
 				buf.WriteString(fmt.Sprintf("\x1b[%dX", nullCellCount))
 			}
+			// 对于折行行，输出真实空格以确保物理光标到达行尾，
+			// 从而让客户端能正确自动折行（否则下一行数据会拼接到本行右侧）
+			if wrapped[r] && r < lastRow {
+				buf.WriteString(strings.Repeat(" ", nullCellCount))
+			}
 		}
 
 		if (activeFlags & styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
@@ -560,13 +573,18 @@ func (screen *ScreenState) AnsiText() string {
 
 	// 检查是否需要恢复光标位置。仅在实际光标位置不在文本自然结束处时，才追加定位序列
 	lastCol := lastActiveCol(cells[lastRow])
-	if absRow != lastRow || curCol != lastCol+1 {
+	expectedNaturalCol := lastCol + 1
+	if lastCol >= 0 && cells[lastRow][lastCol].HasFlag(headlessterm.CellFlagWideChar) {
+		// 最后一个有效字符是宽字符（如中文/Emoji），物理光标实际在 lastCol+2
+		expectedNaturalCol = lastCol + 2
+	}
+	if absRow != lastRow || curCol != expectedNaturalCol {
 		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
 	}
 
 	if !cursorVisible {
 		buf.WriteString("\x1b[?25l")
-	} else if absRow != lastRow || curCol != lastCol+1 {
+	} else if absRow != lastRow || curCol != expectedNaturalCol {
 		buf.WriteString("\x1b[?25h")
 	}
 

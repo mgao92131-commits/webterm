@@ -49,7 +49,8 @@ func DefaultFactory(cfg config.Config, application *app.App) (Runner, error) {
 		return direct.New(cfg.Direct, application), nil
 	case config.ModeRelay:
 		return RunnerFunc(func(ctx context.Context) error {
-			return relay.New(cfg.Relay, application).Run(ctx)
+			cfg.Relay.Protocol = config.NormalizeRelayProtocol(cfg.Relay.Protocol)
+			return relay.NewV2(cfg.Relay, application).Run(ctx)
 		}), nil
 	default:
 		return nil, errors.New("unsupported mode")

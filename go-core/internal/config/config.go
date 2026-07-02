@@ -12,6 +12,10 @@ const (
 	ModeLegacyAgent = "agent"
 )
 
+const (
+	RelayProtocolV2 = "v2"
+)
+
 const RedactedSecret = "********"
 
 type Options struct {
@@ -38,6 +42,7 @@ type RelayConfig struct {
 	URL        string `json:"url"`
 	Secret     string `json:"secret,omitempty"`
 	DeviceName string `json:"deviceName"`
+	Protocol   string `json:"protocol"`
 }
 
 type ControlConfig struct {
@@ -111,6 +116,9 @@ func MergeEditable(current Config, next Config) Config {
 	if next.Relay.DeviceName != "" {
 		current.Relay.DeviceName = next.Relay.DeviceName
 	}
+	if next.Relay.Protocol != "" {
+		current.Relay.Protocol = NormalizeRelayProtocol(next.Relay.Protocol)
+	}
 	if next.Control.Addr != "" {
 		current.Control.Addr = next.Control.Addr
 	}
@@ -133,6 +141,10 @@ func NormalizeMode(mode string) string {
 	return mode
 }
 
+func NormalizeRelayProtocol(protocol string) string {
+	return RelayProtocolV2
+}
+
 func Load(options Options) Config {
 	cfg := defaultConfig()
 	if options.ConfigPath != "" {
@@ -146,6 +158,7 @@ func Load(options Options) Config {
 	if cfg.Mode == "" {
 		cfg.Mode = ModeDirect
 	}
+	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
 	return cfg
 }
 
@@ -160,6 +173,7 @@ func defaultConfig() Config {
 		},
 		Relay: RelayConfig{
 			DeviceName: hostname,
+			Protocol:   RelayProtocolV2,
 		},
 		Control: ControlConfig{
 			Addr: "127.0.0.1:18081",
@@ -195,6 +209,7 @@ func envConfig() Config {
 			URL:        env("RELAY_URL"),
 			Secret:     env("RELAY_SECRET"),
 			DeviceName: env("DEVICE_NAME"),
+			Protocol:   env("WEBTERM_RELAY_PROTOCOL"),
 		},
 		Control: ControlConfig{
 			Addr: env("WEBTERM_CONTROL_ADDR"),
@@ -229,6 +244,9 @@ func mergeConfig(base Config, override Config) Config {
 	}
 	if override.Relay.DeviceName != "" {
 		base.Relay.DeviceName = override.Relay.DeviceName
+	}
+	if override.Relay.Protocol != "" {
+		base.Relay.Protocol = NormalizeRelayProtocol(override.Relay.Protocol)
 	}
 	if override.Control.Addr != "" {
 		base.Control.Addr = override.Control.Addr
