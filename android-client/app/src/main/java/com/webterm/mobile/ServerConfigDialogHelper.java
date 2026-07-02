@@ -54,17 +54,17 @@ public final class ServerConfigDialogHelper {
 
         EditText url = UIUtils.createInput(activity, "Server URL");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(existingServer == null ? "http://100.121.115.14:8081" : existingServer.getUrl());
+        url.setText(existingServer == null ? "http://100.121.115.14:8080" : existingServer.getUrl());
         container.addView(url, UIUtils.matchWrap(activity));
 
         EditText user = UIUtils.createInput(activity, "Username");
         user.setInputType(InputType.TYPE_CLASS_TEXT);
-        user.setText(existingServer == null ? "gao" : existingServer.getUsername());
+        user.setText(existingServer == null ? "admin" : existingServer.getUsername());
         container.addView(user, UIUtils.matchWrap(activity));
 
         EditText password = UIUtils.createInput(activity, "Password");
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(existingServer == null ? "" : existingServer.getPassword());
+        password.setText(existingServer == null ? "admin" : existingServer.getPassword());
         container.addView(password, UIUtils.matchWrap(activity));
 
         TextView errText = new TextView(activity);

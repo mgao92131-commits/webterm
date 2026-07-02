@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -173,6 +174,29 @@ public final class SettingsDialogHelper {
         fontTypeRow.addView(fontStepper);
         container.addView(fontTypeRow);
 
+        LinearLayout p2pRow = new LinearLayout(activity);
+        p2pRow.setOrientation(LinearLayout.HORIZONTAL);
+        p2pRow.setGravity(Gravity.CENTER_VERTICAL);
+        p2pRow.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_5));
+
+        TextView p2pLabel = new TextView(activity);
+        p2pLabel.setText("中转 P2P");
+        p2pLabel.setTextColor(DesignTokens.TEXT_PRIMARY);
+        p2pLabel.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        p2pRow.addView(p2pLabel, new LinearLayout.LayoutParams(0, -2, 1));
+
+        CheckBox p2pToggle = new CheckBox(activity);
+        p2pToggle.setChecked(host.isP2PEnabled());
+        p2pToggle.setText(host.isP2PEnabled() ? "开启" : "关闭");
+        p2pToggle.setTextColor(DesignTokens.TEXT_SECONDARY);
+        p2pToggle.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        p2pToggle.setOnCheckedChangeListener((button, checked) -> {
+            host.saveP2PEnabled(checked);
+            p2pToggle.setText(checked ? "开启" : "关闭");
+        });
+        p2pRow.addView(p2pToggle, new LinearLayout.LayoutParams(-2, -2));
+        container.addView(p2pRow);
+
         // ----------------- 关闭/确定按钮 -----------------
         LinearLayout btnBar = new LinearLayout(activity);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -203,6 +227,8 @@ public final class SettingsDialogHelper {
         String getFontDisplayName(String fontType);
         void saveFontSize(int size);
         void saveFontType(String type);
+        boolean isP2PEnabled();
+        void saveP2PEnabled(boolean enabled);
         void applyTerminalFontSize(int size);
         void applyTerminalTypeface(Typeface typeface);
     }

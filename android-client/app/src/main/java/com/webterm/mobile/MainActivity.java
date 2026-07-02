@@ -45,6 +45,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private WebTermTerminalSessionClient mTerminalSessionClient;
     private ServerConfigManager mServerConfigs;
     private TerminalLifecycleController mTerminalLifecycle;
+    private P2PConnectionManager mP2PConnectionManager;
 
     private LinearLayout mSessionList;
     private SessionRecyclerAdapter mSessionAdapter;
@@ -79,8 +80,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
-            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice);
+            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId) {
+                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice, relayDeviceId);
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -94,6 +95,24 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
         mTerminalConnection = new TerminalConnection(mHttp, mMainHandler, this);
+        mP2PConnectionManager = new P2PConnectionManager(this, mHttp, mMainHandler, new P2PConnectionManager.Listener() {
+            @Override public void onConnecting(String deviceId) {
+            }
+
+            @Override public void onConnected(String deviceId) {
+                RelayMuxSessionManager.reconnectDevice(deviceId, "p2p connected");
+            }
+
+            @Override public void onDisconnected(String deviceId, String reason) {
+                RelayMuxSessionManager.reconnectDevice(deviceId, "p2p disconnected: " + reason);
+            }
+
+            @Override public void onError(String deviceId, String message) {
+            }
+        });
+        RelayMuxSessionManager.setTransportProvider((deviceId) ->
+            mP2PConnectionManager == null ? null : mP2PConnectionManager.getDataChannelTransport(deviceId)
+        );
         mTitleSynchronizer = new TerminalTitleSynchronizer(mMainHandler, () -> mTerminalConnection);
         mClipboardController = new TerminalClipboardController(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
@@ -165,6 +184,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             mTerminalLifecycle.closeTerminal(false);
         }
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
+        if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
         if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
         if (mTerminalCache != null) mTerminalCache.shutdown(mTerminalLifecycle.terminalSession());
         mHttp.dispatcher().cancelAll();
@@ -203,6 +223,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private void showSessionHome(PageTransitionAnimator.Transition transition) {
         mTerminalLifecycle.closeTerminal(false);
+        if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
         mClosed.set(false);
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICES;
@@ -436,31 +457,49 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── Terminal ───────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false);
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false, "");
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false);
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false, "");
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false);
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false, "");
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
                       String createdAt, String instanceId, boolean relayDevice) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice, "");
+    }
+
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+                      String createdAt, String instanceId, boolean relayDevice, String relayDeviceId) {
         if (mHomeCoordinator != null) mHomeCoordinator.pause();
         mScreenMode = ScreenMode.TERMINAL;
         mTerminalLifecycle.showTerminal(
-            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice,
+            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDeviceId,
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
+        startP2PIfRelayDevice(baseUrl, cookie, relayDevice, relayDeviceId);
     }
 
     @Override
     public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName,
                             String createdAt, String instanceId) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice());
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId());
+    }
+
+    private void startP2PIfRelayDevice(String baseUrl, String cookie, boolean relayDevice, String relayDeviceId) {
+        if (!relayDevice || relayDeviceId == null || relayDeviceId.isEmpty()) return;
+        if (mP2PConnectionManager == null) return;
+        if (!mConfigStore.isP2PEnabled()) return;
+        if (mSelectedServer != null
+            && relayDeviceId.equals(mSelectedServer.getDeviceId())
+            && !mSelectedServer.isP2PEnabled()) {
+            return;
+        }
+        mP2PConnectionManager.connectToDevice(baseUrl, cookie, relayDeviceId);
     }
 
     // ── TerminalLifecycleController.Host ───────────────────────────
@@ -469,6 +508,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     public int getSavedFontSize() { return mConfigStore.getFontSize(); }
     @Override
     public String getSavedFontType() { return mConfigStore.getFontType(); }
+    @Override
+    public boolean isP2PEnabled() { return mConfigStore.isP2PEnabled(); }
+    @Override
+    public void saveP2PEnabled(boolean enabled) { mConfigStore.saveP2PEnabled(enabled); }
 
     @Override
     public Typeface getTypefaceByName(String type) {

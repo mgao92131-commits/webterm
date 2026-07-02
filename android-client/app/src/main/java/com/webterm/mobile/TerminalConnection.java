@@ -3,9 +3,6 @@ package com.webterm.mobile;
 import android.os.Handler;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -13,11 +10,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
-import okio.ByteString;
 
 final class TerminalConnection {
     private static final String TAG = "TerminalConnection";
@@ -32,13 +24,12 @@ final class TerminalConnection {
     }
 
     private final OkHttpClient http;
-    private final OkHttpClient terminalHttp;
     private final Handler mainHandler;
     private final Listener listener;
 
-    private WebSocket webSocket;
-    private MuxSession muxSession;
-    private boolean relayDevice;
+    private RelayMuxSessionManager relayMuxSession;
+    private String relayDeviceId;
+    private String relayChannelId;
     private volatile State state = State.DISCONNECTED;
     private int socketGeneration;
     private int reconnectAttempts;
@@ -52,18 +43,10 @@ final class TerminalConnection {
     private int sentColumns;
     private int sentRows;
 
-    private final Runnable reconnectRunnable = () -> {
-        if (state == State.RECONNECTING) {
-            connectNow();
-        }
-    };
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
     TerminalConnection(OkHttpClient http, Handler mainHandler, Listener listener) {
         this.http = http;
-        this.terminalHttp = http.newBuilder()
-            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
-            .build();
         this.mainHandler = mainHandler;
         this.listener = listener;
     }
@@ -72,48 +55,33 @@ final class TerminalConnection {
         return state;
     }
 
-    void connect(String baseUrl, String cookie, String sessionId, long lastSeq, boolean isRelayDevice) {
+    void connect(String baseUrl, String cookie, String sessionId, long lastSeq, String relayDeviceId) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
         this.lastSeq = lastSeq;
-        this.relayDevice = isRelayDevice;
+        this.relayDeviceId = relayDeviceId == null ? "" : relayDeviceId;
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
         connectNow();
     }
 
     void reconnectNow() {
-        mainHandler.removeCallbacks(reconnectRunnable);
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
         connectNow();
     }
 
-    private void releaseSocket(String reason) {
-        WebSocket ws = webSocket;
-        webSocket = null;
-        if (ws != null) {
-            try {
-                ws.close(1000, reason);
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to close socket gracefully: " + e.getMessage(), e);
-            }
-        }
-    }
-
     void close(String reason) {
         this.state = State.DISCONNECTED;
         this.socketGeneration++;
-        mainHandler.removeCallbacks(reconnectRunnable);
         mainHandler.removeCallbacks(sendResizeRunnable);
-        if (relayDevice) {
-            releaseSocket(reason);
-        } else if (muxSession != null) {
-            muxSession.sendWsClose(channelId());
-            muxSession.stop();
-            muxSession = null;
+        if (relayMuxSession != null) {
+            relayMuxSession.closeChannel(relayChannelId);
+            relayMuxSession.stopIfIdle();
+            relayMuxSession = null;
         }
+        relayChannelId = null;
     }
 
     boolean isConnected() {
@@ -140,127 +108,48 @@ final class TerminalConnection {
 
     private void connectNow() {
         if (sessionId == null || baseUrl == null || cookie == null) return;
-        if (relayDevice) {
-            connectRelayLegacy();
-            return;
-        }
-        connectDirectMux();
+        connectRelayMux();
     }
 
-    private void connectRelayLegacy() {
-        if (webSocket != null) {
-            releaseSocket("reconnecting");
-        }
+    private void connectRelayMux() {
         state = State.CONNECTING;
         listener.onConnectionStatus(state, reconnectAttempts);
-        int generation = ++socketGeneration;
-        String encodedId = WebTermUrls.encodePath(sessionId);
-        Request request = new Request.Builder()
-            .url(WebTermUrls.toWebSocketUrl(baseUrl) + "/ws/sessions/" + encodedId)
-            .header("Cookie", cookie)
-            .header("Sec-WebSocket-Protocol", BINARY_SUBPROTOCOL)
-            .build();
-        webSocket = terminalHttp.newWebSocket(request, new WebSocketListener() {
-            @Override
-            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
-                if (generation != socketGeneration) {
-                    webSocket.close(1000, "stale socket");
-                    return;
-                }
+        String localSessionId = RelayMuxSessionManager.localSessionId(sessionId, relayDeviceId);
+        String nextChannelId = RelayMuxSessionManager.terminalChannelId(localSessionId);
+        if (relayMuxSession == null || !relayMuxSession.matches(baseUrl, cookie, relayDeviceId)) {
+            if (relayMuxSession != null) {
+                relayMuxSession.closeChannel(relayChannelId);
+                relayMuxSession.stopIfIdle();
+            }
+            relayMuxSession = RelayMuxSessionManager.forDevice(http, mainHandler, baseUrl, cookie, relayDeviceId);
+        }
+        relayChannelId = nextChannelId;
+        relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) {
+                if (!channelId.equals(relayChannelId)) return;
                 state = State.CONNECTED;
                 reconnectAttempts = 0;
                 sentColumns = 0;
                 sentRows = 0;
-                Log.i(TAG, "websocket open gen=" + generation + " code=" + response.code());
                 listener.onConnectionStatus(state, reconnectAttempts);
-                JSONObject hello = WebTermProtocol.put(WebTermProtocol.json(), "lastSeq", lastSeq);
-                if (columns > 0 && rows > 0) {
-                    WebTermProtocol.put(hello, "cols", columns);
-                    WebTermProtocol.put(hello, "rows", rows);
-                    sentColumns = columns;
-                    sentRows = rows;
-                }
-                sendBinary(WebTermProtocol.MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
+                sendHello();
                 sendResizeNow();
             }
 
-            @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
-                if (generation != socketGeneration) return;
-                handleServerMessage(bytes.toByteArray());
+            @Override public void onError(String channelId, String message) {
+                if (!channelId.equals(relayChannelId)) return;
+                listener.onProtocolError("tunnel error: " + message);
             }
 
-            @Override
-            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
-                mainHandler.post(() -> {
-                    if (generation != socketGeneration) return;
-                    if (TerminalConnection.this.webSocket == webSocket) {
-                        releaseSocket("failed");
-                    }
-                    String reason = describeFailure(t, response);
-                    Log.e(TAG, "websocket failure gen=" + generation + " reason=" + reason, t);
-                    if (state != State.DISCONNECTED) scheduleReconnect(reason);
-                });
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {
+                if (!channelId.equals(relayChannelId)) return;
+                handleServerMessage(payload);
             }
 
-            @Override
-            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                mainHandler.post(() -> {
-                    if (generation != socketGeneration) return;
-                    if (TerminalConnection.this.webSocket == webSocket) {
-                        releaseSocket("closed");
-                    }
-                    String description = "Connection closed: " + code + (reason.isEmpty() ? "" : " " + reason);
-                    Log.w(TAG, "websocket closed gen=" + generation + " reason=" + description);
-                    if (state != State.DISCONNECTED) scheduleReconnect(description);
-                });
+            @Override public void onMuxDisconnected(String reason) {
+                if (state != State.DISCONNECTED) scheduleReconnect(reason);
             }
         });
-    }
-
-    private void connectDirectMux() {
-        if (muxSession == null || !muxSession.isConnected()) {
-            if (muxSession != null) muxSession.stop();
-            String wsUrl = WebTermUrls.toWebSocketUrl(baseUrl) + "/ws/sessions";
-            muxSession = new MuxSession(http, mainHandler, wsUrl, cookie, new MuxSession.Listener() {
-                @Override public void onMuxConnected() {
-                    openTerminalChannel();
-                }
-                @Override public void onMuxDisconnected(String reason) {
-                    if (state != State.DISCONNECTED) scheduleReconnect(reason);
-                }
-                @Override public void onTunnelConnected(String tunnelId) {
-                    if (!tunnelId.equals(channelId())) return;
-                    state = State.CONNECTED;
-                    reconnectAttempts = 0;
-                    sentColumns = 0;
-                    sentRows = 0;
-                    listener.onConnectionStatus(state, reconnectAttempts);
-                    sendHello();
-                    sendResizeNow();
-                }
-                @Override public void onTunnelError(String tunnelId, String message) {
-                    listener.onProtocolError("tunnel error: " + message);
-                }
-                @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
-                    if (!tunnelId.equals(channelId())) return;
-                    handleServerMessage(payload);
-                }
-            });
-            muxSession.start();
-        } else {
-            openTerminalChannel();
-        }
-    }
-
-    private String channelId() {
-        return "term:" + sessionId;
-    }
-
-    private void openTerminalChannel() {
-        if (muxSession == null || !muxSession.isConnected()) return;
-        muxSession.sendWsConnect(channelId(), "/ws/sessions/" + WebTermUrls.encodePath(sessionId),
-            new String[]{BINARY_SUBPROTOCOL});
     }
 
     private void sendHello() {
@@ -277,26 +166,11 @@ final class TerminalConnection {
     private void scheduleReconnect(String reason) {
         if (state == State.DISCONNECTED || sessionId == null || cookie == null || baseUrl == null) return;
         if (state == State.RECONNECTING) return;
-        // mux path: reconnection is handled internally by MuxSession. Surface RECONNECTING
-        // so the UI leaves CONNECTED, the status bar shows a reconnecting state, and user
-        // input is explicitly dropped (sendBinary guards on state==CONNECTED) instead of
-        // being silently swallowed while the physical socket is down.
-        if (!relayDevice) {
-            state = State.RECONNECTING;
-            Log.i(TAG, "mux disconnected, awaiting MuxSession reconnect. Reason: " + reason);
-            listener.onConnectionStatus(state, reconnectAttempts);
-            return;
-        }
-        Log.i(TAG, "Connection lost, scheduling reconnect. Reason: " + reason);
+        // MuxSession handles reconnection internally. Surface RECONNECTING
+        // so the UI leaves CONNECTED and user input is dropped by sendBinary guard.
         state = State.RECONNECTING;
-        int attempt = ++reconnectAttempts;
-
-        int shift = Math.min(attempt - 1, 15);
-        long cap = Math.min(15000L, 1000L * (1L << shift));
-        long delayMs = Math.max(200L, (long) (Math.random() * cap));
-
+        Log.i(TAG, "mux disconnected, awaiting MuxSession reconnect. Reason: " + reason);
         listener.onConnectionStatus(state, reconnectAttempts);
-        mainHandler.postDelayed(reconnectRunnable, delayMs);
     }
 
     private void handleServerMessage(byte[] frame) {
@@ -333,20 +207,23 @@ final class TerminalConnection {
         if (type == WebTermProtocol.MSG_PONG) {
             return;
         }
-        try {
-            JSONObject msg = WebTermProtocol.controlPayload(payload);
-            if (type == WebTermProtocol.MSG_EXIT) {
+        if (type == WebTermProtocol.MSG_EXIT) {
+            try {
+                JSONObject msg = WebTermProtocol.controlPayload(payload);
                 listener.onExit(msg.optInt("code", 0));
+            } catch (JSONException e) {
+                listener.onProtocolError("Bad message: " + e.getMessage());
             }
-        } catch (JSONException e) {
-            listener.onProtocolError("Bad message: " + e.getMessage());
+            return;
         }
+        // Unknown message types are silently ignored to avoid parsing
+        // non-JSON payloads (e.g. plain text titles) as JSON objects.
     }
 
     private void scheduleResize() {
         mainHandler.removeCallbacks(sendResizeRunnable);
         if (state != State.CONNECTED) return;
-        if (relayDevice && webSocket == null) return;
+        if (relayMuxSession == null || !relayMuxSession.isConnected()) return;
         mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
     }
 
@@ -365,27 +242,8 @@ final class TerminalConnection {
     }
 
     private void sendBinary(byte type, byte[] payload) {
-        if (relayDevice) {
-            WebSocket ws = webSocket;
-            if (ws == null || state != State.CONNECTED) return;
-            ws.send(WebTermProtocol.frame(type, payload));
-            return;
-        }
-        // direct mux: wrap in tunnel frame
-        if (muxSession == null || !muxSession.isConnected() || state != State.CONNECTED) return;
-        muxSession.sendTunnelFrame(channelId(), WebTermProtocol.frame(type, payload).toByteArray(), true);
-    }
-
-    private String describeFailure(Throwable t, @Nullable Response response) {
-        StringBuilder message = new StringBuilder();
-        message.append(t.getClass().getSimpleName());
-        if (t.getMessage() != null && !t.getMessage().trim().isEmpty()) {
-            message.append(": ").append(t.getMessage().trim());
-        }
-        if (response != null) {
-            message.append(" (HTTP ").append(response.code()).append(")");
-        }
-        return message.toString();
+        if (relayMuxSession == null || relayChannelId == null || !relayMuxSession.isConnected() || state != State.CONNECTED) return;
+        relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
     interface Listener {

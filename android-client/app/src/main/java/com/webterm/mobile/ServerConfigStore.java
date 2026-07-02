@@ -12,13 +12,14 @@ import java.util.List;
 
 final class ServerConfigStore {
     static final String PREFS = "webterm";
-    static final String DEFAULT_URL = "http://100.121.115.14:8081";
-    static final String DEFAULT_USER = "gao";
+    static final String DEFAULT_URL = "http://100.121.115.14:8080";
+    static final String DEFAULT_USER = "admin";
 
     private static final String TAG = "ServerConfigStore";
     private static final String KEY_SERVERS_LIST = "servers_list";
     private static final String KEY_TERMINAL_FONT_SIZE = "terminal_font_size";
     private static final String KEY_TERMINAL_FONT_TYPE = "terminal_font_type";
+    private static final String KEY_ENABLE_P2P = "enable_p2p";
 
     private final SharedPreferences prefs;
 
@@ -82,5 +83,13 @@ final class ServerConfigStore {
 
     void saveFontType(String type) {
         prefs.edit().putString(KEY_TERMINAL_FONT_TYPE, type).apply();
+    }
+
+    boolean isP2PEnabled() {
+        return prefs.getBoolean(KEY_ENABLE_P2P, true);
+    }
+
+    void saveP2PEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_ENABLE_P2P, enabled).apply();
     }
 }

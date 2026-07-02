@@ -3,9 +3,6 @@ package com.webterm.mobile;
 import android.os.Handler;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -15,10 +12,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
 
 /**
  * 客户端角色 mux：一条 /ws/sessions 连接（webterm.mux.v1 子协议）复用多个终端通道。
@@ -36,14 +29,10 @@ final class MuxSession {
         void onTunnelData(String tunnelId, byte[] payload, boolean binary);
     }
 
-    private final OkHttpClient http;
-    private final OkHttpClient muxHttp;
     private final Handler mainHandler;
-    private final String wsUrl;
-    private final String cookie;
+    private final MuxTransport transport;
     private final Listener listener;
 
-    private WebSocket webSocket;
     private volatile boolean connected;
     private volatile boolean enabled;
     private int reconnectAttempts;
@@ -51,35 +40,31 @@ final class MuxSession {
     // 待发 ws-connect 后等待 ws-connected 的回调登记（仅记录已发 connect 的 tunnelId）。
     private final Map<String, Boolean> pendingConnects = new HashMap<>();
 
+    @Deprecated
     MuxSession(OkHttpClient http, Handler mainHandler, String wsUrl, String cookie, Listener listener) {
-        this.http = http;
-        this.muxHttp = http.newBuilder()
-            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
-            .build();
+        this(new WebSocketMuxTransport(http, wsUrl, cookie, MUX_SUBPROTOCOL), mainHandler, listener);
+    }
+
+    MuxSession(MuxTransport transport, Handler mainHandler, Listener listener) {
         this.mainHandler = mainHandler;
-        this.wsUrl = wsUrl;
-        this.cookie = cookie;
+        this.transport = transport;
         this.listener = listener;
     }
 
     void start() {
-        if (wsUrl == null || wsUrl.isEmpty()) {
+        if (transport == null) {
             stop();
             return;
         }
         enabled = true;
-        if (webSocket != null) return;
+        if (connected) return;
         connectNow();
     }
 
     void stop() {
         enabled = false;
         connected = false;
-        WebSocket ws = webSocket;
-        webSocket = null;
-        if (ws != null) {
-            try { ws.close(1000, "closing mux"); } catch (Exception ignored) {}
-        }
+        if (transport != null) transport.close();
     }
 
     boolean isConnected() {
@@ -121,9 +106,7 @@ final class MuxSession {
 
     boolean sendTunnelFrame(String tunnelId, byte[] payload, boolean binary) {
         if (!connected) return false;
-        WebSocket ws = webSocket;
-        if (ws == null) return false;
-        return ws.send(okio.ByteString.of(WebTermProtocol.encodeTunnelFrame(tunnelId, payload, binary)));
+        return transport.sendBinary(WebTermProtocol.encodeTunnelFrame(tunnelId, payload, binary));
     }
 
     boolean sendTunnelFrameText(String tunnelId, String text) {
@@ -131,22 +114,16 @@ final class MuxSession {
     }
 
     private boolean sendText(String text) {
-        WebSocket ws = webSocket;
-        if (ws == null || !connected) return false;
-        return ws.send(text);
+        if (transport == null || !connected) return false;
+        return transport.sendText(text);
     }
 
     private void connectNow() {
-        Request request = new Request.Builder()
-            .url(wsUrl)
-            .header("Cookie", cookie != null ? cookie : "")
-            .header("Sec-WebSocket-Protocol", MUX_SUBPROTOCOL)
-            .build();
-        webSocket = muxHttp.newWebSocket(request, new WebSocketListener() {
+        transport.start(new MuxTransport.Listener() {
             @Override
-            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
+            public void onOpen() {
                 if (!enabled) {
-                    webSocket.close(1000, "stale mux socket");
+                    transport.close();
                     return;
                 }
                 connected = true;
@@ -156,37 +133,34 @@ final class MuxSession {
             }
 
             @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
+            public void onText(String text) {
                 if (!enabled) return;
                 handleControlMessage(text);
             }
 
             @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull okio.ByteString bytes) {
+            public void onBinary(byte[] data) {
                 if (!enabled) return;
-                byte[] data = bytes.toByteArray();
                 mainHandler.post(() -> dispatchBinaryFrame(data, listener));
             }
 
             @Override
-            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+            public void onError(String message) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     connected = false;
-                    MuxSession.this.webSocket = null;
-                    Log.e(TAG, "mux failure: " + t.getMessage(), t);
-                    listener.onMuxDisconnected(t.getMessage());
+                    Log.e(TAG, "mux failure: " + message);
+                    listener.onMuxDisconnected(message);
                     scheduleReconnect();
                 });
             }
 
             @Override
-            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+            public void onClosed(String reason) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     connected = false;
-                    MuxSession.this.webSocket = null;
-                    listener.onMuxDisconnected("closed: " + code);
+                    listener.onMuxDisconnected(reason);
                     scheduleReconnect();
                 });
             }
@@ -231,7 +205,7 @@ final class MuxSession {
         long cap = Math.min(1000L * attempt, 8000L);
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
         mainHandler.postDelayed(() -> {
-            if (enabled && webSocket == null) connectNow();
+            if (enabled && !transport.isConnected()) connectNow();
         }, delayMs);
     }
 }

@@ -6,7 +6,7 @@ android {
     namespace = "com.webterm.mobile"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.webterm.mobile"
+        applicationId = "com.webterm.mobile.new"
         minSdk = 23
         targetSdk = 36
         versionCode = 1
@@ -45,6 +45,7 @@ android {
 dependencies {
   implementation(project(":terminal-view"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
+  implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")
   implementation("androidx.recyclerview:recyclerview:1.4.0")
   testImplementation(libs.junit)

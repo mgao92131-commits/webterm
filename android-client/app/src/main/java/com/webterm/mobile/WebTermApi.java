@@ -318,6 +318,66 @@ final class WebTermApi {
         http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
 
+    void postP2POffer(String baseUrl, String cookie, String deviceId, String sdp, P2POfferCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("deviceId", deviceId);
+            body.put("sdp", sdp);
+        } catch (JSONException e) {
+            callback.onError(e.getMessage());
+            return;
+        }
+        Request request = new Request.Builder()
+            .url(WebTermUrls.normalizeBaseUrl(baseUrl) + "/api/p2p/offer")
+            .header("Cookie", cookie != null ? cookie : "")
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("P2P offer failed: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body().string();
+                    if (!response.isSuccessful()) {
+                        callback.onError("P2P offer failed: " + response.code() + " " + text);
+                        return;
+                    }
+                    try {
+                        String answerSdp = new JSONObject(text).optString("sdp", "");
+                        if (answerSdp.isEmpty()) {
+                            callback.onError("P2P offer response did not include SDP answer.");
+                            return;
+                        }
+                        callback.onAnswer(answerSdp);
+                    } catch (JSONException e) {
+                        callback.onError("P2P offer response error: " + e.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    void postP2PIce(String baseUrl, String cookie, String deviceId, JSONObject candidate, SimpleCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("deviceId", deviceId);
+            body.put("candidate", candidate);
+        } catch (JSONException e) {
+            callback.onError(e.getMessage());
+            return;
+        }
+        Request request = new Request.Builder()
+            .url(WebTermUrls.normalizeBaseUrl(baseUrl) + "/api/p2p/ice")
+            .header("Cookie", cookie != null ? cookie : "")
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(simpleCallback(callback, "P2P ICE failed"));
+    }
+
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {
         return new Callback() {
             @Override
@@ -393,6 +453,11 @@ final class WebTermApi {
         void onReady(JSONArray sessions);
         void onError(int code, String message);
         void onParseError(String message);
+    }
+
+    interface P2POfferCallback {
+        void onAnswer(String sdp);
+        void onError(String message);
     }
 
     interface SimpleCallback {

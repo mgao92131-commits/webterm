@@ -39,7 +39,6 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     private final Host host;
 
     private ServerConfig relayMasterConfig;
-    private ServerSessionMonitor relayMonitor;
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private TextView homeSubtitle;
     private StatusIndicatorView homeStatusDot;
@@ -109,129 +108,15 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
             updateSubtitleState(RelayState.NOT_CONFIGURED);
             return;
         }
-        if (relayMonitor != null && relayMonitor.isEnabled()) {
-            return;
-        }
         stop();
         updateSubtitleState(RelayState.CONNECTING);
-        relayMonitor = new ServerSessionMonitor(http, mainHandler, relayMasterConfig, new ServerSessionMonitor.Listener() {
-            @Override
-            public void onMonitorConnected() {
-                host.activity().runOnUiThread(() -> {
-                    mainHandler.removeCallbacks(pollDevicesRunnable);
-                    updateSubtitleState(RelayState.CONNECTED_FETCHING_DEVICES);
-                });
-            }
-
-            @Override
-            public void onMonitorPollingFallback() {
-                host.activity().runOnUiThread(() -> {
-                    updateSubtitleState(RelayState.CONNECTING);
-                    mainHandler.removeCallbacks(pollDevicesRunnable);
-                    mainHandler.post(pollDevicesRunnable);
-                });
-            }
-
-            @Override
-            public void onMonitorSessions(JSONArray sessions) {}
-
-            @Override
-            public void onMonitorSession(JSONObject session) {}
-
-            @Override
-            public void onMonitorSessionClosed(String sessionId) {}
-
-            @Override
-            public void onMonitorDevices(JSONArray devices) {
-                mainHandler.post(() -> {
-                    relayDevices.clear();
-                    for (int i = 0; i < devices.length(); i++) {
-                        JSONObject deviceObj = devices.optJSONObject(i);
-                        if (deviceObj == null) continue;
-                        String deviceId = deviceObj.optString("deviceId");
-                        String deviceName = deviceObj.optString("deviceName");
-                        if (deviceId.isEmpty()) continue;
-                        if (!isDeviceOnline(deviceObj)) continue;
-
-                        relayDevices.add(new ServerConfig(
-                            "relay_dev_" + deviceId,
-                            deviceName,
-                            relayMasterConfig.getUrl(),
-                            relayMasterConfig.getCookie(),
-                            relayMasterConfig.getUsername(),
-                            relayMasterConfig.getPassword(),
-                            false, true, deviceId
-                        ));
-                    }
-                    updateSubtitleState(relayDevices.isEmpty()
-                        ? RelayState.CONNECTED_NO_DEVICES
-                        : RelayState.CONNECTED_WITH_DEVICES);
-                    httpAuthFailures = 0;
-                    host.onRelayDevicesChanged();
-                });
-            }
-
-            @Override
-            public void onMonitorError(String errorMsg) {
-                host.activity().runOnUiThread(() -> {
-                    if (errorMsg != null && errorMsg.contains("401")) {
-                        if (relayMasterConfig != null && relayMasterConfig.getCookie() != null && !relayMasterConfig.getCookie().isEmpty()) {
-                            updateSubtitleState(RelayState.CONNECTING);
-                            api.refresh(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.LoginCallback() {
-                                @Override
-                                public void onReady(String url, String cookie) {
-                                    relayMasterConfig.setCookie(cookie);
-                                    host.saveServers();
-                                    resetReconnectAndStart();
-                                }
-
-                                @Override
-                                public void onError(String message) {
-                                    performPasswordLogin();
-                                }
-                            });
-                        } else {
-                            performPasswordLogin();
-                        }
-                    } else {
-                        updateSubtitleState(RelayState.CONNECT_FAILED);
-                    }
-                });
-            }
-        });
-        relayMonitor.start();
-    }
-
-    private void performPasswordLogin() {
-        if (relayMasterConfig != null
-            && relayMasterConfig.getUsername() != null && !relayMasterConfig.getUsername().isEmpty()
-            && relayMasterConfig.getPassword() != null && !relayMasterConfig.getPassword().isEmpty()) {
-            updateSubtitleState(RelayState.CONNECTING);
-            api.login(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), relayMasterConfig.getUsername(), relayMasterConfig.getPassword(), new WebTermApi.LoginCallback() {
-                @Override
-                public void onReady(String url, String cookie) {
-                    relayMasterConfig.setCookie(cookie);
-                    host.saveServers();
-                    resetReconnectAndStart();
-                }
-
-                @Override
-                public void onError(String message) {
-                    updateSubtitleState(RelayState.AUTH_FAILED);
-                }
-            });
-        } else {
-            updateSubtitleState(RelayState.AUTH_FAILED);
-        }
+        mainHandler.removeCallbacks(pollDevicesRunnable);
+        mainHandler.post(pollDevicesRunnable);
     }
 
     void stop() {
         mainHandler.removeCallbacks(pollDevicesRunnable);
         httpAuthFailures = 0;
-        if (relayMonitor != null) {
-            relayMonitor.stop();
-            relayMonitor = null;
-        }
     }
 
     void resetReconnectAndStart() {
@@ -266,7 +151,8 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
                             relayMasterConfig.getCookie(),
                             relayMasterConfig.getUsername(),
                             relayMasterConfig.getPassword(),
-                            false, true, deviceId
+                            false, true, deviceId,
+                            relayMasterConfig.isP2PEnabled()
                         ));
                     }
                     updateSubtitleState(RelayState.CONNECTED_POLLING);

@@ -10,31 +10,24 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
+
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
 
 final class ServerSessionMonitor {
     private static final String TAG = "ServerSessionMonitor";
 
     private final OkHttpClient http;
-    private final OkHttpClient monitorHttp;
     private final Handler mainHandler;
     private final ServerConfig server;
     private final Listener listener;
 
-    private WebSocket webSocket;
+    private RelayMuxSessionManager relayMuxSession;
     private boolean connected;
     private boolean enabled;
-    private int reconnectAttempts;
 
     ServerSessionMonitor(OkHttpClient http, Handler mainHandler, ServerConfig server, Listener listener) {
         this.http = http;
-        this.monitorHttp = http.newBuilder()
-            .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
-            .build();
         this.mainHandler = mainHandler;
         this.server = server;
         this.listener = listener;
@@ -46,64 +39,39 @@ final class ServerSessionMonitor {
             return;
         }
         enabled = true;
-        if (webSocket != null) return;
-
-        String urlString = WebTermUrls.toWebSocketUrl(server.getUrl()) + "/ws/sessions";
-        if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
-            urlString += "?deviceId=" + WebTermUrls.encodePath(server.getDeviceId());
+        if (relayMuxSession == null) {
+            relayMuxSession = RelayMuxSessionManager.forDevice(
+                http,
+                mainHandler,
+                server.getUrl(),
+                server.getCookie() != null ? server.getCookie() : "",
+                server.getDeviceId()
+            );
         }
-        Log.i(TAG, "TitleTrace manager start url=" + urlString + " relayDevice=" + server.isRelayDevice() + " deviceId=" + server.getDeviceId());
-
-        Request request = new Request.Builder()
-            .url(urlString)
-            .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
-            .build();
-
-        webSocket = monitorHttp.newWebSocket(request, new WebSocketListener() {
-            @Override
-            public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
-                if (!enabled) {
-                    webSocket.close(1000, "stale manager socket");
-                    return;
-                }
+        String managerId = managerChannelId();
+        Log.i(TAG, "TitleTrace manager start deviceId=" + server.getDeviceId());
+        relayMuxSession.openChannel(managerId, "/ws/sessions", null, new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) {
+                if (!managerId.equals(channelId)) return;
                 connected = true;
-                reconnectAttempts = 0;
-                Log.i(TAG, "TitleTrace manager open code=" + response.code());
+                Log.i(TAG, "TitleTrace manager open deviceId=" + server.getDeviceId());
                 listener.onMonitorConnected();
             }
 
-            @Override
-            public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
-                if (!enabled) return;
-                dispatchMessage(text, listener, server.isRelayDevice() ? server.getDeviceId() : null);
+            @Override public void onError(String channelId, String message) {
+                if (!managerId.equals(channelId)) return;
+                connected = false;
+                listener.onMonitorError(message);
+                onMuxDisconnected(message);
             }
 
-            @Override
-            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
-                if (response != null && response.code() == 401) {
-                    connected = false;
-                    if (webSocket == ServerSessionMonitor.this.webSocket) {
-                        ServerSessionMonitor.this.webSocket = null;
-                    }
-                    listener.onMonitorError("401");
-                    return;
-                }
-                Log.i(TAG, "TitleTrace manager failure response=" + (response != null ? response.code() : 0) + " error=" + t.getMessage());
-                onDisconnected(webSocket);
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {
+                if (!managerId.equals(channelId) || binary) return;
+                dispatchMessage(new String(payload, StandardCharsets.UTF_8), listener, server.getDeviceId());
             }
 
-            @Override
-            public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                if (code == 4001 || "Unauthorized".equalsIgnoreCase(reason)) {
-                    connected = false;
-                    if (webSocket == ServerSessionMonitor.this.webSocket) {
-                        ServerSessionMonitor.this.webSocket = null;
-                    }
-                    listener.onMonitorError("401");
-                    return;
-                }
-                Log.i(TAG, "TitleTrace manager closed code=" + code + " reason=" + reason);
-                onDisconnected(webSocket);
+            @Override public void onMuxDisconnected(String reason) {
+                ServerSessionMonitor.this.onMuxDisconnected(reason);
             }
         });
     }
@@ -190,63 +158,34 @@ final class ServerSessionMonitor {
         Log.i(TAG, builder.toString());
     }
 
-    void connectDevice(String deviceId) {
-        if (webSocket == null || !connected) return;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "connect-device");
-            msg.put("deviceId", deviceId);
-            webSocket.send(msg.toString());
-        } catch (JSONException ignored) {
-        }
-    }
-
-    void requestDevicesList() {
-        if (webSocket == null || !connected) return;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "list-devices");
-            webSocket.send(msg.toString());
-        } catch (JSONException ignored) {
-        }
-    }
-
     void stop() {
         enabled = false;
         connected = false;
-        WebSocket ws = webSocket;
-        webSocket = null;
-        if (ws != null) {
-            ws.close(1000, "closing page");
+        if (relayMuxSession != null) {
+            relayMuxSession.closeChannel(managerChannelId());
+            relayMuxSession.stopIfIdle();
+            relayMuxSession = null;
         }
     }
 
     boolean isConnected() {
-        return connected;
+        return connected || (relayMuxSession != null && relayMuxSession.isConnected());
     }
 
     boolean isEnabled() {
         return enabled;
     }
 
-    private void onDisconnected(WebSocket socket) {
+    private void onMuxDisconnected(String reason) {
+        if (!enabled) return;
         connected = false;
-        if (webSocket == socket) {
-            webSocket = null;
-        }
-        Log.i(TAG, "TitleTrace manager disconnected fallback");
+        Log.i(TAG, "TitleTrace mux manager disconnected reason=" + reason);
         listener.onMonitorPollingFallback();
-        scheduleReconnect();
     }
 
-    private void scheduleReconnect() {
-        if (!enabled) return;
-        int attempt = ++reconnectAttempts;
-        long cap = Math.min(1000L * attempt, 8000L);
-        long delayMs = Math.max(200L, (long) (Math.random() * cap));
-        mainHandler.postDelayed(() -> {
-            if (enabled) start();
-        }, delayMs);
+    private String managerChannelId() {
+        String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+        return "manager:" + deviceId;
     }
 
     interface Listener {
