@@ -246,6 +246,10 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
         api.login(baseUrl, oldCookie, email, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
+                if (cookie != null && !cookie.isEmpty() && relayMasterConfig != null) {
+                    relayMasterConfig.setCookie(cookie);
+                    host.saveServers();
+                }
                 callback.onLoginSuccess(url, cookie);
             }
 
@@ -267,6 +271,10 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
         api.register(baseUrl, email, username, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
+                if (cookie != null && !cookie.isEmpty() && relayMasterConfig != null) {
+                    relayMasterConfig.setCookie(cookie);
+                    host.saveServers();
+                }
                 callback.onLoginSuccess(url, cookie);
             }
 
@@ -288,6 +296,10 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
         api.verifyOtp(baseUrl, email, code, targetDeviceId, cookie, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String url, String newCookie) {
+                if (newCookie != null && !newCookie.isEmpty() && relayMasterConfig != null) {
+                    relayMasterConfig.setCookie(newCookie);
+                    host.saveServers();
+                }
                 callback.onLoginSuccess(url, newCookie);
             }
 
