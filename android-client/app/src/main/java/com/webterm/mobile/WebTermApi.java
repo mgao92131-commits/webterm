@@ -154,6 +154,7 @@ final class WebTermApi {
         }
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/register")
+            .header("Cookie", "")
             .post(RequestBody.create(body.toString(), JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -496,9 +497,7 @@ final class WebTermApi {
 
     private void post(String url, String cookie, JSONObject body, RawCallback callback) {
         Request.Builder rb = new Request.Builder().url(url);
-        if (cookie != null && !cookie.isEmpty()) {
-            rb.header("Cookie", "webterm_relay_token=" + cookie);
-        }
+        rb.header("Cookie", cookie != null ? cookie : "");
         rb.post(RequestBody.create(body.toString(), JSON));
         http.newCall(rb.build()).enqueue(new Callback() {
             @Override
@@ -527,9 +526,7 @@ final class WebTermApi {
 
     private void delete(String url, String cookie, RawCallback callback) {
         Request.Builder rb = new Request.Builder().url(url).delete();
-        if (cookie != null && !cookie.isEmpty()) {
-            rb.header("Cookie", "webterm_relay_token=" + cookie);
-        }
+        rb.header("Cookie", cookie != null ? cookie : "");
         http.newCall(rb.build()).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
@@ -557,9 +554,7 @@ final class WebTermApi {
 
     private void getJSONArray(String url, String cookie, RawArrayCallback callback) {
         Request.Builder rb = new Request.Builder().url(url).get();
-        if (cookie != null && !cookie.isEmpty()) {
-            rb.header("Cookie", "webterm_relay_token=" + cookie);
-        }
+        rb.header("Cookie", cookie != null ? cookie : "");
         http.newCall(rb.build()).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
