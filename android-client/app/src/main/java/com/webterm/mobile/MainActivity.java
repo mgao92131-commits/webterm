@@ -51,7 +51,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private enum ScreenMode {
         DEVICES,
         DEVICE_SESSIONS,
-        TERMINAL
+        TERMINAL,
+        RELAY_LOGIN,
+        RELAY_DEVICES
     }
 
     @Override
@@ -194,6 +196,10 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             showSessionHome(PageTransitionAnimator.Transition.BACK);
             return;
         }
+        if (mScreenMode == ScreenMode.RELAY_LOGIN || mScreenMode == ScreenMode.RELAY_DEVICES) {
+            showSessionHome(PageTransitionAnimator.Transition.BACK);
+            return;
+        }
         super.onBackPressed();
     }
 
@@ -229,7 +235,14 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
             () -> { loadMultiSessions(); mRelayCoordinator.start(); },
-            () -> { /* TODO(Task 5): replace with new RelayLoginScreenBuilder page-based flow */ },
+            () -> {
+                if (mRelayCoordinator.hasMaster() && mRelayCoordinator.masterConfig().getCookie() != null
+                    && !mRelayCoordinator.masterConfig().getCookie().isEmpty()) {
+                    showRelayDevicesPage();
+                } else {
+                    showRelayLoginPage();
+                }
+            },
             this::shareLatestCrashLog
         );
         mHomeSubtitle = home.subtitle;
@@ -301,6 +314,25 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             mHomeCoordinator.loadDeviceSessions(server, mSelectedServerStatus);
         }
         setContentViewAnimated(screen.root, transition);
+    }
+
+    private void showRelayLoginPage() {
+        String savedEmail = mRelayCoordinator.masterConfig() != null
+            ? mRelayCoordinator.masterConfig().getUsername() : "";
+        RelayLoginScreenBuilder.RelayLoginScreen screen =
+            RelayLoginScreenBuilder.buildLogin(mRelayCoordinator, savedEmail);
+
+        mScreenMode = ScreenMode.RELAY_LOGIN;
+        setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
+    }
+
+    private void showRelayDevicesPage() {
+        RelayDevicesScreenBuilder.RelayDevicesScreen screen =
+            RelayDevicesScreenBuilder.build(mRelayCoordinator);
+
+        mScreenMode = ScreenMode.RELAY_DEVICES;
+        setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
+        screen.refresh.run();
     }
 
     private void setupSwipeToDelete(androidx.recyclerview.widget.RecyclerView recyclerView, final SessionRecyclerAdapter adapter) {
@@ -618,7 +650,16 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onRelayDevicesChanged() { loadMultiSessions(); }
     @Override
-    public void onRelayAuthDone() { showSessionHome(PageTransitionAnimator.Transition.FADE); }
+    public void onRelayAuthDone() {
+        if (mScreenMode == ScreenMode.RELAY_LOGIN
+            && mRelayCoordinator.hasMaster()
+            && mRelayCoordinator.masterConfig().getCookie() != null
+            && !mRelayCoordinator.masterConfig().getCookie().isEmpty()) {
+            showRelayDevicesPage();
+        } else {
+            showSessionHome(PageTransitionAnimator.Transition.BACK);
+        }
+    }
     @Override
     public ServerConfigManager serverConfigs() { return mApp.serverConfigs(); }
 
