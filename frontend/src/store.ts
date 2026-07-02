@@ -1,8 +1,9 @@
 import { reactive, watch } from 'vue';
 import { p2pManager } from './lib/p2p';
+import { relayMuxSessionManager } from './lib/relay-mux-session-manager';
 
 export interface User {
-  id: number;
+  id: string;
   username: string;
   role: 'admin' | 'user';
   mode: 'direct' | 'relay';
@@ -62,6 +63,20 @@ export const store = reactive<AppStore>({
   connectionStates: {},
 });
 
+relayMuxSessionManager.setTransportProvider((deviceId) => p2pManager.createMuxTransport(deviceId));
+p2pManager.addEventListener('p2p:connected', (event) => {
+  const deviceId = (event as CustomEvent<{ deviceId: string | null }>).detail.deviceId;
+  if (deviceId) {
+    relayMuxSessionManager.reconnectDevice(deviceId, 'p2p connected');
+  }
+});
+p2pManager.addEventListener('p2p:disconnected', (event) => {
+  const deviceId = (event as CustomEvent<{ deviceId: string | null }>).detail.deviceId;
+  if (deviceId) {
+    relayMuxSessionManager.reconnectDevice(deviceId, 'p2p disconnected');
+  }
+});
+
 // 监听主题变化，并应用到 html 元素
 watch(() => store.theme, (newTheme) => {
   document.documentElement.dataset.theme = newTheme;
@@ -79,6 +94,7 @@ watch(() => store.selectedDeviceId, (newDevice) => {
 
 // 重置 Store（用于退出登录或权限失效时，防止单例污染）
 export function resetStore() {
+  relayMuxSessionManager.closeAll();
   store.user = null;
   store.sessions = [];
   store.devices = [];
@@ -93,24 +109,6 @@ let refreshPromise: Promise<boolean> | null = null;
 
 // 统一 API HTTP 请求方法
 export async function api(path: string, options: RequestInit = {}): Promise<any> {
-  const isSignalingOrAuth = path.startsWith('/api/auth/') || path.startsWith('/api/p2p/');
-  if (store.mode === 'relay' && p2pManager.isP2PActive() && !isSignalingOrAuth) {
-    try {
-      const response = await p2pManager.sendRequest(path, options);
-      if (response.statusCode === 204) return null;
-      if (response.statusCode >= 400) {
-        throw new Error(response.body || `HTTP ${response.statusCode}`);
-      }
-      try {
-        return JSON.parse(response.body);
-      } catch {
-        return response.body;
-      }
-    } catch (err) {
-      console.warn('[P2P] HTTP 请求代理失败，降级回中转路由:', err);
-    }
-  }
-
   const headers: Record<string, string> = { 
     "Content-Type": "application/json", 
     ...(options.headers as Record<string, string> || {}) 

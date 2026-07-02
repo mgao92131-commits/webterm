@@ -1,5 +1,8 @@
-import { api } from '../store';
+import { api, store } from '../store';
 import { p2pManager } from './p2p';
+import { relayMuxSessionManager } from './relay-mux-session-manager';
+import type { RelayMuxChannel } from './relay-mux-session';
+import { decodeTerminalMessage, encodeTerminalMessage } from './terminal-binary-protocol';
 import { DisposableStore, IDisposable } from './disposable';
 import { TerminalView } from './terminal-view';
 import { TerminalInputController } from './terminal-input-controller';
@@ -47,10 +50,11 @@ export class TerminalSessionContext implements IDisposable {
   public layoutController!: TerminalLayoutController;
   public selectionController!: TerminalSelectionController;
 
-  private ws: WebSocket | null = null;
+  private ws: WebSocket | RelayMuxChannel | null = null;
   private reconnectTimer: any = null;
   private reconnectAttempts = 0;
   private manualClose = false;
+  private binaryTransport = false;
   private lastCloseCode: number | null = null;
   private lastSeq = 0;
   private restored = false;
@@ -185,13 +189,18 @@ export class TerminalSessionContext implements IDisposable {
     this.manualClose = false;
 
     const id = this.options.sessionId;
-    const [deviceId, localId] = id.includes(':') ? id.split(':') : ['', id];
+    const [parsedDeviceId, localId] = id.includes(':') ? id.split(':') : ['', id];
+    const deviceId = parsedDeviceId || (store.mode === 'relay' ? store.selectedDeviceId || '' : '');
     let wsUrl = `${proto}://${window.location.host}/ws/sessions/${encodeURIComponent(localId)}`;
     if (deviceId) {
       wsUrl += `?deviceId=${encodeURIComponent(deviceId)}`;
     }
 
-    if (p2pManager.isP2PActive()) {
+    this.binaryTransport = false;
+    if (store.mode === 'relay' && deviceId) {
+      this.ws = relayMuxSessionManager.openTerminalChannel(deviceId, id);
+      this.binaryTransport = true;
+    } else if (p2pManager.isP2PActive()) {
       this.ws = p2pManager.createWebSocketMock(wsUrl, ['binary', 'json']) as any;
     } else {
       this.ws = new WebSocket(wsUrl);
@@ -217,10 +226,15 @@ export class TerminalSessionContext implements IDisposable {
 
     this.disposables.addEventListener(this.ws, 'message', (event: any) => {
       let msg: any;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
+      if (this.binaryTransport && typeof event.data !== 'string') {
+        msg = decodeTerminalMessage(event.data);
+        if (!msg) return;
+      } else {
+        try {
+          msg = JSON.parse(event.data);
+        } catch {
+          return;
+        }
       }
 
       if (msg.type === 'state') {
@@ -279,7 +293,7 @@ export class TerminalSessionContext implements IDisposable {
   private send(msg: any) {
     this.ensureConnected();
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+      this.ws.send(this.binaryTransport ? encodeTerminalMessage(msg) : JSON.stringify(msg));
     }
   }
 

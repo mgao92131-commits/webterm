@@ -1,4 +1,4 @@
-import{c as o}from"./createLucideIcon-DEhfr8WC.js";/**
+import{c as o}from"./createLucideIcon-3A7ZcugA.js";/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.

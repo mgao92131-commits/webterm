@@ -1,13 +1,14 @@
 import { store, api } from '../store';
 import { decodeBase64Utf8, decodeTunnelFrame } from './p2p-utils';
 import { P2PWebSocketMock } from './p2p-ws-mock';
+import type { RelayMuxTransport } from './relay-mux-session';
 import {
   MSG_TYPE_WS_DATA, MSG_TYPE_HTTP_CHUNK,
   WS_DATA_TEXT, WS_DATA_BINARY,
   HTTP_CHUNK_DATA, HTTP_CHUNK_FIN,
 } from '@shared/constants.js';
 
-export class P2PConnectionManager {
+export class P2PConnectionManager extends EventTarget {
   private static readonly DISCONNECTED_GRACE_MS = 8000;
 
   private pc: RTCPeerConnection | null = null;
@@ -28,8 +29,19 @@ export class P2PConnectionManager {
 
   private activeWsMocks = new Map<string, any>();
 
+  constructor() {
+    super();
+  }
+
   public isP2PActive(): boolean {
     return this.connectionState === 'connected' && this.dc?.readyState === 'open';
+  }
+
+  public createMuxTransport(deviceId: string): RelayMuxTransport | null {
+    if (!this.isP2PActive() || this.targetDeviceId !== deviceId || !this.dc) {
+      return null;
+    }
+    return new P2PDataChannelTransport(this.dc);
   }
 
   public registerWsMock(id: string, wsMock: any) {
@@ -152,6 +164,7 @@ export class P2PConnectionManager {
       console.log('[P2P] DataChannel opened successfully');
       this.connectionState = 'connected';
       store.p2pActive = true; // 同步前端 UI 状态指示灯
+      this.dispatchEvent(new CustomEvent('p2p:connected', { detail: { deviceId: this.targetDeviceId } }));
       this.clearDisconnectedGraceTimer();
       if (this.connectTimeoutTimer) {
         clearTimeout(this.connectTimeoutTimer);
@@ -265,7 +278,8 @@ export class P2PConnectionManager {
   public sendBinaryFrame(frame: Uint8Array): void {
     if (!this.isP2PActive()) return;
     try {
-      this.dc!.send(frame);
+      const data = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer;
+      this.dc!.send(data);
     } catch (err) {
       console.error('[P2P] Failed to send binary frame:', err);
     }
@@ -320,6 +334,8 @@ export class P2PConnectionManager {
 
   public disconnect() {
     console.log('[P2P] Disconnecting WebRTC direct connection');
+    const previousDeviceId = this.targetDeviceId;
+    const wasConnected = this.connectionState === 'connected' || store.p2pActive;
     this.connectionState = 'disconnected';
     store.p2pActive = false; // 同步前端 UI 状态指示灯
 
@@ -349,6 +365,10 @@ export class P2PConnectionManager {
       try { wsMock.onClose(1006, 'P2P disconnected'); } catch {}
     }
     this.activeWsMocks.clear();
+
+    if (wasConnected && previousDeviceId) {
+      this.dispatchEvent(new CustomEvent('p2p:disconnected', { detail: { deviceId: previousDeviceId } }));
+    }
   }
 
   private scheduleDisconnectedGraceTimeout(pc: RTCPeerConnection) {
@@ -371,3 +391,39 @@ export class P2PConnectionManager {
 }
 
 export const p2pManager = new P2PConnectionManager();
+
+class P2PDataChannelTransport extends EventTarget implements RelayMuxTransport {
+  constructor(private dc: RTCDataChannel) {
+    super();
+    dc.addEventListener('open', () => this.dispatchEvent(new Event('open')));
+    dc.addEventListener('message', (event) => this.dispatchEvent(new MessageEvent('message', { data: event.data })));
+    dc.addEventListener('close', () => this.dispatchEvent(new CloseEvent('close', { code: 1000, reason: 'p2p datachannel closed', wasClean: true })));
+    dc.addEventListener('error', () => this.dispatchEvent(new Event('error')));
+  }
+
+  get readyState(): number {
+    switch (this.dc.readyState) {
+      case 'connecting':
+        return WebSocket.CONNECTING;
+      case 'open':
+        return WebSocket.OPEN;
+      case 'closing':
+        return WebSocket.CLOSING;
+      default:
+        return WebSocket.CLOSED;
+    }
+  }
+
+  sendText(value: string): void {
+    this.dc.send(value);
+  }
+
+  sendBinary(value: Uint8Array): void {
+    const data = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
+    this.dc.send(data);
+  }
+
+  close(): void {
+    this.dc.close();
+  }
+}

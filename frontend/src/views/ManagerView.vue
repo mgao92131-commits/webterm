@@ -266,11 +266,14 @@ import {
 } from '@lucide/vue';
 import { store, api, resetStore } from '../store';
 import { p2pManager } from '../lib/p2p';
+import { getDevices } from '../api/devices';
+import { relayMuxSessionManager } from '../lib/relay-mux-session-manager';
+import type { RelayMuxChannel } from '../lib/relay-mux-session';
 
 const router = useRouter();
 
 let pollTimer: any = null;
-let ws: WebSocket | null = null;
+let ws: WebSocket | RelayMuxChannel | null = null;
 let reconnectTimer: any = null;
 let reconnectAttempts = 0;
 let manualClose = false;
@@ -318,6 +321,18 @@ function getSelectedDeviceName(): string {
   return current ? current.deviceName : '选择设备';
 }
 
+async function bootstrapManager() {
+  if (store.mode === 'relay') {
+    await refreshDeviceList();
+  }
+  if (store.selectedDeviceId) {
+    p2pManager.connectToDevice(store.selectedDeviceId);
+    refreshSessionList();
+  }
+  connectManagerWS();
+  startPolling();
+}
+
 onMounted(() => {
   document.title = "WebTerm";
   document.body.classList.remove("terminal-mode");
@@ -326,13 +341,7 @@ onMounted(() => {
   window.addEventListener('online', onlineHandler);
   window.addEventListener('offline', offlineHandler);
 
-  if (store.selectedDeviceId) {
-    p2pManager.connectToDevice(store.selectedDeviceId);
-    refreshSessionList();
-  }
-
-  connectManagerWS();
-  startPolling();
+  bootstrapManager();
 
   mediaQuery = window.matchMedia('(min-width: 640px)');
   mediaQuery.addEventListener('change', handleMediaChange);
@@ -392,6 +401,34 @@ async function selectDevice(deviceId: string) {
     await refreshSessionList();
   } catch (err: any) {
     store.managerError = err.message || '获取会话列表失败';
+  }
+}
+
+async function refreshDeviceList() {
+  try {
+    const devices = await getDevices();
+    store.devices = devices.map((device) => ({
+      deviceId: device.deviceId,
+      deviceName: device.deviceName,
+      status: device.online ? 'online' : 'offline',
+    }));
+    const selected = store.selectedDeviceId
+      ? store.devices.find((device) => device.deviceId === store.selectedDeviceId)
+      : null;
+    if (store.selectedDeviceId && !selected) {
+      store.selectedDeviceId = null;
+      store.sessions = [];
+    }
+    if (!store.selectedDeviceId) {
+      const firstOnline = store.devices.find((device) => device.status === 'online');
+      if (firstOnline) {
+        store.selectedDeviceId = firstOnline.deviceId;
+      }
+    }
+  } catch (err: any) {
+    if (err.status !== 404) {
+      store.managerError = err.message || '加载设备列表失败';
+    }
   }
 }
 
@@ -469,11 +506,19 @@ function connectManagerWS() {
     return;
   }
 
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
   manualClose = false;
 
-  const deviceParam = store.selectedDeviceId ? `&deviceId=${encodeURIComponent(store.selectedDeviceId)}` : '';
-  ws = new WebSocket(`${proto}://${window.location.host}/ws/sessions?clientId=${store.clientId}${deviceParam}`);
+  if (store.mode === 'relay') {
+    if (!store.selectedDeviceId) {
+      store.connectionStates['manager'] = 'disconnected';
+      return;
+    }
+    ws = relayMuxSessionManager.openManagerChannel(store.selectedDeviceId);
+  } else {
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const deviceParam = store.selectedDeviceId ? `&deviceId=${encodeURIComponent(store.selectedDeviceId)}` : '';
+    ws = new WebSocket(`${proto}://${window.location.host}/ws/sessions?clientId=${store.clientId}${deviceParam}`);
+  }
   const currentWs = ws;
 
   ws.addEventListener("open", () => {
@@ -491,7 +536,7 @@ function connectManagerWS() {
   ws.addEventListener("message", (event) => {
     if (ws !== currentWs) return;
     try {
-      const msg = JSON.parse(event.data);
+      const msg = JSON.parse((event as MessageEvent).data);
       if (msg.type === "devices") {
         if (store.mode === 'direct') return;
         store.devices = Array.isArray(msg.devices) ? msg.devices : [];

@@ -1,8 +1,9 @@
 import { api } from '../store';
 
 export interface DeviceInfo {
-  id: number;
+  deviceId: string;
   deviceName: string;
+  online: boolean;
   lastSeenAt: string | null;
   createdAt: string;
 }

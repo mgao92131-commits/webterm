@@ -66,7 +66,8 @@
 
         <p
           v-if="errorMessage"
-          class="text-[13px] text-status-danger bg-status-danger/10 border border-status-danger/20 px-3 py-2 rounded-sm font-mono text-center"
+          class="text-[13px] px-3 py-2 rounded-sm font-mono text-center"
+          :class="successMessage ? 'text-status-success bg-status-success/10 border border-status-success/20' : 'text-status-danger bg-status-danger/10 border border-status-danger/20'"
         >
           {{ errorMessage }}
         </p>
@@ -101,6 +102,7 @@ import OtpInput from '../components/OtpInput.vue';
 const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref('');
+const successMessage = ref(false);
 
 type Mode = 'credentials' | 'otp';
 const mode = ref<Mode>('credentials');
@@ -118,6 +120,7 @@ onMounted(() => {
 
 async function handleRegister() {
   errorMessage.value = '';
+  successMessage.value = false;
   if (form.password !== form.confirmPassword) {
     errorMessage.value = '两次输入的密码不一致';
     return;
@@ -129,8 +132,16 @@ async function handleRegister() {
 
   loading.value = true;
   try {
-    await apiRegister(form.email, form.password);
-    mode.value = 'otp';
+    const res = await apiRegister(form.email, form.password);
+    if (res.emailVerificationRequired) {
+      mode.value = 'otp';
+      return;
+    }
+    successMessage.value = true;
+    errorMessage.value = '注册成功，请登录';
+    setTimeout(() => {
+      router.push('/login');
+    }, 800);
   } catch (err: any) {
     errorMessage.value = err.message || '注册失败，请稍后再试';
   } finally {
@@ -140,7 +151,7 @@ async function handleRegister() {
 
 async function handleVerified(payload: { email: string; role: 'admin' | 'user' }) {
   store.user = {
-    id: 0,
+    id: '',
     username: payload.email,
     role: payload.role,
     mode: 'relay',
@@ -164,5 +175,6 @@ async function handleVerified(payload: { email: string; role: 'admin' | 'user' }
 function backToCredentials() {
   mode.value = 'credentials';
   errorMessage.value = '';
+  successMessage.value = false;
 }
 </script>

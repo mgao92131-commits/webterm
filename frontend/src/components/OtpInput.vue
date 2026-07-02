@@ -24,7 +24,7 @@
         @input="onDigitInput(i, $event)"
         @keydown="onDigitKeydown(i, $event)"
         @paste="onPaste"
-        @focus="$event.target.select()"
+        @focus="onDigitFocus"
       />
     </div>
 
@@ -78,6 +78,10 @@ const errorMessage = ref('');
 const verifying = ref(false);
 const resending = ref(false);
 const resendCooldown = ref(60);
+
+function onDigitFocus(event: FocusEvent) {
+  (event.target as HTMLInputElement | null)?.select();
+}
 let cooldownTimer: any = null;
 
 const allDigitsFilled = computed(() => digits.value.every(d => d.length === 1));

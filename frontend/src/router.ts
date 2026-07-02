@@ -11,13 +11,13 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'Login',
     component: () => import('./views/LoginView.vue'),
-    public: true,
+    meta: { public: true },
   },
   {
     path: '/register',
     name: 'Register',
     component: () => import('./views/RegisterView.vue'),
-    public: true,
+    meta: { public: true },
   },
   {
     path: '/devices',

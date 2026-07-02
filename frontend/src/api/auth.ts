@@ -1,19 +1,28 @@
 import { api } from '../store';
 
 export interface AuthUser {
-  id: number;
+  id: string;
   username: string;
   role: 'admin' | 'user';
   mode?: 'direct' | 'relay';
 }
 
 export interface LoginResult {
+  id?: string;
   email?: string;
   username?: string;
   role?: 'admin' | 'user';
   otp_required?: boolean;
   target_device_id?: string;
   error?: string;
+}
+
+export interface RegisterResult {
+  id?: string;
+  email?: string;
+  username?: string;
+  role?: 'admin' | 'user';
+  emailVerificationRequired?: boolean;
 }
 
 export async function login(email: string, password: string): Promise<LoginResult> {
@@ -23,7 +32,7 @@ export async function login(email: string, password: string): Promise<LoginResul
   });
 }
 
-export async function register(email: string, password: string) {
+export async function register(email: string, password: string): Promise<RegisterResult> {
   return api('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify({ email, password })
@@ -70,7 +79,7 @@ export async function me(): Promise<AuthUser> {
 }
 
 export interface TrustedDevice {
-  id: number;
+  id: string;
   deviceId: string;
   deviceName: string | null;
   lastSeenAt: string | null;
@@ -83,7 +92,7 @@ export async function getTrustedDevices(): Promise<TrustedDevice[]> {
   });
 }
 
-export async function deleteTrustedDevice(id: number): Promise<void> {
+export async function deleteTrustedDevice(id: string): Promise<void> {
   return api(`/api/auth/devices/${id}`, {
     method: 'DELETE'
   });

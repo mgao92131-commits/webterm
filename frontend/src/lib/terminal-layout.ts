@@ -12,6 +12,7 @@ export interface TerminalViewInterface {
       baseY: number;
       cursorY: number;
       cursorX: number;
+      getLine?(index: number): { translateToString(trimRight?: boolean): string } | undefined;
     };
   };
   scrollToBottom(): void;
@@ -569,7 +570,7 @@ export class TerminalLayoutController implements IDisposable {
   private attachTouchScroll(): void {
     if (!this.container) return;
 
-    this.store.addEventListener(this.container, "touchstart", (event: TouchEvent) => {
+    this.store.addEventListener(this.container, "touchstart", ((event: TouchEvent) => {
       if (this.isSelectionMode()) return;
       if (event.touches.length !== 1) {
         this.touchScrollLastY = null;
@@ -578,9 +579,9 @@ export class TerminalLayoutController implements IDisposable {
       }
       this.touchScrollLastY = event.touches[0].clientY;
       this.touchScrollRemainder = 0;
-    }, { passive: true } as any);
+    }) as EventListener, { passive: true } as any);
 
-    this.store.addEventListener(this.container, "touchmove", (event: TouchEvent) => {
+    this.store.addEventListener(this.container, "touchmove", ((event: TouchEvent) => {
       if (this.isSelectionMode() || !this.terminalView) return;
       if (event.touches.length !== 1 || this.touchScrollLastY === null) return;
 
@@ -603,7 +604,7 @@ export class TerminalLayoutController implements IDisposable {
         if (viewport) viewport.scrollTop += lines * rowHeight;
       }
       event.preventDefault();
-    }, { capture: true, passive: false } as any);
+    }) as EventListener, { capture: true, passive: false } as any);
 
     const endTouchScroll = () => {
       this.touchScrollLastY = null;
@@ -679,7 +680,7 @@ export class TerminalLayoutController implements IDisposable {
     // 2. 从视口最底部开始向上扫描，获取可视区内最后一行非空正常文字的相对 Y 坐标
     let lastNonEmptyRow = 0;
     for (let i = rows - 1; i >= 0; i--) {
-      const line = buffer.getLine(buffer.viewportY + i);
+      const line = buffer.getLine?.(buffer.viewportY + i);
       if (line && line.translateToString(true).trim().length > 0) {
         lastNonEmptyRow = i;
         break;

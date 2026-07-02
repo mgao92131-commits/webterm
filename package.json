@@ -9,10 +9,14 @@
     "start:relay": "node relay-server/main.js",
     "start:agent": "WEBTERM_MODE=agent node main.js",
     "test:client": "node scripts/mock-mobile-client.js",
-    "test": "node --test",
+    "test": "node --test server/**/*.test.js relay-server/**/*.test.js",
     "test:e2e": "playwright test",
     "smoke:binary": "node scripts/smoke-node-binary-ws.cjs",
     "smoke:go-relay-server": "node scripts/smoke-go-relay-server.mjs",
+    "smoke:web-go-relay-pc-agent": "node scripts/smoke-web-go-relay-pc-agent.mjs",
+    "validate:deploy": "node scripts/validate-go-relay-deploy-config.mjs",
+    "test:unit": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
     "build": "vite build",
     "dev": "vite"
   },
@@ -44,6 +48,7 @@
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
     "vite": "^5.1.4",
-    "vue-tsc": "^1.8.27"
+    "vitest": "^4.1.9",
+    "vue-tsc": "^3.3.6"
   }
 }

@@ -155,7 +155,7 @@ async function handleLogin() {
       return;
     }
     store.user = {
-      id: 0,
+      id: res.id || '',
       username: res.email || res.username || email,
       role: res.role || 'user',
       mode: 'relay',
@@ -180,7 +180,7 @@ async function handleLogin() {
 
 async function handleOtpVerified(payload: { email: string; role: 'admin' | 'user' }) {
   store.user = {
-    id: 0,
+    id: '',
     username: payload.email,
     role: payload.role,
     mode: 'relay',

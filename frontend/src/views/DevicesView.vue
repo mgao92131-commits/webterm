@@ -286,7 +286,7 @@ async function deleteAgentDevice(d: AgentDevice) {
   }
 }
 
-async function deleteTrusted(d: { id: number; deviceName: string | null }) {
+async function deleteTrusted(d: { id: string; deviceName: string | null }) {
   if (!confirm(`确定要撤销对 "${d.deviceName || '未知设备'}" 的信任吗？\n该设备下次登录将需要重新输入验证码。`)) return;
   try {
     await deleteTrustedDevice(d.id);
