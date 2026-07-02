@@ -1,13 +1,7 @@
 package com.webterm.mobile;
 
 import android.app.Activity;
-import android.content.Context;
-import android.graphics.Color;
-import android.graphics.drawable.Drawable;
 import android.os.Handler;
-import android.text.Spannable;
-import android.text.SpannableString;
-import android.text.style.ImageSpan;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -18,7 +12,7 @@ import java.util.List;
 
 import okhttp3.OkHttpClient;
 
-final class RelayCoordinator implements RelayConfigDialogHelper.Host {
+final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevicesScreenBuilder.Host {
     private static final int MAX_HTTP_AUTH_RETRIES = 2;
     private static final long HTTP_POLL_INTERVAL_MS = 3000L;
     private static final long HTTP_RETRY_INTERVAL_MS = 5000L;
@@ -238,19 +232,21 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
         homeSubtitle = null;
     }
 
-    // RelayConfigDialogHelper.Host implementation
+    // region RelayLoginScreenBuilder.Host implementation
+
     @Override
     public Activity activity() {
         return host.activity();
     }
 
     @Override
-    public void loginRelay(String baseUrl, String username, String password, RelayConfigDialogHelper.LoginCallback callback) {
+    public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
         String oldCookie = relayMasterConfig != null ? relayMasterConfig.getCookie() : "";
-        api.login(baseUrl, oldCookie, username, password, new WebTermApi.ExtendedLoginCallback() {
+        api.login(baseUrl, oldCookie, email, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
-            public void onReady(String baseUrl, String cookie) {
-                callback.onReady(baseUrl, cookie);
+            public void onReady(String url, String cookie) {
+                callback.onLoginSuccess(url, cookie);
             }
 
             @Override
@@ -266,11 +262,17 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     }
 
     @Override
-    public void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, RelayConfigDialogHelper.LoginCallback callback) {
-        api.verifyOtp(baseUrl, username, code, targetDeviceId, cookie, new WebTermApi.LoginCallback() {
+    public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
+        api.register(baseUrl, email, username, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
-            public void onReady(String baseUrl, String cookie) {
-                callback.onReady(baseUrl, cookie);
+            public void onReady(String url, String cookie) {
+                callback.onLoginSuccess(url, cookie);
+            }
+
+            @Override
+            public void onOtpRequired(String targetDeviceId, String cookie) {
+                // Register typically doesn't require OTP
             }
 
             @Override
@@ -281,37 +283,132 @@ final class RelayCoordinator implements RelayConfigDialogHelper.Host {
     }
 
     @Override
-    public void onRelayAuthenticated(String url, String cookie, String username, String password) {
-        ServerConfig existingMaster = null;
-        for (ServerConfig s : host.serverConfigs().servers()) {
-            if (s.isRelayMaster()) {
-                existingMaster = s;
-                break;
+    public void onVerifyOtp(String email, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
+        api.verifyOtp(baseUrl, email, code, targetDeviceId, cookie, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String url, String newCookie) {
+                callback.onLoginSuccess(url, newCookie);
             }
-        }
-        if (existingMaster == null) {
-            existingMaster = new ServerConfig(
-                "relay_mst_" + System.currentTimeMillis(),
-                "中转服务器",
-                url, cookie, username, password,
-                true, false, ""
-            );
-            host.serverConfigs().servers().add(existingMaster);
-        } else {
-            existingMaster.setUrl(url);
-            existingMaster.setCookie(cookie);
-            existingMaster.setUsername(username);
-            existingMaster.setPassword(password);
-        }
-        relayMasterConfig = existingMaster;
-        httpAuthFailures = 0;
-        host.saveServers();
-        start();
-        host.onRelayAuthDone();
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
     }
 
     @Override
-    public void onDisconnectRelay() {
+    public void onBackToHome() {
+        host.onRelayAuthDone();
+    }
+
+    // endregion
+
+    // region RelayDevicesScreenBuilder.Host implementation
+
+    @Override
+    public void onFetchDevices(RelayDevicesScreenBuilder.DevicesCallback callback) {
+        if (relayMasterConfig == null) {
+            callback.onError("中转服务未配置");
+            return;
+        }
+        api.fetchDevices(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.SessionsCallback() {
+            @Override
+            public void onReady(JSONArray devices) {
+                callback.onReady(devices);
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                callback.onError(message);
+            }
+
+            @Override
+            public void onParseError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onRegisterDevice(String deviceName, RelayDevicesScreenBuilder.DeviceCreateCallback callback) {
+        if (relayMasterConfig == null) {
+            callback.onError("中转服务未配置");
+            return;
+        }
+        api.registerDevice(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), deviceName, new WebTermApi.DeviceCreateCallback() {
+            @Override
+            public void onReady(String deviceId, String name, String agentSecret) {
+                callback.onReady(deviceId, name, agentSecret);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onDeleteDevice(String deviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
+        if (relayMasterConfig == null) {
+            callback.onError("中转服务未配置");
+            return;
+        }
+        api.deleteDevice(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), deviceId, new WebTermApi.SimpleCallback() {
+            @Override
+            public void onReady() { callback.onReady(); }
+            @Override
+            public void onError(String message) { callback.onError(message); }
+        });
+    }
+
+    @Override
+    public void onFetchTrustedDevices(RelayDevicesScreenBuilder.TrustedDevicesCallback callback) {
+        if (relayMasterConfig == null) {
+            callback.onError("中转服务未配置");
+            return;
+        }
+        api.fetchTrustedDevices(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.TrustedDevicesCallback() {
+            @Override
+            public void onReady(JSONArray devices) {
+                callback.onReady(devices);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onDeleteTrustedDevice(String trustedDeviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
+        if (relayMasterConfig == null) {
+            callback.onError("中转服务未配置");
+            return;
+        }
+        api.deleteTrustedDevice(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), trustedDeviceId, new WebTermApi.SimpleCallback() {
+            @Override
+            public void onReady() { callback.onReady(); }
+            @Override
+            public void onError(String message) { callback.onError(message); }
+        });
+    }
+
+    @Override
+    public void onLogout() {
+        onDisconnectRelay();
+    }
+
+    // endregion
+
+    /**
+     * Disconnect from relay, clear stored master config and session state.
+     * Kept for internal use and called by {@link #onLogout()}.
+     */
+    void onDisconnectRelay() {
         ServerConfig existingMaster = null;
         for (ServerConfig s : host.serverConfigs().servers()) {
             if (s.isRelayMaster()) {
