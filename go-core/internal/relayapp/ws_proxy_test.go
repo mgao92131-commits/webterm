@@ -11,7 +11,6 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaygateway"
 	"webterm/go-core/internal/testutil"
@@ -51,7 +50,7 @@ func testAppProxiesWebSocketFramesToAgentStream(t *testing.T, clientPath string,
 	waitForPresence(t, app, user.ID, device.ID)
 
 	headers := http.Header{}
-	headers.Add("Cookie", (&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value}).String())
+	headers.Add("Cookie", (&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value}).String())
 	client, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+clientPath+"?deviceId="+device.ID, &websocket.DialOptions{
 		HTTPHeader:   headers,
 		Subprotocols: []string{subprotocol},

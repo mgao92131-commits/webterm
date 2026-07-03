@@ -19,7 +19,6 @@ import (
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relayapp"
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/testutil"
 )
@@ -59,7 +58,7 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	}()
 	waitForV2Presence(t, relayApp, user.ID, device.ID)
 
-	headers := http.Header{"Cookie": []string{(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value}).String()}}
+	headers := http.Header{"Cookie": []string{(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value}).String()}}
 	muxURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/sessions?deviceId=" + device.ID
 	ws, _, err := websocket.Dial(ctx, muxURL, &websocket.DialOptions{
 		HTTPHeader:   headers,
@@ -88,7 +87,7 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	req.Header.Set("x-device-id", device.ID)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -217,7 +216,7 @@ func TestV2ClientP2PDataChannelServesMuxManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new p2p offer request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	req.Header.Set("content-type", "application/json")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

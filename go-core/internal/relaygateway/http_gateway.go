@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relayrouter"
 	"webterm/go-core/internal/relaystore"
@@ -145,9 +143,9 @@ func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Con
 }
 
 func (gateway *HTTPGateway) authenticateRequest(w http.ResponseWriter, r *http.Request) (relaystore.User, bool) {
-	tokenValue := bearerToken(r.Header.Get("Authorization"))
+	tokenValue := relaycore.BearerToken(r.Header.Get("Authorization"))
 	if tokenValue == "" {
-		if cookie, err := r.Cookie(relaycontrol.AuthCookieName); err == nil {
+		if cookie, err := r.Cookie(relaycore.AuthCookieName); err == nil {
 			tokenValue = cookie.Value
 		}
 	}
@@ -161,14 +159,6 @@ func (gateway *HTTPGateway) authenticateRequest(w http.ResponseWriter, r *http.R
 		return relaystore.User{}, false
 	}
 	return user, true
-}
-
-func bearerToken(header string) string {
-	const prefix = "Bearer "
-	if strings.HasPrefix(header, prefix) {
-		return strings.TrimSpace(strings.TrimPrefix(header, prefix))
-	}
-	return ""
 }
 
 func singleValueHeaders(headers http.Header) map[string]string {

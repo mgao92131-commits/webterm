@@ -13,7 +13,6 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaygateway"
 	"webterm/go-core/internal/testutil"
@@ -51,7 +50,7 @@ func TestAppProxiesSessionHTTPToAgentStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	req.Header.Set("x-device-id", device.ID)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -16,18 +16,16 @@ import (
 	"strings"
 	"time"
 
+	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relayrouter"
 	"webterm/go-core/internal/relaystore"
 )
 
 const (
-	AuthCookieName          = "webterm_relay_token"
-	RefreshCookieName       = "webterm_relay_refresh"
-	BrowserDeviceCookieName = "webterm_device_id"
-	verifyEmailPurpose      = "email_verify"
-	newDevicePurpose        = "new_device"
-	verificationTTL         = 10 * time.Minute
-	resendOTPWindow         = time.Minute
+	verifyEmailPurpose = "email_verify"
+	newDevicePurpose   = "new_device"
+	verificationTTL    = 10 * time.Minute
+	resendOTPWindow    = time.Minute
 )
 
 type otpSender interface {
@@ -201,9 +199,9 @@ func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	refreshValue := bearerToken(r.Header.Get("Authorization"))
+	refreshValue := relaycore.BearerToken(r.Header.Get("Authorization"))
 	if refreshValue == "" {
-		if cookie, err := r.Cookie(RefreshCookieName); err == nil {
+		if cookie, err := r.Cookie(relaycore.RefreshCookieName); err == nil {
 			refreshValue = cookie.Value
 		}
 	}
@@ -388,7 +386,7 @@ func (server *Server) issueLoginResponseForDevice(w http.ResponseWriter, r *http
 
 func (server *Server) setAuthCookies(w http.ResponseWriter, access relaystore.Token, refresh relaystore.Token) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     AuthCookieName,
+		Name:     relaycore.AuthCookieName,
 		Value:    access.Value,
 		Path:     "/",
 		HttpOnly: true,
@@ -396,7 +394,7 @@ func (server *Server) setAuthCookies(w http.ResponseWriter, access relaystore.To
 		Expires:  access.ExpiresAt,
 	})
 	http.SetCookie(w, &http.Cookie{
-		Name:     RefreshCookieName,
+		Name:     relaycore.RefreshCookieName,
 		Value:    refresh.Value,
 		Path:     "/api/auth/refresh",
 		HttpOnly: true,
@@ -408,7 +406,7 @@ func (server *Server) setAuthCookies(w http.ResponseWriter, access relaystore.To
 func (server *Server) clearAuthCookies(w http.ResponseWriter) {
 	expired := time.Unix(0, 0).UTC()
 	http.SetCookie(w, &http.Cookie{
-		Name:     AuthCookieName,
+		Name:     relaycore.AuthCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -417,7 +415,7 @@ func (server *Server) clearAuthCookies(w http.ResponseWriter) {
 		MaxAge:   -1,
 	})
 	http.SetCookie(w, &http.Cookie{
-		Name:     RefreshCookieName,
+		Name:     relaycore.RefreshCookieName,
 		Value:    "",
 		Path:     "/api/auth/refresh",
 		HttpOnly: true,
@@ -459,7 +457,7 @@ func (server *Server) isTrustedDevice(userID, deviceID string) bool {
 
 func (server *Server) browserDeviceCookie(deviceID string) *http.Cookie {
 	return &http.Cookie{
-		Name:     BrowserDeviceCookieName,
+		Name:     relaycore.BrowserDeviceCookieName,
 		Value:    deviceID,
 		Path:     "/",
 		HttpOnly: true,
@@ -646,9 +644,9 @@ func (server *Server) dropDevice(deviceID, reason string) {
 }
 
 func (server *Server) authenticateRequest(w http.ResponseWriter, r *http.Request) (relaystore.User, bool) {
-	tokenValue := bearerToken(r.Header.Get("Authorization"))
+	tokenValue := relaycore.BearerToken(r.Header.Get("Authorization"))
 	if tokenValue == "" {
-		if cookie, err := r.Cookie(AuthCookieName); err == nil {
+		if cookie, err := r.Cookie(relaycore.AuthCookieName); err == nil {
 			tokenValue = cookie.Value
 		}
 	}
@@ -694,14 +692,6 @@ func parseTrustedDevicePath(rawPath string) (string, bool) {
 	return rest, rest != "" && rest != "."
 }
 
-func bearerToken(header string) string {
-	const prefix = "Bearer "
-	if strings.HasPrefix(header, prefix) {
-		return strings.TrimSpace(strings.TrimPrefix(header, prefix))
-	}
-	return ""
-}
-
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, relaystore.ErrInvalidInput):
@@ -728,7 +718,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func browserDeviceID(r *http.Request) string {
-	if cookie, err := r.Cookie(BrowserDeviceCookieName); err == nil {
+	if cookie, err := r.Cookie(relaycore.BrowserDeviceCookieName); err == nil {
 		return strings.TrimSpace(cookie.Value)
 	}
 	return strings.TrimSpace(r.Header.Get("x-client-id"))

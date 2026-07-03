@@ -14,7 +14,6 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaygateway"
 	"webterm/go-core/internal/testutil"
@@ -53,7 +52,7 @@ func TestAppRoutesP2PUnavailableFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do returned error: %v", err)
@@ -104,7 +103,7 @@ func TestAppAcceptsP2PICEForOnlineAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do returned error: %v", err)
@@ -157,7 +156,7 @@ func TestAppForwardsP2PICEToActiveOfferStream(t *testing.T) {
 			offerErr <- err
 			return
 		}
-		req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+		req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			offerErr <- err
@@ -173,7 +172,7 @@ func TestAppForwardsP2PICEToActiveOfferStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new ice request: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token.Value})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ice Do returned error: %v", err)

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"webterm/go-core/internal/relaycontrol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relayrouter"
 	"webterm/go-core/internal/relaystore"
@@ -155,9 +154,9 @@ func (gateway *P2PGateway) writeP2PResponse(w http.ResponseWriter, r *http.Reque
 }
 
 func (gateway *P2PGateway) authenticateRequest(w http.ResponseWriter, r *http.Request) (relaystore.User, bool) {
-	tokenValue := bearerToken(r.Header.Get("Authorization"))
+	tokenValue := relaycore.BearerToken(r.Header.Get("Authorization"))
 	if tokenValue == "" {
-		if cookie, err := r.Cookie(relaycontrol.AuthCookieName); err == nil {
+		if cookie, err := r.Cookie(relaycore.AuthCookieName); err == nil {
 			tokenValue = cookie.Value
 		}
 	}

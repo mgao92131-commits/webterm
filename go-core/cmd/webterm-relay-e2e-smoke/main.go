@@ -21,7 +21,7 @@ import (
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relay"
 	"webterm/go-core/internal/relayapp"
-	"webterm/go-core/internal/relaycontrol"
+	"webterm/go-core/internal/relaycore"
 )
 
 func main() {
@@ -405,7 +405,7 @@ func sessionAPI(ctx context.Context, method string, baseURL string, token string
 	if err != nil {
 		return 0, nil, err
 	}
-	req.AddCookie(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token})
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token})
 	req.Header.Set("x-device-id", deviceID)
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
@@ -446,7 +446,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	}
 	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/ws/sessions?deviceId=" + deviceID
 	ws, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
-		HTTPHeader:   http.Header{"Cookie": []string{(&http.Cookie{Name: relaycontrol.AuthCookieName, Value: token}).String()}},
+		HTTPHeader:   http.Header{"Cookie": []string{(&http.Cookie{Name: relaycore.AuthCookieName, Value: token}).String()}},
 		Subprotocols: []string{protocol.MuxSubprotocol},
 	})
 	if err != nil {

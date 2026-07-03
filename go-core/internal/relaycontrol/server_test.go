@@ -31,11 +31,11 @@ func TestRelayControlLoginCreateDeviceAndPresence(t *testing.T) {
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
 	}
-	cookie := findCookie(login, AuthCookieName)
+	cookie := findCookie(login, relaycore.AuthCookieName)
 	if cookie == nil || cookie.Value == "" {
 		t.Fatalf("auth cookie missing: %#v", login.Result().Cookies())
 	}
-	refreshCookie := findCookie(login, RefreshCookieName)
+	refreshCookie := findCookie(login, relaycore.RefreshCookieName)
 	if refreshCookie == nil || refreshCookie.Value == "" {
 		t.Fatalf("refresh cookie missing: %#v", login.Result().Cookies())
 	}
@@ -101,8 +101,8 @@ func TestRelayControlRefreshRotatesToken(t *testing.T) {
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
 	}
-	oldAccess := findCookie(login, AuthCookieName)
-	oldRefresh := findCookie(login, RefreshCookieName)
+	oldAccess := findCookie(login, relaycore.AuthCookieName)
+	oldRefresh := findCookie(login, relaycore.RefreshCookieName)
 	if oldAccess == nil || oldRefresh == nil {
 		t.Fatalf("login cookies = %#v", login.Result().Cookies())
 	}
@@ -111,8 +111,8 @@ func TestRelayControlRefreshRotatesToken(t *testing.T) {
 	if refresh.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d body=%s", refresh.Code, refresh.Body.String())
 	}
-	newAccess := findCookie(refresh, AuthCookieName)
-	newRefresh := findCookie(refresh, RefreshCookieName)
+	newAccess := findCookie(refresh, relaycore.AuthCookieName)
+	newRefresh := findCookie(refresh, relaycore.RefreshCookieName)
 	if newAccess == nil || newRefresh == nil {
 		t.Fatalf("refresh cookies = %#v", refresh.Result().Cookies())
 	}
@@ -251,11 +251,11 @@ func TestRelayControlVerifyEmailIssuesSession(t *testing.T) {
 	response := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
 		"email": "owner@example.com",
 		"code":  "123456",
-	}, &http.Cookie{Name: BrowserDeviceCookieName, Value: "browser-1"})
+	}, &http.Cookie{Name: relaycore.BrowserDeviceCookieName, Value: "browser-1"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("verify email status = %d body=%s", response.Code, response.Body.String())
 	}
-	if access := findCookie(response, AuthCookieName); access == nil || access.Value == "" {
+	if access := findCookie(response, relaycore.AuthCookieName); access == nil || access.Value == "" {
 		t.Fatalf("verify email did not issue access cookie: %#v", response.Result().Cookies())
 	}
 	verified, ok := store.FindUser(user.ID)
@@ -282,7 +282,7 @@ func TestRelayControlLoginRequiresOTPForUntrustedDevice(t *testing.T) {
 	response := postJSON(t, handler, "/api/auth/login", map[string]any{
 		"email":    "owner@example.com",
 		"password": "secret-password",
-	}, &http.Cookie{Name: BrowserDeviceCookieName, Value: "browser-1"})
+	}, &http.Cookie{Name: relaycore.BrowserDeviceCookieName, Value: "browser-1"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("login status = %d body=%s", response.Code, response.Body.String())
 	}
@@ -296,7 +296,7 @@ func TestRelayControlLoginRequiresOTPForUntrustedDevice(t *testing.T) {
 	if sender.count() != 1 || sender.last().purpose != newDevicePurpose || sender.last().email != "owner@example.com" {
 		t.Fatalf("otp sends = %#v, want new device send", sender.sends)
 	}
-	if access := findCookie(response, AuthCookieName); access != nil {
+	if access := findCookie(response, relaycore.AuthCookieName); access != nil {
 		t.Fatalf("OTP-required login should not issue access cookie: %#v", response.Result().Cookies())
 	}
 }
@@ -326,8 +326,8 @@ func TestRelayControlVerifyOTPTrustsDeviceAndIssuesSession(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("verify otp status = %d body=%s", response.Code, response.Body.String())
 	}
-	access := findCookie(response, AuthCookieName)
-	browser := findCookie(response, BrowserDeviceCookieName)
+	access := findCookie(response, relaycore.AuthCookieName)
+	browser := findCookie(response, relaycore.BrowserDeviceCookieName)
 	if access == nil || access.Value == "" || browser == nil || browser.Value != "browser-1" {
 		t.Fatalf("verify otp cookies = %#v, want access and browser-1", response.Result().Cookies())
 	}
@@ -343,7 +343,7 @@ func TestRelayControlVerifyOTPTrustsDeviceAndIssuesSession(t *testing.T) {
 	if nextLogin.Code != http.StatusOK {
 		t.Fatalf("trusted login status = %d body=%s", nextLogin.Code, nextLogin.Body.String())
 	}
-	if access := findCookie(nextLogin, AuthCookieName); access == nil || access.Value == "" {
+	if access := findCookie(nextLogin, relaycore.AuthCookieName); access == nil || access.Value == "" {
 		t.Fatalf("trusted login did not issue access cookie: %#v", nextLogin.Result().Cookies())
 	}
 }
@@ -413,7 +413,7 @@ func TestRelayControlMeReturnsCurrentUser(t *testing.T) {
 	}
 	handler := New(store, relayrouter.NewRegistry()).Handler()
 
-	response := get(t, handler, "/api/auth/me", &http.Cookie{Name: AuthCookieName, Value: token.Value})
+	response := get(t, handler, "/api/auth/me", &http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
 	if response.Code != http.StatusOK {
 		t.Fatalf("me status = %d body=%s", response.Code, response.Body.String())
 	}
@@ -442,14 +442,14 @@ func TestRelayControlLogoutClearsCookies(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("logout status = %d body=%s", response.Code, response.Body.String())
 	}
-	access := findCookie(response, AuthCookieName)
+	access := findCookie(response, relaycore.AuthCookieName)
 	if access == nil {
 		t.Fatalf("logout did not clear access cookie: %#v", response.Result().Cookies())
 	}
 	if access.Value != "" || access.MaxAge >= 0 || access.Path != "/" {
 		t.Fatalf("access clear cookie = %#v, want empty expired root cookie", access)
 	}
-	refresh := findCookie(response, RefreshCookieName)
+	refresh := findCookie(response, relaycore.RefreshCookieName)
 	if refresh == nil {
 		t.Fatalf("logout did not clear refresh cookie: %#v", response.Result().Cookies())
 	}
@@ -468,12 +468,12 @@ func TestRelayControlTrustedDevicesCompatibility(t *testing.T) {
 	login := postJSON(t, handler, "/api/auth/login", map[string]any{
 		"email":    "owner@example.com",
 		"password": "secret-password",
-	}, &http.Cookie{Name: BrowserDeviceCookieName, Value: "browser-1"})
+	}, &http.Cookie{Name: relaycore.BrowserDeviceCookieName, Value: "browser-1"})
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
 	}
-	access := findCookie(login, AuthCookieName)
-	browserDevice := findCookie(login, BrowserDeviceCookieName)
+	access := findCookie(login, relaycore.AuthCookieName)
+	browserDevice := findCookie(login, relaycore.BrowserDeviceCookieName)
 	if access == nil || browserDevice == nil || browserDevice.Value != "browser-1" {
 		t.Fatalf("login cookies = %#v, want access and browser device", login.Result().Cookies())
 	}
@@ -519,11 +519,11 @@ func TestRelayControlRefreshTouchesTrustedDevice(t *testing.T) {
 		t.Fatalf("IssueRefreshToken returned error: %v", err)
 	}
 
-	response := postJSON(t, handler, "/api/auth/refresh", map[string]any{}, &http.Cookie{Name: RefreshCookieName, Value: refresh.Value}, &http.Cookie{Name: BrowserDeviceCookieName, Value: "browser-2"})
+	response := postJSON(t, handler, "/api/auth/refresh", map[string]any{}, &http.Cookie{Name: relaycore.RefreshCookieName, Value: refresh.Value}, &http.Cookie{Name: relaycore.BrowserDeviceCookieName, Value: "browser-2"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d body=%s", response.Code, response.Body.String())
 	}
-	access := findCookie(response, AuthCookieName)
+	access := findCookie(response, relaycore.AuthCookieName)
 	if access == nil {
 		t.Fatalf("refresh did not issue access cookie: %#v", response.Result().Cookies())
 	}
@@ -578,7 +578,7 @@ func TestRelayControlDeviceLifecycleActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken returned error: %v", err)
 	}
-	cookie := &http.Cookie{Name: AuthCookieName, Value: token.Value}
+	cookie := &http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value}
 	registry := relayrouter.NewRegistry()
 	streams := relayrouter.NewStreamManager()
 	handler := NewWithStreams(store, registry, streams).Handler()
