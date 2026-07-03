@@ -1,5 +1,6 @@
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.hilt)
 }
 
 android {
@@ -55,6 +56,8 @@ dependencies {
   implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")
   implementation("androidx.recyclerview:recyclerview:1.4.0")
+  implementation(libs.hilt.android)
+  annotationProcessor(libs.hilt.compiler)
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
 }
