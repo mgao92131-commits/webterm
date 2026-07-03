@@ -13,9 +13,9 @@ import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.data.repository.SessionRepository;
-import com.webterm.mobile.domain.session.RelayMuxSessionManager;
-import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
-import com.webterm.mobile.domain.session.SessionIdentity;
+import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.SessionIdentity;
 import com.webterm.mobile.ui.home.SessionRecyclerAdapter;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
 

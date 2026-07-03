@@ -11,7 +11,7 @@ import com.webterm.core.cache.CachedTerminal;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.mobile.domain.command.SessionCommandController;
-import com.webterm.mobile.domain.session.SessionIdentity;
+import com.webterm.core.session.SessionIdentity;
 import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;
 import com.webterm.mobile.ui.terminal.TerminalScreenBuilder;
 import com.webterm.mobile.ui.terminal.WebTermTerminalSessionClient;

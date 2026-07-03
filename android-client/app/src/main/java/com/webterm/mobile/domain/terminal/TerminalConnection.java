@@ -3,10 +3,10 @@ package com.webterm.mobile.domain.terminal;
 import android.os.Handler;
 import android.util.Log;
 
-import com.webterm.mobile.domain.session.MuxSession;
-import com.webterm.mobile.domain.session.RelayMuxSessionManager;
-import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
-import com.webterm.mobile.domain.session.WebTermProtocol;
+import com.webterm.core.session.MuxSession;
+import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.WebTermProtocol;
 
 import org.json.JSONException;
 import org.json.JSONObject;

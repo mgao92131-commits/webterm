@@ -3,8 +3,8 @@ package com.webterm.mobile.domain.server;
 import android.util.Log;
 
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.domain.session.RelayMuxSessionManager;
-import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.session.RelayMuxSessionRegistry;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;

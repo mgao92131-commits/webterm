@@ -13,7 +13,7 @@ import android.widget.TextView;
 
 import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.domain.session.SessionIdentity;
+import com.webterm.core.session.SessionIdentity;
 import com.webterm.mobile.ui.common.DesignTokens;
 import com.webterm.mobile.ui.common.UIUtils;
 

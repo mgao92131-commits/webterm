@@ -6,7 +6,7 @@ import android.widget.Toast;
 
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.domain.session.RelayMuxSessionManager;
+import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.mobile.ui.dialog.RenameSessionDialogHelper;
 
 public final class SessionCommandController {

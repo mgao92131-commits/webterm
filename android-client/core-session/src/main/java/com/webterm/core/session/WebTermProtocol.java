@@ -1,4 +1,4 @@
-package com.webterm.mobile.domain.session;
+package com.webterm.core.session;
 
 import org.json.JSONException;
 import org.json.JSONObject;

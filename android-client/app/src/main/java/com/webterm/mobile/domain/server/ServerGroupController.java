@@ -10,7 +10,7 @@ import android.widget.TextView;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.mobile.ui.home.SessionRowActions;
 import com.webterm.mobile.ui.home.SessionRowHelper;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
