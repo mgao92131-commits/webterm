@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class ServerConfigStore {
     static final String PREFS = "webterm";
-    static final String DEFAULT_URL = "http://100.121.115.14:8080";
+    public static final String DEFAULT_URL = "http://100.121.115.14:8080";
     static final String DEFAULT_USER = "admin";
 
     private static final String TAG = "ServerConfigStore";
@@ -71,27 +71,27 @@ public final class ServerConfigStore {
         prefs.edit().putString(KEY_SERVERS_LIST, arr.toString()).apply();
     }
 
-    int getFontSize() {
+    public int getFontSize() {
         return prefs.getInt(KEY_TERMINAL_FONT_SIZE, 28);
     }
 
-    void saveFontSize(int size) {
+    public void saveFontSize(int size) {
         prefs.edit().putInt(KEY_TERMINAL_FONT_SIZE, size).apply();
     }
 
-    String getFontType() {
+    public String getFontType() {
         return prefs.getString(KEY_TERMINAL_FONT_TYPE, "monospace");
     }
 
-    void saveFontType(String type) {
+    public void saveFontType(String type) {
         prefs.edit().putString(KEY_TERMINAL_FONT_TYPE, type).apply();
     }
 
-    boolean isP2PEnabled() {
+    public boolean isP2PEnabled() {
         return prefs.getBoolean(KEY_ENABLE_P2P, true);
     }
 
-    void saveP2PEnabled(boolean enabled) {
+    public void saveP2PEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_ENABLE_P2P, enabled).apply();
     }
 }

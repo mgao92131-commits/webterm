@@ -156,13 +156,13 @@ public final class ServerConfigDialogHelper {
         });
     }
 
-    interface Host {
+    public interface Host {
         Activity activity();
         void login(String baseUrl, String username, String password, LoginCallback callback);
         void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password);
     }
 
-    interface LoginCallback {
+    public interface LoginCallback {
         void onReady(String baseUrl, String cookie);
         void onError(String message);
     }

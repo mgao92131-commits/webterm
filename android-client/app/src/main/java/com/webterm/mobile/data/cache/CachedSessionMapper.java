@@ -7,7 +7,7 @@ import org.json.JSONObject;
 public final class CachedSessionMapper {
     private CachedSessionMapper() {}
 
-    static JSONArray toSessions(java.util.List<TerminalDiskCache.Metadata> metadataList) {
+    public static JSONArray toSessions(java.util.List<TerminalDiskCache.Metadata> metadataList) {
         JSONArray sessions = new JSONArray();
         if (metadataList == null) return sessions;
         for (TerminalDiskCache.Metadata meta : metadataList) {

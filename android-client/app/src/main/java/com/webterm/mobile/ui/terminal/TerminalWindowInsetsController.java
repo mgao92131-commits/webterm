@@ -14,7 +14,7 @@ import com.termux.view.TerminalView;
 public final class TerminalWindowInsetsController {
     private TerminalWindowInsetsController() {}
 
-    static void installRootInsets(
+    public static void installRootInsets(
         Activity activity,
         View root,
         int baseLeft,
@@ -33,7 +33,7 @@ public final class TerminalWindowInsetsController {
      *        新方案：顶栏自己吸收 statusBar inset（用 {@link UIUtils#installTopbarInset}），
      *        root 这里传 false 避免双重 inset。
      */
-    static void installRootInsets(
+    public static void installRootInsets(
         Activity activity,
         View root,
         int baseLeft,
@@ -79,7 +79,7 @@ public final class TerminalWindowInsetsController {
      * 单独为顶栏安装 statusBar inset 监听，让 topbar 自己 paddingTop = statusBarHeight。
      * 顶栏背景延伸到屏幕顶端（覆盖状态栏区域），与状态栏图标融为一体。
      */
-    static void installTopbarInset(View topbar) {
+    public static void installTopbarInset(View topbar) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return;
         }
@@ -103,7 +103,7 @@ public final class TerminalWindowInsetsController {
         }
     }
 
-    static void updateKeyboardAvoidance(Activity activity, View root, View viewport, View quickBar, TerminalView terminal, int imeOverlap) {
+    public static void updateKeyboardAvoidance(Activity activity, View root, View viewport, View quickBar, TerminalView terminal, int imeOverlap) {
         if (quickBar != null) quickBar.setTranslationY(imeOverlap > 0 ? -imeOverlap : 0);
         if (terminal == null) return;
         if (imeOverlap <= 0 || root == null || viewport == null || terminal.mEmulator == null || terminal.mRenderer == null) {
@@ -144,7 +144,7 @@ public final class TerminalWindowInsetsController {
         return Math.max(0, Math.min(visibleRows - 1, Math.max(cursorRow, lastContentRow)));
     }
 
-    interface ImeOverlapCallback {
+    public interface ImeOverlapCallback {
         void onImeOverlapChanged(int imeOverlap);
     }
 }

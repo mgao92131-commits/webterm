@@ -25,11 +25,11 @@ public final class RelayMuxSessionRegistry {
         this.mainHandler = mainHandler;
     }
 
-    synchronized void setTransportProvider(RelayMuxSessionManager.TransportProvider provider) {
+    public synchronized void setTransportProvider(RelayMuxSessionManager.TransportProvider provider) {
         transportProvider = provider;
     }
 
-    synchronized RelayMuxSessionManager forDevice(String baseUrl, String cookie, String deviceId) {
+    public synchronized RelayMuxSessionManager forDevice(String baseUrl, String cookie, String deviceId) {
         String key = key(baseUrl, cookie, deviceId);
         RelayMuxSessionManager manager = managers.get(key);
         if (manager == null) {
@@ -39,7 +39,7 @@ public final class RelayMuxSessionRegistry {
         return manager;
     }
 
-    synchronized void reconnectDevice(String deviceId, String reason) {
+    public synchronized void reconnectDevice(String deviceId, String reason) {
         for (RelayMuxSessionManager manager : managers.values().toArray(new RelayMuxSessionManager[0])) {
             if (RelayMuxSessionManager.safeEquals(manager.deviceId(), deviceId)) {
                 manager.reconnectTransport(reason);
@@ -47,14 +47,14 @@ public final class RelayMuxSessionRegistry {
         }
     }
 
-    synchronized void releaseIfIdle(RelayMuxSessionManager manager) {
+    public synchronized void releaseIfIdle(RelayMuxSessionManager manager) {
         if (manager == null) return;
         manager.stopIfIdle();
         if (!manager.isIdle()) return;
         managers.values().removeIf(value -> value == manager);
     }
 
-    synchronized void shutdown() {
+    public synchronized void shutdown() {
         for (RelayMuxSessionManager manager : managers.values().toArray(new RelayMuxSessionManager[0])) {
             manager.stop();
         }

@@ -258,32 +258,32 @@ public final class TerminalDiskCache {
     }
 
     public static final class RestoreResult {
-        final Metadata metadata;
-        final long lastSeq;
+        public final Metadata metadata;
+        public final long lastSeq;
 
-        RestoreResult(Metadata metadata, long lastSeq) {
+        public RestoreResult(Metadata metadata, long lastSeq) {
             this.metadata = metadata;
             this.lastSeq = lastSeq;
         }
     }
 
     public static final class Metadata {
-        String baseUrl = "";
-        String sessionId = "";
-        String instanceId = "";
-        String createdAt = "";
-        String termTitle = "";
-        String sessionName = "";
-        String cwd = "";
-        int columns;
-        int rows;
-        long lastSeq;
-        long updatedAt;
+        public String baseUrl = "";
+        public String sessionId = "";
+        public String instanceId = "";
+        public String createdAt = "";
+        public String termTitle = "";
+        public String sessionName = "";
+        public String cwd = "";
+        public int columns;
+        public int rows;
+        public long lastSeq;
+        public long updatedAt;
 
-        Metadata() {
+        public Metadata() {
         }
 
-        Metadata(Metadata other) {
+        public Metadata(Metadata other) {
             baseUrl = other.baseUrl;
             sessionId = other.sessionId;
             instanceId = other.instanceId;

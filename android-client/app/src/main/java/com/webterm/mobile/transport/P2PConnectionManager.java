@@ -26,7 +26,7 @@ import okhttp3.OkHttpClient;
 public final class P2PConnectionManager {
     private static final String TAG = "P2PConnectionManager";
 
-    interface Listener {
+    public interface Listener {
         void onConnecting(String deviceId);
         void onConnected(String deviceId);
         void onDisconnected(String deviceId, String reason);
@@ -47,26 +47,26 @@ public final class P2PConnectionManager {
     private boolean connected;
     private boolean disconnecting;
 
-    P2PConnectionManager(Context context, OkHttpClient http, Handler mainHandler, Listener listener) {
+    public P2PConnectionManager(Context context, OkHttpClient http, Handler mainHandler, Listener listener) {
         this.mainHandler = mainHandler;
         this.api = new WebTermApi(http);
         this.listener = listener;
         ensureFactory(context.getApplicationContext());
     }
 
-    synchronized boolean isP2PActive(String deviceId) {
+    public synchronized boolean isP2PActive(String deviceId) {
         return connected
             && safeEquals(this.deviceId, deviceId)
             && dataChannelEndpoint != null
             && dataChannelEndpoint.isOpen();
     }
 
-    synchronized MuxTransport getDataChannelTransport(String deviceId) {
+    public synchronized MuxTransport getDataChannelTransport(String deviceId) {
         if (!isP2PActive(deviceId)) return null;
         return new WebRtcDataChannelTransport(dataChannelEndpoint);
     }
 
-    synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
+    public synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
         if (deviceId == null || deviceId.isEmpty()) return;
         if (safeEquals(this.deviceId, deviceId) && peerConnection != null) return;
         disconnect("switching device");
@@ -133,7 +133,7 @@ public final class P2PConnectionManager {
         }, new org.webrtc.MediaConstraints());
     }
 
-    synchronized void disconnect() {
+    public synchronized void disconnect() {
         disconnect("manual disconnect");
     }
 

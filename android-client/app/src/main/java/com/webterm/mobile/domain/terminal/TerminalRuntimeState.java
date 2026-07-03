@@ -19,66 +19,66 @@ public final class TerminalRuntimeState {
     private int columns;
     private int rows;
 
-    boolean hasSession() {
+    public boolean hasSession() {
         return sessionId != null;
     }
 
-    String baseUrl() {
+    public String baseUrl() {
         return baseUrl;
     }
 
-    String cookie() {
+    public String cookie() {
         return cookie;
     }
 
-    String sessionId() {
+    public String sessionId() {
         return sessionId;
     }
 
-    String relayDeviceId() {
+    public String relayDeviceId() {
         return relayDeviceId;
     }
 
-    String instanceId() {
+    public String instanceId() {
         return instanceId;
     }
 
-    String createdAt() {
+    public String createdAt() {
         return createdAt;
     }
 
-    String cwd() {
+    public String cwd() {
         return cwd;
     }
 
-    void setCwd(String cwd) {
+    public void setCwd(String cwd) {
         this.cwd = cwd == null ? "" : cwd.trim();
     }
 
-    long lastSeq() {
+    public long lastSeq() {
         return lastSeq;
     }
 
-    void resetLastSeq() {
+    public void resetLastSeq() {
         lastSeq = 0;
     }
 
-    int columns() {
+    public int columns() {
         return columns;
     }
 
-    int rows() {
+    public int rows() {
         return rows;
     }
 
-    void setServerSession(String baseUrl, String cookie, String sessionId, String relayDeviceId) {
+    public void setServerSession(String baseUrl, String cookie, String sessionId, String relayDeviceId) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
         this.relayDeviceId = relayDeviceId == null ? "" : relayDeviceId;
     }
 
-    void applyLaunchState(TerminalLaunchState launchState) {
+    public void applyLaunchState(TerminalLaunchState launchState) {
         createdAt = launchState.createdAt;
         instanceId = launchState.instanceId;
         cwd = launchState.cwd;
@@ -87,7 +87,7 @@ public final class TerminalRuntimeState {
         rows = launchState.rows;
     }
 
-    void updateIdentity(String instanceId, String createdAt) {
+    public void updateIdentity(String instanceId, String createdAt) {
         if (instanceId != null && !instanceId.isEmpty()) {
             this.instanceId = instanceId;
         }
@@ -96,24 +96,24 @@ public final class TerminalRuntimeState {
         }
     }
 
-    void updateSize(int columns, int rows) {
+    public void updateSize(int columns, int rows) {
         this.columns = columns;
         this.rows = rows;
     }
 
-    void onOutput(long seq, byte[] bytes) {
+    public void onOutput(long seq, byte[] bytes) {
         if (seq <= 0) return;
         lastSeq = seq;
     }
 
-    void clearServerSession() {
+    public void clearServerSession() {
         baseUrl = null;
         cookie = null;
         sessionId = null;
         relayDeviceId = "";
     }
 
-    void clearTerminalDetails() {
+    public void clearTerminalDetails() {
         instanceId = "";
         createdAt = "";
         cwd = "";
@@ -122,10 +122,10 @@ public final class TerminalRuntimeState {
         lastSeq = 0;
     }
 
-    void clearPersistence() {
+    public void clearPersistence() {
     }
 
-    TerminalCacheCoordinator.Snapshot snapshot(TextView titleView, TextView subtitleView, TerminalSession terminalSession) {
+    public TerminalCacheCoordinator.Snapshot snapshot(TextView titleView, TextView subtitleView, TerminalSession terminalSession) {
         TerminalCacheCoordinator.Snapshot snapshot = new TerminalCacheCoordinator.Snapshot();
         snapshot.baseUrl = baseUrl;
         snapshot.cookie = cookie;
@@ -143,7 +143,7 @@ public final class TerminalRuntimeState {
         return snapshot;
     }
 
-    TerminalDiskCache.Metadata diskMetadata(TextView titleView, TextView subtitleView) {
+    public TerminalDiskCache.Metadata diskMetadata(TextView titleView, TextView subtitleView) {
         if (baseUrl == null || sessionId == null) return null;
         TerminalDiskCache.Metadata metadata = new TerminalDiskCache.Metadata();
         metadata.baseUrl = baseUrl;

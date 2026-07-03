@@ -61,32 +61,32 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
         }
     };
 
-    RelayCoordinator(OkHttpClient http, Handler mainHandler, WebTermApi api, Host host) {
+    public RelayCoordinator(OkHttpClient http, Handler mainHandler, WebTermApi api, Host host) {
         this.http = http;
         this.mainHandler = mainHandler;
         this.api = api;
         this.host = host;
     }
 
-    void attachSubtitle(TextView subtitle) {
+    public void attachSubtitle(TextView subtitle) {
         this.homeSubtitle = subtitle;
         updateSubtitleState(relayState);
     }
 
-    void attachStatusDot(StatusIndicatorView statusDot) {
+    public void attachStatusDot(StatusIndicatorView statusDot) {
         this.homeStatusDot = statusDot;
         updateStatusDot();
     }
 
-    void detachSubtitle() {
+    public void detachSubtitle() {
         this.homeSubtitle = null;
     }
 
-    void detachStatusDot() {
+    public void detachStatusDot() {
         this.homeStatusDot = null;
     }
 
-    void loadMasterFromServers(List<ServerConfig> servers) {
+    public void loadMasterFromServers(List<ServerConfig> servers) {
         relayMasterConfig = null;
         for (ServerConfig s : servers) {
             if (s.isRelayMaster()) {
@@ -96,19 +96,19 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
         }
     }
 
-    ServerConfig masterConfig() {
+    public ServerConfig masterConfig() {
         return relayMasterConfig;
     }
 
-    List<ServerConfig> devices() {
+    public List<ServerConfig> devices() {
         return relayDevices;
     }
 
-    boolean hasMaster() {
+    public boolean hasMaster() {
         return relayMasterConfig != null && !relayMasterConfig.getUrl().isEmpty();
     }
 
-    void start() {
+    public void start() {
         if (!hasMaster()) {
             stop();
             updateSubtitleState(RelayState.NOT_CONFIGURED);
@@ -120,12 +120,12 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
         mainHandler.post(pollDevicesRunnable);
     }
 
-    void stop() {
+    public void stop() {
         mainHandler.removeCallbacks(pollDevicesRunnable);
         httpAuthFailures = 0;
     }
 
-    void resetReconnectAndStart() {
+    public void resetReconnectAndStart() {
         stop();
         start();
     }
@@ -272,7 +272,7 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
             });
     }
 
-    void destroy() {
+    public void destroy() {
         stop();
         relayDevices.clear();
         relayMasterConfig = null;
@@ -510,7 +510,7 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
      * Disconnect from relay, clear stored master config and session state.
      * Kept for internal use and called by {@link #onLogout()}.
      */
-    void onDisconnectRelay() {
+    public void onDisconnectRelay() {
         ServerConfig existingMaster = null;
         for (ServerConfig s : host.serverConfigs().servers()) {
             if (s.isRelayMaster()) {
@@ -618,7 +618,7 @@ public final class RelayCoordinator implements RelayLoginScreenBuilder.Host, Rel
         return Math.min(HTTP_RETRY_INTERVAL_MS, 500L * httpAuthFailures);
     }
 
-    interface Host {
+    public interface Host {
         Activity activity();
         void onRelayDevicesChanged();
         void onRelayAuthDone();

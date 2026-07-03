@@ -23,7 +23,7 @@ public final class TerminalConnection {
     private static final long RESIZE_DEBOUNCE_MS = 100L;
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
 
-    enum State {
+    public enum State {
         DISCONNECTED,
         CONNECTING,
         CONNECTED,
@@ -60,15 +60,15 @@ public final class TerminalConnection {
     }
 
     @AssistedFactory
-    interface Factory {
+    public interface Factory {
         TerminalConnection create(Listener listener);
     }
 
-    State getState() {
+    public State getState() {
         return state;
     }
 
-    void connect(String baseUrl, String cookie, String sessionId, long lastSeq, String relayDeviceId) {
+    public void connect(String baseUrl, String cookie, String sessionId, long lastSeq, String relayDeviceId) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;
         this.sessionId = sessionId;
@@ -79,13 +79,13 @@ public final class TerminalConnection {
         connectNow();
     }
 
-    void reconnectNow() {
+    public void reconnectNow() {
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
         connectNow();
     }
 
-    void close(String reason) {
+    public void close(String reason) {
         this.state = State.DISCONNECTED;
         this.socketGeneration++;
         mainHandler.removeCallbacks(sendResizeRunnable);
@@ -97,29 +97,29 @@ public final class TerminalConnection {
         relayChannelId = null;
     }
 
-    boolean isConnected() {
+    public boolean isConnected() {
         return state == State.CONNECTED;
     }
 
-    boolean isP2PConnected() {
+    public boolean isP2PConnected() {
         return relayMuxSession != null && relayMuxSession.isP2PConnected();
     }
 
-    void updateLastSeq(long lastSeq) {
+    public void updateLastSeq(long lastSeq) {
         this.lastSeq = lastSeq;
     }
 
-    void updateSize(int columns, int rows) {
+    public void updateSize(int columns, int rows) {
         this.columns = columns;
         this.rows = rows;
         scheduleResize();
     }
 
-    void sendInput(String data) {
+    public void sendInput(String data) {
         sendBinary(WebTermProtocol.MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
     }
 
-    void sendTitle(String title) {
+    public void sendTitle(String title) {
         sendBinary(WebTermProtocol.MSG_TITLE, title.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -270,7 +270,7 @@ public final class TerminalConnection {
         relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
-    interface Listener {
+    public interface Listener {
         void onConnectionStatus(State state, int reconnectAttempts);
         void onOutput(long seq, byte[] data);
         void onState(long seq, byte[] data);

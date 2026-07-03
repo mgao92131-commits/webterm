@@ -17,7 +17,7 @@ public final class WebTermTerminalSessionClient implements TerminalSessionClient
     private final TerminalClipboardController clipboardController;
     private final TerminalTitleSynchronizer titleSynchronizer;
 
-    WebTermTerminalSessionClient(
+    public WebTermTerminalSessionClient(
         Activity activity,
         Host host,
         TerminalClipboardController clipboardController,
@@ -92,7 +92,7 @@ public final class WebTermTerminalSessionClient implements TerminalSessionClient
     @Override public void logStackTraceWithMessage(String tag, String message, Exception e) { android.util.Log.e(tag, message, e); }
     @Override public void logStackTrace(String tag, Exception e) { android.util.Log.e(tag, "stack trace", e); }
 
-    interface Host {
+    public interface Host {
         void onTerminalInput(String data);
         void onTerminalResize(int columns, int rows);
         void onTerminalTextChanged();

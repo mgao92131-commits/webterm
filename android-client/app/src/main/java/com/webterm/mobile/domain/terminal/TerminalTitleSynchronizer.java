@@ -28,11 +28,11 @@ public final class TerminalTitleSynchronizer {
     }
 
     @AssistedFactory
-    interface Factory {
+    public interface Factory {
         TerminalTitleSynchronizer create(ConnectionProvider connectionProvider);
     }
 
-    void onTitleChanged(TerminalSession session, TextView titleView) {
+    public void onTitleChanged(TerminalSession session, TextView titleView) {
         String title = sanitize(session.getTitle());
         if (title.isEmpty()) return;
 
@@ -46,11 +46,11 @@ public final class TerminalTitleSynchronizer {
         });
     }
 
-    void cancel() {
+    public void cancel() {
         mainHandler.removeCallbacks(uploadRunnable);
     }
 
-    void reset() {
+    public void reset() {
         cancel();
         lastUploadedTitle = "";
         pendingTitle = "";
@@ -82,7 +82,7 @@ public final class TerminalTitleSynchronizer {
         return builder.toString().trim();
     }
 
-    interface ConnectionProvider {
+    public interface ConnectionProvider {
         TerminalConnection getTerminalConnection();
     }
 }

@@ -75,7 +75,7 @@ public final class TerminalLifecycleController {
     }
 
     @AssistedFactory
-    interface Factory {
+    public interface Factory {
         TerminalLifecycleController create(
             Activity activity,
             Host host,
@@ -88,41 +88,41 @@ public final class TerminalLifecycleController {
         );
     }
 
-    boolean hasSession() {
+    public boolean hasSession() {
         return terminalState.hasSession();
     }
 
-    boolean hasActiveTerminal() {
+    public boolean hasActiveTerminal() {
         return terminalView != null && terminalSession != null;
     }
 
-    TerminalView terminalView() { return terminalView; }
-    TerminalSession terminalSession() { return terminalSession; }
-    TerminalConnection terminalConnection() { return terminalConnection; }
-    Button ctrlButton() { return ctrlButton; }
+    public TerminalView terminalView() { return terminalView; }
+    public TerminalSession terminalSession() { return terminalSession; }
+    public TerminalConnection terminalConnection() { return terminalConnection; }
+    public Button ctrlButton() { return ctrlButton; }
 
-    boolean readCtrlKey() { return ctrlDown; }
+    public boolean readCtrlKey() { return ctrlDown; }
 
-    void setCtrlKey(boolean down) {
+    public void setCtrlKey(boolean down) {
         ctrlDown = down;
         if (ctrlButton != null) {
             activity.runOnUiThread(() -> TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, down));
         }
     }
 
-    void write(String data) {
+    public void write(String data) {
         if (terminalSession != null) terminalSession.write(data);
     }
 
-    void appendOutput(byte[] data) {
+    public void appendOutput(byte[] data) {
         if (terminalSession != null) terminalSession.appendOutput(data);
     }
 
-    void appendOutput(String data) {
+    public void appendOutput(String data) {
         if (terminalSession != null) terminalSession.appendOutput(data);
     }
 
-    void showTerminal(
+    public void showTerminal(
         String baseUrl, String cookie, String sessionId,
         String termTitle, String sessionName, String createdAt, String instanceId,
         String relayDeviceId, String cwd,
@@ -176,7 +176,7 @@ public final class TerminalLifecycleController {
         attachTerminalWhenLaidOut();
     }
 
-    void closeTerminal(boolean closeRemote) {
+    public void closeTerminal(boolean closeRemote) {
         String closingBaseUrl = terminalState.baseUrl();
         String closingSessionId = terminalState.sessionId();
         hideKeyboard();
@@ -209,18 +209,18 @@ public final class TerminalLifecycleController {
         terminalState.clearServerSession();
     }
 
-    void pauseCurrentConnection() {
+    public void pauseCurrentConnection() {
         cacheCurrentTerminal();
         closeTerminalConnection("activity paused");
     }
 
-    void connectTerminal() {
+    public void connectTerminal() {
         if (terminalConnection == null || !terminalState.hasSession() || terminalState.baseUrl() == null || terminalState.cookie() == null) return;
         terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
         terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq(), terminalState.relayDeviceId());
     }
 
-    void showKeyboard() {
+    public void showKeyboard() {
         if (terminalView == null) return;
         terminalView.postDelayed(() -> {
             InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
@@ -237,17 +237,17 @@ public final class TerminalLifecycleController {
         tokenView.clearFocus();
     }
 
-    void onTerminalResize(int columns, int rows) {
+    public void onTerminalResize(int columns, int rows) {
         terminalState.updateSize(columns, rows);
         if (terminalConnection != null) terminalConnection.updateSize(columns, rows);
     }
 
-    void onTerminalTextChanged() {
+    public void onTerminalTextChanged() {
         if (terminalView != null) terminalView.onScreenUpdated();
         host.updateKeyboardAvoidance();
     }
 
-    void onOutput(long seq, byte[] data) {
+    public void onOutput(long seq, byte[] data) {
         activity.runOnUiThread(() -> {
             if (closed.get() || terminalSession == null) return;
             if (seq > 0) {
@@ -258,7 +258,7 @@ public final class TerminalLifecycleController {
         });
     }
 
-    void onState(long seq, byte[] data) {
+    public void onState(long seq, byte[] data) {
         activity.runOnUiThread(() -> {
             if (closed.get() || terminalView == null || activeSessionClient == null) return;
             terminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, activeSessionClient, activeSessionClient);
@@ -275,7 +275,7 @@ public final class TerminalLifecycleController {
         });
     }
 
-    void onInfo(org.json.JSONObject info) {
+    public void onInfo(org.json.JSONObject info) {
         String termTitle = info.optString("termTitle", "").trim();
         String name = info.optString("name", "").trim();
         String instanceId = info.optString("instanceId", "").trim();
@@ -287,17 +287,17 @@ public final class TerminalLifecycleController {
         });
     }
 
-    void onExit(int code) {
+    public void onExit(int code) {
         appendOutput("\r\n[Remote session exited]\r\n");
         removeCachedTerminal(terminalState.baseUrl(), terminalState.sessionId());
         if (terminalSession != null) terminalSession.notifyExternalSessionFinished(code);
     }
 
-    TextView terminalTitleView() { return terminalTitle; }
+    public TextView terminalTitleView() { return terminalTitle; }
 
-    View terminalRoot() { return terminalRoot; }
-    View terminalViewport() { return terminalViewport; }
-    View quickBar() { return quickBar; }
+    public View terminalRoot() { return terminalRoot; }
+    public View terminalViewport() { return terminalViewport; }
+    public View quickBar() { return quickBar; }
 
     private void attachTerminalWhenLaidOut() {
         if (terminalRoot == null || terminalView == null || terminalSession == null || terminalAttachStarted) return;
@@ -361,7 +361,7 @@ public final class TerminalLifecycleController {
         }
     }
 
-    interface Host {
+    public interface Host {
         int getSavedFontSize();
         String getSavedFontType();
         android.graphics.Typeface getTypefaceByName(String type);

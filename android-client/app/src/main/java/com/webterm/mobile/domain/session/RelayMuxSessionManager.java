@@ -17,7 +17,7 @@ public final class RelayMuxSessionManager {
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
 
-    interface ChannelListener {
+    public interface ChannelListener {
         void onConnected(String channelId);
         void onError(String channelId, String message);
         void onData(String channelId, byte[] payload, boolean binary);
@@ -27,7 +27,7 @@ public final class RelayMuxSessionManager {
         default void onReconnectAttempt(int attempt) {}
     }
 
-    interface TransportProvider {
+    public interface TransportProvider {
         MuxTransport createTransport(String deviceId);
     }
 
@@ -121,17 +121,17 @@ public final class RelayMuxSessionManager {
         });
     }
 
-    boolean matches(String baseUrl, String cookie, String deviceId) {
+    public boolean matches(String baseUrl, String cookie, String deviceId) {
         return this.baseUrl.equals(WebTermUrls.normalizeBaseUrl(baseUrl))
             && safeEquals(this.cookie, cookie)
             && safeEquals(this.deviceId, deviceId);
     }
 
-    boolean isConnected() {
+    public boolean isConnected() {
         return muxSession.isConnected();
     }
 
-    boolean isP2PConnected() {
+    public boolean isP2PConnected() {
         return muxSession.isConnected() && muxSession.isP2PTransport();
     }
 
@@ -143,17 +143,17 @@ public final class RelayMuxSessionManager {
         return deviceId;
     }
 
-    void start() {
+    public void start() {
         muxSession.start();
     }
 
-    void openTerminalChannel(String localSessionId, ChannelListener listener) {
+    public void openTerminalChannel(String localSessionId, ChannelListener listener) {
         String channelId = terminalChannelId(localSessionId);
         String path = "/ws/sessions/" + WebTermUrls.encodePath(localSessionId);
         openChannel(channelId, path, new String[]{BINARY_SUBPROTOCOL}, listener);
     }
 
-    void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {
+    public void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {
         channels.put(channelId, new Channel(channelId, path, protocols, listener));
         start();
         if (muxSession.isConnected()) {
@@ -161,7 +161,7 @@ public final class RelayMuxSessionManager {
         }
     }
 
-    void closeChannel(String channelId) {
+    public void closeChannel(String channelId) {
         if (channelId == null || channelId.isEmpty()) return;
         channels.remove(channelId);
         muxSession.sendWsClose(channelId);
@@ -185,7 +185,7 @@ public final class RelayMuxSessionManager {
         muxSession.stop();
     }
 
-    boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
+    public boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
         return muxSession.sendTunnelFrame(channelId, payload, binary);
     }
 
@@ -197,11 +197,11 @@ public final class RelayMuxSessionManager {
         muxSession.stop();
     }
 
-    static String terminalChannelId(String localSessionId) {
+    public static String terminalChannelId(String localSessionId) {
         return "term:" + localSessionId;
     }
 
-    static String localSessionId(String sessionId, String deviceId) {
+    public static String localSessionId(String sessionId, String deviceId) {
         if (sessionId == null) return "";
         String prefix = deviceId == null || deviceId.isEmpty() ? "" : deviceId + ":";
         if (!prefix.isEmpty() && sessionId.startsWith(prefix)) {
@@ -210,7 +210,7 @@ public final class RelayMuxSessionManager {
         return sessionId;
     }
 
-    static String canonicalSessionId(String sessionId, String deviceId) {
+    public static String canonicalSessionId(String sessionId, String deviceId) {
         if (sessionId == null) return "";
         if (deviceId == null || deviceId.isEmpty() || sessionId.contains(":")) return sessionId;
         return deviceId + ":" + sessionId;
@@ -226,7 +226,7 @@ public final class RelayMuxSessionManager {
         return channels.values().toArray(new Channel[0]);
     }
 
-    static boolean safeEquals(String a, String b) {
+    public static boolean safeEquals(String a, String b) {
         if (a == null) return b == null || b.isEmpty();
         if (b == null) return a.isEmpty();
         return a.equals(b);

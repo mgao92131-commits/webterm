@@ -42,7 +42,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
     private String errorMessage;
     private JSONArray lastSessions;
 
-    SessionRecyclerAdapter(Activity activity, SessionRowActions actions, Runnable onRetry) {
+    public SessionRecyclerAdapter(Activity activity, SessionRowActions actions, Runnable onRetry) {
         this.activity = activity;
         this.actions = actions;
         this.onRetry = onRetry;
@@ -50,11 +50,11 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         showEmpty();
     }
 
-    void setCollapseState(CollapseState collapseState) {
+    public void setCollapseState(CollapseState collapseState) {
         this.collapseState = collapseState;
     }
 
-    void submitSessions(ServerConfig server, JSONArray sessions) {
+    public void submitSessions(ServerConfig server, JSONArray sessions) {
         this.server = server;
         this.errorMessage = null;
         this.lastSessions = copySessions(sessions);
@@ -63,7 +63,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         updateItems(next);
     }
 
-    void showError(String message) {
+    public void showError(String message) {
         errorMessage = message == null || message.isEmpty() ? "连接失败" : message;
         lastSessions = null;
         List<RowItem> next = new ArrayList<>();
@@ -71,7 +71,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         updateItems(next);
     }
 
-    void showEmpty() {
+    public void showEmpty() {
         errorMessage = null;
         lastSessions = null;
         List<RowItem> next = new ArrayList<>();
@@ -79,7 +79,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         updateItems(next);
     }
 
-    boolean hasSessionRows() {
+    public boolean hasSessionRows() {
         if (lastSessions != null && lastSessions.length() > 0) return true;
         for (RowItem item : items) {
             if (item.type == TYPE_SESSION) return true;
@@ -87,7 +87,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         return false;
     }
 
-    void removeSession(String sessionId) {
+    public void removeSession(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) return;
         if (removeFromLastSessions(sessionId)) {
             List<RowItem> next = buildGroupedItems(server, lastSessions);
@@ -170,14 +170,14 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         return items.size();
     }
 
-    boolean isSessionRow(int position) {
+    public boolean isSessionRow(int position) {
         if (position >= 0 && position < items.size()) {
             return items.get(position).type == TYPE_SESSION;
         }
         return false;
     }
 
-    String getSessionId(int position) {
+    public String getSessionId(int position) {
         if (position >= 0 && position < items.size()) {
             RowItem item = items.get(position);
             if (item.type == TYPE_SESSION && item.session != null) {
@@ -529,7 +529,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         }
     }
 
-    interface CollapseState {
+    public interface CollapseState {
         boolean isCollapsed(String groupKey);
         void setCollapsed(String groupKey, boolean collapsed);
     }

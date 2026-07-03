@@ -19,13 +19,13 @@ public final class NetworkRecoveryController {
     private ConnectivityManager.NetworkCallback networkCallback;
     private long lastNetworkAvailableTime;
 
-    NetworkRecoveryController(Context context, Handler mainHandler, Host host) {
+    public NetworkRecoveryController(Context context, Handler mainHandler, Host host) {
         this.context = context.getApplicationContext();
         this.mainHandler = mainHandler;
         this.host = host;
     }
 
-    void register() {
+    public void register() {
         if (networkCallback != null) return;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
         ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -45,7 +45,7 @@ public final class NetworkRecoveryController {
         cm.registerDefaultNetworkCallback(networkCallback);
     }
 
-    void unregister() {
+    public void unregister() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || networkCallback == null) return;
         ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) {
@@ -54,7 +54,7 @@ public final class NetworkRecoveryController {
         networkCallback = null;
     }
 
-    interface Host {
+    public interface Host {
         void onNetworkAvailableForRecovery();
     }
 }

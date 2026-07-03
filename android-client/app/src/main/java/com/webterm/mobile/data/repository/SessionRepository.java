@@ -31,7 +31,7 @@ public final class SessionRepository {
         this.executor = executor;
     }
 
-    void loadSessions(ServerConfig server, Callback callback) {
+    public void loadSessions(ServerConfig server, Callback callback) {
         if (server.getCookie() != null && !server.getCookie().isEmpty()) {
             fetchSessions(server, callback);
             return;
@@ -133,13 +133,13 @@ public final class SessionRepository {
         List<TerminalDiskCache.Metadata> cachedSessionsForServer(ServerConfig server);
     }
 
-    interface Callback {
+    public interface Callback {
         void onAuthenticated(ServerConfig server);
         void onResult(Result result);
     }
 
-    static final class Result {
-        enum Kind {
+    public static final class Result {
+        public enum Kind {
             ONLINE,
             OFFLINE_CACHE,
             ERROR,
@@ -147,9 +147,9 @@ public final class SessionRepository {
             PARSE_ERROR
         }
 
-        final Kind kind;
-        final JSONArray sessions;
-        final String message;
+        public final Kind kind;
+        public final JSONArray sessions;
+        public final String message;
 
         private Result(Kind kind, JSONArray sessions, String message) {
             this.kind = kind;

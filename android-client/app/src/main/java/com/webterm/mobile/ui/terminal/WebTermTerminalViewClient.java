@@ -9,7 +9,7 @@ import com.termux.view.TerminalViewClient;
 public final class WebTermTerminalViewClient implements TerminalViewClient {
     private final Host host;
 
-    WebTermTerminalViewClient(Host host) {
+    public WebTermTerminalViewClient(Host host) {
         this.host = host;
     }
 
@@ -44,7 +44,7 @@ public final class WebTermTerminalViewClient implements TerminalViewClient {
     @Override public void logStackTraceWithMessage(String tag, String message, Exception e) { android.util.Log.e(tag, message, e); }
     @Override public void logStackTrace(String tag, Exception e) { android.util.Log.e(tag, "stack trace", e); }
 
-    interface Host {
+    public interface Host {
         void onTerminalViewTapped();
         boolean readTerminalControlKey();
         void clearTerminalControlKey();

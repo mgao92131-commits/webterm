@@ -31,7 +31,7 @@ public final class WebTermApi {
         this.http = http;
     }
 
-    void login(String baseUrl, String cookie, String username, String password, LoginCallback callback) {
+    public void login(String baseUrl, String cookie, String username, String password, LoginCallback callback) {
         JSONObject login = new JSONObject();
         try {
             login.put("username", username);
@@ -83,7 +83,7 @@ public final class WebTermApi {
         });
     }
 
-    void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, LoginCallback callback) {
+    public void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, LoginCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("email", username);
@@ -122,7 +122,7 @@ public final class WebTermApi {
         });
     }
 
-    void refresh(String baseUrl, String cookie, LoginCallback callback) {
+    public void refresh(String baseUrl, String cookie, LoginCallback callback) {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/refresh")
             .header("Cookie", cookie != null ? cookie : "")
@@ -152,7 +152,7 @@ public final class WebTermApi {
         });
     }
 
-    void register(String baseUrl, String email, String username, String password, ExtendedLoginCallback callback) {
+    public void register(String baseUrl, String email, String username, String password, ExtendedLoginCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("email", email);
@@ -204,7 +204,7 @@ public final class WebTermApi {
         });
     }
 
-    void fetchDevices(String baseUrl, String cookie, SessionsCallback callback) {
+    public void fetchDevices(String baseUrl, String cookie, SessionsCallback callback) {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/devices")
             .header("Cookie", cookie != null ? cookie : "")
@@ -234,7 +234,7 @@ public final class WebTermApi {
         });
     }
 
-    void fetchSessions(ServerConfig server, SessionsCallback callback) {
+    public void fetchSessions(ServerConfig server, SessionsCallback callback) {
         Request.Builder builder = new Request.Builder()
             .url(server.getUrl() + "/api/sessions")
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
@@ -266,7 +266,7 @@ public final class WebTermApi {
         });
     }
 
-    void createSession(ServerConfig server, SessionCreateCallback callback) {
+    public void createSession(ServerConfig server, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("name", "Android");
@@ -303,7 +303,7 @@ public final class WebTermApi {
         });
     }
 
-    void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
+    public void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("name", "Android");
@@ -338,7 +338,7 @@ public final class WebTermApi {
         });
     }
 
-    void renameSession(ServerConfig server, String sessionId, String newName, SimpleCallback callback) {
+    public void renameSession(ServerConfig server, String sessionId, String newName, SimpleCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("name", newName);
@@ -355,7 +355,7 @@ public final class WebTermApi {
         http.newCall(builder.build()).enqueue(simpleCallback(callback, "Rename failed"));
     }
 
-    void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
+    public void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
         String apiSessionId = stripRelaySessionPrefix(sessionId);
         Request.Builder builder = new Request.Builder()
             .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
@@ -367,7 +367,7 @@ public final class WebTermApi {
         http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
 
-    void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
+    public void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
         String apiSessionId = stripRelaySessionPrefix(sessionId);
         Request.Builder builder = new Request.Builder()
             .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
@@ -380,7 +380,7 @@ public final class WebTermApi {
         http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
 
-    void postP2POffer(String baseUrl, String cookie, String deviceId, String sdp, P2POfferCallback callback) {
+    public void postP2POffer(String baseUrl, String cookie, String deviceId, String sdp, P2POfferCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("deviceId", deviceId);
@@ -423,7 +423,7 @@ public final class WebTermApi {
         });
     }
 
-    void postP2PIce(String baseUrl, String cookie, String deviceId, JSONObject candidate, SimpleCallback callback) {
+    public void postP2PIce(String baseUrl, String cookie, String deviceId, JSONObject candidate, SimpleCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("deviceId", deviceId);
@@ -442,7 +442,7 @@ public final class WebTermApi {
 
     // --- Device management ---
 
-    void registerDevice(String baseUrl, String cookie, String deviceName, DeviceCreateCallback callback) {
+    public void registerDevice(String baseUrl, String cookie, String deviceName, DeviceCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("deviceName", deviceName);
@@ -465,7 +465,7 @@ public final class WebTermApi {
         });
     }
 
-    void deleteDevice(String baseUrl, String cookie, String deviceId, SimpleCallback callback) {
+    public void deleteDevice(String baseUrl, String cookie, String deviceId, SimpleCallback callback) {
         delete(baseUrl + "/api/devices/" + deviceId, cookie, new RawCallback() {
             @Override
             public void onSuccess(JSONObject data) {
@@ -478,7 +478,7 @@ public final class WebTermApi {
         });
     }
 
-    void fetchTrustedDevices(String baseUrl, String cookie, TrustedDevicesCallback callback) {
+    public void fetchTrustedDevices(String baseUrl, String cookie, TrustedDevicesCallback callback) {
         getJSONArray(baseUrl + "/api/auth/devices", cookie, new RawArrayCallback() {
             @Override
             public void onSuccess(JSONArray data) {
@@ -491,7 +491,7 @@ public final class WebTermApi {
         });
     }
 
-    void deleteTrustedDevice(String baseUrl, String cookie, String trustedDeviceId, SimpleCallback callback) {
+    public void deleteTrustedDevice(String baseUrl, String cookie, String trustedDeviceId, SimpleCallback callback) {
         delete(baseUrl + "/api/auth/devices/" + trustedDeviceId, cookie, new RawCallback() {
             @Override
             public void onSuccess(JSONObject data) {

@@ -9,14 +9,14 @@ import android.view.animation.DecelerateInterpolator;
 
 public final class PageTransitionAnimator {
 
-    enum Transition {
+    public enum Transition {
         NONE,
         FORWARD,
         BACK,
         FADE
     }
 
-    static void animate(Activity activity, View newRoot, Transition transition) {
+    public static void animate(Activity activity, View newRoot, Transition transition) {
         if (newRoot == null) return;
         if (transition == Transition.NONE) { activity.setContentView(newRoot); return; }
 
@@ -79,7 +79,7 @@ public final class PageTransitionAnimator {
         oldRoot.setLayerType(View.LAYER_TYPE_NONE, null);
     }
 
-    static int dp(Activity activity, int value) {
+    public static int dp(Activity activity, int value) {
         return (int) (value * activity.getResources().getDisplayMetrics().density + 0.5f);
     }
 }

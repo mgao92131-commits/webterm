@@ -11,22 +11,22 @@ public final class TerminalConnectionStatusView {
     private ImageButton retryButton;
     private View reconnectOverlay;
 
-    TerminalConnectionStatusView() {
+    public TerminalConnectionStatusView() {
     }
 
-    void bind(StatusIndicatorView indicator, ImageButton retryButton, View reconnectOverlay) {
+    public void bind(StatusIndicatorView indicator, ImageButton retryButton, View reconnectOverlay) {
         this.indicator = indicator;
         this.retryButton = retryButton;
         this.reconnectOverlay = reconnectOverlay;
     }
 
-    void clear() {
+    public void clear() {
         indicator = null;
         retryButton = null;
         reconnectOverlay = null;
     }
 
-    void update(TerminalConnection.State state, int reconnectAttempts, boolean isP2P) {
+    public void update(TerminalConnection.State state, int reconnectAttempts, boolean isP2P) {
         if (indicator == null) return;
         switch (state) {
             case CONNECTED:

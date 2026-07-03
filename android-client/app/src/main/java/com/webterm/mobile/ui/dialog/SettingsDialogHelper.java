@@ -224,7 +224,7 @@ public final class SettingsDialogHelper {
         closeBtn.setOnClickListener((v) -> dialog.dismiss());
     }
 
-    interface Host {
+    public interface Host {
         Activity activity();
         int getSavedFontSize();
         String getSavedFontType();

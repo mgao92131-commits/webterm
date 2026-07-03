@@ -21,7 +21,7 @@ public final class WebSocketMuxTransport implements MuxTransport {
     private volatile boolean connected;
     private volatile boolean enabled;
 
-    WebSocketMuxTransport(OkHttpClient http, String wsUrl, String cookie, String subprotocol) {
+    public WebSocketMuxTransport(OkHttpClient http, String wsUrl, String cookie, String subprotocol) {
         this.muxHttp = http.newBuilder()
             .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
             .build();

@@ -15,11 +15,11 @@ public final class TerminalCacheCoordinator {
         diskCache = new TerminalDiskCache(filesDir);
     }
 
-    java.util.List<TerminalDiskCache.Metadata> getCachedSessionsForServer(ServerConfig server) {
+    public java.util.List<TerminalDiskCache.Metadata> getCachedSessionsForServer(ServerConfig server) {
         return diskCache.getCachedSessionsForServer(server);
     }
 
-    java.util.Map<String, CachedTerminal> getMemorySessionsForServer(ServerConfig server) {
+    public java.util.Map<String, CachedTerminal> getMemorySessionsForServer(ServerConfig server) {
         java.util.Map<String, CachedTerminal> result = new java.util.HashMap<>();
         for (CachedTerminal cached : memoryCache.values()) {
             if (TerminalCacheScope.matches(server, cached.baseUrl, cached.sessionId)) {
@@ -29,16 +29,16 @@ public final class TerminalCacheCoordinator {
         return result;
     }
 
-    CachedTerminal getMemory(String baseUrl, String sessionId, String instanceId, String createdAt) {
+    public CachedTerminal getMemory(String baseUrl, String sessionId, String instanceId, String createdAt) {
         String key = SessionIdentity.cacheKey(baseUrl, sessionId, instanceId, createdAt);
         return key.isEmpty() ? null : memoryCache.get(key);
     }
 
-    TerminalDiskCache.RestoreResult restore(String baseUrl, String sessionId, String instanceId, String createdAt) {
+    public TerminalDiskCache.RestoreResult restore(String baseUrl, String sessionId, String instanceId, String createdAt) {
         return diskCache.restore(baseUrl, sessionId, instanceId, createdAt);
     }
 
-    void saveCurrent(Snapshot snapshot) {
+    public void saveCurrent(Snapshot snapshot) {
         if (snapshot.baseUrl == null || snapshot.sessionId == null || snapshot.terminalSession == null) return;
         String key = SessionIdentity.cacheKey(snapshot.baseUrl, snapshot.sessionId, snapshot.instanceId, snapshot.createdAt);
         if (key.isEmpty()) return;
@@ -73,7 +73,7 @@ public final class TerminalCacheCoordinator {
         }
     }
 
-    boolean removeTerminal(String baseUrl, String sessionId, String currentBaseUrl, String currentSessionId, TerminalSession currentSession) {
+    public boolean removeTerminal(String baseUrl, String sessionId, String currentBaseUrl, String currentSessionId, TerminalSession currentSession) {
         boolean removedCurrent = sameServerSession(baseUrl, sessionId, currentBaseUrl, currentSessionId);
         java.util.List<String> keys = new java.util.ArrayList<>();
         String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
@@ -88,7 +88,7 @@ public final class TerminalCacheCoordinator {
         return removedCurrent;
     }
 
-    void removeMissingForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities, TerminalSession currentSession) {
+    public void removeMissingForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities, TerminalSession currentSession) {
         java.util.List<String> staleKeys = new java.util.ArrayList<>();
         for (java.util.Map.Entry<String, CachedTerminal> entry : memoryCache.entrySet()) {
             CachedTerminal cached = entry.getValue();
@@ -107,7 +107,7 @@ public final class TerminalCacheCoordinator {
         diskCache.clearMissingForServerAsync(server, liveSessionIdentities);
     }
 
-    void removeServer(ServerConfig server, TerminalSession currentSession) {
+    public void removeServer(ServerConfig server, TerminalSession currentSession) {
         java.util.List<String> keys = new java.util.ArrayList<>();
         for (java.util.Map.Entry<String, CachedTerminal> entry : memoryCache.entrySet()) {
             CachedTerminal cached = entry.getValue();
@@ -119,7 +119,7 @@ public final class TerminalCacheCoordinator {
         diskCache.clearServerAsync(server);
     }
 
-    void shutdown(TerminalSession currentSession) {
+    public void shutdown(TerminalSession currentSession) {
         for (CachedTerminal cached : memoryCache.values()) {
             finishIfInactive(cached, currentSession);
         }
@@ -146,19 +146,19 @@ public final class TerminalCacheCoordinator {
     }
 
     public static final class Snapshot {
-        String baseUrl;
-        String cookie;
-        String sessionId;
-        String instanceId;
-        String termTitle;
-        String sessionName;
-        String cwd;
-        String createdAt;
-        TerminalSession terminalSession;
-        long lastSeq;
-        int columns;
-        int rows;
-        TerminalDiskCache.Metadata diskMetadata;
+        public String baseUrl;
+        public String cookie;
+        public String sessionId;
+        public String instanceId;
+        public String termTitle;
+        public String sessionName;
+        public String cwd;
+        public String createdAt;
+        public TerminalSession terminalSession;
+        public long lastSeq;
+        public int columns;
+        public int rows;
+        public TerminalDiskCache.Metadata diskMetadata;
     }
 
 }

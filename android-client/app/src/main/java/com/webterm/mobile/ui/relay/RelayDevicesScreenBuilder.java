@@ -54,14 +54,14 @@ public final class RelayDevicesScreenBuilder {
         void onError(String message);
     }
 
-    static final class RelayDevicesScreen {
-        final LinearLayout root;
-        final Runnable refresh;
-        final LinearLayout agentDeviceList;
-        final LinearLayout trustedDeviceList;
-        final TextView errorText;
+    public static final class RelayDevicesScreen {
+        public final LinearLayout root;
+        public final Runnable refresh;
+        public final LinearLayout agentDeviceList;
+        public final LinearLayout trustedDeviceList;
+        public final TextView errorText;
 
-        RelayDevicesScreen(LinearLayout root, Runnable refresh,
+        public RelayDevicesScreen(LinearLayout root, Runnable refresh,
                            LinearLayout agentDeviceList, LinearLayout trustedDeviceList,
                            TextView errorText) {
             this.root = root;

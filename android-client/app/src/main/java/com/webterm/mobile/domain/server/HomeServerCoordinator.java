@@ -84,11 +84,11 @@ public final class HomeServerCoordinator {
     }
 
     @AssistedFactory
-    interface Factory {
+    public interface Factory {
         HomeServerCoordinator create(Activity activity, Listener listener);
     }
 
-    void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {
+    public void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {
         this.sessionAdapter = sessionAdapter;
         if (sessionAdapter != null) {
             sessionAdapter.setCollapseState(new SessionRecyclerAdapter.CollapseState() {
@@ -110,7 +110,7 @@ public final class HomeServerCoordinator {
         }
     }
 
-    void loadDeviceSessions(ServerConfig server, StatusIndicatorView status) {
+    public void loadDeviceSessions(ServerConfig server, StatusIndicatorView status) {
         refreshScheduler.reset();
         if (sessionAdapter == null || server == null) return;
         Map<String, JSONArray> tempInMemorySessions = collectInMemorySessions();
@@ -163,7 +163,7 @@ public final class HomeServerCoordinator {
         refreshScheduler.scheduleInitial();
     }
 
-    void resume() {
+    public void resume() {
         for (ServerGroupController holder : activeGroups) {
             connectManagerWS(holder);
         }
@@ -171,17 +171,17 @@ public final class HomeServerCoordinator {
         refreshScheduler.scheduleInitial();
     }
 
-    void pauseUi() {
+    public void pauseUi() {
         sessionLoadGeneration++;
         refreshScheduler.cancel();
     }
 
-    void detach() {
+    public void detach() {
         pauseUi();
         detachGroups();
     }
 
-    void destroy() {
+    public void destroy() {
         detach();
         sessionAdapter = null;
     }
@@ -392,7 +392,7 @@ public final class HomeServerCoordinator {
             && RelayMuxSessionManager.safeEquals(a.getDeviceId(), b.getDeviceId());
     }
 
-    interface Listener {
+    public interface Listener {
         boolean isHomeActive();
         boolean isServerContextActive(ServerConfig server);
         void onAuthenticated(ServerConfig server);

@@ -5,7 +5,7 @@ import com.webterm.mobile.data.config.ServerConfig;
 public final class TerminalCacheScope {
     private TerminalCacheScope() {}
 
-    static String key(ServerConfig server) {
+    public static String key(ServerConfig server) {
         if (server == null) return "";
         String base = WebTermUrls.normalizeBaseUrl(server.getUrl());
         if (isRelayDevice(server)) {
@@ -14,7 +14,7 @@ public final class TerminalCacheScope {
         return base;
     }
 
-    static boolean matches(ServerConfig server, String baseUrl, String sessionId) {
+    public static boolean matches(ServerConfig server, String baseUrl, String sessionId) {
         if (server == null) return false;
         if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(baseUrl))) return false;
         if (!isRelayDevice(server)) return true;

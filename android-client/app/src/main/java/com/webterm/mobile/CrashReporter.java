@@ -38,7 +38,7 @@ public final class CrashReporter {
         });
     }
 
-    static String readLatestCrash(Context context) {
+    public static String readLatestCrash(Context context) {
         File latest = latestCrashFile(context);
         if (latest == null) return null;
         try {

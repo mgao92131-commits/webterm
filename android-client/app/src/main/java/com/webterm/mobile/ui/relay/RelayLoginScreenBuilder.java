@@ -30,11 +30,11 @@ public final class RelayLoginScreenBuilder {
         void onError(String message);
     }
 
-    static final class RelayLoginScreen {
-        final LinearLayout root;
-        final Runnable onDetach;
+    public static final class RelayLoginScreen {
+        public final LinearLayout root;
+        public final Runnable onDetach;
 
-        RelayLoginScreen(LinearLayout root, Runnable onDetach) {
+        public RelayLoginScreen(LinearLayout root, Runnable onDetach) {
             this.root = root;
             this.onDetach = onDetach;
         }

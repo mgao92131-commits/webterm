@@ -23,11 +23,11 @@ import androidx.recyclerview.widget.RecyclerView;
 public final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-    static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
+    public static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
         return buildTopLevel(activity, "WebTerm", "设备列表", onAddServer, onSettings, onRefresh, onRelaySettings, onCrashLogs);
     }
 
-    static DeviceSessionsResult buildDeviceSessions(
+    public static DeviceSessionsResult buildDeviceSessions(
         Activity activity,
         ServerConfig server,
         Runnable onBack,
@@ -224,7 +224,7 @@ public final class HomeScreenBuilder {
         return result;
     }
 
-    static TextView emptyState(Activity activity) {
+    public static TextView emptyState(Activity activity) {
         TextView empty = new TextView(activity);
         empty.setText("暂无保存的电脑\n点击右上角按钮添加电脑");
         empty.setTextColor(DesignTokens.TEXT_TERTIARY);
@@ -234,7 +234,7 @@ public final class HomeScreenBuilder {
         return empty;
     }
 
-    static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick, Runnable onEditServer, Runnable onRemoveServer) {
+    public static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick, Runnable onEditServer, Runnable onRemoveServer) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
@@ -330,16 +330,16 @@ public final class HomeScreenBuilder {
         return bg;
     }
 
-    static final class HomeResult {
-        LinearLayout root;
-        LinearLayout sessionList;
-        TextView subtitle;
-        StatusIndicatorView homeStatus;
+    public static final class HomeResult {
+        public LinearLayout root;
+        public LinearLayout sessionList;
+        public TextView subtitle;
+        public StatusIndicatorView homeStatus;
     }
 
-    static final class DeviceSessionsResult {
-        LinearLayout root;
-        RecyclerView sessionList;
-        StatusIndicatorView status;
+    public static final class DeviceSessionsResult {
+        public LinearLayout root;
+        public RecyclerView sessionList;
+        public StatusIndicatorView status;
     }
 }

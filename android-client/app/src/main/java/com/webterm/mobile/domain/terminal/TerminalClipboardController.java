@@ -27,11 +27,11 @@ public final class TerminalClipboardController {
     }
 
     @AssistedFactory
-    interface Factory {
+    public interface Factory {
         TerminalClipboardController create(Activity activity, WebTermTerminalViewClient.Host controlKeyHost);
     }
 
-    void copy(String text) {
+    public void copy(String text) {
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
         if (clipboard != null) {
             clipboard.setPrimaryClip(ClipData.newPlainText("terminal", text));
@@ -39,7 +39,7 @@ public final class TerminalClipboardController {
         }
     }
 
-    void paste(TerminalSession session) {
+    public void paste(TerminalSession session) {
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
         if (clipboard == null || !clipboard.hasPrimaryClip() || session == null) return;
         CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(activity);

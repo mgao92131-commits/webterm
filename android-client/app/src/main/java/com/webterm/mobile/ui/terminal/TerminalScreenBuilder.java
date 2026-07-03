@@ -27,7 +27,7 @@ import com.termux.view.TerminalViewClient;
 public final class TerminalScreenBuilder {
     private TerminalScreenBuilder() {}
 
-    static Result build(
+    public static Result build(
         Activity activity,
         String headerTitle,
         String headerSubtitle,
@@ -299,26 +299,26 @@ public final class TerminalScreenBuilder {
         return new RippleDrawable(colorStateList, content, mask);
     }
 
-    interface TextSender {
+    public interface TextSender {
         void send(String text);
     }
 
-    static void updateCtrlButtonState(Activity activity, Button ctrlButton, boolean active) {
+    public static void updateCtrlButtonState(Activity activity, Button ctrlButton, boolean active) {
         if (ctrlButton != null) {
             ctrlButton.setBackground(quickBarButtonBackground(activity, active));
         }
     }
 
-    static final class Result {
-        LinearLayout root;
-        TerminalView terminalView;
-        View terminalViewport;
-        View quickBar;
-        TextView title;
-        TextView subtitle;
-        ImageButton retryButton;
-        StatusIndicatorView statusIndicator;
-        Button ctrlButton;
-        View reconnectOverlay;
+    public static final class Result {
+        public LinearLayout root;
+        public TerminalView terminalView;
+        public View terminalViewport;
+        public View quickBar;
+        public TextView title;
+        public TextView subtitle;
+        public ImageButton retryButton;
+        public StatusIndicatorView statusIndicator;
+        public Button ctrlButton;
+        public View reconnectOverlay;
     }
 }

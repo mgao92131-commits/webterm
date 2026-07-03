@@ -20,7 +20,7 @@ public final class SessionCommandController {
         this.listener = listener;
     }
 
-    void createSessionOnServer(ServerConfig server) {
+    public void createSessionOnServer(ServerConfig server) {
         api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
@@ -59,7 +59,7 @@ public final class SessionCommandController {
         });
     }
 
-    void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
+    public void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
         RenameSessionDialogHelper.show(() -> activity, oldName, (newName, dialog) -> {
             api.renameSession(server, sessionId, newName, new WebTermApi.SimpleCallback() {
                 @Override
@@ -81,7 +81,7 @@ public final class SessionCommandController {
         });
     }
 
-    void showCloseConfirmDialog(ServerConfig server, String sessionId) {
+    public void showCloseConfirmDialog(ServerConfig server, String sessionId) {
         AlertDialog dialog = new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
@@ -105,7 +105,7 @@ public final class SessionCommandController {
         dialog.show();
     }
 
-    void deleteCurrentSession(String baseUrl, String cookie, String sessionId) {
+    public void deleteCurrentSession(String baseUrl, String cookie, String sessionId) {
         if (baseUrl == null || cookie == null) return;
         api.deleteSession(baseUrl, cookie, sessionId, new WebTermApi.SimpleCallback() {
             @Override
@@ -144,7 +144,7 @@ public final class SessionCommandController {
         });
     }
 
-    interface Listener {
+    public interface Listener {
         void onAuthenticated(ServerConfig server);
         void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);

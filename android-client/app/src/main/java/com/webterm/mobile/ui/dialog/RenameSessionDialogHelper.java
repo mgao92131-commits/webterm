@@ -15,7 +15,7 @@ import com.webterm.mobile.ui.common.UIUtils;
 public final class RenameSessionDialogHelper {
     private RenameSessionDialogHelper() {}
 
-    static void show(ActivityHost host, String oldName, SubmitCallback callback) {
+    public static void show(ActivityHost host, String oldName, SubmitCallback callback) {
         AlertDialog.Builder builder = new AlertDialog.Builder(host.activity());
 
         LinearLayout container = new LinearLayout(host.activity());
@@ -98,11 +98,11 @@ public final class RenameSessionDialogHelper {
         });
     }
 
-    interface ActivityHost {
+    public interface ActivityHost {
         android.app.Activity activity();
     }
 
-    interface SubmitCallback {
+    public interface SubmitCallback {
         void onSubmit(String newName, AlertDialog dialog);
     }
 }

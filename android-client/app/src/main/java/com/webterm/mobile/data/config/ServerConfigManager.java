@@ -11,20 +11,20 @@ public final class ServerConfigManager {
         this.store = store;
     }
 
-    void load() {
+    public void load() {
         servers.clear();
         servers.addAll(store.loadServers());
     }
 
-    void save() {
+    public void save() {
         store.saveServers(servers);
     }
 
-    List<ServerConfig> servers() {
+    public List<ServerConfig> servers() {
         return servers;
     }
 
-    void addOrUpdate(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
+    public void addOrUpdate(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
         if (existingServer == null) {
             servers.add(new ServerConfig(
                 "srv_" + System.currentTimeMillis(),
@@ -44,7 +44,7 @@ public final class ServerConfigManager {
         existingServer.setPassword(password);
     }
 
-    void remove(ServerConfig server) {
+    public void remove(ServerConfig server) {
         servers.remove(server);
     }
 }
