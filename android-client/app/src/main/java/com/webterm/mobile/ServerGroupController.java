@@ -11,6 +11,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class ServerGroupController {
     private static final String TAG = "ServerGroupController";
 
@@ -26,13 +30,32 @@ final class ServerGroupController {
     private ServerSessionMonitor monitor;
     private volatile JSONArray lastSessions;
 
-    ServerGroupController(Activity activity, RelayMuxSessionRegistry relayMuxRegistry, ServerConfig server, LinearLayout subList, StatusIndicatorView status, Listener listener) {
+    @AssistedInject
+    ServerGroupController(
+        @Assisted Activity activity,
+        RelayMuxSessionRegistry relayMuxRegistry,
+        @Assisted ServerConfig server,
+        @Assisted LinearLayout subList,
+        @Assisted StatusIndicatorView status,
+        @Assisted Listener listener
+    ) {
         this.activity = activity;
         this.relayMuxRegistry = relayMuxRegistry;
         this.server = server;
         this.subList = subList;
         this.status = status;
         this.listener = listener;
+    }
+
+    @AssistedFactory
+    interface Factory {
+        ServerGroupController create(
+            Activity activity,
+            ServerConfig server,
+            LinearLayout subList,
+            StatusIndicatorView status,
+            Listener listener
+        );
     }
 
     void start() {

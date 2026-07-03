@@ -7,13 +7,26 @@ import android.widget.Toast;
 
 import com.termux.terminal.TerminalSession;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class TerminalClipboardController {
     private final Activity activity;
     private final WebTermTerminalViewClient.Host controlKeyHost;
 
-    TerminalClipboardController(Activity activity, WebTermTerminalViewClient.Host controlKeyHost) {
+    @AssistedInject
+    TerminalClipboardController(
+        @Assisted Activity activity,
+        @Assisted WebTermTerminalViewClient.Host controlKeyHost
+    ) {
         this.activity = activity;
         this.controlKeyHost = controlKeyHost;
+    }
+
+    @AssistedFactory
+    interface Factory {
+        TerminalClipboardController create(Activity activity, WebTermTerminalViewClient.Host controlKeyHost);
     }
 
     void copy(String text) {

@@ -12,6 +12,10 @@ import com.termux.view.TerminalView;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class TerminalLifecycleController {
     private static final int TRANSCRIPT_ROWS = 10000;
 
@@ -37,16 +41,17 @@ final class TerminalLifecycleController {
     private boolean ctrlDown;
     private WebTermTerminalSessionClient activeSessionClient;
 
+    @AssistedInject
     TerminalLifecycleController(
-        Activity activity,
-        Host host,
-        TerminalRuntimeState terminalState,
-        AtomicBoolean closed,
-        TerminalConnectionStatusView connectionStatus,
+        @Assisted Activity activity,
+        @Assisted Host host,
+        @Assisted TerminalRuntimeState terminalState,
+        @Assisted AtomicBoolean closed,
+        @Assisted TerminalConnectionStatusView connectionStatus,
         TerminalCacheCoordinator terminalCache,
-        TerminalConnection terminalConnection,
-        TerminalTitleSynchronizer titleSynchronizer,
-        SessionCommandController sessionCommands
+        @Assisted TerminalConnection terminalConnection,
+        @Assisted TerminalTitleSynchronizer titleSynchronizer,
+        @Assisted SessionCommandController sessionCommands
     ) {
         this.activity = activity;
         this.host = host;
@@ -57,6 +62,20 @@ final class TerminalLifecycleController {
         this.terminalConnection = terminalConnection;
         this.titleSynchronizer = titleSynchronizer;
         this.sessionCommands = sessionCommands;
+    }
+
+    @AssistedFactory
+    interface Factory {
+        TerminalLifecycleController create(
+            Activity activity,
+            Host host,
+            TerminalRuntimeState terminalState,
+            AtomicBoolean closed,
+            TerminalConnectionStatusView connectionStatus,
+            TerminalConnection terminalConnection,
+            TerminalTitleSynchronizer titleSynchronizer,
+            SessionCommandController sessionCommands
+        );
     }
 
     boolean hasSession() {

@@ -6,6 +6,10 @@ import android.widget.TextView;
 
 import com.termux.terminal.TerminalSession;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class TerminalTitleSynchronizer {
     private static final String TAG = "TerminalTitleSync";
     private static final int MAX_TERM_TITLE_CHARS = 256;
@@ -17,9 +21,15 @@ final class TerminalTitleSynchronizer {
     private String lastUploadedTitle = "";
     private String pendingTitle = "";
 
-    TerminalTitleSynchronizer(Handler mainHandler, ConnectionProvider connectionProvider) {
+    @AssistedInject
+    TerminalTitleSynchronizer(Handler mainHandler, @Assisted ConnectionProvider connectionProvider) {
         this.mainHandler = mainHandler;
         this.connectionProvider = connectionProvider;
+    }
+
+    @AssistedFactory
+    interface Factory {
+        TerminalTitleSynchronizer create(ConnectionProvider connectionProvider);
     }
 
     void onTitleChanged(TerminalSession session, TextView titleView) {

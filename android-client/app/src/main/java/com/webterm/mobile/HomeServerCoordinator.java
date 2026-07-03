@@ -13,6 +13,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class HomeServerCoordinator {
     private final Activity activity;
     private final RelayMuxSessionRegistry relayMuxRegistry;
@@ -27,14 +31,15 @@ final class HomeServerCoordinator {
     private SessionRecyclerAdapter sessionAdapter;
     private volatile int sessionLoadGeneration;
 
+    @AssistedInject
     HomeServerCoordinator(
-        Activity activity,
+        @Assisted Activity activity,
         Handler mainHandler,
         RelayMuxSessionRegistry relayMuxRegistry,
         WebTermApi api,
         TerminalCacheCoordinator terminalCache,
         Executor executor,
-        Listener listener
+        @Assisted Listener listener
     ) {
         this.activity = activity;
         this.relayMuxRegistry = relayMuxRegistry;
@@ -61,6 +66,11 @@ final class HomeServerCoordinator {
                 }
             }
         );
+    }
+
+    @AssistedFactory
+    interface Factory {
+        HomeServerCoordinator create(Activity activity, Listener listener);
     }
 
     void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {

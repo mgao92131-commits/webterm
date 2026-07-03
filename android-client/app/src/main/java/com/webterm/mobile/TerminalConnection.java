@@ -9,6 +9,10 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
+
 final class TerminalConnection {
     private static final String TAG = "TerminalConnection";
     private static final long RESIZE_DEBOUNCE_MS = 100L;
@@ -43,10 +47,16 @@ final class TerminalConnection {
 
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
-    TerminalConnection(Handler mainHandler, RelayMuxSessionRegistry relayMuxRegistry, Listener listener) {
+    @AssistedInject
+    TerminalConnection(Handler mainHandler, RelayMuxSessionRegistry relayMuxRegistry, @Assisted Listener listener) {
         this.mainHandler = mainHandler;
         this.relayMuxRegistry = relayMuxRegistry;
         this.listener = listener;
+    }
+
+    @AssistedFactory
+    interface Factory {
+        TerminalConnection create(Listener listener);
     }
 
     State getState() {
