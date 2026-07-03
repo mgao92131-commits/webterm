@@ -12,7 +12,7 @@
         v-for="(_, i) in 6"
         :key="i"
         :ref="(el) => { if (el) digitRefs[i] = el as HTMLInputElement }"
-        v-model="digits[i]"
+        :value="digits[i]"
         type="text"
         inputmode="numeric"
         pattern="[0-9]"
@@ -74,6 +74,7 @@ const emit = defineEmits<{
 
 const digits = ref<string[]>(['', '', '', '', '', '']);
 const digitRefs = ref<(HTMLInputElement | null)[]>(Array(6).fill(null));
+let pasteGuard = false;
 const errorMessage = ref('');
 const verifying = ref(false);
 const resending = ref(false);
@@ -109,8 +110,22 @@ function focusPrev(fromIndex: number) {
 }
 
 function onDigitInput(index: number, event: Event) {
+  if (pasteGuard) return;
+
   const input = event.target as HTMLInputElement;
   const val = input.value.replace(/\D/g, '');
+
+  // 兼容多字符输入：直接粘贴、自动填充或某些 IME 一次性输入多位数字
+  if (val.length > 1) {
+    const chunk = val.slice(0, 6 - index);
+    for (let i = 0; i < chunk.length; i++) {
+      digits.value[index + i] = chunk[i];
+    }
+    const nextEmpty = digits.value.findIndex(d => d === '');
+    digitRefs.value[nextEmpty >= 0 ? nextEmpty : 5]?.focus();
+    return;
+  }
+
   if (val.length > 0) {
     digits.value[index] = val[val.length - 1];
     if (index < 5) focusNext(index);
@@ -132,15 +147,28 @@ function onDigitKeydown(index: number, event: KeyboardEvent) {
 }
 
 function onPaste(event: ClipboardEvent) {
+  pasteGuard = true;
   event.preventDefault();
+
   const pasted = event.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 6) || '';
+  if (!pasted) {
+    pasteGuard = false;
+    return;
+  }
+
   for (let i = 0; i < 6; i++) {
     digits.value[i] = pasted[i] || '';
   }
-  // Focus the next empty or last
+
+  // 聚焦到下一个为空的输入框，或者最后一个
   const nextEmpty = digits.value.findIndex(d => d === '');
   const target = nextEmpty >= 0 ? nextEmpty : 5;
   digitRefs.value[target]?.focus();
+
+  // 当前事件栈处理完毕后再解除 guard，避免浏览器仍派发的 input 事件覆盖已填充的值
+  requestAnimationFrame(() => {
+    pasteGuard = false;
+  });
 }
 
 async function handleSubmit() {

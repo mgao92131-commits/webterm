@@ -51,6 +51,10 @@ export class TerminalSessionContext implements IDisposable {
   public selectionController!: TerminalSelectionController;
 
   private ws: WebSocket | RelayMuxChannel | null = null;
+  // 每条连接自己的监听器容器：换连接时整体丢弃，避免旧连接的监听器残留
+  private wsDisposables: DisposableStore | null = null;
+  // 连接代际（号码牌）：拨新连接时 +1。旧连接迟到的 close 事件靠它识别并忽略
+  private wsGeneration = 0;
   private reconnectTimer: any = null;
   private reconnectAttempts = 0;
   private manualClose = false;
@@ -185,6 +189,16 @@ export class TerminalSessionContext implements IDisposable {
       return;
     }
 
+    // 清理上一条连接：解绑它的监听器并关闭，避免旧连接迟到的 close 事件回调误把新连接指针抹空
+    if (this.wsDisposables) {
+      this.wsDisposables.dispose();
+      this.wsDisposables = null;
+    }
+    if (this.ws) {
+      try { (this.ws as any).close(); } catch (e) {}
+      this.ws = null;
+    }
+
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     this.manualClose = false;
 
@@ -206,7 +220,11 @@ export class TerminalSessionContext implements IDisposable {
       this.ws = new WebSocket(wsUrl);
     }
 
-    this.disposables.addEventListener(this.ws, 'open', () => {
+    // 本条连接专属的监听器容器 + 代际号码牌
+    const gen = ++this.wsGeneration;
+    this.wsDisposables = new DisposableStore();
+
+    this.wsDisposables.addEventListener(this.ws, 'open', () => {
       this.lastCloseCode = null;
       this.reconnectAttempts = 0;
       this.clearReconnect();
@@ -224,7 +242,7 @@ export class TerminalSessionContext implements IDisposable {
       this.layoutController?.sendResize({ reason: 'ws-open' });
     });
 
-    this.disposables.addEventListener(this.ws, 'message', (event: any) => {
+    this.wsDisposables.addEventListener(this.ws, 'message', (event: any) => {
       let msg: any;
       if (this.binaryTransport && typeof event.data !== 'string') {
         msg = decodeTerminalMessage(event.data);
@@ -281,7 +299,15 @@ export class TerminalSessionContext implements IDisposable {
       }
     });
 
-    this.disposables.addEventListener(this.ws, 'close', (event: any) => {
+    this.wsDisposables.addEventListener(this.ws, 'close', (event: any) => {
+      // 旧连接迟到的 close：号码牌对不上，说明已经被新连接取代，直接忽略，不要去抹空 this.ws
+      if (gen !== this.wsGeneration) return;
+      // relay 模式下，底层 transport 掉线时 mux 会把 channel 置回 CONNECTING 并自动重连。
+      // 此时 close 不是"真死"，若清空 this.ws 自行重连，会与 mux 抢恢复、错过 channel 重新 open 的信号，
+      // 导致 hello 不再发送、画面乱序卡住。所以这里保持原样，交给 mux 恢复即可。
+      if (this.binaryTransport && this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        return;
+      }
       this.ws = null;
       this.lastCloseCode = typeof event.code === 'number' ? event.code : null;
       if (this.canReconnect()) {
@@ -314,9 +340,15 @@ export class TerminalSessionContext implements IDisposable {
 
   private ensureConnected() {
     if (!this.canReconnect()) return;
-    if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
-      this.connectWS();
+    // 已有可用连接（已连上或正在连），不重复拨号
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
+      return;
     }
+    // 已经排了重连闹钟，就让它来连，避免每次按键/可见性切换都抢着重拨、触发服务端全量回放
+    if (this.reconnectTimer) {
+      return;
+    }
+    this.connectWS();
   }
 
   private scheduleReconnect() {
@@ -324,6 +356,10 @@ export class TerminalSessionContext implements IDisposable {
     const cap = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts++), 8000);
     const delay = Math.max(200, Math.random() * cap);
     this.reconnectTimer = setTimeout(() => {
+      // 闹钟响了，但如果在这期间已经有人把连接重建好（且正在通），就不要再掐掉重拨
+      if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
       this.ws = null;
       this.ensureConnected();
     }, delay);
@@ -626,6 +662,10 @@ export class TerminalSessionContext implements IDisposable {
   public dispose() {
     this.manualClose = true;
     this.clearReconnect();
+    if (this.wsDisposables) {
+      this.wsDisposables.dispose();
+      this.wsDisposables = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;

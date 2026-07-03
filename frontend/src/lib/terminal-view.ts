@@ -44,12 +44,22 @@ export class TerminalView implements IDisposable {
         let addonDisposable: IDisposable | null = null;
         const contextLossDisposable = this.disposables.add(webglAddon.onContextLoss(() => {
           console.warn("WebGL context lost, disposing WebGL addon");
-          if (addonDisposable) {
-            addonDisposable.dispose();
-            addonDisposable = null;
+          try {
+            if (addonDisposable) {
+              addonDisposable.dispose();
+              addonDisposable = null;
+            }
+          } catch (e) {
+            console.warn("Failed to dispose WebGL addon on context loss", e);
           }
           if (contextLossDisposable) {
             contextLossDisposable.dispose();
+          }
+          // 卸载 WebGL 后会回退到 canvas 渲染器，必须主动重绘一次，否则画面会空白/定格
+          try {
+            this.refreshAll();
+          } catch (e) {
+            console.warn("Failed to refresh terminal after WebGL context loss", e);
           }
         }));
         addonDisposable = this.disposables.add(webglAddon);
