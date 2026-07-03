@@ -5,7 +5,7 @@ import android.widget.TextView;
 
 import androidx.lifecycle.Observer;
 
-import com.webterm.mobile.domain.relay.RelayService;
+import com.webterm.core.relay.RelayService;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
 
 import org.json.JSONArray;
