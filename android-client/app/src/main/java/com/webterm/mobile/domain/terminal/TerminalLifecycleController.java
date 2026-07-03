@@ -7,9 +7,9 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.TextView;
 
-import com.webterm.mobile.data.cache.CachedTerminal;
-import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
-import com.webterm.mobile.data.cache.TerminalDiskCache;
+import com.webterm.core.cache.CachedTerminal;
+import com.webterm.core.cache.TerminalCacheCoordinator;
+import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.mobile.domain.command.SessionCommandController;
 import com.webterm.mobile.domain.session.SessionIdentity;
 import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;

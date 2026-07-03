@@ -11,7 +11,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.webterm.mobile.data.cache.TerminalCacheScope;
+import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.domain.session.SessionIdentity;
 import com.webterm.mobile.ui.common.DesignTokens;

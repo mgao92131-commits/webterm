@@ -6,11 +6,11 @@ import android.widget.LinearLayout;
 
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
-import com.webterm.mobile.data.cache.CachedSessionMapper;
-import com.webterm.mobile.data.cache.CachedTerminal;
-import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
-import com.webterm.mobile.data.cache.TerminalCacheScope;
-import com.webterm.mobile.data.cache.TerminalDiskCache;
+import com.webterm.core.cache.CachedSessionMapper;
+import com.webterm.core.cache.CachedTerminal;
+import com.webterm.core.cache.TerminalCacheCoordinator;
+import com.webterm.core.cache.TerminalCacheScope;
+import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.data.repository.SessionRepository;
 import com.webterm.mobile.domain.session.RelayMuxSessionManager;

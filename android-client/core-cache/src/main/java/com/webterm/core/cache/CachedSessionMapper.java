@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.cache;
+package com.webterm.core.cache;
 
 import org.json.JSONArray;
 import org.json.JSONException;

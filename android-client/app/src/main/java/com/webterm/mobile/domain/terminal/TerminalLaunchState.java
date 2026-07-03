@@ -1,7 +1,7 @@
 package com.webterm.mobile.domain.terminal;
 
-import com.webterm.mobile.data.cache.CachedTerminal;
-import com.webterm.mobile.data.cache.TerminalDiskCache;
+import com.webterm.core.cache.CachedTerminal;
+import com.webterm.core.cache.TerminalDiskCache;
 public final class TerminalLaunchState {
     final String headerTitle;
     final String headerSubtitle;

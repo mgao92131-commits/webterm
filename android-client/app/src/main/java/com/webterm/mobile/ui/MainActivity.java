@@ -17,7 +17,7 @@ import android.widget.Toast;
 import com.webterm.mobile.CrashReporter;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
-import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
+import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;

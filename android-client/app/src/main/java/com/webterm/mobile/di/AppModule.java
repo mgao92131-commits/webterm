@@ -4,7 +4,7 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
+import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.transport.api.TransportFactory;

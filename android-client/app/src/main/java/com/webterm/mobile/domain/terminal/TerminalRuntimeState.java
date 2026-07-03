@@ -2,8 +2,8 @@ package com.webterm.mobile.domain.terminal;
 
 import android.widget.TextView;
 
-import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
-import com.webterm.mobile.data.cache.TerminalDiskCache;
+import com.webterm.core.cache.TerminalCacheCoordinator;
+import com.webterm.core.cache.TerminalDiskCache;
 
 import com.termux.terminal.TerminalSession;
 

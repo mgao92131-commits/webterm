@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.cache;
+package com.webterm.core.cache;
 
 import android.util.Log;
 import com.webterm.core.api.WebTermUrls;

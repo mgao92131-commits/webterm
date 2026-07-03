@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.cache;
+package com.webterm.core.cache;
 
 import com.termux.terminal.TerminalSession;
 import com.webterm.core.api.WebTermUrls;
