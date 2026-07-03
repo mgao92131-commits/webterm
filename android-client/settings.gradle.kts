@@ -29,3 +29,4 @@ rootProject.name = "webterm"
 include(":app")
 include(":terminal-emulator")
 include(":terminal-view")
+include(":transport-api")

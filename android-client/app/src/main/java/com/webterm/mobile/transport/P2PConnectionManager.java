@@ -2,7 +2,7 @@ package com.webterm.mobile.transport;
 
 import com.webterm.mobile.data.api.WebTermApi;
 import com.webterm.mobile.data.api.WebTermUrls;
-import com.webterm.mobile.domain.session.MuxTransport;
+import com.webterm.transport.api.MuxTransport;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
 
 import android.content.Context;

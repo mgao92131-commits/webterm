@@ -1,7 +1,7 @@
 package com.webterm.mobile.di;
 
-import com.webterm.mobile.domain.session.MuxTransport;
-import com.webterm.mobile.domain.session.TransportFactory;
+import com.webterm.transport.api.MuxTransport;
+import com.webterm.transport.api.TransportFactory;
 import com.webterm.mobile.transport.P2PConnectionManager;
 import com.webterm.mobile.transport.WebSocketMuxTransport;
 

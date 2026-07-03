@@ -1,4 +1,4 @@
-package com.webterm.mobile.domain.session;
+package com.webterm.transport.api;
 
 public interface MuxTransport {
     interface Listener {

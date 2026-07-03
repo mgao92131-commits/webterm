@@ -52,6 +52,7 @@ android {
 
 dependencies {
   implementation(project(":terminal-view"))
+  implementation(project(":transport-api"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")

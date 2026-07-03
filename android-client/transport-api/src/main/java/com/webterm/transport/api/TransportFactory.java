@@ -1,4 +1,4 @@
-package com.webterm.mobile.domain.session;
+package com.webterm.transport.api;
 
 public interface TransportFactory {
     /** Create WebSocket transport, never null */

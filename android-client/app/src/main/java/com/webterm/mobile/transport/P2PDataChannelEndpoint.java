@@ -1,6 +1,6 @@
 package com.webterm.mobile.transport;
 
-import com.webterm.mobile.domain.session.MuxTransport;
+import com.webterm.transport.api.MuxTransport;
 
 import android.util.Log;
 
