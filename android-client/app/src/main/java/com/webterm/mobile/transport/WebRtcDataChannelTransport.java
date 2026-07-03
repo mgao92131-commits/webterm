@@ -44,4 +44,7 @@ public final class WebRtcDataChannelTransport implements MuxTransport {
         if (!isConnected()) return false;
         return endpoint.sendBinary(data);
     }
+
+    @Override
+    public boolean isP2P() { return true; }
 }

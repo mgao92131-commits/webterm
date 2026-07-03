@@ -94,7 +94,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     private TerminalClipboardController mClipboardController;
     private WebTermTerminalSessionClient mTerminalSessionClient;
     private TerminalLifecycleController mTerminalLifecycle;
-    private P2PConnectionManager mP2PConnectionManager;
+    @Inject P2PConnectionManager p2pManager;
 
     private LinearLayout mSessionList;
     private SessionRecyclerAdapter mSessionAdapter;
@@ -149,7 +149,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
         mTerminalConnection = terminalConnectionFactory.create(this);
-        mP2PConnectionManager = new P2PConnectionManager(this, http, mainHandler, new P2PConnectionManager.Listener() {
+        p2pManager.setListener(new P2PConnectionManager.Listener() {
             @Override public void onConnecting(String deviceId) {
             }
 
@@ -164,9 +164,6 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             @Override public void onError(String deviceId, String message) {
             }
         });
-        relayMuxRegistry.setTransportProvider((deviceId) ->
-            mP2PConnectionManager == null ? null : mP2PConnectionManager.getDataChannelTransport(deviceId)
-        );
         mTitleSynchronizer = terminalTitleFactory.create(() -> mTerminalConnection);
         mClipboardController = terminalClipboardFactory.create(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
@@ -241,7 +238,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             mTerminalLifecycle.closeTerminal(false);
         }
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
-        if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
+        if (p2pManager != null) p2pManager.disconnect();
         if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
         terminalCache.shutdown(mTerminalLifecycle.terminalSession());
         relayMuxRegistry.shutdown();
@@ -285,7 +282,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     private void showSessionHome(PageTransitionAnimator.Transition transition) {
         mTerminalLifecycle.closeTerminal(false);
-        if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
+        if (p2pManager != null) p2pManager.disconnect();
         if (mHomeCoordinator != null) {
             mHomeCoordinator.detach();
             mHomeCoordinator.attachSessionAdapter(null);
@@ -614,14 +611,14 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     private void startP2PIfRelayDevice(String baseUrl, String cookie, boolean relayDevice, String relayDeviceId) {
         if (!relayDevice || relayDeviceId == null || relayDeviceId.isEmpty()) return;
-        if (mP2PConnectionManager == null) return;
+        if (p2pManager == null) return;
         if (!configStore.isP2PEnabled()) return;
         if (mSelectedServer != null
             && relayDeviceId.equals(mSelectedServer.getDeviceId())
             && !mSelectedServer.isP2PEnabled()) {
             return;
         }
-        mP2PConnectionManager.connectToDevice(baseUrl, cookie, relayDeviceId);
+        p2pManager.connectToDevice(baseUrl, cookie, relayDeviceId);
     }
 
     // ── TerminalLifecycleController.Host ───────────────────────────

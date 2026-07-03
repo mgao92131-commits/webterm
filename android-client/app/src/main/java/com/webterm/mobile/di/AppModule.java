@@ -7,6 +7,7 @@ import android.os.Looper;
 import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
 import com.webterm.mobile.data.config.ServerConfigManager;
 import com.webterm.mobile.data.config.ServerConfigStore;
+import com.webterm.mobile.domain.session.TransportFactory;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -54,5 +55,11 @@ public class AppModule {
     @Singleton
     static Executor provideIoExecutor() {
         return Executors.newSingleThreadExecutor();
+    }
+
+    @Provides
+    @Singleton
+    static TransportFactory provideTransportFactory(DefaultTransportFactory impl) {
+        return impl;
     }
 }

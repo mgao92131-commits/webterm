@@ -18,4 +18,7 @@ public interface MuxTransport {
     boolean sendText(String text);
 
     boolean sendBinary(byte[] data);
+
+    /** Returns true if this transport is a P2P (WebRTC) connection. Default false. */
+    default boolean isP2P() { return false; }
 }

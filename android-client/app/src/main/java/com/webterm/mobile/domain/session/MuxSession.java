@@ -3,9 +3,6 @@ package com.webterm.mobile.domain.session;
 import android.os.Handler;
 import android.util.Log;
 
-import com.webterm.mobile.transport.WebRtcDataChannelTransport;
-import com.webterm.mobile.transport.WebSocketMuxTransport;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -14,15 +11,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-import okhttp3.OkHttpClient;
-
 /**
  * 客户端角色 mux：一条 /ws/sessions 连接（webterm.mux.v1 子协议）复用多个终端通道。
  * 通道由 ws-connect 建立；数据经 tunnel frame 收发。第一阶段仅用于 direct 路径。
  */
 public final class MuxSession {
     private static final String TAG = "MuxSession";
-    private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
 
     interface Listener {
         void onMuxConnected();
@@ -46,12 +40,7 @@ public final class MuxSession {
     // 待发 ws-connect 后等待 ws-connected 的回调登记（仅记录已发 connect 的 tunnelId）。
     private final Map<String, Boolean> pendingConnects = new HashMap<>();
 
-    @Deprecated
-    MuxSession(OkHttpClient http, Handler mainHandler, String wsUrl, String cookie, Listener listener) {
-        this(new WebSocketMuxTransport(http, wsUrl, cookie, MUX_SUBPROTOCOL), mainHandler, listener);
-    }
-
-    MuxSession(MuxTransport transport, Handler mainHandler, Listener listener) {
+    public MuxSession(MuxTransport transport, Handler mainHandler, Listener listener) {
         this.mainHandler = mainHandler;
         this.transport = transport;
         this.listener = listener;
@@ -78,7 +67,7 @@ public final class MuxSession {
     }
 
     boolean isP2PTransport() {
-        return transport instanceof WebRtcDataChannelTransport;
+        return transport.isP2P();
     }
 
     boolean sendWsConnect(String tunnelId, String path, String[] protocols) {

@@ -3,6 +3,7 @@ package com.webterm.mobile.transport;
 import com.webterm.mobile.data.api.WebTermApi;
 import com.webterm.mobile.data.api.WebTermUrls;
 import com.webterm.mobile.domain.session.MuxTransport;
+import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
 
 import android.content.Context;
 import android.os.Handler;
@@ -21,8 +22,14 @@ import org.webrtc.SessionDescription;
 
 import java.util.Collections;
 
+import javax.inject.Inject;
+import javax.inject.Provider;
+import javax.inject.Singleton;
+
+import dagger.hilt.android.qualifiers.ApplicationContext;
 import okhttp3.OkHttpClient;
 
+@Singleton
 public final class P2PConnectionManager {
     private static final String TAG = "P2PConnectionManager";
 
@@ -35,7 +42,8 @@ public final class P2PConnectionManager {
 
     private final Handler mainHandler;
     private final WebTermApi api;
-    private final Listener listener;
+    private final Provider<RelayMuxSessionRegistry> registryProvider;
+    private volatile Listener listener;
 
     private PeerConnectionFactory factory;
     private PeerConnection peerConnection;
@@ -47,11 +55,16 @@ public final class P2PConnectionManager {
     private boolean connected;
     private boolean disconnecting;
 
-    public P2PConnectionManager(Context context, OkHttpClient http, Handler mainHandler, Listener listener) {
+    @Inject
+    public P2PConnectionManager(@ApplicationContext Context context, OkHttpClient http, Handler mainHandler, Provider<RelayMuxSessionRegistry> registryProvider) {
         this.mainHandler = mainHandler;
         this.api = new WebTermApi(http);
-        this.listener = listener;
+        this.registryProvider = registryProvider;
         ensureFactory(context.getApplicationContext());
+    }
+
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
     public synchronized boolean isP2PActive(String deviceId) {

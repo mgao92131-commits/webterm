@@ -16,24 +16,21 @@ import okhttp3.OkHttpClient;
 public final class RelayMuxSessionRegistry {
     private final OkHttpClient http;
     private final Handler mainHandler;
+    private final TransportFactory transportFactory;
     private final Map<String, RelayMuxSessionManager> managers = new LinkedHashMap<>();
-    private RelayMuxSessionManager.TransportProvider transportProvider;
 
     @Inject
-    public RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler) {
+    public RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler, TransportFactory transportFactory) {
         this.http = http;
         this.mainHandler = mainHandler;
-    }
-
-    public synchronized void setTransportProvider(RelayMuxSessionManager.TransportProvider provider) {
-        transportProvider = provider;
+        this.transportFactory = transportFactory;
     }
 
     public synchronized RelayMuxSessionManager forDevice(String baseUrl, String cookie, String deviceId) {
         String key = key(baseUrl, cookie, deviceId);
         RelayMuxSessionManager manager = managers.get(key);
         if (manager == null) {
-            manager = new RelayMuxSessionManager(http, mainHandler, baseUrl, cookie, deviceId, () -> transportProvider);
+            manager = new RelayMuxSessionManager(http, mainHandler, baseUrl, cookie, deviceId, transportFactory);
             managers.put(key, manager);
         }
         return manager;
@@ -59,7 +56,6 @@ public final class RelayMuxSessionRegistry {
             manager.stop();
         }
         managers.clear();
-        transportProvider = null;
     }
 
     private static String key(String baseUrl, String cookie, String deviceId) {

@@ -4,11 +4,9 @@ import android.os.Handler;
 import android.util.Log;
 
 import com.webterm.mobile.data.api.WebTermUrls;
-import com.webterm.mobile.transport.WebSocketMuxTransport;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.function.Supplier;
 
 import okhttp3.OkHttpClient;
 
@@ -27,10 +25,6 @@ public final class RelayMuxSessionManager {
         default void onReconnectAttempt(int attempt) {}
     }
 
-    public interface TransportProvider {
-        MuxTransport createTransport(String deviceId);
-    }
-
     private static final class Channel {
         final String id;
         final String path;
@@ -47,7 +41,7 @@ public final class RelayMuxSessionManager {
 
     private final OkHttpClient http;
     private final Handler mainHandler;
-    private final Supplier<TransportProvider> transportProviderSupplier;
+    private final TransportFactory transportFactory;
     private final String baseUrl;
     private final String cookie;
     private final String deviceId;
@@ -55,10 +49,10 @@ public final class RelayMuxSessionManager {
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
 
-    RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, Supplier<TransportProvider> transportProviderSupplier) {
+    RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this.http = http;
         this.mainHandler = mainHandler;
-        this.transportProviderSupplier = transportProviderSupplier;
+        this.transportFactory = transportFactory;
         this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         this.cookie = cookie;
         this.deviceId = deviceId == null ? "" : deviceId;
@@ -67,16 +61,17 @@ public final class RelayMuxSessionManager {
 
     private MuxSession createMuxSession(int generation) {
         MuxTransport transport = null;
-        TransportProvider provider = transportProviderSupplier == null ? null : transportProviderSupplier.get();
-        if (provider != null) {
-            transport = provider.createTransport(deviceId);
+        if (transportFactory != null) {
+            transport = transportFactory.createDataChannel(deviceId);
         }
         if (transport == null) {
             String wsUrl = WebTermUrls.toWebSocketUrl(this.baseUrl) + "/ws/sessions";
             if (this.deviceId != null && !this.deviceId.isEmpty()) {
                 wsUrl += "?deviceId=" + WebTermUrls.encodePath(this.deviceId);
             }
-            transport = new WebSocketMuxTransport(http, wsUrl, cookie, MUX_SUBPROTOCOL);
+            transport = transportFactory != null
+                ? transportFactory.createWebSocket(wsUrl, cookie, MUX_SUBPROTOCOL)
+                : null;
             Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
         } else {
             Log.i(TAG, "using p2p transport for " + deviceId + " generation=" + generation);
