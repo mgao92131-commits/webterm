@@ -14,7 +14,6 @@ import (
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/relaycore"
-	"webterm/go-core/internal/session"
 )
 
 const (
@@ -29,10 +28,9 @@ type V2Client struct {
 	router  *application.SessionRouter
 	http    *HTTPProxy
 	p2p     *P2PHandler
+	streams *StreamMultiplexer
 
 	writeMu sync.Mutex
-	mu      sync.Mutex
-	ws      map[string]*relayStreamSocket
 }
 
 func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
@@ -41,11 +39,10 @@ func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
 		cfg:    cfg,
 		app:    application,
 		router: router,
-		ws:     make(map[string]*relayStreamSocket),
-		p2p:    make(map[string]*p2pPeer),
 	}
 	client.http = NewHTTPProxy(router, client)
 	client.p2p = NewP2PHandler(router, client)
+	client.streams = NewStreamMultiplexer(router, client)
 	return client
 }
 
@@ -143,11 +140,11 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 	case relaycore.FrameTypeHTTPChunk:
 		client.http.DeliverChunk(frame)
 	case relaycore.FrameTypeStreamOpen:
-		client.handleStreamOpen(ctx, conn, frame)
+		client.streams.OpenStream(ctx, conn, frame)
 	case relaycore.FrameTypeWSText, relaycore.FrameTypeWSBinary:
-		client.deliverWS(frame)
+		client.streams.DeliverWS(frame)
 	case relaycore.FrameTypeStreamClose, relaycore.FrameTypeStreamError:
-		client.closeWS(frame.StreamID, false)
+		client.streams.CloseStream(frame.StreamID, false)
 	case relaycore.FrameTypeP2POffer:
 		if err := client.p2p.AcceptOffer(ctx, conn, frame); err != nil {
 			payload, _ := json.Marshal(relaycore.P2PUnavailable{
@@ -157,47 +154,6 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 		}
 	case relaycore.FrameTypeP2PIce:
 		client.p2p.DeliverICE(frame)
-	}
-}
-
-func (client *V2Client) handleStreamOpen(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) {
-	var route relaycore.StreamRoute
-	if err := json.Unmarshal(frame.Payload, &route); err != nil {
-		client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte("invalid stream route")))
-		return
-	}
-	socket := newRelayStreamSocket(frame.StreamID, route.Subprotocol, client, conn)
-	start, err := client.router.RouteOpen(ctx, socket, route.Path, []string{route.Subprotocol})
-	if err != nil {
-		client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte(err.Error())))
-		return
-	}
-	client.mu.Lock()
-	client.ws[frame.StreamID] = socket
-	client.mu.Unlock()
-	if start != nil {
-		go start()
-	}
-}
-
-func (client *V2Client) deliverWS(frame relaycore.Frame) {
-	client.mu.Lock()
-	socket := client.ws[frame.StreamID]
-	client.mu.Unlock()
-	if socket == nil {
-		return
-	}
-	binary := frame.Type == relaycore.FrameTypeWSBinary
-	socket.Emit(frame.Payload, binary)
-}
-
-func (client *V2Client) closeWS(streamID string, notifyRemote bool) {
-	client.mu.Lock()
-	socket := client.ws[streamID]
-	delete(client.ws, streamID)
-	client.mu.Unlock()
-	if socket != nil {
-		socket.close(notifyRemote)
 	}
 }
 
@@ -219,89 +175,6 @@ func (client *V2Client) writeRaw(ctx context.Context, conn *websocket.Conn, data
 	client.writeMu.Lock()
 	defer client.writeMu.Unlock()
 	return conn.Write(writeCtx, websocket.MessageBinary, data)
-}
-
-type relayStreamSocket struct {
-	id       string
-	protocol string
-	client   *V2Client
-	conn     *websocket.Conn
-	incoming chan relayStreamMessage
-	done     chan struct{}
-	once     sync.Once
-}
-
-type relayStreamMessage struct {
-	messageType session.MessageType
-	payload     []byte
-}
-
-func newRelayStreamSocket(id string, protocolName string, client *V2Client, conn *websocket.Conn) *relayStreamSocket {
-	return &relayStreamSocket{
-		id:       id,
-		protocol: protocolName,
-		client:   client,
-		conn:     conn,
-		incoming: make(chan relayStreamMessage, 256),
-		done:     make(chan struct{}),
-	}
-}
-
-func (socket *relayStreamSocket) Read(ctx context.Context) (session.MessageType, []byte, error) {
-	select {
-	case <-ctx.Done():
-		return 0, nil, ctx.Err()
-	case <-socket.done:
-		return 0, nil, errors.New("relay stream socket closed")
-	case message := <-socket.incoming:
-		return message.messageType, message.payload, nil
-	}
-}
-
-func (socket *relayStreamSocket) Write(ctx context.Context, messageType session.MessageType, data []byte) error {
-	frameType := relaycore.FrameTypeWSText
-	if messageType == session.MessageBinary {
-		frameType = relaycore.FrameTypeWSBinary
-	}
-	frame := relaycore.NewFrame(frameType, socket.id, 0, data)
-	encoded, err := relaycore.EncodeFrame(frame)
-	if err != nil {
-		return err
-	}
-	return socket.client.writeRaw(ctx, socket.conn, encoded)
-}
-
-func (socket *relayStreamSocket) Close() error {
-	socket.close(true)
-	return nil
-}
-
-func (socket *relayStreamSocket) close(notifyRemote bool) {
-	socket.once.Do(func() {
-		close(socket.done)
-		socket.client.mu.Lock()
-		delete(socket.client.ws, socket.id)
-		socket.client.mu.Unlock()
-		if notifyRemote {
-			socket.client.writeFrame(context.Background(), socket.conn, relaycore.NewFrame(relaycore.FrameTypeStreamClose, socket.id, 0, nil))
-		}
-	})
-}
-
-func (socket *relayStreamSocket) Emit(payload []byte, binary bool) bool {
-	messageType := session.MessageText
-	if binary {
-		messageType = session.MessageBinary
-	}
-	select {
-	case <-socket.done:
-		return false
-	case socket.incoming <- relayStreamMessage{messageType: messageType, payload: payload}:
-		return true
-	default:
-		_ = socket.Close()
-		return false
-	}
 }
 
 func writeJSON(ctx context.Context, conn *websocket.Conn, value any) error {
@@ -329,4 +202,14 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func agentWebSocketURL(baseURL string) (string, error) {
+	u, err := urlParse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	u.Path = "/ws/agent"
+	u.RawQuery = ""
+	return u.String(), nil
 }
