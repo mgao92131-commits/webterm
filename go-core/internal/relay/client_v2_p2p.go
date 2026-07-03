@@ -13,32 +13,30 @@ import (
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/mux"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
 )
 
 const p2pAnswerGatherTimeout = 2 * time.Second
 
-type p2pPeer struct {
-	streamID string
-	pc       *webrtc.PeerConnection
-	cancel   context.CancelFunc
-	once     sync.Once
+// P2PHandler 处理 WebRTC P2P 信令。
+type P2PHandler struct {
+	router *application.SessionRouter
+	writer frameWriter
+	mu     sync.Mutex
+	peers  map[string]*p2pPeer
 }
 
-func (peer *p2pPeer) close() {
-	peer.once.Do(func() {
-		if peer.cancel != nil {
-			peer.cancel()
-		}
-		if peer.pc != nil {
-			_ = peer.pc.Close()
-		}
-	})
+func NewP2PHandler(router *application.SessionRouter, writer frameWriter) *P2PHandler {
+	return &P2PHandler{
+		router: router,
+		writer: writer,
+		peers:  make(map[string]*p2pPeer),
+	}
 }
 
-func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) error {
+// AcceptOffer 处理 P2P offer 帧，创建 PeerConnection 并返回 answer。
+func (h *P2PHandler) AcceptOffer(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) error {
 	if os.Getenv("WEBTERM_DISABLE_P2P") == "1" {
 		return fmt.Errorf("p2p disabled")
 	}
@@ -59,11 +57,11 @@ func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn
 
 	peerCtx, cancel := context.WithCancel(ctx)
 	peer := &p2pPeer{streamID: frame.StreamID, pc: pc, cancel: cancel}
-	client.storeP2PPeer(frame.StreamID, peer)
+	h.storePeer(frame.StreamID, peer)
 	cleanupOnError := true
 	defer func() {
 		if cleanupOnError {
-			client.removeP2PPeer(frame.StreamID, peer)
+			h.removePeer(frame.StreamID, peer)
 			peer.close()
 		}
 	}()
@@ -71,7 +69,7 @@ func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		switch state {
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
-			client.removeP2PPeer(frame.StreamID, peer)
+			h.removePeer(frame.StreamID, peer)
 			peer.close()
 		}
 	})
@@ -86,8 +84,8 @@ func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn
 		startMux := func() {
 			startMuxOnce.Do(func() {
 				muxSession := mux.Serve(socket, &mux.ServeOpts{
-					OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, path string, protocols []string) (func(), error) {
-						return mux.OpenSessionOrManager(ctx, client.app.Sessions(), vs, path, protocols)
+					OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
+						return mux.OpenSessionOrManager(ctx, h.router, vs, p, protos)
 					},
 				})
 				go func() {
@@ -96,9 +94,7 @@ func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn
 				}()
 			})
 		}
-		dc.OnOpen(func() {
-			startMux()
-		})
+		dc.OnOpen(func() { startMux() })
 		if dc.ReadyState() == webrtc.DataChannelStateOpen {
 			startMux()
 		}
@@ -130,46 +126,16 @@ func (client *V2Client) acceptP2POffer(ctx context.Context, conn *websocket.Conn
 	if err != nil {
 		return fmt.Errorf("encode p2p answer: %w", err)
 	}
-	client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PAnswer, frame.StreamID, 0, payload))
+	h.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PAnswer, frame.StreamID, 0, payload))
 	cleanupOnError = false
 	return nil
 }
 
-func (client *V2Client) storeP2PPeer(streamID string, peer *p2pPeer) {
-	client.mu.Lock()
-	old := client.p2p[streamID]
-	client.p2p[streamID] = peer
-	client.mu.Unlock()
-	if old != nil && old != peer {
-		old.close()
-	}
-}
-
-func (client *V2Client) removeP2PPeer(streamID string, peer *p2pPeer) {
-	client.mu.Lock()
-	if current := client.p2p[streamID]; current == peer {
-		delete(client.p2p, streamID)
-	}
-	client.mu.Unlock()
-}
-
-func (client *V2Client) closeAllP2P() {
-	client.mu.Lock()
-	peers := make([]*p2pPeer, 0, len(client.p2p))
-	for streamID, peer := range client.p2p {
-		delete(client.p2p, streamID)
-		peers = append(peers, peer)
-	}
-	client.mu.Unlock()
-	for _, peer := range peers {
-		peer.close()
-	}
-}
-
-func (client *V2Client) deliverP2PIce(frame relaycore.Frame) {
-	client.mu.Lock()
-	peer := client.p2p[frame.StreamID]
-	client.mu.Unlock()
+// DeliverICE 将 ICE candidate 帧投递到对应 peer。
+func (h *P2PHandler) DeliverICE(frame relaycore.Frame) {
+	h.mu.Lock()
+	peer := h.peers[frame.StreamID]
+	h.mu.Unlock()
 	if peer == nil || peer.pc == nil {
 		return
 	}
@@ -180,29 +146,54 @@ func (client *V2Client) deliverP2PIce(frame relaycore.Frame) {
 	_ = peer.pc.AddICECandidate(candidate)
 }
 
-func decodeP2PIceCandidate(payload []byte) (webrtc.ICECandidateInit, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &raw); err != nil {
-		return webrtc.ICECandidateInit{}, err
+// CloseAll 关闭所有活跃的 P2P 连接。
+func (h *P2PHandler) CloseAll() {
+	h.mu.Lock()
+	peers := make([]*p2pPeer, 0, len(h.peers))
+	for streamID, peer := range h.peers {
+		delete(h.peers, streamID)
+		peers = append(peers, peer)
 	}
-	if candidatePayload, ok := raw["candidate"]; ok {
-		var candidate webrtc.ICECandidateInit
-		if err := json.Unmarshal(candidatePayload, &candidate); err == nil && candidate.Candidate != "" {
-			return candidate, nil
+	h.mu.Unlock()
+	for _, peer := range peers {
+		peer.close()
+	}
+}
+
+func (h *P2PHandler) storePeer(streamID string, peer *p2pPeer) {
+	h.mu.Lock()
+	old := h.peers[streamID]
+	h.peers[streamID] = peer
+	h.mu.Unlock()
+	if old != nil && old != peer {
+		old.close()
+	}
+}
+
+func (h *P2PHandler) removePeer(streamID string, peer *p2pPeer) {
+	h.mu.Lock()
+	if current := h.peers[streamID]; current == peer {
+		delete(h.peers, streamID)
+	}
+	h.mu.Unlock()
+}
+
+type p2pPeer struct {
+	streamID string
+	pc       *webrtc.PeerConnection
+	cancel   context.CancelFunc
+	once     sync.Once
+}
+
+func (peer *p2pPeer) close() {
+	peer.once.Do(func() {
+		if peer.cancel != nil {
+			peer.cancel()
 		}
-		var candidateText string
-		if err := json.Unmarshal(candidatePayload, &candidateText); err == nil && candidateText != "" {
-			return webrtc.ICECandidateInit{Candidate: candidateText}, nil
+		if peer.pc != nil {
+			_ = peer.pc.Close()
 		}
-	}
-	var candidate webrtc.ICECandidateInit
-	if err := json.Unmarshal(payload, &candidate); err != nil {
-		return webrtc.ICECandidateInit{}, err
-	}
-	if candidate.Candidate == "" {
-		return webrtc.ICECandidateInit{}, errors.New("missing ice candidate")
-	}
-	return candidate, nil
+	})
 }
 
 type p2pDataChannelSocket struct {
@@ -277,4 +268,29 @@ func (socket *p2pDataChannelSocket) Close() error {
 		_ = socket.dc.Close()
 	})
 	return nil
+}
+
+func decodeP2PIceCandidate(payload []byte) (webrtc.ICECandidateInit, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return webrtc.ICECandidateInit{}, err
+	}
+	if candidatePayload, ok := raw["candidate"]; ok {
+		var candidate webrtc.ICECandidateInit
+		if err := json.Unmarshal(candidatePayload, &candidate); err == nil && candidate.Candidate != "" {
+			return candidate, nil
+		}
+		var candidateText string
+		if err := json.Unmarshal(candidatePayload, &candidateText); err == nil && candidateText != "" {
+			return webrtc.ICECandidateInit{Candidate: candidateText}, nil
+		}
+	}
+	var candidate webrtc.ICECandidateInit
+	if err := json.Unmarshal(payload, &candidate); err != nil {
+		return webrtc.ICECandidateInit{}, err
+	}
+	if candidate.Candidate == "" {
+		return webrtc.ICECandidateInit{}, errors.New("missing ice candidate")
+	}
+	return candidate, nil
 }

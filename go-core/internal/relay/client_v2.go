@@ -28,11 +28,11 @@ type V2Client struct {
 	app     *app.App
 	router  *application.SessionRouter
 	http    *HTTPProxy
+	p2p     *P2PHandler
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
 	ws      map[string]*relayStreamSocket
-	p2p     map[string]*p2pPeer
 }
 
 func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
@@ -45,6 +45,7 @@ func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
 		p2p:    make(map[string]*p2pPeer),
 	}
 	client.http = NewHTTPProxy(router, client)
+	client.p2p = NewP2PHandler(router, client)
 	return client
 }
 
@@ -118,7 +119,7 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn) er
 }
 
 func (client *V2Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
-	defer client.closeAllP2P()
+	defer client.p2p.CloseAll()
 	for {
 		messageType, data, err := conn.Read(ctx)
 		if err != nil {
@@ -148,9 +149,14 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 	case relaycore.FrameTypeStreamClose, relaycore.FrameTypeStreamError:
 		client.closeWS(frame.StreamID, false)
 	case relaycore.FrameTypeP2POffer:
-		client.handleP2POfferV2(ctx, conn, frame)
+		if err := client.p2p.AcceptOffer(ctx, conn, frame); err != nil {
+			payload, _ := json.Marshal(relaycore.P2PUnavailable{
+				Message: err.Error(),
+			})
+			client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PUnavailable, frame.StreamID, 0, payload))
+		}
 	case relaycore.FrameTypeP2PIce:
-		client.deliverP2PIce(frame)
+		client.p2p.DeliverICE(frame)
 	}
 }
 
@@ -192,15 +198,6 @@ func (client *V2Client) closeWS(streamID string, notifyRemote bool) {
 	client.mu.Unlock()
 	if socket != nil {
 		socket.close(notifyRemote)
-	}
-}
-
-func (client *V2Client) handleP2POfferV2(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) {
-	if err := client.acceptP2POffer(ctx, conn, frame); err != nil {
-		payload, _ := json.Marshal(relaycore.P2PUnavailable{
-			Message: err.Error(),
-		})
-		client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PUnavailable, frame.StreamID, 0, payload))
 	}
 }
 
