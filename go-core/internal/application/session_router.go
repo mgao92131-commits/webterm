@@ -9,19 +9,47 @@ import (
 	"net/url"
 	"strings"
 
-	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
 
+// MuxServeFunc 是 mux.Serve 的函数签名，用于避免 application → mux 的循环依赖。
+// 调用方（direct server / relay agent）负责传入 mux.Serve 的实际实现。
+type MuxServeFunc func(conn session.Socket, opts *MuxServeOpts) MuxSession
+
+// MuxSession 是 mux.Session 的接口抽象。
+type MuxSession interface {
+	Run(ctx context.Context) error
+}
+
+// MuxServeOpts 是 mux.ServeOpts 的类型投影。
+type MuxServeOpts struct {
+	OnOpen    func(ctx context.Context, vs MuxVirtualSocket, path string, protocols []string) (func(), error)
+	OnControl func(ctx context.Context, msg map[string]any)
+}
+
+// MuxVirtualSocket 是 mux.VirtualSocket 的接口抽象。
+type MuxVirtualSocket interface {
+	Read(ctx context.Context) (session.MessageType, []byte, error)
+	Write(ctx context.Context, messageType session.MessageType, data []byte) error
+	Close() error
+}
+
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager *session.Manager
+	manager  *session.Manager
+	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
 }
 
 func NewSessionRouter(manager *session.Manager) *SessionRouter {
 	return &SessionRouter{manager: manager}
+}
+
+// NewSessionRouterWithMux 创建带 mux 支持的 SessionRouter。
+// muxServe 应该是 mux.Serve 的实际实现，由调用方注入以避免循环依赖。
+func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc) *SessionRouter {
+	return &SessionRouter{manager: manager, muxServe: muxServe}
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -35,10 +63,10 @@ func (r *SessionRouter) RouteOpen(
 	clean := cleanPath(path)
 	switch {
 	case clean == "/ws/sessions":
-		if hasProtocol(protocols, protocol.MuxSubprotocol) {
-			muxSession := mux.Serve(socket, &mux.ServeOpts{
-				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
-					return mux.OpenSessionOrManager(ctx, r, vs, p, protos)
+		if r.muxServe != nil && hasProtocol(protocols, protocol.MuxSubprotocol) {
+			muxSession := r.muxServe(socket, &MuxServeOpts{
+				OnOpen: func(ctx context.Context, vs MuxVirtualSocket, p string, protos []string) (func(), error) {
+					return r.RouteOpen(ctx, vs, p, protos)
 				},
 			})
 			return func() {

@@ -13,6 +13,7 @@ import (
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 )
 
@@ -34,7 +35,7 @@ type V2Client struct {
 }
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
-	router := application.NewSessionRouter(appInstance.Sessions())
+	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter)
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,
