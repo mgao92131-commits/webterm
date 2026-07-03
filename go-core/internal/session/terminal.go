@@ -4,18 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	headlessterm "github.com/danielgatis/go-headless-term"
+
+	"webterm/go-core/internal/infrastructure/pty"
 )
 
 const (
@@ -49,8 +45,7 @@ type TerminalSession struct {
 	activeAt       time.Time
 	ring           *EventRing
 	screen         *ScreenState
-	pty            *os.File
-	cmd            *exec.Cmd
+	process        *pty.Process
 	clients        map[*Client]struct{}
 	onTitleChanged func()
 	titleChanged   bool
@@ -66,20 +61,12 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	if rows <= 0 {
 		rows = DefaultRows
 	}
-	cwd, err := validateCWD(options.CWD)
-	if err != nil {
-		return nil, err
-	}
-	command, args, err := shellCommand(options.Command)
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.Command(command, args...)
-	cmd.Dir = cwd
-	cmd.Env = buildEnv(os.Environ())
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
+
+	process, err := pty.Start(pty.Options{
+		CWD:     options.CWD,
+		Command: options.Command,
+		Cols:    cols,
+		Rows:    rows,
 	})
 	if err != nil {
 		return nil, err
@@ -104,17 +91,16 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		id:             options.ID,
 		instance:       randomID(),
 		name:           normalize(options.Name),
-		cwd:            cwd,
-		command:        strings.Join(append([]string{command}, args...), " "),
+		cwd:            process.CWD(),
+		command:        process.Command(),
 		status:         StatusRunning,
 		cols:           cols,
 		rows:           rows,
 		createdAt:      now,
 		activeAt:       now,
 		ring:           NewEventRing(0, 0),
-		screen:         NewScreenState(rows, cols, ptmx, titleProvider),
-		pty:            ptmx,
-		cmd:            cmd,
+		screen:         NewScreenState(rows, cols, process.PTY(), titleProvider),
+		process:        process,
 		clients:        make(map[*Client]struct{}),
 		onTitleChanged: options.OnTitle,
 	}
@@ -164,16 +150,12 @@ func (terminal *TerminalSession) Close() {
 	}
 	terminal.status = StatusClosed
 	terminal.touchLocked()
-	ptmx := terminal.pty
-	cmd := terminal.cmd
 	clients := terminal.clientSnapshotLocked()
 	terminal.mu.Unlock()
 
-	if ptmx != nil {
-		_ = ptmx.Close()
-	}
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+	if terminal.process != nil {
+		_ = terminal.process.Close()
+		terminal.process.Kill()
 	}
 	for _, client := range clients {
 		client.Close()
@@ -214,39 +196,25 @@ func (terminal *TerminalSession) LatestSeq() uint64 {
 
 func (terminal *TerminalSession) WriteInput(data []byte) error {
 	terminal.mu.Lock()
-	ptmx := terminal.pty
 	terminal.touchLocked()
 	terminal.mu.Unlock()
-	if ptmx == nil {
-		return errors.New("terminal is closed")
-	}
-	_, err := ptmx.Write(data)
+	_, err := terminal.process.Write(data)
 	return err
 }
 
 func (terminal *TerminalSession) Resize(cols int, rows int) error {
-	if cols < 10 || rows < 5 {
-		return nil
-	}
-	if cols > 500 {
-		cols = 500
-	}
-	if rows > 200 {
-		rows = 200
+	if err := terminal.process.Resize(cols, rows); err != nil {
+		return err
 	}
 	terminal.mu.Lock()
-	terminal.cols = cols
-	terminal.rows = rows
+	terminal.cols = terminal.process.Cols()
+	terminal.rows = terminal.process.Rows()
 	if terminal.screen != nil {
-		terminal.screen.Resize(rows, cols)
+		terminal.screen.Resize(terminal.rows, terminal.cols)
 	}
-	ptmx := terminal.pty
 	terminal.touchLocked()
 	terminal.mu.Unlock()
-	if ptmx == nil {
-		return nil
-	}
-	return pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	return nil
 }
 
 func (terminal *TerminalSession) Attach(client *Client) {
@@ -372,7 +340,7 @@ func (terminal *TerminalSession) ScreenDelta() ScreenDelta {
 func (terminal *TerminalSession) readLoop() {
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := terminal.pty.Read(buf)
+		n, err := terminal.process.Read(buf)
 		if n > 0 {
 			bytes := append([]byte(nil), buf[:n]...)
 			frame := terminal.PushOutput(bytes)
@@ -388,14 +356,7 @@ func (terminal *TerminalSession) readLoop() {
 }
 
 func (terminal *TerminalSession) waitLoop() {
-	if terminal.cmd == nil {
-		return
-	}
-	err := terminal.cmd.Wait()
-	code := 0
-	if err != nil {
-		code = 1
-	}
+	code, _ := terminal.process.Wait()
 	terminal.markClosed()
 	terminal.broadcastExit(code)
 }
@@ -468,69 +429,6 @@ func displayTitle(name string, termTitle string) string {
 
 func normalize(value string) string {
 	return strings.TrimSpace(value)
-}
-
-func validateCWD(cwd string) (string, error) {
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return "", err
-		}
-	}
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", fmt.Errorf("cwd does not exist or is not accessible: %s", abs)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("cwd is not a directory: %s", abs)
-	}
-	return abs, nil
-}
-
-func shellCommand(command string) (string, []string, error) {
-	if command != "" {
-		return command, nil, nil
-	}
-	if runtime.GOOS == "windows" {
-		if comspec := os.Getenv("ComSpec"); comspec != "" {
-			return comspec, nil, nil
-		}
-		return "cmd.exe", nil, nil
-	}
-	candidates := []string{os.Getenv("SHELL"), "/bin/zsh", "/bin/bash", "/bin/sh"}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil, nil
-		}
-	}
-	return "", nil, errors.New("no executable shell found")
-}
-
-func buildEnv(source []string) []string {
-	env := append([]string(nil), source...)
-	env = setEnv(env, "TERM", "xterm-256color")
-	env = setEnv(env, "COLORTERM", "truecolor")
-	env = setEnv(env, "WEBTERM", "1")
-	return env
-}
-
-func setEnv(env []string, key string, value string) []string {
-	prefix := key + "="
-	for i, item := range env {
-		if strings.HasPrefix(item, prefix) {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
 }
 
 func reverse(frames []EventFrame) {
