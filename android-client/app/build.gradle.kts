@@ -58,6 +58,7 @@ dependencies {
   implementation("androidx.recyclerview:recyclerview:1.4.0")
   implementation(libs.hilt.android)
   annotationProcessor(libs.hilt.compiler)
+  compileOnly("com.google.errorprone:error_prone_annotations:2.23.0")
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
 }

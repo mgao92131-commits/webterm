@@ -7,12 +7,14 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
 import androidx.annotation.Nullable;
 
 import org.json.JSONObject;
@@ -20,7 +22,14 @@ import org.json.JSONObject;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
+import dagger.hilt.android.AndroidEntryPoint;
+import okhttp3.OkHttpClient;
+
+import javax.inject.Inject;
+
+@AndroidEntryPoint
+
+public final class MainActivity extends ComponentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
 
     private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
 
@@ -28,7 +37,20 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private final TerminalRuntimeState mTerminalState = new TerminalRuntimeState();
     private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
 
-    private AppContainer mApp;
+    @Inject WebTermApi api;
+    @Inject RelayMuxSessionRegistry relayMuxRegistry;
+    @Inject TerminalCacheCoordinator terminalCache;
+    @Inject ServerConfigStore configStore;
+    @Inject ServerConfigManager serverConfigs;
+    @Inject Handler mainHandler;
+    @Inject OkHttpClient http;
+
+    @Inject TerminalLifecycleController.Factory terminalLifecycleFactory;
+    @Inject HomeServerCoordinator.Factory homeServerFactory;
+    @Inject TerminalConnection.Factory terminalConnectionFactory;
+    @Inject TerminalClipboardController.Factory terminalClipboardFactory;
+    @Inject TerminalTitleSynchronizer.Factory terminalTitleFactory;
+
     private boolean mInForeground = true;
     private TerminalConnection mTerminalConnection;
     private SessionCommandController mSessionCommands;
@@ -71,10 +93,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
         }
-        mApp = new AppContainer(this);
-        mNetworkRecoveryController = new NetworkRecoveryController(this, mApp.mainHandler(), this);
-        mRelayCoordinator = new RelayCoordinator(mApp.http(), mApp.mainHandler(), mApp.api(), this);
-        mSessionCommands = new SessionCommandController(this, mApp.api(), new SessionCommandController.Listener() {
+        mNetworkRecoveryController = new NetworkRecoveryController(this, mainHandler, this);
+        mRelayCoordinator = new RelayCoordinator(http, mainHandler, api, this);
+        mSessionCommands = new SessionCommandController(this, api, new SessionCommandController.Listener() {
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
@@ -92,50 +113,47 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             @Override
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
-        mTerminalConnection = new TerminalConnection(mApp.mainHandler(), mApp.relayMuxRegistry(), this);
-        mP2PConnectionManager = new P2PConnectionManager(this, mApp.http(), mApp.mainHandler(), new P2PConnectionManager.Listener() {
+        mTerminalConnection = terminalConnectionFactory.create(this);
+        mP2PConnectionManager = new P2PConnectionManager(this, http, mainHandler, new P2PConnectionManager.Listener() {
             @Override public void onConnecting(String deviceId) {
             }
 
             @Override public void onConnected(String deviceId) {
-                mApp.relayMuxRegistry().reconnectDevice(deviceId, "p2p connected");
+                relayMuxRegistry.reconnectDevice(deviceId, "p2p connected");
             }
 
             @Override public void onDisconnected(String deviceId, String reason) {
-                mApp.relayMuxRegistry().reconnectDevice(deviceId, "p2p disconnected: " + reason);
+                relayMuxRegistry.reconnectDevice(deviceId, "p2p disconnected: " + reason);
             }
 
             @Override public void onError(String deviceId, String message) {
             }
         });
-        mApp.relayMuxRegistry().setTransportProvider((deviceId) ->
+        relayMuxRegistry.setTransportProvider((deviceId) ->
             mP2PConnectionManager == null ? null : mP2PConnectionManager.getDataChannelTransport(deviceId)
         );
-        mTitleSynchronizer = new TerminalTitleSynchronizer(mApp.mainHandler(), () -> mTerminalConnection);
-        mClipboardController = new TerminalClipboardController(this, this);
+        mTitleSynchronizer = terminalTitleFactory.create(() -> mTerminalConnection);
+        mClipboardController = terminalClipboardFactory.create(this, this);
         mTerminalSessionClient = new WebTermTerminalSessionClient(this, this, mClipboardController, mTitleSynchronizer);
-        mTerminalLifecycle = new TerminalLifecycleController(
+        mTerminalLifecycle = terminalLifecycleFactory.create(
             this, this, mTerminalState, mClosed, mConnectionStatus,
-            mApp.terminalCache(), mTerminalConnection, mTitleSynchronizer, mSessionCommands
+            mTerminalConnection, mTitleSynchronizer, mSessionCommands
         );
-        mHomeCoordinator = new HomeServerCoordinator(
-            this, mApp.mainHandler(), mApp.relayMuxRegistry(), mApp.api(), mApp.terminalCache(),
-            mApp.http().dispatcher().executorService(),
-            new HomeServerCoordinator.Listener() {
-                @Override public boolean isHomeActive() { return MainActivity.this.isHomeActive(); }
-                @Override public boolean isServerContextActive(ServerConfig server) { return MainActivity.this.isServerContextActive(server); }
-                @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
-                @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
-                    removeCachedTerminal(baseUrl, sessionId);
-                }
-                @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
-                    updateCurrentSessionCwd(server, sessionId, cwd);
-                }
-                @Override
-                public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
-                    removeMissingCachedSessionsForServer(server, liveSessionIdentities);
-                }
-            });
+        mHomeCoordinator = homeServerFactory.create(this, new HomeServerCoordinator.Listener() {
+            @Override public boolean isHomeActive() { return MainActivity.this.isHomeActive(); }
+            @Override public boolean isServerContextActive(ServerConfig server) { return MainActivity.this.isServerContextActive(server); }
+            @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
+            @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
+                removeCachedTerminal(baseUrl, sessionId);
+            }
+            @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
+                updateCurrentSessionCwd(server, sessionId, cwd);
+            }
+            @Override
+            public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
+                removeMissingCachedSessionsForServer(server, liveSessionIdentities);
+            }
+        });
         loadServersFromPrefs();
         showSessionHome(PageTransitionAnimator.Transition.NONE);
     }
@@ -181,7 +199,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     protected void onDestroy() {
         mClosed.set(true);
-        mApp.mainHandler().removeCallbacksAndMessages(null);
+        mainHandler.removeCallbacksAndMessages(null);
         mRelayCoordinator.stop();
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
         if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()) {
@@ -190,8 +208,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
         if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
         if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
-        mApp.terminalCache().shutdown(mTerminalLifecycle.terminalSession());
-        mApp.shutdown();
+        terminalCache.shutdown(mTerminalLifecycle.terminalSession());
+        relayMuxRegistry.shutdown();
+        http.dispatcher().cancelAll();
         super.onDestroy();
     }
 
@@ -219,12 +238,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── Navigation ────────────────────────────────────────────────
 
     private void loadServersFromPrefs() {
-        mApp.serverConfigs().load();
-        mRelayCoordinator.loadMasterFromServers(mApp.serverConfigs().servers());
+        serverConfigs.load();
+        mRelayCoordinator.loadMasterFromServers(serverConfigs.servers());
     }
 
     public void saveServers() {
-        mApp.serverConfigs().save();
+        serverConfigs.save();
     }
 
     void showSessionHome() { showSessionHome(PageTransitionAnimator.Transition.BACK); }
@@ -288,7 +307,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     private java.util.List<ServerConfig> collectVisibleDevices() {
         java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
-        for (ServerConfig s : mApp.serverConfigs().servers()) {
+        for (ServerConfig s : serverConfigs.servers()) {
             if (!s.isRelayMaster()) allServers.add(s);
         }
         List<ServerConfig> relayDevices = mRelayCoordinator.devices();
@@ -472,13 +491,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private void scheduleBackgroundServerDetach() {
-        if (mApp == null || mSelectedServer == null) return;
-        mApp.mainHandler().removeCallbacks(mBackgroundServerDetach);
-        mApp.mainHandler().postDelayed(mBackgroundServerDetach, BACKGROUND_SERVER_DETACH_MS);
+        if (mSelectedServer == null) return;
+        mainHandler.removeCallbacks(mBackgroundServerDetach);
+        mainHandler.postDelayed(mBackgroundServerDetach, BACKGROUND_SERVER_DETACH_MS);
     }
 
     private void cancelBackgroundServerDetach() {
-        if (mApp != null) mApp.mainHandler().removeCallbacks(mBackgroundServerDetach);
+        mainHandler.removeCallbacks(mBackgroundServerDetach);
     }
 
     private void showAddServerDialog(final ServerConfig existingServer) {
@@ -495,7 +514,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             .setMessage("确定要从列表中移除该服务器吗？")
             .setPositiveButton("移除", (d, which) -> {
                 removeCachedTerminalsForServer(server);
-                mApp.serverConfigs().remove(server);
+                serverConfigs.remove(server);
                 saveServers();
                 if (server == mSelectedServer) {
                     showSessionHome(PageTransitionAnimator.Transition.BACK);
@@ -561,7 +580,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private void startP2PIfRelayDevice(String baseUrl, String cookie, boolean relayDevice, String relayDeviceId) {
         if (!relayDevice || relayDeviceId == null || relayDeviceId.isEmpty()) return;
         if (mP2PConnectionManager == null) return;
-        if (!mApp.configStore().isP2PEnabled()) return;
+        if (!configStore.isP2PEnabled()) return;
         if (mSelectedServer != null
             && relayDeviceId.equals(mSelectedServer.getDeviceId())
             && !mSelectedServer.isP2PEnabled()) {
@@ -573,13 +592,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── TerminalLifecycleController.Host ───────────────────────────
 
     @Override
-    public int getSavedFontSize() { return mApp.configStore().getFontSize(); }
+    public int getSavedFontSize() { return configStore.getFontSize(); }
     @Override
-    public String getSavedFontType() { return mApp.configStore().getFontType(); }
+    public String getSavedFontType() { return configStore.getFontType(); }
     @Override
-    public boolean isP2PEnabled() { return mApp.configStore().isP2PEnabled(); }
+    public boolean isP2PEnabled() { return configStore.isP2PEnabled(); }
     @Override
-    public void saveP2PEnabled(boolean enabled) { mApp.configStore().saveP2PEnabled(enabled); }
+    public void saveP2PEnabled(boolean enabled) { configStore.saveP2PEnabled(enabled); }
 
     @Override
     public Typeface getTypefaceByName(String type) {
@@ -671,7 +690,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void login(String baseUrl, String username, String password, ServerConfigDialogHelper.LoginCallback callback) {
-        mApp.api().login(baseUrl, "", username, password, new WebTermApi.LoginCallback() {
+        api.login(baseUrl, "", username, password, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String readyBaseUrl, String cookie) { callback.onReady(readyBaseUrl, cookie); }
             @Override
@@ -682,7 +701,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie,
                                       String username, String password) {
-        mApp.serverConfigs().addOrUpdate(existingServer, name, url, cookie, username, password);
+        serverConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
         saveServers();
         if (existingServer != null && existingServer == mSelectedServer) {
             showDeviceSessions(existingServer, PageTransitionAnimator.Transition.FADE);
@@ -707,7 +726,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         }
     }
     @Override
-    public ServerConfigManager serverConfigs() { return mApp.serverConfigs(); }
+    public ServerConfigManager serverConfigs() { return serverConfigs; }
 
     // ── SettingsDialogHelper.Host ──────────────────────────────────
 
@@ -719,9 +738,9 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         return "Monospace";
     }
     @Override
-    public void saveFontSize(int size) { mApp.configStore().saveFontSize(size); }
+    public void saveFontSize(int size) { configStore.saveFontSize(size); }
     @Override
-    public void saveFontType(String type) { mApp.configStore().saveFontType(type); }
+    public void saveFontType(String type) { configStore.saveFontType(type); }
     @Override
     public void applyTerminalFontSize(int size) {
         if (mTerminalLifecycle.terminalView() != null) mTerminalLifecycle.terminalView().setTextSize(size);
@@ -758,18 +777,18 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     }
 
     private void removeCachedTerminal(String baseUrl, String sessionId) {
-        if (mApp.terminalCache().removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(),
+        if (terminalCache.removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(),
             mTerminalLifecycle.terminalSession())) {
             mTerminalState.clearPersistence();
         }
     }
 
     private void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
-        mApp.terminalCache().removeMissingForServer(server, liveSessionIdentities, mTerminalLifecycle.terminalSession());
+        terminalCache.removeMissingForServer(server, liveSessionIdentities, mTerminalLifecycle.terminalSession());
     }
 
     private void removeCachedTerminalsForServer(ServerConfig server) {
-        mApp.terminalCache().removeServer(server, mTerminalLifecycle.terminalSession());
+        terminalCache.removeServer(server, mTerminalLifecycle.terminalSession());
     }
 
     // ── Animation ──────────────────────────────────────────────────
