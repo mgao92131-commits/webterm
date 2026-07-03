@@ -1,0 +1,62 @@
+package com.webterm.mobile.ui.terminal;
+
+import android.view.View;
+import android.widget.ImageButton;
+
+import com.webterm.mobile.domain.terminal.TerminalConnection;
+import com.webterm.mobile.ui.home.StatusIndicatorView;
+
+public final class TerminalConnectionStatusView {
+    private StatusIndicatorView indicator;
+    private ImageButton retryButton;
+    private View reconnectOverlay;
+
+    TerminalConnectionStatusView() {
+    }
+
+    void bind(StatusIndicatorView indicator, ImageButton retryButton, View reconnectOverlay) {
+        this.indicator = indicator;
+        this.retryButton = retryButton;
+        this.reconnectOverlay = reconnectOverlay;
+    }
+
+    void clear() {
+        indicator = null;
+        retryButton = null;
+        reconnectOverlay = null;
+    }
+
+    void update(TerminalConnection.State state, int reconnectAttempts, boolean isP2P) {
+        if (indicator == null) return;
+        switch (state) {
+            case CONNECTED:
+                indicator.setStatus(isP2P ? StatusIndicatorView.Status.CONNECTED_P2P : StatusIndicatorView.Status.CONNECTED);
+                if (retryButton != null) retryButton.setVisibility(View.GONE);
+                if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
+                break;
+            case CONNECTING:
+                indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
+                if (retryButton != null) retryButton.setVisibility(View.GONE);
+                if (reconnectOverlay != null && reconnectAttempts < 5) {
+                    reconnectOverlay.setVisibility(View.GONE);
+                }
+                break;
+            case RECONNECTING:
+                indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
+                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
+                if (reconnectOverlay != null) {
+                    if (reconnectAttempts >= 5) {
+                        reconnectOverlay.setVisibility(View.VISIBLE);
+                    } else {
+                        reconnectOverlay.setVisibility(View.GONE);
+                    }
+                }
+                break;
+            case DISCONNECTED:
+                indicator.setStatus(StatusIndicatorView.Status.DISCONNECTED);
+                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
+                if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.VISIBLE);
+                break;
+        }
+    }
+}

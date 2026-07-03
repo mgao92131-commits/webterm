@@ -4,9 +4,9 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.webterm.mobile.ServerConfigManager;
-import com.webterm.mobile.ServerConfigStore;
-import com.webterm.mobile.TerminalCacheCoordinator;
+import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
+import com.webterm.mobile.data.config.ServerConfigManager;
+import com.webterm.mobile.data.config.ServerConfigStore;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;

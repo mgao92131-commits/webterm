@@ -18,7 +18,7 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.Locale;
 
-final class CrashReporter {
+public final class CrashReporter {
     private static final String TAG = "CrashReporter";
     private static final String CRASH_DIR = "crash-logs";
     private static final int MAX_LOG_FILES = 10;
