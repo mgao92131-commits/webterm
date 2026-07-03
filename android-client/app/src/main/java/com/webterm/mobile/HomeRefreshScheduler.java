@@ -2,7 +2,11 @@ package com.webterm.mobile;
 
 import android.os.Handler;
 
-final class HomeRefreshScheduler {
+import javax.inject.Inject;
+import javax.inject.Singleton;
+
+@Singleton
+public final class HomeRefreshScheduler {
     private static final long INITIAL_DELAY_MS = 3000L;
     private static final long MAX_DELAY_MS = 60000L;
 
@@ -27,7 +31,8 @@ final class HomeRefreshScheduler {
         }
     };
 
-    HomeRefreshScheduler(Handler mainHandler, Listener listener) {
+    @Inject
+    public HomeRefreshScheduler(Handler mainHandler, Listener listener) {
         this.mainHandler = mainHandler;
         this.listener = listener;
     }

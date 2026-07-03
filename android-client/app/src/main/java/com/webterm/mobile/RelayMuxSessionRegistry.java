@@ -5,14 +5,19 @@ import android.os.Handler;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import javax.inject.Inject;
+import javax.inject.Singleton;
+
 import okhttp3.OkHttpClient;
 
+@Singleton
 public final class RelayMuxSessionRegistry {
     private final OkHttpClient http;
     private final Handler mainHandler;
     private final Map<String, RelayMuxSessionManager> managers = new LinkedHashMap<>();
     private RelayMuxSessionManager.TransportProvider transportProvider;
 
+    @Inject
     public RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler) {
         this.http = http;
         this.mainHandler = mainHandler;

@@ -5,12 +5,17 @@ import org.json.JSONArray;
 import java.util.List;
 import java.util.concurrent.Executor;
 
-final class SessionRepository {
+import javax.inject.Inject;
+import javax.inject.Singleton;
+
+@Singleton
+public final class SessionRepository {
     private final Api api;
     private final Cache cache;
     private final Executor executor;
 
-    SessionRepository(WebTermApi api, TerminalCacheCoordinator terminalCache, Executor executor) {
+    @Inject
+    public SessionRepository(WebTermApi api, TerminalCacheCoordinator terminalCache, Executor executor) {
         this(new WebTermApiAdapter(api), new TerminalCacheAdapter(terminalCache), executor);
     }
 

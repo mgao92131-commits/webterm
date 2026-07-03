@@ -4,13 +4,12 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.webterm.mobile.RelayMuxSessionRegistry;
 import com.webterm.mobile.ServerConfigManager;
 import com.webterm.mobile.ServerConfigStore;
 import com.webterm.mobile.TerminalCacheCoordinator;
-import com.webterm.mobile.WebTermApi;
 
-import java.io.File;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import dagger.Module;
 import dagger.Provides;
@@ -35,16 +34,6 @@ public class AppModule {
 
     @Provides
     @Singleton
-    static WebTermApi provideWebTermApi(OkHttpClient http) { return new WebTermApi(http); }
-
-    @Provides
-    @Singleton
-    static RelayMuxSessionRegistry provideRegistry(OkHttpClient http, Handler mainHandler) {
-        return new RelayMuxSessionRegistry(http, mainHandler);
-    }
-
-    @Provides
-    @Singleton
     static ServerConfigStore provideConfigStore(@ApplicationContext Context context) {
         return new ServerConfigStore(context);
     }
@@ -59,5 +48,11 @@ public class AppModule {
     @Singleton
     static TerminalCacheCoordinator provideTerminalCache(@ApplicationContext Context context) {
         return new TerminalCacheCoordinator(context.getFilesDir());
+    }
+
+    @Provides
+    @Singleton
+    static Executor provideIoExecutor() {
+        return Executors.newSingleThreadExecutor();
     }
 }
