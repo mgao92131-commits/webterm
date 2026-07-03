@@ -7,13 +7,13 @@ import java.util.Map;
 
 import okhttp3.OkHttpClient;
 
-final class RelayMuxSessionRegistry {
+public final class RelayMuxSessionRegistry {
     private final OkHttpClient http;
     private final Handler mainHandler;
     private final Map<String, RelayMuxSessionManager> managers = new LinkedHashMap<>();
     private RelayMuxSessionManager.TransportProvider transportProvider;
 
-    RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler) {
+    public RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler) {
         this.http = http;
         this.mainHandler = mainHandler;
     }

@@ -16,12 +16,12 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-final class WebTermApi {
+public final class WebTermApi {
     static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     private final OkHttpClient http;
 
-    WebTermApi(OkHttpClient http) {
+    public WebTermApi(OkHttpClient http) {
         this.http = http;
     }
 

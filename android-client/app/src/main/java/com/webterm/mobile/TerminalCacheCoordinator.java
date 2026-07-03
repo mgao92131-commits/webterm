@@ -4,11 +4,11 @@ import com.termux.terminal.TerminalSession;
 
 import java.io.File;
 
-final class TerminalCacheCoordinator {
+public final class TerminalCacheCoordinator {
     private final TerminalDiskCache diskCache;
     private final java.util.Map<String, CachedTerminal> memoryCache = new java.util.HashMap<>();
 
-    TerminalCacheCoordinator(File filesDir) {
+    public TerminalCacheCoordinator(File filesDir) {
         diskCache = new TerminalDiskCache(filesDir);
     }
 

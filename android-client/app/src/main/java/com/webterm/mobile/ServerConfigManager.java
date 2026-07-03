@@ -3,11 +3,11 @@ package com.webterm.mobile;
 import java.util.ArrayList;
 import java.util.List;
 
-final class ServerConfigManager {
+public final class ServerConfigManager {
     private final ServerConfigStore store;
     private final List<ServerConfig> servers = new ArrayList<>();
 
-    ServerConfigManager(ServerConfigStore store) {
+    public ServerConfigManager(ServerConfigStore store) {
         this.store = store;
     }
 

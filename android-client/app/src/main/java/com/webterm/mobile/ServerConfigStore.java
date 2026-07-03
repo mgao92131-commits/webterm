@@ -11,7 +11,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
-final class ServerConfigStore {
+public final class ServerConfigStore {
     static final String PREFS = "webterm";
     static final String DEFAULT_URL = "http://100.121.115.14:8080";
     static final String DEFAULT_USER = "admin";
@@ -24,7 +24,7 @@ final class ServerConfigStore {
 
     private final SharedPreferences prefs;
 
-    ServerConfigStore(Context context) {
+    public ServerConfigStore(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
