@@ -33,11 +33,11 @@ type V2Client struct {
 	writeMu sync.Mutex
 }
 
-func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
-	router := application.NewSessionRouter(application.Sessions())
+func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
+	router := application.NewSessionRouter(appInstance.Sessions())
 	client := &V2Client{
 		cfg:    cfg,
-		app:    application,
+		app:    appInstance,
 		router: router,
 	}
 	client.http = NewHTTPProxy(router, client)
@@ -175,41 +175,4 @@ func (client *V2Client) writeRaw(ctx context.Context, conn *websocket.Conn, data
 	client.writeMu.Lock()
 	defer client.writeMu.Unlock()
 	return conn.Write(writeCtx, websocket.MessageBinary, data)
-}
-
-func writeJSON(ctx context.Context, conn *websocket.Conn, value any) error {
-	bytes, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	return conn.Write(writeCtx, websocket.MessageText, bytes)
-}
-
-func stringValue(value any) string {
-	if value == nil {
-		return ""
-	}
-	if text, ok := value.(string); ok {
-		return text
-	}
-	return fmt.Sprint(value)
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-func agentWebSocketURL(baseURL string) (string, error) {
-	u, err := urlParse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	u.Path = "/ws/agent"
-	u.RawQuery = ""
-	return u.String(), nil
 }

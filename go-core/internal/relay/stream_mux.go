@@ -22,6 +22,11 @@ type StreamMultiplexer struct {
 	streams map[string]*relayStreamSocket
 }
 
+type relayStreamMessage struct {
+	messageType session.MessageType
+	payload     []byte
+}
+
 func NewStreamMultiplexer(router *application.SessionRouter, writer frameWriter) *StreamMultiplexer {
 	return &StreamMultiplexer{
 		router:  router,

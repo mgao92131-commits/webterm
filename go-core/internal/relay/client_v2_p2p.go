@@ -12,6 +12,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"

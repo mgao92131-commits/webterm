@@ -36,7 +36,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	application := app.New(cfg, "test")
 	client := NewV2(cfg.Relay, application)
 
-	status, body, err := client.routeMemoryAPI(http.MethodPost, "/api/sessions", []byte(`{"name":"relay-test","cwd":"."}`))
+	status, body, err := client.router.RouteHTTP(http.MethodPost, "/api/sessions", []byte(`{"name":"relay-test","cwd":"."}`))
 	if err != nil {
 		t.Fatalf("POST /api/sessions returned error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	}
 	defer application.Sessions().Close(created.ID)
 
-	status, body, err = client.routeMemoryAPI(http.MethodGet, "/api/sessions", nil)
+	status, body, err = client.router.RouteHTTP(http.MethodGet, "/api/sessions", nil)
 	if err != nil {
 		t.Fatalf("GET /api/sessions returned error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 		t.Fatalf("list length = %d, want 1", len(list))
 	}
 
-	status, body, err = client.routeMemoryAPI(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{"name":"renamed"}`))
+	status, body, err = client.router.RouteHTTP(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{"name":"renamed"}`))
 	if err != nil {
 		t.Fatalf("PATCH returned error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 		t.Fatalf("renamed name = %q, want renamed", renamed.Name)
 	}
 
-	status, _, err = client.routeMemoryAPI(http.MethodDelete, "/api/sessions/s1", nil)
+	status, _, err = client.router.RouteHTTP(http.MethodDelete, "/api/sessions/s1", nil)
 	if err != nil {
 		t.Fatalf("DELETE returned error: %v", err)
 	}

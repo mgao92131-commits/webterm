@@ -12,6 +12,7 @@ import (
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 	"webterm/go-core/internal/testutil"
@@ -87,6 +88,7 @@ func newManagerWithShell(t *testing.T) *session.Manager {
 // 返回 dial URL。cancel 关闭 server。
 func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager) (string, func()) {
 	t.Helper()
+	router := application.NewSessionRouter(manager)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			Subprotocols: []string{protocol.MuxSubprotocol},
@@ -98,7 +100,7 @@ func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager)
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		sess := Serve(session.NewWebSocketAdapter(conn), &ServeOpts{
 			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (func(), error) {
-				return OpenSessionOrManager(ctx, manager, vs, path, protocols)
+				return OpenSessionOrManager(ctx, router, vs, path, protocols)
 			},
 		})
 		_ = sess.Run(ctx)

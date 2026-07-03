@@ -3,7 +3,6 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -242,7 +241,7 @@ func (terminal *TerminalSession) terminalModes() []byte {
 	}
 
 	var buf []byte
-	t := screen.terminal
+	t := screen.Terminal
 
 	// 默认 false 的模式，启用时输出 set 序列
 	if t.HasMode(headlessterm.ModeCursorKeys) {
