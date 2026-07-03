@@ -15,6 +15,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
@@ -124,9 +125,10 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		_ = conn.Close(websocket.StatusPolicyViolation, "mux subprotocol required")
 		return
 	}
+	router := application.NewSessionRouter(direct.app.Sessions())
 	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
-			return mux.OpenSessionOrManager(ctx, direct.app.Sessions(), vs, p, protos)
+			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
 	})
 	sess.Run(r.Context())

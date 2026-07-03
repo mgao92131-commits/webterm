@@ -5,20 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
-	"webterm/go-core/internal/mux"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relaycore"
-	"webterm/go-core/internal/session"
 )
 
 const (
@@ -28,8 +23,9 @@ const (
 )
 
 type V2Client struct {
-	cfg config.RelayConfig
-	app *app.App
+	cfg    config.RelayConfig
+	app    *app.App
+	router *application.SessionRouter
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -40,11 +36,12 @@ type V2Client struct {
 
 func NewV2(cfg config.RelayConfig, application *app.App) *V2Client {
 	return &V2Client{
-		cfg:  cfg,
-		app:  application,
-		http: make(map[string]chan relaycore.Frame),
-		ws:   make(map[string]*relayStreamSocket),
-		p2p:  make(map[string]*p2pPeer),
+		cfg:    cfg,
+		app:    application,
+		router: application.NewSessionRouter(application.Sessions()),
+		http:   make(map[string]chan relaycore.Frame),
+		ws:     make(map[string]*relayStreamSocket),
+		p2p:    make(map[string]*p2pPeer),
 	}
 }
 
@@ -196,7 +193,7 @@ func (client *V2Client) respondHTTP(ctx context.Context, conn *websocket.Conn, s
 	if meta.Query != "" {
 		path += "?" + meta.Query
 	}
-	status, payload, err := client.routeMemoryAPI(meta.Method, path, body)
+	status, payload, err := client.router.RouteHTTP(meta.Method, path, body)
 	if err != nil && status == 0 {
 		status = http.StatusInternalServerError
 	}
@@ -239,7 +236,7 @@ func (client *V2Client) handleStreamOpen(ctx context.Context, conn *websocket.Co
 		return
 	}
 	socket := newRelayStreamSocket(frame.StreamID, route.Subprotocol, client, conn)
-	start, err := client.openSessionOrManager(ctx, socket, route.Path, route.Subprotocol)
+	start, err := client.router.RouteOpen(ctx, socket, route.Path, []string{route.Subprotocol})
 	if err != nil {
 		client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte(err.Error())))
 		return
@@ -250,89 +247,6 @@ func (client *V2Client) handleStreamOpen(ctx context.Context, conn *websocket.Co
 	if start != nil {
 		go start()
 	}
-}
-
-func (client *V2Client) openSessionOrManager(ctx context.Context, socket session.Socket, rawPath string, protocolName string) (func(), error) {
-	path := rawPath
-	if parsed, err := url.Parse(rawPath); err == nil {
-		path = parsed.Path
-	}
-	switch {
-	case path == "/ws/sessions":
-		if protocolName == protocol.MuxSubprotocol {
-			muxSession := mux.Serve(socket, &mux.ServeOpts{
-				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protocols []string) (func(), error) {
-					return mux.OpenSessionOrManager(ctx, client.app.Sessions(), vs, p, protocols)
-				},
-			})
-			return func() {
-				defer socket.Close()
-				_ = muxSession.Run(ctx)
-			}, nil
-		}
-		managerClient := session.NewManagerClient(socket)
-		return func() { go managerClient.Run(ctx, client.app.Sessions()) }, nil
-	case strings.HasPrefix(path, "/ws/sessions/"):
-		id := strings.TrimPrefix(path, "/ws/sessions/")
-		id, _ = url.PathUnescape(id)
-		terminal, ok := client.app.Sessions().Get(id)
-		if !ok {
-			return nil, fmt.Errorf("session %s not found", id)
-		}
-		mode := session.ClientModeFromProtocol(protocolName)
-		terminalClient := session.NewClient(socket, terminal, mode)
-		return func() { go terminalClient.Run(ctx) }, nil
-	default:
-		return nil, fmt.Errorf("unknown path: %s", path)
-	}
-}
-
-func (client *V2Client) routeMemoryAPI(method string, rawPath string, body []byte) (int, []byte, error) {
-	path := rawPath
-	if parsed, err := url.Parse(rawPath); err == nil {
-		path = parsed.Path
-	}
-	if method == http.MethodGet && path == "/api/sessions" {
-		return marshalStatus(http.StatusOK, client.app.Sessions().List())
-	}
-	if method == http.MethodPost && path == "/api/sessions" {
-		var req struct {
-			Name string `json:"name"`
-			CWD  string `json:"cwd"`
-		}
-		if len(body) > 0 {
-			_ = json.Unmarshal(body, &req)
-		}
-		terminal, err := client.app.Sessions().Create(req.Name, req.CWD)
-		if err != nil {
-			return http.StatusBadRequest, nil, err
-		}
-		return marshalStatus(http.StatusCreated, terminal.Info())
-	}
-	if strings.HasPrefix(path, "/api/sessions/") {
-		id := strings.TrimPrefix(path, "/api/sessions/")
-		id, _ = url.PathUnescape(id)
-		if method == http.MethodPatch {
-			var req struct {
-				Name string `json:"name"`
-			}
-			if len(body) > 0 {
-				_ = json.Unmarshal(body, &req)
-			}
-			terminal, ok := client.app.Sessions().Rename(id, req.Name)
-			if !ok {
-				return http.StatusNotFound, nil, errors.New("session not found")
-			}
-			return marshalStatus(http.StatusOK, terminal.Info())
-		}
-		if method == http.MethodDelete {
-			if !client.app.Sessions().Close(id) {
-				return http.StatusNotFound, nil, errors.New("session not found")
-			}
-			return http.StatusNoContent, []byte{}, nil
-		}
-	}
-	return http.StatusNotFound, nil, errors.New("not found")
 }
 
 func (client *V2Client) deliverWS(frame relaycore.Frame) {
