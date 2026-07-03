@@ -207,6 +207,13 @@ func parseDevicePath(rawPath string) (deviceID string, action string, ok bool) {
 	return "", "", false
 }
 
+func emptyToNil(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 func parseTrustedDevicePath(rawPath string) (string, bool) {
 	clean := path.Clean(rawPath)
 	const prefix = "/api/auth/devices/"
