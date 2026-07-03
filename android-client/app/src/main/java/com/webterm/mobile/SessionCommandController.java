@@ -19,7 +19,10 @@ final class SessionCommandController {
         api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
-                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", "", server.isRelayDevice(), server.getDeviceId()));
+                String canonicalSessionId = server.isRelayDevice()
+                    ? RelayMuxSessionManager.canonicalSessionId(sessionId, server.getDeviceId())
+                    : sessionId;
+                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), canonicalSessionId, "Terminal", "", server.isRelayDevice(), server.getDeviceId()));
             }
 
             @Override
@@ -74,10 +77,10 @@ final class SessionCommandController {
     }
 
     void showCloseConfirmDialog(ServerConfig server, String sessionId) {
-        new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+        AlertDialog dialog = new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
-            .setPositiveButton("关闭", (dialog, which) -> {
+            .setPositiveButton("关闭", (d, which) -> {
                 api.deleteSession(server, sessionId, new WebTermApi.SimpleCallback() {
                     @Override
                     public void onReady() {
@@ -92,7 +95,9 @@ final class SessionCommandController {
                 });
             })
             .setNegativeButton("取消", null)
-            .show();
+            .create();
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
     }
 
     void deleteCurrentSession(String baseUrl, String cookie, String sessionId) {

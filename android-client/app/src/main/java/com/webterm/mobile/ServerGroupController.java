@@ -2,7 +2,6 @@ package com.webterm.mobile;
 
 import android.app.Activity;
 import android.graphics.Color;
-import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -12,27 +11,24 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import okhttp3.OkHttpClient;
-
 final class ServerGroupController {
     private static final String TAG = "ServerGroupController";
 
     final ServerConfig server;
     final LinearLayout subList;
-    final StatusIndicatorView status;
+    private StatusIndicatorView status;
 
     private final Activity activity;
-    private final OkHttpClient http;
-    private final Handler mainHandler;
+    private final RelayMuxSessionRegistry relayMuxRegistry;
     private final Listener listener;
+    private String muxIdentity;
 
     private ServerSessionMonitor monitor;
-    private JSONArray lastSessions;
+    private volatile JSONArray lastSessions;
 
-    ServerGroupController(Activity activity, OkHttpClient http, Handler mainHandler, ServerConfig server, LinearLayout subList, StatusIndicatorView status, Listener listener) {
+    ServerGroupController(Activity activity, RelayMuxSessionRegistry relayMuxRegistry, ServerConfig server, LinearLayout subList, StatusIndicatorView status, Listener listener) {
         this.activity = activity;
-        this.http = http;
-        this.mainHandler = mainHandler;
+        this.relayMuxRegistry = relayMuxRegistry;
         this.server = server;
         this.subList = subList;
         this.status = status;
@@ -45,13 +41,17 @@ final class ServerGroupController {
             return;
         }
         if (!listener.isActive(this)) return;
+        String currentIdentity = muxIdentity(server);
+        if (monitor != null && !currentIdentity.equals(muxIdentity)) {
+            stop();
+        }
         if (monitor == null) {
-            monitor = new ServerSessionMonitor(http, mainHandler, server, new ServerSessionMonitor.Listener() {
+            monitor = new ServerSessionMonitor(relayMuxRegistry, server, new ServerSessionMonitor.Listener() {
                 @Override
                 public void onMonitorConnected() {
                     listener.onScheduleFallbackRefresh();
                     activity.runOnUiThread(() -> {
-                        if (listener.isActive(ServerGroupController.this)) markReady();
+                        if (listener.isRenderActive(ServerGroupController.this)) markReady();
                     });
                 }
 
@@ -64,6 +64,7 @@ final class ServerGroupController {
 
                 @Override
                 public void onMonitorSession(JSONObject session) {
+                    if (!listener.isActive(ServerGroupController.this)) return;
                     boolean belongs = belongsToCurrentServer(session);
                     Log.i(TAG, "TitleTrace monitor session id=" + session.optString("id") + " termTitle=" + session.optString("termTitle") + " belongs=" + belongs);
                     if (belongs) {
@@ -91,19 +92,30 @@ final class ServerGroupController {
                 @Override
                 public void onMonitorPollingFallback() {
                     activity.runOnUiThread(() -> {
-                        if (listener.isActive(ServerGroupController.this)) markPending();
+                        if (listener.isRenderActive(ServerGroupController.this)) markPending();
                     });
                     listener.onScheduleFallbackRefresh();
                 }
             });
+            muxIdentity = currentIdentity;
         }
         monitor.start();
+    }
+
+    void attachStatus(StatusIndicatorView status) {
+        this.status = status;
+    }
+
+    StatusIndicatorView status() {
+        return status;
     }
 
     void stop() {
         if (monitor != null) {
             monitor.stop();
+            monitor = null;
         }
+        muxIdentity = "";
     }
 
     boolean isConnected() {
@@ -147,10 +159,13 @@ final class ServerGroupController {
         String id = newData.optString("id");
         if (id == null) return;
 
+        JSONObject oldSessionForCwd = null;
+        String newCwd = normalizedCwd(newData);
         boolean found = false;
         for (int i = 0; i < lastSessions.length(); i++) {
             JSONObject session = lastSessions.optJSONObject(i);
             if (session != null && id.equals(session.optString("id"))) {
+                oldSessionForCwd = session;
                 try {
                     lastSessions.put(i, newData);
                 } catch (JSONException ignored) {
@@ -163,21 +178,40 @@ final class ServerGroupController {
             lastSessions.put(newData);
         }
         final boolean insertedNew = !found;
+        final boolean cwdChanged = shouldRerenderForCwd(oldSessionForCwd, newData);
 
         final String rawTermTitle = newData.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = newData.optString("name", "").trim();
         Log.i(TAG, "TitleTrace upsert row id=" + id + " termTitle=" + termTitle + " name=" + nameText + " active=" + listener.isActive(this));
+        if (cwdChanged) {
+            listener.onSessionCwdChanged(server, id, newCwd);
+        }
         activity.runOnUiThread(() -> {
+            if (cwdChanged && listener.isRenderActive(this)) {
+                listener.onRenderSessions(server, lastSessions, subList);
+                return;
+            }
             View rowView = activity.findViewById(android.R.id.content).findViewWithTag(id);
             if (rowView != null) {
                 if (activity instanceof SessionRowActions) {
                     SessionRowHelper.updateSessionRow((SessionRowActions) activity, rowView, newData, server);
                 }
-            } else if (insertedNew && listener.isActive(this)) {
+            } else if (insertedNew && listener.isRenderActive(this)) {
                 listener.onRenderSessions(server, lastSessions, subList);
             }
         });
+    }
+
+    static boolean shouldRerenderForCwd(JSONObject oldSession, JSONObject newData) {
+        if (oldSession == null || newData == null) return false;
+        String id = newData.optString("id");
+        if (id.isEmpty() || !id.equals(oldSession.optString("id"))) return false;
+        return !normalizedCwd(oldSession).equals(normalizedCwd(newData));
+    }
+
+    private static String normalizedCwd(JSONObject session) {
+        return session == null ? "" : session.optString("cwd", "").trim();
     }
 
     private void removeLocalSession(String id) {
@@ -195,17 +229,32 @@ final class ServerGroupController {
     }
 
     private void markReady() {
-        status.setStatus(StatusIndicatorView.Status.CONNECTED);
+        if (status == null) return;
+        status.setStatus(isP2PConnected() ? StatusIndicatorView.Status.CONNECTED_P2P : StatusIndicatorView.Status.CONNECTED);
+    }
+
+    boolean isP2PConnected() {
+        return monitor != null && monitor.isP2PConnected();
     }
 
     private void markPending() {
+        if (status == null) return;
         status.setStatus(StatusIndicatorView.Status.CONNECTING);
     }
 
     interface Listener {
         boolean isActive(ServerGroupController controller);
+        boolean isRenderActive(ServerGroupController controller);
         void onRenderSessions(ServerConfig server, JSONArray sessions, LinearLayout subList);
         void onSessionClosed(String baseUrl, String sessionId);
+        void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd);
         void onScheduleFallbackRefresh();
+    }
+
+    private static String muxIdentity(ServerConfig server) {
+        if (server == null) return "";
+        return WebTermUrls.normalizeBaseUrl(server.getUrl())
+            + "\n" + (server.getCookie() == null ? "" : server.getCookie())
+            + "\n" + (server.getDeviceId() == null ? "" : server.getDeviceId());
     }
 }

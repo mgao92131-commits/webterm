@@ -58,9 +58,7 @@ public class ServerConfig {
         obj.put("id", id);
         obj.put("name", name);
         obj.put("url", url);
-        obj.put("cookie", cookie);
         obj.put("username", username);
-        obj.put("password", password);
         obj.put("isRelayMaster", relayMaster);
         obj.put("isRelayDevice", relayDevice);
         obj.put("deviceId", deviceId);
@@ -73,9 +71,9 @@ public class ServerConfig {
             obj.optString("id"),
             obj.optString("name"),
             obj.optString("url"),
-            obj.optString("cookie"),
+            "",
             obj.optString("username"),
-            obj.optString("password"),
+            "",
             obj.optBoolean("isRelayMaster", false),
             obj.optBoolean("isRelayDevice", false),
             obj.optString("deviceId", ""),

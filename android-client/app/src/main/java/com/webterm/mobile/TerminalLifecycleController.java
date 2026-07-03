@@ -96,7 +96,7 @@ final class TerminalLifecycleController {
     void showTerminal(
         String baseUrl, String cookie, String sessionId,
         String termTitle, String sessionName, String createdAt, String instanceId,
-        String relayDeviceId,
+        String relayDeviceId, String cwd,
         WebTermTerminalViewClient.Host viewClientHost,
         WebTermTerminalSessionClient sessionClient,
         Runnable onBack
@@ -108,10 +108,10 @@ final class TerminalLifecycleController {
         if (cached == null && terminalCache != null && !SessionIdentity.cacheKey(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt).isEmpty()) {
             diskRestore[0] = terminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
         }
-        terminalState.setServerSession(baseUrl, cookie, sessionId, relayDeviceId);
         TerminalLaunchState launchState = TerminalLaunchState.resolve(
-            sessionId, termTitle, sessionName, normalizedCreatedAt, normalizedInstanceId, cached, diskRestore[0]
+            sessionId, termTitle, sessionName, cwd, normalizedCreatedAt, normalizedInstanceId, cached, diskRestore[0]
         );
+        terminalState.setServerSession(baseUrl, cookie, sessionId, relayDeviceId);
         closed.set(false);
         terminalState.applyLaunchState(launchState);
 
@@ -124,7 +124,6 @@ final class TerminalLifecycleController {
             new WebTermTerminalViewClient(viewClientHost),
             onBack,
             () -> { if (terminalConnection != null) terminalConnection.reconnectNow(); },
-            () -> TodoDialogHelper.show(activity, sessionId),
             () -> setCtrlKey(!ctrlDown),
             this::write
         );
@@ -325,7 +324,6 @@ final class TerminalLifecycleController {
         if (terminalCache.removeTerminal(baseUrl, sessionId, terminalState.baseUrl(), terminalState.sessionId(), terminalSession)) {
             terminalState.clearPersistence();
         }
-        TodoDialogHelper.clearTodo(activity, sessionId);
     }
 
     private void deleteSession(String sessionId) {

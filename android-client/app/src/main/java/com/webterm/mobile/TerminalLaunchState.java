@@ -5,6 +5,7 @@ final class TerminalLaunchState {
     final String headerSubtitle;
     final String createdAt;
     final String instanceId;
+    final String cwd;
     final long lastSeq;
     final int columns;
     final int rows;
@@ -14,6 +15,7 @@ final class TerminalLaunchState {
         String headerSubtitle,
         String createdAt,
         String instanceId,
+        String cwd,
         long lastSeq,
         int columns,
         int rows
@@ -22,6 +24,7 @@ final class TerminalLaunchState {
         this.headerSubtitle = headerSubtitle;
         this.createdAt = createdAt;
         this.instanceId = instanceId;
+        this.cwd = cwd;
         this.lastSeq = lastSeq;
         this.columns = columns;
         this.rows = rows;
@@ -31,6 +34,7 @@ final class TerminalLaunchState {
         String sessionId,
         String requestedTitle,
         String requestedName,
+        String requestedCwd,
         String normalizedCreatedAt,
         String normalizedInstanceId,
         CachedTerminal cached,
@@ -42,6 +46,7 @@ final class TerminalLaunchState {
             firstNonBlank(cached == null ? null : cached.sessionName, diskMetadata == null ? null : diskMetadata.sessionName, requestedName, sessionId),
             firstNonBlank(cached == null ? null : cached.createdAt, diskMetadata == null ? null : diskMetadata.createdAt, normalizedCreatedAt, ""),
             firstNonBlank(cached == null ? null : cached.instanceId, diskMetadata == null ? null : diskMetadata.instanceId, normalizedInstanceId, ""),
+            firstNonBlank(requestedCwd, cached == null ? null : cached.cwd, diskMetadata == null ? null : diskMetadata.cwd, ""),
             cached != null ? cached.lastSeq : (diskRestore != null ? diskRestore.lastSeq : 0),
             cached != null ? cached.columns : (diskMetadata != null ? diskMetadata.columns : 0),
             cached != null ? cached.rows : (diskMetadata != null ? diskMetadata.rows : 0)

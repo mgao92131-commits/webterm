@@ -136,6 +136,10 @@ final class WebTermApi {
                         return;
                     }
                     String newCookie = parseAndMergeCookies(cookie, response);
+                    if (newCookie.isEmpty()) {
+                        callback.onError("Refresh did not return an auth cookie.");
+                        return;
+                    }
                     callback.onReady(baseUrl, newCookie);
                 }
             }
@@ -334,8 +338,9 @@ final class WebTermApi {
             body.put("name", newName);
         } catch (JSONException ignored) {
         }
+        String apiSessionId = stripRelaySessionPrefix(sessionId);
         Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
+            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .patch(RequestBody.create(body.toString(), JSON));
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
@@ -345,8 +350,9 @@ final class WebTermApi {
     }
 
     void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
+        String apiSessionId = stripRelaySessionPrefix(sessionId);
         Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
+            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .delete();
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
@@ -356,15 +362,14 @@ final class WebTermApi {
     }
 
     void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
+        String apiSessionId = stripRelaySessionPrefix(sessionId);
         Request.Builder builder = new Request.Builder()
-            .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(sessionId))
+            .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
             .header("Cookie", cookie != null ? cookie : "")
             .delete();
-        if (sessionId != null && sessionId.contains(":")) {
-            String[] parts = sessionId.split(":");
-            if (parts.length > 0 && !parts[0].isEmpty()) {
-                builder.header("x-device-id", parts[0]);
-            }
+        String relayDeviceId = relayDeviceIdFromSessionId(sessionId);
+        if (relayDeviceId != null) {
+            builder.header("x-device-id", relayDeviceId);
         }
         http.newCall(builder.build()).enqueue(simpleCallback(callback, "Close failed"));
     }
@@ -647,6 +652,19 @@ final class WebTermApi {
             sb.append(entry.getKey()).append("=").append(entry.getValue());
         }
         return sb.toString();
+    }
+
+    private static String relayDeviceIdFromSessionId(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty() || !sessionId.contains(":")) return null;
+        int idx = sessionId.indexOf(':');
+        String deviceId = idx > 0 ? sessionId.substring(0, idx) : "";
+        return deviceId.isEmpty() ? null : deviceId;
+    }
+
+    private static String stripRelaySessionPrefix(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty() || !sessionId.contains(":")) return sessionId;
+        int idx = sessionId.indexOf(':');
+        return idx + 1 < sessionId.length() ? sessionId.substring(idx + 1) : "";
     }
 
     interface LoginCallback {

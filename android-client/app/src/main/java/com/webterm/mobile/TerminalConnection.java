@@ -9,8 +9,6 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import okhttp3.OkHttpClient;
-
 final class TerminalConnection {
     private static final String TAG = "TerminalConnection";
     private static final long RESIZE_DEBOUNCE_MS = 100L;
@@ -23,8 +21,8 @@ final class TerminalConnection {
         RECONNECTING
     }
 
-    private final OkHttpClient http;
     private final Handler mainHandler;
+    private final RelayMuxSessionRegistry relayMuxRegistry;
     private final Listener listener;
 
     private RelayMuxSessionManager relayMuxSession;
@@ -45,9 +43,9 @@ final class TerminalConnection {
 
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
-    TerminalConnection(OkHttpClient http, Handler mainHandler, Listener listener) {
-        this.http = http;
+    TerminalConnection(Handler mainHandler, RelayMuxSessionRegistry relayMuxRegistry, Listener listener) {
         this.mainHandler = mainHandler;
+        this.relayMuxRegistry = relayMuxRegistry;
         this.listener = listener;
     }
 
@@ -78,7 +76,7 @@ final class TerminalConnection {
         mainHandler.removeCallbacks(sendResizeRunnable);
         if (relayMuxSession != null) {
             relayMuxSession.closeChannel(relayChannelId);
-            relayMuxSession.stopIfIdle();
+            relayMuxRegistry.releaseIfIdle(relayMuxSession);
             relayMuxSession = null;
         }
         relayChannelId = null;
@@ -86,6 +84,10 @@ final class TerminalConnection {
 
     boolean isConnected() {
         return state == State.CONNECTED;
+    }
+
+    boolean isP2PConnected() {
+        return relayMuxSession != null && relayMuxSession.isP2PConnected();
     }
 
     void updateLastSeq(long lastSeq) {
@@ -119,9 +121,9 @@ final class TerminalConnection {
         if (relayMuxSession == null || !relayMuxSession.matches(baseUrl, cookie, relayDeviceId)) {
             if (relayMuxSession != null) {
                 relayMuxSession.closeChannel(relayChannelId);
-                relayMuxSession.stopIfIdle();
+                relayMuxRegistry.releaseIfIdle(relayMuxSession);
             }
-            relayMuxSession = RelayMuxSessionManager.forDevice(http, mainHandler, baseUrl, cookie, relayDeviceId);
+            relayMuxSession = relayMuxRegistry.forDevice(baseUrl, cookie, relayDeviceId);
         }
         relayChannelId = nextChannelId;
         relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
@@ -148,6 +150,13 @@ final class TerminalConnection {
 
             @Override public void onMuxDisconnected(String reason) {
                 if (state != State.DISCONNECTED) scheduleReconnect(reason);
+            }
+
+            @Override public void onReconnectAttempt(int attempt) {
+                if (state == State.DISCONNECTED) return;
+                reconnectAttempts = attempt;
+                state = State.RECONNECTING;
+                listener.onConnectionStatus(state, reconnectAttempts);
             }
         });
     }

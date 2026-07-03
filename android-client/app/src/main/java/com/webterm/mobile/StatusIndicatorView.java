@@ -12,7 +12,8 @@ public final class StatusIndicatorView extends View {
     public enum Status {
         DISCONNECTED,
         CONNECTING,
-        CONNECTED
+        CONNECTED,
+        CONNECTED_P2P
     }
 
     private GradientDrawable bg;
@@ -49,6 +50,9 @@ public final class StatusIndicatorView extends View {
         switch (status) {
             case CONNECTED:
                 bg.setColor(DesignTokens.SUCCESS);
+                break;
+            case CONNECTED_P2P:
+                bg.setColor(DesignTokens.INFO);
                 break;
             case CONNECTING:
                 bg.setColor(DesignTokens.WARNING);

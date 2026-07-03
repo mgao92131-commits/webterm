@@ -23,11 +23,11 @@ final class TerminalConnectionStatusView {
         reconnectOverlay = null;
     }
 
-    void update(TerminalConnection.State state, int reconnectAttempts) {
+    void update(TerminalConnection.State state, int reconnectAttempts, boolean isP2P) {
         if (indicator == null) return;
         switch (state) {
             case CONNECTED:
-                indicator.setStatus(StatusIndicatorView.Status.CONNECTED);
+                indicator.setStatus(isP2P ? StatusIndicatorView.Status.CONNECTED_P2P : StatusIndicatorView.Status.CONNECTED);
                 if (retryButton != null) retryButton.setVisibility(View.GONE);
                 if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
                 break;

@@ -17,7 +17,7 @@ public final class RelayLoginScreenBuilder {
         Activity activity();
         void onLogin(String email, String password, LoginScreenCallback callback);
         void onRegister(String email, String username, String password, LoginScreenCallback callback);
-        void onVerifyOtp(String email, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
+        void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
         void onBackToHome();
     }
 
@@ -167,7 +167,7 @@ public final class RelayLoginScreenBuilder {
                 msgText.setText("验证中...");
                 msgText.setTextColor(DesignTokens.WARNING);
                 msgText.setVisibility(View.VISIBLE);
-                host.onVerifyOtp(email, code, targetDeviceId[0], otpCookie[0], new LoginScreenCallback() {
+                host.onVerifyOtp(email, password, code, targetDeviceId[0], otpCookie[0], new LoginScreenCallback() {
                     @Override
                     public void onOtpRequired(String tdId, String cookie) {}
                     @Override

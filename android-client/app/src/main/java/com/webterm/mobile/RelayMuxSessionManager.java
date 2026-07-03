@@ -5,6 +5,7 @@ import android.util.Log;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import okhttp3.OkHttpClient;
 
@@ -12,14 +13,15 @@ final class RelayMuxSessionManager {
     private static final String TAG = "RelayMuxSessionManager";
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
-    private static final Map<String, RelayMuxSessionManager> INSTANCES = new LinkedHashMap<>();
-    private static TransportProvider transportProvider;
 
     interface ChannelListener {
         void onConnected(String channelId);
         void onError(String channelId, String message);
         void onData(String channelId, byte[] payload, boolean binary);
         void onMuxDisconnected(String reason);
+
+        /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
+        default void onReconnectAttempt(int attempt) {}
     }
 
     interface TransportProvider {
@@ -42,7 +44,7 @@ final class RelayMuxSessionManager {
 
     private final OkHttpClient http;
     private final Handler mainHandler;
-    private final String key;
+    private final Supplier<TransportProvider> transportProviderSupplier;
     private final String baseUrl;
     private final String cookie;
     private final String deviceId;
@@ -50,32 +52,10 @@ final class RelayMuxSessionManager {
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
 
-    static synchronized void setTransportProvider(TransportProvider provider) {
-        transportProvider = provider;
-    }
-
-    static synchronized void reconnectDevice(String deviceId, String reason) {
-        for (RelayMuxSessionManager manager : INSTANCES.values().toArray(new RelayMuxSessionManager[0])) {
-            if (safeEquals(manager.deviceId, deviceId)) {
-                manager.reconnectTransport(reason);
-            }
-        }
-    }
-
-    static synchronized RelayMuxSessionManager forDevice(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId) {
-        String key = key(baseUrl, cookie, deviceId);
-        RelayMuxSessionManager manager = INSTANCES.get(key);
-        if (manager == null) {
-            manager = new RelayMuxSessionManager(http, mainHandler, key, baseUrl, cookie, deviceId);
-            INSTANCES.put(key, manager);
-        }
-        return manager;
-    }
-
-    private RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String key, String baseUrl, String cookie, String deviceId) {
+    RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, Supplier<TransportProvider> transportProviderSupplier) {
         this.http = http;
         this.mainHandler = mainHandler;
-        this.key = key;
+        this.transportProviderSupplier = transportProviderSupplier;
         this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         this.cookie = cookie;
         this.deviceId = deviceId == null ? "" : deviceId;
@@ -84,7 +64,7 @@ final class RelayMuxSessionManager {
 
     private MuxSession createMuxSession(int generation) {
         MuxTransport transport = null;
-        TransportProvider provider = transportProvider;
+        TransportProvider provider = transportProviderSupplier == null ? null : transportProviderSupplier.get();
         if (provider != null) {
             transport = provider.createTransport(deviceId);
         }
@@ -108,6 +88,13 @@ final class RelayMuxSessionManager {
                 if (generation != muxGeneration) return;
                 for (Channel channel : snapshotChannels()) {
                     channel.listener.onMuxDisconnected(reason);
+                }
+            }
+
+            @Override public void onReconnectAttempt(int attempt) {
+                if (generation != muxGeneration) return;
+                for (Channel channel : snapshotChannels()) {
+                    channel.listener.onReconnectAttempt(attempt);
                 }
             }
 
@@ -139,6 +126,18 @@ final class RelayMuxSessionManager {
 
     boolean isConnected() {
         return muxSession.isConnected();
+    }
+
+    boolean isP2PConnected() {
+        return muxSession.isConnected() && muxSession.isP2PTransport();
+    }
+
+    boolean isIdle() {
+        return channels.isEmpty();
+    }
+
+    String deviceId() {
+        return deviceId;
     }
 
     void start() {
@@ -181,9 +180,6 @@ final class RelayMuxSessionManager {
     void stopIfIdle() {
         if (!channels.isEmpty()) return;
         muxSession.stop();
-        synchronized (RelayMuxSessionManager.class) {
-            INSTANCES.remove(key);
-        }
     }
 
     boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
@@ -196,9 +192,6 @@ final class RelayMuxSessionManager {
         }
         channels.clear();
         muxSession.stop();
-        synchronized (RelayMuxSessionManager.class) {
-            INSTANCES.remove(key);
-        }
     }
 
     static String terminalChannelId(String localSessionId) {
@@ -214,6 +207,12 @@ final class RelayMuxSessionManager {
         return sessionId;
     }
 
+    static String canonicalSessionId(String sessionId, String deviceId) {
+        if (sessionId == null) return "";
+        if (deviceId == null || deviceId.isEmpty() || sessionId.contains(":")) return sessionId;
+        return deviceId + ":" + sessionId;
+    }
+
     private void reopenChannels() {
         for (Channel channel : snapshotChannels()) {
             muxSession.sendWsConnect(channel.id, channel.path, channel.protocols);
@@ -224,13 +223,9 @@ final class RelayMuxSessionManager {
         return channels.values().toArray(new Channel[0]);
     }
 
-    private static boolean safeEquals(String a, String b) {
+    static boolean safeEquals(String a, String b) {
         if (a == null) return b == null || b.isEmpty();
         if (b == null) return a.isEmpty();
         return a.equals(b);
-    }
-
-    private static String key(String baseUrl, String cookie, String deviceId) {
-        return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (cookie == null ? "" : cookie) + "\n" + (deviceId == null ? "" : deviceId);
     }
 }

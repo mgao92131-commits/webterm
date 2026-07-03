@@ -271,6 +271,7 @@ final class TerminalDiskCache {
         String createdAt = "";
         String termTitle = "";
         String sessionName = "";
+        String cwd = "";
         int columns;
         int rows;
         long lastSeq;
@@ -286,6 +287,7 @@ final class TerminalDiskCache {
             createdAt = other.createdAt;
             termTitle = other.termTitle;
             sessionName = other.sessionName;
+            cwd = other.cwd;
             columns = other.columns;
             rows = other.rows;
             lastSeq = other.lastSeq;
@@ -300,6 +302,7 @@ final class TerminalDiskCache {
             json.put("createdAt", createdAt);
             json.put("termTitle", termTitle);
             json.put("sessionName", sessionName);
+            json.put("cwd", cwd);
             json.put("cols", columns);
             json.put("rows", rows);
             json.put("lastSeq", lastSeq);
@@ -315,6 +318,7 @@ final class TerminalDiskCache {
             metadata.createdAt = json.optString("createdAt", "");
             metadata.termTitle = json.optString("termTitle", "");
             metadata.sessionName = json.optString("sessionName", "");
+            metadata.cwd = json.optString("cwd", "");
             metadata.columns = json.optInt("cols", 0);
             metadata.rows = json.optInt("rows", 0);
             metadata.lastSeq = json.optLong("lastSeq", 0);

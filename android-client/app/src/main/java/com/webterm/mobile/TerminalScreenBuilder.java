@@ -32,7 +32,6 @@ final class TerminalScreenBuilder {
         TerminalViewClient terminalViewClient,
         Runnable onBack,
         Runnable onRetry,
-        Runnable onTodo,
         Runnable onCtrl,
         TextSender textSender
     ) {
@@ -94,17 +93,10 @@ final class TerminalScreenBuilder {
         labels.addView(subtitleContainer, new LinearLayout.LayoutParams(-1, -2));
         topBar.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
 
-        // 右侧按钮组（todo + retry）
+        // 右侧按钮组
         LinearLayout buttonGroup = new LinearLayout(activity);
         buttonGroup.setOrientation(LinearLayout.HORIZONTAL);
         buttonGroup.setGravity(Gravity.CENTER_VERTICAL);
-
-        ImageButton todoButton = new ImageButton(activity);
-        todoButton.setImageResource(com.webterm.mobile.R.drawable.ic_todo);
-        todoButton.setColorFilter(DesignTokens.TEXT_PRIMARY);
-        todoButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
-        todoButton.setPadding(0, 0, 0, 0);
-        todoButton.setOnClickListener((v) -> onTodo.run());
 
         ImageButton retryButton = new ImageButton(activity);
         retryButton.setImageResource(com.webterm.mobile.R.drawable.ic_refresh);
@@ -115,7 +107,6 @@ final class TerminalScreenBuilder {
         retryButton.setOnClickListener((v) -> onRetry.run());
 
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE), UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE));
-        buttonGroup.addView(todoButton, btnLp);
         buttonGroup.addView(retryButton, btnLp);
         topBar.addView(buttonGroup, new LinearLayout.LayoutParams(-2, -2));
         content.addView(topbarWrapper, new LinearLayout.LayoutParams(-1, -2));
@@ -201,7 +192,6 @@ final class TerminalScreenBuilder {
         result.title = title;
         result.subtitle = subtitle;
         result.retryButton = retryButton;
-        result.todoButton = todoButton;
         result.statusIndicator = statusIndicator;
         result.ctrlButton = outCtrlButton[0];
         result.reconnectOverlay = reconnectOverlay;
@@ -323,7 +313,6 @@ final class TerminalScreenBuilder {
         TextView title;
         TextView subtitle;
         ImageButton retryButton;
-        ImageButton todoButton;
         StatusIndicatorView statusIndicator;
         Button ctrlButton;
         View reconnectOverlay;

@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
 
+    private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
+
     private final AtomicBoolean mClosed = new AtomicBoolean(false);
     private final TerminalRuntimeState mTerminalState = new TerminalRuntimeState();
     private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
@@ -47,6 +49,11 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private RelayCoordinator mRelayCoordinator;
     private NetworkRecoveryController mNetworkRecoveryController;
     private TextView mHomeSubtitle;
+    private final Runnable mBackgroundServerDetach = () -> {
+        if (!mInForeground && mSelectedServer != null && mHomeCoordinator != null) {
+            mHomeCoordinator.detach();
+        }
+    };
 
     private enum ScreenMode {
         DEVICES,
@@ -72,7 +79,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
             public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice, relayDeviceId);
+                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice, relayDeviceId, "");
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -116,9 +123,13 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             mApp.http().dispatcher().executorService(),
             new HomeServerCoordinator.Listener() {
                 @Override public boolean isHomeActive() { return MainActivity.this.isHomeActive(); }
+                @Override public boolean isServerContextActive(ServerConfig server) { return MainActivity.this.isServerContextActive(server); }
                 @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
                 @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
                     removeCachedTerminal(baseUrl, sessionId);
+                }
+                @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
+                    updateCurrentSessionCwd(server, sessionId, cwd);
                 }
                 @Override
                 public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
@@ -133,6 +144,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     protected void onResume() {
         super.onResume();
         mInForeground = true;
+        cancelBackgroundServerDetach();
         if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal() && mTerminalConnection != null) {
             TerminalConnection.State s = mTerminalConnection.getState();
             if (s == TerminalConnection.State.RECONNECTING) {
@@ -144,7 +156,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             }
         } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
-                if (mHomeCoordinator != null) mHomeCoordinator.resume();
+                loadSelectedDeviceSessions();
             } else {
                 mRelayCoordinator.start();
             }
@@ -157,11 +169,12 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
         if (!mTerminalLifecycle.hasSession()) {
-            if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pause();
+            if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pauseUi();
             mRelayCoordinator.stop();
         } else {
             mTerminalLifecycle.pauseCurrentConnection();
         }
+        scheduleBackgroundServerDetach();
         super.onPause();
     }
 
@@ -219,16 +232,16 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     private void showSessionHome(PageTransitionAnimator.Transition transition) {
         mTerminalLifecycle.closeTerminal(false);
         if (mP2PConnectionManager != null) mP2PConnectionManager.disconnect();
+        if (mHomeCoordinator != null) {
+            mHomeCoordinator.detach();
+            mHomeCoordinator.attachSessionAdapter(null);
+        }
         mClosed.set(false);
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICES;
         mSelectedServer = null;
         mSelectedServerStatus = null;
         mSessionAdapter = null;
-        if (mHomeCoordinator != null) {
-            mHomeCoordinator.pause();
-            mHomeCoordinator.attachSessionAdapter(null);
-        }
 
         HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
             this,
@@ -293,6 +306,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICE_SESSIONS;
         mSelectedServer = server;
+        startP2PIfRelayDevice(server.getUrl(), server.getCookie(), server.isRelayDevice(), server.getDeviceId());
         mHomeSubtitle = null;
         mSessionList = null;
 
@@ -323,6 +337,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             RelayLoginScreenBuilder.buildLogin(mRelayCoordinator, savedEmail);
 
         mScreenMode = ScreenMode.RELAY_LOGIN;
+        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
         setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
     }
 
@@ -331,6 +346,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             RelayDevicesScreenBuilder.build(mRelayCoordinator);
 
         mScreenMode = ScreenMode.RELAY_DEVICES;
+        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
         setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
         screen.refresh.run();
     }
@@ -449,6 +465,22 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             && mScreenMode == ScreenMode.DEVICE_SESSIONS && mSessionAdapter != null;
     }
 
+    private boolean isServerContextActive(ServerConfig server) {
+        if (mClosed.get() || server == null || mSelectedServer == null) return false;
+        if (mScreenMode != ScreenMode.DEVICE_SESSIONS && mScreenMode != ScreenMode.TERMINAL) return false;
+        return isSelectedServer(server);
+    }
+
+    private void scheduleBackgroundServerDetach() {
+        if (mApp == null || mSelectedServer == null) return;
+        mApp.mainHandler().removeCallbacks(mBackgroundServerDetach);
+        mApp.mainHandler().postDelayed(mBackgroundServerDetach, BACKGROUND_SERVER_DETACH_MS);
+    }
+
+    private void cancelBackgroundServerDetach() {
+        if (mApp != null) mApp.mainHandler().removeCallbacks(mBackgroundServerDetach);
+    }
+
     private void showAddServerDialog(final ServerConfig existingServer) {
         ServerConfigDialogHelper.show(this, existingServer);
     }
@@ -480,37 +512,50 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     // ── Terminal ───────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false, "");
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false, "", "");
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false, "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false, "", "");
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false, "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false, "", "");
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
                       String createdAt, String instanceId, boolean relayDevice) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice, "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice, "", "");
     }
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
-                      String createdAt, String instanceId, boolean relayDevice, String relayDeviceId) {
-        if (mHomeCoordinator != null) mHomeCoordinator.pause();
+                      String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
+        if (mHomeCoordinator != null) mHomeCoordinator.pauseUi();
         mScreenMode = ScreenMode.TERMINAL;
         mTerminalLifecycle.showTerminal(
-            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDeviceId,
+            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDeviceId, cwd,
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
-        startP2PIfRelayDevice(baseUrl, cookie, relayDevice, relayDeviceId);
     }
 
     @Override
     public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName,
-                            String createdAt, String instanceId) {
+                            String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId());
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+    }
+
+    private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
+        if (server == null || sessionId == null || sessionId.isEmpty()) return;
+        if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(mTerminalState.baseUrl()))) return;
+        if (!sameTerminalSessionId(sessionId, mTerminalState.sessionId(), server.getDeviceId())) return;
+        mTerminalState.setCwd(cwd);
+    }
+
+    private static boolean sameTerminalSessionId(String a, String b, String deviceId) {
+        if (a == null || b == null) return false;
+        if (a.equals(b)) return true;
+        return RelayMuxSessionManager.localSessionId(a, deviceId)
+            .equals(RelayMuxSessionManager.localSessionId(b, deviceId));
     }
 
     private void startP2PIfRelayDevice(String baseUrl, String cookie, boolean relayDevice, String relayDeviceId) {
@@ -592,7 +637,8 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     public void onConnectionStatus(TerminalConnection.State state, int reconnectAttempts) {
-        runOnUiThread(() -> mConnectionStatus.update(state, reconnectAttempts));
+        boolean isP2P = mTerminalConnection != null && mTerminalConnection.isP2PConnected();
+        runOnUiThread(() -> mConnectionStatus.update(state, reconnectAttempts, isP2P));
     }
     @Override
     public void onOutput(long seq, byte[] data) { mTerminalLifecycle.onOutput(seq, data); }

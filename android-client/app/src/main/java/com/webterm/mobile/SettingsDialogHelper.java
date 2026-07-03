@@ -210,7 +210,9 @@ public final class SettingsDialogHelper {
         container.addView(btnBar);
 
         builder.setView(container);
+        builder.setCancelable(true);
         final AlertDialog dialog = builder.create();
+        dialog.setCanceledOnTouchOutside(false);
         dialog.show();
 
         if (dialog.getWindow() != null) {

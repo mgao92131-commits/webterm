@@ -38,6 +38,9 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
     private StatusIndicatorView homeStatusDot;
     private RelayState relayState = RelayState.NOT_CONFIGURED;
     private int httpAuthFailures;
+    private boolean refreshInFlight;
+    private String refreshCookieInFlight = "";
+    private boolean loginInFlight;
 
     private final Runnable pollDevicesRunnable = new Runnable() {
         @Override
@@ -144,7 +147,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                             relayMasterConfig.getUrl(),
                             relayMasterConfig.getCookie(),
                             relayMasterConfig.getUsername(),
-                            relayMasterConfig.getPassword(),
+                            "",
                             false, true, deviceId,
                             relayMasterConfig.isP2PEnabled()
                         ));
@@ -160,13 +163,14 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
             public void onError(int code, String message) {
                 mainHandler.post(() -> {
                     if (code == 401) {
+                        if (refreshInFlight) return;
                         httpAuthFailures++;
                         if (httpAuthFailures > MAX_HTTP_AUTH_RETRIES) {
                             mainHandler.removeCallbacks(pollDevicesRunnable);
-                            updateSubtitleState(RelayState.AUTH_FAILED);
+                            performPasswordLogin();
                             return;
                         }
-                        performSilentLoginOrPasswordLogin();
+                        refreshSavedCookieOrFail();
                     } else {
                         updateSubtitleState(RelayState.CONNECT_FAILED);
                         scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
@@ -183,46 +187,80 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
         });
     }
 
-    private void performSilentLoginOrPasswordLogin() {
-        if (relayMasterConfig != null && relayMasterConfig.getCookie() != null && !relayMasterConfig.getCookie().isEmpty()) {
-            api.refresh(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.LoginCallback() {
-                @Override
-                public void onReady(String url, String cookie) {
-                    relayMasterConfig.setCookie(cookie);
-                    host.saveServers();
-                    scheduleHttpPoll(authRetryDelayMs());
-                }
-
-                @Override
-                public void onError(String message) {
-                    performPasswordLoginForHttp();
-                }
-            });
-        } else {
-            performPasswordLoginForHttp();
+    private void refreshSavedCookieOrFail() {
+        if (relayMasterConfig == null || relayMasterConfig.getCookie() == null || relayMasterConfig.getCookie().isEmpty()) {
+            updateSubtitleState(RelayState.AUTH_FAILED);
+            return;
         }
+        if (refreshInFlight) return;
+
+        String cookieBeforeRefresh = relayMasterConfig.getCookie();
+        refreshInFlight = true;
+        refreshCookieInFlight = cookieBeforeRefresh;
+        api.refresh(relayMasterConfig.getUrl(), cookieBeforeRefresh, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String url, String cookie) {
+                mainHandler.post(() -> {
+                    refreshInFlight = false;
+                    refreshCookieInFlight = "";
+                    if (relayMasterConfig == null || cookie == null || cookie.isEmpty()) {
+                        updateSubtitleState(RelayState.AUTH_FAILED);
+                        return;
+                    }
+                    relayMasterConfig.setCookie(cookie);
+                    httpAuthFailures = 0;
+                    host.saveServers();
+                    scheduleHttpPoll(0);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> {
+                    boolean sameAttempt = refreshInFlight && cookieBeforeRefresh.equals(refreshCookieInFlight);
+                    refreshInFlight = false;
+                    refreshCookieInFlight = "";
+                    if (!sameAttempt) return;
+                    if (relayMasterConfig != null && !cookieBeforeRefresh.equals(relayMasterConfig.getCookie())) {
+                        scheduleHttpPoll(0);
+                        return;
+                    }
+                    performPasswordLogin();
+                });
+            }
+        });
     }
 
-    private void performPasswordLoginForHttp() {
-        if (relayMasterConfig != null
-            && relayMasterConfig.getUsername() != null && !relayMasterConfig.getUsername().isEmpty()
-            && relayMasterConfig.getPassword() != null && !relayMasterConfig.getPassword().isEmpty()) {
-            api.login(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), relayMasterConfig.getUsername(), relayMasterConfig.getPassword(), new WebTermApi.LoginCallback() {
+    private void performPasswordLogin() {
+        if (relayMasterConfig == null
+            || relayMasterConfig.getUsername() == null || relayMasterConfig.getUsername().isEmpty()
+            || relayMasterConfig.getPassword() == null || relayMasterConfig.getPassword().isEmpty()) {
+            updateSubtitleState(RelayState.AUTH_FAILED);
+            return;
+        }
+        if (loginInFlight) return;
+        loginInFlight = true;
+        updateSubtitleState(RelayState.CONNECTING);
+        api.login(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(),
+            relayMasterConfig.getUsername(), relayMasterConfig.getPassword(),
+            new WebTermApi.LoginCallback() {
                 @Override
                 public void onReady(String url, String cookie) {
-                    relayMasterConfig.setCookie(cookie);
-                    host.saveServers();
-                    scheduleHttpPoll(authRetryDelayMs());
+                    loginInFlight = false;
+                    if (cookie != null && !cookie.isEmpty()) {
+                        relayMasterConfig.setCookie(cookie);
+                        host.saveServers();
+                    }
+                    httpAuthFailures = 0;
+                    scheduleHttpPoll(0);
                 }
 
                 @Override
                 public void onError(String message) {
+                    loginInFlight = false;
                     updateSubtitleState(RelayState.AUTH_FAILED);
                 }
             });
-        } else {
-            updateSubtitleState(RelayState.AUTH_FAILED);
-        }
     }
 
     void destroy() {
@@ -241,14 +279,13 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
 
     @Override
     public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
+        String baseUrl = relayBaseUrl();
         String oldCookie = relayMasterConfig != null ? relayMasterConfig.getCookie() : "";
         api.login(baseUrl, oldCookie, email, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
-                if (cookie != null && !cookie.isEmpty() && relayMasterConfig != null) {
-                    relayMasterConfig.setCookie(cookie);
-                    host.saveServers();
+                if (cookie != null && !cookie.isEmpty()) {
+                    saveRelayLogin(url, email, password, cookie);
                 }
                 callback.onLoginSuccess(url, cookie);
             }
@@ -267,13 +304,12 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
 
     @Override
     public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
+        String baseUrl = relayBaseUrl();
         api.register(baseUrl, email, username, password, new WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
-                if (cookie != null && !cookie.isEmpty() && relayMasterConfig != null) {
-                    relayMasterConfig.setCookie(cookie);
-                    host.saveServers();
+                if (cookie != null && !cookie.isEmpty()) {
+                    saveRelayLogin(url, email, password, cookie);
                 }
                 callback.onLoginSuccess(url, cookie);
             }
@@ -291,14 +327,13 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
     }
 
     @Override
-    public void onVerifyOtp(String email, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        String baseUrl = relayMasterConfig != null ? relayMasterConfig.getUrl() : "";
+    public void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        String baseUrl = relayBaseUrl();
         api.verifyOtp(baseUrl, email, code, targetDeviceId, cookie, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String url, String newCookie) {
-                if (newCookie != null && !newCookie.isEmpty() && relayMasterConfig != null) {
-                    relayMasterConfig.setCookie(newCookie);
-                    host.saveServers();
+                if (newCookie != null && !newCookie.isEmpty()) {
+                    saveRelayLogin(url, email, password, newCookie);
                 }
                 callback.onLoginSuccess(url, newCookie);
             }
@@ -308,6 +343,52 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                 callback.onError(message);
             }
         });
+    }
+
+    private String relayBaseUrl() {
+        if (relayMasterConfig != null && relayMasterConfig.getUrl() != null && !relayMasterConfig.getUrl().isEmpty()) {
+            return relayMasterConfig.getUrl();
+        }
+        return ServerConfigStore.DEFAULT_URL;
+    }
+
+    private void saveRelayLogin(String url, String username, String password, String cookie) {
+        ServerConfig master = ensureRelayMasterConfig(url);
+        master.setUsername(username);
+        master.setPassword(password);
+        master.setCookie(cookie);
+        host.saveServers();
+    }
+
+    private ServerConfig ensureRelayMasterConfig(String url) {
+        if (relayMasterConfig != null) {
+            if (url != null && !url.isEmpty()) relayMasterConfig.setUrl(url);
+            return relayMasterConfig;
+        }
+
+        List<ServerConfig> servers = host.serverConfigs().servers();
+        for (ServerConfig server : servers) {
+            if (server.isRelayMaster()) {
+                relayMasterConfig = server;
+                if (url != null && !url.isEmpty()) relayMasterConfig.setUrl(url);
+                return relayMasterConfig;
+            }
+        }
+
+        relayMasterConfig = new ServerConfig(
+            "relay_master",
+            "中转服务",
+            url == null || url.isEmpty() ? ServerConfigStore.DEFAULT_URL : url,
+            "",
+            "",
+            "",
+            true,
+            false,
+            "",
+            true
+        );
+        servers.add(relayMasterConfig);
+        return relayMasterConfig;
     }
 
     @Override

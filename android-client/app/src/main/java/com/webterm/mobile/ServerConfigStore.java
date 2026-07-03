@@ -6,6 +6,7 @@ import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,7 +35,8 @@ final class ServerConfigStore {
             try {
                 JSONArray arr = new JSONArray(json);
                 for (int i = 0; i < arr.length(); i++) {
-                    servers.add(ServerConfig.fromJSON(arr.getJSONObject(i)));
+                    JSONObject obj = arr.getJSONObject(i);
+                    servers.add(ServerConfig.fromJSON(obj));
                 }
             } catch (JSONException e) {
                 Log.e(TAG, "Failed to parse servers list", e);

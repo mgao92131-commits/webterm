@@ -1,6 +1,5 @@
 package com.webterm.mobile;
 
-import android.os.Handler;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -12,23 +11,20 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 
-import okhttp3.OkHttpClient;
-
 final class ServerSessionMonitor {
     private static final String TAG = "ServerSessionMonitor";
 
-    private final OkHttpClient http;
-    private final Handler mainHandler;
+    private final RelayMuxSessionRegistry relayMuxRegistry;
     private final ServerConfig server;
     private final Listener listener;
 
     private RelayMuxSessionManager relayMuxSession;
     private boolean connected;
     private boolean enabled;
+    private boolean channelOpened;
 
-    ServerSessionMonitor(OkHttpClient http, Handler mainHandler, ServerConfig server, Listener listener) {
-        this.http = http;
-        this.mainHandler = mainHandler;
+    ServerSessionMonitor(RelayMuxSessionRegistry relayMuxRegistry, ServerConfig server, Listener listener) {
+        this.relayMuxRegistry = relayMuxRegistry;
         this.server = server;
         this.listener = listener;
     }
@@ -40,13 +36,15 @@ final class ServerSessionMonitor {
         }
         enabled = true;
         if (relayMuxSession == null) {
-            relayMuxSession = RelayMuxSessionManager.forDevice(
-                http,
-                mainHandler,
+            relayMuxSession = relayMuxRegistry.forDevice(
                 server.getUrl(),
                 server.getCookie() != null ? server.getCookie() : "",
                 server.getDeviceId()
             );
+        }
+        if (channelOpened) {
+            relayMuxSession.start();
+            return;
         }
         String managerId = managerChannelId();
         Log.i(TAG, "TitleTrace manager start deviceId=" + server.getDeviceId());
@@ -61,6 +59,7 @@ final class ServerSessionMonitor {
             @Override public void onError(String channelId, String message) {
                 if (!managerId.equals(channelId)) return;
                 connected = false;
+                channelOpened = false;
                 listener.onMonitorError(message);
                 onMuxDisconnected(message);
             }
@@ -74,6 +73,7 @@ final class ServerSessionMonitor {
                 ServerSessionMonitor.this.onMuxDisconnected(reason);
             }
         });
+        channelOpened = true;
     }
 
     static void dispatchMessage(@NonNull String text, @NonNull Listener listener) {
@@ -161,15 +161,20 @@ final class ServerSessionMonitor {
     void stop() {
         enabled = false;
         connected = false;
+        channelOpened = false;
         if (relayMuxSession != null) {
             relayMuxSession.closeChannel(managerChannelId());
-            relayMuxSession.stopIfIdle();
+            relayMuxRegistry.releaseIfIdle(relayMuxSession);
             relayMuxSession = null;
         }
     }
 
     boolean isConnected() {
         return connected || (relayMuxSession != null && relayMuxSession.isConnected());
+    }
+
+    boolean isP2PConnected() {
+        return relayMuxSession != null && relayMuxSession.isP2PConnected();
     }
 
     boolean isEnabled() {

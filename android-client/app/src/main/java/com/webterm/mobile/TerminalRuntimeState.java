@@ -11,6 +11,7 @@ final class TerminalRuntimeState {
     private String relayDeviceId = "";
     private String instanceId = "";
     private String createdAt = "";
+    private String cwd = "";
     private long lastSeq;
     private int columns;
     private int rows;
@@ -43,6 +44,14 @@ final class TerminalRuntimeState {
         return createdAt;
     }
 
+    String cwd() {
+        return cwd;
+    }
+
+    void setCwd(String cwd) {
+        this.cwd = cwd == null ? "" : cwd.trim();
+    }
+
     long lastSeq() {
         return lastSeq;
     }
@@ -69,6 +78,7 @@ final class TerminalRuntimeState {
     void applyLaunchState(TerminalLaunchState launchState) {
         createdAt = launchState.createdAt;
         instanceId = launchState.instanceId;
+        cwd = launchState.cwd;
         lastSeq = launchState.lastSeq;
         columns = launchState.columns;
         rows = launchState.rows;
@@ -103,6 +113,7 @@ final class TerminalRuntimeState {
     void clearTerminalDetails() {
         instanceId = "";
         createdAt = "";
+        cwd = "";
         columns = 0;
         rows = 0;
         lastSeq = 0;
@@ -120,6 +131,7 @@ final class TerminalRuntimeState {
         snapshot.termTitle = titleView == null ? "" : String.valueOf(titleView.getText());
         snapshot.sessionName = subtitleView == null ? "" : String.valueOf(subtitleView.getText());
         snapshot.createdAt = createdAt;
+        snapshot.cwd = cwd;
         snapshot.terminalSession = terminalSession;
         snapshot.lastSeq = lastSeq;
         snapshot.columns = columns;
@@ -137,6 +149,7 @@ final class TerminalRuntimeState {
         metadata.createdAt = createdAt == null ? "" : createdAt;
         metadata.termTitle = titleView == null ? "" : String.valueOf(titleView.getText());
         metadata.sessionName = subtitleView == null ? "" : String.valueOf(subtitleView.getText());
+        metadata.cwd = cwd;
         metadata.columns = columns;
         metadata.rows = rows;
         metadata.lastSeq = lastSeq;

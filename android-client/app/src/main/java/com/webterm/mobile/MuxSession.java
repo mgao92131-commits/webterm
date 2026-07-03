@@ -27,6 +27,9 @@ final class MuxSession {
         void onTunnelConnected(String tunnelId);
         void onTunnelError(String tunnelId, String message);
         void onTunnelData(String tunnelId, byte[] payload, boolean binary);
+
+        /** 物理连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
+        default void onReconnectAttempt(int attempt) {}
     }
 
     private final Handler mainHandler;
@@ -69,6 +72,10 @@ final class MuxSession {
 
     boolean isConnected() {
         return connected;
+    }
+
+    boolean isP2PTransport() {
+        return transport instanceof WebRtcDataChannelTransport;
     }
 
     boolean sendWsConnect(String tunnelId, String path, String[] protocols) {
@@ -202,6 +209,7 @@ final class MuxSession {
     private void scheduleReconnect() {
         if (!enabled) return;
         int attempt = ++reconnectAttempts;
+        mainHandler.post(() -> listener.onReconnectAttempt(attempt));
         long cap = Math.min(1000L * attempt, 8000L);
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
         mainHandler.postDelayed(() -> {

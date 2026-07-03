@@ -89,6 +89,7 @@ public final class SessionRowHelper {
         final String nameText = session.optString("name", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
+        final String cwd = session.optString("cwd", "").trim();
 
         if (titleView != null) {
             if (!nameText.isEmpty()) {
@@ -109,7 +110,7 @@ public final class SessionRowHelper {
             updateRecentInput(recentView, session);
         }
 
-        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId));
+        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId, cwd));
 
         row.setOnLongClickListener((v) -> {
             actions.renameSession(server, id, nameText);

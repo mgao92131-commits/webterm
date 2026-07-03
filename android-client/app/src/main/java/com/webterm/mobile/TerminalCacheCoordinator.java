@@ -48,6 +48,7 @@ final class TerminalCacheCoordinator {
                 snapshot.instanceId,
                 snapshot.termTitle,
                 snapshot.sessionName,
+                snapshot.cwd,
                 snapshot.createdAt,
                 snapshot.terminalSession
             );
@@ -57,6 +58,7 @@ final class TerminalCacheCoordinator {
         cached.instanceId = snapshot.instanceId;
         cached.termTitle = snapshot.termTitle;
         cached.sessionName = snapshot.sessionName;
+        cached.cwd = snapshot.cwd;
         cached.createdAt = snapshot.createdAt;
         cached.terminalSession = snapshot.terminalSession;
         cached.lastSeq = snapshot.lastSeq;
@@ -147,6 +149,7 @@ final class TerminalCacheCoordinator {
         String instanceId;
         String termTitle;
         String sessionName;
+        String cwd;
         String createdAt;
         TerminalSession terminalSession;
         long lastSeq;

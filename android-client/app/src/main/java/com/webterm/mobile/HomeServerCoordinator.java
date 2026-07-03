@@ -13,37 +13,34 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
-import okhttp3.OkHttpClient;
-
 final class HomeServerCoordinator {
     private final Activity activity;
-    private final OkHttpClient http;
-    private final Handler mainHandler;
-    private final WebTermApi api;
+    private final RelayMuxSessionRegistry relayMuxRegistry;
     private final TerminalCacheCoordinator terminalCache;
     private final Executor executor;
+    private final SessionRepository sessionRepository;
     private final Listener listener;
     private final HomeRefreshScheduler refreshScheduler;
     private final List<ServerGroupController> activeGroups = new ArrayList<>();
     private final Map<String, Boolean> directoryCollapsed = new HashMap<>();
 
     private SessionRecyclerAdapter sessionAdapter;
+    private volatile int sessionLoadGeneration;
 
     HomeServerCoordinator(
         Activity activity,
-        OkHttpClient http,
         Handler mainHandler,
+        RelayMuxSessionRegistry relayMuxRegistry,
         WebTermApi api,
         TerminalCacheCoordinator terminalCache,
         Executor executor,
         Listener listener
     ) {
         this.activity = activity;
-        this.http = http;
-        this.mainHandler = mainHandler;
-        this.api = api;
+        this.relayMuxRegistry = relayMuxRegistry;
         this.terminalCache = terminalCache;
         this.executor = executor;
+        this.sessionRepository = new SessionRepository(api, terminalCache, executor);
         this.listener = listener;
         refreshScheduler = new HomeRefreshScheduler(
             mainHandler,
@@ -60,7 +57,7 @@ final class HomeServerCoordinator {
 
                 @Override
                 public void loadSessionsForGroup(ServerGroupController group) {
-                    loadSessionsForAdapter(group.server, group.status, null);
+                    loadSessionsForAdapter(group.server, group.status(), null);
                 }
             }
         );
@@ -92,13 +89,26 @@ final class HomeServerCoordinator {
         refreshScheduler.reset();
         if (sessionAdapter == null || server == null) return;
         Map<String, JSONArray> tempInMemorySessions = collectInMemorySessions();
-        stopAllGroups();
-        activeGroups.clear();
+        ServerGroupController holder = findHolderForServer(server);
+        if (holder != null) {
+            holder.attachStatus(status);
+            loadSessionsForAdapter(server, status, tempInMemorySessions);
+            connectManagerWS(holder);
+            refreshScheduler.scheduleInitial();
+            return;
+        }
 
-        ServerGroupController holder = new ServerGroupController(activity, http, mainHandler, server, null, status, new ServerGroupController.Listener() {
+        detachGroups();
+
+        holder = new ServerGroupController(activity, relayMuxRegistry, server, null, status, new ServerGroupController.Listener() {
             @Override
             public boolean isActive(ServerGroupController controller) {
-                return isActiveManagerHolder(controller);
+                return isServerContextActive(controller);
+            }
+
+            @Override
+            public boolean isRenderActive(ServerGroupController controller) {
+                return isRenderTargetActive(controller.server);
             }
 
             @Override
@@ -110,6 +120,11 @@ final class HomeServerCoordinator {
             @Override
             public void onSessionClosed(String baseUrl, String sessionId) {
                 listener.onRemoveCachedTerminal(baseUrl, sessionId);
+            }
+
+            @Override
+            public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
+                listener.onSessionCwdChanged(server, sessionId, cwd);
             }
 
             @Override
@@ -131,14 +146,18 @@ final class HomeServerCoordinator {
         refreshScheduler.scheduleInitial();
     }
 
-    void pause() {
+    void pauseUi() {
+        sessionLoadGeneration++;
         refreshScheduler.cancel();
-        stopAllGroups();
+    }
+
+    void detach() {
+        pauseUi();
+        detachGroups();
     }
 
     void destroy() {
-        pause();
-        activeGroups.clear();
+        detach();
         sessionAdapter = null;
     }
 
@@ -154,21 +173,15 @@ final class HomeServerCoordinator {
 
     private void loadSessionsForAdapter(ServerConfig server, StatusIndicatorView status, Map<String, JSONArray> tempInMemorySessions) {
         if (server.getUrl().isEmpty() || sessionAdapter == null) return;
+        int loadGeneration = ++sessionLoadGeneration;
         status.setStatus(StatusIndicatorView.Status.CONNECTING);
 
         boolean loadedFromMemory = renderTemporarySessionsIntoAdapter(server, tempInMemorySessions);
         if (!loadedFromMemory && terminalCache != null) {
-            prepopulateCachedSessionsIntoAdapter(server);
+            prepopulateCachedSessionsIntoAdapter(server, loadGeneration);
         }
 
-        if (server.getCookie() != null && !server.getCookie().isEmpty()) {
-            fetchSessionsIntoAdapter(server, status);
-        } else if (server.getPassword() != null && !server.getPassword().isEmpty()) {
-            silentLoginAndFetchIntoAdapter(server, status);
-        } else {
-            status.setStatus(StatusIndicatorView.Status.DISCONNECTED);
-            sessionAdapter.showError("需要登录");
-        }
+        loadRepositorySessionsIntoAdapter(server, status, loadGeneration);
     }
 
     private boolean renderTemporarySessionsIntoAdapter(ServerConfig server, Map<String, JSONArray> tempInMemorySessions) {
@@ -182,105 +195,59 @@ final class HomeServerCoordinator {
         return true;
     }
 
-    private void prepopulateCachedSessionsIntoAdapter(ServerConfig server) {
+    private void prepopulateCachedSessionsIntoAdapter(ServerConfig server, int loadGeneration) {
         if (terminalCache == null) return;
         executor.execute(() -> {
             List<TerminalDiskCache.Metadata> cached = terminalCache.getCachedSessionsForServer(server);
             if (cached == null || cached.isEmpty()) return;
             activity.runOnUiThread(() -> {
-                if (sessionAdapter != null && !sessionAdapter.hasSessionRows()) {
+                if (isLoadActive(server, loadGeneration) && sessionAdapter != null && !sessionAdapter.hasSessionRows()) {
                     renderServerSessions(server, CachedSessionMapper.toSessions(cached));
                 }
             });
         });
     }
 
-    private void fetchSessionsIntoAdapter(ServerConfig server, StatusIndicatorView status) {
-        api.fetchSessions(server, new WebTermApi.SessionsCallback() {
+    private void loadRepositorySessionsIntoAdapter(ServerConfig server, StatusIndicatorView status, int loadGeneration) {
+        sessionRepository.loadSessions(server, new SessionRepository.Callback() {
             @Override
-            public void onReady(JSONArray sessions) {
-                activity.runOnUiThread(() -> {
-                    status.setStatus(StatusIndicatorView.Status.CONNECTED);
-                    ServerGroupController holder = findHolderForServer(server);
-                    if (holder != null) holder.setLastSessions(sessions);
-                    hydrateCachedNames(server, sessions);
-                    renderServerSessions(server, sessions);
-                });
-            }
-
-            @Override
-            public void onError(int code, String message) {
-                if (code == 401) {
-                    if (server.getCookie() != null && !server.getCookie().isEmpty()) {
-                        api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
-                            @Override
-                            public void onReady(String baseUrl, String cookie) {
-                                server.setCookie(cookie);
-                                listener.onAuthenticated(server);
-                                activity.runOnUiThread(() -> fetchSessionsIntoAdapter(server, status));
-                            }
-
-                            @Override
-                            public void onError(String refreshError) {
-                                silentLoginAndFetchIntoAdapter(server, status);
-                            }
-                        });
-                        return;
-                    } else if (server.getPassword() != null && !server.getPassword().isEmpty()) {
-                        silentLoginAndFetchIntoAdapter(server, status);
-                        return;
-                    }
+            public void onAuthenticated(ServerConfig server) {
+                if (isLoadActive(server, loadGeneration)) {
+                    listener.onAuthenticated(server);
                 }
-                showOfflineCachedSessionsIntoAdapter(server, status, code > 0 ? "HTTP " + code : message);
             }
 
             @Override
-            public void onParseError(String message) {
+            public void onResult(SessionRepository.Result result) {
                 activity.runOnUiThread(() -> {
-                    status.setStatus(StatusIndicatorView.Status.DISCONNECTED);
-                    if (sessionAdapter != null && !sessionAdapter.hasSessionRows()) {
-                        sessionAdapter.showError("JSON 解析错误");
+                    if (isLoadActive(server, loadGeneration)) {
+                        applySessionResult(server, status, result);
                     }
                 });
             }
         });
     }
 
-    private void silentLoginAndFetchIntoAdapter(ServerConfig server, StatusIndicatorView status) {
-        if (server.getPassword() == null || server.getPassword().isEmpty()) {
-            showOfflineCachedSessionsIntoAdapter(server, status, "登录失败: 密码为空");
+    private void applySessionResult(ServerConfig server, StatusIndicatorView status, SessionRepository.Result result) {
+        if (result == null) return;
+        if (result.kind == SessionRepository.Result.Kind.ONLINE) {
+            ServerGroupController holder = findHolderForServer(server);
+            boolean isP2P = holder != null && holder.isP2PConnected();
+            status.setStatus(isP2P ? StatusIndicatorView.Status.CONNECTED_P2P : StatusIndicatorView.Status.CONNECTED);
+            if (holder != null) holder.setLastSessions(result.sessions);
+            hydrateCachedNames(server, result.sessions);
+            renderServerSessions(server, result.sessions);
             return;
         }
-        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String baseUrl, String cookie) {
-                server.setCookie(cookie);
-                listener.onAuthenticated(server);
-                activity.runOnUiThread(() -> fetchSessionsIntoAdapter(server, status));
-            }
 
-            @Override
-            public void onError(String message) {
-                showOfflineCachedSessionsIntoAdapter(server, status, "登录失败: " + message);
-            }
-        });
-    }
+        status.setStatus(StatusIndicatorView.Status.DISCONNECTED);
+        if (sessionAdapter != null && sessionAdapter.hasSessionRows()) return;
 
-    private void showOfflineCachedSessionsIntoAdapter(ServerConfig server, StatusIndicatorView status, String errorMsg) {
-        List<TerminalDiskCache.Metadata> cachedMetadata = terminalCache == null
-            ? null
-            : terminalCache.getCachedSessionsForServer(server);
-
-        activity.runOnUiThread(() -> {
-            status.setStatus(StatusIndicatorView.Status.DISCONNECTED);
-            if (sessionAdapter != null && sessionAdapter.hasSessionRows()) return;
-
-            if (cachedMetadata != null && !cachedMetadata.isEmpty()) {
-                renderServerSessions(server, CachedSessionMapper.toSessions(cachedMetadata));
-            } else if (sessionAdapter != null) {
-                sessionAdapter.showError(errorMsg);
-            }
-        });
+        if (result.kind == SessionRepository.Result.Kind.OFFLINE_CACHE) {
+            renderServerSessions(server, result.sessions);
+        } else if (sessionAdapter != null) {
+            sessionAdapter.showError(result.message);
+        }
     }
 
     private void hydrateCachedNames(ServerConfig server, JSONArray sessions) {
@@ -318,7 +285,7 @@ final class HomeServerCoordinator {
     }
 
     private void renderServerSessions(ServerConfig server, JSONArray sessions) {
-        if (sessionAdapter == null) return;
+        if (!isRenderTargetActive(server)) return;
         cleanupMissingCachedSessions(server, sessions);
         sessionAdapter.submitSessions(server, sessions);
     }
@@ -339,8 +306,7 @@ final class HomeServerCoordinator {
     }
 
     private void connectManagerWS(ServerGroupController holder) {
-        if (!listener.isHomeActive() || !hasAttachedTarget() || holder.server.getUrl().isEmpty()) {
-            closeManagerWS(holder);
+        if (!isServerContextActive(holder) || holder.server.getUrl().isEmpty()) {
             return;
         }
         if (!activeGroups.contains(holder)) return;
@@ -357,14 +323,30 @@ final class HomeServerCoordinator {
         }
     }
 
+    private void detachGroups() {
+        stopAllGroups();
+        activeGroups.clear();
+    }
+
     private boolean isRefreshActive() {
         return listener.isHomeActive() && hasAttachedTarget();
     }
 
-    private boolean isActiveManagerHolder(ServerGroupController holder) {
+    private boolean isServerContextActive(ServerGroupController holder) {
+        return holder != null
+            && activeGroups.contains(holder)
+            && listener.isServerContextActive(holder.server);
+    }
+
+    private boolean isRenderTargetActive(ServerConfig server) {
         return listener.isHomeActive()
             && hasAttachedTarget()
-            && activeGroups.contains(holder);
+            && findHolderForServer(server) != null;
+    }
+
+    private boolean isLoadActive(ServerConfig server, int loadGeneration) {
+        return sessionLoadGeneration == loadGeneration
+            && isRenderTargetActive(server);
     }
 
     private boolean hasAttachedTarget() {
@@ -373,15 +355,24 @@ final class HomeServerCoordinator {
 
     private ServerGroupController findHolderForServer(ServerConfig server) {
         for (ServerGroupController holder : activeGroups) {
-            if (holder.server == server) return holder;
+            if (sameMuxTarget(holder.server, server)) return holder;
         }
         return null;
     }
 
+    private static boolean sameMuxTarget(ServerConfig a, ServerConfig b) {
+        if (a == null || b == null) return false;
+        return WebTermUrls.normalizeBaseUrl(a.getUrl()).equals(WebTermUrls.normalizeBaseUrl(b.getUrl()))
+            && RelayMuxSessionManager.safeEquals(a.getCookie(), b.getCookie())
+            && RelayMuxSessionManager.safeEquals(a.getDeviceId(), b.getDeviceId());
+    }
+
     interface Listener {
         boolean isHomeActive();
+        boolean isServerContextActive(ServerConfig server);
         void onAuthenticated(ServerConfig server);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
         void onRemoveMissingCachedSessionsForServer(ServerConfig server, Set<String> liveSessionIdentities);
+        void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd);
     }
 }

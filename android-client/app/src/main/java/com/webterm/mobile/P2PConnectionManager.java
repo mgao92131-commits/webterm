@@ -36,6 +36,7 @@ final class P2PConnectionManager {
     private PeerConnectionFactory factory;
     private PeerConnection peerConnection;
     private DataChannel dataChannel;
+    private P2PDataChannelEndpoint dataChannelEndpoint;
     private String baseUrl;
     private String cookie;
     private String deviceId;
@@ -52,13 +53,13 @@ final class P2PConnectionManager {
     synchronized boolean isP2PActive(String deviceId) {
         return connected
             && safeEquals(this.deviceId, deviceId)
-            && dataChannel != null
-            && dataChannel.state() == DataChannel.State.OPEN;
+            && dataChannelEndpoint != null
+            && dataChannelEndpoint.isOpen();
     }
 
     synchronized MuxTransport getDataChannelTransport(String deviceId) {
         if (!isP2PActive(deviceId)) return null;
-        return new WebRtcDataChannelTransport(dataChannel);
+        return new WebRtcDataChannelTransport(dataChannelEndpoint);
     }
 
     synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
@@ -87,24 +88,20 @@ final class P2PConnectionManager {
             fail(deviceId, "Failed to create DataChannel.");
             return;
         }
-        dataChannel.registerObserver(new DataChannel.Observer() {
-            @Override public void onBufferedAmountChange(long previousAmount) {}
-
-            @Override public void onStateChange() {
-                DataChannel.State state = dataChannel.state();
-                if (disconnecting) return;
-                if (state == DataChannel.State.OPEN) {
-                    Log.i(TAG, "p2p datachannel open for " + deviceId);
-                    connected = true;
-                    mainHandler.post(() -> listener.onConnected(deviceId));
-                } else if (state == DataChannel.State.CLOSED || state == DataChannel.State.CLOSING) {
-                    Log.i(TAG, "p2p datachannel " + state.name().toLowerCase(java.util.Locale.US) + " for " + deviceId);
-                    connected = false;
-                    mainHandler.post(() -> listener.onDisconnected(deviceId, "datachannel " + state.name().toLowerCase(java.util.Locale.US)));
-                }
+        dataChannelEndpoint = new P2PDataChannelEndpoint(dataChannel, new P2PDataChannelEndpoint.StateListener() {
+            @Override public void onOpen() {
+                if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
+                Log.i(TAG, "p2p datachannel open for " + deviceId);
+                connected = true;
+                mainHandler.post(() -> listener.onConnected(deviceId));
             }
 
-            @Override public void onMessage(DataChannel.Buffer buffer) {}
+            @Override public void onClosed(String reason) {
+                if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
+                Log.i(TAG, "p2p " + reason + " for " + deviceId);
+                connected = false;
+                mainHandler.post(() -> listener.onDisconnected(deviceId, reason));
+            }
         });
 
         peerConnection.createOffer(new SdpObserverAdapter() {
@@ -141,11 +138,13 @@ final class P2PConnectionManager {
         if (disconnecting) return;
         disconnecting = true;
         connected = false;
-        if (dataChannel != null) {
-            dataChannel.unregisterObserver();
+        if (dataChannelEndpoint != null) {
+            dataChannelEndpoint.close();
+            dataChannelEndpoint = null;
+        } else if (dataChannel != null) {
             try { dataChannel.close(); } catch (Exception ignored) {}
-            dataChannel = null;
         }
+        dataChannel = null;
         if (peerConnection != null) {
             try { peerConnection.close(); } catch (Exception ignored) {}
             peerConnection = null;

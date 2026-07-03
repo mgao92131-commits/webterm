@@ -18,6 +18,7 @@ final class CachedSessionMapper {
                 session.put("name", meta.sessionName);
                 session.put("termTitle", meta.termTitle);
                 session.put("createdAt", meta.createdAt);
+                session.put("cwd", meta.cwd);
                 session.put("cols", meta.columns);
                 session.put("rows", meta.rows);
                 sessions.put(session);
