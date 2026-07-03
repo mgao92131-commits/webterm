@@ -43,19 +43,46 @@ func NewWithFactory(application *app.App, factory Factory) *Supervisor {
 	return &Supervisor{app: application, factory: factory}
 }
 
-func DefaultFactory(cfg config.Config, application *app.App) (Runner, error) {
-	switch cfg.Mode {
-	case config.ModeDirect:
-		return direct.New(cfg.Direct, application), nil
-	case config.ModeRelay:
+func DefaultFactory(cfg config.Config, app *app.App) (Runner, error) {
+	return defaultRegistry.Create(cfg, app)
+}
+
+// RunnerRegistry 按运行模式注册 Runner 工厂。
+type RunnerRegistry struct {
+	factories map[string]Factory
+}
+
+// NewRunnerRegistry 创建包含默认 direct/relay 工厂的注册表。
+func NewRunnerRegistry() *RunnerRegistry {
+	r := &RunnerRegistry{factories: make(map[string]Factory)}
+	r.Register(config.ModeDirect, func(cfg config.Config, app *app.App) (Runner, error) {
+		return direct.New(cfg.Direct, app), nil
+	})
+	r.Register(config.ModeRelay, func(cfg config.Config, app *app.App) (Runner, error) {
 		return RunnerFunc(func(ctx context.Context) error {
 			cfg.Relay.Protocol = config.NormalizeRelayProtocol(cfg.Relay.Protocol)
-			return relay.NewV2(cfg.Relay, application).Run(ctx)
+			return relay.NewV2(cfg.Relay, app).Run(ctx)
 		}), nil
-	default:
-		return nil, errors.New("unsupported mode")
-	}
+	})
+	return r
 }
+
+// Register 注册一个运行模式。
+func (r *RunnerRegistry) Register(mode string, factory Factory) {
+	r.factories[mode] = factory
+}
+
+// Create 根据模式创建 Runner。模式未注册时返回错误。
+func (r *RunnerRegistry) Create(cfg config.Config, app *app.App) (Runner, error) {
+	factory, ok := r.factories[cfg.Mode]
+	if !ok {
+		return nil, fmt.Errorf("unsupported mode: %s", cfg.Mode)
+	}
+	return factory(cfg, app)
+}
+
+// defaultRegistry 是 DefaultFactory 使用的全局注册表。
+var defaultRegistry = NewRunnerRegistry()
 
 func (supervisor *Supervisor) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
