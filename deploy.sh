@@ -148,7 +148,6 @@ tar --exclude='node_modules' \
     --exclude='go-core/webterm-agent' \
     --exclude='go-core/webterm-flow-smoke' \
     --exclude='go-core/webterm-relay-flow-smoke' \
-    --exclude='flutter_client' \
     --exclude='android-client' \
     --exclude='go-core/.gocache' \
     --exclude='*.zip' \

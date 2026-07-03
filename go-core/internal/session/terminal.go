@@ -40,6 +40,7 @@ type TerminalSession struct {
 	name           string
 	termTitle      string
 	cwd            string
+	liveCwd        string
 	command        string
 	status         string
 	cols           int
@@ -125,13 +126,17 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 func (terminal *TerminalSession) Info() Info {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
+	cwd := terminal.cwd
+	if terminal.liveCwd != "" {
+		cwd = terminal.liveCwd
+	}
 	return Info{
 		ID:                terminal.id,
 		InstanceID:        terminal.instance,
 		Name:              terminal.name,
 		TermTitle:         terminal.termTitle,
 		DisplayTitle:      displayTitle(terminal.name, terminal.termTitle),
-		CWD:               terminal.cwd,
+		CWD:               cwd,
 		RecentInputLines:  []string{},
 		RecentInputHidden: false,
 		Command:           terminal.command,
@@ -401,7 +406,10 @@ func (terminal *TerminalSession) waitLoop() {
 // are properly broadcasted and titleChanged state does not leak.
 func (terminal *TerminalSession) pushOutputLocked(data []byte) EventFrame {
 	if terminal.screen != nil {
-		_ = terminal.screen.Write(data)
+		if cwd, err := terminal.screen.WriteAndWorkingDirectoryPath(data); err == nil && cwd != "" && cwd != terminal.liveCwd {
+			terminal.liveCwd = cwd
+			terminal.titleChanged = true
+		}
 	}
 	terminal.touchLocked()
 	return terminal.ring.Push(data)

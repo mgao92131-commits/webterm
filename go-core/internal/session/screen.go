@@ -59,6 +59,19 @@ func (screen *ScreenState) Write(data []byte) error {
 	return err
 }
 
+func (screen *ScreenState) WriteAndWorkingDirectoryPath(data []byte) (string, error) {
+	screen.mu.Lock()
+	defer screen.mu.Unlock()
+	_, err := screen.terminal.Write(data)
+	return screen.terminal.WorkingDirectoryPath(), err
+}
+
+func (screen *ScreenState) WorkingDirectoryPath() string {
+	screen.mu.Lock()
+	defer screen.mu.Unlock()
+	return screen.terminal.WorkingDirectoryPath()
+}
+
 func (screen *ScreenState) Resize(rows int, cols int) {
 	screen.mu.Lock()
 	defer screen.mu.Unlock()
@@ -455,7 +468,7 @@ func (screen *ScreenState) AnsiText() string {
 			if isEmpty && isDefaultStyle(cell) {
 				// 如果当前活动样式不是默认的，需要在跳过之前将其重置为默认，
 				// 否则在后续输出跳过的单元格（如 ECH \x1b[NX）时会发生样式（背景色）泄漏。
-				if (activeFlags & styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
+				if (activeFlags&styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
 					buf.WriteString("\x1b[0m")
 					activeFg = defaultFg
 					activeBg = defaultBg
@@ -548,7 +561,7 @@ func (screen *ScreenState) AnsiText() string {
 			}
 		}
 
-		if (activeFlags & styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
+		if (activeFlags&styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
 			buf.WriteString("\x1b[0m")
 			activeFg = defaultFg
 			activeBg = defaultBg

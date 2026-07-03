@@ -1,5 +1,5 @@
 /**
- * Tunnel protocol — shared between relay-server and pc-agent.
+ * Tunnel protocol shared by relay clients, agents, and browser/mobile mux code.
  * Universal HTTP/WebSocket tunneling and proxying.
  */
 

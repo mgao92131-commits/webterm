@@ -3,6 +3,7 @@ package relaygateway
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,10 @@ func NewP2PGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry
 func (gateway *P2PGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if os.Getenv("WEBTERM_DISABLE_P2P") == "1" {
+		http.Error(w, "p2p disabled", http.StatusServiceUnavailable)
 		return
 	}
 	user, ok := gateway.authenticateRequest(w, r)

@@ -1,44 +1,70 @@
 # WebTerm
 
-个人自用的 Node WebTerm。服务端通过 node-pty 持有 PTY/ConPTY 会话，并用 headless xterm 维护权威终端状态；浏览器只是可以断开重连的视图。
+个人自用的 WebTerm。当前服务端能力由 `go-core/` 提供：`webterm-agent` 负责本机终端会话，`webterm-relay` 负责多设备中转；仓库根目录保留 Vue 前端、部署脚本和 smoke 测试入口。
 
-## 运行
-
-Windows 当前默认使用 `pwsh.exe`，需要先安装 PowerShell 7 并确保它在 `PATH` 中。
-
-```powershell
-$env:WEBTERM_PASSWORD = "your-password"
-$env:WEBTERM_ADDR = "127.0.0.1:8080"
-npm start
-```
+## 前端
 
 首次运行前安装依赖：
 
-```powershell
+```sh
 npm install
 ```
 
-Tailscale 使用时建议绑定 Tailscale IP，而不是直接监听全部网卡：
+开发模式：
 
-```powershell
-$env:WEBTERM_ADDR = "100.x.y.z:8080"
+```sh
+npm run dev
 ```
 
-## 功能
+构建静态资源到 `web/`：
 
-- 单用户密码登录，密码来自 `WEBTERM_PASSWORD`。
-- `/` 管理终端 session。
-- `/terminal/{id}` 打开单个终端页。
-- 同一个 session 可被多个页面同时打开，所有页面都可输入。
-- 可见页面的 resize 生效。
-- 运行中的 session 不会自动关闭。
-- shell 进程退出或用户点击关闭时，session 被移除。
-- 移动端快捷键栏。
-- 深色/浅色主题切换。
-- 断线重连时通过 seq replay 或 serialized state 恢复终端状态。
+```sh
+npm run build
+```
 
-## 限制
+## Go Agent
 
-- 不提供退出登录按钮。
-- PTY 进程不跨服务重启保活。
-- 不内置 HTTPS；公网或 HTTPS 场景建议放到 Tailscale Serve、Caddy 或 Nginx 后面。
+Direct 模式：
+
+```sh
+cd go-core
+go run ./cmd/webterm-agent --mode direct
+```
+
+Relay 模式：
+
+```sh
+cd go-core
+RELAY_URL=http://127.0.0.1:19090 \
+RELAY_SECRET=your-device-secret \
+DEVICE_NAME="My Mac" \
+go run ./cmd/webterm-agent --mode relay
+```
+
+## Go Relay
+
+本地启动：
+
+```sh
+cd go-core
+WEBTERM_RELAY_ADDR=127.0.0.1:19090 \
+WEBTERM_RELAY_STORE_PATH=../data/relay-store.json \
+WEBTERM_RELAY_ALLOW_REGISTRATION=1 \
+go run ./cmd/webterm-relay
+```
+
+Docker 部署使用 `Dockerfile.go-relay` 和 `docker-compose.yml`。部署前先构建前端并设置管理员初始密码：
+
+```sh
+npm run build
+RELAY_BOOTSTRAP_PASSWORD='your-secure-password' ./deploy.sh
+```
+
+## 验证
+
+```sh
+npm run typecheck
+npm run test:unit
+npm run smoke:go-relay-server
+npm run smoke:web-go-relay-pc-agent
+```

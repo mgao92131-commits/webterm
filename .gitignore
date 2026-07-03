@@ -10,3 +10,7 @@ data/
 *.db*
 agent_run.log
 webterm_deploy_temp.tar.gz
+# Go binaries
+go-core/webterm-agent
+go-core/webterm-flow-smoke
+go-core/webterm-relay-flow-smoke

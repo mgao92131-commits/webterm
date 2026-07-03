@@ -780,12 +780,6 @@ func newVerificationCode() string {
 	return fmt.Sprintf("%06d", value.Int64()+100000)
 }
 
-func (server *Server) emitDevOTP(email, purpose, code string) {
-	if os.Getenv("WEBTERM_RELAY_DEV_PRINT_OTP") != "1" {
-		return
-	}
-	fmt.Printf("[Relay OTP] email=%s purpose=%s code=%s\n", email, purpose, code)
-}
 
 type envOTPSender struct{}
 

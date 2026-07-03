@@ -40,7 +40,7 @@ const compose = read('docker-compose.yml');
 for (const required of [
   'dockerfile: Dockerfile.go-relay',
   'WEBTERM_RELAY_ADDR=0.0.0.0:19090',
-  'WEBTERM_RELAY_STORE_PATH=/app/data/relay.db',
+  'WEBTERM_RELAY_STORE_PATH=/app/data/relay-store.json',
   'WEBTERM_RELAY_PUBLIC_URL=${WEBTERM_RELAY_PUBLIC_URL:-}',
   'WEBTERM_RELAY_ALLOW_REGISTRATION=${WEBTERM_RELAY_ALLOW_REGISTRATION:-1}',
   'WEBTERM_RELAY_REQUIRE_EMAIL_OTP=${WEBTERM_RELAY_REQUIRE_EMAIL_OTP:-0}',

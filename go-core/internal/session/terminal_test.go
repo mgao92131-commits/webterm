@@ -71,3 +71,71 @@ func TestTerminalSessionTitleUpdate(t *testing.T) {
 		t.Errorf("expected TermTitle to be %q, got %q", "TestTitle", info.TermTitle)
 	}
 }
+
+func TestTerminalSessionCwdUpdatesFromOSC7(t *testing.T) {
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	initialCwd := terminal.Info().CWD
+	if initialCwd == "" {
+		t.Fatalf("initial CWD should not be empty")
+	}
+
+	terminal.PushOutput([]byte("\x1b]7;file://localhost/tmp\x07"))
+
+	info := terminal.Info()
+	if info.CWD != "/tmp" {
+		t.Errorf("expected CWD to update to /tmp after OSC 7, got %q", info.CWD)
+	}
+}
+
+func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	info := terminal.Info()
+	if info.CWD == "" {
+		t.Errorf("CWD must fall back to initial cwd when no OSC 7 received, got empty")
+	}
+}
+
+func TestTerminalSessionBroadcastsOnCwdChange(t *testing.T) {
+	var broadcastCount int
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+		OnTitle: func() {
+			broadcastCount++
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	terminal.PushOutput([]byte("\x1b]7;file://localhost/tmp\x07"))
+	if broadcastCount < 1 {
+		t.Errorf("expected OnTitle broadcast to fire on cwd change, got %d", broadcastCount)
+	}
+
+	before := broadcastCount
+	terminal.PushOutput([]byte("\x1b]7;file://localhost/tmp\x07"))
+	if broadcastCount != before {
+		t.Errorf("expected no extra broadcast when cwd unchanged, got delta %d", broadcastCount-before)
+	}
+}
