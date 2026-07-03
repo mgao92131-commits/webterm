@@ -4,16 +4,11 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.widget.Toast;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-@Singleton
 public final class SessionCommandController {
     private final Activity activity;
     private final WebTermApi api;
     private final Listener listener;
 
-    @Inject
     public SessionCommandController(Activity activity, WebTermApi api, Listener listener) {
         this.activity = activity;
         this.api = api;

@@ -11,10 +11,6 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-@Singleton
 public final class ServerSessionMonitor {
     private static final String TAG = "ServerSessionMonitor";
 
@@ -27,7 +23,6 @@ public final class ServerSessionMonitor {
     private boolean enabled;
     private boolean channelOpened;
 
-    @Inject
     public ServerSessionMonitor(RelayMuxSessionRegistry relayMuxRegistry, ServerConfig server, Listener listener) {
         this.relayMuxRegistry = relayMuxRegistry;
         this.server = server;
