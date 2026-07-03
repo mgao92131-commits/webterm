@@ -22,7 +22,7 @@ final class TerminalTitleSynchronizer {
     private String pendingTitle = "";
 
     @AssistedInject
-    TerminalTitleSynchronizer(Handler mainHandler, @Assisted ConnectionProvider connectionProvider) {
+    public TerminalTitleSynchronizer(Handler mainHandler, @Assisted ConnectionProvider connectionProvider) {
         this.mainHandler = mainHandler;
         this.connectionProvider = connectionProvider;
     }

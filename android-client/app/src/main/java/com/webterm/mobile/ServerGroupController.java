@@ -31,7 +31,7 @@ final class ServerGroupController {
     private volatile JSONArray lastSessions;
 
     @AssistedInject
-    ServerGroupController(
+    public ServerGroupController(
         @Assisted Activity activity,
         RelayMuxSessionRegistry relayMuxRegistry,
         @Assisted ServerConfig server,

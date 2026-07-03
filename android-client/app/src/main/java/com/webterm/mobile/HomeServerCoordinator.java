@@ -32,7 +32,7 @@ final class HomeServerCoordinator {
     private volatile int sessionLoadGeneration;
 
     @AssistedInject
-    HomeServerCoordinator(
+    public HomeServerCoordinator(
         @Assisted Activity activity,
         Handler mainHandler,
         RelayMuxSessionRegistry relayMuxRegistry,

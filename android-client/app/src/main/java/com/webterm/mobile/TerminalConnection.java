@@ -48,7 +48,7 @@ final class TerminalConnection {
     private final Runnable sendResizeRunnable = this::sendResizeNow;
 
     @AssistedInject
-    TerminalConnection(Handler mainHandler, RelayMuxSessionRegistry relayMuxRegistry, @Assisted Listener listener) {
+    public TerminalConnection(Handler mainHandler, RelayMuxSessionRegistry relayMuxRegistry, @Assisted Listener listener) {
         this.mainHandler = mainHandler;
         this.relayMuxRegistry = relayMuxRegistry;
         this.listener = listener;

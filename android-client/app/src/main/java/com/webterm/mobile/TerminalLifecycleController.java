@@ -42,7 +42,7 @@ final class TerminalLifecycleController {
     private WebTermTerminalSessionClient activeSessionClient;
 
     @AssistedInject
-    TerminalLifecycleController(
+    public TerminalLifecycleController(
         @Assisted Activity activity,
         @Assisted Host host,
         @Assisted TerminalRuntimeState terminalState,

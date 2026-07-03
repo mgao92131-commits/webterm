@@ -16,7 +16,7 @@ final class TerminalClipboardController {
     private final WebTermTerminalViewClient.Host controlKeyHost;
 
     @AssistedInject
-    TerminalClipboardController(
+    public TerminalClipboardController(
         @Assisted Activity activity,
         @Assisted WebTermTerminalViewClient.Host controlKeyHost
     ) {
