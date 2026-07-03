@@ -11,6 +11,7 @@ import (
 
 	headlessterm "github.com/danielgatis/go-headless-term"
 
+	"webterm/go-core/internal/infrastructure/emulator"
 	"webterm/go-core/internal/infrastructure/pty"
 )
 
@@ -78,8 +79,8 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	// terminal fields here is thread-safe and free from data races.
 	// WARNING: Do NOT attempt to acquire terminal.mu.Lock() inside this callback,
 	// as that will cause a deadlock since the lock is already held by the caller.
-	titleProvider := &terminalTitleProvider{
-		onTitle: func(title string) {
+	titleProvider := &emulator.TerminalTitleProvider{
+		OnTitle: func(title string) {
 			if terminal != nil {
 				terminal.termTitle = title
 				terminal.titleChanged = true
