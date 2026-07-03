@@ -1,6 +1,6 @@
 package com.webterm.mobile.data.repository;
 
-import com.webterm.mobile.data.api.WebTermApi;
+import com.webterm.core.api.WebTermApi;
 import com.webterm.mobile.data.cache.CachedSessionMapper;
 import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
 import com.webterm.mobile.data.cache.TerminalDiskCache;

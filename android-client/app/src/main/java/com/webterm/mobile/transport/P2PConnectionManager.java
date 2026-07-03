@@ -1,7 +1,7 @@
 package com.webterm.mobile.transport;
 
-import com.webterm.mobile.data.api.WebTermApi;
-import com.webterm.mobile.data.api.WebTermUrls;
+import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.MuxTransport;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
 

@@ -5,7 +5,7 @@ import android.os.Handler;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
-import com.webterm.mobile.data.api.WebTermApi;
+import com.webterm.core.api.WebTermApi;
 import com.webterm.mobile.data.config.ServerConfig;
 import com.webterm.mobile.data.config.ServerConfigManager;
 import com.webterm.mobile.data.config.ServerConfigStore;

@@ -4,7 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.widget.Toast;
 
-import com.webterm.mobile.data.api.WebTermApi;
+import com.webterm.core.api.WebTermApi;
 import com.webterm.mobile.data.config.ServerConfig;
 import com.webterm.mobile.domain.session.RelayMuxSessionManager;
 import com.webterm.mobile.ui.dialog.RenameSessionDialogHelper;

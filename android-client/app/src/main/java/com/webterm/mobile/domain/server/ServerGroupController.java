@@ -7,7 +7,7 @@ import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.webterm.mobile.data.api.WebTermUrls;
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.mobile.data.cache.TerminalCacheScope;
 import com.webterm.mobile.data.config.ServerConfig;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;

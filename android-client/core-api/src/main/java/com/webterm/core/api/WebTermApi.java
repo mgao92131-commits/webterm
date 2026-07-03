@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.api;
+package com.webterm.core.api;
 
 import androidx.annotation.NonNull;
 import com.webterm.mobile.data.config.ServerConfig;

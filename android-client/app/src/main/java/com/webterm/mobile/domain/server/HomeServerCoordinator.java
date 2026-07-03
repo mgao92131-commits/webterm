@@ -4,8 +4,8 @@ import android.app.Activity;
 import android.os.Handler;
 import android.widget.LinearLayout;
 
-import com.webterm.mobile.data.api.WebTermApi;
-import com.webterm.mobile.data.api.WebTermUrls;
+import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.mobile.data.cache.CachedSessionMapper;
 import com.webterm.mobile.data.cache.CachedTerminal;
 import com.webterm.mobile.data.cache.TerminalCacheCoordinator;

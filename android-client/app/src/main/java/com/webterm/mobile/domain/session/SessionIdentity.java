@@ -1,6 +1,6 @@
 package com.webterm.mobile.domain.session;
 
-import com.webterm.mobile.data.api.WebTermUrls;
+import com.webterm.core.api.WebTermUrls;
 public final class SessionIdentity {
     private SessionIdentity() {}
 
