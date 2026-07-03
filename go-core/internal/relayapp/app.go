@@ -90,15 +90,15 @@ func NewInMemory(config Config) *App {
 	return New(config, relaystore.NewMemoryStore(), relayrouter.NewRegistry(), nil)
 }
 
-func (app *App) Store() *relaystore.MemoryStore {
+func (app *App) Store() relaystore.ControlStore {
 	return app.store
 }
 
-func (app *App) Registry() *relayrouter.Registry {
+func (app *App) Registry() relayrouter.AgentRegistry {
 	return app.registry
 }
 
-func (app *App) Streams() *relayrouter.StreamManager {
+func (app *App) Streams() relayrouter.StreamController {
 	return app.streams
 }
 

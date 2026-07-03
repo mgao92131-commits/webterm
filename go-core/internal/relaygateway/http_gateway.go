@@ -13,13 +13,13 @@ import (
 )
 
 type HTTPGateway struct {
-	store    *relaystore.MemoryStore
-	registry *relayrouter.Registry
-	streams  *relayrouter.StreamManager
+	store    relaystore.GatewayStore
+	registry relayrouter.AgentRegistry
+	streams  relayrouter.StreamController
 	timeout  time.Duration
 }
 
-func NewHTTPGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager) *HTTPGateway {
+func NewHTTPGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *HTTPGateway {
 	return &HTTPGateway{
 		store:    store,
 		registry: registry,

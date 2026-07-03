@@ -22,23 +22,23 @@ const (
 )
 
 type AgentGateway struct {
-	store             *relaystore.MemoryStore
-	registry          *relayrouter.Registry
-	streams           *relayrouter.StreamManager
+	store             relaystore.GatewayStore
+	registry          relayrouter.AgentRegistry
+	streams           relayrouter.StreamController
 	events            *relaycore.EventBus
 	heartbeatInterval time.Duration
 	heartbeatTimeout  time.Duration
 }
 
-func NewAgentGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager) *AgentGateway {
+func NewAgentGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *AgentGateway {
 	return newAgentGateway(store, registry, streams, nil)
 }
 
-func NewAgentGatewayWithEvents(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager, events *relaycore.EventBus) *AgentGateway {
+func NewAgentGatewayWithEvents(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController, events *relaycore.EventBus) *AgentGateway {
 	return newAgentGateway(store, registry, streams, events)
 }
 
-func newAgentGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager, events *relaycore.EventBus) *AgentGateway {
+func newAgentGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController, events *relaycore.EventBus) *AgentGateway {
 	return &AgentGateway{
 		store:             store,
 		registry:          registry,

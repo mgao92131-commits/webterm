@@ -13,13 +13,13 @@ import (
 )
 
 type P2PGateway struct {
-	store    *relaystore.MemoryStore
-	registry *relayrouter.Registry
-	streams  *relayrouter.StreamManager
+	store    relaystore.GatewayStore
+	registry relayrouter.AgentRegistry
+	streams  relayrouter.StreamController
 	timeout  time.Duration
 }
 
-func NewP2PGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager) *P2PGateway {
+func NewP2PGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *P2PGateway {
 	return &P2PGateway{
 		store:    store,
 		registry: registry,

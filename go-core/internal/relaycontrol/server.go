@@ -12,15 +12,15 @@ import (
 )
 
 type Server struct {
-	store           *relaystore.MemoryStore
-	registry        *relayrouter.Registry
-	streams         *relayrouter.StreamManager
+	store           relaystore.ControlStore
+	registry        relayrouter.AgentRegistry
+	streams         relayrouter.StreamController
 	tokenTTL        time.Duration
 	refreshTokenTTL time.Duration
 	otpSender       otpSender
 }
 
-func New(store *relaystore.MemoryStore, registry *relayrouter.Registry) *Server {
+func New(store relaystore.ControlStore, registry relayrouter.AgentRegistry) *Server {
 	return &Server{
 		store:           store,
 		registry:        registry,
@@ -30,7 +30,7 @@ func New(store *relaystore.MemoryStore, registry *relayrouter.Registry) *Server 
 	}
 }
 
-func NewWithStreams(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager) *Server {
+func NewWithStreams(store relaystore.ControlStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *Server {
 	server := New(store, registry)
 	server.streams = streams
 	return server

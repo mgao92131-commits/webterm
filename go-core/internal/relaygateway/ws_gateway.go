@@ -15,13 +15,13 @@ import (
 )
 
 type WSGateway struct {
-	store    *relaystore.MemoryStore
-	registry *relayrouter.Registry
-	streams  *relayrouter.StreamManager
+	store    relaystore.GatewayStore
+	registry relayrouter.AgentRegistry
+	streams  relayrouter.StreamController
 	timeout  time.Duration
 }
 
-func NewWSGateway(store *relaystore.MemoryStore, registry *relayrouter.Registry, streams *relayrouter.StreamManager) *WSGateway {
+func NewWSGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *WSGateway {
 	return &WSGateway{
 		store:    store,
 		registry: registry,

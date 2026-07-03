@@ -10,16 +10,16 @@ import (
 )
 
 type Server struct {
-	registry *relayrouter.Registry
-	streams  *relayrouter.StreamManager
+	registry relayrouter.AgentRegistry
+	streams  relayrouter.StreamController
 	events   *relaycore.EventBus
 }
 
-func New(registry *relayrouter.Registry, streams *relayrouter.StreamManager) *Server {
+func New(registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *Server {
 	return &Server{registry: registry, streams: streams}
 }
 
-func NewWithEvents(registry *relayrouter.Registry, streams *relayrouter.StreamManager, events *relaycore.EventBus) *Server {
+func NewWithEvents(registry relayrouter.AgentRegistry, streams relayrouter.StreamController, events *relaycore.EventBus) *Server {
 	return &Server{registry: registry, streams: streams, events: events}
 }
 
