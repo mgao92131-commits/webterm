@@ -17,7 +17,6 @@ type Socket interface {
 	Read(context.Context) (MessageType, []byte, error)
 	Write(context.Context, MessageType, []byte) error
 	Close() error
-	Subprotocol() string
 }
 
 type WebSocketAdapter struct {
@@ -48,8 +47,4 @@ func (adapter *WebSocketAdapter) Write(ctx context.Context, messageType MessageT
 
 func (adapter *WebSocketAdapter) Close() error {
 	return adapter.conn.Close(websocket.StatusNormalClosure, "")
-}
-
-func (adapter *WebSocketAdapter) Subprotocol() string {
-	return adapter.conn.Subprotocol()
 }

@@ -278,7 +278,3 @@ func (socket *p2pDataChannelSocket) Close() error {
 	})
 	return nil
 }
-
-func (socket *p2pDataChannelSocket) Subprotocol() string {
-	return protocol.MuxSubprotocol
-}

@@ -362,10 +362,6 @@ func (socket *relayStreamSocket) close(notifyRemote bool) {
 	})
 }
 
-func (socket *relayStreamSocket) Subprotocol() string {
-	return socket.protocol
-}
-
 func (socket *relayStreamSocket) Emit(payload []byte, binary bool) bool {
 	messageType := session.MessageText
 	if binary {

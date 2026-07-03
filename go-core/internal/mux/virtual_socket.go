@@ -81,10 +81,6 @@ func (socket *VirtualSocket) CloseWithNotify(ctx context.Context, code int, reas
 	})
 }
 
-func (socket *VirtualSocket) Subprotocol() string {
-	return socket.protocol
-}
-
 func (socket *VirtualSocket) Emit(payload []byte, binary bool) bool {
 	messageType := session.MessageText
 	if binary {
