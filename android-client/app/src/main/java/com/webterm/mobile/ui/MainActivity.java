@@ -22,7 +22,7 @@ import com.webterm.mobile.data.config.ServerConfig;
 import com.webterm.mobile.data.config.ServerConfigManager;
 import com.webterm.mobile.data.config.ServerConfigStore;
 import com.webterm.mobile.domain.command.SessionCommandController;
-import com.webterm.mobile.domain.relay.RelayCoordinator;
+import com.webterm.mobile.domain.relay.RelayService;
 import com.webterm.mobile.domain.server.HomeServerCoordinator;
 import com.webterm.mobile.domain.session.RelayMuxSessionManager;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
@@ -44,6 +44,7 @@ import com.webterm.mobile.ui.home.SessionRowActions;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
 import com.webterm.mobile.ui.relay.RelayDevicesScreenBuilder;
 import com.webterm.mobile.ui.relay.RelayLoginScreenBuilder;
+import com.webterm.mobile.ui.relay.RelayUiState;
 import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;
 import com.webterm.mobile.ui.terminal.TerminalWindowInsetsController;
 import com.webterm.mobile.ui.terminal.WebTermTerminalSessionClient;
@@ -64,7 +65,7 @@ import javax.inject.Inject;
 
 @AndroidEntryPoint
 
-public final class MainActivity extends ComponentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayCoordinator.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
+public final class MainActivity extends ComponentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
 
     private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
 
@@ -103,7 +104,8 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     private StatusIndicatorView mSelectedServerStatus;
 
     private int mImeOverlap;
-    private RelayCoordinator mRelayCoordinator;
+    @Inject RelayService mRelayService;
+    private RelayUiState mRelayUiState;
     private NetworkRecoveryController mNetworkRecoveryController;
     private TextView mHomeSubtitle;
     private final Runnable mBackgroundServerDetach = () -> {
@@ -129,7 +131,8 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             getWindow().setDecorFitsSystemWindows(false);
         }
         mNetworkRecoveryController = new NetworkRecoveryController(this, mainHandler, this);
-        mRelayCoordinator = new RelayCoordinator(http, mainHandler, api, this);
+        mRelayService.setHost(this);
+        mRelayUiState = new RelayUiState(mRelayService, this);
         mSessionCommands = new SessionCommandController(this, api, new SessionCommandController.Listener() {
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
@@ -208,7 +211,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 loadSelectedDeviceSessions();
             } else {
-                mRelayCoordinator.start();
+                mRelayService.start();
             }
         }
         mNetworkRecoveryController.register();
@@ -220,7 +223,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         mInForeground = false;
         if (!mTerminalLifecycle.hasSession()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pauseUi();
-            mRelayCoordinator.stop();
+            mRelayService.stop();
         } else {
             mTerminalLifecycle.pauseCurrentConnection();
         }
@@ -232,7 +235,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     protected void onDestroy() {
         mClosed.set(true);
         mainHandler.removeCallbacksAndMessages(null);
-        mRelayCoordinator.stop();
+        mRelayService.stop();
         if (mHomeCoordinator != null) mHomeCoordinator.destroy();
         if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()) {
             mTerminalLifecycle.closeTerminal(false);
@@ -271,7 +274,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     private void loadServersFromPrefs() {
         serverConfigs.load();
-        mRelayCoordinator.loadMasterFromServers(serverConfigs.servers());
+        mRelayService.loadMasterFromServers(serverConfigs.servers());
     }
 
     public void saveServers() {
@@ -298,10 +301,10 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             this,
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
-            () -> { loadMultiSessions(); mRelayCoordinator.start(); },
+            () -> { loadMultiSessions(); mRelayService.start(); },
             () -> {
-                if (mRelayCoordinator.hasMaster() && mRelayCoordinator.masterConfig().getCookie() != null
-                    && !mRelayCoordinator.masterConfig().getCookie().isEmpty()) {
+                if (mRelayService.hasMaster() && mRelayService.masterConfig().getCookie() != null
+                    && !mRelayService.masterConfig().getCookie().isEmpty()) {
                     showRelayDevicesPage();
                 } else {
                     showRelayLoginPage();
@@ -310,13 +313,13 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             this::shareLatestCrashLog
         );
         mHomeSubtitle = home.subtitle;
-        mRelayCoordinator.attachSubtitle(home.subtitle);
-        mRelayCoordinator.attachStatusDot(home.homeStatus);
+        mRelayUiState.attachSubtitle(home.subtitle);
+        mRelayUiState.attachStatusDot(home.homeStatus);
         installRootInsets(home.root, 0, 0, 0, dp(16), true, true);
         mSessionList = home.sessionList;
         loadMultiSessions();
         setContentViewAnimated(home.root, transition);
-        mRelayCoordinator.start();
+        mRelayService.start();
     }
 
     private void loadMultiSessions() {
@@ -342,7 +345,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         for (ServerConfig s : serverConfigs.servers()) {
             if (!s.isRelayMaster()) allServers.add(s);
         }
-        List<ServerConfig> relayDevices = mRelayCoordinator.devices();
+        List<ServerConfig> relayDevices = mRelayService.devices();
         if (!relayDevices.isEmpty()) allServers.addAll(relayDevices);
         return allServers;
     }
@@ -352,7 +355,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     private void showDeviceSessions(ServerConfig server, PageTransitionAnimator.Transition transition) {
         if (server == null) { showSessionHome(PageTransitionAnimator.Transition.BACK); return; }
         mTerminalLifecycle.closeTerminal(false);
-        mRelayCoordinator.stop();
+        mRelayService.stop();
         mClosed.set(false);
         mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICE_SESSIONS;
@@ -382,10 +385,10 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     }
 
     private void showRelayLoginPage() {
-        String savedEmail = mRelayCoordinator.masterConfig() != null
-            ? mRelayCoordinator.masterConfig().getUsername() : "";
+        String savedEmail = mRelayService.masterConfig() != null
+            ? mRelayService.masterConfig().getUsername() : "";
         RelayLoginScreenBuilder.RelayLoginScreen screen =
-            RelayLoginScreenBuilder.buildLogin(mRelayCoordinator, savedEmail);
+            RelayLoginScreenBuilder.buildLogin(mRelayUiState, savedEmail);
 
         mScreenMode = ScreenMode.RELAY_LOGIN;
         installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
@@ -394,7 +397,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     private void showRelayDevicesPage() {
         RelayDevicesScreenBuilder.RelayDevicesScreen screen =
-            RelayDevicesScreenBuilder.build(mRelayCoordinator);
+            RelayDevicesScreenBuilder.build(mRelayUiState);
 
         mScreenMode = ScreenMode.RELAY_DEVICES;
         installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
@@ -742,16 +745,16 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         }
     }
 
-    // ── RelayCoordinator.Host ──────────────────────────────────────
+    // ── RelayService.Host ──────────────────────────────────────
 
     @Override
     public void onRelayDevicesChanged() { loadMultiSessions(); }
     @Override
     public void onRelayAuthDone() {
         if (mScreenMode == ScreenMode.RELAY_LOGIN
-            && mRelayCoordinator.hasMaster()
-            && mRelayCoordinator.masterConfig().getCookie() != null
-            && !mRelayCoordinator.masterConfig().getCookie().isEmpty()) {
+            && mRelayService.hasMaster()
+            && mRelayService.masterConfig().getCookie() != null
+            && !mRelayService.masterConfig().getCookie().isEmpty()) {
             showRelayDevicesPage();
         } else {
             showSessionHome(PageTransitionAnimator.Transition.BACK);
@@ -835,8 +838,8 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     @Override
     public void onNetworkAvailableForRecovery() {
-        if (mRelayCoordinator != null) {
-            mRelayCoordinator.resetReconnectAndStart();
+        if (mRelayService != null) {
+            mRelayService.resetReconnectAndStart();
         }
         if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
             TerminalConnection.State s = mTerminalConnection.getState();
