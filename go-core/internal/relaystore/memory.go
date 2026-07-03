@@ -765,39 +765,6 @@ func VerificationCodeHash(code string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func HashPassword(password string) (string, error) {
-	salt, err := randomBytes(16)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(append(salt, []byte(password)...))
-	return base64.RawURLEncoding.EncodeToString(salt) + "$" + hex.EncodeToString(sum[:]), nil
-}
-
-func VerifyPassword(password, stored string) bool {
-	parts := splitOnce(stored, '$')
-	if parts == nil {
-		return false
-	}
-	saltText, hashText := parts[0], parts[1]
-	salt, err := base64.RawURLEncoding.DecodeString(saltText)
-	if err != nil {
-		return false
-	}
-	sum := sha256.Sum256(append(salt, []byte(password)...))
-	expected := hex.EncodeToString(sum[:])
-	return subtle.ConstantTimeCompare([]byte(expected), []byte(hashText)) == 1
-}
-
-func splitOnce(value string, sep byte) []string {
-	for i := 0; i < len(value); i++ {
-		if value[i] == sep {
-			return []string{value[:i], value[i+1:]}
-		}
-	}
-	return nil
-}
-
 func randomToken(size int) (string, error) {
 	data, err := randomBytes(size)
 	if err != nil {

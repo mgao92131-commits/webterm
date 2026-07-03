@@ -84,14 +84,6 @@ func TestMemoryStoreRefreshTokenRotation(t *testing.T) {
 	}
 }
 
-func TestVerifyPasswordRejectsMalformedHash(t *testing.T) {
-	for _, hash := range []string{"", "missing-separator", "bad$hash"} {
-		if VerifyPassword("secret", hash) {
-			t.Fatalf("VerifyPassword accepted malformed hash %q", hash)
-		}
-	}
-}
-
 func TestMemoryStoreDeviceLifecycle(t *testing.T) {
 	store := NewMemoryStore()
 	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
