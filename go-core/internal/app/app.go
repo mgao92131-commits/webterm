@@ -14,7 +14,7 @@ type App struct {
 	cfg             config.Config
 	version         string
 	sessions        *session.Manager
-	logs            *logs.Logger
+	logger          *logs.Logger
 	mu              sync.RWMutex
 	runtimeMode     string
 	restartRequired bool
@@ -26,7 +26,7 @@ func New(cfg config.Config, version string) *App {
 	application := &App{
 		cfg:         cfg,
 		version:     version,
-		logs:        logs.New(logs.DefaultCapacity),
+		logger:      logs.New(logs.DefaultCapacity),
 		runtimeMode: cfg.Mode,
 		sessions: session.NewManager(session.TerminalDefaults{
 			CWD:     cfg.Shell.CWD,
@@ -53,12 +53,12 @@ func (app *App) Config() config.Config {
 }
 
 func (app *App) Logs() *logs.Logger {
-	return app.logs
+	return app.logger
 }
 
 func (app *App) Log(level string, source string, message string) {
-	if app.logs != nil {
-		app.logs.Add(level, source, message)
+	if app.logger != nil {
+		app.logger.Add(level, source, message)
 	}
 }
 
