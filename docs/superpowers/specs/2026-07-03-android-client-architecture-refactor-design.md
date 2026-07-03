@@ -57,11 +57,11 @@ android-client/
 | 2 | 按层分包 | 0 | 低 | 0.5-1 天 |
 | 3 | 传输接口抽象（前置） | 0 | 中 | 1-2 天 |
 | 4 | 拆分 core 模块（含 RelayCoordinator 预拆分、:transport:api 接口模块） | 6 | 中 | 3-4 天 |
-| 5 | 拆分 transport 实现模块 | 3 | 中 | 1-2 天 |
+| 5 | 拆分 transport 实现模块 | 2 | 中 | 1-2 天 |
 | 6 | 拆分 feature 模块（6a Fragment 化 / 6b Gradle 拆分） | 4 | 高 | 5-7 天 |
 | 7 | 拆解 MainActivity | 0 | 中 | 1-2 天 |
 | 8 | 测试验证 | 0 | 低 | 1-2 天 |
-| **合计** | | **13** | | **15-23 天** |
+| **合计** | | **12** | | **15-23 天** |
 
 > 估时已考虑 Fragment 化与资源迁移的隐藏成本，比初版更保守。
 
@@ -128,7 +128,7 @@ public class WebTermApplication extends Application {
 ```java
 @Module
 @InstallIn(SingletonComponent.class)
-public abstract class AppModule {
+public class AppModule {
     @Provides @Singleton
     static OkHttpClient provideHttpClient() { return new OkHttpClient(); }
 
@@ -142,7 +142,7 @@ public abstract class AppModule {
     static RelayMuxSessionRegistry provideRegistry(OkHttpClient http, Handler mainHandler) {
         return new RelayMuxSessionRegistry(http, mainHandler);
     }
-    // ServerConfigStore（需 Context）、ServerConfigManager、TerminalCacheCoordinator 同理
+    // ServerConfigStore（需 @ApplicationContext Context）、ServerConfigManager、TerminalCacheCoordinator 同理
 }
 ```
 
@@ -159,11 +159,15 @@ public abstract class AppModule {
 | 类 | 构造参数来源 |
 |----|-------------|
 | `WebTermApi` | `OkHttpClient` |
-| `RelayMuxSessionRegistry` | `OkHttpClient`, `Handler` |
+| `RelayMuxSessionRegistry` | `OkHttpClient`, `Handler`, `TransportFactory`（阶段 3 引入） |
 | `SessionRepository` | `WebTermApi`, `TerminalCacheCoordinator` |
 | `SessionCommandController` | `WebTermApi` |
 | `HomeRefreshScheduler` | `Handler` |
-| `DefaultTransportFactory` | `OkHttpClient`（阶段 3 引入） |
+| `ServerSessionMonitor` | `RelayMuxSessionRegistry` |
+| `P2PConnectionManager` | `OkHttpClient`, `Provider<RelayMuxSessionRegistry>`（Listener 通过 setter 设置，见 6.5） |
+| `DefaultTransportFactory` | `OkHttpClient`, `P2PConnectionManager`（阶段 3 引入） |
+
+> `P2PConnectionManager` 必须是 A 类（@Singleton 进图），否则 `DefaultTransportFactory` 无法通过构造器注入它。其 `Listener`（运行时回调）改用 setter 设置。`Provider<RelayMuxSessionRegistry>` 用于打破 `registry → factory → p2p → registry` 的构造期循环（见 6.5）。
 
 改为：
 ```java
@@ -183,8 +187,6 @@ final class SessionRepository {
 | `TerminalLifecycleController` | `Activity`, `Host`, `TerminalRuntimeState`, `AtomicBoolean` | `@AssistedInject` + `@AssistedFactory` |
 | `HomeServerCoordinator` | `SessionRecyclerAdapter`（含 View 逻辑） | `@AssistedInject` + `@AssistedFactory` |
 | `ServerGroupController` | `RelayMuxSessionRegistry`, `SessionRowHelper`, `TerminalCacheScope` | `@AssistedInject` |
-| `ServerSessionMonitor` | `RelayMuxSessionRegistry` | 可改 A 类或保留 Assisted |
-| `P2PConnectionManager` | `RelayMuxSessionRegistry`, `P2PConnectionManager.Listener` | `@AssistedInject`（Listener 是运行时回调） |
 | `TerminalConnection` | `RelayMuxSessionRegistry`, `TerminalConnection.Listener` | `@AssistedInject` |
 | `TerminalClipboardController` | `Activity` | `@AssistedInject` |
 | `TerminalTitleSynchronizer` | `Activity` | `@AssistedInject` |
@@ -210,19 +212,9 @@ final class TerminalLifecycleController {
 
 > Hilt `@AssistedInject` 需额外依赖：`implementation("com.google.dagger:hilt-android:2.51")` 已包含（2.51+ 内置 assisted-inject）。
 
-#### B 类工厂注册
+#### Assisted 工厂无需注册
 
-在 `AppModule` 中声明：
-```java
-@Module
-@InstallIn(SingletonComponent.class)
-public abstract class AppModule {
-    // Assisted factory 无需 @Provides —— Hilt 自动生成实现
-    @Binds
-    abstract TerminalLifecycleController.Factory bindTerminalLifecycleFactory(
-        TerminalLifecycleController_Impl factory);
-}
-```
+`@AssistedFactory` 接口由 Dagger 编译期自动生成实现并绑定到 Hilt 图，**无需在 Module 中写 `@Provides` 或 `@Binds`**。调用方直接注入工厂接口即可。
 
 调用方（MainActivity 或后续 Fragment）注入工厂并传运行时参数：
 ```java
@@ -331,38 +323,75 @@ interface TransportFactory {
 - 内部需要新建传输时，调用 `factory.createXxx(...)`，不直接 `new WebSocketMuxTransport(...)`
 - 删除对 `WebSocketMuxTransport`、`WebRtcDataChannelTransport` 的 import
 
-### 6.4 临时实现 TransportFactory
+### 6.4 实现 TransportFactory
 
-`di/DefaultTransportFactory.java`（新建，临时放 `:app`）：
+`di/DefaultTransportFactory.java`（新建，临时放 `:app`，阶段 5 后仍在 `:app`）：
 ```java
 @Singleton
 final class DefaultTransportFactory implements TransportFactory {
     private final OkHttpClient http;
-    private final P2PConnectionManager p2p;  // 构造完成后注入
+    private final P2PConnectionManager p2p;   // 构造器注入，永不为 null
 
     @Inject
-    DefaultTransportFactory(OkHttpClient http) { this.http = http; }
+    DefaultTransportFactory(OkHttpClient http, P2PConnectionManager p2p) {
+        this.http = http;
+        this.p2p = p2p;
+    }
 
-    void setP2PManager(P2PConnectionManager p2p) { this.p2p = p2p; }
+    @Override
+    public MuxTransport createWebSocket(String baseUrl, String cookie, String sessionId) {
+        return new WebSocketMuxTransport(http, baseUrl, cookie, sessionId);
+    }
 
-    @Override public MuxTransport createWebSocket(...) { return new WebSocketMuxTransport(...); }
-    @Override public MuxTransport createDataChannel(String deviceId) {
-        return p2p == null ? null : p2p.getDataChannelTransport(deviceId);
+    @Override
+    public MuxTransport createDataChannel(String deviceId) {
+        return p2p.getDataChannelTransport(deviceId);  // P2P 不可用时返回 null
     }
 }
 ```
 
+> 无 setter、无 null 检查。`P2PConnectionManager` 作为 A 类 @Singleton 由 Hilt 构造器注入。
+
 ### 6.5 消除 P2P 循环依赖
 
-构造顺序（在 `MainActivity.onCreate` 或 Hilt 装配中）：
-```
-1. RelayMuxSessionRegistry 构造（不含 transportProvider）
-2. P2PConnectionManager 构造（可注入 registry，用于触发 reconnect）
-3. DefaultTransportFactory.setP2PManager(p2pManager)
-4. registry.setTransportFactory(factory)
+原循环：`RelayMuxSessionRegistry → TransportFactory → P2PConnectionManager → RelayMuxSessionRegistry`。
+
+用 `Provider<RelayMuxSessionRegistry>` 打破构造期循环——`P2PConnectionManager` 在**构造期不持有 registry 实例**，仅持有 `Provider`；触发重连时才调用 `provider.get()`：
+
+```java
+@Singleton
+final class P2PConnectionManager {
+    private final OkHttpClient http;
+    private final Provider<RelayMuxSessionRegistry> registryProvider;  // 延迟解析
+    private volatile Listener listener;  // 运行时 setter 设置，volatile 保证可见性
+
+    @Inject
+    P2PConnectionManager(OkHttpClient http, Provider<RelayMuxSessionRegistry> registryProvider) {
+        this.http = http;
+        this.registryProvider = registryProvider;
+    }
+
+    void setListener(Listener listener) { this.listener = listener; }
+
+    void onP2PDisconnected(String deviceId) {
+        registryProvider.get().reconnectDevice(deviceId, "p2p disconnected");
+    }
+}
 ```
 
-`P2PConnectionManager → registry`（触发重连）方向保留；`registry → P2PConnectionManager` 方向通过 factory 间接访问，**消除 null 检查**。
+依赖图（Hilt 自动解析）：
+```
+RelayMuxSessionRegistry ──构造──→ TransportFactory(DefaultTransportFactory)
+        ▲                              │
+        │Provider<...>（延迟）         │
+        │                              ▼
+        └────────────────── P2PConnectionManager
+```
+
+- 三个类均为 `@Singleton`，构造器互相注入，Hilt 编译期可解析（Provider 打破环）
+- `RelayMuxSessionRegistry` 原有的 `setTransportProvider(...)` 方法**删除**，factory 改为构造器注入
+- 唯一手动步骤：`P2PConnectionManager.setListener(...)` 在 TerminalViewModel/Fragment 激活时设置回调
+- 原 `setTransportProvider` 的 null 检查 lambda 彻底删除
 
 ### 6.6 验收标准
 - `MuxSession`、`RelayMuxSessionManager` 无任何对 `WebSocketMuxTransport`/`WebRtcDataChannelTransport` 的引用
@@ -513,7 +542,7 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 :core:relay/src/main/java/com/webterm/core/relay/
 └── RelayService.java     ← 阶段 7.0 拆分出的纯逻辑
 ```
-依赖：`:core:api`、`:core:config`、`okhttp3`。**无 Android View 依赖**。
+依赖：`:core:api`、`:core:config`、`okhttp3`、`androidx.lifecycle:lifecycle-livedata:2.7.0`（RelayService 暴露 LiveData）、`Handler`（轮询 Timer，由 `:app` 注入）。**无 Android View 依赖**。
 
 ### 7.6 跨模块可见性
 
@@ -528,7 +557,8 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 :core:config ──→ (无)
 :core:api ─────→ okhttp3
 :core:cache ───→ :terminal-emulator
-:core:session ─→ :core:api            (MuxTransport/TransportFactory 接口暂存于此)
+:transport:api → (纯接口，无依赖)
+:core:session ─→ :core:api, :transport:api
 :core:relay ───→ :core:api, :core:config
 :app ──────────→ 上述全部 + transport 实现类（仍在 :app）
 ```
@@ -543,18 +573,9 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 
 ## 8. 阶段 5：拆分 transport 实现模块
 
-**目标**：将传输接口正式独立为 `:transport:api`，WebSocket 和 WebRTC 实现各自成模块。
+**目标**：将 WebSocket 和 WebRTC 实现各自成模块。`:transport:api` 接口模块已在阶段 4 创建。
 
-### 8.1 创建 `:transport:api`
-
-```
-:transport:api/src/main/java/com/webterm/transport/api/
-├── MuxTransport.java          ← 从 :core:session 移入
-└── TransportFactory.java      ← 从 :core:session 移入
-```
-依赖：无（纯 Java 接口）
-
-### 8.2 创建 `:transport:websocket`
+### 8.1 创建 `:transport:websocket`
 
 ```
 :transport:websocket/src/main/java/com/webterm/transport/websocket/
@@ -562,7 +583,7 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 ```
 依赖：`:transport:api`、`okhttp3`
 
-### 8.3 创建 `:transport:webrtc`
+### 8.2 创建 `:transport:webrtc`
 
 ```
 :transport:webrtc/src/main/java/com/webterm/transport/webrtc/
@@ -570,9 +591,11 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 ├── P2PConnectionManager.java
 └── P2PDataChannelEndpoint.java
 ```
-依赖：`:transport:api`、`:core:api`（P2P 信令用 HTTP）、`org.webrtc`
+依赖：`:transport:api`、`:core:api`、`org.webrtc`
 
-### 8.4 DefaultTransportFactory 归属
+> `:transport:webrtc → :core:api` 是因为 P2P 信令（offer/answer/ICE candidate）需通过 HTTP API 交换。此依赖方向不是分层污染——P2P 信令的 HTTP 调用是 API 层职责，transport 模块仅依赖 API 接口而非实现。
+
+### 8.3 DefaultTransportFactory 归属
 
 `DefaultTransportFactory` 实现 `TransportFactory`（来自 `:transport:api`），但依赖 `:transport:websocket` + `:transport:webrtc` 两个实现模块。**只有 `:app` 同时依赖这两个实现模块**，因此 `DefaultTransportFactory` 放 `:app` 的 `di/` 包。
 
@@ -580,11 +603,7 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 :app/di/DefaultTransportFactory.java   ← 依赖 :transport:websocket + :transport:webrtc
 ```
 
-### 8.5 更新 :core:session 依赖
-
-`:core:session` 的 `MuxTransport`/`TransportFactory` 移走后，依赖从"自带接口"改为 `implementation(:transport:api)`。
-
-### 8.6 模块依赖图（阶段 5 结束后）
+### 8.4 模块依赖图（阶段 5 结束后）
 
 ```
 :transport:api ──────→ (纯接口)
@@ -594,7 +613,7 @@ WebTermApi（HTTP）、OkHttpClient（轮询 Timer）
 :app ────────────────→ :transport:websocket, :transport:webrtc, :core:*, :feature:* (阶段6后)
 ```
 
-### 8.7 验收标准
+### 8.5 验收标准
 - `MuxSession` 只持有 `MuxTransport` 接口引用
 - `DefaultTransportFactory` 在 `:app`，无 null 检查
 - 三个 transport 模块独立编译
@@ -651,7 +670,7 @@ implementation("androidx.fragment:fragment:1.6.2")
 | `SettingsDialogHelper.Host` | MainActivity | `SettingsViewModel` | `getSavedFontSize/getSavedFontType` → 读 SharedPreferences |
 | `RelayCoordinator.Host` | MainActivity | `RelayViewModel` | 已在阶段 7.0 拆分为 `RelayUiState` |
 | `TerminalLifecycleController.Host` | MainActivity | `TerminalFragment` | 直接实现（`getSavedFontSize`、`installTerminalInsets` 等是 Fragment 职责） |
-| `NetworkRecoveryController.Host` | MainActivity | App 级单例 | `onNetworkAvailableForRecovery()` → 通过 EventBus/LiveData 通知各 ViewModel |
+| `NetworkRecoveryController.Host` | MainActivity | App 级单例 | `onNetworkAvailableForRecovery()` → 单例暴露 `LiveData<Void>` 网络恢复事件，各 ViewModel 自行 observe |
 | `P2PConnectionManager.Listener` | MainActivity | `TerminalViewModel` | `onConnected/onDisconnected` → 更新 LiveData |
 
 迁移原则：
@@ -664,10 +683,12 @@ implementation("androidx.fragment:fragment:1.6.2")
 `PageTransitionAnimator` 基于 View 直接替换。Fragment 化后改用 Fragment 事务的 `setCustomAnimations`，需重写动画资源。本阶段先保留 `PageTransitionAnimator` 给非导航场景，导航转场用 Fragment 动画。
 
 #### 阶段 6a 验收
-- 4 个 Fragment + ViewModel 可工作
-- Navigation Component 导航正常
-- MainActivity 仍存在但变薄
-- 功能与重构前一致
+- 4 个 Fragment + ViewModel 可工作，与原单 Activity 行为一致
+- Navigation Component 导航正常，页面切换动画无闪烁
+- 返回键行为一致：终端页弹出"确认退出"弹窗，其余页正常返回
+- 横竖屏旋转时终端会话不丢失（ViewModel 跨 config change 存活）
+- 后台恢复时连接状态正确（网络恢复后自动重连）
+- MainActivity 仍存在但逻辑已迁移至各 Fragment
 
 ### 9.2 阶段 6b：拆为独立 Gradle 模块
 
@@ -701,7 +722,10 @@ implementation("androidx.fragment:fragment:1.6.2")
 - `:feature:settings` → `layout/settings*.xml`
 - 公共资源（`colors.xml` 基础色、通用 `strings`、`DesignTokens` 相关）留在 `:app` 或抽 `:core:ui`（可选）
 
-**资源冲突处理**：多模块资源合并时同名资源会冲突。迁移前先全局检索重名，按模块加前缀（如 `home_`、`terminal_`）。
+**资源冲突处理**：多模块资源合并时需注意：
+1. **同名资源冲突**：AGP 默认不允许不同模块定义同名资源。迁移前全局检索 `res/` 中所有 layout/drawable/string ID，重名者按模块加前缀（如 `home_session_row`、`terminal_status_dot`）
+2. **R 类引用**：在 feature 模块内部，`R.layout.xxx` 自动解析为该模块的 R 类。`:app` 中引用聚合 R 类（`com.webterm.mobile.R`）。迁移后需检查所有 `R.` 引用是否指向正确模块
+3. **公共资源保留**：基础色值、通用字符串、`DesignTokens` 相关 drawable 留在 `:app` 的 `res/`，避免各模块重复定义
 
 #### 依赖
 
@@ -767,7 +791,14 @@ public class MainActivity extends AppCompatActivity {
 
 ### 11.1 每个 core 模块至少 1 个单元测试
 
-- `:core:api`：`WebTermApi` 的 cookie 合并、错误解析（用 mockwebserver）
+测试依赖（各模块 `build.gradle.kts` 中 `testImplementation`）：
+```kotlin
+testImplementation(libs.junit)
+testImplementation("org.json:json:20240303")
+testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")  // :core:api 测试用
+```
+
+- `:core:api`：`WebTermApi` 的 cookie 合并、错误解析（mockwebserver 模拟 HTTP 响应）
 - `:core:config`：`ServerConfigStore` 序列化/反序列化
 - `:core:cache`：`TerminalDiskCache` 读写、过期清理
 - `:core:session`：`MuxSession` 重连退避、`SessionIdentity` 规范化
@@ -775,7 +806,13 @@ public class MainActivity extends AppCompatActivity {
 
 ### 11.2 Hilt 图验证
 
-- `@HiltAndroidTest` 集成测试，确认所有 `@Inject` 构造器可装配
+Hilt 测试依赖（`:app` 的 `androidTestImplementation`）：
+```kotlin
+androidTestImplementation("com.google.dagger:hilt-android-testing:2.51")
+androidTestImplementation("androidx.test.ext:junit:1.1.5")
+```
+
+- `@HiltAndroidTest` 集成测试，确认所有 `@Inject` 和 `@AssistedInject` 可装配
 - 临时替换 `DefaultTransportFactory` 的 transport 实现为 mock，验证 `MuxSession` 只依赖接口
 
 ### 11.3 验收标准
@@ -813,9 +850,9 @@ public class MainActivity extends AppCompatActivity {
 - **阶段 6a 是最大风险点**：Fragment 化若问题过大，可停留在阶段 5（已完成模块化但仍是单 Activity），后续再重启 Fragment 化。
 - **不强制按顺序做完所有阶段**：阶段 1-5 完成后已获得分层和可测试性收益，可随时停。
 
-## 14. 不在本次范围
+## 14. 不在本次范围 / 可选的后续优化
 
-- `WebTermApi` 内部按 AuthApi/SessionApi/DeviceApi/P2PApi 拆分接口（可选后续优化）
+- `WebTermApi` 内部按 AuthApi/SessionApi/DeviceApi/P2PApi 拆分接口——阶段 4 后 `:core:api` 已独立，可随时做接口拆分而不影响其他模块
 - Kotlin 迁移
 - Compose 迁移
 - `:terminal-emulator`/`:terminal-view` 独立为 Maven 坐标引用
