@@ -66,49 +66,31 @@ android-client/
 - Modify: `android-client/build.gradle.kts`
 - Modify: `android-client/app/build.gradle.kts`
 
-- [ ] **Step 1: 创建/完善版本目录**
+**现实状态（已核实）：** `libs.versions.toml` 已存在，`androidGradlePlugin = "9.0.1"`，含 Compose/Kotlin/Nav3 条目（本 Java 应用不用，保留不动）。app 模块硬编码 okhttp/webrtc 等依赖（本任务不收编，保持聚焦）。Gradle 9.1.0，SDK 在 `/Users/gao/Library/Android/sdk`，`local.properties` 已就位。
 
-确认 `android-client/gradle/libs.versions.toml` 含以下条目（不存在则创建）：
+- [ ] **Step 1: 向现有 catalog 追加 Hilt 与 android-library 条目**
 
+在 `android-client/gradle/libs.versions.toml` 的 `[versions]` 段追加（不删除任何现有条目）：
 ```toml
-[versions]
-agp = "8.5.0"
-hilt = "2.51"
-okhttp = "4.12.0"
-webrtc = "144.7559.09"
-navigation = "2.7.7"
-lifecycle = "2.7.0"
-fragment = "1.6.2"
-recyclerview = "1.4.0"
-annotation = "1.9.0"
-junit = "4.13.2"
-mockwebserver = "4.12.0"
-orgJson = "20240303"
+hilt = "2.56.2"
+```
 
-[libraries]
+在 `[libraries]` 段追加：
+```toml
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
 hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
 hilt-android-testing = { module = "com.google.dagger:hilt-android-testing", version.ref = "hilt" }
-okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "mockwebserver" }
-webrtc = { module = "io.github.webrtc-sdk:android", version.ref = "webrtc" }
-navigation-fragment = { module = "androidx.navigation:navigation-fragment", version.ref = "navigation" }
-lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycle" }
-lifecycle-livedata = { module = "androidx.lifecycle:lifecycle-livedata", version.ref = "lifecycle" }
-fragment = { module = "androidx.fragment:fragment", version.ref = "fragment" }
-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
-annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
-junit = { module = "junit:junit", version.ref = "junit" }
-orgJson = { module = "org.json:json", version.ref = "orgJson" }
+```
 
-[plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
+在 `[plugins]` 段追加（`android-library` 供后续 library 模块用）：
+```toml
+android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 ```
 
 - [ ] **Step 2: 顶层 build.gradle.kts 声明 Hilt 插件**
 
-`android-client/build.gradle.kts`：
+`android-client/build.gradle.kts` 的 `plugins` 块加一行（保留现有 `android.application`）：
 ```kotlin
 plugins {
   alias(libs.plugins.android.application) apply false
@@ -118,31 +100,26 @@ plugins {
 
 - [ ] **Step 3: app 模块应用 Hilt 插件 + 依赖**
 
-`android-client/app/build.gradle.kts` 的 `plugins` 块加 `alias(libs.plugins.hilt)`；`dependencies` 块用 catalog 别名替换硬编码，并加 Hilt：
+`android-client/app/build.gradle.kts`：
+- `plugins` 块加 `alias(libs.plugins.hilt)`（保留现有 `alias(libs.plugins.android.application)`）
+- `dependencies` 块追加两行（保留所有现有硬编码依赖不动）：
 ```kotlin
-dependencies {
-  implementation(project(":terminal-view"))
-  implementation(libs.okhttp)
-  implementation(libs.webrtc)
-  implementation(libs.annotation)
-  implementation(libs.recyclerview)
   implementation(libs.hilt.android)
   annotationProcessor(libs.hilt.compiler)
-  testImplementation(libs.junit)
-  testImplementation(libs.orgJson)
-}
 ```
 
 - [ ] **Step 4: 构建验证**
 
 Run: `cd android-client && ./gradlew :app:assembleDebug`
-Expected: BUILD SUCCESSFUL（Hilt 插件应用但尚无 @HiltAndroidApp，仅验证依赖解析）
+Expected: BUILD SUCCESSFUL（Hilt 插件应用但尚无 @HiltAndroidApp，仅验证依赖解析与插件兼容）
+
+> **若 Hilt 2.56.2 与 AGP 9.0.1 不兼容**（构建报版本错误）：升级 `hilt` 版本至 `2.57` 或更高后重试。若仍失败，报告 BLOCKED 并附错误信息。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 git add android-client/gradle/libs.versions.toml android-client/build.gradle.kts android-client/app/build.gradle.kts
-git commit -m "build: 引入 Hilt 依赖与版本目录"
+git commit -m "build: 引入 Hilt 依赖与 android-library 插件"
 ```
 
 ## Task 1.2: 改造 WebTermApplication 为 Hilt 入口
