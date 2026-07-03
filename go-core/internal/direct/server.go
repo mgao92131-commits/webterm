@@ -125,7 +125,7 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		_ = conn.Close(websocket.StatusPolicyViolation, "mux subprotocol required")
 		return
 	}
-	router := application.NewSessionRouterWithMux(direct.app.Sessions(), mux.MuxServeAdapter)
+	router := application.NewSessionRouter(direct.app.Sessions())
 	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
