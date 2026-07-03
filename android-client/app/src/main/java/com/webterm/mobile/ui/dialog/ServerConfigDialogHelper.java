@@ -13,7 +13,7 @@ import android.widget.TextView;
 import android.text.InputType;
 
 import com.webterm.core.api.WebTermUrls;
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.ui.common.DesignTokens;
 import com.webterm.mobile.ui.common.UIUtils;
 

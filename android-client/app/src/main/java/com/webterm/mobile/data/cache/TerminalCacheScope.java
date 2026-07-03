@@ -1,7 +1,7 @@
 package com.webterm.mobile.data.cache;
 
 import com.webterm.core.api.WebTermUrls;
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 public final class TerminalCacheScope {
     private TerminalCacheScope() {}
 

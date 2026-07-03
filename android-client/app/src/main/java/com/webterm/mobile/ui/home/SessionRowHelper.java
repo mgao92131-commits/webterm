@@ -14,7 +14,7 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.ui.common.DesignTokens;
 import com.webterm.mobile.ui.common.UIUtils;
 

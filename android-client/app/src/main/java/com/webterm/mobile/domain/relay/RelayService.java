@@ -6,9 +6,9 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
 import com.webterm.core.api.WebTermApi;
-import com.webterm.mobile.data.config.ServerConfig;
-import com.webterm.mobile.data.config.ServerConfigManager;
-import com.webterm.mobile.data.config.ServerConfigStore;
+import com.webterm.core.config.ServerConfig;
+import com.webterm.core.config.ServerConfigManager;
+import com.webterm.core.config.ServerConfigStore;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

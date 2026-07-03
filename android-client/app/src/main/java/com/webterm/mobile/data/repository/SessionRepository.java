@@ -4,7 +4,7 @@ import com.webterm.core.api.WebTermApi;
 import com.webterm.mobile.data.cache.CachedSessionMapper;
 import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
 import com.webterm.mobile.data.cache.TerminalDiskCache;
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 
 import org.json.JSONArray;
 

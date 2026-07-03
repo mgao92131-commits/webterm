@@ -12,7 +12,7 @@ import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.ui.common.DesignTokens;
 import com.webterm.mobile.ui.common.UIUtils;
 

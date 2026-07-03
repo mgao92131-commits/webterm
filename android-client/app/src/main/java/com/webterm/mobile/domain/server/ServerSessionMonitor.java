@@ -2,7 +2,7 @@ package com.webterm.mobile.domain.server;
 
 import android.util.Log;
 
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.domain.session.RelayMuxSessionManager;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
 

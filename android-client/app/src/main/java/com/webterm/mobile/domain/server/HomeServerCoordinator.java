@@ -11,7 +11,7 @@ import com.webterm.mobile.data.cache.CachedTerminal;
 import com.webterm.mobile.data.cache.TerminalCacheCoordinator;
 import com.webterm.mobile.data.cache.TerminalCacheScope;
 import com.webterm.mobile.data.cache.TerminalDiskCache;
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.data.repository.SessionRepository;
 import com.webterm.mobile.domain.session.RelayMuxSessionManager;
 import com.webterm.mobile.domain.session.RelayMuxSessionRegistry;
