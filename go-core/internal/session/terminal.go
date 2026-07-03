@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -198,19 +199,31 @@ func (terminal *TerminalSession) WriteInput(data []byte) error {
 	terminal.mu.Lock()
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+	if terminal.process == nil {
+		return errors.New("terminal has no process")
+	}
 	_, err := terminal.process.Write(data)
 	return err
 }
 
 func (terminal *TerminalSession) Resize(cols int, rows int) error {
-	if err := terminal.process.Resize(cols, rows); err != nil {
-		return err
+	if cols < 10 || rows < 5 {
+		return nil
+	}
+	if cols > 500 {
+		cols = 500
+	}
+	if rows > 200 {
+		rows = 200
 	}
 	terminal.mu.Lock()
-	terminal.cols = terminal.process.Cols()
-	terminal.rows = terminal.process.Rows()
+	terminal.cols = cols
+	terminal.rows = rows
 	if terminal.screen != nil {
-		terminal.screen.Resize(terminal.rows, terminal.cols)
+		terminal.screen.Resize(rows, cols)
+	}
+	if terminal.process != nil {
+		terminal.process.Resize(cols, rows)
 	}
 	terminal.touchLocked()
 	terminal.mu.Unlock()

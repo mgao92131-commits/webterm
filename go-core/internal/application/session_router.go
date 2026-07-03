@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
@@ -34,6 +35,17 @@ func (r *SessionRouter) RouteOpen(
 	clean := cleanPath(path)
 	switch {
 	case clean == "/ws/sessions":
+		if hasProtocol(protocols, protocol.MuxSubprotocol) {
+			muxSession := mux.Serve(socket, &mux.ServeOpts{
+				OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
+					return mux.OpenSessionOrManager(ctx, r, vs, p, protos)
+				},
+			})
+			return func() {
+				defer socket.Close()
+				_ = muxSession.Run(ctx)
+			}, nil
+		}
 		mc := session.NewManagerClient(socket)
 		return func() { go mc.Run(ctx, r.manager) }, nil
 
@@ -106,6 +118,15 @@ func (r *SessionRouter) Manager() *session.Manager {
 }
 
 // --- helpers ---
+
+func hasProtocol(protocols []string, target string) bool {
+	for _, p := range protocols {
+		if p == target {
+			return true
+		}
+	}
+	return false
+}
 
 func selectProtocol(protocols []string) string {
 	for _, p := range protocols {
