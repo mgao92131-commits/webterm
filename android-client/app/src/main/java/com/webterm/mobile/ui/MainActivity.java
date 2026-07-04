@@ -22,7 +22,7 @@ import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.mobile.domain.command.SessionCommandController;
-import com.webterm.mobile.domain.relay.RelayService;
+import com.webterm.core.relay.RelayService;
 import com.webterm.mobile.domain.server.HomeServerCoordinator;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;

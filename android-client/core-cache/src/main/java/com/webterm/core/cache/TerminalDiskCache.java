@@ -3,7 +3,7 @@ package com.webterm.core.cache;
 import android.util.Log;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.domain.session.SessionIdentity;
+import com.webterm.core.session.SessionIdentity;
 
 import org.json.JSONException;
 import org.json.JSONObject;

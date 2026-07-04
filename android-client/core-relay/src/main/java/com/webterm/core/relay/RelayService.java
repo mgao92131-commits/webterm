@@ -1,4 +1,4 @@
-package com.webterm.mobile.domain.relay;
+package com.webterm.core.relay;
 
 import android.os.Handler;
 

@@ -1,7 +1,7 @@
 package com.webterm.core.api;
 
 import androidx.annotation.NonNull;
-import com.webterm.mobile.data.config.ServerConfig;
+import com.webterm.core.config.ServerConfig;
 
 import org.json.JSONArray;
 import org.json.JSONException;

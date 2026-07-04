@@ -127,7 +127,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onLogin(email, password, new com.webterm.mobile.data.api.WebTermApi.ExtendedLoginCallback() {
+        relayService.onLogin(email, password, new com.webterm.core.api.WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
                 if (cookie != null && !cookie.isEmpty()) {
@@ -150,7 +150,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onRegister(email, username, password, new com.webterm.mobile.data.api.WebTermApi.ExtendedLoginCallback() {
+        relayService.onRegister(email, username, password, new com.webterm.core.api.WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
                 if (cookie != null && !cookie.isEmpty()) {
@@ -173,7 +173,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onVerifyOtp(email, code, targetDeviceId, cookie, new com.webterm.mobile.data.api.WebTermApi.LoginCallback() {
+        relayService.onVerifyOtp(email, code, targetDeviceId, cookie, new com.webterm.core.api.WebTermApi.LoginCallback() {
             @Override
             public void onReady(String url, String newCookie) {
                 if (newCookie != null && !newCookie.isEmpty()) {
@@ -198,7 +198,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onFetchDevices(RelayDevicesScreenBuilder.DevicesCallback callback) {
-        relayService.onFetchDevices(new com.webterm.mobile.data.api.WebTermApi.SessionsCallback() {
+        relayService.onFetchDevices(new com.webterm.core.api.WebTermApi.SessionsCallback() {
             @Override
             public void onReady(JSONArray devices) {
                 callback.onReady(devices);
@@ -218,7 +218,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onRegisterDevice(String deviceName, RelayDevicesScreenBuilder.DeviceCreateCallback callback) {
-        relayService.onRegisterDevice(deviceName, new com.webterm.mobile.data.api.WebTermApi.DeviceCreateCallback() {
+        relayService.onRegisterDevice(deviceName, new com.webterm.core.api.WebTermApi.DeviceCreateCallback() {
             @Override
             public void onReady(String deviceId, String name, String agentSecret) {
                 callback.onReady(deviceId, name, agentSecret);
@@ -233,7 +233,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onDeleteDevice(String deviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
-        relayService.onDeleteDevice(deviceId, new com.webterm.mobile.data.api.WebTermApi.SimpleCallback() {
+        relayService.onDeleteDevice(deviceId, new com.webterm.core.api.WebTermApi.SimpleCallback() {
             @Override
             public void onReady() { callback.onReady(); }
             @Override
@@ -243,7 +243,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onFetchTrustedDevices(RelayDevicesScreenBuilder.TrustedDevicesCallback callback) {
-        relayService.onFetchTrustedDevices(new com.webterm.mobile.data.api.WebTermApi.TrustedDevicesCallback() {
+        relayService.onFetchTrustedDevices(new com.webterm.core.api.WebTermApi.TrustedDevicesCallback() {
             @Override
             public void onReady(JSONArray devices) {
                 callback.onReady(devices);
@@ -258,7 +258,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
     @Override
     public void onDeleteTrustedDevice(String trustedDeviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
-        relayService.onDeleteTrustedDevice(trustedDeviceId, new com.webterm.mobile.data.api.WebTermApi.SimpleCallback() {
+        relayService.onDeleteTrustedDevice(trustedDeviceId, new com.webterm.core.api.WebTermApi.SimpleCallback() {
             @Override
             public void onReady() { callback.onReady(); }
             @Override

@@ -14,4 +14,7 @@ dependencies {
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
     implementation(project(":core-config"))
+    implementation(project(":core-api"))
+    implementation(project(":core-session"))
+    implementation(project(":terminal-emulator"))
 }

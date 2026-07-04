@@ -14,4 +14,6 @@ dependencies {
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
     implementation(project(":transport-api"))
+    implementation(project(":core-config"))
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

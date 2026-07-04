@@ -16,4 +16,5 @@ dependencies {
     implementation(project(":core-api"))
     implementation(project(":core-config"))
     implementation(project(":core-session"))
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

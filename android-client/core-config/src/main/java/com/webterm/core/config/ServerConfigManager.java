@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.config;
+package com.webterm.core.config;
 
 import java.util.ArrayList;
 import java.util.List;

@@ -1,4 +1,4 @@
-package com.webterm.mobile.data.api;
+package com.webterm.core.api;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
