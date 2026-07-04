@@ -10,7 +10,7 @@ import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.relay.RelayService;
 import com.webterm.mobile.domain.command.SessionCommandController;
 import com.webterm.mobile.domain.server.HomeServerCoordinator;
-import com.webterm.mobile.ui.common.SingleLiveEvent;
+import com.webterm.ui.common.SingleLiveEvent;
 
 import java.util.ArrayList;
 import java.util.List;

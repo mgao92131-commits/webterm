@@ -15,8 +15,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

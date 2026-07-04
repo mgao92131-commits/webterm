@@ -14,8 +14,8 @@ import android.text.InputType;
 
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
 
 public final class ServerConfigDialogHelper {
 

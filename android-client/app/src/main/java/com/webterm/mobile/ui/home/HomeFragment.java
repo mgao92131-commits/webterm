@@ -20,11 +20,11 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.mobile.R;
 import com.webterm.mobile.domain.server.HomeServerCoordinator;
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.PageTransitionAnimator;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.PageTransitionAnimator;
+import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.ui.relay.RelayUiState;
-import com.webterm.mobile.ui.terminal.TerminalWindowInsetsController;
+import com.webterm.terminal.ui.TerminalWindowInsetsController;
 
 import java.util.List;
 

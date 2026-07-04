@@ -5,7 +5,7 @@ import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
 
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.mobile.ui.common.SingleLiveEvent;
+import com.webterm.ui.common.SingleLiveEvent;
 
 import javax.inject.Inject;
 

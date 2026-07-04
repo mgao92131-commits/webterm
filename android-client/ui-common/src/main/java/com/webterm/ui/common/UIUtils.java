@@ -1,4 +1,4 @@
-package com.webterm.mobile.ui.common;
+package com.webterm.ui.common;
 
 import android.content.Context;
 import android.graphics.Color;

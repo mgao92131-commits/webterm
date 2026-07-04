@@ -14,8 +14,8 @@ import android.widget.TextView;
 import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.SessionIdentity;
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
 
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;

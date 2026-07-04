@@ -1,4 +1,4 @@
-package com.webterm.mobile.ui.common;
+package com.webterm.ui.common;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;

@@ -60,6 +60,8 @@ dependencies {
   implementation(project(":core-cache"))
   implementation(project(":core-session"))
   implementation(project(":core-relay"))
+  implementation(project(":ui-common"))
+  implementation(project(":terminal-ui"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")

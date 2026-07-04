@@ -12,7 +12,7 @@ import android.os.Handler;
 
 import androidx.lifecycle.LiveData;
 
-import com.webterm.mobile.ui.common.SingleLiveEvent;
+import com.webterm.ui.common.SingleLiveEvent;
 
 /**
  * Monitors network connectivity and notifies observers via LiveData.

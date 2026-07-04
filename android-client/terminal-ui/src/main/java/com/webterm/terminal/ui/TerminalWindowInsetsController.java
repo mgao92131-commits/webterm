@@ -1,11 +1,11 @@
-package com.webterm.mobile.ui.terminal;
+package com.webterm.terminal.ui;
 
 import android.app.Activity;
 import android.os.Build;
 import android.view.View;
 import android.view.WindowInsets;
 
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.UIUtils;
 
 import com.termux.terminal.TerminalBuffer;
 import com.termux.terminal.TerminalRow;

@@ -13,8 +13,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.webterm.core.config.ServerConfig;
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
 
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;

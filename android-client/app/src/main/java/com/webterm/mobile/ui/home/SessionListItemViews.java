@@ -9,8 +9,8 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.webterm.mobile.ui.common.DesignTokens;
-import com.webterm.mobile.ui.common.UIUtils;
+import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
 
 public final class SessionListItemViews {
     private SessionListItemViews() {}

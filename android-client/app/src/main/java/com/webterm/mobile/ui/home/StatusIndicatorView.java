@@ -8,7 +8,7 @@ import android.view.View;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 
-import com.webterm.mobile.ui.common.DesignTokens;
+import com.webterm.ui.common.DesignTokens;
 
 public final class StatusIndicatorView extends View {
     public enum Status {
