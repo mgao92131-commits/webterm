@@ -53,6 +53,7 @@ android {
 dependencies {
   implementation(project(":terminal-view"))
   implementation(project(":transport-api"))
+  implementation(project(":transport-websocket"))
   implementation(project(":core-api"))
   implementation(project(":core-config"))
   implementation(project(":core-cache"))

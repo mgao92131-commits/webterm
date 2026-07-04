@@ -1,4 +1,4 @@
-package com.webterm.mobile.transport;
+package com.webterm.transport.websocket;
 
 import com.webterm.transport.api.MuxTransport;
 
