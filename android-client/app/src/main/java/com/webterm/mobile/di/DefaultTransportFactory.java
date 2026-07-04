@@ -2,7 +2,7 @@ package com.webterm.mobile.di;
 
 import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
-import com.webterm.mobile.transport.P2PConnectionManager;
+import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.transport.websocket.WebSocketMuxTransport;
 
 import javax.inject.Inject;

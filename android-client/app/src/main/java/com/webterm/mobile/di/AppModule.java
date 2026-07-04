@@ -7,6 +7,8 @@ import android.os.Looper;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
+import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.transport.api.ReconnectTrigger;
 import com.webterm.transport.api.TransportFactory;
 
 import java.util.concurrent.Executor;
@@ -61,5 +63,11 @@ public class AppModule {
     @Singleton
     static TransportFactory provideTransportFactory(DefaultTransportFactory impl) {
         return impl;
+    }
+
+    @Provides
+    @Singleton
+    static ReconnectTrigger provideReconnectTrigger(RelayMuxSessionRegistry registry) {
+        return registry;
     }
 }

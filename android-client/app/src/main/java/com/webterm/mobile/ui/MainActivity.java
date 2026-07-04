@@ -32,7 +32,7 @@ import com.webterm.mobile.domain.terminal.TerminalLifecycleController;
 import com.webterm.mobile.domain.terminal.TerminalRuntimeState;
 import com.webterm.mobile.domain.terminal.TerminalTitleSynchronizer;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
-import com.webterm.mobile.transport.P2PConnectionManager;
+import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.mobile.ui.common.DesignTokens;
 import com.webterm.mobile.ui.common.PageTransitionAnimator;
 import com.webterm.mobile.ui.common.UIUtils;

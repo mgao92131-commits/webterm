@@ -1,9 +1,9 @@
-package com.webterm.mobile.transport;
+package com.webterm.transport.webrtc;
 
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.MuxTransport;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.transport.api.ReconnectTrigger;
 
 import android.content.Context;
 import android.os.Handler;
@@ -42,7 +42,7 @@ public final class P2PConnectionManager {
 
     private final Handler mainHandler;
     private final WebTermApi api;
-    private final Provider<RelayMuxSessionRegistry> registryProvider;
+    private final Provider<ReconnectTrigger> registryProvider;
     private volatile Listener listener;
 
     private PeerConnectionFactory factory;
@@ -56,7 +56,7 @@ public final class P2PConnectionManager {
     private boolean disconnecting;
 
     @Inject
-    public P2PConnectionManager(@ApplicationContext Context context, OkHttpClient http, Handler mainHandler, Provider<RelayMuxSessionRegistry> registryProvider) {
+    public P2PConnectionManager(@ApplicationContext Context context, OkHttpClient http, Handler mainHandler, Provider<ReconnectTrigger> registryProvider) {
         this.mainHandler = mainHandler;
         this.api = new WebTermApi(http);
         this.registryProvider = registryProvider;

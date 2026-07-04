@@ -54,6 +54,7 @@ dependencies {
   implementation(project(":terminal-view"))
   implementation(project(":transport-api"))
   implementation(project(":transport-websocket"))
+  implementation(project(":transport-webrtc"))
   implementation(project(":core-api"))
   implementation(project(":core-config"))
   implementation(project(":core-cache"))
