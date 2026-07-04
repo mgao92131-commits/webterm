@@ -21,16 +21,16 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.mobile.domain.command.SessionCommandController;
+import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
-import com.webterm.mobile.domain.server.HomeServerCoordinator;
+import com.webterm.feature.home.domain.HomeServerCoordinator;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
-import com.webterm.mobile.domain.terminal.TerminalClipboardController;
-import com.webterm.mobile.domain.terminal.TerminalConnection;
-import com.webterm.mobile.domain.terminal.TerminalLifecycleController;
-import com.webterm.mobile.domain.terminal.TerminalRuntimeState;
-import com.webterm.mobile.domain.terminal.TerminalTitleSynchronizer;
+import com.webterm.feature.terminal.domain.TerminalClipboardController;
+import com.webterm.feature.terminal.domain.TerminalConnection;
+import com.webterm.feature.terminal.domain.TerminalLifecycleController;
+import com.webterm.feature.terminal.domain.TerminalRuntimeState;
+import com.webterm.feature.terminal.domain.TerminalTitleSynchronizer;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.ui.common.DesignTokens;
@@ -38,25 +38,25 @@ import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
-import com.webterm.mobile.ui.home.HomeFragment;
-import com.webterm.mobile.ui.home.HomeHost;
-import com.webterm.mobile.ui.home.HomeScreenBuilder;
-import com.webterm.mobile.ui.home.SessionRecyclerAdapter;
-import com.webterm.mobile.ui.home.SessionRowActions;
-import com.webterm.mobile.ui.home.StatusIndicatorView;
-import com.webterm.mobile.ui.relay.RelayDevicesScreenBuilder;
-import com.webterm.mobile.ui.relay.RelayFragment;
-import com.webterm.mobile.ui.relay.RelayHost;
-import com.webterm.mobile.ui.relay.RelayLoginScreenBuilder;
-import com.webterm.mobile.ui.relay.RelayUiState;
-import com.webterm.mobile.ui.settings.SettingsHost;
-import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;
-import com.webterm.mobile.ui.terminal.TerminalFragment;
-import com.webterm.mobile.ui.terminal.TerminalHost;
-import com.webterm.mobile.ui.terminal.TerminalViewModel;
+import com.webterm.feature.home.HomeFragment;
+import com.webterm.feature.home.HomeHost;
+import com.webterm.feature.home.HomeScreenBuilder;
+import com.webterm.feature.home.SessionRecyclerAdapter;
+import com.webterm.feature.home.SessionRowActions;
+import com.webterm.ui.common.StatusIndicatorView;
+import com.webterm.feature.relay.RelayDevicesScreenBuilder;
+import com.webterm.feature.relay.RelayFragment;
+import com.webterm.feature.relay.RelayHost;
+import com.webterm.feature.relay.RelayLoginScreenBuilder;
+import com.webterm.feature.relay.RelayUiState;
+import com.webterm.feature.settings.SettingsHost;
+import com.webterm.feature.terminal.TerminalConnectionStatusView;
+import com.webterm.feature.terminal.TerminalFragment;
+import com.webterm.feature.terminal.TerminalHost;
+import com.webterm.feature.terminal.TerminalViewModel;
 import com.webterm.terminal.ui.TerminalWindowInsetsController;
-import com.webterm.mobile.ui.terminal.WebTermTerminalSessionClient;
-import com.webterm.mobile.ui.terminal.WebTermTerminalViewClient;
+import com.webterm.feature.terminal.WebTermTerminalSessionClient;
+import com.webterm.feature.terminal.WebTermTerminalViewClient;
 
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
@@ -219,6 +219,13 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
             return buildRelayDevicesView();
         } else {
             return buildRelayLoginView();
+        }
+    }
+
+    @Override
+    public void navigateRelayToHome() {
+        if (mNavController != null) {
+            mNavController.popBackStack(R.id.homeFragment, false);
         }
     }
 
@@ -902,6 +909,11 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         send.putExtra(Intent.EXTRA_SUBJECT, "WebTerm 崩溃日志");
         send.putExtra(Intent.EXTRA_TEXT, crashLog);
         startActivity(Intent.createChooser(send, "导出崩溃日志"));
+    }
+
+    @Override
+    public void shareCrashLog() {
+        shareLatestCrashLog();
     }
 
     private void removeCachedTerminal(String baseUrl, String sessionId) {

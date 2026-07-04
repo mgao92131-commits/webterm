@@ -6,14 +6,14 @@
 
     <fragment
         android:id="@+id/homeFragment"
-        android:name="com.webterm.mobile.ui.home.HomeFragment"
+        android:name="com.webterm.feature.home.HomeFragment"
         android:label="Home" />
     <fragment
         android:id="@+id/terminalFragment"
-        android:name="com.webterm.mobile.ui.terminal.TerminalFragment"
+        android:name="com.webterm.feature.terminal.TerminalFragment"
         android:label="Terminal" />
     <fragment
         android:id="@+id/relayFragment"
-        android:name="com.webterm.mobile.ui.relay.RelayFragment"
+        android:name="com.webterm.feature.relay.RelayFragment"
         android:label="Relay" />
 </navigation>

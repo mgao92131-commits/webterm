@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.webterm.ui.common"
+    namespace = "com.webterm.feature.relay"
     compileSdk = 36
     defaultConfig { minSdk = 23 }
     compileOptions {
@@ -15,11 +15,14 @@ android {
 }
 
 dependencies {
-    implementation("androidx.annotation:annotation:1.9.0")
-    implementation(libs.lifecycle.livedata)
-    implementation(libs.hilt.android)
-    annotationProcessor(libs.hilt.compiler)
     implementation(project(":core-api"))
     implementation(project(":core-config"))
-    implementation(project(":core-session"))
+    implementation(project(":core-relay"))
+    implementation(project(":ui-common"))
+    implementation(libs.hilt.android)
+    annotationProcessor(libs.hilt.compiler)
+    implementation(libs.fragment.ktx)
+    implementation(libs.lifecycle.viewmodel)
+    implementation(libs.lifecycle.livedata)
+    implementation("androidx.annotation:annotation:1.9.0")
 }

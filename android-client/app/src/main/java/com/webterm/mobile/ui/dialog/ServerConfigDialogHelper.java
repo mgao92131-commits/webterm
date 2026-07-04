@@ -42,7 +42,7 @@ public final class ServerConfigDialogHelper {
         titleView.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_4));
         String serverTitle = existingServer == null ? "连接并保存新电脑" : "修改电脑配置";
         int serverIconRes = existingServer == null
-            ? com.webterm.mobile.R.drawable.ic_add
+            ? com.webterm.ui.common.R.drawable.ic_add
             : com.webterm.mobile.R.drawable.ic_edit;
         container.addView(UIUtils.dialogTitleRow(
             activity,
