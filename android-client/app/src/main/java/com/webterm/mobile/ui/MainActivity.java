@@ -924,17 +924,4 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     int dp(int value) {
         return PageTransitionAnimator.dp(this, value);
     }
-
-    @Override
-    public void onNetworkAvailableForRecovery() {
-        if (mRelayService != null) {
-            mRelayService.resetReconnectAndStart();
-        }
-        if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
-            TerminalConnection.State s = mTerminalConnection.getState();
-            if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
-                mTerminalConnection.reconnectNow();
-            }
-        }
-    }
 }
