@@ -3,7 +3,6 @@ package com.webterm.mobile.ui;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,6 +14,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.webterm.mobile.CrashReporter;
+import com.webterm.mobile.R;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.TerminalCacheCoordinator;
@@ -38,20 +38,26 @@ import com.webterm.mobile.ui.common.PageTransitionAnimator;
 import com.webterm.mobile.ui.common.UIUtils;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
+import com.webterm.mobile.ui.home.HomeFragment;
 import com.webterm.mobile.ui.home.HomeScreenBuilder;
 import com.webterm.mobile.ui.home.SessionRecyclerAdapter;
 import com.webterm.mobile.ui.home.SessionRowActions;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
 import com.webterm.mobile.ui.relay.RelayDevicesScreenBuilder;
+import com.webterm.mobile.ui.relay.RelayFragment;
 import com.webterm.mobile.ui.relay.RelayLoginScreenBuilder;
 import com.webterm.mobile.ui.relay.RelayUiState;
 import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;
+import com.webterm.mobile.ui.terminal.TerminalFragment;
 import com.webterm.mobile.ui.terminal.TerminalWindowInsetsController;
 import com.webterm.mobile.ui.terminal.WebTermTerminalSessionClient;
 import com.webterm.mobile.ui.terminal.WebTermTerminalViewClient;
 
-import androidx.activity.ComponentActivity;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentActivity;
 import androidx.annotation.Nullable;
+import androidx.navigation.NavController;
+import androidx.navigation.fragment.NavHostFragment;
 
 import org.json.JSONObject;
 
@@ -65,7 +71,7 @@ import javax.inject.Inject;
 
 @AndroidEntryPoint
 
-public final class MainActivity extends ComponentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
+public final class MainActivity extends FragmentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
 
     private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
 
@@ -108,13 +114,15 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     private RelayUiState mRelayUiState;
     private NetworkRecoveryController mNetworkRecoveryController;
     private TextView mHomeSubtitle;
+    private NavController mNavController;
+    private HomeFragment mHomeFragment;
     private final Runnable mBackgroundServerDetach = () -> {
         if (!mInForeground && mSelectedServer != null && mHomeCoordinator != null) {
             mHomeCoordinator.detach();
         }
     };
 
-    private enum ScreenMode {
+    public enum ScreenMode {
         DEVICES,
         DEVICE_SESSIONS,
         TERMINAL,
@@ -122,14 +130,130 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         RELAY_DEVICES
     }
 
+    // ── Public accessors for Fragments ─────────────────────────────
+
+    public RelayService getRelayService() { return mRelayService; }
+    public RelayUiState getRelayUiState() { return mRelayUiState; }
+    public ServerConfigManager getServerConfigs() { return serverConfigs; }
+    public ServerConfigStore getConfigStore() { return configStore; }
+    public WebTermApi getApi() { return api; }
+    public Handler getMainHandler() { return mainHandler; }
+    public P2PConnectionManager getP2PManager() { return p2pManager; }
+    public TerminalLifecycleController getTerminalLifecycle() { return mTerminalLifecycle; }
+    public HomeServerCoordinator getHomeCoordinator() { return mHomeCoordinator; }
+    public SessionCommandController getSessionCommands() { return mSessionCommands; }
+    public RelayMuxSessionRegistry getRelayMuxRegistry() { return relayMuxRegistry; }
+    public TerminalCacheCoordinator getTerminalCache() { return terminalCache; }
+    public TerminalConnection getTerminalConnection() { return mTerminalConnection; }
+    public OkHttpClient getHttpClient() { return http; }
+    public LinearLayout getSessionList() { return mSessionList; }
+    public void setSessionList(LinearLayout list) { mSessionList = list; }
+    public void setHomeSubtitle(TextView subtitle) { mHomeSubtitle = subtitle; }
+    public ServerConfig getSelectedServer() { return mSelectedServer; }
+    public void setSelectedServer(ServerConfig server) { mSelectedServer = server; }
+    public StatusIndicatorView getSelectedServerStatus() { return mSelectedServerStatus; }
+    public void setSelectedServerStatus(StatusIndicatorView status) { mSelectedServerStatus = status; }
+    public SessionRecyclerAdapter getSessionAdapter() { return mSessionAdapter; }
+    public void setSessionAdapter(SessionRecyclerAdapter adapter) { mSessionAdapter = adapter; }
+    public ScreenMode getScreenMode() { return mScreenMode; }
+    public void setScreenMode(ScreenMode mode) { mScreenMode = mode; }
+    public boolean isInForeground() { return mInForeground; }
+    public AtomicBoolean getClosed() { return mClosed; }
+    public TerminalRuntimeState getTerminalState() { return mTerminalState; }
+    public NetworkRecoveryController getNetworkRecoveryController() { return mNetworkRecoveryController; }
+
+    // ── Navigation methods for Fragments ───────────────────────────
+
+    public void navigateToTerminal(String baseUrl, String cookie, String sessionId,
+                                   String termTitle, String sessionName,
+                                   String createdAt, String instanceId,
+                                   boolean relayDevice, String relayDeviceId, String cwd) {
+        Bundle args = new Bundle();
+        args.putString("baseUrl", baseUrl);
+        args.putString("cookie", cookie);
+        args.putString("sessionId", sessionId);
+        args.putString("termTitle", termTitle);
+        args.putString("sessionName", sessionName);
+        args.putString("createdAt", createdAt != null ? createdAt : "");
+        args.putString("instanceId", instanceId != null ? instanceId : "");
+        args.putBoolean("relayDevice", relayDevice);
+        args.putString("relayDeviceId", relayDeviceId != null ? relayDeviceId : "");
+        args.putString("cwd", cwd != null ? cwd : "");
+        if (mNavController != null) {
+            mNavController.navigate(R.id.terminalFragment, args);
+        }
+    }
+
+    public void navigateToRelay() {
+        if (mNavController != null) {
+            mNavController.navigate(R.id.relayFragment);
+        }
+    }
+
+    public void navigateToHome() {
+        if (mNavController != null) {
+            mNavController.popBackStack(R.id.homeFragment, false);
+        }
+    }
+
+    // ── UI helpers exposed for fragments ───────────────────────────
+
+    public void installRootInsets(View root, int baseLeft, int baseTop, int baseRight,
+                                  int baseBottom, boolean avoidImeWithPadding,
+                                  boolean includeStatusBar) {
+        TerminalWindowInsetsController.installRootInsets(this, root, baseLeft, baseTop,
+            baseRight, baseBottom, avoidImeWithPadding, includeStatusBar, (imeOverlap) -> {
+                mImeOverlap = imeOverlap;
+                updateKeyboardAvoidance();
+            });
+    }
+
+    public View buildRelayView() {
+        if (mRelayService.hasMaster() && mRelayService.masterConfig().getCookie() != null
+            && !mRelayService.masterConfig().getCookie().isEmpty()) {
+            return buildRelayDevicesView();
+        } else {
+            return buildRelayLoginView();
+        }
+    }
+
+    private View buildRelayLoginView() {
+        String savedEmail = mRelayService.masterConfig() != null
+            ? mRelayService.masterConfig().getUsername() : "";
+        RelayLoginScreenBuilder.RelayLoginScreen screen =
+            RelayLoginScreenBuilder.buildLogin(mRelayUiState, savedEmail);
+        mScreenMode = ScreenMode.RELAY_LOGIN;
+        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
+        return screen.root;
+    }
+
+    private View buildRelayDevicesView() {
+        RelayDevicesScreenBuilder.RelayDevicesScreen screen =
+            RelayDevicesScreenBuilder.build(mRelayUiState);
+        mScreenMode = ScreenMode.RELAY_DEVICES;
+        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
+        screen.refresh.run();
+        return screen.root;
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
         getWindow().getDecorView().setBackgroundColor(DesignTokens.BG_PRIMARY);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
         }
+
+        // Setup Navigation
+        NavHostFragment navHost = (NavHostFragment) getSupportFragmentManager()
+            .findFragmentById(R.id.nav_host_fragment);
+        if (navHost != null) {
+            mNavController = navHost.getNavController();
+        }
+
         mNetworkRecoveryController = new NetworkRecoveryController(this, mainHandler, this);
         mRelayService.setHost(this);
         mRelayUiState = new RelayUiState(mRelayService, this);
@@ -190,7 +314,24 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
             }
         });
         loadServersFromPrefs();
-        showSessionHome(PageTransitionAnimator.Transition.NONE);
+
+        // Start relay service; HomeFragment will be found in onResume
+        mRelayService.start();
+    }
+
+    /**
+     * Find the HomeFragment managed by NavHostFragment.
+     */
+    private HomeFragment findHomeFragment() {
+        Fragment f = getSupportFragmentManager().findFragmentById(R.id.nav_host_fragment);
+        if (f instanceof NavHostFragment) {
+            Fragment home = ((NavHostFragment) f).getChildFragmentManager()
+                .findFragmentById(R.id.homeFragment);
+            if (home instanceof HomeFragment) {
+                return (HomeFragment) home;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -198,6 +339,12 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         super.onResume();
         mInForeground = true;
         cancelBackgroundServerDetach();
+
+        // Cache HomeFragment reference (may have been recreated)
+        if (mHomeFragment == null) {
+            mHomeFragment = findHomeFragment();
+        }
+
         if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal() && mTerminalConnection != null) {
             TerminalConnection.State s = mTerminalConnection.getState();
             if (s == TerminalConnection.State.RECONNECTING) {
@@ -251,20 +398,36 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     @Override
     public void onBackPressed() {
+        // If showing terminal, go back to home/device-sessions
         if (mTerminalLifecycle.hasSession()) {
-            if (mSelectedServer != null) {
-                showDeviceSessions(mSelectedServer, PageTransitionAnimator.Transition.BACK);
-            } else {
-                showSessionHome(PageTransitionAnimator.Transition.BACK);
+            // Pop back to HomeFragment
+            if (mNavController != null) {
+                mNavController.popBackStack(R.id.homeFragment, false);
             }
+            // After popping back, show device sessions if applicable
+            final ServerConfig server = mSelectedServer;
+            mainHandler.post(() -> {
+                if (mHomeFragment == null) mHomeFragment = findHomeFragment();
+                if (mHomeFragment != null && server != null) {
+                    mHomeFragment.showDeviceSessions(server);
+                } else if (mHomeFragment != null) {
+                    mHomeFragment.showHomeScreen();
+                }
+            });
             return;
         }
-        if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
-            showSessionHome(PageTransitionAnimator.Transition.BACK);
+        // If HomeFragment is showing device sessions, let it handle back
+        if (mHomeFragment != null && mHomeFragment.isShowingDeviceSessions()) {
+            mHomeFragment.showHomeScreen();
+            mScreenMode = ScreenMode.DEVICES;
+            mSelectedServer = null;
+            mSelectedServerStatus = null;
+            mSessionAdapter = null;
             return;
         }
+        // If showing relay, go back to home
         if (mScreenMode == ScreenMode.RELAY_LOGIN || mScreenMode == ScreenMode.RELAY_DEVICES) {
-            showSessionHome(PageTransitionAnimator.Transition.BACK);
+            showSessionHome();
             return;
         }
         super.onBackPressed();
@@ -281,9 +444,7 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         serverConfigs.save();
     }
 
-    void showSessionHome() { showSessionHome(PageTransitionAnimator.Transition.BACK); }
-
-    private void showSessionHome(PageTransitionAnimator.Transition transition) {
+    public void showSessionHome() {
         mTerminalLifecycle.closeTerminal(false);
         if (p2pManager != null) p2pManager.disconnect();
         if (mHomeCoordinator != null) {
@@ -296,64 +457,27 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         mSelectedServer = null;
         mSelectedServerStatus = null;
         mSessionAdapter = null;
+        mSessionList = null;
 
-        HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
-            this,
-            () -> showAddServerDialog(null),
-            this::showSettingsDialog,
-            () -> { loadMultiSessions(); mRelayService.start(); },
-            () -> {
-                if (mRelayService.hasMaster() && mRelayService.masterConfig().getCookie() != null
-                    && !mRelayService.masterConfig().getCookie().isEmpty()) {
-                    showRelayDevicesPage();
-                } else {
-                    showRelayLoginPage();
-                }
-            },
-            this::shareLatestCrashLog
-        );
-        mHomeSubtitle = home.subtitle;
-        mRelayUiState.attachSubtitle(home.subtitle);
-        mRelayUiState.attachStatusDot(home.homeStatus);
-        installRootInsets(home.root, 0, 0, 0, dp(16), true, true);
-        mSessionList = home.sessionList;
-        loadMultiSessions();
-        setContentViewAnimated(home.root, transition);
-        mRelayService.start();
+        // Navigate to HomeFragment
+        if (mNavController != null) {
+            mNavController.popBackStack(R.id.homeFragment, false);
+        }
+        // Update HomeFragment to show home screen
+        mainHandler.post(() -> {
+            if (mHomeFragment == null) mHomeFragment = findHomeFragment();
+            if (mHomeFragment != null) {
+                mHomeFragment.showHomeScreen();
+            }
+        });
     }
 
-    private void loadMultiSessions() {
-        if (mSessionList == null || mScreenMode != ScreenMode.DEVICES) return;
-        java.util.List<ServerConfig> allServers = collectVisibleDevices();
-        mSessionList.removeAllViews();
-        if (allServers.isEmpty()) {
-            mSessionList.addView(HomeScreenBuilder.emptyState(this), new LinearLayout.LayoutParams(-1, -2));
-            return;
-        }
-        for (ServerConfig server : allServers) {
-            mSessionList.addView(HomeScreenBuilder.deviceCard(
-                this, server,
-                (v) -> showDeviceSessions(server, PageTransitionAnimator.Transition.FORWARD),
-                () -> showAddServerDialog(server),
-                () -> confirmRemoveServer(server)
-            ));
-        }
+    public void loadMultiSessions() {
+        // This is called from HomeFragment's loadMultiSessions
     }
 
-    private java.util.List<ServerConfig> collectVisibleDevices() {
-        java.util.List<ServerConfig> allServers = new java.util.ArrayList<>();
-        for (ServerConfig s : serverConfigs.servers()) {
-            if (!s.isRelayMaster()) allServers.add(s);
-        }
-        List<ServerConfig> relayDevices = mRelayService.devices();
-        if (!relayDevices.isEmpty()) allServers.addAll(relayDevices);
-        return allServers;
-    }
-
-    private void showDeviceSessions(ServerConfig server) { showDeviceSessions(server, PageTransitionAnimator.Transition.FORWARD); }
-
-    private void showDeviceSessions(ServerConfig server, PageTransitionAnimator.Transition transition) {
-        if (server == null) { showSessionHome(PageTransitionAnimator.Transition.BACK); return; }
+    public void showDeviceSessions(ServerConfig server) {
+        if (server == null) { showSessionHome(); return; }
         mTerminalLifecycle.closeTerminal(false);
         mRelayService.stop();
         mClosed.set(false);
@@ -364,120 +488,10 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         mHomeSubtitle = null;
         mSessionList = null;
 
-        HomeScreenBuilder.DeviceSessionsResult screen = HomeScreenBuilder.buildDeviceSessions(
-            this, server,
-            () -> showSessionHome(PageTransitionAnimator.Transition.BACK),
-            () -> createSessionOnServer(server),
-            () -> loadSelectedDeviceSessions(),
-            () -> showAddServerDialog(server),
-            () -> confirmRemoveServer(server)
-        );
-        mSelectedServerStatus = screen.status;
-        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
-        mSessionAdapter = new SessionRecyclerAdapter(this, this, this::loadSelectedDeviceSessions);
-        screen.sessionList.setAdapter(mSessionAdapter);
-        setupSwipeToDelete(screen.sessionList, mSessionAdapter);
-        if (mHomeCoordinator != null) {
-            mHomeCoordinator.attachSessionAdapter(mSessionAdapter);
-            mHomeCoordinator.loadDeviceSessions(server, mSelectedServerStatus);
+        // Delegate to HomeFragment
+        if (mHomeFragment != null) {
+            mHomeFragment.showDeviceSessions(server);
         }
-        setContentViewAnimated(screen.root, transition);
-    }
-
-    private void showRelayLoginPage() {
-        String savedEmail = mRelayService.masterConfig() != null
-            ? mRelayService.masterConfig().getUsername() : "";
-        RelayLoginScreenBuilder.RelayLoginScreen screen =
-            RelayLoginScreenBuilder.buildLogin(mRelayUiState, savedEmail);
-
-        mScreenMode = ScreenMode.RELAY_LOGIN;
-        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
-        setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
-    }
-
-    private void showRelayDevicesPage() {
-        RelayDevicesScreenBuilder.RelayDevicesScreen screen =
-            RelayDevicesScreenBuilder.build(mRelayUiState);
-
-        mScreenMode = ScreenMode.RELAY_DEVICES;
-        installRootInsets(screen.root, 0, 0, 0, dp(16), true, true);
-        setContentViewAnimated(screen.root, PageTransitionAnimator.Transition.FORWARD);
-        screen.refresh.run();
-    }
-
-    private void setupSwipeToDelete(androidx.recyclerview.widget.RecyclerView recyclerView, final SessionRecyclerAdapter adapter) {
-        androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback swipeCallback = new androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback(0, androidx.recyclerview.widget.ItemTouchHelper.LEFT) {
-            @Override
-            public boolean onMove(androidx.recyclerview.widget.RecyclerView recyclerView, androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder, androidx.recyclerview.widget.RecyclerView.ViewHolder target) {
-                return false;
-            }
-
-            @Override
-            public void onSwiped(androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder, int direction) {
-                final int position = viewHolder.getAdapterPosition();
-                if (position == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return;
-
-                String sessionId = adapter.getSessionId(position);
-                if (sessionId != null) {
-                    closeSession(mSelectedServer, sessionId);
-                }
-                adapter.notifyItemChanged(position);
-            }
-
-            @Override
-            public int getSwipeDirs(androidx.recyclerview.widget.RecyclerView recyclerView, androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder) {
-                int position = viewHolder.getAdapterPosition();
-                if (position != androidx.recyclerview.widget.RecyclerView.NO_POSITION && adapter.isSessionRow(position)) {
-                    return androidx.recyclerview.widget.ItemTouchHelper.LEFT;
-                }
-                return 0;
-            }
-
-            @Override
-            public void onChildDraw(
-                android.graphics.Canvas c,
-                androidx.recyclerview.widget.RecyclerView recyclerView,
-                androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder,
-                float dX,
-                float dY,
-                int actionState,
-                boolean isCurrentlyActive
-            ) {
-                if (actionState == androidx.recyclerview.widget.ItemTouchHelper.ACTION_STATE_SWIPE && dX < 0) {
-                    android.view.View itemView = viewHolder.itemView;
-                    android.graphics.Paint paint = new android.graphics.Paint();
-                    paint.setColor(DesignTokens.DANGER);
-                    
-                    android.graphics.RectF background = new android.graphics.RectF(
-                        itemView.getRight() + dX,
-                        itemView.getTop(),
-                        itemView.getRight(),
-                        itemView.getBottom()
-                    );
-                    c.drawRect(background, paint);
-
-                    paint.setColor(android.graphics.Color.WHITE);
-                    paint.setTextSize(UIUtils.dp(MainActivity.this, 14));
-                    paint.setAntiAlias(true);
-                    paint.setTypeface(DesignTokens.fontGeistSansSemibold(MainActivity.this));
-                    
-                    String text = "关闭会话";
-                    float textWidth = paint.measureText(text);
-                    android.graphics.Paint.FontMetrics fm = paint.getFontMetrics();
-                    float textHeight = fm.bottom - fm.top;
-                    
-                    float cardHeight = itemView.getHeight();
-                    float x = itemView.getRight() + dX / 2f - textWidth / 2f;
-                    float y = itemView.getTop() + cardHeight / 2f - textHeight / 2f - fm.top;
-                    
-                    if (-dX > textWidth + UIUtils.dp(MainActivity.this, 24)) {
-                        c.drawText(text, x, y, paint);
-                    }
-                }
-                super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive);
-            }
-        };
-        new androidx.recyclerview.widget.ItemTouchHelper(swipeCallback).attachToRecyclerView(recyclerView);
     }
 
     private void loadSelectedDeviceSessions() {
@@ -508,9 +522,9 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     private void showSessionListOrDeviceHome() {
         if (mSelectedServer != null) {
-            showDeviceSessions(mSelectedServer, PageTransitionAnimator.Transition.BACK);
+            showDeviceSessions(mSelectedServer);
         } else {
-            showSessionHome(PageTransitionAnimator.Transition.BACK);
+            showSessionHome();
         }
     }
 
@@ -535,15 +549,11 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         mainHandler.removeCallbacks(mBackgroundServerDetach);
     }
 
-    private void showAddServerDialog(final ServerConfig existingServer) {
+    public void showAddServerDialog(final ServerConfig existingServer) {
         ServerConfigDialogHelper.show(this, existingServer);
     }
 
-    private void createSessionOnServer(ServerConfig server) {
-        if (mSessionCommands != null) mSessionCommands.createSessionOnServer(server);
-    }
-
-    private void confirmRemoveServer(ServerConfig server) {
+    public void confirmRemoveServer(ServerConfig server) {
         AlertDialog dialog = new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("确认移除电脑")
             .setMessage("确定要从列表中移除该服务器吗？")
@@ -552,9 +562,11 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
                 serverConfigs.remove(server);
                 saveServers();
                 if (server == mSelectedServer) {
-                    showSessionHome(PageTransitionAnimator.Transition.BACK);
+                    showSessionHome();
                 } else {
-                    loadMultiSessions();
+                    if (mHomeFragment != null) {
+                        mHomeFragment.showHomeScreen();
+                    }
                 }
             })
             .setNegativeButton("取消", null)
@@ -582,9 +594,50 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
+        navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            relayDevice, relayDeviceId, cwd);
+    }
+
+    /**
+     * Called by TerminalFragment when it's ready to start the terminal.
+     */
+    public void startTerminalInFragment(String baseUrl, String cookie, String sessionId,
+                                         String termTitle, String sessionName,
+                                         String createdAt, String instanceId,
+                                         boolean relayDevice, String relayDeviceId, String cwd,
+                                         TerminalFragment fragment) {
         if (mHomeCoordinator != null) mHomeCoordinator.pauseUi();
         mScreenMode = ScreenMode.TERMINAL;
-        mTerminalLifecycle.showTerminal(
+
+        // Override setContentRoot to update the fragment's view
+        TerminalLifecycleController.Host fragmentHost = new TerminalLifecycleController.Host() {
+            @Override public int getSavedFontSize() { return configStore.getFontSize(); }
+            @Override public String getSavedFontType() { return configStore.getFontType(); }
+            @Override public Typeface getTypefaceByName(String type) { return MainActivity.this.getTypefaceByName(type); }
+            @Override public void installTerminalInsets(View root) {
+                TerminalWindowInsetsController.installRootInsets(MainActivity.this, root, 0, 0, 0, 0, false, true, (imeOverlap) -> {
+                    mImeOverlap = imeOverlap;
+                    updateKeyboardAvoidance();
+                });
+            }
+            @Override public void setContentRoot(View root) {
+                fragment.setTerminalContent(root);
+            }
+            @Override public void updateKeyboardAvoidance() {
+                TerminalWindowInsetsController.updateKeyboardAvoidance(MainActivity.this,
+                    mTerminalLifecycle.terminalRoot(), mTerminalLifecycle.terminalViewport(),
+                    mTerminalLifecycle.quickBar(), mTerminalLifecycle.terminalView(), mImeOverlap);
+            }
+        };
+
+        // Create a new TerminalLifecycleController for this fragment context
+        TerminalLifecycleController fragController = terminalLifecycleFactory.create(
+            this, fragmentHost, mTerminalState, mClosed, mConnectionStatus,
+            mTerminalConnection, mTitleSynchronizer, mSessionCommands
+        );
+        mTerminalLifecycle = fragController;
+
+        fragController.showTerminal(
             baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDeviceId, cwd,
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
@@ -653,7 +706,9 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     @Override
     public void setContentRoot(View root) {
-        setContentViewAnimated(root, PageTransitionAnimator.Transition.FORWARD);
+        // Default implementation: used when terminal is not in a fragment
+        // (should not happen after fragment refactor)
+        PageTransitionAnimator.animate(this, root, PageTransitionAnimator.Transition.FORWARD);
     }
 
     @Override
@@ -739,25 +794,38 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         serverConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
         saveServers();
         if (existingServer != null && existingServer == mSelectedServer) {
-            showDeviceSessions(existingServer, PageTransitionAnimator.Transition.FADE);
+            showDeviceSessions(existingServer);
         } else {
-            showSessionHome(PageTransitionAnimator.Transition.FADE);
+            showSessionHome();
         }
     }
 
     // ── RelayService.Host ──────────────────────────────────────
 
     @Override
-    public void onRelayDevicesChanged() { loadMultiSessions(); }
+    public void onRelayDevicesChanged() {
+        if (mHomeFragment != null) {
+            // Refresh the home screen if it's showing
+            mHomeFragment.showHomeScreen();
+        }
+    }
     @Override
     public void onRelayAuthDone() {
         if (mScreenMode == ScreenMode.RELAY_LOGIN
             && mRelayService.hasMaster()
             && mRelayService.masterConfig().getCookie() != null
             && !mRelayService.masterConfig().getCookie().isEmpty()) {
-            showRelayDevicesPage();
+            // Refresh relay fragment
+            if (mNavController != null) {
+                mNavController.popBackStack(R.id.homeFragment, false);
+                mainHandler.postDelayed(() -> {
+                    if (mNavController != null) {
+                        mNavController.navigate(R.id.relayFragment);
+                    }
+                }, 100);
+            }
         } else {
-            showSessionHome(PageTransitionAnimator.Transition.BACK);
+            showSessionHome();
         }
     }
     @Override
@@ -787,9 +855,9 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
 
     // ── Helpers ────────────────────────────────────────────────────
 
-    private void showSettingsDialog() { SettingsDialogHelper.show(this); }
+    public void showSettingsDialog() { SettingsDialogHelper.show(this); }
 
-    private void shareLatestCrashLog() {
+    public void shareLatestCrashLog() {
         String crashLog = CrashReporter.readLatestCrash(this);
         if (crashLog == null || crashLog.trim().isEmpty()) {
             Toast.makeText(this, "暂无崩溃日志", Toast.LENGTH_SHORT).show();
@@ -800,15 +868,6 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
         send.putExtra(Intent.EXTRA_SUBJECT, "WebTerm 崩溃日志");
         send.putExtra(Intent.EXTRA_TEXT, crashLog);
         startActivity(Intent.createChooser(send, "导出崩溃日志"));
-    }
-
-    private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight, int baseBottom,
-                                   boolean avoidImeWithPadding, boolean includeStatusBar) {
-        TerminalWindowInsetsController.installRootInsets(this, root, baseLeft, baseTop, baseRight, baseBottom,
-            avoidImeWithPadding, includeStatusBar, (imeOverlap) -> {
-                mImeOverlap = imeOverlap;
-                updateKeyboardAvoidance();
-            });
     }
 
     private void removeCachedTerminal(String baseUrl, String sessionId) {
@@ -827,10 +886,6 @@ public final class MainActivity extends ComponentActivity implements SessionRowA
     }
 
     // ── Animation ──────────────────────────────────────────────────
-
-    private void setContentViewAnimated(View newRoot, PageTransitionAnimator.Transition transition) {
-        PageTransitionAnimator.animate(this, newRoot, transition);
-    }
 
     int dp(int value) {
         return PageTransitionAnimator.dp(this, value);
