@@ -2,6 +2,9 @@ package com.webterm.mobile;
 
 import static org.junit.Assert.assertEquals;
 
+import com.webterm.core.cache.CachedSessionMapper;
+import com.webterm.core.cache.TerminalDiskCache;
+
 import org.json.JSONArray;
 import org.junit.Test;
 

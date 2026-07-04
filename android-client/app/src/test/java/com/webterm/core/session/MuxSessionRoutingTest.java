@@ -1,4 +1,4 @@
-package com.webterm.mobile;
+package com.webterm.core.session;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;

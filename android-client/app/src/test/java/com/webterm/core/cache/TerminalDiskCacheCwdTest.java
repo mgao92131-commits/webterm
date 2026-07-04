@@ -1,4 +1,4 @@
-package com.webterm.mobile;
+package com.webterm.core.cache;
 
 import static org.junit.Assert.assertEquals;
 

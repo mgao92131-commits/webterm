@@ -80,4 +80,6 @@ dependencies {
   compileOnly("com.google.errorprone:error_prone_annotations:2.23.0")
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
+  testImplementation("org.mockito:mockito-core:5.12.0")
+  testImplementation("androidx.arch.core:core-testing:2.2.0")
 }

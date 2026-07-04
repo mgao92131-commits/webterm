@@ -1,7 +1,12 @@
-package com.webterm.mobile;
+package com.webterm.feature.home.repository;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+
+import com.webterm.core.api.WebTermApi;
+import com.webterm.core.cache.TerminalDiskCache;
+import com.webterm.core.config.ServerConfig;
+import com.webterm.feature.home.repository.SessionRepository;
 
 import org.json.JSONArray;
 import org.json.JSONException;
