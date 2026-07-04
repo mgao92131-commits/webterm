@@ -1,59 +1,91 @@
 package com.webterm.mobile.recovery;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.os.Build;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.Handler;
-import android.util.Log;
 
-import androidx.annotation.NonNull;
+import androidx.lifecycle.LiveData;
 
+import com.webterm.mobile.ui.common.SingleLiveEvent;
+
+/**
+ * Monitors network connectivity and notifies observers via LiveData.
+ * Replaces the old callback-based Host pattern.
+ *
+ * Usage:
+ *   NetworkRecoveryController controller = new NetworkRecoveryController(context, handler);
+ *   controller.getOnNetworkAvailable().observe(lifecycleOwner, v -> { ... });
+ *   controller.register();
+ *   // ... later ...
+ *   controller.unregister();
+ */
 public final class NetworkRecoveryController {
-    private static final String TAG = "NetworkRecoveryController";
-    private static final long RECOVERY_DEBOUNCE_MS = 2000L;
 
     private final Context context;
-    private final Handler mainHandler;
-    private final Host host;
-    private ConnectivityManager.NetworkCallback networkCallback;
-    private long lastNetworkAvailableTime;
+    private final Handler handler;
+    private final SingleLiveEvent<Void> onNetworkAvailable = new SingleLiveEvent<>();
 
-    public NetworkRecoveryController(Context context, Handler mainHandler, Host host) {
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private boolean registered;
+
+    public NetworkRecoveryController(Context context, Handler handler) {
         this.context = context.getApplicationContext();
-        this.mainHandler = mainHandler;
-        this.host = host;
+        this.handler = handler;
+    }
+
+    public LiveData<Void> getOnNetworkAvailable() {
+        return onNetworkAvailable;
     }
 
     public void register() {
-        if (networkCallback != null) return;
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
-        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (registered) return;
+        registered = true;
+
+        ConnectivityManager cm = (ConnectivityManager)
+            context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return;
+
+        NetworkRequest request = new NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build();
+
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
-            public void onAvailable(@NonNull Network network) {
-                mainHandler.post(() -> {
-                    long now = System.currentTimeMillis();
-                    if (now - lastNetworkAvailableTime <= RECOVERY_DEBOUNCE_MS) return;
-                    lastNetworkAvailableTime = now;
-                    Log.i(TAG, "Network available: trigger recovery");
-                    host.onNetworkAvailableForRecovery();
-                });
+            public void onAvailable(Network network) {
+                handler.post(() -> onNetworkAvailable.setValue(null));
             }
         };
-        cm.registerDefaultNetworkCallback(networkCallback);
+        cm.registerNetworkCallback(request, networkCallback);
     }
 
     public void unregister() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || networkCallback == null) return;
-        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (cm != null) {
-            cm.unregisterNetworkCallback(networkCallback);
+        if (!registered) return;
+        registered = false;
+
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && networkCallback != null) {
+                cm.unregisterNetworkCallback(networkCallback);
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Already unregistered
         }
         networkCallback = null;
     }
 
+    // ── Deprecated Host interface (kept for backward compat) ────
+
+    /**
+     * @deprecated Use {@link #getOnNetworkAvailable()} LiveData instead.
+     */
+    @Deprecated
     public interface Host {
         void onNetworkAvailableForRecovery();
     }

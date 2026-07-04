@@ -10,67 +10,81 @@ import android.widget.FrameLayout;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.ViewModelProvider;
 
-import com.webterm.mobile.ui.MainActivity;
+import com.webterm.mobile.ui.common.DesignTokens;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
 /**
  * TerminalFragment provides the container for the terminal screen.
- * The terminal view is built by TerminalLifecycleController and set via
- * {@link #setTerminalContent(View)}.
+ * Uses TerminalViewModel for terminal session state and TerminalHost for
+ * delegating terminal lifecycle to the Activity.
  */
 @AndroidEntryPoint
 public final class TerminalFragment extends Fragment {
 
-    private MainActivity mMainActivity;
+    private TerminalViewModel mViewModel;
+    private TerminalHost mHost;
     private FrameLayout mContainer;
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        mViewModel = new ViewModelProvider(this).get(TerminalViewModel.class);
+    }
 
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
-        mMainActivity = (MainActivity) requireActivity();
+        mHost = (TerminalHost) context;
     }
 
     @Override
     public void onDetach() {
         super.onDetach();
-        mMainActivity = null;
+        mHost = null;
     }
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        mContainer = new FrameLayout(mMainActivity);
-        mContainer.setBackgroundColor(com.webterm.mobile.ui.common.DesignTokens.TERMINAL_BG);
+        mContainer = new FrameLayout(requireContext());
+        mContainer.setBackgroundColor(DesignTokens.TERMINAL_BG);
         return mContainer;
     }
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+
         // Read terminal arguments and start the terminal
         Bundle args = getArguments();
         if (args != null && args.containsKey("baseUrl")) {
-            String baseUrl = args.getString("baseUrl");
-            String cookie = args.getString("cookie");
-            String sessionId = args.getString("sessionId");
-            String termTitle = args.getString("termTitle", "Terminal");
-            String sessionName = args.getString("sessionName", "");
-            String createdAt = args.getString("createdAt", "");
-            String instanceId = args.getString("instanceId", "");
-            boolean relayDevice = args.getBoolean("relayDevice", false);
-            String relayDeviceId = args.getString("relayDeviceId", "");
-            String cwd = args.getString("cwd", "");
+            TerminalViewModel.TerminalSessionArgs sessionArgs =
+                new TerminalViewModel.TerminalSessionArgs(
+                    args.getString("baseUrl"),
+                    args.getString("cookie"),
+                    args.getString("sessionId"),
+                    args.getString("termTitle", "Terminal"),
+                    args.getString("sessionName", ""),
+                    args.getString("createdAt", ""),
+                    args.getString("instanceId", ""),
+                    args.getBoolean("relayDevice", false),
+                    args.getString("relayDeviceId", ""),
+                    args.getString("cwd", "")
+                );
+            mViewModel.setSessionArgs(sessionArgs);
 
-            mMainActivity.startTerminalInFragment(baseUrl, cookie, sessionId, termTitle,
-                sessionName, createdAt, instanceId, relayDevice, relayDeviceId, cwd, this);
+            if (mHost != null) {
+                mHost.startTerminalInFragment(sessionArgs, this);
+            }
         }
     }
 
     /**
-     * Called by MainActivity to set the terminal content view into this fragment.
+     * Called by the Activity to set the terminal content view into this fragment.
      */
     public void setTerminalContent(View terminalRoot) {
         if (mContainer != null) {
@@ -82,7 +96,7 @@ public final class TerminalFragment extends Fragment {
     }
 
     /**
-     * Called by MainActivity to get the container for installing terminal insets.
+     * Called by the Activity to get the container for installing terminal insets.
      */
     public View getTerminalContainer() {
         return mContainer;

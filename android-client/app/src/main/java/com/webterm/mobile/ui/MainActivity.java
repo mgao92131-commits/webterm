@@ -39,16 +39,21 @@ import com.webterm.mobile.ui.common.UIUtils;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
 import com.webterm.mobile.ui.home.HomeFragment;
+import com.webterm.mobile.ui.home.HomeHost;
 import com.webterm.mobile.ui.home.HomeScreenBuilder;
 import com.webterm.mobile.ui.home.SessionRecyclerAdapter;
 import com.webterm.mobile.ui.home.SessionRowActions;
 import com.webterm.mobile.ui.home.StatusIndicatorView;
 import com.webterm.mobile.ui.relay.RelayDevicesScreenBuilder;
 import com.webterm.mobile.ui.relay.RelayFragment;
+import com.webterm.mobile.ui.relay.RelayHost;
 import com.webterm.mobile.ui.relay.RelayLoginScreenBuilder;
 import com.webterm.mobile.ui.relay.RelayUiState;
+import com.webterm.mobile.ui.settings.SettingsHost;
 import com.webterm.mobile.ui.terminal.TerminalConnectionStatusView;
 import com.webterm.mobile.ui.terminal.TerminalFragment;
+import com.webterm.mobile.ui.terminal.TerminalHost;
+import com.webterm.mobile.ui.terminal.TerminalViewModel;
 import com.webterm.mobile.ui.terminal.TerminalWindowInsetsController;
 import com.webterm.mobile.ui.terminal.WebTermTerminalSessionClient;
 import com.webterm.mobile.ui.terminal.WebTermTerminalViewClient;
@@ -71,7 +76,7 @@ import javax.inject.Inject;
 
 @AndroidEntryPoint
 
-public final class MainActivity extends FragmentActivity implements SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host, TerminalLifecycleController.Host, NetworkRecoveryController.Host {
+public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions, TerminalConnection.Listener, WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host, ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host, TerminalLifecycleController.Host {
 
     private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
 
@@ -208,7 +213,7 @@ public final class MainActivity extends FragmentActivity implements SessionRowAc
             });
     }
 
-    public View buildRelayView() {
+    public View buildRelayView(RelayUiState relayUiState) {
         if (mRelayService.hasMaster() && mRelayService.masterConfig().getCookie() != null
             && !mRelayService.masterConfig().getCookie().isEmpty()) {
             return buildRelayDevicesView();
@@ -254,7 +259,18 @@ public final class MainActivity extends FragmentActivity implements SessionRowAc
             mNavController = navHost.getNavController();
         }
 
-        mNetworkRecoveryController = new NetworkRecoveryController(this, mainHandler, this);
+        mNetworkRecoveryController = new NetworkRecoveryController(this, mainHandler);
+        mNetworkRecoveryController.getOnNetworkAvailable().observe(this, v -> {
+            if (mRelayService != null) {
+                mRelayService.resetReconnectAndStart();
+            }
+            if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
+                TerminalConnection.State s = mTerminalConnection.getState();
+                if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
+                    mTerminalConnection.reconnectNow();
+                }
+            }
+        });
         mRelayService.setHost(this);
         mRelayUiState = new RelayUiState(mRelayService, this);
         mSessionCommands = new SessionCommandController(this, api, new SessionCommandController.Listener() {
@@ -598,6 +614,16 @@ public final class MainActivity extends FragmentActivity implements SessionRowAc
             relayDevice, relayDeviceId, cwd);
     }
 
+    // ── TerminalHost ─────────────────────────────────────────────
+
+    @Override
+    public void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args,
+                                        TerminalFragment fragment) {
+        startTerminalInFragment(args.baseUrl, args.cookie, args.sessionId,
+            args.termTitle, args.sessionName, args.createdAt, args.instanceId,
+            args.relayDevice, args.relayDeviceId, args.cwd, fragment);
+    }
+
     /**
      * Called by TerminalFragment when it's ready to start the terminal.
      */
@@ -642,6 +668,14 @@ public final class MainActivity extends FragmentActivity implements SessionRowAc
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
+    }
+
+    // ── HomeHost ─────────────────────────────────────────────────
+
+    @Override
+    public void showTerminal(ServerConfig server, String sessionId, String termTitle,
+                             String sessionName, String createdAt, String instanceId, String cwd) {
+        openSession(server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd);
     }
 
     @Override

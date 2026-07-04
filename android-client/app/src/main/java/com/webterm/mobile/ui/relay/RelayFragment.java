@@ -9,38 +9,56 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.fragment.NavHostFragment;
 
-import com.webterm.mobile.ui.MainActivity;
+import com.webterm.mobile.R;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
 /**
  * RelayFragment owns the relay login and relay devices screens.
- * It delegates business logic to MainActivity and {@link RelayUiState}.
+ * Uses RelayViewModel for state and RelayHost for view building.
  */
 @AndroidEntryPoint
 public final class RelayFragment extends Fragment {
 
-    private MainActivity mMainActivity;
+    private RelayViewModel mViewModel;
+    private RelayHost mHost;
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        mViewModel = new ViewModelProvider(this).get(RelayViewModel.class);
+    }
 
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
-        mMainActivity = (MainActivity) requireActivity();
+        mHost = (RelayHost) context;
     }
 
     @Override
     public void onDetach() {
         super.onDetach();
-        mMainActivity = null;
+        mHost = null;
     }
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        // Build the appropriate relay screen based on current state.
-        // The screen type is determined by MainActivity's relay state.
-        return mMainActivity.buildRelayView();
+        mViewModel.refreshState();
+
+        // Observe navigation event
+        mViewModel.getNavigateToHome().observe(getViewLifecycleOwner(), v -> {
+            NavHostFragment.findNavController(this).popBackStack(R.id.homeFragment, false);
+        });
+
+        if (mHost != null) {
+            RelayUiState uiState = new RelayUiState(mViewModel.getRelayService(), null);
+            return mHost.buildRelayView(uiState);
+        }
+        return new android.widget.FrameLayout(requireContext());
     }
 }
