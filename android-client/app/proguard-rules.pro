@@ -13,7 +13,7 @@
 }
 
 # Keep Android components referenced from the manifest.
--keep public class com.webterm.mobile.MainActivity {
+-keep public class com.webterm.mobile.ui.MainActivity {
     public <init>();
 }
 

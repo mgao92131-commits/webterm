@@ -40,6 +40,7 @@ public final class P2PConnectionManager {
         void onError(String deviceId, String message);
     }
 
+    private final Context appContext;
     private final Handler mainHandler;
     private final WebTermApi api;
     private final Provider<ReconnectTrigger> registryProvider;
@@ -57,10 +58,10 @@ public final class P2PConnectionManager {
 
     @Inject
     public P2PConnectionManager(@ApplicationContext Context context, OkHttpClient http, Handler mainHandler, Provider<ReconnectTrigger> registryProvider) {
+        this.appContext = context.getApplicationContext();
         this.mainHandler = mainHandler;
         this.api = new WebTermApi(http);
         this.registryProvider = registryProvider;
-        ensureFactory(context.getApplicationContext());
     }
 
     public void setListener(Listener listener) {
@@ -81,6 +82,7 @@ public final class P2PConnectionManager {
 
     public synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
         if (deviceId == null || deviceId.isEmpty()) return;
+        ensureFactory(appContext);
         String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         if (safeEquals(this.baseUrl, normalizedBaseUrl)
             && safeEquals(this.cookie, cookie)
