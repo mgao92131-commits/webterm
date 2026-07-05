@@ -1,14 +1,13 @@
 package com.webterm.mobile;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 
 import org.json.JSONObject;
 import org.junit.Test;
 
 public class ServerConfigTest {
     @Test
-    public void toJsonDoesNotPersistCredentials() throws Exception {
+    public void toJsonPersistsLoginState() throws Exception {
         ServerConfig server = new ServerConfig(
             "srv1",
             "Mac",
@@ -20,13 +19,13 @@ public class ServerConfigTest {
 
         JSONObject json = server.toJSON();
 
-        assertFalse(json.has("cookie"));
-        assertFalse(json.has("password"));
+        assertEquals("sid=secret", json.optString("cookie"));
+        assertEquals("password", json.optString("password"));
         assertEquals("admin", json.optString("username"));
     }
 
     @Test
-    public void fromJsonIgnoresLegacyCredentials() throws Exception {
+    public void fromJsonRestoresLoginState() throws Exception {
         JSONObject json = new JSONObject()
             .put("id", "srv1")
             .put("name", "Mac")
@@ -37,8 +36,8 @@ public class ServerConfigTest {
 
         ServerConfig server = ServerConfig.fromJSON(json);
 
-        assertEquals("", server.getCookie());
-        assertEquals("", server.getPassword());
+        assertEquals("sid=legacy", server.getCookie());
+        assertEquals("legacy-password", server.getPassword());
         assertEquals("admin", server.getUsername());
     }
 }

@@ -64,10 +64,16 @@ final class P2PConnectionManager {
 
     synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
         if (deviceId == null || deviceId.isEmpty()) return;
-        if (safeEquals(this.deviceId, deviceId) && peerConnection != null) return;
+        String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
+        if (safeEquals(this.baseUrl, normalizedBaseUrl)
+            && safeEquals(this.cookie, cookie)
+            && safeEquals(this.deviceId, deviceId)
+            && peerConnection != null) {
+            return;
+        }
         disconnect("switching device");
         disconnecting = false;
-        this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
+        this.baseUrl = normalizedBaseUrl;
         this.cookie = cookie;
         this.deviceId = deviceId;
         Log.i(TAG, "p2p connecting to " + deviceId);

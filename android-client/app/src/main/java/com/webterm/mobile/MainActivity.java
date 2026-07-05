@@ -65,6 +65,18 @@ public final class MainActivity extends Activity implements SessionRowActions, T
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
+        // 解决 Android 从安装器或特定第三方应用启动后，按 Home 回后台再点击桌面图标
+        // 导致重复实例化根 Activity 的系统 Bug：如果当前不是任务根且是桌面 LAUNCHER 启动，
+        // 则直接销毁本次多余实例，让系统把后台已有任务栈恢复到前台。
+        if (!isTaskRoot()
+                && getIntent() != null
+                && getIntent().hasCategory(Intent.CATEGORY_LAUNCHER)
+                && Intent.ACTION_MAIN.equals(getIntent().getAction())) {
+            super.onCreate(savedInstanceState);
+            finish();
+            return;
+        }
+
         super.onCreate(savedInstanceState);
         getWindow().getDecorView().setBackgroundColor(DesignTokens.BG_PRIMARY);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
@@ -157,8 +169,6 @@ public final class MainActivity extends Activity implements SessionRowActions, T
         } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 loadSelectedDeviceSessions();
-            } else {
-                mRelayCoordinator.start();
             }
         }
         mNetworkRecoveryController.register();
@@ -247,7 +257,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
             this,
             () -> showAddServerDialog(null),
             this::showSettingsDialog,
-            () -> { loadMultiSessions(); mRelayCoordinator.start(); },
+            mRelayCoordinator::refresh,
             () -> {
                 if (mRelayCoordinator.hasMaster() && mRelayCoordinator.masterConfig().getCookie() != null
                     && !mRelayCoordinator.masterConfig().getCookie().isEmpty()) {
@@ -785,7 +795,7 @@ public final class MainActivity extends Activity implements SessionRowActions, T
     @Override
     public void onNetworkAvailableForRecovery() {
         if (mRelayCoordinator != null) {
-            mRelayCoordinator.resetReconnectAndStart();
+            mRelayCoordinator.resetAndRefresh();
         }
         if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
             TerminalConnection.State s = mTerminalConnection.getState();

@@ -14,18 +14,13 @@ import okhttp3.OkHttpClient;
 
 final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevicesScreenBuilder.Host {
     private static final int MAX_HTTP_AUTH_RETRIES = 2;
-    private static final long HTTP_POLL_INTERVAL_MS = 3000L;
-    private static final long HTTP_RETRY_INTERVAL_MS = 5000L;
 
     private enum RelayState {
         NOT_CONFIGURED,
         CONNECTING,
         AUTH_FAILED,
         CONNECT_FAILED,
-        CONNECTED_FETCHING_DEVICES,
-        CONNECTED_NO_DEVICES,
-        CONNECTED_WITH_DEVICES,
-        CONNECTED_POLLING
+        CONNECTED
     }
     private final OkHttpClient http;
     private final Handler mainHandler;
@@ -38,19 +33,10 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
     private StatusIndicatorView homeStatusDot;
     private RelayState relayState = RelayState.NOT_CONFIGURED;
     private int httpAuthFailures;
+    private boolean devicesFetchInFlight;
     private boolean refreshInFlight;
     private String refreshCookieInFlight = "";
     private boolean loginInFlight;
-
-    private final Runnable pollDevicesRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
-                return;
-            }
-            fetchDevicesHttp();
-        }
-    };
 
     RelayCoordinator(OkHttpClient http, Handler mainHandler, WebTermApi api, Host host) {
         this.http = http;
@@ -101,35 +87,43 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
 
     void start() {
         if (!hasMaster()) {
-            stop();
             updateSubtitleState(RelayState.NOT_CONFIGURED);
             return;
         }
-        stop();
+        refresh();
+    }
+
+    void refresh() {
+        if (!hasMaster()) {
+            updateSubtitleState(RelayState.NOT_CONFIGURED);
+            return;
+        }
+        if (devicesFetchInFlight || refreshInFlight || loginInFlight) return;
+        devicesFetchInFlight = true;
         updateSubtitleState(RelayState.CONNECTING);
-        mainHandler.removeCallbacks(pollDevicesRunnable);
-        mainHandler.post(pollDevicesRunnable);
+        fetchDevicesHttp();
     }
 
     void stop() {
-        mainHandler.removeCallbacks(pollDevicesRunnable);
         httpAuthFailures = 0;
     }
 
-    void resetReconnectAndStart() {
+    void resetAndRefresh() {
         stop();
         start();
     }
 
     private void fetchDevicesHttp() {
-        if (relayMasterConfig == null) return;
+        if (relayMasterConfig == null) {
+            devicesFetchInFlight = false;
+            return;
+        }
         api.fetchDevices(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.SessionsCallback() {
             @Override
             public void onReady(JSONArray devices) {
                 mainHandler.post(() -> {
-                    if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
-                        return;
-                    }
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                     httpAuthFailures = 0;
                     relayDevices.clear();
                     for (int i = 0; i < devices.length(); i++) {
@@ -152,28 +146,26 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                             relayMasterConfig.isP2PEnabled()
                         ));
                     }
-                    updateSubtitleState(RelayState.CONNECTED_POLLING);
+                    updateSubtitleState(RelayState.CONNECTED);
                     host.onRelayDevicesChanged();
-
-                    scheduleHttpPoll(HTTP_POLL_INTERVAL_MS);
                 });
             }
 
             @Override
             public void onError(int code, String message) {
                 mainHandler.post(() -> {
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                     if (code == 401) {
                         if (refreshInFlight) return;
                         httpAuthFailures++;
                         if (httpAuthFailures > MAX_HTTP_AUTH_RETRIES) {
-                            mainHandler.removeCallbacks(pollDevicesRunnable);
                             performPasswordLogin();
                             return;
                         }
                         refreshSavedCookieOrFail();
                     } else {
                         updateSubtitleState(RelayState.CONNECT_FAILED);
-                        scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
                     }
                 });
             }
@@ -181,7 +173,8 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
             @Override
             public void onParseError(String message) {
                 mainHandler.post(() -> {
-                    scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                 });
             }
         });
@@ -210,7 +203,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                     relayMasterConfig.setCookie(cookie);
                     httpAuthFailures = 0;
                     host.saveServers();
-                    scheduleHttpPoll(0);
+                    refresh();
                 });
             }
 
@@ -222,7 +215,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                     refreshCookieInFlight = "";
                     if (!sameAttempt) return;
                     if (relayMasterConfig != null && !cookieBeforeRefresh.equals(relayMasterConfig.getCookie())) {
-                        scheduleHttpPoll(0);
+                        refresh();
                         return;
                     }
                     performPasswordLogin();
@@ -252,7 +245,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                         host.saveServers();
                     }
                     httpAuthFailures = 0;
-                    scheduleHttpPoll(0);
+                    refresh();
                 }
 
                 @Override
@@ -514,6 +507,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
         }
         relayMasterConfig = null;
         httpAuthFailures = 0;
+        devicesFetchInFlight = false;
         host.saveServers();
         stop();
         relayDevices.clear();
@@ -541,23 +535,11 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                     break;
                 case CONNECT_FAILED:
                     setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_alert,
-                        "无法连接中转服务，正在重连...", DesignTokens.DANGER);
+                        "无法连接中转服务", DesignTokens.DANGER);
                     break;
-                case CONNECTED_FETCHING_DEVICES:
-                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
-                        "已连接中转，正在获取电脑...", DesignTokens.SUCCESS);
-                    break;
-                case CONNECTED_NO_DEVICES:
-                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
-                        "中转服务已连接 (无在线电脑)", DesignTokens.SUCCESS);
-                    break;
-                case CONNECTED_WITH_DEVICES:
+                case CONNECTED:
                     setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
                         "已连接中转服务", DesignTokens.SUCCESS);
-                    break;
-                case CONNECTED_POLLING:
-                    setSubtitleWithIcon(com.webterm.mobile.R.drawable.ic_check_circle,
-                        "已连接中转服务 (轮询模式)", DesignTokens.SUCCESS);
                     break;
             }
         });
@@ -585,10 +567,7 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
                 case CONNECT_FAILED:
                     homeStatusDot.setStatus(StatusIndicatorView.Status.DISCONNECTED);
                     break;
-                case CONNECTED_FETCHING_DEVICES:
-                case CONNECTED_NO_DEVICES:
-                case CONNECTED_WITH_DEVICES:
-                case CONNECTED_POLLING:
+                case CONNECTED:
                     homeStatusDot.setStatus(StatusIndicatorView.Status.CONNECTED);
                     break;
             }
@@ -598,15 +577,6 @@ final class RelayCoordinator implements RelayLoginScreenBuilder.Host, RelayDevic
     private boolean isDeviceOnline(JSONObject deviceObj) {
         return deviceObj.optBoolean("online", false)
             || "online".equalsIgnoreCase(deviceObj.optString("status", ""));
-    }
-
-    private void scheduleHttpPoll(long delayMs) {
-        mainHandler.removeCallbacks(pollDevicesRunnable);
-        mainHandler.postDelayed(pollDevicesRunnable, delayMs);
-    }
-
-    private long authRetryDelayMs() {
-        return Math.min(HTTP_RETRY_INTERVAL_MS, 500L * httpAuthFailures);
     }
 
     interface Host {

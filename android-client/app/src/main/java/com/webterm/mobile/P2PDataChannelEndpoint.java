@@ -17,7 +17,7 @@ final class P2PDataChannelEndpoint {
 
     private final DataChannel dataChannel;
     private final StateListener stateListener;
-    private MuxTransport.Listener muxListener;
+    private volatile MuxTransport.Listener muxListener;
 
     P2PDataChannelEndpoint(DataChannel dataChannel, StateListener stateListener) {
         this.dataChannel = dataChannel;
