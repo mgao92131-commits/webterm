@@ -151,7 +151,7 @@ public final class HomeFragment extends Fragment implements SessionRowActions {
             },
             () -> {
                 loadMultiSessions();
-                mViewModel.getRelayService().start();
+                mViewModel.getRelayService().refresh();
             },
             () -> mViewModel.requestRelay(),
             () -> shareCrashLog()
@@ -167,7 +167,6 @@ public final class HomeFragment extends Fragment implements SessionRowActions {
         mSessionList = home.sessionList;
         mContainer.addView(home.root);
         loadMultiSessions();
-        mViewModel.getRelayService().start();
     }
 
     // ── Device Sessions Screen ───────────────────────────────────

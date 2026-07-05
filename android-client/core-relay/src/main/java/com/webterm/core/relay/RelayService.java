@@ -24,8 +24,6 @@ import okhttp3.OkHttpClient;
 @Singleton
 public final class RelayService {
     private static final int MAX_HTTP_AUTH_RETRIES = 2;
-    private static final long HTTP_POLL_INTERVAL_MS = 3000L;
-    private static final long HTTP_RETRY_INTERVAL_MS = 5000L;
 
     /** Status dot constants – keep in sync with StatusIndicatorView.Status. */
     public static final int STATUS_CONNECTING = 0;
@@ -37,10 +35,7 @@ public final class RelayService {
         CONNECTING,
         AUTH_FAILED,
         CONNECT_FAILED,
-        CONNECTED_FETCHING_DEVICES,
-        CONNECTED_NO_DEVICES,
-        CONNECTED_WITH_DEVICES,
-        CONNECTED_POLLING
+        CONNECTED
     }
 
     private final OkHttpClient http;
@@ -52,6 +47,7 @@ public final class RelayService {
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private RelayState relayState = RelayState.NOT_CONFIGURED;
     private int httpAuthFailures;
+    private boolean devicesFetchInFlight;
     private boolean refreshInFlight;
     private String refreshCookieInFlight = "";
     private boolean loginInFlight;
@@ -65,16 +61,6 @@ public final class RelayService {
     public LiveData<String> getSubtitleText() { return subtitleText; }
     public LiveData<Integer> getSubtitleColor() { return subtitleColor; }
     public LiveData<Integer> getStatusDotStatus() { return statusDotStatus; }
-
-    private final Runnable pollDevicesRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
-                return;
-            }
-            fetchDevicesHttp();
-        }
-    };
 
     @Inject
     public RelayService(OkHttpClient http, Handler mainHandler, WebTermApi api) {
@@ -113,22 +99,28 @@ public final class RelayService {
 
     public void start() {
         if (!hasMaster()) {
-            stop();
             updateState(RelayState.NOT_CONFIGURED);
             return;
         }
-        stop();
+        refresh();
+    }
+
+    public void refresh() {
+        if (!hasMaster()) {
+            updateState(RelayState.NOT_CONFIGURED);
+            return;
+        }
+        if (devicesFetchInFlight || refreshInFlight || loginInFlight) return;
+        devicesFetchInFlight = true;
         updateState(RelayState.CONNECTING);
-        mainHandler.removeCallbacks(pollDevicesRunnable);
-        mainHandler.post(pollDevicesRunnable);
+        fetchDevicesHttp();
     }
 
     public void stop() {
-        mainHandler.removeCallbacks(pollDevicesRunnable);
         httpAuthFailures = 0;
     }
 
-    public void resetReconnectAndStart() {
+    public void resetAndRefresh() {
         stop();
         start();
     }
@@ -142,14 +134,16 @@ public final class RelayService {
     // ── Device polling ───────────────────────────────────────────
 
     private void fetchDevicesHttp() {
-        if (relayMasterConfig == null) return;
+        if (relayMasterConfig == null) {
+            devicesFetchInFlight = false;
+            return;
+        }
         api.fetchDevices(relayMasterConfig.getUrl(), relayMasterConfig.getCookie(), new WebTermApi.SessionsCallback() {
             @Override
             public void onReady(JSONArray devices) {
                 mainHandler.post(() -> {
-                    if (relayState != RelayState.CONNECTING && relayState != RelayState.CONNECT_FAILED && relayState != RelayState.CONNECTED_POLLING) {
-                        return;
-                    }
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                     httpAuthFailures = 0;
                     relayDevices.clear();
                     for (int i = 0; i < devices.length(); i++) {
@@ -172,28 +166,26 @@ public final class RelayService {
                             relayMasterConfig.isP2PEnabled()
                         ));
                     }
-                    updateState(RelayState.CONNECTED_POLLING);
+                    updateState(RelayState.CONNECTED);
                     if (host != null) host.onRelayDevicesChanged();
-
-                    scheduleHttpPoll(HTTP_POLL_INTERVAL_MS);
                 });
             }
 
             @Override
             public void onError(int code, String message) {
                 mainHandler.post(() -> {
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                     if (code == 401) {
                         if (refreshInFlight) return;
                         httpAuthFailures++;
                         if (httpAuthFailures > MAX_HTTP_AUTH_RETRIES) {
-                            mainHandler.removeCallbacks(pollDevicesRunnable);
                             performPasswordLogin();
                             return;
                         }
                         refreshSavedCookieOrFail();
                     } else {
                         updateState(RelayState.CONNECT_FAILED);
-                        scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
                     }
                 });
             }
@@ -201,7 +193,8 @@ public final class RelayService {
             @Override
             public void onParseError(String message) {
                 mainHandler.post(() -> {
-                    scheduleHttpPoll(HTTP_RETRY_INTERVAL_MS);
+                    if (!devicesFetchInFlight) return;
+                    devicesFetchInFlight = false;
                 });
             }
         });
@@ -230,7 +223,7 @@ public final class RelayService {
                     relayMasterConfig.setCookie(cookie);
                     httpAuthFailures = 0;
                     if (host != null) host.saveServers();
-                    scheduleHttpPoll(0);
+                    refresh();
                 });
             }
 
@@ -242,7 +235,7 @@ public final class RelayService {
                     refreshCookieInFlight = "";
                     if (!sameAttempt) return;
                     if (relayMasterConfig != null && !cookieBeforeRefresh.equals(relayMasterConfig.getCookie())) {
-                        scheduleHttpPoll(0);
+                        refresh();
                         return;
                     }
                     performPasswordLogin();
@@ -272,7 +265,7 @@ public final class RelayService {
                         if (host != null) host.saveServers();
                     }
                     httpAuthFailures = 0;
-                    scheduleHttpPoll(0);
+                    refresh();
                 }
 
                 @Override
@@ -408,6 +401,7 @@ public final class RelayService {
         }
         relayMasterConfig = null;
         httpAuthFailures = 0;
+        devicesFetchInFlight = false;
         if (host != null) host.saveServers();
         stop();
         relayDevices.clear();
@@ -420,11 +414,6 @@ public final class RelayService {
     private boolean isDeviceOnline(JSONObject deviceObj) {
         return deviceObj.optBoolean("online", false)
             || "online".equalsIgnoreCase(deviceObj.optString("status", ""));
-    }
-
-    private void scheduleHttpPoll(long delayMs) {
-        mainHandler.removeCallbacks(pollDevicesRunnable);
-        mainHandler.postDelayed(pollDevicesRunnable, delayMs);
     }
 
     private void updateState(RelayState state) {
@@ -447,27 +436,12 @@ public final class RelayService {
                 statusDotStatus.postValue(STATUS_DISCONNECTED);
                 break;
             case CONNECT_FAILED:
-                subtitleText.postValue("无法连接中转服务，正在重连...");
+                subtitleText.postValue("无法连接中转服务");
                 subtitleColor.postValue(0xFFEF4444); // DANGER
                 statusDotStatus.postValue(STATUS_DISCONNECTED);
                 break;
-            case CONNECTED_FETCHING_DEVICES:
-                subtitleText.postValue("已连接中转，正在获取电脑...");
-                subtitleColor.postValue(0xFF10B981); // SUCCESS
-                statusDotStatus.postValue(STATUS_CONNECTED);
-                break;
-            case CONNECTED_NO_DEVICES:
-                subtitleText.postValue("中转服务已连接 (无在线电脑)");
-                subtitleColor.postValue(0xFF10B981); // SUCCESS
-                statusDotStatus.postValue(STATUS_CONNECTED);
-                break;
-            case CONNECTED_WITH_DEVICES:
+            case CONNECTED:
                 subtitleText.postValue("已连接中转服务");
-                subtitleColor.postValue(0xFF10B981); // SUCCESS
-                statusDotStatus.postValue(STATUS_CONNECTED);
-                break;
-            case CONNECTED_POLLING:
-                subtitleText.postValue("已连接中转服务 (轮询模式)");
                 subtitleColor.postValue(0xFF10B981); // SUCCESS
                 statusDotStatus.postValue(STATUS_CONNECTED);
                 break;

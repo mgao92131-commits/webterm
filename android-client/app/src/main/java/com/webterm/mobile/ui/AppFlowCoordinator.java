@@ -170,7 +170,7 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         mNetworkRecoveryController = new NetworkRecoveryController(mActivity, mainHandler);
         mNetworkRecoveryController.getOnNetworkAvailable().observe(mActivity, v -> {
             if (mRelayService != null) {
-                mRelayService.resetReconnectAndStart();
+                mRelayService.resetAndRefresh();
             }
             if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
                 TerminalConnection.State s = mTerminalConnection.getState();
@@ -257,8 +257,6 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
             if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
                 loadSelectedDeviceSessions();
-            } else {
-                mRelayService.start();
             }
         }
         mNetworkRecoveryController.register();
