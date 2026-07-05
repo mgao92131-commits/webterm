@@ -16,8 +16,7 @@
           v-if="store.mode === 'relay'"
           data-testid="device-selector-trigger"
           @click="isDrawerOpen = !isDrawerOpen"
-          class="flex items-center gap-1 px-2 py-1 text-[12px] rounded-sm border border-border bg-app-bg text-fg-muted hover:text-fg hover:border-border-hover transition-colors ml-1 min-w-0"
-          :class="{ 'lg:hidden': true }"
+          class="lg:hidden flex items-center gap-1 px-2 py-1 text-[12px] rounded-sm border border-border bg-app-bg text-fg-muted hover:text-fg hover:border-border-hover transition-colors ml-1 min-w-0"
         >
           <span class="truncate">{{ getSelectedDeviceName() }}</span>
           <ChevronDown class="w-3 h-3 flex-shrink-0 transition-transform duration-200" :class="{ 'rotate-180': isDrawerOpen }" />

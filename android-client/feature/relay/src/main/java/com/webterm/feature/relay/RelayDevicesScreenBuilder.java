@@ -148,12 +148,13 @@ public final class RelayDevicesScreenBuilder {
         LinearLayout agentHeader = buildSectionHeader(activity, fonts,
             "PC Agent 设备",
             "用于远程登录你电脑的终端 Agent");
-        Button addDeviceBtn = new Button(activity);
-        addDeviceBtn.setText("+ 添加设备");
-        UIUtils.styleDialogButton(activity, addDeviceBtn, true);
-        addDeviceBtn.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        ImageButton addDeviceBtn = new ImageButton(activity);
+        addDeviceBtn.setImageResource(R.drawable.ic_add);
+        addDeviceBtn.setColorFilter(DesignTokens.ACCENT);
+        addDeviceBtn.setBackground(UIUtils.iconButtonBackground(activity, 18));
+        addDeviceBtn.setPadding(0, 0, 0, 0);
         LinearLayout headerRow = (LinearLayout) agentHeader.getChildAt(0);
-        headerRow.addView(addDeviceBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 92), UIUtils.dp(activity, 34)));
+        headerRow.addView(addDeviceBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 40), UIUtils.dp(activity, 40)));
         content.addView(agentHeader, new LinearLayout.LayoutParams(-1, -2));
 
         // 添加设备表单（初始隐藏）
@@ -323,6 +324,48 @@ public final class RelayDevicesScreenBuilder {
             if (date == null) return null;
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA);
             return formatter.format(date);
+        } catch (ParseException e) {
+            return null;
+        }
+    }
+
+    /** 解析 ISO 时间为相对时间描述（刚刚 / X 分钟前 / 昨天 / M月d日）。 */
+    private static String formatRelativeTime(String iso) {
+        if (iso == null || iso.isEmpty()) return null;
+        String normalized = iso.endsWith("Z") ? iso : iso + "Z";
+        Date date = parseIsoDate(normalized);
+        if (date == null) return null;
+
+        long diffMs = System.currentTimeMillis() - date.getTime();
+        if (diffMs < 0) diffMs = 0;
+
+        long minutes = diffMs / (60 * 1000);
+        long hours = diffMs / (60 * 60 * 1000);
+        long days = diffMs / (24 * 60 * 60 * 1000);
+
+        if (minutes < 1) return "刚刚";
+        if (minutes < 60) return minutes + " 分钟前";
+        if (hours < 24) return hours + " 小时前";
+        if (days < 2) return "昨天";
+        if (days < 7) return days + " 天前";
+
+        SimpleDateFormat formatter = new SimpleDateFormat("M月d日", Locale.CHINA);
+        return formatter.format(date);
+    }
+
+    private static Date parseIsoDate(String normalized) {
+        Date date = tryParseDate(normalized, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+        if (date == null) {
+            date = tryParseDate(normalized, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+        }
+        return date;
+    }
+
+    private static Date tryParseDate(String normalized, String pattern) {
+        try {
+            SimpleDateFormat parser = new SimpleDateFormat(pattern, Locale.US);
+            parser.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return parser.parse(normalized);
         } catch (ParseException e) {
             return null;
         }
@@ -592,25 +635,22 @@ public final class RelayDevicesScreenBuilder {
         nameText.setTypeface(fonts.sans);
         info.addView(nameText, new LinearLayout.LayoutParams(-1, -2));
 
-        String statusStr = (online ? "在线" : "离线");
-        String formatted = formatTime(lastSeenAt);
-        if (formatted != null) {
-            statusStr += " · 最后在线 " + formatted;
-        }
+        String relative = formatRelativeTime(lastSeenAt);
+        String subtitleText = relative != null ? relative : (online ? "在线" : "离线");
         TextView statusText = new TextView(activity);
-        statusText.setText(statusStr);
+        statusText.setText(subtitleText);
         statusText.setTextColor(DesignTokens.TEXT_TERTIARY);
         statusText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
-        statusText.setTypeface(fonts.mono);
+        statusText.setTypeface(fonts.sans);
         info.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
 
         row.addView(info);
 
-        // 状态 badge
-        TextView badge = createStatusBadge(activity, fonts, online);
-        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(-2, -2);
-        badgeLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
-        row.addView(badge, badgeLp);
+        // 状态指示圆点
+        View statusDot = createStatusDot(activity, online);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, 8), UIUtils.dp(activity, 8));
+        dotLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
+        row.addView(statusDot, dotLp);
 
         // 删除按钮
         ImageButton deleteBtn = createIconButton(activity, R.drawable.ic_delete, DesignTokens.TEXT_TERTIARY);
@@ -638,9 +678,8 @@ public final class RelayDevicesScreenBuilder {
             String id = d.optString("id", "");
             String deviceName = d.optString("deviceName", "未知设备");
             String lastSeenAt = d.optString("lastSeenAt", null);
-            String createdAt = d.optString("createdAt", null);
 
-            LinearLayout row = buildTrustedDeviceRow(activity, fonts, deviceName, lastSeenAt, createdAt,
+            LinearLayout row = buildTrustedDeviceRow(activity, fonts, deviceName, lastSeenAt,
                 () -> {
                     AlertDialog dialog = new AlertDialog.Builder(activity)
                         .setTitle("撤销信任")
@@ -673,7 +712,7 @@ public final class RelayDevicesScreenBuilder {
     }
 
     private static LinearLayout buildTrustedDeviceRow(Activity activity, Fonts fonts, String name,
-                                                       String lastSeenAt, String createdAt,
+                                                       String lastSeenAt,
                                                        Runnable onRevoke) {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -703,24 +742,14 @@ public final class RelayDevicesScreenBuilder {
         nameText.setTypeface(fonts.sans);
         info.addView(nameText, new LinearLayout.LayoutParams(-1, -2));
 
-        String formattedLastSeen = formatTime(lastSeenAt);
-        if (formattedLastSeen != null) {
+        String relativeLastSeen = formatRelativeTime(lastSeenAt);
+        if (relativeLastSeen != null) {
             TextView lastSeenText = new TextView(activity);
-            lastSeenText.setText("最后活跃 " + formattedLastSeen);
+            lastSeenText.setText("最近活跃 " + relativeLastSeen);
             lastSeenText.setTextColor(DesignTokens.TEXT_TERTIARY);
             lastSeenText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
-            lastSeenText.setTypeface(fonts.mono);
+            lastSeenText.setTypeface(fonts.sans);
             info.addView(lastSeenText, new LinearLayout.LayoutParams(-1, -2));
-        }
-
-        String formattedCreated = formatTime(createdAt);
-        if (formattedCreated != null) {
-            TextView createdText = new TextView(activity);
-            createdText.setText("添加于 " + formattedCreated);
-            createdText.setTextColor(DesignTokens.TEXT_TERTIARY);
-            createdText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
-            createdText.setTypeface(fonts.mono);
-            info.addView(createdText, new LinearLayout.LayoutParams(-1, -2));
         }
 
         row.addView(info);
@@ -744,29 +773,13 @@ public final class RelayDevicesScreenBuilder {
         return divider;
     }
 
-    private static TextView createStatusBadge(Activity activity, Fonts fonts, boolean online) {
-        TextView badge = new TextView(activity);
-        badge.setText(online ? "在线" : "离线");
-        badge.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
-        badge.setTypeface(fonts.sansSemibold);
-        badge.setPadding(
-            UIUtils.dp(activity, DesignTokens.SPACE_2),
-            UIUtils.dp(activity, 2),
-            UIUtils.dp(activity, DesignTokens.SPACE_2),
-            UIUtils.dp(activity, 2));
-
+    private static View createStatusDot(Activity activity, boolean online) {
+        View dot = new View(activity);
         GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
-        bg.setCornerRadius(UIUtils.dp(activity, DesignTokens.RADIUS_SM));
-        if (online) {
-            badge.setTextColor(DesignTokens.SUCCESS);
-            bg.setColor(DesignTokens.successBg());
-        } else {
-            badge.setTextColor(DesignTokens.TEXT_TERTIARY);
-            bg.setColor(DesignTokens.BG_TERTIARY);
-        }
-        badge.setBackground(bg);
-        return badge;
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(online ? DesignTokens.SUCCESS : DesignTokens.TEXT_TERTIARY);
+        dot.setBackground(bg);
+        return dot;
     }
 
     private static ImageButton createIconButton(Activity activity, int iconRes, int defaultColor) {
