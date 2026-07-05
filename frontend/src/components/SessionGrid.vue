@@ -30,13 +30,16 @@
     </div>
 
     <!-- Session cards -->
-    <div v-else class="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 content-start">
+    <div v-else class="flex-1 overflow-y-auto flex flex-col gap-2 content-start">
       <div
         v-for="(s, idx) in sessions"
         :key="s.id"
         role="link"
         tabindex="0"
-        class="session-link stagger-item group flex flex-col gap-2 p-3 rounded-md bg-app-panel border border-border hover:border-border-hover transition-colors cursor-pointer"
+        :class="['session-link stagger-item group flex flex-col gap-2 p-3 rounded-md border transition-colors cursor-pointer',
+          s.id === selectedSessionId
+            ? 'bg-accent-muted border-accent ring-1 ring-accent'
+            : 'bg-app-panel border-border hover:border-border-hover']"
         :style="{ animationDelay: idx * 40 + 'ms' }"
         @click="emit('open', s.id)"
         @keydown.enter.prevent="emit('open', s.id)"
@@ -83,6 +86,7 @@ import type { Session } from '../store';
 defineProps<{
   sessions: Session[];
   selectedDeviceId: string | null;
+  selectedSessionId?: string | null;
 }>();
 
 const emit = defineEmits<{

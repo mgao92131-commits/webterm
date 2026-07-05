@@ -11,14 +11,16 @@
           :class="store.p2pActive ? 'bg-accent-muted text-accent border border-accent/30' : 'bg-bg-tertiary text-fg-subtle border border-border'">
           {{ store.p2pActive ? 'P2P' : 'RELAY' }}
         </span>
-        <!-- Mobile device selector -->
+        <!-- Device selector trigger -->
         <button
           v-if="store.mode === 'relay'"
-          @click="isPanelOpen = !isPanelOpen"
-          class="sm:hidden flex items-center gap-1 px-2 py-1 text-[12px] rounded-sm border border-border bg-app-bg text-fg-muted hover:text-fg hover:border-border-hover transition-colors ml-1 min-w-0"
+          data-testid="device-selector-trigger"
+          @click="isDrawerOpen = !isDrawerOpen"
+          class="flex items-center gap-1 px-2 py-1 text-[12px] rounded-sm border border-border bg-app-bg text-fg-muted hover:text-fg hover:border-border-hover transition-colors ml-1 min-w-0"
+          :class="{ 'lg:hidden': true }"
         >
           <span class="truncate">{{ getSelectedDeviceName() }}</span>
-          <ChevronDown class="w-3 h-3 flex-shrink-0 transition-transform duration-200" :class="{ 'rotate-180': isPanelOpen }" />
+          <ChevronDown class="w-3 h-3 flex-shrink-0 transition-transform duration-200" :class="{ 'rotate-180': isDrawerOpen }" />
         </button>
       </div>
 
@@ -89,36 +91,14 @@
       </Transition>
     </Teleport>
 
-    <!-- Mobile device panel -->
-    <Transition name="slide-down">
-      <div
-        v-if="isPanelOpen && store.mode === 'relay'"
-        class="sm:hidden w-full border-b border-border bg-app-bg z-20 py-3 px-4 flex flex-col gap-2 max-h-[260px] overflow-y-auto flex-shrink-0"
-      >
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] font-medium text-fg-subtle font-mono tracking-wider">选择设备</span>
-          <button @click="isPanelOpen = false" class="text-[12px] text-accent hover:text-accent-hover transition-colors">收起</button>
-        </div>
-        <div class="flex flex-col gap-1">
-          <button
-            v-for="d in store.devices"
-            :key="d.deviceId"
-            @click="selectDevice(d.deviceId)"
-            :class="['flex items-center gap-2.5 px-3 py-2 rounded-sm text-left transition-colors',
-              store.selectedDeviceId === d.deviceId
-                ? 'bg-accent-muted border-l-2 border-accent'
-                : 'hover:bg-bg-tertiary border-l-2 border-transparent']"
-          >
-            <Monitor class="w-4 h-4 flex-shrink-0" :class="store.selectedDeviceId === d.deviceId ? 'text-accent' : 'text-fg-subtle'" />
-            <span class="text-[13px] text-fg truncate flex-1">{{ d.deviceName }}</span>
-            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="d.status === 'online' ? 'bg-status-success' : 'bg-fg-disabled'"></span>
-          </button>
-          <div v-if="!store.devices.length" class="text-center py-4 text-[12px] text-fg-subtle font-mono">
-            暂无在线设备
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <!-- Device drawer -->
+    <DeviceDrawer
+      v-model="isDrawerOpen"
+      :devices="store.devices"
+      :selected-device-id="store.selectedDeviceId"
+      :p2p-active="store.p2pActive"
+      @select="selectDevice"
+    />
 
     <!-- Error banner -->
     <div
@@ -130,11 +110,12 @@
     </div>
 
     <!-- Main content -->
-    <main class="flex-1 flex flex-col sm:flex-row p-3 sm:p-4 gap-3 sm:gap-4 min-h-0">
-      <!-- Device sidebar (desktop) -->
+    <main class="flex-1 flex min-h-0 overflow-hidden">
+      <!-- Device sidebar (large desktop) -->
       <aside
         v-if="store.mode === 'relay'"
-        class="hidden sm:flex w-[220px] flex-shrink-0 flex-col gap-2"
+        data-testid="device-sidebar"
+        class="hidden lg:flex w-[220px] flex-shrink-0 flex-col gap-2 p-3 border-r border-border"
       >
         <div class="flex items-center justify-between px-1">
           <span class="text-[11px] font-medium text-fg-subtle font-mono tracking-wider">设备</span>
@@ -164,32 +145,71 @@
       </aside>
 
       <!-- Session list -->
-      <SessionGrid
-        :sessions="store.sessions"
-        :selected-device-id="store.selectedDeviceId"
-        @create="handleCreateSession"
-        @open="openSession"
-        @close="handleCloseSession"
+      <section
+        data-testid="session-list-panel"
+        :class="['flex flex-col min-h-0 p-3 sm:p-4 border-r border-border transition-all',
+          isMobileTerminalOpen ? 'hidden' : 'flex',
+          'w-full sm:w-[280px] lg:w-[320px] sm:flex-shrink-0'
+        ]"
       >
-        <template #select-device-trigger>
-          <button
-            v-if="store.mode === 'relay'"
-            @click="isPanelOpen = !isPanelOpen"
-            class="sm:hidden px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover text-black transition-colors"
+        <SessionGrid
+          :sessions="store.sessions"
+          :selected-device-id="store.selectedDeviceId"
+          :selected-session-id="store.selectedSessionId"
+          @create="handleCreateSession"
+          @open="openSession"
+          @close="handleCloseSession"
+        >
+          <template #select-device-trigger>
+            <button
+              v-if="store.mode === 'relay'"
+              @click="isDrawerOpen = !isDrawerOpen"
+              class="sm:hidden px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover text-black transition-colors"
+            >
+              选择设备
+            </button>
+          </template>
+        </SessionGrid>
+      </section>
+
+      <!-- Terminal view -->
+      <section
+        data-testid="terminal-panel"
+        :class="['flex-1 flex flex-col min-h-0 bg-app-bg relative',
+          isMobileTerminalOpen ? 'fixed inset-0 z-30 flex' : 'hidden sm:flex'
+        ]"
+      >
+        <template v-if="store.selectedSessionId">
+          <TerminalPane
+            :session-id="store.selectedSessionId"
+            :inline="true"
           >
-            选择设备
-          </button>
+            <template #leading>
+              <button
+                v-if="isMobileTerminalOpen"
+                @click="closeMobileTerminal"
+                class="flex items-center gap-1.5 px-2 py-1 text-[12px] rounded-sm text-fg-muted hover:text-fg hover:bg-bg-tertiary transition-colors flex-shrink-0"
+              >
+                <ArrowLeft class="w-3.5 h-3.5" />
+                <span>返回</span>
+              </button>
+            </template>
+          </TerminalPane>
         </template>
-      </SessionGrid>
+        <div v-else class="flex-1 flex flex-col items-center justify-center gap-3 text-fg-subtle">
+          <Terminal class="w-8 h-8 opacity-30" />
+          <span class="text-[13px]">选择一个终端会话以开始</span>
+        </div>
+      </section>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, toRef, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  Sun, Moon, AlertTriangle, Monitor, LogOut, ChevronDown, MoreVertical
+  Sun, Moon, AlertTriangle, Monitor, LogOut, ChevronDown, MoreVertical, ArrowLeft, Terminal
 } from '@lucide/vue';
 import { store, resetStore } from '../store';
 import { UnauthorizedError } from '../api/client';
@@ -197,6 +217,8 @@ import { logout } from '../services/auth.service';
 import { fetchStoreDevices } from '../services/device.service';
 import ConnectionBadge from '../components/ConnectionBadge.vue';
 import SessionGrid from '../components/SessionGrid.vue';
+import DeviceDrawer from '../components/DeviceDrawer.vue';
+import TerminalPane from '../components/TerminalPane.vue';
 import { fetchSessions, createSession, closeSession as closeSessionService } from '../services/session.service';
 import { connectionService } from '../services/connection.service';
 import { useManagerConnection, type ManagerServerMessage } from '../composables/useManagerConnection';
@@ -230,6 +252,7 @@ function handleManagerMessage(msg: ManagerServerMessage) {
     const isSelectedOnline = store.devices.some(d => d.deviceId === store.selectedDeviceId);
     if (store.selectedDeviceId && !isSelectedOnline) {
       store.selectedDeviceId = null;
+      store.selectedSessionId = null;
       store.sessions = [];
     }
   } else if (msg.type === 'sessions') {
@@ -238,6 +261,9 @@ function handleManagerMessage(msg: ManagerServerMessage) {
     upsertSession(msg.data as Session);
   } else if (msg.type === 'session-closed') {
     removeSession(msg.id);
+    if (store.selectedSessionId === msg.id) {
+      store.selectedSessionId = null;
+    }
   } else if (msg.type === 'p2p-ice') {
     connectionService.handleRemoteCandidate(msg.candidate);
   } else if (msg.type === 'error') {
@@ -256,15 +282,26 @@ const managerConnection = useManagerConnection({
 
 const { connectionHealth } = managerConnection;
 
-const isPanelOpen = ref(false);
+const isDrawerOpen = ref(false);
 const isMenuOpen = ref(false);
+const isDesktop = ref(false);
 
-let mediaQuery: MediaQueryList | null = null;
+const isMobileTerminalOpen = computed(() => !isDesktop.value && store.selectedSessionId !== null);
 
-function handleMediaChange(e: MediaQueryListEvent | MediaQueryList) {
+let mobileQuery: MediaQueryList | null = null;
+let largeQuery: MediaQueryList | null = null;
+
+function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
+  isDesktop.value = e.matches;
   if (e.matches) {
-    isPanelOpen.value = false;
+    isDrawerOpen.value = false;
     isMenuOpen.value = false;
+  }
+}
+
+function handleLargeChange(e: MediaQueryListEvent | MediaQueryList) {
+  if (e.matches) {
+    isDrawerOpen.value = false;
   }
 }
 
@@ -292,18 +329,25 @@ onMounted(() => {
 
   bootstrapManager();
 
-  mediaQuery = window.matchMedia('(min-width: 640px)');
-  mediaQuery.addEventListener('change', handleMediaChange);
+  mobileQuery = window.matchMedia('(min-width: 640px)');
+  isDesktop.value = mobileQuery.matches;
+  mobileQuery.addEventListener('change', handleMobileChange);
+
+  largeQuery = window.matchMedia('(min-width: 1024px)');
+  largeQuery.addEventListener('change', handleLargeChange);
 });
 
 onUnmounted(() => {
-  if (mediaQuery) {
-    mediaQuery.removeEventListener('change', handleMediaChange);
+  if (mobileQuery) {
+    mobileQuery.removeEventListener('change', handleMobileChange);
+  }
+  if (largeQuery) {
+    largeQuery.removeEventListener('change', handleLargeChange);
   }
   document.body.style.overflow = '';
 });
 
-watch(isPanelOpen, (newVal) => {
+watch(isDrawerOpen, (newVal) => {
   if (newVal) {
     isMenuOpen.value = false;
     document.body.style.overflow = 'hidden';
@@ -314,22 +358,23 @@ watch(isPanelOpen, (newVal) => {
 
 watch(isMenuOpen, (newVal) => {
   if (newVal) {
-    isPanelOpen.value = false;
+    isDrawerOpen.value = false;
     document.body.style.overflow = 'hidden';
-  } else if (!isPanelOpen.value) {
+  } else if (!isDrawerOpen.value) {
     document.body.style.overflow = '';
   }
 });
 
 async function selectDevice(deviceId: string) {
   if (store.selectedDeviceId === deviceId) {
-    isPanelOpen.value = false;
+    isDrawerOpen.value = false;
     return;
   }
   store.selectedDeviceId = deviceId;
+  store.selectedSessionId = null;
   store.managerError = '';
   store.sessions = [];
-  isPanelOpen.value = false;
+  isDrawerOpen.value = false;
 
   if (store.mode === 'relay') {
     connectionService.connectToDevice(deviceId);
@@ -350,6 +395,7 @@ async function refreshDeviceList() {
       : null;
     if (store.selectedDeviceId && !selected) {
       store.selectedDeviceId = null;
+      store.selectedSessionId = null;
       store.sessions = [];
     }
     if (!store.selectedDeviceId) {
@@ -382,7 +428,13 @@ async function handleCreateSession() {
   try {
     store.managerError = '';
     const session = await createSession();
-    router.push(`/terminal/${encodeURIComponent(session.id)}`);
+
+    if (!isDesktop.value) {
+      router.push(`/terminal/${encodeURIComponent(session.id)}`);
+      return;
+    }
+
+    store.selectedSessionId = session.id;
   } catch (err: any) {
     if (err instanceof UnauthorizedError) {
       router.push('/login');
@@ -393,13 +445,25 @@ async function handleCreateSession() {
 }
 
 function openSession(sessionId: string) {
-  router.push(`/terminal/${encodeURIComponent(sessionId)}`);
+  if (!isDesktop.value) {
+    router.push(`/terminal/${encodeURIComponent(sessionId)}`);
+    return;
+  }
+
+  store.selectedSessionId = sessionId;
+}
+
+function closeMobileTerminal() {
+  store.selectedSessionId = null;
 }
 
 async function handleCloseSession(sessionId: string) {
   if (!confirm("确定要关闭这个终端会话吗？")) return;
   try {
     await closeSessionService(sessionId);
+    if (store.selectedSessionId === sessionId) {
+      store.selectedSessionId = null;
+    }
     await refreshSessionList();
   } catch (err: any) {
     if (err instanceof UnauthorizedError) {

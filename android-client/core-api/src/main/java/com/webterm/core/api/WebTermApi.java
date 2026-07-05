@@ -1,5 +1,7 @@
 package com.webterm.core.api;
 
+import android.os.Build;
+
 import androidx.annotation.NonNull;
 import com.webterm.core.config.ServerConfig;
 
@@ -43,6 +45,7 @@ public final class WebTermApi {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/login")
             .header("Cookie", cookie != null ? cookie : "")
+            .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(login.toString(), JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -96,6 +99,7 @@ public final class WebTermApi {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/verify-otp")
             .header("Cookie", cookie != null ? cookie : "")
+            .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(body.toString(), JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -126,6 +130,7 @@ public final class WebTermApi {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/refresh")
             .header("Cookie", cookie != null ? cookie : "")
+            .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create("", JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -165,6 +170,7 @@ public final class WebTermApi {
         Request request = new Request.Builder()
             .url(baseUrl + "/api/auth/register")
             .header("Cookie", "")
+            .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(body.toString(), JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
@@ -671,6 +677,16 @@ public final class WebTermApi {
         if (sessionId == null || sessionId.isEmpty() || !sessionId.contains(":")) return sessionId;
         int idx = sessionId.indexOf(':');
         return idx + 1 < sessionId.length() ? sessionId.substring(idx + 1) : "";
+    }
+
+    /** 构造友好设备名，用于 X-Device-Name header。 */
+    private static String getDeviceName() {
+        String manufacturer = Build.MANUFACTURER;
+        String model = Build.MODEL;
+        if (manufacturer == null) manufacturer = "";
+        if (model == null) model = "";
+        String name = (manufacturer + " " + model).replaceAll("\\s+", " ").trim();
+        return name.isEmpty() ? "Android" : name;
     }
 
     public interface LoginCallback {

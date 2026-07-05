@@ -33,6 +33,7 @@ export interface AppStore {
   mode: 'direct' | 'relay';
   devices: Device[];
   selectedDeviceId: string | null;
+  selectedSessionId: string | null;
   sessions: Session[];
   theme: Theme;
   clientId: string;
@@ -49,6 +50,7 @@ export const store = reactive<AppStore>({
   mode: 'direct',
   devices: [],
   selectedDeviceId: savedDevice || null,
+  selectedSessionId: null,
   sessions: [],
   theme: savedTheme || 'solarized',
   clientId: getClientId(),
@@ -63,6 +65,7 @@ export function resetStore() {
   store.sessions = [];
   store.devices = [];
   store.selectedDeviceId = null;
+  store.selectedSessionId = null;
   store.managerError = '';
   store.p2pActive = false;
   store.connectionStates = {};

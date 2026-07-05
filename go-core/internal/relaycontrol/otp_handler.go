@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mileusna/useragent"
+
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaystore"
 )
@@ -189,10 +191,31 @@ func browserDeviceID(r *http.Request) string {
 }
 
 func browserDeviceName(r *http.Request) string {
-	name := strings.TrimSpace(r.UserAgent())
-	if name == "" {
+	// 1. 优先使用客户端主动上报的友好设备名（Android 端会带真实机型）
+	if name := strings.TrimSpace(r.Header.Get("X-Device-Name")); name != "" {
+		return truncateDeviceName(name)
+	}
+
+	// 2. 解析 User-Agent，生成 "Browser / OS" 格式
+	ua := r.UserAgent()
+	if ua == "" {
 		return "Browser"
 	}
+	parsed := useragent.Parse(ua)
+	parts := make([]string, 0, 2)
+	if parsed.Name != "" {
+		parts = append(parts, parsed.Name)
+	}
+	if parsed.OS != "" {
+		parts = append(parts, parsed.OS)
+	}
+	if len(parts) > 0 {
+		return truncateDeviceName(strings.Join(parts, " / "))
+	}
+	return truncateDeviceName(ua)
+}
+
+func truncateDeviceName(name string) string {
 	if len(name) > 120 {
 		return name[:120]
 	}

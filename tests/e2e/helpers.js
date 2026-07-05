@@ -28,7 +28,6 @@ export async function openTerminal(page) {
   await page.getByLabel("密码").fill("test");
   await page.getByRole("button", { name: "登录" }).click();
   await page.getByRole("button", { name: "新建终端" }).click();
-  await expect(page).toHaveURL(/\/terminal\/s\d+/);
   await expect(page.locator("#terminal .xterm")).toBeVisible();
   await waitForTerminalReady(page);
 }

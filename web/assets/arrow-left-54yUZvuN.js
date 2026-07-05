@@ -1,4 +1,4 @@
-import{a2 as v,a3 as u,b as A}from"./index-BEhhLm91.js";/**
+import{a2 as b,a3 as l,b as v}from"./index-CMCQl_IX.js";/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -8,7 +8,7 @@ import{a2 as v,a3 as u,b as A}from"./index-BEhhLm91.js";/**
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const S=(...t)=>t.filter((e,r,o)=>!!e&&e.trim()!==""&&o.indexOf(e)===r).join(" ").trim();/**
+ */const L=(...t)=>t.filter((e,r,o)=>!!e&&e.trim()!==""&&o.indexOf(e)===r).join(" ").trim();/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -18,12 +18,12 @@ import{a2 as v,a3 as u,b as A}from"./index-BEhhLm91.js";/**
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const L=t=>t.replace(/^([A-Z])|[\s-_]+(\w)/g,(e,r,o)=>o?o.toUpperCase():r.toLowerCase());/**
+ */const S=t=>t.replace(/^([A-Z])|[\s-_]+(\w)/g,(e,r,o)=>o?o.toUpperCase():r.toLowerCase());/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const W=t=>{const e=L(t);return e.charAt(0).toUpperCase()+e.slice(1)};/**
+ */const W=t=>{const e=S(t);return e.charAt(0).toUpperCase()+e.slice(1)};/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -33,14 +33,19 @@ import{a2 as v,a3 as u,b as A}from"./index-BEhhLm91.js";/**
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const $=Symbol("lucide-icons");function j(){return v($,{})}/**
+ */const y=Symbol("lucide-icons");function _(){return b(y,{})}/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const E=({name:t,iconNode:e,absoluteStrokeWidth:r,"absolute-stroke-width":o,strokeWidth:c,"stroke-width":k,size:i,color:C,...f},{slots:l})=>{const{size:n,color:p,strokeWidth:m=2,absoluteStrokeWidth:g=!1,class:x=""}=j(),b=A(()=>{const a=h(r)||h(o)||r===!0||o===!0||g===!0,d=c||k||m||s["stroke-width"];return a?Number(d)*24/Number(i??n??s.width):d});return u("svg",{...s,...f,width:i??n??s.width,height:i??n??s.height,stroke:C??p??s.stroke,"stroke-width":b.value,class:S("lucide",x,...t?[`lucide-${w(W(t))}-icon`,`lucide-${w(t)}`]:["lucide-icon"])},[...e.map(a=>u(...a)),...l.default?[l.default()]:[]])};/**
+ */const $=({name:t,iconNode:e,absoluteStrokeWidth:r,"absolute-stroke-width":o,strokeWidth:c,"stroke-width":k,size:i,color:f,...p},{slots:d})=>{const{size:n,color:C,strokeWidth:m=2,absoluteStrokeWidth:x=!1,class:g=""}=_(),A=v(()=>{const a=h(r)||h(o)||r===!0||o===!0||x===!0,u=c||k||m||s["stroke-width"];return a?Number(u)*24/Number(i??n??s.width):u});return l("svg",{...s,...p,width:i??n??s.width,height:i??n??s.height,stroke:f??C??s.stroke,"stroke-width":A.value,class:L("lucide",g,...t?[`lucide-${w(W(t))}-icon`,`lucide-${w(t)}`]:["lucide-icon"])},[...e.map(a=>l(...a)),...d.default?[d.default()]:[]])};/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const U=(t,e)=>(r,{slots:o,attrs:c})=>u(E,{...c,...r,iconNode:e,name:t},o.default?{default:o.default}:void 0);export{U as c};
+ */const j=(t,e)=>(r,{slots:o,attrs:c})=>l($,{...c,...r,iconNode:e,name:t},o.default?{default:o.default}:void 0);/**
+ * @license @lucide/vue v1.21.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const E=[["path",{d:"m12 19-7-7 7-7",key:"1l729n"}],["path",{d:"M19 12H5",key:"x3x0zl"}]],U=j("arrow-left",E);export{U as A,j as c};

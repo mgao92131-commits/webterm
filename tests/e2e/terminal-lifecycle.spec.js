@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import { expectTerminalText, openTerminal, sendDebugInput, waitForTerminalReady } from "./helpers.js";
 
 test("re-entering a terminal does not duplicate terminal page lifecycle resources", async ({ page }) => {
+  // Use mobile viewport so navigation goes through the standalone /terminal/:id route.
+  await page.setViewportSize({ width: 375, height: 667 });
   await openTerminal(page);
   await page.waitForTimeout(250);
   const baseline = await lifecycle(page);

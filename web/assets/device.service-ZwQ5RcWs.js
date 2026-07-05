@@ -1,4 +1,4 @@
-import{c as t}from"./createLucideIcon-CyWX_Uux.js";import{R as n}from"./index-BEhhLm91.js";/**
+import{c as t}from"./arrow-left-54yUZvuN.js";import{R as n}from"./index-CMCQl_IX.js";/**
  * @license @lucide/vue v1.21.0 - ISC
  *
  * This source code is licensed under the ISC license.

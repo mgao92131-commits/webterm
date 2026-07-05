@@ -40,6 +40,7 @@ export interface TerminalSessionContextOptions {
   mode: 'direct' | 'relay';
   deviceId: string | null;
   p2pActive: boolean;
+  setDocumentTitle?: boolean;
   onStateChange?: (state: Partial<TerminalSessionState>) => void;
   onExit?: () => void;
 }
@@ -414,7 +415,9 @@ export class TerminalSessionContext implements IDisposable {
 
     const sessionPlaceholder = this.currentTermTitle || 'Terminal';
     const displayTitle = `${this.currentDisplayTitle} - WebTerm`;
-    document.title = displayTitle;
+    if (this.options.setDocumentTitle !== false) {
+      document.title = displayTitle;
+    }
 
     this.updateState({
       sessionName: this.currentSessionName,

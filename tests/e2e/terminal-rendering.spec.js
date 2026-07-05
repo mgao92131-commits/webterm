@@ -8,6 +8,8 @@ test("terminal renders large output without going blank", async ({ page }) => {
 });
 
 test("terminal restores output after page reload and continues accepting input", async ({ page }) => {
+  // Use mobile viewport so the terminal stays on the standalone /terminal/:id route after reload.
+  await page.setViewportSize({ width: 375, height: 667 });
   await openTerminal(page);
   await sendDebugInput(page, "printf 'BEFORE_RELOAD\\n'\r");
   await expectTerminalText(page, "BEFORE_RELOAD");
