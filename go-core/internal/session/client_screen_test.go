@@ -40,7 +40,7 @@ func TestScreenClientSendsSnapshotOnHello(t *testing.T) {
 func TestScreenClientSendsDirtyDeltaOnOutput(t *testing.T) {
 	terminal := newTestTerminal()
 	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
-	client.ready = true
+	client.ready.Store(true)
 	terminal.clients[client] = struct{}{}
 
 	frame := terminal.PushOutput([]byte("ab"))

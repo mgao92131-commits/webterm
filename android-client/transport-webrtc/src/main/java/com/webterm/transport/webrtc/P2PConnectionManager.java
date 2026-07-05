@@ -55,6 +55,8 @@ public final class P2PConnectionManager {
     private String deviceId;
     private boolean connected;
     private boolean disconnecting;
+    private boolean connecting;
+    private boolean factoryInitFailed;
 
     @Inject
     public P2PConnectionManager(@ApplicationContext Context context, OkHttpClient http, Handler mainHandler, Provider<ReconnectTrigger> registryProvider) {
@@ -82,7 +84,12 @@ public final class P2PConnectionManager {
 
     public synchronized void connectToDevice(String baseUrl, String cookie, String deviceId) {
         if (deviceId == null || deviceId.isEmpty()) return;
+        if (connecting) return;
         ensureFactory(appContext);
+        if (factoryInitFailed || factory == null) {
+            Log.w(TAG, "P2P unavailable for " + deviceId + ", factory init failed");
+            return;
+        }
         String normalizedBaseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         if (safeEquals(this.baseUrl, normalizedBaseUrl)
             && safeEquals(this.cookie, cookie)
@@ -95,63 +102,78 @@ public final class P2PConnectionManager {
         this.baseUrl = normalizedBaseUrl;
         this.cookie = cookie;
         this.deviceId = deviceId;
-        Log.i(TAG, "p2p connecting to " + deviceId);
-        listener.onConnecting(deviceId);
+        connecting = true;
+        try {
+            Log.i(TAG, "p2p connecting to " + deviceId);
+            Listener currentListener = listener;
+            if (currentListener != null) currentListener.onConnecting(deviceId);
 
-        PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(
-            Collections.singletonList(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
-        );
-        peerConnection = factory.createPeerConnection(config, new PeerObserver(deviceId));
-        if (peerConnection == null) {
-            fail(deviceId, "Failed to create PeerConnection.");
-            return;
+            PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(
+                Collections.singletonList(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
+            );
+            peerConnection = factory.createPeerConnection(config, new PeerObserver(deviceId));
+            if (peerConnection == null) {
+                fail(deviceId, "Failed to create PeerConnection.");
+                return;
+            }
+            DataChannel.Init init = new DataChannel.Init();
+            init.ordered = true;
+            dataChannel = peerConnection.createDataChannel("tunnel", init);
+            if (dataChannel == null) {
+                fail(deviceId, "Failed to create DataChannel.");
+                return;
+            }
+            dataChannelEndpoint = new P2PDataChannelEndpoint(dataChannel, new P2PDataChannelEndpoint.StateListener() {
+                @Override public void onOpen() {
+                    if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
+                    Log.i(TAG, "p2p datachannel open for " + deviceId);
+                    connected = true;
+                    mainHandler.post(() -> {
+                        Listener listener = P2PConnectionManager.this.listener;
+                        if (listener != null) listener.onConnected(deviceId);
+                    });
+                }
+
+                @Override public void onClosed(String reason) {
+                    if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
+                    Log.i(TAG, "p2p " + reason + " for " + deviceId);
+                    connected = false;
+                    mainHandler.post(() -> {
+                        Listener listener = P2PConnectionManager.this.listener;
+                        if (listener != null) listener.onDisconnected(deviceId, reason);
+                    });
+                }
+            });
+
+            peerConnection.createOffer(new SdpObserverAdapter() {
+                @Override
+                public void onCreateSuccess(SessionDescription offer) {
+                    PeerConnection pc = peerConnection;
+                    if (pc == null || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
+                    pc.setLocalDescription(new SdpObserverAdapter() {
+                        @Override
+                        public void onSetSuccess() {
+                            sendOffer(deviceId, offer.description);
+                        }
+
+                        @Override
+                        public void onSetFailure(String error) {
+                            fail(deviceId, "Set local SDP failed: " + error);
+                        }
+                    }, offer);
+                }
+
+                @Override
+                public void onCreateFailure(String error) {
+                    fail(deviceId, "Create offer failed: " + error);
+                }
+            }, new org.webrtc.MediaConstraints());
+        } catch (Throwable t) {
+            Log.e(TAG, "P2P connectToDevice failed for " + deviceId, t);
+            fail(deviceId, "P2P connectToDevice failed: " + t.getMessage());
+        } finally {
+            connecting = false;
         }
-        DataChannel.Init init = new DataChannel.Init();
-        init.ordered = true;
-        dataChannel = peerConnection.createDataChannel("tunnel", init);
-        if (dataChannel == null) {
-            fail(deviceId, "Failed to create DataChannel.");
-            return;
-        }
-        dataChannelEndpoint = new P2PDataChannelEndpoint(dataChannel, new P2PDataChannelEndpoint.StateListener() {
-            @Override public void onOpen() {
-                if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
-                Log.i(TAG, "p2p datachannel open for " + deviceId);
-                connected = true;
-                mainHandler.post(() -> listener.onConnected(deviceId));
-            }
-
-            @Override public void onClosed(String reason) {
-                if (disconnecting || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
-                Log.i(TAG, "p2p " + reason + " for " + deviceId);
-                connected = false;
-                mainHandler.post(() -> listener.onDisconnected(deviceId, reason));
-            }
-        });
-
-        peerConnection.createOffer(new SdpObserverAdapter() {
-            @Override
-            public void onCreateSuccess(SessionDescription offer) {
-                PeerConnection pc = peerConnection;
-                if (pc == null || !safeEquals(P2PConnectionManager.this.deviceId, deviceId)) return;
-                pc.setLocalDescription(new SdpObserverAdapter() {
-                    @Override
-                    public void onSetSuccess() {
-                        sendOffer(deviceId, offer.description);
-                    }
-
-                    @Override
-                    public void onSetFailure(String error) {
-                        fail(deviceId, "Set local SDP failed: " + error);
-                    }
-                }, offer);
-            }
-
-            @Override
-            public void onCreateFailure(String error) {
-                fail(deviceId, "Create offer failed: " + error);
-            }
-        }, new org.webrtc.MediaConstraints());
     }
 
     public synchronized void disconnect() {
@@ -163,6 +185,7 @@ public final class P2PConnectionManager {
         if (disconnecting) return;
         disconnecting = true;
         connected = false;
+        connecting = false;
         if (dataChannelEndpoint != null) {
             dataChannelEndpoint.close();
             dataChannelEndpoint = null;
@@ -176,8 +199,11 @@ public final class P2PConnectionManager {
         }
         deviceId = null;
         disconnecting = false;
-        if (oldDeviceId != null && listener != null) {
-            mainHandler.post(() -> listener.onDisconnected(oldDeviceId, reason));
+        if (oldDeviceId != null) {
+            mainHandler.post(() -> {
+                Listener listener = P2PConnectionManager.this.listener;
+                if (listener != null) listener.onDisconnected(oldDeviceId, reason);
+            });
         }
     }
 
@@ -229,17 +255,25 @@ public final class P2PConnectionManager {
 
     private void fail(String targetDeviceId, String message) {
         Log.w(TAG, message);
-        mainHandler.post(() -> listener.onError(targetDeviceId, message));
+        mainHandler.post(() -> {
+            Listener listener = P2PConnectionManager.this.listener;
+            if (listener != null) listener.onError(targetDeviceId, message);
+        });
         disconnect(message);
     }
 
-    private void ensureFactory(Context context) {
-        if (factory != null) return;
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context)
-                .createInitializationOptions()
-        );
-        factory = PeerConnectionFactory.builder().createPeerConnectionFactory();
+    public synchronized void ensureFactory(Context context) {
+        if (factory != null || factoryInitFailed) return;
+        try {
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(context)
+                    .createInitializationOptions()
+            );
+            factory = PeerConnectionFactory.builder().createPeerConnectionFactory();
+        } catch (Throwable t) {
+            factoryInitFailed = true;
+            Log.e(TAG, "Failed to initialize WebRTC factory", t);
+        }
     }
 
     private final class PeerObserver implements PeerConnection.Observer {

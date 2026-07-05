@@ -2,6 +2,8 @@ package com.webterm.feature.home;
 
 import com.webterm.core.config.ServerConfig;
 
+import java.util.Set;
+
 /**
  * Simplified host interface for HomeFragment to communicate with its Activity
  * for operations that require Activity context (dialogs, terminal navigation).
@@ -13,6 +15,36 @@ public interface HomeHost {
                       String createdAt, String instanceId, String cwd);
     void onServerAuthenticated(ServerConfig existingServer, String name, String url,
                                String cookie, String username, String password);
+
+    /** Navigate to the device sessions destination. */
+    void navigateToDeviceSessions(ServerConfig server);
+
+    /** Navigate back to the top-level home destination. */
+    void navigateHome();
+
+    /** Create a new terminal session on a server. */
+    void createSession(ServerConfig server);
+
+    /** Close a terminal session and run a UI callback after the server confirms it. */
+    void closeSession(ServerConfig server, String sessionId, Runnable onClosed);
+
+    /** Rename a terminal session. */
+    void renameSession(ServerConfig server, String sessionId, String oldName);
+
+    /** Remove a saved server. */
+    void removeServer(ServerConfig server);
+
+    /** Persist server configuration changes such as refreshed cookies. */
+    void saveServers();
+
+    /** Remove cached terminal state for a closed session. */
+    void removeCachedTerminal(String baseUrl, String sessionId);
+
+    /** Sync the currently opened terminal cwd when a manager update reports it. */
+    void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd);
+
+    /** Prune stale cached sessions after a live session refresh. */
+    void removeMissingCachedSessionsForServer(ServerConfig server, Set<String> liveSessionIdentities);
 
     /** Navigate to the relay destination. */
     void navigateToRelay();

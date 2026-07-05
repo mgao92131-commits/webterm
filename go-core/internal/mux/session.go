@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	termsession "webterm/go-core/internal/session"
 )
@@ -25,6 +26,7 @@ type ControlHandler func(ctx context.Context, msg map[string]any)
 type ServeOpts struct {
 	OnOpen    OpenHandler    // 必填
 	OnControl ControlHandler // 可选
+	Logger    *logs.Logger   // 可选，用于背压关闭日志
 }
 
 type Session struct {
@@ -34,6 +36,7 @@ type Session struct {
 	channelsMu sync.RWMutex
 	onOpen     OpenHandler
 	onControl  ControlHandler
+	logger     *logs.Logger
 }
 
 // Serve 包装一个已建立的 WebSocket 连接，启动多路复用。
@@ -44,6 +47,7 @@ func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 		channels:  make(map[string]*VirtualSocket),
 		onOpen:    opts.OnOpen,
 		onControl: opts.OnControl,
+		logger:    opts.Logger,
 	}
 }
 
@@ -142,7 +146,7 @@ func (s *Session) newSocket(id string, protocolName string) *VirtualSocket {
 	defer s.channelsMu.Unlock()
 	socket := newVirtualSocket(id, protocolName, s, func() {
 		s.removeSocket(id)
-	})
+	}, s.logger)
 	s.channels[id] = socket
 	return socket
 }

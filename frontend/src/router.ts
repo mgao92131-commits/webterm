@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-import { store, api } from './store';
+import { store, resetStore } from './store';
+import { me } from './api/auth';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -47,9 +48,14 @@ router.beforeEach(async (to, _from, next) => {
 
   if (!store.user) {
     try {
-      const user = await api('/api/auth/me');
-      store.user = user;
-      store.mode = user.mode || 'direct';
+      const user = await me();
+      store.user = {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        mode: user.mode || 'relay',
+      };
+      store.mode = user.mode || 'relay';
 
       if (store.mode === 'direct') {
         store.selectedDeviceId = 'local';

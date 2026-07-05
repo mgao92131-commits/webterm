@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { expectTerminalSized, openTerminal, sendDebugInput } from "./helpers.js";
+import { expectTerminalSized, openTerminal, sendDebugInput, waitForLayoutSettle } from "./helpers.js";
 
 test("terminal keeps valid dimensions across desktop and mobile resizes", async ({ page }) => {
   await openTerminal(page);
+  await waitForLayoutSettle(page);
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expectTerminalSized(page);
+  await waitForLayoutSettle(page);
   const tallState = await page.evaluate(() => ({
     rows: window.__webtermDebug.termState().rows,
     resizeMessageCount: window.__webtermDebug.layoutState().resizeMessageCount,
@@ -27,6 +29,7 @@ test("terminal keeps valid dimensions across desktop and mobile resizes", async 
   await sendDebugInput(page, "for i in $(seq 1 80); do echo DESKTOP_SHIFT_$i; done\n");
   await expect.poll(async () => page.evaluate(() => window.__webtermDebug.termState().text)).toContain("DESKTOP_SHIFT_80");
   await page.waitForTimeout(250);
+  await waitForLayoutSettle(page);
 
   const bottomState = await page.evaluate(() => ({
     rows: window.__webtermDebug.termState().rows,
@@ -34,6 +37,7 @@ test("terminal keeps valid dimensions across desktop and mobile resizes", async 
   }));
 
   await page.setViewportSize({ width: 1280, height: 520 });
+  await waitForLayoutSettle(page);
   expect(await page.evaluate(() => window.__webtermDebug.termState().rows)).toBe(bottomState.rows);
   expect(await page.evaluate(() => window.__webtermDebug.layoutState().resizeMessageCount)).toBe(bottomState.resizeMessageCount);
   await page.evaluate(() => {
@@ -48,10 +52,16 @@ test("terminal keeps valid dimensions across desktop and mobile resizes", async 
   await expect.poll(async () => page.evaluate(() => {
     const terminalBottom = document.querySelector("#terminal-container")?.getBoundingClientRect().bottom || 0;
     const quickbarTop = document.querySelector(".quickbar")?.getBoundingClientRect().top || 0;
-    return Math.abs(quickbarTop - terminalBottom);
-  })).toBeLessThanOrEqual(1);
+    const quickbarBottom = document.querySelector(".quickbar")?.getBoundingClientRect().bottom || 0;
+    const visibleBottom = window.visualViewport?.height || window.innerHeight;
+    return {
+      terminalAboveViewport: terminalBottom <= visibleBottom + 1,
+      quickbarVisible: quickbarTop >= 0 && quickbarBottom <= visibleBottom + 1,
+    };
+  })).toEqual({ terminalAboveViewport: true, quickbarVisible: true });
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await waitForLayoutSettle(page);
   await expectTerminalSized(page);
 
   await expect.poll(async () => page.evaluate(() => {

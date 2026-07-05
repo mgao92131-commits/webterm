@@ -111,14 +111,16 @@ func (manager *StreamManager) CreateStream(kind relaycore.StreamKind, route rela
 
 func (manager *StreamManager) Open(streamID string) bool {
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
 	entry := manager.streams[streamID]
 	if entry == nil || entry.info.State.Terminal() {
+		manager.mu.Unlock()
 		return false
 	}
 	entry.info.State = relaycore.StreamOpen
 	entry.info.LastActivityAt = time.Now().UTC()
 	info := entry.info
+	manager.mu.Unlock()
+
 	manager.publish(relaycore.Event{
 		Type:     relaycore.EventStreamOpened,
 		UserID:   info.UserID,
@@ -162,9 +164,10 @@ func (manager *StreamManager) HandleAgentFrame(frame relaycore.Frame) bool {
 		return false
 	}
 	entry.pendingBytes += payloadBytes
+	var event *relaycore.Event
 	if frame.Type == relaycore.FrameTypeStreamError {
 		entry.info.State = relaycore.StreamFailed
-		manager.publish(relaycore.Event{
+		event = &relaycore.Event{
 			Type:     relaycore.EventStreamError,
 			UserID:   entry.info.UserID,
 			DeviceID: entry.info.DeviceID,
@@ -173,13 +176,17 @@ func (manager *StreamManager) HandleAgentFrame(frame relaycore.Frame) bool {
 				"kind":   entry.info.Kind,
 				"reason": string(frame.Payload),
 			},
-		})
+		}
 	} else if frame.Type == relaycore.FrameTypeStreamClose || frame.Flags.Has(relaycore.FrameFlagFin) {
 		entry.info.State = relaycore.StreamClosing
 	}
+	info := entry.info
 	responses := entry.responses
 	done := entry.done
 	manager.mu.Unlock()
+	if event != nil {
+		manager.publish(*event)
+	}
 
 	select {
 	case responses <- frame:
@@ -189,7 +196,7 @@ func (manager *StreamManager) HandleAgentFrame(frame relaycore.Frame) bool {
 		return false
 	default:
 		manager.releaseResponseBytes(frame.StreamID, int64(len(frame.Payload)))
-		manager.recordBackpressure(entry.info, "response buffer full")
+		manager.recordBackpressure(info, "response buffer full")
 		manager.Close(frame.StreamID, "response buffer full")
 		return false
 	}

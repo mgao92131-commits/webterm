@@ -19,6 +19,7 @@ const (
 	AgentRegisterMessage   = "agent.register"
 	AgentRegisteredMessage = "agent.registered"
 	AgentErrorMessage      = "agent.error"
+	webSocketReadLimit     = 8 << 20 // 8 MiB per message
 )
 
 type AgentGateway struct {
@@ -58,6 +59,7 @@ func (gateway *AgentGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(webSocketReadLimit)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	gateway.handleConnection(r.Context(), conn)
 }

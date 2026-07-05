@@ -24,6 +24,11 @@ import (
 
 const cookieName = "webterm_token"
 
+const (
+	directIdleTimeout        = 120 * time.Second
+	directMaxRequestBodySize = 1 << 20 // 1 MiB
+)
+
 type Server struct {
 	cfg        config.DirectConfig
 	app        *app.App
@@ -45,6 +50,8 @@ func New(cfg config.DirectConfig, application *app.App) *Server {
 		Addr:              cfg.Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       directIdleTimeout,
+		MaxHeaderBytes:    1 << 20,
 	}
 	return direct
 }
@@ -121,15 +128,17 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(8 << 20)
 	if conn.Subprotocol() != protocol.MuxSubprotocol {
 		_ = conn.Close(websocket.StatusPolicyViolation, "mux subprotocol required")
 		return
 	}
-	router := application.NewSessionRouter(direct.app.Sessions())
+	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
 	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
+		Logger: direct.app.Logs(),
 	})
 	sess.Run(r.Context())
 }
@@ -140,7 +149,7 @@ func (direct *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -201,7 +210,7 @@ func (direct *Server) routeSessions(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 			CWD  string `json:"cwd"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize)).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
@@ -222,7 +231,7 @@ func (direct *Server) routeSession(w http.ResponseWriter, r *http.Request, id st
 		var body struct {
 			Name string `json:"name"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize)).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}

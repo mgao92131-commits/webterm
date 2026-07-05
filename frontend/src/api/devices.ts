@@ -1,4 +1,4 @@
-import { api } from '../store';
+import { httpClient } from './client';
 
 export interface DeviceInfo {
   deviceId: string;
@@ -15,13 +15,13 @@ export interface CreateDeviceResult {
 }
 
 export async function getDevices(): Promise<DeviceInfo[]> {
-  return api('/api/devices', {
+  return httpClient('/api/devices', {
     method: 'GET'
   });
 }
 
 export async function registerDevice(deviceName: string): Promise<CreateDeviceResult> {
-  return api('/api/devices', {
+  return httpClient('/api/devices', {
     method: 'POST',
     body: JSON.stringify({ deviceName })
   });
@@ -29,7 +29,7 @@ export async function registerDevice(deviceName: string): Promise<CreateDeviceRe
 
 export async function deleteDevice(deviceId: string): Promise<void> {
   const id = deviceId.startsWith('d') ? deviceId.slice(1) : deviceId;
-  return api(`/api/devices/d${id}`, {
+  return httpClient(`/api/devices/d${id}`, {
     method: 'DELETE'
   });
 }

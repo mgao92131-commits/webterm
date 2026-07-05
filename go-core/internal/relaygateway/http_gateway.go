@@ -3,6 +3,7 @@ package relaygateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"webterm/go-core/internal/relayrouter"
 	"webterm/go-core/internal/relaystore"
 )
+
+const httpGatewayMaxBodyBytes = 1 << 20 // 1 MiB
 
 type HTTPGateway struct {
 	store    relaystore.GatewayStore
@@ -39,8 +42,13 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target agent unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, httpGatewayMaxBodyBytes))
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read request body failed", http.StatusBadRequest)
 		return
 	}

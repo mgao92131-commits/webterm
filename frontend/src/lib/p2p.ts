@@ -1,5 +1,7 @@
-import { store, api } from '../store';
-import { decodeBase64Utf8, decodeTunnelFrame } from './p2p-utils';
+import { CONFIG } from '../config';
+import { httpClient } from '../api/client';
+import { decodeBase64Utf8 } from './p2p-utils';
+import { decodeTunnelFrame } from './mux-protocol';
 import { P2PWebSocketMock } from './p2p-ws-mock';
 import type { RelayMuxTransport } from './relay-mux-session';
 import {
@@ -9,7 +11,6 @@ import {
 } from '@shared/constants.js';
 
 export class P2PConnectionManager extends EventTarget {
-  private static readonly DISCONNECTED_GRACE_MS = 8000;
 
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
@@ -62,17 +63,17 @@ export class P2PConnectionManager extends EventTarget {
     this.connectionState = 'connecting';
     console.log(`[P2P] Starting WebRTC connection to device: ${deviceId}`);
 
-    // 3秒连接超时降级机制
+    // P2P 连接超时降级机制
     this.connectTimeoutTimer = setTimeout(() => {
       if (this.connectionState === 'connecting') {
         console.warn('[P2P] WebRTC connection timeout, falling back to relay.');
         this.disconnect();
       }
-    }, 3000);
+    }, CONFIG.p2pConnectTimeoutMs);
 
     try {
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: CONFIG.stunServers
       });
       this.pc = pc;
 
@@ -91,7 +92,7 @@ export class P2PConnectionManager extends EventTarget {
       // 监听本地 ICE candidates，并立即向中转信令接口进行推流 (Trickle ICE)
       pc.addEventListener('icecandidate', (event) => {
         if (event.candidate && this.targetDeviceId === deviceId) {
-          api('/api/p2p/ice', {
+          httpClient('/api/p2p/ice', {
             method: 'POST',
             body: JSON.stringify({
               candidate: event.candidate,
@@ -120,7 +121,7 @@ export class P2PConnectionManager extends EventTarget {
       }
 
       // 携带 SDP Offer 发送 HTTP 握手请求，无须等待 ICE 收集完毕直接发送得到 Answer
-      const response = await api('/api/p2p/offer', {
+      const response = await httpClient('/api/p2p/offer', {
         method: 'POST',
         body: JSON.stringify({
           sdp: pc.localDescription!.sdp,
@@ -163,7 +164,6 @@ export class P2PConnectionManager extends EventTarget {
     dc.addEventListener('open', () => {
       console.log('[P2P] DataChannel opened successfully');
       this.connectionState = 'connected';
-      store.p2pActive = true; // 同步前端 UI 状态指示灯
       this.dispatchEvent(new CustomEvent('p2p:connected', { detail: { deviceId: this.targetDeviceId } }));
       this.clearDisconnectedGraceTimer();
       if (this.connectTimeoutTimer) {
@@ -299,7 +299,7 @@ export class P2PConnectionManager extends EventTarget {
           this.pendingHttpResponses.delete(requestId);
           reject(new Error('P2P request timeout'));
         }
-      }, 30000);
+      }, CONFIG.p2pRequestTimeoutMs);
 
       this.pendingHttpResponses.set(requestId, {
         resolve,
@@ -335,9 +335,8 @@ export class P2PConnectionManager extends EventTarget {
   public disconnect() {
     console.log('[P2P] Disconnecting WebRTC direct connection');
     const previousDeviceId = this.targetDeviceId;
-    const wasConnected = this.connectionState === 'connected' || store.p2pActive;
+    const wasConnected = this.connectionState === 'connected';
     this.connectionState = 'disconnected';
-    store.p2pActive = false; // 同步前端 UI 状态指示灯
 
     this.clearDisconnectedGraceTimer();
     if (this.connectTimeoutTimer) {
@@ -379,7 +378,7 @@ export class P2PConnectionManager extends EventTarget {
         console.warn('[P2P] WebRTC remained disconnected, falling back to relay.');
         this.disconnect();
       }
-    }, P2PConnectionManager.DISCONNECTED_GRACE_MS);
+    }, CONFIG.p2pDisconnectedGraceMs);
   }
 
   private clearDisconnectedGraceTimer() {

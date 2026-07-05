@@ -9,6 +9,10 @@
         android:name="com.webterm.feature.home.HomeFragment"
         android:label="Home" />
     <fragment
+        android:id="@+id/deviceSessionsFragment"
+        android:name="com.webterm.feature.home.DeviceSessionsFragment"
+        android:label="Device Sessions" />
+    <fragment
         android:id="@+id/terminalFragment"
         android:name="com.webterm.feature.terminal.TerminalFragment"
         android:label="Terminal" />

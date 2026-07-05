@@ -68,6 +68,10 @@ public final class TerminalConnection {
         return state;
     }
 
+    public int getReconnectAttempts() {
+        return reconnectAttempts;
+    }
+
     public void connect(String baseUrl, String cookie, String sessionId, long lastSeq, String relayDeviceId) {
         this.baseUrl = baseUrl;
         this.cookie = cookie;

@@ -82,6 +82,10 @@ public final class SessionCommandController {
     }
 
     public void showCloseConfirmDialog(ServerConfig server, String sessionId) {
+        showCloseConfirmDialog(server, sessionId, null);
+    }
+
+    public void showCloseConfirmDialog(ServerConfig server, String sessionId, Runnable onClosed) {
         AlertDialog dialog = new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("❌ 关闭终端会话")
             .setMessage("确定要关闭该终端会话吗？这将会终结其在服务器上的后台进程。")
@@ -90,7 +94,10 @@ public final class SessionCommandController {
                     @Override
                     public void onReady() {
                         listener.onRemoveCachedTerminal(server.getUrl(), sessionId);
-                        activity.runOnUiThread(() -> listener.onSessionClosed(server, sessionId));
+                        activity.runOnUiThread(() -> {
+                            listener.onSessionClosed(server, sessionId);
+                            if (onClosed != null) onClosed.run();
+                        });
                     }
 
                     @Override

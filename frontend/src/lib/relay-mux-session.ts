@@ -1,3 +1,4 @@
+import { CONFIG } from '../config';
 import {
   MUX_SUBPROTOCOL,
   MSG_TYPE_WS_DATA,
@@ -335,8 +336,9 @@ export class RelayMuxSession {
 
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
-    const cap = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts++), 8000);
-    const delay = Math.max(250, Math.random() * cap);
+    const backoff = CONFIG.reconnectBackoff;
+    const cap = Math.min(backoff.baseMs * Math.pow(backoff.multiplier, this.reconnectAttempts++), backoff.capMs);
+    const delay = Math.max(backoff.relayMinDelayMs, Math.random() * cap);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.ensureConnected();

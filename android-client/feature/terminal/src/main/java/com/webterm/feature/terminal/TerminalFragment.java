@@ -95,6 +95,15 @@ public final class TerminalFragment extends Fragment {
         }
     }
 
+    @Override
+    public void onDestroyView() {
+        if (mHost != null) {
+            mHost.detachTerminalFragment(this);
+        }
+        mContainer = null;
+        super.onDestroyView();
+    }
+
     /**
      * Called by the Activity to get the container for installing terminal insets.
      */

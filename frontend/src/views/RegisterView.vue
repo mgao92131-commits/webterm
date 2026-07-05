@@ -95,8 +95,8 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { api, store } from '../store';
-import { register as apiRegister } from '../api/auth';
+import { store } from '../store';
+import { fetchMe, register as authRegister } from '../services/auth.service';
 import OtpInput from '../components/OtpInput.vue';
 
 const router = useRouter();
@@ -132,7 +132,7 @@ async function handleRegister() {
 
   loading.value = true;
   try {
-    const res = await apiRegister(form.email, form.password);
+    const res = await authRegister({ email: form.email, password: form.password });
     if (res.emailVerificationRequired) {
       mode.value = 'otp';
       return;
@@ -158,14 +158,14 @@ async function handleVerified(payload: { email: string; role: 'admin' | 'user' }
   };
   store.mode = 'relay';
   try {
-    const me = await api('/api/auth/me');
+    const user = await fetchMe();
     store.user = {
-      id: me.id,
-      username: me.username,
-      role: me.role,
-      mode: me.mode || 'relay',
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      mode: user.mode || 'relay',
     };
-    store.mode = me.mode || 'relay';
+    store.mode = user.mode || 'relay';
   } catch {
     // ignore
   }

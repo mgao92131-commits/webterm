@@ -4,16 +4,8 @@
     <header class="flex items-center justify-between h-11 px-4 border-b border-border bg-app-bg flex-shrink-0 gap-3">
       <div class="flex items-center gap-3 min-w-0">
         <span class="text-[15px] font-semibold tracking-tight text-fg flex-shrink-0">WebTerm</span>
-        <!-- Connection health dot -->
-        <span class="flex items-center gap-1.5 text-[11px] text-fg-subtle flex-shrink-0">
-          <span class="w-1.5 h-1.5 rounded-full" :class="{
-            'bg-status-success': connectionHealth === 'connected',
-            'bg-status-warning animate-pulse': connectionHealth === 'connecting',
-            'bg-status-warning': connectionHealth === 'polling',
-            'bg-status-danger': connectionHealth === 'disconnected',
-          }"></span>
-          <span class="hidden sm:inline">{{ connectionLabel }}</span>
-        </span>
+        <!-- Connection health badge -->
+        <ConnectionBadge :health="connectionHealth" />
         <!-- P2P badge -->
         <span v-if="store.mode === 'relay' && store.selectedDeviceId" class="hidden sm:inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm font-medium font-mono"
           :class="store.p2pActive ? 'bg-accent-muted text-accent border border-accent/30' : 'bg-bg-tertiary text-fg-subtle border border-border'">
@@ -172,27 +164,14 @@
       </aside>
 
       <!-- Session list -->
-      <section class="flex-1 flex flex-col min-h-0 min-w-0">
-        <!-- Section header -->
-        <div class="flex items-center justify-between mb-3 px-1 flex-shrink-0">
-          <div class="flex items-center gap-3">
-            <span class="text-[11px] font-medium text-fg-subtle font-mono tracking-wider">终端</span>
-            <span v-if="store.selectedDeviceId" class="text-[10px] text-fg-disabled font-mono">{{ store.sessions.length }} 个</span>
-          </div>
-          <button
-            @click="createSession"
-            :disabled="!store.selectedDeviceId"
-            class="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover text-black transition-colors disabled:opacity-40 disabled:pointer-events-none active:scale-[0.99]"
-          >
-            <Plus class="w-3.5 h-3.5" />
-            <span>新建终端</span>
-          </button>
-        </div>
-
-        <!-- Empty: no device selected -->
-        <div v-if="!store.selectedDeviceId" class="flex-1 flex flex-col items-center justify-center gap-3 text-fg-subtle">
-          <Monitor class="w-8 h-8 opacity-30" />
-          <span class="text-[13px]">选择一台设备以查看终端</span>
+      <SessionGrid
+        :sessions="store.sessions"
+        :selected-device-id="store.selectedDeviceId"
+        @create="handleCreateSession"
+        @open="openSession"
+        @close="handleCloseSession"
+      >
+        <template #select-device-trigger>
           <button
             v-if="store.mode === 'relay'"
             @click="isPanelOpen = !isPanelOpen"
@@ -200,108 +179,82 @@
           >
             选择设备
           </button>
-        </div>
-
-        <!-- Empty: no sessions -->
-        <div v-else-if="!store.sessions.length" class="flex-1 flex flex-col items-center justify-center gap-2 text-fg-subtle">
-          <Terminal class="w-8 h-8 opacity-30" />
-          <span class="text-[13px]">暂无终端，点击「新建终端」开始</span>
-        </div>
-
-        <!-- Session cards -->
-        <div v-else class="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 content-start">
-          <div
-            v-for="(s, idx) in store.sessions"
-            :key="s.id"
-            role="link"
-            tabindex="0"
-            class="stagger-item group flex flex-col gap-3 p-4 rounded-md bg-app-panel border border-border hover:border-border-hover transition-colors cursor-pointer"
-            :style="{ animationDelay: idx * 40 + 'ms' }"
-            @click="openSession(s.id)"
-            @keydown.enter.prevent="openSession(s.id)"
-            @keydown.space.prevent="openSession(s.id)"
-          >
-            <!-- Header row -->
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex-1 min-w-0">
-                <span class="text-[10px] font-mono text-fg-disabled tracking-wider">SESSION</span>
-                <h3 class="text-[14px] font-medium text-fg mt-0.5 truncate">{{ s.name || 'Terminal' }}</h3>
-              </div>
-              <button
-                type="button"
-                class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-sm text-fg-disabled hover:text-status-danger hover:bg-status-danger/10 transition-colors opacity-0 group-hover:opacity-100"
-                @click.stop="closeSession(s.id)"
-                @keydown.enter.stop
-                @keydown.space.stop
-                title="关闭会话"
-              >
-                <X class="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <!-- Recent input preview -->
-            <div class="flex-1 rounded-sm bg-app-bg/80 border border-border/50 p-2.5 font-mono text-[12px] text-fg-muted min-h-[44px] flex items-center">
-              <span v-if="(s as any).recentInputHidden" class="text-fg-disabled italic">敏感输入已隐藏</span>
-              <pre v-else-if="recentInputText(s)" class="w-full truncate leading-relaxed">{{ recentInputText(s) }}</pre>
-              <span v-else class="text-fg-disabled italic">等待输入...</span>
-            </div>
-
-            <!-- CWD footer -->
-            <div class="flex items-center gap-1.5 text-[11px] text-fg-subtle font-mono truncate">
-              <Folder class="w-3 h-3 flex-shrink-0" />
-              <span class="truncate">{{ s.cwd || '/' }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
+        </template>
+      </SessionGrid>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  Terminal, Sun, Moon, Plus, AlertTriangle, Folder, Monitor, LogOut, ChevronDown, MoreVertical, X
+  Sun, Moon, AlertTriangle, Monitor, LogOut, ChevronDown, MoreVertical
 } from '@lucide/vue';
-import { store, api, resetStore } from '../store';
-import { p2pManager } from '../lib/p2p';
-import { getDevices } from '../api/devices';
-import { relayMuxSessionManager } from '../lib/relay-mux-session-manager';
-import type { RelayMuxChannel } from '../lib/relay-mux-session';
+import { store, resetStore } from '../store';
+import { UnauthorizedError } from '../api/client';
+import { logout } from '../services/auth.service';
+import { fetchStoreDevices } from '../services/device.service';
+import ConnectionBadge from '../components/ConnectionBadge.vue';
+import SessionGrid from '../components/SessionGrid.vue';
+import { fetchSessions, createSession, closeSession as closeSessionService } from '../services/session.service';
+import { connectionService } from '../services/connection.service';
+import { useManagerConnection, type ManagerServerMessage } from '../composables/useManagerConnection';
+import type { Session, Device } from '../store';
 
 const router = useRouter();
-
-let pollTimer: any = null;
-let ws: WebSocket | RelayMuxChannel | null = null;
-let reconnectTimer: any = null;
-let reconnectAttempts = 0;
-let manualClose = false;
 const loggingOut = ref(false);
 
-const connectionHealth = computed(() => {
-  return store.connectionStates['manager'] || 'disconnected';
+function upsertSession(session: Session) {
+  if (!session.id) return;
+  const index = store.sessions.findIndex((item) => item.id === session.id);
+  if (index >= 0) {
+    store.sessions.splice(index, 1, session);
+  } else {
+    store.sessions.push(session);
+  }
+}
+
+function removeSession(id: string) {
+  store.sessions = store.sessions.filter((s) => s.id !== id);
+}
+
+function handleManagerMessage(msg: ManagerServerMessage) {
+  if (msg.type === 'devices') {
+    if (store.mode === 'direct') return;
+    store.devices = (msg.devices || []).map<Device>((d) => ({
+      deviceId: d.deviceId,
+      deviceName: d.deviceName,
+      status: d.status ?? (d.online ? 'online' : 'offline'),
+    }));
+    const isSelectedOnline = store.devices.some(d => d.deviceId === store.selectedDeviceId);
+    if (store.selectedDeviceId && !isSelectedOnline) {
+      store.selectedDeviceId = null;
+      store.sessions = [];
+    }
+  } else if (msg.type === 'sessions') {
+    store.sessions = Array.isArray(msg.data) ? (msg.data as Session[]) : [];
+  } else if (msg.type === 'session') {
+    upsertSession(msg.data as Session);
+  } else if (msg.type === 'session-closed') {
+    removeSession(msg.id);
+  } else if (msg.type === 'p2p-ice') {
+    connectionService.handleRemoteCandidate(msg.candidate);
+  } else if (msg.type === 'error') {
+    store.managerError = msg.message;
+  }
+}
+
+const managerConnection = useManagerConnection({
+  deviceId: toRef(store, 'selectedDeviceId'),
+  onMessage: handleManagerMessage,
+  poll: refreshSessionList,
+  onConnect: () => {
+    store.managerError = '';
+  },
 });
 
-const connectionLabel = computed(() => {
-  switch (connectionHealth.value) {
-    case 'connected': return '已连接';
-    case 'connecting': return '连接中';
-    case 'polling': return '轮询中';
-    default: return '离线';
-  }
-});
-
-let onlineHandler = () => {
-  reconnectAttempts = 0;
-  connectManagerWS();
-};
-let offlineHandler = () => {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-};
+const { connectionHealth } = managerConnection;
 
 const isPanelOpen = ref(false);
 const isMenuOpen = ref(false);
@@ -324,22 +277,18 @@ function getSelectedDeviceName(): string {
 async function bootstrapManager() {
   if (store.mode === 'relay') {
     await refreshDeviceList();
+    if (store.selectedDeviceId) {
+      connectionService.connectToDevice(store.selectedDeviceId);
+    }
   }
   if (store.selectedDeviceId) {
-    p2pManager.connectToDevice(store.selectedDeviceId);
-    refreshSessionList();
+    await refreshSessionList();
   }
-  connectManagerWS();
-  startPolling();
 }
 
 onMounted(() => {
   document.title = "WebTerm";
   document.body.classList.remove("terminal-mode");
-
-  store.connectionStates['manager'] = 'connecting';
-  window.addEventListener('online', onlineHandler);
-  window.addEventListener('offline', offlineHandler);
 
   bootstrapManager();
 
@@ -348,10 +297,6 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener('online', onlineHandler);
-  window.removeEventListener('offline', offlineHandler);
-  stopPolling();
-  closeManagerWS();
   if (mediaQuery) {
     mediaQuery.removeEventListener('change', handleMediaChange);
   }
@@ -376,13 +321,6 @@ watch(isMenuOpen, (newVal) => {
   }
 });
 
-function recentInputText(session: any): string {
-  const lines = Array.isArray(session.recentInputLines)
-    ? session.recentInputLines.filter(Boolean).slice(-2)
-    : [];
-  return lines.join("\n");
-}
-
 async function selectDevice(deviceId: string) {
   if (store.selectedDeviceId === deviceId) {
     isPanelOpen.value = false;
@@ -392,10 +330,10 @@ async function selectDevice(deviceId: string) {
   store.managerError = '';
   store.sessions = [];
   isPanelOpen.value = false;
-  closeManagerWS();
 
-  p2pManager.connectToDevice(deviceId);
-  connectManagerWS();
+  if (store.mode === 'relay') {
+    connectionService.connectToDevice(deviceId);
+  }
 
   try {
     await refreshSessionList();
@@ -406,12 +344,7 @@ async function selectDevice(deviceId: string) {
 
 async function refreshDeviceList() {
   try {
-    const devices = await getDevices();
-    store.devices = devices.map((device) => ({
-      deviceId: device.deviceId,
-      deviceName: device.deviceName,
-      status: device.online ? 'online' : 'offline',
-    }));
+    store.devices = await fetchStoreDevices();
     const selected = store.selectedDeviceId
       ? store.devices.find((device) => device.deviceId === store.selectedDeviceId)
       : null;
@@ -435,10 +368,9 @@ async function refreshDeviceList() {
 async function refreshSessionList() {
   if (!store.selectedDeviceId) return;
   try {
-    const rawSessions = await api("/api/sessions");
-    store.sessions = Array.isArray(rawSessions) ? rawSessions : [];
+    store.sessions = await fetchSessions();
   } catch (err: any) {
-    if (err.status === 401) {
+    if (err instanceof UnauthorizedError) {
       router.push("/login");
     } else {
       store.managerError = err.message || '更新会话列表失败';
@@ -446,15 +378,17 @@ async function refreshSessionList() {
   }
 }
 
-async function createSession() {
-  stopPolling();
+async function handleCreateSession() {
   try {
     store.managerError = '';
-    const session = await api("/api/sessions", { method: "POST" });
+    const session = await createSession();
     router.push(`/terminal/${encodeURIComponent(session.id)}`);
   } catch (err: any) {
+    if (err instanceof UnauthorizedError) {
+      router.push('/login');
+      return;
+    }
     store.managerError = err.message || '新建终端会话失败';
-    startPolling();
   }
 }
 
@@ -462,12 +396,16 @@ function openSession(sessionId: string) {
   router.push(`/terminal/${encodeURIComponent(sessionId)}`);
 }
 
-async function closeSession(sessionId: string) {
+async function handleCloseSession(sessionId: string) {
   if (!confirm("确定要关闭这个终端会话吗？")) return;
   try {
-    await api(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    await closeSessionService(sessionId);
     await refreshSessionList();
   } catch (err: any) {
+    if (err instanceof UnauthorizedError) {
+      router.push('/login');
+      return;
+    }
     store.managerError = err.message || "关闭会话失败";
   }
 }
@@ -477,8 +415,7 @@ function toggleTheme() {
 }
 
 function goDevices() {
-  closeManagerWS();
-  stopPolling();
+  managerConnection.disconnect();
   router.push('/devices');
 }
 
@@ -487,9 +424,9 @@ async function handleLogout() {
   if (!confirm('确定要退出登录吗？')) return;
   loggingOut.value = true;
   try {
-    closeManagerWS();
-    stopPolling();
-    await api('/api/auth/logout', { method: 'POST' });
+    managerConnection.disconnect();
+    connectionService.closeAll();
+    await logout();
   } catch {
     // ignore
   } finally {
@@ -499,144 +436,4 @@ async function handleLogout() {
   }
 }
 
-// ── WebSocket ──
-
-function connectManagerWS() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  manualClose = false;
-
-  if (store.mode === 'relay') {
-    if (!store.selectedDeviceId) {
-      store.connectionStates['manager'] = 'disconnected';
-      return;
-    }
-    ws = relayMuxSessionManager.openManagerChannel(store.selectedDeviceId);
-  } else {
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const deviceParam = store.selectedDeviceId ? `&deviceId=${encodeURIComponent(store.selectedDeviceId)}` : '';
-    ws = new WebSocket(`${proto}://${window.location.host}/ws/sessions?clientId=${store.clientId}${deviceParam}`);
-  }
-  const currentWs = ws;
-
-  ws.addEventListener("open", () => {
-    if (ws !== currentWs) return;
-    store.connectionStates['manager'] = 'connected';
-    reconnectAttempts = 0;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    store.managerError = "";
-    stopPolling();
-  });
-
-  ws.addEventListener("message", (event) => {
-    if (ws !== currentWs) return;
-    try {
-      const msg = JSON.parse((event as MessageEvent).data);
-      if (msg.type === "devices") {
-        if (store.mode === 'direct') return;
-        store.devices = Array.isArray(msg.devices) ? msg.devices : [];
-        const isSelectedOnline = store.devices.some(d => d.deviceId === store.selectedDeviceId);
-        if (store.selectedDeviceId && !isSelectedOnline) {
-          store.selectedDeviceId = null;
-          store.sessions = [];
-        }
-      } else if (msg.type === "sessions") {
-        store.sessions = Array.isArray(msg.data) ? msg.data : [];
-        stopPolling();
-      } else if (msg.type === "session") {
-        upsertSession(msg.data);
-        stopPolling();
-      } else if (msg.type === "session-closed") {
-        removeSession(msg.id);
-        stopPolling();
-      } else if (msg.type === "p2p-ice") {
-        p2pManager.handleRemoteCandidate(msg.candidate);
-      } else if (msg.type === "error") {
-        store.managerError = msg.message;
-      }
-    } catch (e) {
-      console.error("解析WebSocket推送失败", e);
-    }
-  });
-
-  ws.addEventListener("close", (event: any) => {
-    if (ws !== currentWs) return;
-    ws = null;
-    if (manualClose) return;
-
-    const blockList = [1000, 1008, 1011];
-    if (!blockList.includes(event.code)) {
-      store.connectionStates['manager'] = 'polling';
-      startPolling();
-      scheduleReconnect();
-    } else {
-      store.connectionStates['manager'] = 'disconnected';
-      startPolling();
-    }
-  });
-
-  ws.addEventListener("error", () => {
-    if (ws !== currentWs) return;
-    startPolling();
-  });
-}
-
-function closeManagerWS() {
-  manualClose = true;
-  store.connectionStates['manager'] = 'disconnected';
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (ws) {
-    ws.close();
-    ws = null;
-  }
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  const cap = Math.min(1000 * Math.pow(1.6, reconnectAttempts++), 8000);
-  const delay = Math.max(200, Math.random() * cap);
-  reconnectTimer = setTimeout(() => connectManagerWS(), delay);
-}
-
-function startPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(async () => {
-    if (store.selectedDeviceId) {
-      try {
-        await refreshSessionList();
-      } catch (err: any) {
-        store.managerError = err.message || '更新会话列表失败';
-      }
-    }
-  }, 3000);
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-function upsertSession(session: any) {
-  if (!session?.id) return;
-  const index = store.sessions.findIndex((item) => item.id === session.id);
-  if (index >= 0) {
-    store.sessions.splice(index, 1, session);
-  } else {
-    store.sessions.push(session);
-  }
-}
-
-function removeSession(id: string) {
-  store.sessions = store.sessions.filter((s) => s.id !== id);
-}
 </script>

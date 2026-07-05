@@ -13,6 +13,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/application"
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
@@ -24,14 +25,16 @@ const p2pAnswerGatherTimeout = 2 * time.Second
 type P2PHandler struct {
 	router *application.SessionRouter
 	writer frameWriter
+	logger *logs.Logger
 	mu     sync.Mutex
 	peers  map[string]*p2pPeer
 }
 
-func NewP2PHandler(router *application.SessionRouter, writer frameWriter) *P2PHandler {
+func NewP2PHandler(router *application.SessionRouter, writer frameWriter, logger *logs.Logger) *P2PHandler {
 	return &P2PHandler{
 		router: router,
 		writer: writer,
+		logger: logger,
 		peers:  make(map[string]*p2pPeer),
 	}
 }
@@ -80,7 +83,7 @@ func (h *P2PHandler) AcceptOffer(ctx context.Context, conn *websocket.Conn, fram
 			_ = dc.Close()
 			return
 		}
-		socket := newP2PDataChannelSocket(dc)
+		socket := newP2PDataChannelSocket(dc, h.logger)
 		var startMuxOnce sync.Once
 		startMux := func() {
 			startMuxOnce.Do(func() {
@@ -88,6 +91,7 @@ func (h *P2PHandler) AcceptOffer(ctx context.Context, conn *websocket.Conn, fram
 					OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 						return mux.OpenSessionOrManager(ctx, h.router, vs, p, protos)
 					},
+					Logger: h.logger,
 				})
 				go func() {
 					defer socket.Close()
@@ -197,20 +201,30 @@ func (peer *p2pPeer) close() {
 	})
 }
 
+type p2pWriteReq struct {
+	messageType session.MessageType
+	data        []byte
+	errCh       chan error
+}
+
 type p2pDataChannelSocket struct {
 	dc       *webrtc.DataChannel
 	incoming chan relayStreamMessage
+	writes   chan p2pWriteReq
 	done     chan struct{}
 	once     sync.Once
-	writeMu  sync.Mutex
+	logger   *logs.Logger
 }
 
-func newP2PDataChannelSocket(dc *webrtc.DataChannel) *p2pDataChannelSocket {
+func newP2PDataChannelSocket(dc *webrtc.DataChannel, logger *logs.Logger) *p2pDataChannelSocket {
 	socket := &p2pDataChannelSocket{
 		dc:       dc,
 		incoming: make(chan relayStreamMessage, 256),
+		writes:   make(chan p2pWriteReq, 256),
 		done:     make(chan struct{}),
+		logger:   logger,
 	}
+	go socket.writeLoop()
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 		messageType := session.MessageText
 		if !msg.IsString {
@@ -221,6 +235,9 @@ func newP2PDataChannelSocket(dc *webrtc.DataChannel) *p2pDataChannelSocket {
 		case <-socket.done:
 		case socket.incoming <- relayStreamMessage{messageType: messageType, payload: payload}:
 		default:
+			if socket.logger != nil {
+				socket.logger.Add("warn", "relay", "p2p datachannel incoming buffer full, closing")
+			}
 			_ = socket.Close()
 		}
 	})
@@ -228,6 +245,23 @@ func newP2PDataChannelSocket(dc *webrtc.DataChannel) *p2pDataChannelSocket {
 		_ = socket.Close()
 	})
 	return socket
+}
+
+func (socket *p2pDataChannelSocket) writeLoop() {
+	for {
+		select {
+		case <-socket.done:
+			return
+		case req := <-socket.writes:
+			var err error
+			if req.messageType == session.MessageBinary {
+				err = socket.dc.Send(req.data)
+			} else {
+				err = socket.dc.SendText(string(req.data))
+			}
+			req.errCh <- err
+		}
+	}
 }
 
 func (socket *p2pDataChannelSocket) Read(ctx context.Context) (session.MessageType, []byte, error) {
@@ -242,23 +276,21 @@ func (socket *p2pDataChannelSocket) Read(ctx context.Context) (session.MessageTy
 }
 
 func (socket *p2pDataChannelSocket) Write(ctx context.Context, messageType session.MessageType, data []byte) error {
-	done := make(chan error, 1)
-	payload := append([]byte(nil), data...)
-	go func() {
-		socket.writeMu.Lock()
-		defer socket.writeMu.Unlock()
-		if messageType == session.MessageBinary {
-			done <- socket.dc.Send(payload)
-			return
-		}
-		done <- socket.dc.SendText(string(payload))
-	}()
+	req := p2pWriteReq{messageType: messageType, data: append([]byte(nil), data...), errCh: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-socket.done:
 		return errors.New("p2p datachannel socket closed")
-	case err := <-done:
+	case socket.writes <- req:
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-socket.done:
+		return errors.New("p2p datachannel socket closed")
+	case err := <-req.errCh:
 		return err
 	}
 }

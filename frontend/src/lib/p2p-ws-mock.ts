@@ -1,7 +1,8 @@
 // P2P WebSocket Mock — bridges browser WebSocket API over a WebRTC DataChannel.
 // Creates a WebSocket-like object that tunnels data through the P2P connection.
 
-import { encodeTunnelFrame } from './p2p-utils';
+import { CONFIG } from '../config';
+import { encodeTunnelFrame } from './mux-protocol';
 import { MSG_TYPE_WS_DATA, WS_DATA_TEXT } from '@shared/constants.js';
 
 export class P2PWebSocketMock extends EventTarget {
@@ -34,7 +35,7 @@ export class P2PWebSocketMock extends EventTarget {
         this.dispatchEvent(new Event('error'));
         this.dispatchEvent(new CloseEvent('close', { code: 1006, reason: 'P2P WS connection timeout' }));
       }
-    }, 5000);
+    }, CONFIG.p2pWsMockConnectTimeoutMs);
 
     try {
       await this.p2pManager.sendControlMessage({

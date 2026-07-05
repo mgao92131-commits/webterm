@@ -15,6 +15,9 @@ import (
 
 // HTTPProxy 处理 relay 侧 HTTP 请求代理。接收 relay 发来的 HTTPHeaders/HTTPChunk
 // 帧，调用 SessionRouter 执行 session CRUD，将结果写回 relay。
+
+const httpProxyMaxBodyBytes = 1 << 20 // 1 MiB
+
 type HTTPProxy struct {
 	router  *application.SessionRouter
 	writer  frameWriter
@@ -87,6 +90,10 @@ func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, fir
 			if frame.Type != relaycore.FrameTypeHTTPChunk {
 				continue
 			}
+			if len(body)+len(frame.Payload) > httpProxyMaxBodyBytes {
+				p.writeHTTPError(ctx, conn, first.StreamID, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
 			body = append(body, frame.Payload...)
 			if frame.Flags.Has(relaycore.FrameFlagFin) {
 				p.respond(ctx, conn, first.StreamID, meta, body)
@@ -109,6 +116,19 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
 		return
 	}
+	responseMeta, _ := json.Marshal(relaycore.HTTPResponseMeta{
+		StatusCode: status,
+		Headers: map[string]string{
+			"content-type":   "application/json; charset=utf-8",
+			"content-length": fmt.Sprintf("%d", len(payload)),
+		},
+	})
+	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, streamID, 0, responseMeta))
+	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
+}
+
+func (p *HTTPProxy) writeHTTPError(ctx context.Context, conn *websocket.Conn, streamID string, status int, message string) {
+	payload, _ := json.Marshal(map[string]string{"error": message})
 	responseMeta, _ := json.Marshal(relaycore.HTTPResponseMeta{
 		StatusCode: status,
 		Headers: map[string]string{

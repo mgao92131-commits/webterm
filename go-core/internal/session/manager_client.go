@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"webterm/go-core/internal/logs"
 )
 
 type ManagerClient struct {
@@ -11,14 +13,20 @@ type ManagerClient struct {
 	send     chan ManagerMessage
 	done     chan struct{}
 	doneOnce chan struct{}
+	logger   *logs.Logger
 }
 
-func NewManagerClient(socket Socket) *ManagerClient {
+func NewManagerClient(socket Socket, logger ...*logs.Logger) *ManagerClient {
+	var log *logs.Logger
+	if len(logger) > 0 {
+		log = logger[0]
+	}
 	return &ManagerClient{
 		socket:   socket,
 		send:     make(chan ManagerMessage, 64),
 		done:     make(chan struct{}),
 		doneOnce: make(chan struct{}, 1),
+		logger:   log,
 	}
 }
 
@@ -38,6 +46,9 @@ func (client *ManagerClient) SendManagerMessage(message ManagerMessage) bool {
 	case client.send <- message:
 		return true
 	default:
+		if client.logger != nil {
+			client.logger.Add("warn", "session", "manager client send buffer full, closing")
+		}
 		client.Close()
 		return false
 	}

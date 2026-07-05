@@ -1,4 +1,4 @@
-import { api } from '../store';
+import { request } from './client';
 
 export interface AuthUser {
   id: string;
@@ -26,54 +26,54 @@ export interface RegisterResult {
 }
 
 export async function login(email: string, password: string): Promise<LoginResult> {
-  return api('/api/auth/login', {
+  return request('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password })
   });
 }
 
 export async function register(email: string, password: string): Promise<RegisterResult> {
-  return api('/api/auth/register', {
+  return request('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify({ email, password })
   });
 }
 
 export async function verifyEmail(email: string, code: string) {
-  return api('/api/auth/verify-email', {
+  return request('/api/auth/verify-email', {
     method: 'POST',
     body: JSON.stringify({ email, code })
   });
 }
 
 export async function verifyOtp(email: string, code: string, targetDeviceId: string) {
-  return api('/api/auth/verify-otp', {
+  return request('/api/auth/verify-otp', {
     method: 'POST',
     body: JSON.stringify({ email, code, target_device_id: targetDeviceId })
   });
 }
 
 export async function resendOtp(email: string) {
-  return api('/api/auth/resend-otp', {
+  return request('/api/auth/resend-otp', {
     method: 'POST',
     body: JSON.stringify({ email })
   });
 }
 
 export async function refresh() {
-  return api('/api/auth/refresh', {
+  return request('/api/auth/refresh', {
     method: 'POST'
   });
 }
 
 export async function logout() {
-  return api('/api/auth/logout', {
+  return request('/api/auth/logout', {
     method: 'POST'
   });
 }
 
 export async function me(): Promise<AuthUser> {
-  return api('/api/auth/me', {
+  return request('/api/auth/me', {
     method: 'GET'
   });
 }
@@ -87,13 +87,13 @@ export interface TrustedDevice {
 }
 
 export async function getTrustedDevices(): Promise<TrustedDevice[]> {
-  return api('/api/auth/devices', {
+  return request('/api/auth/devices', {
     method: 'GET'
   });
 }
 
 export async function deleteTrustedDevice(id: string): Promise<void> {
-  return api(`/api/auth/devices/${id}`, {
+  return request(`/api/auth/devices/${id}`, {
     method: 'DELETE'
   });
 }

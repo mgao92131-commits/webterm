@@ -35,15 +35,15 @@ type V2Client struct {
 }
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
-	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter)
+	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter, appInstance.Logs())
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,
 		router: router,
 	}
 	client.http = NewHTTPProxy(router, client)
-	client.p2p = NewP2PHandler(router, client)
-	client.streams = NewStreamMultiplexer(router, client)
+	client.p2p = NewP2PHandler(router, client, appInstance.Logs())
+	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
 	return client
 }
 
@@ -81,6 +81,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(8 << 20)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	if err := client.registerV2(ctx, conn); err != nil {

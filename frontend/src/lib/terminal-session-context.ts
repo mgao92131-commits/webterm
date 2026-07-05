@@ -1,6 +1,7 @@
-import { api, store } from '../store';
-import { p2pManager } from './p2p';
-import { relayMuxSessionManager } from './relay-mux-session-manager';
+import { CONFIG } from '../config';
+import { renameSession } from '../services/session.service';
+import { getTerminalTheme } from '../config/themes';
+import { connectionService } from '../services/connection.service';
 import type { RelayMuxChannel } from './relay-mux-session';
 import { decodeTerminalMessage, encodeTerminalMessage } from './terminal-binary-protocol';
 import { DisposableStore, IDisposable } from './disposable';
@@ -11,16 +12,16 @@ import { TerminalSelectionController } from './terminal-selection';
 
 function getInitialFontSize(): number {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('webterm:fontSize');
+    const saved = localStorage.getItem(CONFIG.storageKeys.fontSize);
     if (saved) {
       const size = parseInt(saved, 10);
-      if (!isNaN(size) && size >= 8 && size <= 30) {
+      if (!isNaN(size) && size >= CONFIG.fontSize.min && size <= CONFIG.fontSize.max) {
         return size;
       }
     }
-    return window.innerWidth < 768 ? 12 : 14;
+    return window.innerWidth < 768 ? CONFIG.fontSize.defaultMobile : CONFIG.fontSize.defaultDesktop;
   }
-  return 12;
+  return CONFIG.fontSize.defaultMobile;
 }
 
 export interface TerminalSessionState {
@@ -36,13 +37,14 @@ export interface TerminalSessionContextOptions {
   element: HTMLElement;
   sessionId: string;
   theme: 'solarized' | 'dracula';
+  mode: 'direct' | 'relay';
+  deviceId: string | null;
   p2pActive: boolean;
   onStateChange?: (state: Partial<TerminalSessionState>) => void;
   onExit?: () => void;
 }
 
 export class TerminalSessionContext implements IDisposable {
-  private static readonly RECONNECT_BLOCKED_CLOSE_CODES = [1000, 1008, 1011];
 
   private disposables = new DisposableStore();
   public terminalView!: TerminalView;
@@ -79,7 +81,7 @@ export class TerminalSessionContext implements IDisposable {
   public titleBeforeEdit = '';
 
   constructor(private options: TerminalSessionContextOptions) {
-    this.lastSeq = Number(sessionStorage.getItem(`webterm:${options.sessionId}:lastSeq`) || 0);
+    this.lastSeq = Number(sessionStorage.getItem(`${CONFIG.storageKeys.lastSeqPrefix}${options.sessionId}:lastSeq`) || 0);
     
     this.initControllers();
     this.attachEvents();
@@ -203,22 +205,11 @@ export class TerminalSessionContext implements IDisposable {
     this.manualClose = false;
 
     const id = this.options.sessionId;
-    const [parsedDeviceId, localId] = id.includes(':') ? id.split(':') : ['', id];
-    const deviceId = parsedDeviceId || (store.mode === 'relay' ? store.selectedDeviceId || '' : '');
-    let wsUrl = `${proto}://${window.location.host}/ws/sessions/${encodeURIComponent(localId)}`;
-    if (deviceId) {
-      wsUrl += `?deviceId=${encodeURIComponent(deviceId)}`;
-    }
+    const deviceId = this.options.deviceId || '';
 
-    this.binaryTransport = false;
-    if (store.mode === 'relay' && deviceId) {
-      this.ws = relayMuxSessionManager.openTerminalChannel(deviceId, id);
-      this.binaryTransport = true;
-    } else if (p2pManager.isP2PActive()) {
-      this.ws = p2pManager.createWebSocketMock(wsUrl, ['binary', 'json']) as any;
-    } else {
-      this.ws = new WebSocket(wsUrl);
-    }
+    // mux 传输（direct/relay）都走二进制帧；只有 P2P mock 保持 JSON
+    this.binaryTransport = !connectionService.isP2PActive();
+    this.ws = connectionService.openTerminalChannel(deviceId, id);
 
     // 本条连接专属的监听器容器 + 代际号码牌
     const gen = ++this.wsGeneration;
@@ -353,8 +344,9 @@ export class TerminalSessionContext implements IDisposable {
 
   private scheduleReconnect() {
     this.clearReconnect();
-    const cap = Math.min(1000 * Math.pow(1.6, this.reconnectAttempts++), 8000);
-    const delay = Math.max(200, Math.random() * cap);
+    const backoff = CONFIG.reconnectBackoff;
+    const cap = Math.min(backoff.baseMs * Math.pow(backoff.multiplier, this.reconnectAttempts++), backoff.capMs);
+    const delay = Math.max(backoff.minDelayMs, Math.random() * cap);
     this.reconnectTimer = setTimeout(() => {
       // 闹钟响了，但如果在这期间已经有人把连接重建好（且正在通），就不要再掐掉重拨
       if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
@@ -374,7 +366,7 @@ export class TerminalSessionContext implements IDisposable {
 
   private canReconnect() {
     return !this.manualClose
-      && !TerminalSessionContext.RECONNECT_BLOCKED_CLOSE_CODES.includes(this.lastCloseCode || 0);
+      && !CONFIG.reconnectBlockedCloseCodes.includes((this.lastCloseCode || 0) as 1000 | 1008 | 1011);
   }
 
   private beginTerminalRestore() {
@@ -398,7 +390,7 @@ export class TerminalSessionContext implements IDisposable {
     const value = Number(seq || 0);
     if (!value || value < this.lastSeq) return;
     this.lastSeq = value;
-    sessionStorage.setItem(`webterm:${this.options.sessionId}:lastSeq`, String(value));
+    sessionStorage.setItem(`${CONFIG.storageKeys.lastSeqPrefix}${this.options.sessionId}:lastSeq`, String(value));
   }
 
   // --- 状态与广播机制 ---
@@ -434,11 +426,11 @@ export class TerminalSessionContext implements IDisposable {
   // --- 字体大小动态调整 ---
 
   public changeFontSize(delta: number): void {
-    const current = this.terminalView.options.fontSize || 12;
-    const next = Math.min(30, Math.max(8, current + delta));
+    const current = this.terminalView.options.fontSize || CONFIG.fontSize.defaultDesktop;
+    const next = Math.min(CONFIG.fontSize.max, Math.max(CONFIG.fontSize.min, current + delta));
     if (this.layoutController) {
       this.layoutController.setFontSize(next);
-      localStorage.setItem('webterm:fontSize', String(next));
+      localStorage.setItem(CONFIG.storageKeys.fontSize, String(next));
     }
   }
 
@@ -455,12 +447,7 @@ export class TerminalSessionContext implements IDisposable {
     }
 
     try {
-      const id = this.options.sessionId;
-      const localId = id.includes(':') ? id.split(':')[1] : id;
-      const session = await api(`/api/sessions/${encodeURIComponent(localId)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: nextName }),
-      });
+      const session = await renameSession(this.options.sessionId, nextName);
       this.setTerminalInfo(session);
     } catch (err: any) {
       this.setTerminalInfo({ name: oldName });
@@ -506,53 +493,7 @@ export class TerminalSessionContext implements IDisposable {
   // --- 主题数据获取 ---
 
   private getTermTheme(theme: 'solarized' | 'dracula') {
-    const THEMES: any = {
-      solarized: {
-        background: '#002b36',
-        foreground: '#839496',
-        cursor: '#93a1a1',
-        selectionBackground: '#073642',
-        black: '#073642',
-        red: '#dc322f',
-        green: '#859900',
-        yellow: '#b58900',
-        blue: '#268bd2',
-        magenta: '#d33682',
-        cyan: '#2aa198',
-        white: '#eee8d5',
-        brightBlack: '#002b36',
-        brightRed: '#cb4b16',
-        brightGreen: '#586e75',
-        brightYellow: '#657b83',
-        brightBlue: '#839496',
-        brightMagenta: '#6c71c4',
-        brightCyan: '#93a1a1',
-        brightWhite: '#fdf6e3',
-      },
-      dracula: {
-        background: '#282a36',
-        foreground: '#f8f8f2',
-        cursor: '#f8f8f2',
-        selectionBackground: '#44475a',
-        black: '#21222c',
-        red: '#ff5555',
-        green: '#50fa7b',
-        yellow: '#f1fa8c',
-        blue: '#bd93f9',
-        magenta: '#ff79c6',
-        cyan: '#8be9fd',
-        white: '#f8f8f2',
-        brightBlack: '#6272a4',
-        brightRed: '#ff6e6e',
-        brightGreen: '#69ff94',
-        brightYellow: '#ffffa5',
-        brightBlue: '#d6acff',
-        brightMagenta: '#ff92df',
-        brightCyan: '#a4ffff',
-        brightWhite: '#ffffff',
-      }
-    };
-    return THEMES[theme] ? THEMES[theme] : THEMES.solarized;
+    return getTerminalTheme(theme);
   }
 
   // --- Playwright Debug 调试钩子供 E2E 测试使用 ---

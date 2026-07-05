@@ -13,7 +13,10 @@ export async function openTerminal(page) {
     }
   });
   await page.goto("/");
-  await page.evaluate(() => localStorage.setItem("webtermDebug", "1"));
+  await page.evaluate(() => {
+    localStorage.setItem("webtermDebug", "1");
+    localStorage.setItem("webtermDisableWebGL", "1");
+  });
   await page.reload();
   
   // 兼容有邮箱输入框的新登录页面
@@ -36,6 +39,26 @@ export async function waitForTerminalReady(page) {
   await expect.poll(async () => page.evaluate(() => window.__webtermDebug?.termState?.().rows || 0)).toBeGreaterThan(0);
   await expect.poll(async () => page.evaluate(() => window.__webtermDebug?.wsState?.().readyState)).toBe(1);
   await expect.poll(async () => page.evaluate(() => window.__webtermDebug?.wsState?.().restored)).toBe(true);
+}
+
+export async function waitForLayoutSettle(page, { stableMs = 250, timeout = 5000 } = {}) {
+  let lastCount = -1;
+  let lastRows = -1;
+  let lastChange = 0;
+  const start = Date.now();
+  await expect.poll(async () => {
+    const state = await page.evaluate(() => ({
+      count: window.__webtermDebug?.layoutState?.().resizeMessageCount ?? -1,
+      rows: window.__webtermDebug?.termState?.().rows ?? -1,
+    }));
+    const now = Date.now();
+    if (state.count !== lastCount || state.rows !== lastRows) {
+      lastCount = state.count;
+      lastRows = state.rows;
+      lastChange = now;
+    }
+    return now - lastChange;
+  }, { timeout }).toBeGreaterThanOrEqual(stableMs);
 }
 
 export async function sendDebugInput(page, input) {

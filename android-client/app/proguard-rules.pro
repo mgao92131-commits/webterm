@@ -57,10 +57,10 @@
 -keep class org.json.** { public protected *; }
 
 # Keep WebTerm model classes that are serialized to/from JSON on disk.
--keep class com.webterm.mobile.ServerConfig { *; }
--keep class com.webterm.mobile.ServerConfigDialogHelper$* { *; }
--keep class com.webterm.mobile.TerminalDiskCache$* { *; }
--keep class com.webterm.mobile.CachedSessionMapper$* { *; }
+-keep class com.webterm.core.config.ServerConfig { *; }
+-keep class com.webterm.mobile.ui.dialog.ServerConfigDialogHelper$* { *; }
+-keep class com.webterm.core.cache.TerminalDiskCache$* { *; }
+-keep class com.webterm.core.cache.CachedSessionMapper$* { *; }
 
 # Keep callback / listener interfaces that may be implemented as anonymous
 # inner classes and passed across boundaries.
@@ -81,3 +81,6 @@
     public static final ** CREATOR;
 }
 -keep class * implements java.io.Serializable { *; }
+
+# Disable R8 optimization to prevent WebRTC JNI Reflection / obfuscation crash.
+-dontoptimize

@@ -36,7 +36,10 @@ export class TerminalView implements IDisposable {
     this.term.loadAddon(this.fitAddon);
     this.term.open(params.element);
 
-    if (ActualWebglAddon) {
+    const disableWebGL = Boolean(
+      typeof window !== 'undefined' && window.localStorage?.getItem('webtermDisableWebGL') === '1'
+    );
+    if (ActualWebglAddon && !disableWebGL) {
       try {
         const webglAddon = params.WebglAddonCtor ? new params.WebglAddonCtor.WebglAddon() : new ActualWebglAddon();
         this.term.loadAddon(webglAddon);

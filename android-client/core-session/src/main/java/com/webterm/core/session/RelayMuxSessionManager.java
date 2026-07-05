@@ -62,6 +62,9 @@ public final class RelayMuxSessionManager {
     }
 
     private MuxSession createMuxSession(int generation) {
+        if (transportFactory != null) {
+            transportFactory.prepareDataChannel(baseUrl, cookie, deviceId);
+        }
         MuxTransport transport = null;
         if (transportFactory != null) {
             transport = transportFactory.createDataChannel(deviceId);

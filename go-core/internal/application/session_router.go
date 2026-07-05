@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
@@ -26,6 +27,7 @@ type MuxSession interface {
 type MuxServeOpts struct {
 	OnOpen    func(ctx context.Context, vs MuxVirtualSocket, path string, protocols []string) (func(), error)
 	OnControl func(ctx context.Context, msg map[string]any)
+	Logger    *logs.Logger
 }
 
 // MuxVirtualSocket 是 mux.VirtualSocket 的接口抽象。
@@ -40,16 +42,21 @@ type MuxVirtualSocket interface {
 type SessionRouter struct {
 	manager  *session.Manager
 	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
+	logger   *logs.Logger
 }
 
-func NewSessionRouter(manager *session.Manager) *SessionRouter {
-	return &SessionRouter{manager: manager}
+func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
+	return NewSessionRouterWithMux(manager, nil, logger...)
 }
 
 // NewSessionRouterWithMux 创建带 mux 支持的 SessionRouter。
 // muxServe 应该是 mux.Serve 的实际实现，由调用方注入以避免循环依赖。
-func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc) *SessionRouter {
-	return &SessionRouter{manager: manager, muxServe: muxServe}
+func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, logger ...*logs.Logger) *SessionRouter {
+	var log *logs.Logger
+	if len(logger) > 0 {
+		log = logger[0]
+	}
+	return &SessionRouter{manager: manager, muxServe: muxServe, logger: log}
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -68,13 +75,14 @@ func (r *SessionRouter) RouteOpen(
 				OnOpen: func(ctx context.Context, vs MuxVirtualSocket, p string, protos []string) (func(), error) {
 					return r.RouteOpen(ctx, vs, p, protos)
 				},
+				Logger: r.logger,
 			})
 			return func() {
 				defer socket.Close()
 				_ = muxSession.Run(ctx)
 			}, nil
 		}
-		mc := session.NewManagerClient(socket)
+		mc := session.NewManagerClient(socket, r.logger)
 		return func() { go mc.Run(ctx, r.manager) }, nil
 
 	case strings.HasPrefix(clean, "/ws/sessions/"):
@@ -85,7 +93,7 @@ func (r *SessionRouter) RouteOpen(
 			return nil, fmt.Errorf("session %s not found", id)
 		}
 		mode := session.ClientModeFromProtocol(selectProtocol(protocols))
-		client := session.NewClient(socket, terminal, mode)
+		client := session.NewClient(socket, terminal, mode, r.logger)
 		return func() { go client.Run(ctx) }, nil
 
 	default:

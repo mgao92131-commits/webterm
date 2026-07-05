@@ -38,7 +38,7 @@ public final class HomeServerCoordinator {
     private final TerminalCacheCoordinator terminalCache;
     private final Executor executor;
     private final SessionRepository sessionRepository;
-    private final Listener listener;
+    private Listener listener;
     private final HomeRefreshScheduler refreshScheduler;
     private final List<ServerGroupController> activeGroups = new ArrayList<>();
     private final Map<String, Boolean> directoryCollapsed = new HashMap<>();
@@ -86,6 +86,10 @@ public final class HomeServerCoordinator {
     @AssistedFactory
     public interface Factory {
         HomeServerCoordinator create(Activity activity, Listener listener);
+    }
+
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
     public void attachSessionAdapter(SessionRecyclerAdapter sessionAdapter) {
@@ -144,12 +148,12 @@ public final class HomeServerCoordinator {
 
             @Override
             public void onSessionClosed(String baseUrl, String sessionId) {
-                listener.onRemoveCachedTerminal(baseUrl, sessionId);
+                notifyRemoveCachedTerminal(baseUrl, sessionId);
             }
 
             @Override
             public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
-                listener.onSessionCwdChanged(server, sessionId, cwd);
+                notifySessionCwdChanged(server, sessionId, cwd);
             }
 
             @Override
@@ -159,6 +163,26 @@ public final class HomeServerCoordinator {
         });
         activeGroups.add(holder);
         loadSessionsForAdapter(server, status, tempInMemorySessions);
+        connectManagerWS(holder);
+        refreshScheduler.scheduleInitial();
+    }
+
+    public void restoreDeviceSessions(ServerConfig server, StatusIndicatorView status) {
+        refreshScheduler.reset();
+        if (sessionAdapter == null || server == null) return;
+        ServerGroupController holder = findHolderForServer(server);
+        if (holder == null) {
+            loadDeviceSessions(server, status);
+            return;
+        }
+        holder.attachStatus(status);
+        JSONArray cachedSessions = holder.getLastSessions();
+        if (cachedSessions != null && cachedSessions.length() > 0) {
+            hydrateCachedNames(server, cachedSessions);
+            renderServerSessions(server, cachedSessions);
+        } else {
+            loadSessionsForAdapter(server, status, collectInMemorySessions());
+        }
         connectManagerWS(holder);
         refreshScheduler.scheduleInitial();
     }
@@ -273,6 +297,14 @@ public final class HomeServerCoordinator {
         } else if (sessionAdapter != null) {
             sessionAdapter.showError(result.message);
         }
+    }
+
+    private void notifyRemoveCachedTerminal(String baseUrl, String sessionId) {
+        listener.onRemoveCachedTerminal(baseUrl, sessionId);
+    }
+
+    private void notifySessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
+        listener.onSessionCwdChanged(server, sessionId, cwd);
     }
 
     private void hydrateCachedNames(ServerConfig server, JSONArray sessions) {

@@ -100,8 +100,8 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { api, store } from '../store';
-import { login as apiLogin, resendOtp } from '../api/auth';
+import { store } from '../store';
+import { login as authLogin, fetchMe, resendOtp } from '../services/auth.service';
 import OtpInput from '../components/OtpInput.vue';
 
 const router = useRouter();
@@ -145,7 +145,7 @@ async function handleLogin() {
     return;
   }
   try {
-    const res = await apiLogin(email, password);
+    const res = await authLogin({ email, password });
     if (res.otp_required) {
       targetDeviceId.value = res.target_device_id || '';
       if (res.error) {
@@ -192,14 +192,14 @@ async function handleOtpVerified(payload: { email: string; role: 'admin' | 'user
 
 async function bootstrapUser() {
   try {
-    const me = await api('/api/auth/me');
+    const user = await fetchMe();
     store.user = {
-      id: me.id,
-      username: me.username,
-      role: me.role,
-      mode: me.mode || 'relay',
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      mode: user.mode || 'relay',
     };
-    store.mode = me.mode || 'relay';
+    store.mode = user.mode || 'relay';
     if (store.mode === 'direct') {
       store.selectedDeviceId = 'local';
       store.devices = [{ deviceId: 'local', deviceName: '本机', status: 'online' }];

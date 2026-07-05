@@ -10,6 +10,7 @@ declare module '@shared/constants.js' {
   export const MSG_TITLE: number;
   export const MSG_STATE: number;
 
+  export const MUX_SUBPROTOCOL: string;
   export const BINARY_SUBPROTOCOL: string;
   export const JSON_SUBPROTOCOL: string;
 

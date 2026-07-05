@@ -3,11 +3,13 @@ package mux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
@@ -25,9 +27,10 @@ type VirtualSocket struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	onClose   func()
+	logger    *logs.Logger
 }
 
-func newVirtualSocket(id string, protocolName string, s *Session, onClose func()) *VirtualSocket {
+func newVirtualSocket(id string, protocolName string, s *Session, onClose func(), logger *logs.Logger) *VirtualSocket {
 	return &VirtualSocket{
 		id:        id,
 		protocol:  protocolName,
@@ -35,6 +38,7 @@ func newVirtualSocket(id string, protocolName string, s *Session, onClose func()
 		incoming:  make(chan virtualMessage, 256),
 		done:      make(chan struct{}),
 		onClose:   onClose,
+		logger:    logger,
 	}
 }
 
@@ -92,6 +96,9 @@ func (socket *VirtualSocket) Emit(payload []byte, binary bool) bool {
 	case socket.incoming <- virtualMessage{messageType: messageType, payload: payload}:
 		return true
 	default:
+		if socket.logger != nil {
+			socket.logger.Add("warn", "mux", fmt.Sprintf("virtual socket incoming buffer full, closing id=%s", socket.id))
+		}
 		socket.close(true)
 		return false
 	}

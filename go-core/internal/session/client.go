@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 )
 
@@ -24,9 +27,10 @@ type Client struct {
 	session  *TerminalSession
 	mode     ClientMode
 	send     chan outboundMessage
-	ready    bool
+	ready    atomic.Bool
 	done     chan struct{}
 	doneOnce chan struct{}
+	logger   *logs.Logger
 }
 
 type outboundMessage struct {
@@ -34,9 +38,13 @@ type outboundMessage struct {
 	binary []byte
 }
 
-func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode) *Client {
+func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger ...*logs.Logger) *Client {
 	if mode == "" {
 		mode = ClientModeJSON
+	}
+	var log *logs.Logger
+	if len(logger) > 0 {
+		log = logger[0]
 	}
 	return &Client{
 		socket:   socket,
@@ -45,6 +53,7 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode) *Clien
 		send:     make(chan outboundMessage, 256),
 		done:     make(chan struct{}),
 		doneOnce: make(chan struct{}, 1),
+		logger:   log,
 	}
 }
 
@@ -63,7 +72,7 @@ func (client *Client) SendInfo() {
 }
 
 func (client *Client) SendOutput(frame EventFrame, delta ScreenDelta) {
-	if !client.ready {
+	if !client.ready.Load() {
 		return
 	}
 	if client.mode == ClientModeScreen {
@@ -239,7 +248,7 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 	if client.mode == ClientModeScreen {
 		client.SendScreenState(latest)
 		client.SendInfo()
-		client.ready = true
+		client.ready.Store(true)
 		return
 	}
 	if lastSeq > 0 && lastSeq <= latest && client.session.CanReplayFrom(lastSeq) {
@@ -254,7 +263,7 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 		client.SendState(latest, client.session.StateBytes())
 	}
 	client.SendInfo()
-	client.ready = true
+	client.ready.Store(true)
 }
 
 func (client *Client) sendJSONType(_ string, value any) {
@@ -279,6 +288,9 @@ func (client *Client) enqueue(message outboundMessage) {
 		return
 	case client.send <- message:
 	default:
+		if client.logger != nil {
+			client.logger.Add("warn", "session", fmt.Sprintf("client send buffer full, closing session=%s mode=%s", client.session.ID(), client.mode))
+		}
 		client.Close()
 	}
 }

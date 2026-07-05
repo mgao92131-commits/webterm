@@ -14,6 +14,7 @@ export const MSG_TITLE = 0x09;
 export const MSG_STATE = 0x0a;
 
 // WebSocket subprotocol identifiers
+export const MUX_SUBPROTOCOL = 'webterm.mux.v1';
 export const BINARY_SUBPROTOCOL = 'webterm.binary.v1';
 export const JSON_SUBPROTOCOL = 'webterm.json.v1';
 

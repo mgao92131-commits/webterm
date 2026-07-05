@@ -129,6 +129,8 @@ function createContext(): void {
     element: terminalRef.value,
     sessionId,
     theme: store.theme,
+    mode: store.mode,
+    deviceId: store.selectedDeviceId,
     p2pActive: store.p2pActive,
     onStateChange: (change) => {
       if (change.isSelectionMode !== undefined) isSelectionMode.value = change.isSelectionMode;

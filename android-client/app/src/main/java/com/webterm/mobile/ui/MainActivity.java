@@ -56,12 +56,22 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     @Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
     @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd); }
     @Override public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) { coordinator.onServerAuthenticated(existingServer, name, url, cookie, username, password); }
+    @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
+    @Override public void navigateHome() { coordinator.navigateToHome(); }
+    @Override public void createSession(ServerConfig server) { coordinator.createSession(server); }
+    @Override public void closeSession(ServerConfig server, String sessionId, Runnable onClosed) { coordinator.closeSession(server, sessionId, onClosed); }
+    @Override public void removeServer(ServerConfig server) { coordinator.removeServer(server); }
+    @Override public void saveServers() { coordinator.saveServers(); }
+    @Override public void removeCachedTerminal(String baseUrl, String sessionId) { coordinator.removeCachedTerminal(baseUrl, sessionId); }
+    @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) { coordinator.onSessionCwdChanged(server, sessionId, cwd); }
+    @Override public void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) { coordinator.removeMissingCachedSessionsForServer(server, liveSessionIdentities); }
     @Override public void navigateToRelay() { coordinator.navigateToRelay(); }
     @Override public void shareCrashLog() { coordinator.shareLatestCrashLog(this); }
 
     // ── TerminalHost ─────────────────────────────────────────────
 
     @Override public void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment) { coordinator.startTerminalInFragment(this, args, fragment); }
+    @Override public void detachTerminalFragment(TerminalFragment fragment) { coordinator.detachTerminalFragment(fragment); }
 
     // ── RelayHost ─────────────────────────────────────────────────
 

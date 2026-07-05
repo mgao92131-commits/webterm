@@ -142,17 +142,28 @@ func (p *TerminalTitleProvider) PopTitle() {
 
 // AnsiText 重建完整 ANSI 文本（SGR 样式 + 光标定位）。
 func (s *Screen) AnsiText() string {
+	return s.AnsiTextWithScrollbackLimit(0)
+}
+
+// AnsiTextWithScrollbackLimit 与 AnsiText 类似，但最多只包含最近的 maxScrollback 行
+// scrollback。maxScrollback <= 0 时表示不限制。
+func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 	s.mu.Lock()
 	rows := s.Terminal.Rows()
 	cols := s.Terminal.Cols()
 	scrollbackLen := s.Terminal.ScrollbackLen()
+	startLine := 0
+	if maxScrollback > 0 && scrollbackLen > maxScrollback {
+		startLine = scrollbackLen - maxScrollback
+		scrollbackLen = maxScrollback
+	}
 
 	totalRows := scrollbackLen + rows
 	cells := make([][]headlessterm.Cell, totalRows)
 	wrapped := make([]bool, totalRows)
 
 	for r := 0; r < scrollbackLen; r++ {
-		historyLine := s.Terminal.ScrollbackLine(r)
+		historyLine := s.Terminal.ScrollbackLine(startLine + r)
 		cells[r] = make([]headlessterm.Cell, cols)
 		for c := 0; c < cols; c++ {
 			if c < len(historyLine) {

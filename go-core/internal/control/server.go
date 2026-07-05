@@ -28,6 +28,12 @@ type RuntimeController interface {
 	Stop(context.Context) error
 }
 
+const (
+	controlReadTimeout        = 30 * time.Second
+	controlIdleTimeout        = 120 * time.Second
+	controlMaxRequestBodySize = 1 << 20 // 1 MiB
+)
+
 func New(addr string, app *app.App) *Server {
 	return NewWithConfigPath(addr, app, "")
 }
@@ -53,6 +59,9 @@ func NewWithRuntime(addr string, app *app.App, configPath string, runtime Runtim
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       controlReadTimeout,
+		IdleTimeout:       controlIdleTimeout,
+		MaxHeaderBytes:    1 << 20,
 	}
 	return control
 }
@@ -98,7 +107,7 @@ func (control *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, control.app.Config().Redacted())
 	case http.MethodPut:
 		var next config.Config
-		if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, controlMaxRequestBodySize)).Decode(&next); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}

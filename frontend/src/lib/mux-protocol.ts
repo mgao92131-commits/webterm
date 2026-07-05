@@ -1,10 +1,13 @@
-export const MUX_SUBPROTOCOL = 'webterm.mux.v1';
-export const JSON_SUBPROTOCOL = 'webterm.json.v1';
-export const BINARY_SUBPROTOCOL = 'webterm.binary.v1';
+import {
+  MUX_SUBPROTOCOL,
+  BINARY_SUBPROTOCOL,
+  JSON_SUBPROTOCOL,
+  MSG_TYPE_WS_DATA,
+  WS_DATA_TEXT,
+  WS_DATA_BINARY,
+} from '@shared/constants.js';
 
-export const MSG_TYPE_WS_DATA = 0x01;
-export const WS_DATA_TEXT = 0x01;
-export const WS_DATA_BINARY = 0x02;
+export { MUX_SUBPROTOCOL, BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL, MSG_TYPE_WS_DATA, WS_DATA_TEXT, WS_DATA_BINARY };
 
 export interface TunnelFrame {
   msgType: number;

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/application"
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
 )
@@ -18,6 +20,7 @@ import (
 type StreamMultiplexer struct {
 	router  *application.SessionRouter
 	writer  frameWriter
+	logger  *logs.Logger
 	mu      sync.Mutex
 	streams map[string]*relayStreamSocket
 }
@@ -27,10 +30,11 @@ type relayStreamMessage struct {
 	payload     []byte
 }
 
-func NewStreamMultiplexer(router *application.SessionRouter, writer frameWriter) *StreamMultiplexer {
+func NewStreamMultiplexer(router *application.SessionRouter, writer frameWriter, logger *logs.Logger) *StreamMultiplexer {
 	return &StreamMultiplexer{
 		router:  router,
 		writer:  writer,
+		logger:  logger,
 		streams: make(map[string]*relayStreamSocket),
 	}
 }
@@ -42,7 +46,7 @@ func (m *StreamMultiplexer) OpenStream(ctx context.Context, conn *websocket.Conn
 		m.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte("invalid stream route")))
 		return
 	}
-	socket := newRelayStreamSocket(frame.StreamID, route.Subprotocol, m, conn)
+	socket := newRelayStreamSocket(frame.StreamID, route.Subprotocol, m, conn, m.logger)
 	start, err := m.router.RouteOpen(ctx, socket, route.Path, []string{route.Subprotocol})
 	if err != nil {
 		m.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte(err.Error())))
@@ -88,9 +92,10 @@ type relayStreamSocket struct {
 	incoming chan relayStreamMessage
 	done     chan struct{}
 	once     sync.Once
+	logger   *logs.Logger
 }
 
-func newRelayStreamSocket(id string, protocolName string, mux *StreamMultiplexer, conn *websocket.Conn) *relayStreamSocket {
+func newRelayStreamSocket(id string, protocolName string, mux *StreamMultiplexer, conn *websocket.Conn, logger *logs.Logger) *relayStreamSocket {
 	return &relayStreamSocket{
 		id:       id,
 		protocol: protocolName,
@@ -98,6 +103,7 @@ func newRelayStreamSocket(id string, protocolName string, mux *StreamMultiplexer
 		conn:     conn,
 		incoming: make(chan relayStreamMessage, 256),
 		done:     make(chan struct{}),
+		logger:   logger,
 	}
 }
 
@@ -153,6 +159,9 @@ func (s *relayStreamSocket) Emit(payload []byte, binary bool) bool {
 	case s.incoming <- relayStreamMessage{messageType: messageType, payload: payload}:
 		return true
 	default:
+		if s.logger != nil {
+			s.logger.Add("warn", "relay", fmt.Sprintf("relay stream socket incoming buffer full, closing id=%s", s.id))
+		}
 		_ = s.Close()
 		return false
 	}

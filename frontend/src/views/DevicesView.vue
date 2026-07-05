@@ -42,7 +42,7 @@
           <div class="flex gap-2">
             <button
               :disabled="creating || !newDeviceName.trim()"
-              @click="createDevice"
+              @click="handleCreateDevice"
               class="px-3 py-1.5 text-[12px] font-medium rounded-sm bg-accent hover:bg-accent-hover disabled:opacity-40 text-black transition-colors"
             >
               {{ creating ? '生成中...' : '生成 secret' }}
@@ -162,7 +162,7 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ArrowLeft, Plus, AlertTriangle, Copy, Trash2, Monitor, Globe } from '@lucide/vue';
-import { getDevices, registerDevice, deleteDevice } from '../api/devices';
+import { fetchDevices, createDevice, removeDevice } from '../services/device.service';
 import { getTrustedDevices, deleteTrustedDevice } from '../api/auth';
 
 const router = useRouter();
@@ -197,7 +197,7 @@ async function refreshAll() {
 
 async function refreshAgentDevices() {
   try {
-    const data = await getDevices();
+    const data = await fetchDevices();
     agentDevices.value = data;
   } catch (err: any) {
     // direct 模式没有 /api/devices 端点，静默处理
@@ -219,11 +219,11 @@ async function refreshTrustedDevices() {
   }
 }
 
-async function createDevice() {
+async function handleCreateDevice() {
   if (!newDeviceName.value.trim() || creating.value) return;
   creating.value = true;
   try {
-    const res = await registerDevice(newDeviceName.value.trim());
+    const res = await createDevice(newDeviceName.value.trim());
     newSecret.value = res.agentSecret;
     copied.value = false;
     showAddForm.value = false;
@@ -279,7 +279,7 @@ function dismissSecret() {
 async function deleteAgentDevice(d: AgentDevice) {
   if (!confirm(`确定要删除设备 "${d.deviceName}" 吗？\n该设备的 PC Agent 将无法再连接中转服务器。`)) return;
   try {
-    await deleteDevice(d.deviceId);
+    await removeDevice(d.deviceId);
     await refreshAgentDevices();
   } catch (err: any) {
     loadError.value = err.message || '删除设备失败';

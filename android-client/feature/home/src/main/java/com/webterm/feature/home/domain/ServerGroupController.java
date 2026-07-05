@@ -10,6 +10,7 @@ import android.widget.TextView;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.feature.home.SessionRowActions;
 import com.webterm.feature.home.SessionRowHelper;
@@ -89,7 +90,7 @@ public final class ServerGroupController {
                 @Override
                 public void onMonitorSessions(JSONArray sessions) {
                     if (!listener.isActive(ServerGroupController.this)) return;
-                    lastSessions = filterSessionsForCurrentServer(sessions);
+                    lastSessions = normalizeSessions(filterSessionsForCurrentServer(sessions));
                     activity.runOnUiThread(() -> listener.onRenderSessions(server, lastSessions, subList));
                 }
 
@@ -135,6 +136,12 @@ public final class ServerGroupController {
 
     void attachStatus(StatusIndicatorView status) {
         this.status = status;
+        if (status == null) return;
+        if (monitor != null && monitor.isConnected()) {
+            markReady();
+        } else if (monitor != null && monitor.isEnabled()) {
+            markPending();
+        }
     }
 
     StatusIndicatorView status() {
@@ -159,7 +166,7 @@ public final class ServerGroupController {
     }
 
     void setLastSessions(JSONArray sessions) {
-        lastSessions = filterSessionsForCurrentServer(sessions);
+        lastSessions = normalizeSessions(sessions);
     }
 
     private JSONArray filterSessionsForCurrentServer(JSONArray sessions) {
@@ -183,22 +190,55 @@ public final class ServerGroupController {
         return TerminalCacheScope.matches(server, server.getUrl(), sessionId);
     }
 
+    private String normalizeSessionId(String sessionId) {
+        return RelayMuxSessionManager.localSessionId(sessionId, server.getDeviceId());
+    }
+
+    private JSONObject normalizeSession(JSONObject session) {
+        if (session == null) return null;
+        String id = session.optString("id");
+        String normalizedId = normalizeSessionId(id);
+        if (normalizedId.equals(id)) return session;
+        try {
+            JSONObject copy = new JSONObject(session.toString());
+            copy.put("id", normalizedId);
+            return copy;
+        } catch (JSONException e) {
+            return session;
+        }
+    }
+
+    private JSONArray normalizeSessions(JSONArray sessions) {
+        JSONArray normalized = new JSONArray();
+        if (sessions == null) return normalized;
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject session = sessions.optJSONObject(i);
+            if (session == null) continue;
+            JSONObject normalizedSession = normalizeSession(session);
+            if (normalizedSession != null) {
+                normalized.put(normalizedSession);
+            }
+        }
+        return normalized;
+    }
+
     private void upsertLocalSession(JSONObject newData) {
         if (lastSessions == null) {
             lastSessions = new JSONArray();
         }
-        String id = newData.optString("id");
-        if (id == null) return;
+        final JSONObject normalizedData = normalizeSession(newData);
+        final String id = normalizedData.optString("id");
+        if (id.isEmpty()) return;
 
         JSONObject oldSessionForCwd = null;
-        String newCwd = normalizedCwd(newData);
+        String newCwd = normalizedCwd(normalizedData);
         boolean found = false;
         for (int i = 0; i < lastSessions.length(); i++) {
             JSONObject session = lastSessions.optJSONObject(i);
             if (session != null && id.equals(session.optString("id"))) {
                 oldSessionForCwd = session;
                 try {
-                    lastSessions.put(i, newData);
+                    lastSessions.put(i, normalizedData);
                 } catch (JSONException ignored) {
                 }
                 found = true;
@@ -206,14 +246,14 @@ public final class ServerGroupController {
             }
         }
         if (!found) {
-            lastSessions.put(newData);
+            lastSessions.put(normalizedData);
         }
         final boolean insertedNew = !found;
-        final boolean cwdChanged = shouldRerenderForCwd(oldSessionForCwd, newData);
+        final boolean cwdChanged = shouldRerenderForCwd(oldSessionForCwd, normalizedData);
 
-        final String rawTermTitle = newData.optString("termTitle", "").trim();
+        final String rawTermTitle = normalizedData.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
-        final String nameText = newData.optString("name", "").trim();
+        final String nameText = normalizedData.optString("name", "").trim();
         Log.i(TAG, "TitleTrace upsert row id=" + id + " termTitle=" + termTitle + " name=" + nameText + " active=" + listener.isActive(this));
         if (cwdChanged) {
             listener.onSessionCwdChanged(server, id, newCwd);
@@ -226,7 +266,7 @@ public final class ServerGroupController {
             View rowView = activity.findViewById(android.R.id.content).findViewWithTag(id);
             if (rowView != null) {
                 if (activity instanceof SessionRowActions) {
-                    SessionRowHelper.updateSessionRow((SessionRowActions) activity, rowView, newData, server);
+                    SessionRowHelper.updateSessionRow((SessionRowActions) activity, rowView, normalizedData, server);
                 }
             } else if (insertedNew && listener.isRenderActive(this)) {
                 listener.onRenderSessions(server, lastSessions, subList);
@@ -246,6 +286,7 @@ public final class ServerGroupController {
     }
 
     private void removeLocalSession(String id) {
+        id = normalizeSessionId(id);
         listener.onSessionClosed(server.getUrl(), id);
         if (lastSessions == null) return;
         JSONArray nextSessions = new JSONArray();

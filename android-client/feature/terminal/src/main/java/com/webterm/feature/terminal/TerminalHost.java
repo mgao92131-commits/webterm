@@ -9,4 +9,9 @@ public interface TerminalHost {
      * Start a terminal session within the given fragment.
      */
     void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment);
+
+    /**
+     * Detach the fragment view from the terminal runtime without closing the runtime.
+     */
+    void detachTerminalFragment(TerminalFragment fragment);
 }

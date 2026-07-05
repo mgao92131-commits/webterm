@@ -52,6 +52,7 @@ func (gateway *WSGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(webSocketReadLimit)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	route := relaycore.StreamRoute{

@@ -1,10 +1,12 @@
-const MSG_INPUT = 0x01;
-const MSG_OUTPUT = 0x02;
-const MSG_RESIZE = 0x03;
-const MSG_HELLO = 0x04;
-const MSG_INFO = 0x05;
-const MSG_EXIT = 0x06;
-const MSG_STATE = 0x0a;
+import {
+  MSG_INPUT,
+  MSG_OUTPUT,
+  MSG_RESIZE,
+  MSG_HELLO,
+  MSG_INFO,
+  MSG_EXIT,
+  MSG_STATE,
+} from '@shared/constants.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

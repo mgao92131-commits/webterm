@@ -209,6 +209,44 @@ public final class TerminalLifecycleController {
         terminalState.clearServerSession();
     }
 
+    public void detachTerminalView() {
+        hideKeyboard();
+        cacheCurrentTerminal();
+        connectionStatus.clear();
+        terminalView = null;
+        terminalRoot = null;
+        terminalViewport = null;
+        quickBar = null;
+        ctrlButton = null;
+        terminalTitle = null;
+        terminalSubtitle = null;
+        terminalAttachStarted = false;
+    }
+
+    public void disposeTerminal(String reason) {
+        hideKeyboard();
+        closed.set(true);
+        closeTerminalConnection(reason);
+        if (terminalSession != null) {
+            terminalSession.finishIfRunning();
+        }
+        terminalSession = null;
+        terminalView = null;
+        connectionStatus.clear();
+        terminalTitle = null;
+        terminalSubtitle = null;
+        terminalRoot = null;
+        terminalViewport = null;
+        quickBar = null;
+        ctrlButton = null;
+        activeSessionClient = null;
+        terminalAttachStarted = false;
+        ctrlDown = false;
+        terminalState.clearTerminalDetails();
+        if (titleSynchronizer != null) titleSynchronizer.reset();
+        terminalState.clearServerSession();
+    }
+
     public void pauseCurrentConnection() {
         cacheCurrentTerminal();
         closeTerminalConnection("activity paused");
@@ -335,7 +373,13 @@ public final class TerminalLifecycleController {
         terminalView.requestFocus();
         terminalView.updateSize();
         host.updateKeyboardAvoidance();
-        connectTerminal();
+        if (terminalConnection != null && terminalConnection.isConnected()) {
+            terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
+            connectionStatus.update(terminalConnection.getState(),
+                terminalConnection.getReconnectAttempts(), terminalConnection.isP2PConnected());
+        } else {
+            connectTerminal();
+        }
     }
 
     private void closeTerminalConnection(String reason) {

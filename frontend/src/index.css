@@ -9,6 +9,9 @@
   --quickbar-height: 54px;
   --keyboard-offset: 0px;
   --keyboard-scroll-space: 0px;
+  --keyboard-toolbar-bottom: 0px;
+  --keyboard-toolbar-offset: 0px;
+  --terminal-content-shift: 0px;
   --terminal-keyboard-shift: 0px;
 
   /* App chrome */
@@ -94,7 +97,6 @@ body.terminal-mode {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  transform: translateY(calc(-1 * var(--terminal-keyboard-shift, 0px)));
 }
 
 .terminal-page::-webkit-scrollbar { display: none; width: 0; height: 0; }
@@ -111,6 +113,8 @@ body.terminal-mode {
 
 #terminal-container {
   touch-action: none;
+  margin-bottom: var(--quickbar-height);
+  transform: translateY(calc(-1 * var(--terminal-content-shift, 0px)));
 }
 
 #terminal .xterm-viewport {
@@ -162,8 +166,10 @@ body.terminal-mode {
 }
 
 .quickbar {
-  position: sticky;
-  bottom: 0;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--keyboard-toolbar-bottom, 0px);
   z-index: 20;
 }
 

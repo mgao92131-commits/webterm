@@ -23,7 +23,9 @@ func OpenSessionOrManager(
 // MuxServeAdapter 将 mux.Serve 适配为 application.MuxServeFunc，
 // 避免 application → mux 的循环依赖。
 func MuxServeAdapter(conn session.Socket, opts *application.MuxServeOpts) application.MuxSession {
-	muxOpts := &ServeOpts{}
+	muxOpts := &ServeOpts{
+		Logger: opts.Logger,
+	}
 	if opts.OnOpen != nil {
 		muxOpts.OnOpen = func(ctx context.Context, vs *VirtualSocket, p string, protos []string) (func(), error) {
 			return opts.OnOpen(ctx, vs, p, protos)

@@ -18,6 +18,9 @@ import (
 const (
 	DefaultCols = 100
 	DefaultRows = 30
+
+	// StateBytes 重建 ANSI 文本时最多包含的 scrollback 行数，避免重连时全量复制 10k 行。
+	maxStateScrollbackLines = 1000
 )
 
 type TerminalOptions struct {
@@ -31,25 +34,28 @@ type TerminalOptions struct {
 }
 
 type TerminalSession struct {
-	mu             sync.RWMutex
-	id             string
-	instance       string
-	name           string
-	termTitle      string
-	cwd            string
-	liveCwd        string
-	command        string
-	status         string
-	cols           int
-	rows           int
-	createdAt      time.Time
-	activeAt       time.Time
-	ring           *EventRing
-	screen         *ScreenState
-	process        *pty.Process
-	clients        map[*Client]struct{}
-	onTitleChanged func()
-	titleChanged   bool
+	mu              sync.RWMutex
+	id              string
+	instance        string
+	name            string
+	termTitle       string
+	cwd             string
+	liveCwd         string
+	command         string
+	status          string
+	cols            int
+	rows            int
+	createdAt       time.Time
+	activeAt        time.Time
+	ring            *EventRing
+	screen          *ScreenState
+	process         *pty.Process
+	clients         map[*Client]struct{}
+	onTitleChanged  func()
+	titleChanged    bool
+	stateCache      []byte
+	stateCacheValid bool
+	stateCacheGen   uint64
 }
 
 func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
@@ -108,6 +114,12 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	go terminal.readLoop()
 	go terminal.waitLoop()
 	return terminal, nil
+}
+
+func (terminal *TerminalSession) ID() string {
+	terminal.mu.RLock()
+	defer terminal.mu.RUnlock()
+	return terminal.id
 }
 
 func (terminal *TerminalSession) Info() Info {
@@ -226,6 +238,7 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 		terminal.process.Resize(cols, rows)
 	}
 	terminal.touchLocked()
+	terminal.invalidateStateCache()
 	terminal.mu.Unlock()
 	return nil
 }
@@ -295,11 +308,19 @@ func (terminal *TerminalSession) terminalModes() []byte {
 
 func (terminal *TerminalSession) StateBytes() []byte {
 	terminal.mu.RLock()
+	cache := terminal.stateCache
+	valid := terminal.stateCacheValid
+	gen := terminal.stateCacheGen
 	screen := terminal.screen
+	terminal.mu.RUnlock()
+	if valid {
+		return append([]byte(nil), cache...)
+	}
+
+	var out []byte
 	if screen != nil {
-		terminal.mu.RUnlock()
-		text := screen.AnsiText()
-		out := []byte("\x1b[3J\x1b[2J\x1b[H")
+		text := screen.AnsiTextWithScrollbackLimit(maxStateScrollbackLines)
+		out = []byte("\x1b[3J\x1b[2J\x1b[H")
 		if text != "" {
 			out = append(out, []byte(text)...)
 		}
@@ -307,25 +328,33 @@ func (terminal *TerminalSession) StateBytes() []byte {
 		if modes := terminal.terminalModes(); len(modes) > 0 {
 			out = append(out, modes...)
 		}
-		return out
-	}
-	frames := terminal.ring.After(0)
-	terminal.mu.RUnlock()
-	const maxBytes = 256 * 1024
-	total := 0
-	var selected []EventFrame
-	for i := len(frames) - 1; i >= 0; i-- {
-		if total+len(frames[i].Bytes) > maxBytes && len(selected) > 0 {
-			break
+	} else {
+		terminal.mu.RLock()
+		frames := terminal.ring.After(0)
+		terminal.mu.RUnlock()
+		const maxBytes = 256 * 1024
+		total := 0
+		var selected []EventFrame
+		for i := len(frames) - 1; i >= 0; i-- {
+			if total+len(frames[i].Bytes) > maxBytes && len(selected) > 0 {
+				break
+			}
+			selected = append(selected, frames[i])
+			total += len(frames[i].Bytes)
 		}
-		selected = append(selected, frames[i])
-		total += len(frames[i].Bytes)
+		reverse(selected)
+		out = []byte("\x1b[3J\x1b[2J\x1b[H")
+		for _, frame := range selected {
+			out = append(out, frame.Bytes...)
+		}
 	}
-	reverse(selected)
-	out := []byte("\x1b[3J\x1b[2J\x1b[H")
-	for _, frame := range selected {
-		out = append(out, frame.Bytes...)
+
+	terminal.mu.Lock()
+	if terminal.stateCacheGen == gen {
+		terminal.stateCache = append([]byte(nil), out...)
+		terminal.stateCacheValid = true
 	}
+	terminal.mu.Unlock()
 	return out
 }
 
@@ -386,7 +415,15 @@ func (terminal *TerminalSession) pushOutputLocked(data []byte) EventFrame {
 		}
 	}
 	terminal.touchLocked()
+	terminal.invalidateStateCache()
 	return terminal.ring.Push(data)
+}
+
+// invalidateStateCache 必须在 terminal.mu 锁内调用。
+func (terminal *TerminalSession) invalidateStateCache() {
+	terminal.stateCacheValid = false
+	terminal.stateCache = nil
+	terminal.stateCacheGen++
 }
 
 func (terminal *TerminalSession) markClosed() {

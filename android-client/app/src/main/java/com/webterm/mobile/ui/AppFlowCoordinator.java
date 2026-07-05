@@ -7,10 +7,10 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.view.View;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.termux.terminal.TerminalSession;
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
 import com.webterm.core.api.WebTermApi;
@@ -21,59 +21,38 @@ import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
-import com.webterm.feature.home.domain.HomeServerCoordinator;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
-import com.webterm.feature.terminal.domain.TerminalClipboardController;
 import com.webterm.feature.terminal.domain.TerminalConnection;
-import com.webterm.feature.terminal.domain.TerminalLifecycleController;
-import com.webterm.feature.terminal.domain.TerminalRuntimeState;
-import com.webterm.feature.terminal.domain.TerminalTitleSynchronizer;
+import com.webterm.feature.terminal.domain.TerminalRuntime;
+import com.webterm.feature.terminal.domain.TerminalRuntimeRegistry;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
+import com.webterm.feature.home.DeviceSessionsFragment;
 import com.webterm.feature.home.HomeFragment;
-import com.webterm.feature.home.HomeScreenBuilder;
-import com.webterm.feature.home.SessionRecyclerAdapter;
-import com.webterm.ui.common.StatusIndicatorView;
 import com.webterm.feature.relay.RelayDevicesScreenBuilder;
 import com.webterm.feature.relay.RelayLoginScreenBuilder;
 import com.webterm.feature.relay.RelayUiState;
-import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalFragment;
 import com.webterm.feature.terminal.TerminalViewModel;
 import com.webterm.terminal.ui.TerminalWindowInsetsController;
-import com.webterm.feature.terminal.WebTermTerminalSessionClient;
-import com.webterm.feature.terminal.WebTermTerminalViewClient;
 
 import androidx.fragment.app.Fragment;
 import androidx.navigation.NavController;
 
-import org.json.JSONObject;
-
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import okhttp3.OkHttpClient;
 
 import javax.inject.Inject;
-import javax.inject.Singleton;
 
 import dagger.hilt.android.scopes.ActivityScoped;
 
 @ActivityScoped
-public final class AppFlowCoordinator implements TerminalConnection.Listener,
-    WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host,
-    ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host,
-    TerminalLifecycleController.Host {
-
-    private static final long BACKGROUND_SERVER_DETACH_MS = 3 * 60 * 1000L;
-
-    private final AtomicBoolean mClosed = new AtomicBoolean(false);
-    private final TerminalRuntimeState mTerminalState = new TerminalRuntimeState();
-    private final TerminalConnectionStatusView mConnectionStatus = new TerminalConnectionStatusView();
+public final class AppFlowCoordinator implements
+    ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host {
 
     private final WebTermApi api;
     private final RelayMuxSessionRegistry relayMuxRegistry;
@@ -83,28 +62,17 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     private final Handler mainHandler;
     private final OkHttpClient http;
 
-    private final TerminalLifecycleController.Factory terminalLifecycleFactory;
-    private final HomeServerCoordinator.Factory homeServerFactory;
-    private final TerminalConnection.Factory terminalConnectionFactory;
-    private final TerminalClipboardController.Factory terminalClipboardFactory;
-    private final TerminalTitleSynchronizer.Factory terminalTitleFactory;
+    private final TerminalRuntime.Factory terminalRuntimeFactory;
     private final P2PConnectionManager p2pManager;
     private final RelayService mRelayService;
 
     private boolean mInForeground = true;
-    private TerminalConnection mTerminalConnection;
     private SessionCommandController mSessionCommands;
-    private TerminalTitleSynchronizer mTitleSynchronizer;
-    private HomeServerCoordinator mHomeCoordinator;
-    private TerminalClipboardController mClipboardController;
-    private WebTermTerminalSessionClient mTerminalSessionClient;
-    private TerminalLifecycleController mTerminalLifecycle;
+    private TerminalRuntimeRegistry mTerminalRuntimeRegistry;
+    private TerminalRuntime mTerminalRuntime;
 
-    private LinearLayout mSessionList;
-    private SessionRecyclerAdapter mSessionAdapter;
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
     private ServerConfig mSelectedServer;
-    private StatusIndicatorView mSelectedServerStatus;
 
     private int mImeOverlap;
     private RelayUiState mRelayUiState;
@@ -113,11 +81,6 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     private NavController mNavController;
     private HomeFragment mHomeFragment;
     private MainActivity mActivity;
-    private final Runnable mBackgroundServerDetach = () -> {
-        if (!mInForeground && mSelectedServer != null && mHomeCoordinator != null) {
-            mHomeCoordinator.detach();
-        }
-    };
 
     public enum ScreenMode {
         DEVICES,
@@ -136,11 +99,7 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         ServerConfigManager serverConfigs,
         Handler mainHandler,
         OkHttpClient http,
-        TerminalLifecycleController.Factory terminalLifecycleFactory,
-        HomeServerCoordinator.Factory homeServerFactory,
-        TerminalConnection.Factory terminalConnectionFactory,
-        TerminalClipboardController.Factory terminalClipboardFactory,
-        TerminalTitleSynchronizer.Factory terminalTitleFactory,
+        TerminalRuntime.Factory terminalRuntimeFactory,
         P2PConnectionManager p2pManager,
         RelayService relayService
     ) {
@@ -151,11 +110,7 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         this.serverConfigs = serverConfigs;
         this.mainHandler = mainHandler;
         this.http = http;
-        this.terminalLifecycleFactory = terminalLifecycleFactory;
-        this.homeServerFactory = homeServerFactory;
-        this.terminalConnectionFactory = terminalConnectionFactory;
-        this.terminalClipboardFactory = terminalClipboardFactory;
-        this.terminalTitleFactory = terminalTitleFactory;
+        this.terminalRuntimeFactory = terminalRuntimeFactory;
         this.p2pManager = p2pManager;
         this.mRelayService = relayService;
     }
@@ -172,10 +127,11 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             if (mRelayService != null) {
                 mRelayService.resetAndRefresh();
             }
-            if (mScreenMode == ScreenMode.TERMINAL && mTerminalLifecycle.hasSession() && mTerminalConnection != null) {
-                TerminalConnection.State s = mTerminalConnection.getState();
+            TerminalConnection connection = currentConnection();
+            if (mScreenMode == ScreenMode.TERMINAL && hasTerminalSession() && connection != null) {
+                TerminalConnection.State s = connection.getState();
                 if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
-                    mTerminalConnection.reconnectNow();
+                    connection.reconnectNow();
                 }
             }
         });
@@ -192,14 +148,11 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
                 removeCachedTerminal(baseUrl, sessionId);
             }
-            @Override
-            public void onSessionClosed(ServerConfig server, String sessionId) {
-                handleClosedSessionRow(server, sessionId);
-            }
+            @Override public void onSessionClosed(ServerConfig server, String sessionId) { }
             @Override
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
-        mTerminalConnection = terminalConnectionFactory.create(this);
+        mTerminalRuntimeRegistry = new TerminalRuntimeRegistry(mActivity, terminalRuntimeFactory, mSessionCommands);
         p2pManager.setListener(new P2PConnectionManager.Listener() {
             @Override public void onConnecting(String deviceId) { }
             @Override public void onConnected(String deviceId) {
@@ -210,53 +163,31 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             }
             @Override public void onError(String deviceId, String message) { }
         });
-        mTitleSynchronizer = terminalTitleFactory.create(() -> mTerminalConnection);
-        mClipboardController = terminalClipboardFactory.create(mActivity, this);
-        mTerminalSessionClient = new WebTermTerminalSessionClient(mActivity, this, mClipboardController, mTitleSynchronizer);
-        mTerminalLifecycle = terminalLifecycleFactory.create(
-            mActivity, this, mTerminalState, mClosed, mConnectionStatus,
-            mTerminalConnection, mTitleSynchronizer, mSessionCommands
-        );
-        mHomeCoordinator = homeServerFactory.create(mActivity, new HomeServerCoordinator.Listener() {
-            @Override public boolean isHomeActive() { return AppFlowCoordinator.this.isHomeActive(); }
-            @Override public boolean isServerContextActive(ServerConfig server) { return AppFlowCoordinator.this.isServerContextActive(server); }
-            @Override public void onAuthenticated(ServerConfig server) { saveServers(); }
-            @Override public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
-                removeCachedTerminal(baseUrl, sessionId);
-            }
-            @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
-                updateCurrentSessionCwd(server, sessionId, cwd);
-            }
-            @Override
-            public void onRemoveMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
-                removeMissingCachedSessionsForServer(server, liveSessionIdentities);
-            }
-        });
         loadServersFromPrefs();
-
-        mRelayService.start();
     }
 
     public void onResume() {
         mInForeground = true;
-        cancelBackgroundServerDetach();
 
-        if (mHomeFragment == null) {
-            mHomeFragment = findHomeFragment();
+        mHomeFragment = findHomeFragment();
+
+        // 回到前台时，如果在主页列表，自动重新开启/拉取中转设备
+        if (!hasTerminalSession() && mScreenMode == ScreenMode.DEVICES) {
+            mRelayService.start();
         }
 
-        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal() && mTerminalConnection != null) {
-            TerminalConnection.State s = mTerminalConnection.getState();
+        // 主动同步一次最新的中转设备数据到列表上
+        if (mHomeFragment != null) {
+            mHomeFragment.refreshDevices();
+        }
+
+        TerminalConnection connection = currentConnection();
+        if (hasTerminalSession() && hasActiveTerminal() && connection != null) {
+            TerminalConnection.State s = connection.getState();
             if (s == TerminalConnection.State.RECONNECTING) {
-                mClosed.set(false);
-                mTerminalConnection.reconnectNow();
+                connection.reconnectNow();
             } else if (s == TerminalConnection.State.DISCONNECTED) {
-                mClosed.set(false);
-                mTerminalLifecycle.connectTerminal();
-            }
-        } else if (!mTerminalLifecycle.hasSession() && hasHomeList()) {
-            if (mScreenMode == ScreenMode.DEVICE_SESSIONS) {
-                loadSelectedDeviceSessions();
+                mTerminalRuntime.connectTerminal();
             }
         }
         mNetworkRecoveryController.register();
@@ -265,53 +196,35 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     public void onPause() {
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
-        if (!mTerminalLifecycle.hasSession()) {
-            if (mScreenMode == ScreenMode.DEVICE_SESSIONS && mHomeCoordinator != null) mHomeCoordinator.pauseUi();
+        if (!hasTerminalSession()) {
             mRelayService.stop();
         } else {
-            mTerminalLifecycle.pauseCurrentConnection();
+            if (mTerminalRuntimeRegistry != null) mTerminalRuntimeRegistry.pauseAllForBackground();
         }
-        scheduleBackgroundServerDetach();
     }
 
     public void onDestroy() {
-        mClosed.set(true);
         mainHandler.removeCallbacksAndMessages(null);
         mRelayService.stop();
-        if (mHomeCoordinator != null) mHomeCoordinator.destroy();
-        if (mTerminalLifecycle.hasSession() && mTerminalLifecycle.hasActiveTerminal()) {
-            mTerminalLifecycle.closeTerminal(false);
-        }
-        if (mTerminalConnection != null) mTerminalConnection.close("activity closed");
+        if (mTerminalRuntimeRegistry != null) mTerminalRuntimeRegistry.shutdown();
         if (p2pManager != null) p2pManager.disconnect();
-        if (mTerminalLifecycle.terminalSession() != null) mTerminalLifecycle.terminalSession().finishIfRunning();
-        terminalCache.shutdown(mTerminalLifecycle.terminalSession());
+        terminalCache.shutdown(null);
         relayMuxRegistry.shutdown();
         http.dispatcher().cancelAll();
     }
 
     public boolean onBackPressed() {
-        if (mTerminalLifecycle.hasSession()) {
-            if (mNavController != null) {
-                mNavController.popBackStack(R.id.homeFragment, false);
-            }
-            final ServerConfig server = mSelectedServer;
-            mainHandler.post(() -> {
-                if (mHomeFragment == null) mHomeFragment = findHomeFragment();
-                if (mHomeFragment != null && server != null) {
-                    mHomeFragment.showDeviceSessions(server);
-                } else if (mHomeFragment != null) {
-                    mHomeFragment.showHomeScreen();
-                }
-            });
+        int destinationId = currentDestinationId();
+        if (destinationId == R.id.terminalFragment) {
+            detachCurrentTerminalView();
+            if (mNavController != null) mNavController.popBackStack();
+            mScreenMode = mSelectedServer != null ? ScreenMode.DEVICE_SESSIONS : ScreenMode.DEVICES;
             return true;
         }
-        if (mHomeFragment != null && mHomeFragment.isShowingDeviceSessions()) {
-            mHomeFragment.showHomeScreen();
+        if (destinationId == R.id.deviceSessionsFragment) {
+            if (mNavController != null) mNavController.popBackStack(R.id.homeFragment, false);
             mScreenMode = ScreenMode.DEVICES;
             mSelectedServer = null;
-            mSelectedServerStatus = null;
-            mSessionAdapter = null;
             return true;
         }
         if (mScreenMode == ScreenMode.RELAY_LOGIN || mScreenMode == ScreenMode.RELAY_DEVICES) {
@@ -330,27 +243,17 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     public WebTermApi getApi() { return api; }
     public Handler getMainHandler() { return mainHandler; }
     public P2PConnectionManager getP2PManager() { return p2pManager; }
-    public TerminalLifecycleController getTerminalLifecycle() { return mTerminalLifecycle; }
-    public HomeServerCoordinator getHomeCoordinator() { return mHomeCoordinator; }
     public SessionCommandController getSessionCommands() { return mSessionCommands; }
     public RelayMuxSessionRegistry getRelayMuxRegistry() { return relayMuxRegistry; }
     public TerminalCacheCoordinator getTerminalCache() { return terminalCache; }
-    public TerminalConnection getTerminalConnection() { return mTerminalConnection; }
+    public TerminalConnection getTerminalConnection() { return currentConnection(); }
     public OkHttpClient getHttpClient() { return http; }
-    public LinearLayout getSessionList() { return mSessionList; }
-    public void setSessionList(LinearLayout list) { mSessionList = list; }
     public void setHomeSubtitle(TextView subtitle) { mHomeSubtitle = subtitle; }
     public ServerConfig getSelectedServer() { return mSelectedServer; }
     public void setSelectedServer(ServerConfig server) { mSelectedServer = server; }
-    public StatusIndicatorView getSelectedServerStatus() { return mSelectedServerStatus; }
-    public void setSelectedServerStatus(StatusIndicatorView status) { mSelectedServerStatus = status; }
-    public SessionRecyclerAdapter getSessionAdapter() { return mSessionAdapter; }
-    public void setSessionAdapter(SessionRecyclerAdapter adapter) { mSessionAdapter = adapter; }
     public ScreenMode getScreenMode() { return mScreenMode; }
     public void setScreenMode(ScreenMode mode) { mScreenMode = mode; }
     public boolean isInForeground() { return mInForeground; }
-    public AtomicBoolean getClosed() { return mClosed; }
-    public TerminalRuntimeState getTerminalState() { return mTerminalState; }
     public NetworkRecoveryController getNetworkRecoveryController() { return mNetworkRecoveryController; }
 
     // ── Navigation methods ─────────────────────────────────────────
@@ -375,6 +278,16 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         }
     }
 
+    public void navigateToDeviceSessions(ServerConfig server) {
+        if (server == null) { navigateToHome(); return; }
+        detachCurrentTerminalView();
+        mScreenMode = ScreenMode.DEVICE_SESSIONS;
+        mSelectedServer = server;
+        if (mNavController != null) {
+            mNavController.navigate(R.id.deviceSessionsFragment, DeviceSessionsFragment.args(server));
+        }
+    }
+
     public void navigateToRelay() {
         if (mNavController != null) {
             mNavController.navigate(R.id.relayFragment);
@@ -385,6 +298,31 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         if (mNavController != null) {
             mNavController.popBackStack(R.id.homeFragment, false);
         }
+    }
+
+    private int currentDestinationId() {
+        if (mNavController == null || mNavController.getCurrentDestination() == null) return 0;
+        return mNavController.getCurrentDestination().getId();
+    }
+
+    private boolean hasTerminalSession() {
+        return mTerminalRuntime != null && mTerminalRuntime.hasSession();
+    }
+
+    private boolean hasActiveTerminal() {
+        return mTerminalRuntime != null && mTerminalRuntime.hasActiveTerminal();
+    }
+
+    private TerminalConnection currentConnection() {
+        return mTerminalRuntime == null ? null : mTerminalRuntime.connection();
+    }
+
+    private TerminalSession currentTerminalSession() {
+        return mTerminalRuntime == null ? null : mTerminalRuntime.terminalSession();
+    }
+
+    private void detachCurrentTerminalView() {
+        if (mTerminalRuntime != null) mTerminalRuntime.detachView();
     }
 
     // ── UI helpers ───────────────────────────────────────────────────
@@ -445,19 +383,10 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     }
 
     public void showSessionHome() {
-        mTerminalLifecycle.closeTerminal(false);
+        detachCurrentTerminalView();
         if (p2pManager != null) p2pManager.disconnect();
-        if (mHomeCoordinator != null) {
-            mHomeCoordinator.detach();
-            mHomeCoordinator.attachSessionAdapter(null);
-        }
-        mClosed.set(false);
-        mTerminalState.clearServerSession();
         mScreenMode = ScreenMode.DEVICES;
         mSelectedServer = null;
-        mSelectedServerStatus = null;
-        mSessionAdapter = null;
-        mSessionList = null;
 
         if (mNavController != null) {
             mNavController.popBackStack(R.id.homeFragment, false);
@@ -475,31 +404,7 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     }
 
     public void showDeviceSessions(Activity activity, ServerConfig server) {
-        if (server == null) { showSessionHome(); return; }
-        mTerminalLifecycle.closeTerminal(false);
-        mRelayService.stop();
-        mClosed.set(false);
-        mTerminalState.clearServerSession();
-        mScreenMode = ScreenMode.DEVICE_SESSIONS;
-        mSelectedServer = server;
-        startP2PIfRelayDevice(server.getUrl(), server.getCookie(), server.isRelayDevice(), server.getDeviceId());
-        mHomeSubtitle = null;
-        mSessionList = null;
-
-        if (mHomeFragment != null) {
-            mHomeFragment.showDeviceSessions(server);
-        }
-    }
-
-    private void loadSelectedDeviceSessions() {
-        if (mHomeCoordinator != null && mSelectedServer != null && mSelectedServerStatus != null) {
-            mHomeCoordinator.loadDeviceSessions(mSelectedServer, mSelectedServerStatus);
-        }
-    }
-
-    private void handleClosedSessionRow(ServerConfig server, String sessionId) {
-        if (mScreenMode != ScreenMode.DEVICE_SESSIONS || !isSelectedServer(server) || mSessionAdapter == null) return;
-        mSessionAdapter.removeSession(sessionId);
+        navigateToDeviceSessions(server);
     }
 
     private boolean isSelectedServer(ServerConfig server) {
@@ -513,37 +418,22 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         return serverUrl.equals(selectedUrl) && serverDeviceId.equals(selectedDeviceId);
     }
 
-    private boolean hasHomeList() {
-        return mScreenMode == ScreenMode.DEVICE_SESSIONS ? mSessionAdapter != null : mSessionList != null;
-    }
-
     private void showSessionListOrDeviceHome() {
+        if (currentDestinationId() == R.id.terminalFragment) {
+            detachCurrentTerminalView();
+            if (mNavController != null) mNavController.popBackStack();
+            mScreenMode = mSelectedServer != null ? ScreenMode.DEVICE_SESSIONS : ScreenMode.DEVICES;
+            return;
+        }
+        if (currentDestinationId() == R.id.deviceSessionsFragment) {
+            mScreenMode = ScreenMode.DEVICE_SESSIONS;
+            return;
+        }
         if (mSelectedServer != null) {
-            showDeviceSessions(mActivity, mSelectedServer);
+            navigateToDeviceSessions(mSelectedServer);
         } else {
             showSessionHome();
         }
-    }
-
-    private boolean isHomeActive() {
-        return mInForeground && !mClosed.get() && !mTerminalLifecycle.hasSession()
-            && mScreenMode == ScreenMode.DEVICE_SESSIONS && mSessionAdapter != null;
-    }
-
-    private boolean isServerContextActive(ServerConfig server) {
-        if (mClosed.get() || server == null || mSelectedServer == null) return false;
-        if (mScreenMode != ScreenMode.DEVICE_SESSIONS && mScreenMode != ScreenMode.TERMINAL) return false;
-        return isSelectedServer(server);
-    }
-
-    private void scheduleBackgroundServerDetach() {
-        if (mSelectedServer == null) return;
-        mainHandler.removeCallbacks(mBackgroundServerDetach);
-        mainHandler.postDelayed(mBackgroundServerDetach, BACKGROUND_SERVER_DETACH_MS);
-    }
-
-    private void cancelBackgroundServerDetach() {
-        mainHandler.removeCallbacks(mBackgroundServerDetach);
     }
 
     public void showAddServerDialog(Activity activity, final ServerConfig existingServer) {
@@ -602,15 +492,26 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             args.relayDevice, args.relayDeviceId, args.cwd, fragment);
     }
 
+    public void detachTerminalFragment(TerminalFragment fragment) {
+        detachCurrentTerminalView();
+    }
+
     public void startTerminalInFragment(Activity activity, String baseUrl, String cookie, String sessionId,
                                          String termTitle, String sessionName,
                                          String createdAt, String instanceId,
                                          boolean relayDevice, String relayDeviceId, String cwd,
                                          TerminalFragment fragment) {
-        if (mHomeCoordinator != null) mHomeCoordinator.pauseUi();
         mScreenMode = ScreenMode.TERMINAL;
+        TerminalViewModel.TerminalSessionArgs args = new TerminalViewModel.TerminalSessionArgs(
+            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            relayDevice, relayDeviceId, cwd
+        );
+        if (mTerminalRuntimeRegistry == null) {
+            mTerminalRuntimeRegistry = new TerminalRuntimeRegistry(activity, terminalRuntimeFactory, mSessionCommands);
+        }
+        mTerminalRuntime = mTerminalRuntimeRegistry.getOrCreate(args);
 
-        TerminalLifecycleController.Host fragmentHost = new TerminalLifecycleController.Host() {
+        TerminalRuntime.ViewHost fragmentHost = new TerminalRuntime.ViewHost() {
             @Override public int getSavedFontSize() { return configStore.getFontSize(); }
             @Override public String getSavedFontType() { return configStore.getFontType(); }
             @Override public Typeface getTypefaceByName(String type) { return AppFlowCoordinator.this.getTypefaceByName(type); }
@@ -625,22 +526,12 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             }
             @Override public void updateKeyboardAvoidance() {
                 TerminalWindowInsetsController.updateKeyboardAvoidance(activity,
-                    mTerminalLifecycle.terminalRoot(), mTerminalLifecycle.terminalViewport(),
-                    mTerminalLifecycle.quickBar(), mTerminalLifecycle.terminalView(), mImeOverlap);
+                    mTerminalRuntime.terminalRoot(), mTerminalRuntime.terminalViewport(),
+                    mTerminalRuntime.quickBar(), mTerminalRuntime.terminalView(), mImeOverlap);
             }
         };
 
-        TerminalLifecycleController fragController = terminalLifecycleFactory.create(
-            activity, fragmentHost, mTerminalState, mClosed, mConnectionStatus,
-            mTerminalConnection, mTitleSynchronizer, mSessionCommands
-        );
-        mTerminalLifecycle = fragController;
-
-        fragController.showTerminal(
-            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDeviceId, cwd,
-            this, mTerminalSessionClient,
-            this::showSessionListOrDeviceHome
-        );
+        mTerminalRuntime.attach(args, fragmentHost, this::showSessionListOrDeviceHome);
     }
 
     // ── HomeHost ─────────────────────────────────────────────────────
@@ -658,9 +549,14 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
 
     private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
         if (server == null || sessionId == null || sessionId.isEmpty()) return;
-        if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(mTerminalState.baseUrl()))) return;
-        if (!sameTerminalSessionId(sessionId, mTerminalState.sessionId(), server.getDeviceId())) return;
-        mTerminalState.setCwd(cwd);
+        if (mTerminalRuntime == null) return;
+        if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(mTerminalRuntime.state().baseUrl()))) return;
+        if (!sameTerminalSessionId(sessionId, mTerminalRuntime.state().sessionId(), server.getDeviceId())) return;
+        mTerminalRuntime.state().setCwd(cwd);
+    }
+
+    public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
+        updateCurrentSessionCwd(server, sessionId, cwd);
     }
 
     private static boolean sameTerminalSessionId(String a, String b, String deviceId) {
@@ -670,30 +566,13 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
             .equals(RelayMuxSessionManager.localSessionId(b, deviceId));
     }
 
-    private void startP2PIfRelayDevice(String baseUrl, String cookie, boolean relayDevice, String relayDeviceId) {
-        if (!relayDevice || relayDeviceId == null || relayDeviceId.isEmpty()) return;
-        if (p2pManager == null) return;
-        if (!configStore.isP2PEnabled()) return;
-        if (mSelectedServer != null
-            && relayDeviceId.equals(mSelectedServer.getDeviceId())
-            && !mSelectedServer.isP2PEnabled()) {
-            return;
-        }
-        p2pManager.connectToDevice(baseUrl, cookie, relayDeviceId);
-    }
+    // ── Terminal preferences ───────────────────────────────────────
 
-    // ── TerminalLifecycleController.Host ───────────────────────────
-
-    @Override
     public int getSavedFontSize() { return configStore.getFontSize(); }
-    @Override
     public String getSavedFontType() { return configStore.getFontType(); }
-    @Override
     public boolean isP2PEnabled() { return configStore.isP2PEnabled(); }
-    @Override
     public void saveP2PEnabled(boolean enabled) { configStore.saveP2PEnabled(enabled); }
 
-    @Override
     public Typeface getTypefaceByName(String type) {
         if ("sans-serif".equals(type)) return Typeface.SANS_SERIF;
         if ("serif".equals(type)) return Typeface.SERIF;
@@ -701,70 +580,11 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         return Typeface.MONOSPACE;
     }
 
-    @Override
-    public void installTerminalInsets(View root) {
-        TerminalWindowInsetsController.installRootInsets(mActivity, root, 0, 0, 0, 0, false, true, (imeOverlap) -> {
-            mImeOverlap = imeOverlap;
-            updateKeyboardAvoidance();
-        });
-    }
-
-    @Override
-    public void setContentRoot(View root) {
-        PageTransitionAnimator.animate(mActivity, root, PageTransitionAnimator.Transition.FORWARD);
-    }
-
-    @Override
     public void updateKeyboardAvoidance() {
+        if (mTerminalRuntime == null) return;
         TerminalWindowInsetsController.updateKeyboardAvoidance(mActivity,
-            mTerminalLifecycle.terminalRoot(), mTerminalLifecycle.terminalViewport(),
-            mTerminalLifecycle.quickBar(), mTerminalLifecycle.terminalView(), mImeOverlap);
-    }
-
-    // ── WebTermTerminalViewClient.Host ─────────────────────────────
-
-    @Override
-    public void onTerminalViewTapped() { mTerminalLifecycle.showKeyboard(); }
-    @Override
-    public boolean readTerminalControlKey() { return mTerminalLifecycle.readCtrlKey(); }
-    @Override
-    public void clearTerminalControlKey() { mTerminalLifecycle.setCtrlKey(false); }
-
-    // ── WebTermTerminalSessionClient.Host ──────────────────────────
-
-    @Override
-    public void onTerminalInput(String data) {
-        if (mTerminalConnection != null) mTerminalConnection.sendInput(data);
-    }
-    @Override
-    public void onTerminalResize(int columns, int rows) {
-        mTerminalLifecycle.onTerminalResize(columns, rows);
-    }
-    @Override
-    public void onTerminalTextChanged() { mTerminalLifecycle.onTerminalTextChanged(); }
-    @Override
-    public TextView terminalTitleView() { return mTerminalLifecycle.terminalTitleView(); }
-
-    // ── TerminalConnection.Listener ─────────────────────────────────
-
-    @Override
-    public void onConnectionStatus(TerminalConnection.State state, int reconnectAttempts) {
-        boolean isP2P = mTerminalConnection != null && mTerminalConnection.isP2PConnected();
-        if (mActivity != null) {
-            mActivity.runOnUiThread(() -> mConnectionStatus.update(state, reconnectAttempts, isP2P));
-        }
-    }
-    @Override
-    public void onOutput(long seq, byte[] data) { mTerminalLifecycle.onOutput(seq, data); }
-    @Override
-    public void onState(long seq, byte[] data) { mTerminalLifecycle.onState(seq, data); }
-    @Override
-    public void onInfo(JSONObject info) { mTerminalLifecycle.onInfo(info); }
-    @Override
-    public void onExit(int code) { mTerminalLifecycle.onExit(code); }
-    @Override
-    public void onProtocolError(String message) {
-        mTerminalLifecycle.appendOutput("\r\n[" + message + "]\r\n");
+            mTerminalRuntime.terminalRoot(), mTerminalRuntime.terminalViewport(),
+            mTerminalRuntime.quickBar(), mTerminalRuntime.terminalView(), mImeOverlap);
     }
 
     // ── SessionRowActions (not implemented by AppFlowCoordinator directly; handled via MainActivity) ──────────────────────────────────────────
@@ -773,7 +593,39 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         if (mSessionCommands != null) mSessionCommands.showRenameDialog(server, sessionId, oldName);
     }
     public void closeSession(ServerConfig server, String sessionId) {
-        if (mSessionCommands != null) mSessionCommands.showCloseConfirmDialog(server, sessionId);
+        closeSession(server, sessionId, null);
+    }
+
+    public void closeSession(ServerConfig server, String sessionId, Runnable onClosed) {
+        if (mSessionCommands != null) {
+            mSessionCommands.showCloseConfirmDialog(server, sessionId, () -> {
+                disposeRuntimeForSession(server, sessionId);
+                if (onClosed != null) onClosed.run();
+            });
+        }
+    }
+
+    public void createSession(ServerConfig server) {
+        if (mSessionCommands != null && server != null) mSessionCommands.createSessionOnServer(server);
+    }
+
+    public void removeServer(ServerConfig server) {
+        if (server == null) return;
+        if (mTerminalRuntimeRegistry != null) {
+            mTerminalRuntimeRegistry.disposeServer(server);
+            if (!mTerminalRuntimeRegistry.contains(mTerminalRuntime)) {
+                mTerminalRuntime = null;
+            }
+        }
+        removeCachedTerminalsForServer(server);
+        serverConfigs.remove(server);
+        saveServers();
+        if (server == mSelectedServer) {
+            mSelectedServer = null;
+            mScreenMode = ScreenMode.DEVICES;
+        }
+        mHomeFragment = findHomeFragment();
+        if (mHomeFragment != null) mHomeFragment.refreshDevices();
     }
 
     // ── ServerConfigDialogHelper.Host ──────────────────────────────
@@ -797,7 +649,7 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         serverConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
         saveServers();
         if (existingServer != null && existingServer == mSelectedServer) {
-            showDeviceSessions(mActivity, existingServer);
+            navigateToDeviceSessions(existingServer);
         } else {
             showSessionHome();
         }
@@ -807,8 +659,9 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
 
     @Override
     public void onRelayDevicesChanged() {
+        mHomeFragment = findHomeFragment();
         if (mHomeFragment != null) {
-            mHomeFragment.showHomeScreen();
+            mHomeFragment.refreshDevices();
         }
     }
     @Override
@@ -847,11 +700,11 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
     public void saveFontType(String type) { configStore.saveFontType(type); }
     @Override
     public void applyTerminalFontSize(int size) {
-        if (mTerminalLifecycle.terminalView() != null) mTerminalLifecycle.terminalView().setTextSize(size);
+        if (mTerminalRuntime != null) mTerminalRuntime.updateFontSize(size);
     }
     @Override
     public void applyTerminalTypeface(Typeface typeface) {
-        if (mTerminalLifecycle.terminalView() != null) mTerminalLifecycle.terminalView().setTypeface(typeface);
+        if (mTerminalRuntime != null) mTerminalRuntime.updateTypeface(typeface);
     }
 
     // ── Helpers ────────────────────────────────────────────────────
@@ -875,19 +728,31 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         shareLatestCrashLog(mActivity);
     }
 
-    private void removeCachedTerminal(String baseUrl, String sessionId) {
-        if (terminalCache.removeTerminal(baseUrl, sessionId, mTerminalState.baseUrl(), mTerminalState.sessionId(),
-            mTerminalLifecycle.terminalSession())) {
-            mTerminalState.clearPersistence();
+    public void removeCachedTerminal(String baseUrl, String sessionId) {
+        String currentBaseUrl = mTerminalRuntime == null ? null : mTerminalRuntime.state().baseUrl();
+        String currentSessionId = mTerminalRuntime == null ? null : mTerminalRuntime.state().sessionId();
+        if (terminalCache.removeTerminal(baseUrl, sessionId, currentBaseUrl, currentSessionId,
+            currentTerminalSession())) {
+            if (mTerminalRuntime != null) mTerminalRuntime.state().clearPersistence();
         }
     }
 
-    private void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
-        terminalCache.removeMissingForServer(server, liveSessionIdentities, mTerminalLifecycle.terminalSession());
+    public void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) {
+        terminalCache.removeMissingForServer(server, liveSessionIdentities, currentTerminalSession());
     }
 
     private void removeCachedTerminalsForServer(ServerConfig server) {
-        terminalCache.removeServer(server, mTerminalLifecycle.terminalSession());
+        terminalCache.removeServer(server, currentTerminalSession());
+    }
+
+    private void disposeRuntimeForSession(ServerConfig server, String sessionId) {
+        if (mTerminalRuntimeRegistry == null) return;
+        TerminalRuntime runtime = mTerminalRuntimeRegistry.find(server, sessionId);
+        if (runtime == null) return;
+        mTerminalRuntimeRegistry.dispose(runtime);
+        if (runtime == mTerminalRuntime) {
+            mTerminalRuntime = null;
+        }
     }
 
     // ── Fragment helpers ───────────────────────────────────────────
@@ -896,10 +761,10 @@ public final class AppFlowCoordinator implements TerminalConnection.Listener,
         if (mActivity == null) return null;
         Fragment f = mActivity.getSupportFragmentManager().findFragmentById(R.id.nav_host_fragment);
         if (f instanceof androidx.navigation.fragment.NavHostFragment) {
-            Fragment home = ((androidx.navigation.fragment.NavHostFragment) f).getChildFragmentManager()
-                .findFragmentById(R.id.homeFragment);
-            if (home instanceof HomeFragment) {
-                return (HomeFragment) home;
+            for (Fragment fragment : f.getChildFragmentManager().getFragments()) {
+                if (fragment instanceof HomeFragment) {
+                    return (HomeFragment) fragment;
+                }
             }
         }
         return null;

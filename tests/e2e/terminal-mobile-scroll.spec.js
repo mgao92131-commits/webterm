@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { openTerminal, sendDebugInput } from "./helpers.js";
+import { openTerminal, sendDebugInput, waitForLayoutSettle } from "./helpers.js";
 
 test("mobile terminal touch scrolls history and keyboard state creates page scroll room", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openTerminal(page);
+  await waitForLayoutSettle(page);
 
   const sparseBeforeKeyboard = await page.evaluate(() => ({
     rows: window.__webtermDebug.termState().rows,
@@ -33,6 +34,14 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
     const raw = getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift");
     return parseInt(raw, 10) || 0;
   })).toBe(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--keyboard-toolbar-offset");
+    return parseInt(raw, 10) || 0;
+  })).toBeGreaterThan(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const quickbarBottom = document.querySelector(".quickbar")?.getBoundingClientRect().bottom || 0;
+    return quickbarBottom;
+  })).toBeLessThanOrEqual(421);
   expect(await page.evaluate(() => window.__webtermDebug.termState().rows)).toBe(sparseBeforeKeyboard.rows);
   expect(await page.evaluate(() => window.__webtermDebug.layoutState().resizeMessageCount)).toBe(sparseBeforeKeyboard.resizeMessageCount);
 
@@ -52,6 +61,10 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
   });
   await expect.poll(async () => page.evaluate(() => {
     const raw = getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift");
+    return parseInt(raw, 10) || 0;
+  })).toBe(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--keyboard-toolbar-offset");
     return parseInt(raw, 10) || 0;
   })).toBe(0);
 
@@ -76,6 +89,7 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
 
   await expect.poll(async () => page.evaluate(() => window.__webtermDebug.scroll().viewportY)).toBeLessThan(before);
 
+  await waitForLayoutSettle(page);
   const beforeKeyboard = await page.evaluate(() => ({
     rows: window.__webtermDebug.termState().rows,
     resizeMessageCount: window.__webtermDebug.layoutState().resizeMessageCount,
@@ -118,7 +132,9 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
     const quickbar = document.querySelector(".quickbar");
     const quickbarRect = quickbar.getBoundingClientRect();
     const terminalRect = document.querySelector("#terminal-container").getBoundingClientRect();
-    const shift = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--terminal-keyboard-shift"), 10) || 0;
+    const styles = getComputedStyle(document.documentElement);
+    const shift = parseInt(styles.getPropertyValue("--terminal-keyboard-shift"), 10) || 0;
+    const toolbarOffset = parseInt(styles.getPropertyValue("--keyboard-toolbar-offset"), 10) || 0;
     return {
       pageClientHeight: pageEl.clientHeight,
       rows: window.__webtermDebug.termState().rows,
@@ -128,6 +144,7 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
       terminalBottom: terminalRect.bottom,
       terminalTop: terminalRect.top,
       shift,
+      toolbarOffset,
     };
   });
 
@@ -135,7 +152,7 @@ test("mobile terminal touch scrolls history and keyboard state creates page scro
   expect(keyboardLayout.lastResizeMessage.rows).toBe(beforeKeyboard.rows);
   expect(keyboardLayout.quickbarBottom).toBeLessThanOrEqual(421);
   expect(keyboardLayout.quickbarTop).toBeGreaterThan(300);
-  expect(Math.abs(keyboardLayout.quickbarTop - keyboardLayout.terminalBottom)).toBeLessThanOrEqual(1);
   expect(keyboardLayout.terminalTop).toBeLessThan(0);
   expect(keyboardLayout.shift).toBeGreaterThan(0);
+  expect(keyboardLayout.toolbarOffset).toBeGreaterThan(0);
 });
