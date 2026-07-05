@@ -2,6 +2,8 @@ package com.webterm.mobile;
 
 import static org.junit.Assert.assertEquals;
 
+import com.webterm.core.config.ServerConfig;
+
 import org.json.JSONObject;
 import org.junit.Test;
 

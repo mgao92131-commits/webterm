@@ -1,5 +1,6 @@
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.hilt)
 }
 
 android {
@@ -18,8 +19,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -47,10 +52,34 @@ android {
 
 dependencies {
   implementation(project(":terminal-view"))
+  implementation(project(":transport-api"))
+  implementation(project(":transport-websocket"))
+  implementation(project(":transport-webrtc"))
+  implementation(project(":core-api"))
+  implementation(project(":core-config"))
+  implementation(project(":core-cache"))
+  implementation(project(":core-session"))
+  implementation(project(":core-relay"))
+  implementation(project(":ui-common"))
+  implementation(project(":terminal-ui"))
+  implementation(project(":feature:settings"))
+  implementation(project(":feature:relay"))
+  implementation(project(":feature:terminal"))
+  implementation(project(":feature:home"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")
   implementation("androidx.recyclerview:recyclerview:1.4.0")
+  implementation(libs.navigation.fragment)
+  implementation(libs.navigation.ui)
+  implementation(libs.lifecycle.viewmodel)
+  implementation(libs.lifecycle.livedata)
+  implementation(libs.fragment.ktx)
+  implementation(libs.hilt.android)
+  annotationProcessor(libs.hilt.compiler)
+  compileOnly("com.google.errorprone:error_prone_annotations:2.23.0")
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
+  testImplementation("org.mockito:mockito-core:5.12.0")
+  testImplementation("androidx.arch.core:core-testing:2.2.0")
 }
