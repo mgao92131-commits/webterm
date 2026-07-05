@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_nav_graph"
+    app:startDestination="@id/homeFragment">
+
+    <fragment
+        android:id="@+id/homeFragment"
+        android:name="com.webterm.feature.home.HomeFragment"
+        android:label="Home" />
+    <fragment
+        android:id="@+id/terminalFragment"
+        android:name="com.webterm.feature.terminal.TerminalFragment"
+        android:label="Terminal" />
+    <fragment
+        android:id="@+id/relayFragment"
+        android:name="com.webterm.feature.relay.RelayFragment"
+        android:label="Relay" />
+</navigation>

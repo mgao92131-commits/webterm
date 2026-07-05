@@ -2,6 +2,8 @@ package com.webterm.mobile;
 
 import static org.junit.Assert.assertEquals;
 
+import com.webterm.core.session.RelayMuxSessionManager;
+
 import org.junit.Test;
 
 public class RelayMuxSessionManagerTest {

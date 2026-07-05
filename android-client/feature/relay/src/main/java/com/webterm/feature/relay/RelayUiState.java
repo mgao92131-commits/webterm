@@ -1,0 +1,273 @@
+package com.webterm.feature.relay;
+
+import android.app.Activity;
+import android.widget.TextView;
+
+import androidx.lifecycle.Observer;
+
+import com.webterm.core.relay.RelayService;
+import com.webterm.ui.common.StatusIndicatorView;
+
+import org.json.JSONArray;
+
+/**
+ * Implements screen-builder Host interfaces and bridges {@link RelayService}
+ * business logic with UI elements (subtitle Text, status dot).
+ *
+ * Created by MainActivity which owns both the service and the UI views.
+ */
+public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDevicesScreenBuilder.Host {
+
+    private final RelayService relayService;
+    private final RelayService.Host relayHost;
+
+    private TextView homeSubtitle;
+    private StatusIndicatorView homeStatusDot;
+
+    private Observer<String> subtitleObserver;
+    private Observer<Integer> colorObserver;
+    private Observer<Integer> statusObserver;
+
+    public RelayUiState(RelayService relayService, RelayService.Host relayHost) {
+        this.relayService = relayService;
+        this.relayHost = relayHost;
+
+        // Create observers after relayService is assigned
+        subtitleObserver = text -> {
+            if (homeSubtitle != null) {
+                homeSubtitle.post(() -> {
+                    homeSubtitle.setText(text);
+                    Integer color = relayService.getSubtitleColor().getValue();
+                    if (color != null) homeSubtitle.setTextColor(color);
+                });
+            }
+        };
+
+        colorObserver = color -> {
+            if (homeSubtitle != null && color != null) {
+                homeSubtitle.post(() -> homeSubtitle.setTextColor(color));
+            }
+        };
+
+        statusObserver = status -> {
+            if (homeStatusDot != null && status != null) {
+                homeStatusDot.post(() -> {
+                    switch (status) {
+                        case RelayService.STATUS_CONNECTING:
+                            homeStatusDot.setStatus(StatusIndicatorView.Status.CONNECTING);
+                            break;
+                        case RelayService.STATUS_DISCONNECTED:
+                            homeStatusDot.setStatus(StatusIndicatorView.Status.DISCONNECTED);
+                            break;
+                        case RelayService.STATUS_CONNECTED:
+                            homeStatusDot.setStatus(StatusIndicatorView.Status.CONNECTED);
+                            break;
+                    }
+                });
+            }
+        };
+
+        // Observe LiveData
+        relayService.getSubtitleText().observeForever(subtitleObserver);
+        relayService.getSubtitleColor().observeForever(colorObserver);
+        relayService.getStatusDotStatus().observeForever(statusObserver);
+    }
+
+    public void attachSubtitle(TextView subtitle) {
+        this.homeSubtitle = subtitle;
+        // Apply current value immediately
+        String text = relayService.getSubtitleText().getValue();
+        Integer color = relayService.getSubtitleColor().getValue();
+        if (subtitle != null && text != null) {
+            subtitle.setText(text);
+            if (color != null) subtitle.setTextColor(color);
+        }
+    }
+
+    public void attachStatusDot(StatusIndicatorView statusDot) {
+        this.homeStatusDot = statusDot;
+        Integer status = relayService.getStatusDotStatus().getValue();
+        if (statusDot != null && status != null) {
+            switch (status) {
+                case RelayService.STATUS_CONNECTING:
+                    statusDot.setStatus(StatusIndicatorView.Status.CONNECTING);
+                    break;
+                case RelayService.STATUS_DISCONNECTED:
+                    statusDot.setStatus(StatusIndicatorView.Status.DISCONNECTED);
+                    break;
+                case RelayService.STATUS_CONNECTED:
+                    statusDot.setStatus(StatusIndicatorView.Status.CONNECTED);
+                    break;
+            }
+        }
+    }
+
+    public void detachSubtitle() {
+        this.homeSubtitle = null;
+    }
+
+    public void detachStatusDot() {
+        this.homeStatusDot = null;
+    }
+
+    public void destroy() {
+        relayService.getSubtitleText().removeObserver(subtitleObserver);
+        relayService.getSubtitleColor().removeObserver(colorObserver);
+        relayService.getStatusDotStatus().removeObserver(statusObserver);
+        homeSubtitle = null;
+        homeStatusDot = null;
+    }
+
+    // ── RelayLoginScreenBuilder.Host ─────────────────────────────
+
+    @Override
+    public Activity activity() {
+        return relayHost.activity();
+    }
+
+    @Override
+    public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onLogin(email, password, new com.webterm.core.api.WebTermApi.ExtendedLoginCallback() {
+            @Override
+            public void onReady(String url, String cookie) {
+                if (cookie != null && !cookie.isEmpty()) {
+                    relayService.saveRelayLogin(url, email, password, cookie);
+                }
+                callback.onLoginSuccess(url, cookie);
+            }
+
+            @Override
+            public void onOtpRequired(String targetDeviceId, String cookie) {
+                callback.onOtpRequired(targetDeviceId, cookie);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onRegister(email, username, password, new com.webterm.core.api.WebTermApi.ExtendedLoginCallback() {
+            @Override
+            public void onReady(String url, String cookie) {
+                if (cookie != null && !cookie.isEmpty()) {
+                    relayService.saveRelayLogin(url, email, password, cookie);
+                }
+                callback.onLoginSuccess(url, cookie);
+            }
+
+            @Override
+            public void onOtpRequired(String targetDeviceId, String cookie) {
+                // Register typically doesn't require OTP
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onVerifyOtp(email, code, targetDeviceId, cookie, new com.webterm.core.api.WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String url, String newCookie) {
+                if (newCookie != null && !newCookie.isEmpty()) {
+                    relayService.saveRelayLogin(url, email, password, newCookie);
+                }
+                callback.onLoginSuccess(url, newCookie);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onBackToHome() {
+        relayHost.onRelayAuthDone();
+    }
+
+    // ── RelayDevicesScreenBuilder.Host ───────────────────────────
+
+    @Override
+    public void onFetchDevices(RelayDevicesScreenBuilder.DevicesCallback callback) {
+        relayService.onFetchDevices(new com.webterm.core.api.WebTermApi.SessionsCallback() {
+            @Override
+            public void onReady(JSONArray devices) {
+                callback.onReady(devices);
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                callback.onError(message);
+            }
+
+            @Override
+            public void onParseError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onRegisterDevice(String deviceName, RelayDevicesScreenBuilder.DeviceCreateCallback callback) {
+        relayService.onRegisterDevice(deviceName, new com.webterm.core.api.WebTermApi.DeviceCreateCallback() {
+            @Override
+            public void onReady(String deviceId, String name, String agentSecret) {
+                callback.onReady(deviceId, name, agentSecret);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onDeleteDevice(String deviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
+        relayService.onDeleteDevice(deviceId, new com.webterm.core.api.WebTermApi.SimpleCallback() {
+            @Override
+            public void onReady() { callback.onReady(); }
+            @Override
+            public void onError(String message) { callback.onError(message); }
+        });
+    }
+
+    @Override
+    public void onFetchTrustedDevices(RelayDevicesScreenBuilder.TrustedDevicesCallback callback) {
+        relayService.onFetchTrustedDevices(new com.webterm.core.api.WebTermApi.TrustedDevicesCallback() {
+            @Override
+            public void onReady(JSONArray devices) {
+                callback.onReady(devices);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onDeleteTrustedDevice(String trustedDeviceId, RelayDevicesScreenBuilder.SimpleCallback callback) {
+        relayService.onDeleteTrustedDevice(trustedDeviceId, new com.webterm.core.api.WebTermApi.SimpleCallback() {
+            @Override
+            public void onReady() { callback.onReady(); }
+            @Override
+            public void onError(String message) { callback.onError(message); }
+        });
+    }
+
+    @Override
+    public void onLogout() {
+        relayService.onDisconnectRelay();
+    }
+}
