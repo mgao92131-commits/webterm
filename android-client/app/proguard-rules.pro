@@ -84,3 +84,10 @@
 
 # Disable R8 optimization to prevent WebRTC JNI Reflection / obfuscation crash.
 -dontoptimize
+
+# Disable shrinking and class merging to prevent WebRTC JNI JNI_OnLoad SIGTRAP crash
+-dontshrink
+
+# Keep jni_zero and chromium classes used by WebRTC JNI
+-keep class org.jni_zero.** { *; }
+-keep class org.chromium.** { *; }
