@@ -72,6 +72,9 @@ func (client *Client) SendInfo() {
 }
 
 func (client *Client) SendHook(ev protocol.HookEvent) {
+	if !client.ready.Load() {
+		return
+	}
 	if client.mode == ClientModeBinary {
 		frame, err := protocol.EncodeJSONMessage(protocol.MsgHook, ev)
 		if err == nil {

@@ -499,6 +499,10 @@ func (terminal *TerminalSession) broadcastExit(code int) {
 
 func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 	terminal.mu.Lock()
+	if terminal.status == StatusClosed {
+		terminal.mu.Unlock()
+		return
+	}
 	switch ev.Type {
 	case "notify":
 		terminal.notification = &Notification{
@@ -514,6 +518,9 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 		}
 		if ev.AgentState != "" {
 			terminal.agentState = ev.AgentState
+			if ev.AgentState == "running" {
+				terminal.notification = nil
+			}
 		}
 		terminal.touchLocked()
 	case "meta":

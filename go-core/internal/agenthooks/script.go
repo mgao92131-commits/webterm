@@ -20,6 +20,13 @@ event="${2:-}"
 WEBTERM="{{.WebtermBin}}"
 [ -x "$WEBTERM" ] || WEBTERM="webterm"
 
+# 检测 python3 是否可用；缺失时跳过 meta 提取，但不影响核心 state 上报。
+if command -v python3 >/dev/null 2>&1; then
+  HAS_PYTHON3=1
+else
+  HAS_PYTHON3=0
+fi
+
 # 读取 Agent 通过 stdin 传来的事件 JSON
 payload=$(cat 2>/dev/null || true)
 
@@ -27,6 +34,9 @@ payload=$(cat 2>/dev/null || true)
 webterm_meta_last_command() {
   local text="$1"
   local kind="$2"
+  if [ "$HAS_PYTHON3" -ne 1 ]; then
+    return 0
+  fi
   python3 -c '
 import sys, subprocess
 text = sys.argv[1]
@@ -38,6 +48,9 @@ subprocess.run([webterm, "meta", "--quiet", "--last-command", text, "--input-kin
 
 # 从 payload 提取用户提示词（兼容 Claude/Kimi/Codex 的字段差异）
 extract_prompt() {
+  if [ "$HAS_PYTHON3" -ne 1 ]; then
+    return 0
+  fi
   python3 -c '
 import sys, json
 try:
@@ -63,6 +76,9 @@ if isinstance(msgs, list) and msgs:
 
 # 从 payload 提取工具命令（如 Bash 的 command）
 extract_tool_command() {
+  if [ "$HAS_PYTHON3" -ne 1 ]; then
+    return 0
+  fi
   python3 -c '
 import sys, json
 try:

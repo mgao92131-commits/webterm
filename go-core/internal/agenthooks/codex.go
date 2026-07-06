@@ -8,10 +8,10 @@ import (
 type codexAdapter struct{}
 
 func (a *codexAdapter) Prepare(sessionID, cwd, socketPath, hookBinPath string) (LaunchSpec, error) {
-	home := agentHomeDir("codex")
+	home := runtimeDir(sessionID)
 	hooksPath := filepath.Join(home, "hooks.json")
 
-	hooks := strings.ReplaceAll(codexHooksTemplate, "{{HOOK_BIN}}", hookBinPath)
+	hooks := strings.ReplaceAll(codexHooksTemplate, "{{HOOK_BIN}}", jsonString(hookBinPath))
 
 	spec := LaunchSpec{
 		Command: []string{"codex"},

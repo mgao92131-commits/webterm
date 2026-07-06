@@ -11,7 +11,7 @@ func (a *claudeAdapter) Prepare(sessionID, cwd, socketPath, hookBinPath string) 
 	rt := runtimeDir(sessionID)
 	settingsPath := filepath.Join(rt, "claude-settings.json")
 
-	settings := strings.ReplaceAll(claudeSettingsTemplate, "{{HOOK_BIN}}", hookBinPath)
+	settings := strings.ReplaceAll(claudeSettingsTemplate, "{{HOOK_BIN}}", jsonString(hookBinPath))
 
 	spec := LaunchSpec{
 		Command: []string{"claude", "--settings", settingsPath},

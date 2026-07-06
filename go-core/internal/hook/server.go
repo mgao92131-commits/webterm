@@ -66,6 +66,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				s.wg.Wait()
 				return ctx.Err()
 			}
 			s.app.Log("warn", "hook", fmt.Sprintf("accept failed: %v", err))
@@ -79,6 +80,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
+
+	// Close connection when context is canceled to unblock scanner.Scan().
+	connClosed := make(chan struct{})
+	defer close(connClosed)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-connClosed:
+		}
+	}()
 
 	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		return

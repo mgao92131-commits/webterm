@@ -3,6 +3,8 @@ package session
 import (
 	"testing"
 	"time"
+
+	"webterm/go-core/internal/protocol"
 )
 
 func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
@@ -137,5 +139,44 @@ func TestTerminalSessionBroadcastsOnCwdChange(t *testing.T) {
 	terminal.PushOutput([]byte("\x1b]7;file://localhost/tmp\x07"))
 	if broadcastCount != before {
 		t.Errorf("expected no extra broadcast when cwd unchanged, got delta %d", broadcastCount-before)
+	}
+}
+
+
+func TestTerminalSessionClearsNotificationWhenAgentRunning(t *testing.T) {
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	terminal.ApplyHookEvent(protocol.HookEvent{
+		Type:      "notify",
+		SessionID: "s1",
+		Title:     "Turn completed",
+		Level:     "success",
+		Timestamp: time.Now().Unix(),
+	})
+
+	if info := terminal.Info(); info.Notification == nil || info.Notification.Title != "Turn completed" {
+		t.Fatalf("expected notification to be set, got %+v", info.Notification)
+	}
+
+	terminal.ApplyHookEvent(protocol.HookEvent{
+		Type:       "state",
+		SessionID:  "s1",
+		AgentState: "running",
+		Timestamp:  time.Now().Unix(),
+	})
+
+	if info := terminal.Info(); info.Notification != nil {
+		t.Errorf("expected notification to be cleared when agent becomes running, got %+v", info.Notification)
+	}
+	if info := terminal.Info(); info.AgentState != "running" {
+		t.Errorf("expected agentState to be running, got %q", info.AgentState)
 	}
 }

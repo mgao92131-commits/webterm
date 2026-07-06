@@ -75,7 +75,7 @@ func TestKimiAdapterPrepare(t *testing.T) {
 		t.Fatalf("WriteFiles: %v", err)
 	}
 
-	configPath := filepath.Join(agentHomeDir("kimi-code"), "config.toml")
+	configPath := filepath.Join(runtimeDir("s2"), "config.toml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -118,7 +118,7 @@ func TestCodexAdapterPrepare(t *testing.T) {
 	if err := WriteFiles(spec.Files); err != nil {
 		t.Fatalf("WriteFiles: %v", err)
 	}
-	hooksPath := filepath.Join(agentHomeDir("codex"), "hooks.json")
+	hooksPath := filepath.Join(runtimeDir("s3"), "hooks.json")
 	data, err := os.ReadFile(hooksPath)
 	if err != nil {
 		t.Fatalf("read hooks: %v", err)
@@ -159,5 +159,96 @@ func TestInstallHookScript(t *testing.T) {
 	}
 	if !strings.Contains(content, "claude:permission_request") {
 		t.Fatalf("script missing claude permission_request case")
+	}
+}
+
+
+func TestClaudeAdapterEscapesHookPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	adapter, err := NewAdapter(AgentClaude)
+	if err != nil {
+		t.Fatalf("NewAdapter(claude): %v", err)
+	}
+
+	hookBin := `/tmp/webterm"agent\hook`
+	spec, err := adapter.Prepare("s1", "/tmp/work", "/tmp/webterm.sock", hookBin)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := WriteFiles(spec.Files); err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+
+	settingsPath := spec.Command[2]
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	content := string(data)
+	want := `/tmp/webterm\"agent\\hook claude user_prompt_submit`
+	if !strings.Contains(content, want) {
+		t.Fatalf("settings did not escape hook path correctly; want substring %q, got:\n%s", want, content)
+	}
+}
+
+func TestKimiAdapterEscapesHookPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	adapter, err := NewAdapter(AgentKimi)
+	if err != nil {
+		t.Fatalf("NewAdapter(kimi): %v", err)
+	}
+
+	hookBin := `/tmp/webterm"agent\hook`
+	spec, err := adapter.Prepare("s2", "/tmp/work", "/tmp/webterm.sock", hookBin)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := WriteFiles(spec.Files); err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+
+	configPath := filepath.Join(runtimeDir("s2"), "config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	content := string(data)
+	want := `/tmp/webterm\"agent\\hook kimi user_prompt_submit`
+	if !strings.Contains(content, want) {
+		t.Fatalf("config did not escape hook path correctly; want substring %q, got:\n%s", want, content)
+	}
+}
+
+func TestCodexAdapterEscapesHookPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	adapter, err := NewAdapter(AgentCodex)
+	if err != nil {
+		t.Fatalf("NewAdapter(codex): %v", err)
+	}
+
+	hookBin := `/tmp/webterm"agent\hook`
+	spec, err := adapter.Prepare("s3", "/tmp/work", "/tmp/webterm.sock", hookBin)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := WriteFiles(spec.Files); err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+
+	hooksPath := filepath.Join(runtimeDir("s3"), "hooks.json")
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read hooks: %v", err)
+	}
+	content := string(data)
+	want := `/tmp/webterm\"agent\\hook codex user_prompt_submit`
+	if !strings.Contains(content, want) {
+		t.Fatalf("hooks did not escape hook path correctly; want substring %q, got:\n%s", want, content)
 	}
 }
