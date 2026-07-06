@@ -285,6 +285,8 @@ export class TerminalSessionContext implements IDisposable {
         this.terminalView.enqueueWrite(msg.data, () => this.rememberSeq(msg.seq));
       } else if (msg.type === 'info') {
         this.setTerminalInfo(msg.data);
+      } else if (msg.type === 'hook') {
+        this.handleHookEvent(msg.data);
       } else if (msg.type === 'exit') {
         this.manualClose = true;
         this.options.onExit?.();
@@ -395,6 +397,13 @@ export class TerminalSessionContext implements IDisposable {
   }
 
   // --- 状态与广播机制 ---
+
+  private handleHookEvent(data: any) {
+    if (!data || data.type !== 'notify') return;
+    window.dispatchEvent(new CustomEvent('webterm:hook', {
+      detail: { sessionId: this.options.sessionId, ...data },
+    }));
+  }
 
   private updateState(change: Partial<TerminalSessionState>) {
     this.state = { ...this.state, ...change };

@@ -71,6 +71,17 @@ func (client *Client) SendInfo() {
 	client.sendJSONType("info", map[string]any{"type": "info", "data": client.session.Info()})
 }
 
+func (client *Client) SendHook(ev protocol.HookEvent) {
+	if client.mode == ClientModeBinary {
+		frame, err := protocol.EncodeJSONMessage(protocol.MsgHook, ev)
+		if err == nil {
+			client.enqueueBinary(frame)
+		}
+		return
+	}
+	client.sendJSONType("hook", map[string]any{"type": "hook", "data": ev})
+}
+
 func (client *Client) SendOutput(frame EventFrame, delta ScreenDelta) {
 	if !client.ready.Load() {
 		return

@@ -235,6 +235,13 @@ public final class TerminalConnection {
         if (type == WebTermProtocol.MSG_PONG) {
             return;
         }
+        if (type == WebTermProtocol.MSG_HOOK) {
+            try {
+                listener.onHook(WebTermProtocol.controlPayload(payload));
+            } catch (JSONException ignored) {
+            }
+            return;
+        }
         if (type == WebTermProtocol.MSG_EXIT) {
             try {
                 JSONObject msg = WebTermProtocol.controlPayload(payload);
@@ -279,6 +286,7 @@ public final class TerminalConnection {
         void onOutput(long seq, byte[] data);
         void onState(long seq, byte[] data);
         void onInfo(JSONObject info);
+        void onHook(JSONObject ev);
         void onExit(int code);
         void onProtocolError(String message);
     }

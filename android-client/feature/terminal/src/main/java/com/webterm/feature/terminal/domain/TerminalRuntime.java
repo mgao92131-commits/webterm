@@ -24,6 +24,10 @@ import dagger.assisted.AssistedInject;
 public final class TerminalRuntime implements TerminalConnection.Listener,
     WebTermTerminalViewClient.Host, WebTermTerminalSessionClient.Host {
 
+    public interface HookListener {
+        void onHook(JSONObject ev);
+    }
+
     private final Activity activity;
     private final TerminalRuntimeState state = new TerminalRuntimeState();
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -35,6 +39,7 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     private ViewHost currentViewHost;
     private Runnable onFinished;
+    private HookListener hookListener;
 
     @AssistedInject
     public TerminalRuntime(
@@ -73,6 +78,10 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     public void setOnFinished(Runnable onFinished) {
         this.onFinished = onFinished;
+    }
+
+    public void setHookListener(HookListener listener) {
+        this.hookListener = listener;
     }
 
     public void detachView() {
@@ -221,6 +230,12 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
     @Override
     public void onInfo(JSONObject info) {
         lifecycle.onInfo(info);
+    }
+
+    @Override
+    public void onHook(JSONObject ev) {
+        if (hookListener == null) return;
+        activity.runOnUiThread(() -> hookListener.onHook(ev));
     }
 
     @Override

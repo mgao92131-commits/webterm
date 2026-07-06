@@ -1,14 +1,11 @@
 package com.webterm.feature.home;
 
-import android.graphics.Color;
-import android.graphics.Typeface;
+import android.content.Context;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
-import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import org.json.JSONArray;
@@ -43,11 +40,7 @@ public final class SessionRowHelper {
 
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.TOP);
-
-        LinearLayout titleArea = new LinearLayout(context);
-        titleArea.setOrientation(LinearLayout.VERTICAL);
-        titleArea.setGravity(Gravity.CENTER_VERTICAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView titleView = new TextView(context);
         titleView.setTag("title");
@@ -57,23 +50,45 @@ public final class SessionRowHelper {
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
 
-        TextView subtitleView = new TextView(context);
-        subtitleView.setTag("subtitle");
-        subtitleView.setTextColor(DesignTokens.TEXT_SECONDARY);
-        subtitleView.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
-        subtitleView.setSingleLine(true);
-        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+        TextView agentChip = new TextView(context);
+        agentChip.setTag("agent_chip");
+        agentChip.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
+        agentChip.setSingleLine(true);
+        agentChip.setEllipsize(TextUtils.TruncateAt.END);
+        agentChip.setVisibility(View.GONE);
 
-        titleArea.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
-        titleArea.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
-        header.addView(titleArea, new LinearLayout.LayoutParams(-1, -2));
+        header.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(agentChip, new LinearLayout.LayoutParams(-2, -2));
 
         content.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        // 静态添加最近输入框，通过 updateRecentInput 控制可见性
-        TextView recentView = recentInputBox(context, "");
-        recentView.setTag("recent_box");
-        content.addView(recentView, new LinearLayout.LayoutParams(-1, -2));
+        // 最近命令行
+        TextView commandView = new TextView(context);
+        commandView.setTag("command_box");
+        commandView.setTextColor(DesignTokens.TEXT_SECONDARY);
+        commandView.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
+        commandView.setTypeface(DesignTokens.fontGeistMono(context));
+        commandView.setSingleLine(true);
+        commandView.setEllipsize(TextUtils.TruncateAt.END);
+        commandView.setVisibility(View.GONE);
+        commandView.setPadding(
+            UIUtils.dp(context, DesignTokens.SPACE_2),
+            UIUtils.dp(context, DesignTokens.SPACE_1 + 2),
+            UIUtils.dp(context, DesignTokens.SPACE_2),
+            UIUtils.dp(context, DesignTokens.SPACE_1 + 2)
+        );
+        content.addView(commandView, new LinearLayout.LayoutParams(-1, -2));
+
+        // Git 分支行
+        TextView gitBranchView = new TextView(context);
+        gitBranchView.setTag("git_branch");
+        gitBranchView.setTextColor(DesignTokens.TEXT_TERTIARY);
+        gitBranchView.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
+        gitBranchView.setTypeface(DesignTokens.fontGeistMono(context));
+        gitBranchView.setSingleLine(true);
+        gitBranchView.setEllipsize(TextUtils.TruncateAt.END);
+        gitBranchView.setVisibility(View.GONE);
+        content.addView(gitBranchView, new LinearLayout.LayoutParams(-1, -2));
 
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
@@ -82,8 +97,9 @@ public final class SessionRowHelper {
 
     public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
         TextView titleView = row.findViewWithTag("title");
-        TextView subtitleView = row.findViewWithTag("subtitle");
-        TextView recentView = row.findViewWithTag("recent_box");
+        TextView agentChip = row.findViewWithTag("agent_chip");
+        TextView commandView = row.findViewWithTag("command_box");
+        TextView gitBranchView = row.findViewWithTag("git_branch");
 
         String id = session.optString("id");
         row.setTag(id); // 绑定 Tag 以便差分查找
@@ -91,92 +107,146 @@ public final class SessionRowHelper {
         String rawTermTitle = session.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
         final String nameText = session.optString("name", "").trim();
+        final String displayTitle = session.optString("displayTitle", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
         final String cwd = session.optString("cwd", "").trim();
 
         if (titleView != null) {
-            if (!nameText.isEmpty()) {
-                titleView.setText(nameText);
-            } else {
-                titleView.setText(termTitle);
-            }
-        }
-        if (subtitleView != null) {
-            if (!nameText.isEmpty()) {
-                subtitleView.setText(termTitle);
-                subtitleView.setVisibility(View.VISIBLE);
-            } else {
-                subtitleView.setVisibility(View.GONE);
-            }
-        }
-        if (recentView != null) {
-            updateRecentInput(recentView, session);
+            titleView.setText(!displayTitle.isEmpty() ? displayTitle : (!nameText.isEmpty() ? nameText : termTitle));
         }
 
+        updateAgentChip(agentChip, session);
+        updateCommandLine(commandView, session);
+        updateGitBranch(gitBranchView, session);
+
+        final String titleForAction = !nameText.isEmpty() ? nameText : termTitle;
         row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId, cwd));
 
         row.setOnLongClickListener((v) -> {
-            actions.renameSession(server, id, nameText);
+            actions.renameSession(server, id, titleForAction);
             return true;
         });
     }
 
-    private static void updateRecentInput(TextView recentView, JSONObject session) {
-        if (session.optBoolean("recentInputHidden", false)) {
-            recentView.setText("敏感输入已隐藏");
-            recentView.setVisibility(View.VISIBLE);
+    private static void updateAgentChip(TextView agentChip, JSONObject session) {
+        if (agentChip == null) return;
+        JSONObject notification = session.optJSONObject("notification");
+        String agentState = session.optString("agentState", "").trim();
+        Context context = agentChip.getContext();
+
+        if (notification != null) {
+            String title = notification.optString("title", "").trim();
+            String level = notification.optString("level", "info").trim();
+            agentChip.setText(title.isEmpty() ? "●" : title);
+            agentChip.setTextColor(chipTextColor(level));
+            agentChip.setBackground(chipBackground(context, level));
+            agentChip.setPadding(
+                UIUtils.dp(context, DesignTokens.SPACE_2),
+                UIUtils.dp(context, 2),
+                UIUtils.dp(context, DesignTokens.SPACE_2),
+                UIUtils.dp(context, 2)
+            );
+            agentChip.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        if (!agentState.isEmpty()) {
+            agentChip.setText(agentState);
+            agentChip.setTextColor(chipTextColor(agentState));
+            agentChip.setBackground(chipBackground(context, agentState));
+            agentChip.setPadding(
+                UIUtils.dp(context, DesignTokens.SPACE_2),
+                UIUtils.dp(context, 2),
+                UIUtils.dp(context, DesignTokens.SPACE_2),
+                UIUtils.dp(context, 2)
+            );
+            agentChip.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        agentChip.setVisibility(View.GONE);
+    }
+
+    private static void updateCommandLine(TextView commandView, JSONObject session) {
+        if (commandView == null) return;
+        String command = recentCommandText(session);
+        if (command.isEmpty()) {
+            command = session.optString("lastCommand", "").trim();
+        }
+        if (command.isEmpty() && session.optJSONObject("notification") != null) {
+            command = session.optJSONObject("notification").optString("body", "").trim();
+        }
+        if (command.isEmpty()) {
+            commandView.setVisibility(View.GONE);
         } else {
-            JSONArray recentLines = session.optJSONArray("recentInputLines");
-            String recentText = recentInputText(recentLines);
-            if (!recentText.isEmpty()) {
-                recentView.setText(recentText);
-                recentView.setVisibility(View.VISIBLE);
-            } else {
-                recentView.setVisibility(View.GONE);
-            }
+            commandView.setText(command);
+            commandView.setVisibility(View.VISIBLE);
         }
     }
 
-    private static TextView recentInputBox(android.content.Context context, String text) {
-        TextView view = new TextView(context);
-        view.setText(text);
-        // 最近输入预览用 secondary 灰（与 Web 端 text-text-secondary 对齐），不再使用绿色（绿色暗示成功/在线）
-        view.setTextColor(DesignTokens.TEXT_SECONDARY);
-        view.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
-        view.setTypeface(DesignTokens.fontGeistMono(context));
-        view.setMaxLines(2);
-        view.setEllipsize(TextUtils.TruncateAt.END);
-        view.setPadding(
-            UIUtils.dp(context, DesignTokens.SPACE_2),
-            UIUtils.dp(context, DesignTokens.SPACE_1 + 2),
-            UIUtils.dp(context, DesignTokens.SPACE_2),
-            UIUtils.dp(context, DesignTokens.SPACE_1 + 2)
-        );
-
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(DesignTokens.BG_PRIMARY);
-        gd.setCornerRadius(UIUtils.dp(context, DesignTokens.RADIUS_SM));
-        view.setBackground(gd);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, UIUtils.dp(context, DesignTokens.SPACE_2), 0, 0);
-        view.setLayoutParams(lp);
-        return view;
+    private static void updateGitBranch(TextView gitBranchView, JSONObject session) {
+        if (gitBranchView == null) return;
+        String branch = session.optString("gitBranch", "").trim();
+        if (branch.isEmpty()) {
+            gitBranchView.setVisibility(View.GONE);
+        } else {
+            gitBranchView.setText("⎇ " + branch);
+            gitBranchView.setVisibility(View.VISIBLE);
+        }
     }
 
-
-
-    private static String recentInputText(JSONArray lines) {
+    private static String recentCommandText(JSONObject session) {
+        if (session.optBoolean("recentInputHidden", false)) {
+            return "敏感输入已隐藏";
+        }
+        JSONArray lines = session.optJSONArray("recentInputLines");
         if (lines == null || lines.length() == 0) return "";
-        StringBuilder text = new StringBuilder();
-        int start = Math.max(0, lines.length() - 2);
-        for (int i = start; i < lines.length(); i++) {
-            String line = lines.optString(i, "").trim();
-            if (line.isEmpty()) continue;
-            if (text.length() > 0) text.append('\n');
-            text.append(line);
-        }
-        return text.toString();
+        String last = lines.optString(lines.length() - 1, "").trim();
+        return last;
     }
+
+    private static int chipTextColor(String levelOrState) {
+        switch (levelOrState) {
+            case "error":
+            case "failed":
+            case "approval_required":
+                return DesignTokens.DANGER;
+            case "warning":
+                return DesignTokens.WARNING;
+            case "success":
+            case "done":
+                return DesignTokens.SUCCESS;
+            case "running":
+                return DesignTokens.ACCENT;
+            default:
+                return DesignTokens.TEXT_SECONDARY;
+        }
+    }
+
+    private static android.graphics.drawable.Drawable chipBackground(Context context, String levelOrState) {
+        GradientDrawable gd = new GradientDrawable();
+        gd.setCornerRadius(UIUtils.dp(context, DesignTokens.RADIUS_SM));
+        switch (levelOrState) {
+            case "error":
+            case "failed":
+            case "approval_required":
+                gd.setColor(DesignTokens.dangerBg());
+                break;
+            case "warning":
+                gd.setColor(DesignTokens.warningBg());
+                break;
+            case "success":
+            case "done":
+                gd.setColor(DesignTokens.successBg());
+                break;
+            case "running":
+                gd.setColor(DesignTokens.accentBg());
+                break;
+            default:
+                gd.setColor(DesignTokens.BG_TERTIARY);
+        }
+        return gd;
+    }
+
 }

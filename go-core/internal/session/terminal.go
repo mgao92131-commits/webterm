@@ -13,6 +13,7 @@ import (
 
 	"webterm/go-core/internal/infrastructure/emulator"
 	"webterm/go-core/internal/infrastructure/pty"
+	"webterm/go-core/internal/protocol"
 )
 
 const (
@@ -24,38 +25,54 @@ const (
 )
 
 type TerminalOptions struct {
-	ID      string
-	Name    string
-	CWD     string
-	Command string
-	Cols    int
-	Rows    int
-	OnTitle func()
+	ID            string
+	Name          string
+	CWD           string
+	Command       string
+	Args          []string
+	Cols          int
+	Rows          int
+	Env           map[string]string
+	OnTitle       func()
+	OnInfoChanged func()
 }
 
 type TerminalSession struct {
-	mu              sync.RWMutex
-	id              string
-	instance        string
-	name            string
-	termTitle       string
-	cwd             string
-	liveCwd         string
-	command         string
-	status          string
-	cols            int
-	rows            int
-	createdAt       time.Time
-	activeAt        time.Time
-	ring            *EventRing
-	screen          *ScreenState
-	process         *pty.Process
-	clients         map[*Client]struct{}
-	onTitleChanged  func()
-	titleChanged    bool
-	stateCache      []byte
-	stateCacheValid bool
-	stateCacheGen   uint64
+	mu               sync.RWMutex
+	id               string
+	instance         string
+	name             string
+	termTitle        string
+	cwd              string
+	liveCwd          string
+	command          string
+	status           string
+	shellState       string
+	agentState       string
+	gitBranch        string
+	lastInput        *LastInput
+	notification     *Notification
+	cols             int
+	rows             int
+	createdAt        time.Time
+	activeAt         time.Time
+	ring             *EventRing
+	screen           *ScreenState
+	process          *pty.Process
+	clients          map[*Client]struct{}
+	onTitleChanged   func()
+	onInfoChanged    func()
+	titleChanged     bool
+	stateCache       []byte
+	stateCacheValid  bool
+	stateCacheGen    uint64
+}
+
+type Notification struct {
+	Title     string `json:"title"`
+	Body      string `json:"body,omitempty"`
+	Level     string `json:"level,omitempty"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
@@ -72,8 +89,10 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	process, err := pty.Start(pty.Options{
 		CWD:     options.CWD,
 		Command: options.Command,
+		Args:    options.Args,
 		Cols:    cols,
 		Rows:    rows,
+		Env:     options.Env,
 	})
 	if err != nil {
 		return nil, err
@@ -110,6 +129,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		process:        process,
 		clients:        make(map[*Client]struct{}),
 		onTitleChanged: options.OnTitle,
+		onInfoChanged:  options.OnInfoChanged,
 	}
 	go terminal.readLoop()
 	go terminal.waitLoop()
@@ -140,12 +160,32 @@ func (terminal *TerminalSession) Info() Info {
 		RecentInputHidden: false,
 		Command:           terminal.command,
 		Status:            terminal.status,
+		ShellState:        terminal.shellState,
+		AgentState:        terminal.agentState,
+		GitBranch:         terminal.gitBranch,
+		LastCommand:       terminal.lastInputText(),
+		LastInputKind:     terminal.lastInputKind(),
+		Notification:      terminal.notification,
 		Clients:           len(terminal.clients),
 		Cols:              terminal.cols,
 		Rows:              terminal.rows,
 		CreatedAt:         terminal.createdAt,
 		LastActiveAt:      terminal.activeAt,
 	}
+}
+
+func (terminal *TerminalSession) lastInputText() string {
+	if terminal.lastInput == nil {
+		return ""
+	}
+	return terminal.lastInput.Text
+}
+
+func (terminal *TerminalSession) lastInputKind() string {
+	if terminal.lastInput == nil {
+		return ""
+	}
+	return terminal.lastInput.Kind
 }
 
 func (terminal *TerminalSession) Rename(name string) {
@@ -181,10 +221,14 @@ func (terminal *TerminalSession) PushOutput(data []byte) EventFrame {
 	changed := terminal.titleChanged
 	terminal.titleChanged = false
 	onTitleChanged := terminal.onTitleChanged
+	onInfoChanged := terminal.onInfoChanged
 	terminal.mu.Unlock()
 
 	if changed && onTitleChanged != nil {
 		onTitleChanged()
+	}
+	if changed && onInfoChanged != nil {
+		onInfoChanged()
 	}
 	return frame
 }
@@ -450,6 +494,77 @@ func (terminal *TerminalSession) broadcastExit(code int) {
 	for _, client := range clients {
 		client.SendExit(code)
 		client.Close()
+	}
+}
+
+func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
+	terminal.mu.Lock()
+	switch ev.Type {
+	case "notify":
+		terminal.notification = &Notification{
+			Title:     ev.Title,
+			Body:      ev.Body,
+			Level:     ev.Level,
+			Timestamp: ev.Timestamp,
+		}
+		terminal.touchLocked()
+	case "state":
+		if ev.ShellState != "" {
+			terminal.shellState = ev.ShellState
+		}
+		if ev.AgentState != "" {
+			terminal.agentState = ev.AgentState
+		}
+		terminal.touchLocked()
+	case "meta":
+		if ev.CWD != "" {
+			terminal.liveCwd = ev.CWD
+		}
+		if ev.GitBranch != "" {
+			terminal.gitBranch = ev.GitBranch
+		}
+		if ev.LastCommand != "" {
+			kind := ev.InputKind
+			if kind == "" {
+				kind = "shell"
+			}
+			terminal.lastInput = &LastInput{
+				Kind:      kind,
+				Text:      ev.LastCommand,
+				Timestamp: ev.Timestamp,
+			}
+		}
+		terminal.touchLocked()
+	}
+	onInfoChanged := terminal.onInfoChanged
+	terminal.mu.Unlock()
+
+	if onInfoChanged != nil {
+		onInfoChanged()
+	}
+
+	if ev.Type == "notify" {
+		terminal.broadcastHook(ev)
+	} else {
+		terminal.broadcastInfo()
+	}
+}
+
+func (terminal *TerminalSession) broadcastInfo() {
+	terminal.mu.RLock()
+	clients := terminal.clientSnapshotLocked()
+	terminal.mu.RUnlock()
+	for _, client := range clients {
+		client.SendInfo()
+	}
+}
+
+func (terminal *TerminalSession) broadcastHook(ev protocol.HookEvent) {
+	terminal.mu.RLock()
+	clients := terminal.clientSnapshotLocked()
+	terminal.mu.RUnlock()
+	for _, client := range clients {
+		client.SendHook(ev)
 	}
 }
 

@@ -20,3 +20,19 @@ export function parseSessionId(sessionId: string): ParsedSessionId {
   }
   return { localId: sessionId };
 }
+
+/**
+ * 按注意力优先级排序会话。
+ * 需要用户处理的状态置顶，避免通知被淹没。
+ */
+export function sortSessionsByAttention<T extends { agentState?: string; notification?: { level?: string }; state?: string }>(
+  sessions: T[],
+): T[] {
+  const priority = (s: T): number => {
+    if (s.agentState === 'approval_required' || s.agentState === 'failed' || s.notification?.level === 'error') return 0;
+    if (s.notification) return 1;
+    if (s.agentState === 'running' || s.state === 'running') return 2;
+    return 3;
+  };
+  return [...sessions].sort((a, b) => priority(a) - priority(b));
+}

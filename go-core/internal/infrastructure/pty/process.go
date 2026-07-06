@@ -30,9 +30,11 @@ type Process struct {
 // Options 定义进程启动参数。
 type Options struct {
 	CWD     string
-	Command string
+	Command string            // 程序路径
+	Args    []string          // 程序参数
 	Cols    int
 	Rows    int
+	Env     map[string]string // 额外注入到子进程的环境变量
 }
 
 // Start 启动一个带 PTY 的新进程。
@@ -49,13 +51,13 @@ func Start(opts Options) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	shellCmd, args, err := resolveShell(opts.Command)
+	shellCmd, args, err := resolveCommand(opts)
 	if err != nil {
 		return nil, err
 	}
 	cmd := exec.Command(shellCmd, args...)
 	cmd.Dir = cwd
-	cmd.Env = buildEnv(os.Environ())
+	cmd.Env = buildEnv(os.Environ(), opts.Env)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: uint16(cols),
 		Rows: uint16(rows),
@@ -166,9 +168,9 @@ func validateCWD(cwd string) (string, error) {
 	return abs, nil
 }
 
-func resolveShell(command string) (string, []string, error) {
-	if command != "" {
-		return command, nil, nil
+func resolveCommand(opts Options) (string, []string, error) {
+	if opts.Command != "" {
+		return opts.Command, opts.Args, nil
 	}
 	if runtime.GOOS == "windows" {
 		if comspec := os.Getenv("ComSpec"); comspec != "" {
@@ -188,8 +190,11 @@ func resolveShell(command string) (string, []string, error) {
 	return "", nil, errors.New("no executable shell found")
 }
 
-func buildEnv(source []string) []string {
+func buildEnv(source []string, extra map[string]string) []string {
 	env := append([]string(nil), source...)
+	for key, value := range extra {
+		env = setEnv(env, key, value)
+	}
 	env = setEnv(env, "TERM", "xterm-256color")
 	env = setEnv(env, "COLORTERM", "truecolor")
 	env = setEnv(env, "WEBTERM", "1")

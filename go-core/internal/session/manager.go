@@ -12,21 +12,33 @@ const (
 )
 
 type Info struct {
-	ID                string    `json:"id"`
-	InstanceID        string    `json:"instanceId"`
-	Name              string    `json:"name"`
-	TermTitle         string    `json:"termTitle"`
-	DisplayTitle      string    `json:"displayTitle"`
-	CWD               string    `json:"cwd"`
-	RecentInputLines  []string  `json:"recentInputLines"`
-	RecentInputHidden bool      `json:"recentInputHidden"`
-	Command           string    `json:"command"`
-	Status            string    `json:"status"`
-	Clients           int       `json:"clients"`
-	Cols              int       `json:"cols"`
-	Rows              int       `json:"rows"`
-	CreatedAt         time.Time `json:"createdAt"`
-	LastActiveAt      time.Time `json:"lastActiveAt"`
+	ID                string        `json:"id"`
+	InstanceID        string        `json:"instanceId"`
+	Name              string        `json:"name"`
+	TermTitle         string        `json:"termTitle"`
+	DisplayTitle      string        `json:"displayTitle"`
+	CWD               string        `json:"cwd"`
+	RecentInputLines  []string      `json:"recentInputLines"`
+	RecentInputHidden bool          `json:"recentInputHidden"`
+	Command           string        `json:"command"`
+	Status            string        `json:"status"`
+	ShellState        string        `json:"shellState,omitempty"`
+	AgentState        string        `json:"agentState,omitempty"`
+	GitBranch         string        `json:"gitBranch,omitempty"`
+	LastCommand       string        `json:"lastCommand,omitempty"`
+	LastInputKind     string        `json:"lastInputKind,omitempty"`
+	Notification      *Notification `json:"notification,omitempty"`
+	Clients           int           `json:"clients"`
+	Cols              int           `json:"cols"`
+	Rows              int           `json:"rows"`
+	CreatedAt         time.Time     `json:"createdAt"`
+	LastActiveAt      time.Time     `json:"lastActiveAt"`
+}
+
+type LastInput struct {
+	Kind      string `json:"kind"`
+	Text      string `json:"text"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type Manager struct {
@@ -35,6 +47,7 @@ type Manager struct {
 	sessions       map[string]*TerminalSession
 	managerClients map[managerSink]struct{}
 	defaults       TerminalDefaults
+	sessionEnv     map[string]string
 }
 
 type TerminalDefaults struct {
@@ -73,20 +86,72 @@ func (manager *Manager) SetDefaults(defaults TerminalDefaults) {
 	manager.defaults = defaults
 }
 
-func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error) {
+func (manager *Manager) SetSessionEnv(env map[string]string) {
 	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	manager.sessionEnv = env
+}
 
+func (manager *Manager) buildSessionEnv(id string) map[string]string {
+	if len(manager.sessionEnv) == 0 {
+		return map[string]string{
+			"WEBTERM_SESSION_ID": id,
+		}
+	}
+	env := make(map[string]string, len(manager.sessionEnv)+1)
+	for k, v := range manager.sessionEnv {
+		env[k] = v
+	}
+	env["WEBTERM_SESSION_ID"] = id
+	return env
+}
+
+func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error) {
+	return manager.CreateWithPreparer(name, cwd, nil)
+}
+
+// CreateWithPreparer 允许在创建 TerminalSession 之前执行预备逻辑（如写入 Agent 配置文件）。
+// preparer 会收到已分配的 sessionID，并返回要使用的 Command、Args 和额外 Env。
+func (manager *Manager) CreateWithPreparer(
+	name string,
+	cwd string,
+	preparer func(id string) (command string, args []string, env map[string]string, err error),
+) (*TerminalSession, error) {
+	manager.mu.Lock()
 	id := fmt.Sprintf("s%d", manager.nextID)
 	manager.nextID++
+	manager.mu.Unlock()
+
+	var command string
+	var args []string
+	var extraEnv map[string]string
+	if preparer != nil {
+		var err error
+		command, args, extraEnv, err = preparer(id)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	manager.mu.Lock()
 	if cwd == "" {
 		cwd = manager.defaults.CWD
 	}
+	if command == "" {
+		command = manager.defaults.Command
+	}
+	env := manager.buildSessionEnv(id)
+	for k, v := range extraEnv {
+		env[k] = v
+	}
 	terminal, err := NewTerminalSession(TerminalOptions{
-		ID:      id,
-		Name:    name,
-		CWD:     cwd,
-		Command: manager.defaults.Command,
-		OnTitle: func() {
+		ID:            id,
+		Name:          name,
+		CWD:           cwd,
+		Command:       command,
+		Args:          args,
+		Env:           env,
+		OnInfoChanged: func() {
 			manager.mu.RLock()
 			term, ok := manager.sessions[id]
 			manager.mu.RUnlock()

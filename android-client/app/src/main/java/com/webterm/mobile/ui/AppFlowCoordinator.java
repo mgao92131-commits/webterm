@@ -532,6 +532,7 @@ public final class AppFlowCoordinator implements
         };
 
         mTerminalRuntime.attach(args, fragmentHost, this::showSessionListOrDeviceHome);
+        mTerminalRuntime.setHookListener(ev -> fragment.showHookNotification(ev));
     }
 
     // ── HomeHost ─────────────────────────────────────────────────────

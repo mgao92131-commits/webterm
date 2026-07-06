@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -40,9 +41,11 @@ type MuxVirtualSocket interface {
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager  *session.Manager
-	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
-	logger   *logs.Logger
+	manager     *session.Manager
+	muxServe    MuxServeFunc // 可选：用于 mux 子协议包装
+	logger      *logs.Logger
+	socketPath  string
+	hookBinPath string
 }
 
 func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
@@ -57,6 +60,12 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 		log = logger[0]
 	}
 	return &SessionRouter{manager: manager, muxServe: muxServe, logger: log}
+}
+
+// SetAgentHooks 配置 Agent hook 所需的 socket 路径和 hook 脚本路径。
+func (r *SessionRouter) SetAgentHooks(socketPath, hookBinPath string) {
+	r.socketPath = socketPath
+	r.hookBinPath = hookBinPath
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -112,11 +121,12 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 		var req struct {
 			Name string `json:"name"`
 			CWD  string `json:"cwd"`
+			Agent string `json:"agent"`
 		}
 		if len(body) > 0 {
 			_ = json.Unmarshal(body, &req)
 		}
-		terminal, err := r.manager.Create(req.Name, req.CWD)
+		terminal, err := r.createSession(req.Name, req.CWD, req.Agent)
 		if err != nil {
 			return http.StatusBadRequest, nil, err
 		}
@@ -146,6 +156,38 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 		}
 	}
 	return http.StatusNotFound, nil, errors.New("not found")
+}
+
+func (r *SessionRouter) createSession(name, cwd, agent string) (*session.TerminalSession, error) {
+	if agent == "" {
+		return r.manager.Create(name, cwd)
+	}
+	if r.socketPath == "" || r.hookBinPath == "" {
+		return nil, errors.New("agent hooks are not configured")
+	}
+	adapter, err := agenthooks.NewAdapter(agenthooks.AgentKind(agent))
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(name) == "" {
+		name = agent
+	}
+	return r.manager.CreateWithPreparer(name, cwd, func(id string) (string, []string, map[string]string, error) {
+		spec, err := adapter.Prepare(id, cwd, r.socketPath, r.hookBinPath)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		if err := agenthooks.WriteFiles(spec.Files); err != nil {
+			return "", nil, nil, err
+		}
+		command := ""
+		var args []string
+		if len(spec.Command) > 0 {
+			command = spec.Command[0]
+			args = spec.Command[1:]
+		}
+		return command, args, spec.Env, nil
+	})
 }
 
 // Manager 返回内部的 session.Manager（供 P2P 等组件需要直接访问时使用）。

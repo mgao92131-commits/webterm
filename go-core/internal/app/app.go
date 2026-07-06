@@ -3,35 +3,53 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
+	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/session"
 )
 
 type App struct {
-	cfg             config.Config
-	version         string
-	sessions        *session.Manager
-	logger          *logs.Logger
-	mu              sync.RWMutex
-	runtimeMode     string
-	restartRequired bool
-	direct          DirectStatus
-	relay           RelayStatus
+	cfg                 config.Config
+	version             string
+	sessions            *session.Manager
+	logger              *logs.Logger
+	mu                  sync.RWMutex
+	runtimeMode         string
+	restartRequired     bool
+	socketPath          string
+	agentHookScriptPath string
+	direct              DirectStatus
+	relay               RelayStatus
 }
 
 func New(cfg config.Config, version string) *App {
+	logger := logs.New(logs.DefaultCapacity)
+	socketPath := defaultSocketPath()
+	hookPath := installAgentHook(logger)
+
+	manager := session.NewManager(session.TerminalDefaults{
+		CWD:     cfg.Shell.CWD,
+		Command: cfg.Shell.Command,
+	})
+	manager.SetSessionEnv(map[string]string{
+		"WEBTERM":             "1",
+		"WEBTERM_INTEGRATION": "1",
+		"WEBTERM_SOCKET_PATH": socketPath,
+	})
+
 	application := &App{
-		cfg:         cfg,
-		version:     version,
-		logger:      logs.New(logs.DefaultCapacity),
-		runtimeMode: cfg.Mode,
-		sessions: session.NewManager(session.TerminalDefaults{
-			CWD:     cfg.Shell.CWD,
-			Command: cfg.Shell.Command,
-		}),
+		cfg:                 cfg,
+		version:             version,
+		logger:              logger,
+		runtimeMode:         cfg.Mode,
+		socketPath:          socketPath,
+		agentHookScriptPath: hookPath,
+		sessions:            manager,
 		direct: DirectStatus{
 			Listening: false,
 			Addr:      cfg.Direct.Addr,
@@ -42,8 +60,30 @@ func New(cfg config.Config, version string) *App {
 			URL:        cfg.Relay.URL,
 		},
 	}
-	application.Log("info", "core", fmt.Sprintf("app initialized mode=%s", cfg.Mode))
+	application.Log("info", "core", fmt.Sprintf("app initialized mode=%s socket=%s hook=%s", cfg.Mode, socketPath, hookPath))
 	return application
+}
+
+func installAgentHook(logger *logs.Logger) string {
+	webtermBin, err := agenthooks.ResolveWebtermBinary()
+	if err != nil {
+		logger.Add("warn", "agenthooks", fmt.Sprintf("webterm binary not found: %v", err))
+		return ""
+	}
+	hookPath, err := agenthooks.InstallHookScript(webtermBin)
+	if err != nil {
+		logger.Add("warn", "agenthooks", fmt.Sprintf("install hook script failed: %v", err))
+		return ""
+	}
+	return hookPath
+}
+
+func defaultSocketPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	return filepath.Join(home, ".webterm", "webterm.sock")
 }
 
 func (app *App) Config() config.Config {
@@ -109,6 +149,18 @@ func (app *App) SetRuntimeStopped() {
 
 func (app *App) Sessions() *session.Manager {
 	return app.sessions
+}
+
+func (app *App) SocketPath() string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.socketPath
+}
+
+func (app *App) AgentHookScriptPath() string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.agentHookScriptPath
 }
 
 func (app *App) Status() Status {

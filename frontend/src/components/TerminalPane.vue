@@ -67,6 +67,42 @@
       <div id="terminal" ref="terminalRef" class="w-full h-full"></div>
     </div>
 
+    <!-- Hook notification toast -->
+    <Transition
+      enter-active-class="transition ease-out duration-200"
+      enter-from-class="opacity-0 -translate-y-2"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition ease-in duration-150"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 -translate-y-2"
+    >
+      <div
+        v-if="hookToast"
+        class="absolute top-10 left-0 right-0 z-30 px-3 py-2 border-b flex items-center justify-between gap-3"
+        :class="toastClass"
+      >
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-medium text-[13px] truncate">{{ hookToast.title }}</span>
+          <span v-if="hookToast.body" class="text-[12px] opacity-80 truncate">{{ hookToast.body }}</span>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <button
+            v-if="hookToast.sticky"
+            @click="focusTerminal"
+            class="text-[12px] px-2 py-1 rounded-sm bg-black/20 hover:bg-black/30 transition-colors"
+          >
+            查看
+          </button>
+          <button
+            @click="dismissToast"
+            class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-black/20 transition-colors"
+          >
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Quickbar (mobile) -->
     <nav class="quickbar z-20 w-full border-t border-border bg-app-bg py-2 px-2 select-none flex-shrink-0">
       <div class="quickbar-scroll-hint flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none py-1 w-full max-w-lg mx-auto">
@@ -88,9 +124,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { X } from '@lucide/vue';
 import { store } from '../store';
 import { TerminalSessionContext } from '../lib/terminal-session-context';
+
+interface HookToast {
+  title: string;
+  body?: string;
+  level?: 'info' | 'success' | 'warning' | 'error';
+  sticky: boolean;
+}
 
 const props = defineProps<{
   sessionId: string;
@@ -104,6 +148,8 @@ const sessionNameVal = ref('');
 const sessionPlaceholder = ref('Terminal');
 const isSelectionMode = ref(false);
 const isCtrlActive = ref(false);
+const hookToast = ref<HookToast | null>(null);
+let hookToastTimer: ReturnType<typeof setTimeout> | null = null;
 
 let context: TerminalSessionContext | null = null;
 
@@ -221,4 +267,67 @@ function debugEnabled() {
   return new URLSearchParams(window.location.search).has("debug")
     || localStorage.getItem("webtermDebug") === "1";
 }
+
+function onHookEvent(event: Event) {
+  const detail = (event as CustomEvent).detail;
+  if (!detail || detail.sessionId !== props.sessionId) return;
+  showHookToast({
+    title: String(detail.title || ''),
+    body: detail.body ? String(detail.body) : undefined,
+    level: detail.level,
+    sticky: detail.level === 'error' || detail.agentState === 'approval_required',
+  });
+}
+
+function showHookToast(toast: HookToast) {
+  hookToast.value = toast;
+  if (hookToastTimer) {
+    clearTimeout(hookToastTimer);
+    hookToastTimer = null;
+  }
+  if (!toast.sticky) {
+    hookToastTimer = setTimeout(() => {
+      hookToast.value = null;
+    }, 3000);
+  }
+}
+
+function dismissToast() {
+  hookToast.value = null;
+  if (hookToastTimer) {
+    clearTimeout(hookToastTimer);
+    hookToastTimer = null;
+  }
+}
+
+function focusTerminal() {
+  context?.terminalView?.focus();
+  dismissToast();
+}
+
+const toastClass = computed(() => {
+  const level = hookToast.value?.level;
+  const base = 'bg-app-bg/95 backdrop-blur-sm ';
+  switch (level) {
+    case 'error':
+      return base + 'border-status-danger/50 text-status-danger';
+    case 'warning':
+      return base + 'border-status-warning/50 text-status-warning';
+    case 'success':
+      return base + 'border-status-success/50 text-status-success';
+    default:
+      return base + 'border-accent/50 text-accent';
+  }
+});
+
+onMounted(() => {
+  window.addEventListener('webterm:hook', onHookEvent);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('webterm:hook', onHookEvent);
+  if (hookToastTimer) {
+    clearTimeout(hookToastTimer);
+  }
+});
 </script>

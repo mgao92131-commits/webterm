@@ -18,6 +18,8 @@ export interface Device {
 export interface Session {
   id: string;
   name?: string;
+  displayTitle?: string;
+  termTitle?: string;
   cwd: string;
   state?: 'running' | 'exited';
   cmd?: string;
@@ -26,6 +28,20 @@ export interface Session {
   recentInputHidden?: boolean;
   /** 最近输入的多行文本（由后端推送） */
   recentInputLines?: string[];
+  /** Agent / shell 上报的细粒度状态 */
+  shellState?: string;
+  agentState?: string;
+  /** Git 分支 */
+  gitBranch?: string;
+  /** 最后执行的完整命令（可作为 recentInputLines 的 fallback） */
+  lastCommand?: string;
+  /** 最新通知（由 webterm notify 上报） */
+  notification?: {
+    title: string;
+    body?: string;
+    level?: 'info' | 'success' | 'warning' | 'error';
+    timestamp: number;
+  };
 }
 
 export interface AppStore {

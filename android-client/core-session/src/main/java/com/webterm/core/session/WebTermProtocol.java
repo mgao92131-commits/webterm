@@ -18,6 +18,7 @@ public final class WebTermProtocol {
     public static final byte MSG_PONG = 0x08;
     public static final byte MSG_TITLE = 0x09;
     public static final byte MSG_STATE = 0x0a;
+    public static final byte MSG_HOOK = 0x0b;
 
     private WebTermProtocol() {}
 

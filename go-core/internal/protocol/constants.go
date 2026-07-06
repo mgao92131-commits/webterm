@@ -11,6 +11,7 @@ const (
 	MsgPong   byte = 0x08
 	MsgTitle  byte = 0x09
 	MsgState  byte = 0x0a
+	MsgHook   byte = 0x0b
 )
 
 const (

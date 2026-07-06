@@ -1,18 +1,27 @@
 package com.webterm.feature.terminal;
 
 import android.content.Context;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.view.ViewCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.webterm.ui.common.DesignTokens;
+import com.webterm.ui.common.UIUtils;
+
+import org.json.JSONObject;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
@@ -27,6 +36,8 @@ public final class TerminalFragment extends Fragment {
     private TerminalViewModel mViewModel;
     private TerminalHost mHost;
     private FrameLayout mContainer;
+    private final Handler bannerHandler = new Handler(Looper.getMainLooper());
+    private View currentBanner;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -95,12 +106,88 @@ public final class TerminalFragment extends Fragment {
         }
     }
 
+    public void showHookNotification(JSONObject ev) {
+        if (mContainer == null || ev == null) return;
+        String type = ev.optString("type", "");
+        if (!"notify".equals(type)) return;
+        String title = ev.optString("title", "");
+        String body = ev.optString("body", "");
+        String level = ev.optString("level", "info");
+        if (title.isEmpty() && body.isEmpty()) return;
+
+        boolean sticky = "error".equals(level)
+            || "approval_required".equals(ev.optString("agentState", ""));
+
+        String text = title;
+        if (!body.isEmpty()) {
+            text = text.isEmpty() ? body : title + " · " + body;
+        }
+
+        bannerHandler.removeCallbacksAndMessages(null);
+        if (currentBanner != null) {
+            mContainer.removeView(currentBanner);
+            currentBanner = null;
+        }
+
+        Context context = requireContext();
+        TextView banner = new TextView(context);
+        banner.setText(text);
+        banner.setTextColor(DesignTokens.TEXT_PRIMARY);
+        banner.setTextSize(12);
+        banner.setGravity(Gravity.CENTER_VERTICAL);
+        banner.setPadding(
+            UIUtils.dp(context, 12),
+            UIUtils.dp(context, 8),
+            UIUtils.dp(context, 12),
+            UIUtils.dp(context, 8)
+        );
+        banner.setMaxLines(2);
+        banner.setEllipsize(android.text.TextUtils.TruncateAt.END);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(hookBackgroundColor(level));
+        banner.setBackground(bg);
+        ViewCompat.setElevation(banner, UIUtils.dp(context, 4));
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.gravity = Gravity.TOP;
+        mContainer.addView(banner, lp);
+        currentBanner = banner;
+
+        if (!sticky) {
+            bannerHandler.postDelayed(() -> {
+                if (currentBanner == banner && mContainer != null) {
+                    mContainer.removeView(banner);
+                    currentBanner = null;
+                }
+            }, 3000);
+        }
+    }
+
+    private int hookBackgroundColor(String level) {
+        switch (level) {
+            case "error":
+                return DesignTokens.dangerBg();
+            case "warning":
+                return DesignTokens.warningBg();
+            case "success":
+                return DesignTokens.successBg();
+            default:
+                return DesignTokens.accentBgStrong();
+        }
+    }
+
     @Override
     public void onDestroyView() {
+        bannerHandler.removeCallbacksAndMessages(null);
         if (mHost != null) {
             mHost.detachTerminalFragment(this);
         }
         mContainer = null;
+        currentBanner = null;
         super.onDestroyView();
     }
 

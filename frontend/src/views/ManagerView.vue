@@ -221,6 +221,7 @@ import TerminalPane from '../components/TerminalPane.vue';
 import { fetchSessions, createSession, closeSession as closeSessionService } from '../services/session.service';
 import { connectionService } from '../services/connection.service';
 import { useManagerConnection, type ManagerServerMessage } from '../composables/useManagerConnection';
+import { sortSessionsByAttention } from '../utils/session';
 import type { Session, Device } from '../store';
 
 const router = useRouter();
@@ -234,6 +235,7 @@ function upsertSession(session: Session) {
   } else {
     store.sessions.push(session);
   }
+  store.sessions = sortSessionsByAttention(store.sessions);
 }
 
 function removeSession(id: string) {
@@ -255,7 +257,7 @@ function handleManagerMessage(msg: ManagerServerMessage) {
       store.sessions = [];
     }
   } else if (msg.type === 'sessions') {
-    store.sessions = Array.isArray(msg.data) ? (msg.data as Session[]) : [];
+    store.sessions = sortSessionsByAttention(Array.isArray(msg.data) ? (msg.data as Session[]) : []);
   } else if (msg.type === 'session') {
     upsertSession(msg.data as Session);
   } else if (msg.type === 'session-closed') {
@@ -413,7 +415,7 @@ async function refreshDeviceList() {
 async function refreshSessionList() {
   if (!store.selectedDeviceId) return;
   try {
-    store.sessions = await fetchSessions();
+    store.sessions = sortSessionsByAttention(await fetchSessions());
   } catch (err: any) {
     if (err instanceof UnauthorizedError) {
       router.push("/login");

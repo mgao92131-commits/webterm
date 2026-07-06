@@ -14,6 +14,7 @@ import (
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/control"
+	"webterm/go-core/internal/hook"
 	agentruntime "webterm/go-core/internal/runtime"
 )
 
@@ -53,19 +54,23 @@ func main() {
 	application := app.New(cfg, version)
 	supervisor := agentruntime.New(application)
 	controlServer := control.NewWithRuntime(cfg.Control.Addr, application, configPath, supervisor)
+	hookServer := hook.New(application.SocketPath(), application)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Printf("webterm-agent %s starting mode=%s control=http://%s\n", version, cfg.Mode, cfg.Control.Addr)
+	fmt.Printf("webterm-agent %s starting mode=%s control=http://%s hook-socket=%s\n", version, cfg.Mode, cfg.Control.Addr, application.SocketPath())
 	if cfg.Mode == config.ModeDirect {
 		fmt.Printf("direct runtime scaffold configured for %s\n", cfg.Direct.Addr)
 	} else {
 		fmt.Printf("relay runtime scaffold configured for %s protocol=%s\n", cfg.Relay.URL, cfg.Relay.Protocol)
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		errCh <- controlServer.ListenAndServe(ctx)
+	}()
+	go func() {
+		errCh <- hookServer.ListenAndServe(ctx)
 	}()
 	if err := supervisor.Start(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "webterm-agent failed: %v\n", err)

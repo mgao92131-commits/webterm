@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -133,7 +134,7 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		_ = conn.Close(websocket.StatusPolicyViolation, "mux subprotocol required")
 		return
 	}
-	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router := direct.sessionRouter()
 	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
@@ -202,27 +203,27 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 }
 
 func (direct *Server) routeSessions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, direct.app.Sessions().List())
-	case http.MethodPost:
-		var body struct {
-			Name string `json:"name"`
-			CWD  string `json:"cwd"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize)).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json")
-			return
-		}
-		terminal, err := direct.app.Sessions().Create(body.Name, body.CWD)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusCreated, terminal.Info())
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	router := direct.sessionRouter()
+	status, body, err := router.RouteHTTP(r.Method, r.URL.Path, readRequestBody(w, r))
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
 	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func (direct *Server) sessionRouter() *application.SessionRouter {
+	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router.SetAgentHooks(direct.app.SocketPath(), direct.app.AgentHookScriptPath())
+	return router
+}
+
+func readRequestBody(w http.ResponseWriter, r *http.Request) []byte {
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize))
+	return body
 }
 
 func (direct *Server) routeSession(w http.ResponseWriter, r *http.Request, id string) {

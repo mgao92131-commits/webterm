@@ -486,9 +486,22 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
             append(builder, session.optString("createdAt"));
             append(builder, session.optString("name"));
             append(builder, session.optString("termTitle"));
+            append(builder, session.optString("displayTitle"));
+            append(builder, session.optString("agentState"));
+            append(builder, session.optString("shellState"));
+            append(builder, session.optString("gitBranch"));
+            append(builder, session.optString("lastCommand"));
             append(builder, session.optString("recentInputLines"));
             append(builder, session.optString("recentInputHidden"));
+            append(builder, notificationContent(session.optJSONObject("notification")));
             return builder.toString();
+        }
+
+        private static String notificationContent(JSONObject notification) {
+            if (notification == null) return "";
+            return notification.optString("title", "") + "\u001f"
+                + notification.optString("body", "") + "\u001f"
+                + notification.optString("level", "");
         }
 
         private static void append(StringBuilder builder, String value) {
