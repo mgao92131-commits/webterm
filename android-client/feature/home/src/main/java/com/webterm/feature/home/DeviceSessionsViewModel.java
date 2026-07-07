@@ -1,100 +1,111 @@
 package com.webterm.feature.home;
 
-import android.app.Activity;
-
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MediatorLiveData;
 import androidx.lifecycle.ViewModel;
 
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.core.relay.RelayService;
-import com.webterm.feature.home.domain.HomeServerCoordinator;
-import com.webterm.ui.common.StatusIndicatorView;
+import com.webterm.feature.home.repository.SessionRepository;
 
 import javax.inject.Inject;
 
 import dagger.hilt.android.lifecycle.HiltViewModel;
 
+/**
+ * ViewModel for the device sessions screen.
+ * Observes the shared {@link SessionRepository} and maps its state to UI state.
+ */
 @HiltViewModel
 public final class DeviceSessionsViewModel extends ViewModel {
-    private final RelayService relayService;
-    private final HomeServerCoordinator.Factory homeServerFactory;
 
-    private HomeServerCoordinator homeCoordinator;
+    private final SessionRepository sessionRepository;
+    private final MediatorLiveData<DeviceSessionsUiState> uiState = new MediatorLiveData<>();
+    private final MediatorLiveData<ServerConfig> authEvent = new MediatorLiveData<>();
+
     private ServerConfig server;
-    private Activity attachedActivity;
-    private boolean hasLoaded;
 
     @Inject
-    public DeviceSessionsViewModel(
-            RelayService relayService,
-            HomeServerCoordinator.Factory homeServerFactory) {
-        this.relayService = relayService;
-        this.homeServerFactory = homeServerFactory;
+    public DeviceSessionsViewModel(SessionRepository sessionRepository) {
+        this.sessionRepository = sessionRepository;
+        authEvent.addSource(sessionRepository.observeAuthEvents(), authEvent::setValue);
     }
 
     public void setServer(ServerConfig server) {
         if (this.server != null && isSameServer(this.server, server)) return;
+        if (this.server != null) {
+            uiState.removeSource(sessionRepository.observeSessions(this.server));
+        }
         this.server = server;
-        hasLoaded = false;
+        if (server != null) {
+            uiState.addSource(sessionRepository.observeSessions(server), this::applyResult);
+        }
     }
 
     public ServerConfig getServer() {
         return server;
     }
 
-    public void onActivityAttached(Activity activity, HomeServerCoordinator.Listener listener) {
-        if (homeCoordinator == null || attachedActivity != activity) {
-            if (homeCoordinator != null) homeCoordinator.destroy();
-            homeCoordinator = homeServerFactory.create(activity, listener);
-            attachedActivity = activity;
-        } else {
-            homeCoordinator.setListener(listener);
-        }
+    public LiveData<DeviceSessionsUiState> getUiState() {
+        return uiState;
     }
 
-    public HomeServerCoordinator getHomeCoordinator() {
-        return homeCoordinator;
+    /**
+     * Emits when the repository refreshes a server's cookie.
+     * The Fragment/Activity should persist the updated server configuration.
+     */
+    public LiveData<ServerConfig> getAuthEvent() {
+        return authEvent;
     }
 
-    public RelayService getRelayService() {
-        return relayService;
-    }
-
-    public void attach(SessionRecyclerAdapter adapter, StatusIndicatorView status) {
-        if (homeCoordinator == null || server == null) return;
-        homeCoordinator.attachSessionAdapter(adapter);
-        if (hasLoaded) {
-            homeCoordinator.restoreDeviceSessions(server, status);
-        } else {
-            load(status);
-        }
-    }
-
-    public void load(StatusIndicatorView status) {
-        if (homeCoordinator == null || server == null) return;
-        hasLoaded = true;
-        homeCoordinator.loadDeviceSessions(server, status);
-    }
-
-    public void pauseUi() {
-        if (homeCoordinator != null) homeCoordinator.pauseUi();
-    }
-
-    public void resume() {
-        if (homeCoordinator != null) homeCoordinator.resume();
-    }
-
-    public void detachAdapter() {
-        if (homeCoordinator != null) homeCoordinator.attachSessionAdapter(null);
+    public void refresh() {
+        if (server == null) return;
+        sessionRepository.refresh(server);
     }
 
     @Override
     protected void onCleared() {
         super.onCleared();
-        if (homeCoordinator != null) {
-            homeCoordinator.destroy();
-            homeCoordinator = null;
+        if (server != null) {
+            uiState.removeSource(sessionRepository.observeSessions(server));
         }
-        attachedActivity = null;
+        authEvent.removeSource(sessionRepository.observeAuthEvents());
+    }
+
+    private void applyResult(SessionRepository.SessionListResult result) {
+        DeviceSessionsUiState.ConnectionState state;
+        if (result.state == null) {
+            state = DeviceSessionsUiState.ConnectionState.DISCONNECTED;
+        } else {
+            switch (result.state) {
+                case CONNECTING:
+                    state = DeviceSessionsUiState.ConnectionState.CONNECTING;
+                    break;
+                case CONNECTED:
+                    state = DeviceSessionsUiState.ConnectionState.CONNECTED;
+                    break;
+                case CONNECTED_P2P:
+                    state = DeviceSessionsUiState.ConnectionState.CONNECTED_P2P;
+                    break;
+                case DISCONNECTED:
+                    state = DeviceSessionsUiState.ConnectionState.DISCONNECTED;
+                    break;
+                case AUTH_REQUIRED:
+                    state = DeviceSessionsUiState.ConnectionState.AUTH_REQUIRED;
+                    break;
+                case ERROR:
+                    state = DeviceSessionsUiState.ConnectionState.ERROR;
+                    break;
+                default:
+                    state = DeviceSessionsUiState.ConnectionState.DISCONNECTED;
+            }
+        }
+        uiState.setValue(new DeviceSessionsUiState(
+            result.sessions,
+            state,
+            result.errorMessage,
+            result.isLoading
+        ));
     }
 
     private static boolean isSameServer(ServerConfig a, ServerConfig b) {
@@ -103,8 +114,8 @@ public final class DeviceSessionsViewModel extends ViewModel {
         String aId = a.getId();
         String bId = b.getId();
         if (aId != null && !aId.isEmpty() && aId.equals(bId)) return true;
-        String aUrl = com.webterm.core.api.WebTermUrls.normalizeBaseUrl(a.getUrl());
-        String bUrl = com.webterm.core.api.WebTermUrls.normalizeBaseUrl(b.getUrl());
+        String aUrl = WebTermUrls.normalizeBaseUrl(a.getUrl());
+        String bUrl = WebTermUrls.normalizeBaseUrl(b.getUrl());
         if (!aUrl.equals(bUrl)) return false;
         String aDev = a.getDeviceId() == null ? "" : a.getDeviceId();
         String bDev = b.getDeviceId() == null ? "" : b.getDeviceId();

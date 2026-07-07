@@ -15,7 +15,6 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.webterm.core.config.ServerConfig;
-import com.webterm.feature.home.domain.HomeServerCoordinator;
 import com.webterm.terminal.ui.TerminalWindowInsetsController;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.PageTransitionAnimator;
@@ -67,6 +66,13 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
         mHost = null;
     }
 
+    @Override
+    public void onDestroyView() {
+        mSessionAdapter = null;
+        mScreen = null;
+        super.onDestroyView();
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -77,42 +83,6 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             return new View(requireContext());
         }
 
-        mViewModel.onActivityAttached(requireActivity(), new HomeServerCoordinator.Listener() {
-            @Override
-            public boolean isHomeActive() {
-                return isAdded() && !isHidden() && getView() != null && mSessionAdapter != null;
-            }
-
-            @Override
-            public boolean isServerContextActive(ServerConfig activeServer) {
-                return isAdded() && isSameServer(activeServer, mViewModel.getServer());
-            }
-
-            @Override
-            public void onAuthenticated(ServerConfig server) {
-                if (mHost != null) mHost.saveServers();
-            }
-
-            @Override
-            public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
-                if (mHost != null) mHost.removeCachedTerminal(baseUrl, sessionId);
-            }
-
-            @Override
-            public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
-                if (mHost != null) mHost.onSessionCwdChanged(server, sessionId, cwd);
-            }
-
-            @Override
-            public void onRemoveMissingCachedSessionsForServer(ServerConfig server,
-                    java.util.Set<String> liveSessionIdentities) {
-                if (mHost != null) {
-                    mHost.removeMissingCachedSessionsForServer(server, liveSessionIdentities);
-                }
-            }
-        });
-
-        final com.webterm.ui.common.StatusIndicatorView[] statusRef = new com.webterm.ui.common.StatusIndicatorView[1];
         mScreen = DeviceSessionsScreenBuilder.build(
             requireActivity(),
             server,
@@ -122,18 +92,17 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             () -> {
                 if (mHost != null) mHost.createSession(server);
             },
-            () -> mViewModel.load(statusRef[0]),
+            () -> mViewModel.refresh(),
             () -> {
                 if (mHost != null) mHost.showAddServerDialog(server);
             },
             () -> confirmRemoveServer(server)
         );
-        statusRef[0] = mScreen.status;
 
         installRootInsets(mScreen.root, 0, 0, 0, dp(16), true, true);
 
         mSessionAdapter = new SessionRecyclerAdapter(requireActivity(), this,
-            () -> mViewModel.load(mScreen.status));
+            () -> mViewModel.refresh());
         mScreen.sessionList.setAdapter(mSessionAdapter);
         setupSwipeToDelete(mScreen.sessionList, mSessionAdapter);
         return mScreen.root;
@@ -142,28 +111,50 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        if (mSessionAdapter != null && mScreen != null) {
-            mViewModel.attach(mSessionAdapter, mScreen.status);
+        if (mSessionAdapter == null || mScreen == null) return;
+
+        mViewModel.getUiState().observe(getViewLifecycleOwner(), state -> {
+            if (state == null) return;
+            render(state);
+        });
+
+        mViewModel.getAuthEvent().observe(getViewLifecycleOwner(), server -> {
+            if (server != null && mHost != null) mHost.saveServers();
+        });
+    }
+
+    private void render(DeviceSessionsUiState state) {
+        ServerConfig server = mViewModel.getServer();
+        if (server == null) return;
+
+        mScreen.status.setStatus(toStatusIndicator(state.connectionState));
+
+        if (state.sessions != null && state.sessions.length() > 0) {
+            mSessionAdapter.submitSessions(server, state.sessions);
+        } else if (state.connectionState == DeviceSessionsUiState.ConnectionState.ERROR
+            || state.connectionState == DeviceSessionsUiState.ConnectionState.AUTH_REQUIRED) {
+            mSessionAdapter.showError(state.errorMessage != null ? state.errorMessage : "连接失败");
+        } else {
+            mSessionAdapter.showEmpty();
         }
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        mViewModel.resume();
-    }
-
-    @Override
-    public void onPause() {
-        mViewModel.pauseUi();
-        super.onPause();
-    }
-
-    @Override
-    public void onDestroyView() {
-        mViewModel.detachAdapter();
-        mSessionAdapter = null;
-        super.onDestroyView();
+    private static com.webterm.ui.common.StatusIndicatorView.Status toStatusIndicator(
+            DeviceSessionsUiState.ConnectionState state) {
+        if (state == null) return com.webterm.ui.common.StatusIndicatorView.Status.DISCONNECTED;
+        switch (state) {
+            case CONNECTING:
+                return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTING;
+            case CONNECTED:
+                return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTED;
+            case CONNECTED_P2P:
+                return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTED_P2P;
+            case DISCONNECTED:
+            case AUTH_REQUIRED:
+            case ERROR:
+            default:
+                return com.webterm.ui.common.StatusIndicatorView.Status.DISCONNECTED;
+        }
     }
 
     @Override
@@ -190,7 +181,7 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
 
     private void confirmRemoveServer(ServerConfig server) {
         if (server == null) return;
-        new AlertDialog.Builder(requireContext(), AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+        AlertDialog dialog = new AlertDialog.Builder(requireContext(), AlertDialog.THEME_DEVICE_DEFAULT_DARK)
             .setTitle("确认移除电脑")
             .setMessage("确定要从列表中移除该服务器吗？")
             .setPositiveButton("移除", (d, which) -> {
@@ -200,7 +191,9 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
                 }
             })
             .setNegativeButton("取消", null)
-            .create().show();
+            .create();
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
     }
 
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight,
@@ -283,19 +276,5 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
         } catch (JSONException e) {
             return null;
         }
-    }
-
-    private static boolean isSameServer(ServerConfig a, ServerConfig b) {
-        if (a == b) return true;
-        if (a == null || b == null) return false;
-        String aId = a.getId();
-        String bId = b.getId();
-        if (aId != null && !aId.isEmpty() && aId.equals(bId)) return true;
-        String aUrl = com.webterm.core.api.WebTermUrls.normalizeBaseUrl(a.getUrl());
-        String bUrl = com.webterm.core.api.WebTermUrls.normalizeBaseUrl(b.getUrl());
-        if (!aUrl.equals(bUrl)) return false;
-        String aDev = a.getDeviceId() == null ? "" : a.getDeviceId();
-        String bDev = b.getDeviceId() == null ? "" : b.getDeviceId();
-        return aDev.equals(bDev);
     }
 }

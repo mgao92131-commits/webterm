@@ -254,8 +254,11 @@ public final class TerminalLifecycleController {
 
     public void connectTerminal() {
         if (terminalConnection == null || !terminalState.hasSession() || terminalState.baseUrl() == null || terminalState.cookie() == null) return;
+        // 用 connection 实际收到的最新 lastSeq（detach 期间持续更新），
+        // 而非 terminalState.lastSeq()（被 applyLaunchState 重置为 cached 旧值，会导致 ReplayAfter 重放已收数据 → 重复）
+        long seq = terminalConnection.getLastSeq();
         terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
-        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), terminalState.lastSeq(), terminalState.relayDeviceId());
+        terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), seq, terminalState.relayDeviceId());
     }
 
     public void showKeyboard() {
@@ -373,13 +376,11 @@ public final class TerminalLifecycleController {
         terminalView.requestFocus();
         terminalView.updateSize();
         host.updateKeyboardAvoidance();
-        if (terminalConnection != null && terminalConnection.isConnected()) {
-            terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
-            connectionStatus.update(terminalConnection.getState(),
-                terminalConnection.getReconnectAttempts(), terminalConnection.isP2PConnected());
-        } else {
-            connectTerminal();
-        }
+        // 总是重新建立 channel + sendHello：channel 可能已被服务端静默关闭
+        // （isConnected 只反映 mux 物理连接，不感知 channel 级关闭）。
+        // 复用服务端 handleHello 的 ReplayAfter(lastSeq) 恢复数据，
+        // 客户端 seq<=lastSeq 去重避免重复。连接状态由 onConnectionStatus 回调刷新。
+        connectTerminal();
     }
 
     private void closeTerminalConnection(String reason) {

@@ -13,6 +13,11 @@ import (
 )
 
 const (
+	shellInitDirEnv = "WEBTERM_SHELL_INIT_DIR"
+	bashRcName      = "bashrc"
+)
+
+const (
 	DefaultCols = 100
 	DefaultRows = 30
 )
@@ -51,13 +56,13 @@ func Start(opts Options) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	shellCmd, args, err := resolveCommand(opts)
+	shellCmd, args, extraEnv, err := resolveCommand(opts)
 	if err != nil {
 		return nil, err
 	}
 	cmd := exec.Command(shellCmd, args...)
 	cmd.Dir = cwd
-	cmd.Env = buildEnv(os.Environ(), opts.Env)
+	cmd.Env = buildEnv(os.Environ(), opts.Env, extraEnv)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: uint16(cols),
 		Rows: uint16(rows),
@@ -168,15 +173,15 @@ func validateCWD(cwd string) (string, error) {
 	return abs, nil
 }
 
-func resolveCommand(opts Options) (string, []string, error) {
+func resolveCommand(opts Options) (string, []string, map[string]string, error) {
 	if opts.Command != "" {
-		return opts.Command, opts.Args, nil
+		return opts.Command, opts.Args, nil, nil
 	}
 	if runtime.GOOS == "windows" {
 		if comspec := os.Getenv("ComSpec"); comspec != "" {
-			return comspec, nil, nil
+			return comspec, nil, nil, nil
 		}
-		return "cmd.exe", nil, nil
+		return "cmd.exe", nil, nil, nil
 	}
 	candidates := []string{os.Getenv("SHELL"), "/bin/zsh", "/bin/bash", "/bin/sh"}
 	for _, c := range candidates {
@@ -184,16 +189,41 @@ func resolveCommand(opts Options) (string, []string, error) {
 			continue
 		}
 		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			return c, nil, nil
+			initDir := ""
+			if opts.Env != nil {
+				initDir = opts.Env[shellInitDirEnv]
+			}
+			return applyShellInit(c, initDir)
 		}
 	}
-	return "", nil, errors.New("no executable shell found")
+	return "", nil, nil, errors.New("no executable shell found")
 }
 
-func buildEnv(source []string, extra map[string]string) []string {
+func applyShellInit(shellCmd, initDir string) (string, []string, map[string]string, error) {
+	if initDir == "" {
+		return shellCmd, nil, nil, nil
+	}
+	switch filepath.Base(shellCmd) {
+	case "bash":
+		rc := filepath.Join(initDir, bashRcName)
+		if info, err := os.Stat(rc); err == nil && !info.IsDir() {
+			return shellCmd, []string{"--rcfile", rc, "-i"}, nil, nil
+		}
+	case "zsh":
+		zshDir := filepath.Join(initDir, "zsh")
+		if info, err := os.Stat(zshDir); err == nil && info.IsDir() {
+			return shellCmd, []string{"-i"}, map[string]string{"ZDOTDIR": zshDir}, nil
+		}
+	}
+	return shellCmd, nil, nil, nil
+}
+
+func buildEnv(source []string, extra ...map[string]string) []string {
 	env := append([]string(nil), source...)
-	for key, value := range extra {
-		env = setEnv(env, key, value)
+	for _, m := range extra {
+		for key, value := range m {
+			env = setEnv(env, key, value)
+		}
 	}
 	env = setEnv(env, "TERM", "xterm-256color")
 	env = setEnv(env, "COLORTERM", "truecolor")

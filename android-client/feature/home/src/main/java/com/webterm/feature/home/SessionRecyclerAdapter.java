@@ -489,7 +489,6 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
             append(builder, session.optString("displayTitle"));
             append(builder, session.optString("agentState"));
             append(builder, session.optString("shellState"));
-            append(builder, session.optString("gitBranch"));
             append(builder, session.optString("lastCommand"));
             append(builder, session.optString("recentInputLines"));
             append(builder, session.optString("recentInputHidden"));

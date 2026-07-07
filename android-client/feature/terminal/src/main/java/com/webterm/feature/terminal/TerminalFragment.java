@@ -18,6 +18,7 @@ import androidx.core.view.ViewCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 
+import com.webterm.feature.terminal.domain.TerminalRuntime;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
 
@@ -35,6 +36,7 @@ public final class TerminalFragment extends Fragment {
 
     private TerminalViewModel mViewModel;
     private TerminalHost mHost;
+    private TerminalRuntime mRuntime;
     private FrameLayout mContainer;
     private final Handler bannerHandler = new Handler(Looper.getMainLooper());
     private View currentBanner;
@@ -106,8 +108,17 @@ public final class TerminalFragment extends Fragment {
         }
     }
 
+    public void setRuntime(TerminalRuntime runtime) {
+        mRuntime = runtime;
+    }
+
+    public TerminalRuntime getRuntime() {
+        return mRuntime;
+    }
+
     public void showHookNotification(JSONObject ev) {
         if (mContainer == null || ev == null) return;
+        android.util.Log.d("TerminalFragment", "showHookNotification event=" + ev.toString());
         String type = ev.optString("type", "");
         if (!"notify".equals(type)) return;
         String title = ev.optString("title", "");
@@ -188,6 +199,7 @@ public final class TerminalFragment extends Fragment {
         }
         mContainer = null;
         currentBanner = null;
+        mRuntime = null;
         super.onDestroyView();
     }
 

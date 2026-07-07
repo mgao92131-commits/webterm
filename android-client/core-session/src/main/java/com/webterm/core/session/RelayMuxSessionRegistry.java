@@ -29,11 +29,13 @@ public final class RelayMuxSessionRegistry implements ReconnectTrigger {
     }
 
     public synchronized RelayMuxSessionManager forDevice(String baseUrl, String cookie, String deviceId) {
-        String key = key(baseUrl, cookie, deviceId);
+        String key = key(baseUrl, deviceId);
         RelayMuxSessionManager manager = managers.get(key);
         if (manager == null) {
             manager = new RelayMuxSessionManager(http, mainHandler, baseUrl, cookie, deviceId, transportFactory);
             managers.put(key, manager);
+        } else {
+            manager.updateCookie(cookie);
         }
         return manager;
     }
@@ -61,7 +63,9 @@ public final class RelayMuxSessionRegistry implements ReconnectTrigger {
         managers.clear();
     }
 
-    private static String key(String baseUrl, String cookie, String deviceId) {
-        return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (cookie == null ? "" : cookie) + "\n" + (deviceId == null ? "" : deviceId);
+    private static String key(String baseUrl, String deviceId) {
+        // Cookie is a rotating auth token, not part of device identity.
+        // A device should share one manager regardless of cookie refreshes.
+        return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (deviceId == null ? "" : deviceId);
     }
 }

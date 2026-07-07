@@ -8,7 +8,7 @@ import (
 type kimiAdapter struct{}
 
 func (a *kimiAdapter) Prepare(sessionID, cwd, socketPath, hookBinPath string) (LaunchSpec, error) {
-	home := runtimeDir(sessionID)
+	home := agentHomeDir(string(AgentKimi))
 	configPath := filepath.Join(home, "config.toml")
 
 	config := strings.ReplaceAll(kimiConfigTemplate, "{{HOOK_BIN}}", tomlString(hookBinPath))

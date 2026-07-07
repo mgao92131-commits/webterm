@@ -26,6 +26,7 @@ public final class MuxSession {
         void onTunnelConnected(String tunnelId);
         void onTunnelError(String tunnelId, String message);
         void onTunnelData(String tunnelId, byte[] payload, boolean binary);
+        void onTunnelClosed(String tunnelId);
 
         /** 物理连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
@@ -188,6 +189,11 @@ public final class MuxSession {
             }
             String message = msg.optString("message");
             mainHandler.post(() -> listener.onTunnelError(tunnelId, message));
+        } else if ("ws-close".equals(type)) {
+            synchronized (pendingConnects) {
+                pendingConnects.remove(tunnelId);
+            }
+            mainHandler.post(() -> listener.onTunnelClosed(tunnelId));
         }
         // 其它控制消息（服务端角色不发送 ws-connect）忽略。
     }

@@ -4,12 +4,9 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
 
-import com.webterm.core.api.WebTermApi;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.relay.RelayService;
-import com.webterm.ui.common.command.SessionCommandController;
-import com.webterm.feature.home.domain.HomeServerCoordinator;
 import com.webterm.ui.common.SingleLiveEvent;
 
 import java.util.ArrayList;
@@ -20,7 +17,7 @@ import javax.inject.Inject;
 import dagger.hilt.android.lifecycle.HiltViewModel;
 
 /**
- * ViewModel for the home screen (device list + device sessions).
+ * ViewModel for the home screen (device list).
  * Holds business logic and state, exposes LiveData for the Fragment to observe.
  */
 @HiltViewModel
@@ -30,13 +27,6 @@ public final class HomeViewModel extends ViewModel {
 
     private final RelayService relayService;
     private final ServerConfigManager serverConfigs;
-    private final WebTermApi api;
-    private final HomeServerCoordinator.Factory homeServerFactory;
-
-    // ── Created at init time ─────────────────────────────────────
-
-    private SessionCommandController sessionCommands;
-    private HomeServerCoordinator homeCoordinator;
 
     // ── LiveData: data for the Fragment ──────────────────────────
 
@@ -60,44 +50,14 @@ public final class HomeViewModel extends ViewModel {
     private ServerConfig selectedServer;
 
     @Inject
-    public HomeViewModel(
-            RelayService relayService,
-            ServerConfigManager serverConfigs,
-            WebTermApi api,
-            HomeServerCoordinator.Factory homeServerFactory) {
+    public HomeViewModel(RelayService relayService, ServerConfigManager serverConfigs) {
         this.relayService = relayService;
         this.serverConfigs = serverConfigs;
-        this.api = api;
-        this.homeServerFactory = homeServerFactory;
-    }
-
-    /**
-     * Initialize the ViewModel with an Activity-level host for creating
-     * objects that require Activity context (dialogs, toasts).
-     */
-    public void init(SessionCommandController.Listener cmdListener,
-                     HomeServerCoordinator.Listener homeListener) {
-        this.sessionCommands = new SessionCommandController(null, api, cmdListener);
-        // homeCoordinator will be created when we have an Activity
-    }
-
-    /**
-     * Called when the HomeFragment attaches to an Activity —
-     * creates the HomeServerCoordinator which needs Activity.
-     */
-    public void onActivityAttached(android.app.Activity activity,
-                                   HomeServerCoordinator.Listener homeListener) {
-        this.homeCoordinator = homeServerFactory.create(activity, homeListener);
-        loadDevices();
     }
 
     @Override
     protected void onCleared() {
         super.onCleared();
-        if (homeCoordinator != null) {
-            homeCoordinator.destroy();
-            homeCoordinator = null;
-        }
     }
 
     // ── Data accessors ───────────────────────────────────────────
@@ -121,8 +81,6 @@ public final class HomeViewModel extends ViewModel {
 
     public RelayService getRelayService() { return relayService; }
     public ServerConfigManager getServerConfigs() { return serverConfigs; }
-    public HomeServerCoordinator getHomeCoordinator() { return homeCoordinator; }
-    public SessionCommandController getSessionCommands() { return sessionCommands; }
     public ServerConfig getSelectedServer() { return selectedServer; }
 
     // ── Actions ──────────────────────────────────────────────────

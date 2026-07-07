@@ -80,11 +80,11 @@ public final class ServerSessionMonitor {
         channelOpened = true;
     }
 
-    static void dispatchMessage(@NonNull String text, @NonNull Listener listener) {
+    public static void dispatchMessage(@NonNull String text, @NonNull Listener listener) {
         dispatchMessage(text, listener, null);
     }
 
-    static void dispatchMessage(@NonNull String text, @NonNull Listener listener, @Nullable String relayDeviceId) {
+    public static void dispatchMessage(@NonNull String text, @NonNull Listener listener, @Nullable String relayDeviceId) {
         try {
             JSONObject msg = new JSONObject(text);
             prefixRelaySessionIds(msg, relayDeviceId);
@@ -96,7 +96,12 @@ public final class ServerSessionMonitor {
             } else if ("session".equals(type)) {
                 JSONObject sessionData = msg.optJSONObject("data");
                 if (sessionData != null) {
-                    Log.i(TAG, "TitleTrace manager message type=session id=" + sessionData.optString("id") + " termTitle=" + sessionData.optString("termTitle"));
+                    JSONObject n = sessionData.optJSONObject("notification");
+                    Log.i(TAG, "TitleTrace manager message type=session id=" + sessionData.optString("id")
+                        + " termTitle=" + sessionData.optString("termTitle")
+                        + " agentState=" + sessionData.optString("agentState")
+                        + " notification=" + (n != null ? n.optString("title", "") : "null")
+                        + " lastCommand=" + sessionData.optString("lastCommand"));
                     listener.onMonitorSession(sessionData);
                 }
             } else if ("session-closed".equals(type)) {
@@ -197,7 +202,7 @@ public final class ServerSessionMonitor {
         return "manager:" + deviceId;
     }
 
-    interface Listener {
+    public interface Listener {
         void onMonitorConnected();
         void onMonitorPollingFallback();
         void onMonitorSessions(JSONArray sessions);

@@ -75,7 +75,7 @@ func TestKimiAdapterPrepare(t *testing.T) {
 		t.Fatalf("WriteFiles: %v", err)
 	}
 
-	configPath := filepath.Join(runtimeDir("s2"), "config.toml")
+	configPath := filepath.Join(agentHomeDir(string(AgentKimi)), "config.toml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -118,7 +118,7 @@ func TestCodexAdapterPrepare(t *testing.T) {
 	if err := WriteFiles(spec.Files); err != nil {
 		t.Fatalf("WriteFiles: %v", err)
 	}
-	hooksPath := filepath.Join(runtimeDir("s3"), "hooks.json")
+	hooksPath := filepath.Join(agentHomeDir(string(AgentCodex)), "hooks.json")
 	data, err := os.ReadFile(hooksPath)
 	if err != nil {
 		t.Fatalf("read hooks: %v", err)
@@ -162,6 +162,58 @@ func TestInstallHookScript(t *testing.T) {
 	}
 }
 
+
+func TestInstallShellHook(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	hookPath, bashRcPath, err := InstallShellHook("/tmp/webterm")
+	if err != nil {
+		t.Fatalf("InstallShellHook: %v", err)
+	}
+
+	hookInfo, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatalf("stat shell hook: %v", err)
+	}
+	if hookInfo.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("shell hook not executable")
+	}
+
+	hookData, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read shell hook: %v", err)
+	}
+	hookContent := string(hookData)
+	if !strings.Contains(hookContent, "WEBTERM=\"/tmp/webterm\"") {
+		t.Fatalf("webterm binary path not baked into shell hook: %s", hookContent)
+	}
+	if !strings.Contains(hookContent, "__webterm_prompt_command") {
+		t.Fatalf("shell hook missing bash prompt command")
+	}
+	if !strings.Contains(hookContent, "__webterm_precmd") {
+		t.Fatalf("shell hook missing zsh precmd")
+	}
+
+	rcData, err := os.ReadFile(bashRcPath)
+	if err != nil {
+		t.Fatalf("read bash rc: %v", err)
+	}
+	rcContent := string(rcData)
+	if !strings.Contains(rcContent, hookPath) {
+		t.Fatalf("bash rc does not source shell hook: %s", rcContent)
+	}
+
+	zshRcPath := filepath.Join(filepath.Dir(bashRcPath), "zsh", ".zshrc")
+	zshData, err := os.ReadFile(zshRcPath)
+	if err != nil {
+		t.Fatalf("read zsh rc: %v", err)
+	}
+	zshContent := string(zshData)
+	if !strings.Contains(zshContent, hookPath) {
+		t.Fatalf("zsh rc does not source shell hook: %s", zshContent)
+	}
+}
 
 func TestClaudeAdapterEscapesHookPath(t *testing.T) {
 	tmp := t.TempDir()
@@ -211,7 +263,7 @@ func TestKimiAdapterEscapesHookPath(t *testing.T) {
 		t.Fatalf("WriteFiles: %v", err)
 	}
 
-	configPath := filepath.Join(runtimeDir("s2"), "config.toml")
+	configPath := filepath.Join(agentHomeDir(string(AgentKimi)), "config.toml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -241,7 +293,7 @@ func TestCodexAdapterEscapesHookPath(t *testing.T) {
 		t.Fatalf("WriteFiles: %v", err)
 	}
 
-	hooksPath := filepath.Join(runtimeDir("s3"), "hooks.json")
+	hooksPath := filepath.Join(agentHomeDir(string(AgentCodex)), "hooks.json")
 	data, err := os.ReadFile(hooksPath)
 	if err != nil {
 		t.Fatalf("read hooks: %v", err)

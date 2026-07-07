@@ -493,7 +493,8 @@ public final class AppFlowCoordinator implements
     }
 
     public void detachTerminalFragment(TerminalFragment fragment) {
-        detachCurrentTerminalView();
+        TerminalRuntime runtime = fragment.getRuntime();
+        if (runtime != null) runtime.detachView();
     }
 
     public void startTerminalInFragment(Activity activity, String baseUrl, String cookie, String sessionId,
@@ -510,6 +511,7 @@ public final class AppFlowCoordinator implements
             mTerminalRuntimeRegistry = new TerminalRuntimeRegistry(activity, terminalRuntimeFactory, mSessionCommands);
         }
         mTerminalRuntime = mTerminalRuntimeRegistry.getOrCreate(args);
+        fragment.setRuntime(mTerminalRuntime);
 
         TerminalRuntime.ViewHost fragmentHost = new TerminalRuntime.ViewHost() {
             @Override public int getSavedFontSize() { return configStore.getFontSize(); }

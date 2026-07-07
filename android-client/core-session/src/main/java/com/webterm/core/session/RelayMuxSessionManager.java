@@ -23,6 +23,9 @@ public final class RelayMuxSessionManager {
         void onData(String channelId, byte[] payload, boolean binary);
         void onMuxDisconnected(String reason);
 
+        /** channel 被服务端主动关闭时触发（如 send buffer 满）。 */
+        default void onClosed(String channelId) {}
+
         /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
     }
@@ -45,7 +48,7 @@ public final class RelayMuxSessionManager {
     private final Handler mainHandler;
     private final TransportFactory transportFactory;
     private final String baseUrl;
-    private final String cookie;
+    private String cookie;
     private final String deviceId;
     private MuxSession muxSession;
     private int muxGeneration;
@@ -118,13 +121,23 @@ public final class RelayMuxSessionManager {
                 Channel channel = channels.get(tunnelId);
                 if (channel != null) channel.listener.onData(tunnelId, payload, binary);
             }
+
+            @Override public void onTunnelClosed(String tunnelId) {
+                if (generation != muxGeneration) return;
+                Channel channel = channels.remove(tunnelId);
+                if (channel != null) channel.listener.onClosed(tunnelId);
+            }
         });
     }
 
     public boolean matches(String baseUrl, String cookie, String deviceId) {
+        // Cookie is a rotating auth token; identity is baseUrl + deviceId only.
         return this.baseUrl.equals(WebTermUrls.normalizeBaseUrl(baseUrl))
-            && safeEquals(this.cookie, cookie)
             && safeEquals(this.deviceId, deviceId);
+    }
+
+    public void updateCookie(String cookie) {
+        this.cookie = cookie == null ? "" : cookie;
     }
 
     public boolean isConnected() {

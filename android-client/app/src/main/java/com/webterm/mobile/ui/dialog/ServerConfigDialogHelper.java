@@ -59,7 +59,7 @@ public final class ServerConfigDialogHelper {
 
         EditText url = UIUtils.createInput(activity, "Server URL");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(existingServer == null ? "http://100.121.115.14:8080" : existingServer.getUrl());
+        url.setText(existingServer == null ? "http://10.0.2.2:8080" : existingServer.getUrl());
         container.addView(url, UIUtils.matchWrap(activity));
 
         EditText user = UIUtils.createInput(activity, "Username");

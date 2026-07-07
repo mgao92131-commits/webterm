@@ -49,7 +49,6 @@ type TerminalSession struct {
 	status           string
 	shellState       string
 	agentState       string
-	gitBranch        string
 	lastInput        *LastInput
 	notification     *Notification
 	cols             int
@@ -162,7 +161,6 @@ func (terminal *TerminalSession) Info() Info {
 		Status:            terminal.status,
 		ShellState:        terminal.shellState,
 		AgentState:        terminal.agentState,
-		GitBranch:         terminal.gitBranch,
 		LastCommand:       terminal.lastInputText(),
 		LastInputKind:     terminal.lastInputKind(),
 		Notification:      terminal.notification,
@@ -526,9 +524,6 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 	case "meta":
 		if ev.CWD != "" {
 			terminal.liveCwd = ev.CWD
-		}
-		if ev.GitBranch != "" {
-			terminal.gitBranch = ev.GitBranch
 		}
 		if ev.LastCommand != "" {
 			kind := ev.InputKind

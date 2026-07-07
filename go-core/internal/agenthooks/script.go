@@ -34,16 +34,7 @@ payload=$(cat 2>/dev/null || true)
 webterm_meta_last_command() {
   local text="$1"
   local kind="$2"
-  if [ "$HAS_PYTHON3" -ne 1 ]; then
-    return 0
-  fi
-  python3 -c '
-import sys, subprocess
-text = sys.argv[1]
-kind = sys.argv[2]
-webterm = sys.argv[3]
-subprocess.run([webterm, "meta", "--quiet", "--last-command", text, "--input-kind", kind], check=False)
-' "$text" "$kind" "$WEBTERM"
+  "$WEBTERM" meta --quiet --last-command "$text" --input-kind "$kind"
 }
 
 # 从 payload 提取用户提示词（兼容 Claude/Kimi/Codex 的字段差异）

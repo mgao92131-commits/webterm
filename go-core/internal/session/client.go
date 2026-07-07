@@ -147,11 +147,21 @@ func (client *Client) SendScreenDelta(delta ScreenDelta) {
 	})
 }
 
+type closeNotifier interface {
+	CloseWithNotify(ctx context.Context, code int, reason string)
+}
+
 func (client *Client) Close() {
 	select {
 	case client.doneOnce <- struct{}{}:
 		close(client.done)
-		_ = client.socket.Close()
+		if notifier, ok := client.socket.(closeNotifier); ok {
+			notifyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			notifier.CloseWithNotify(notifyCtx, int(websocket.StatusGoingAway), "client send buffer full or write timeout")
+		} else {
+			_ = client.socket.Close()
+		}
 	default:
 	}
 }

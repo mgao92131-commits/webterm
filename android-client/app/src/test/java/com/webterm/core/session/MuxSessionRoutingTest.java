@@ -15,10 +15,10 @@ public class MuxSessionRoutingTest {
         @Override public void onMuxDisconnected(String reason) {}
         @Override public void onTunnelConnected(String tunnelId) {}
         @Override public void onTunnelError(String tunnelId, String message) {}
-        @Override
-        public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
+        @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
             tunnelData.add(tunnelId + ":" + binary + ":" + new String(payload));
         }
+        @Override public void onTunnelClosed(String tunnelId) {}
     }
 
     @Test

@@ -79,17 +79,6 @@ public final class SessionRowHelper {
         );
         content.addView(commandView, new LinearLayout.LayoutParams(-1, -2));
 
-        // Git 分支行
-        TextView gitBranchView = new TextView(context);
-        gitBranchView.setTag("git_branch");
-        gitBranchView.setTextColor(DesignTokens.TEXT_TERTIARY);
-        gitBranchView.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
-        gitBranchView.setTypeface(DesignTokens.fontGeistMono(context));
-        gitBranchView.setSingleLine(true);
-        gitBranchView.setEllipsize(TextUtils.TruncateAt.END);
-        gitBranchView.setVisibility(View.GONE);
-        content.addView(gitBranchView, new LinearLayout.LayoutParams(-1, -2));
-
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
         return row;
@@ -99,7 +88,6 @@ public final class SessionRowHelper {
         TextView titleView = row.findViewWithTag("title");
         TextView agentChip = row.findViewWithTag("agent_chip");
         TextView commandView = row.findViewWithTag("command_box");
-        TextView gitBranchView = row.findViewWithTag("git_branch");
 
         String id = session.optString("id");
         row.setTag(id); // 绑定 Tag 以便差分查找
@@ -118,7 +106,6 @@ public final class SessionRowHelper {
 
         updateAgentChip(agentChip, session);
         updateCommandLine(commandView, session);
-        updateGitBranch(gitBranchView, session);
 
         final String titleForAction = !nameText.isEmpty() ? nameText : termTitle;
         row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId, cwd));
@@ -182,17 +169,6 @@ public final class SessionRowHelper {
         } else {
             commandView.setText(command);
             commandView.setVisibility(View.VISIBLE);
-        }
-    }
-
-    private static void updateGitBranch(TextView gitBranchView, JSONObject session) {
-        if (gitBranchView == null) return;
-        String branch = session.optString("gitBranch", "").trim();
-        if (branch.isEmpty()) {
-            gitBranchView.setVisibility(View.GONE);
-        } else {
-            gitBranchView.setText("⎇ " + branch);
-            gitBranchView.setVisibility(View.VISIBLE);
         }
     }
 

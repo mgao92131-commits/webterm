@@ -77,7 +77,6 @@ func main() {
 		ev.Type = "meta"
 		fs := flag.NewFlagSet("meta", flag.ExitOnError)
 		cwd := fs.String("cwd", "", "current working directory")
-		branch := fs.String("branch", "", "git branch")
 		lastCommand := fs.String("last-command", "", "last executed command")
 		inputKind := fs.String("input-kind", "shell", "shell|agent_prompt|agent_tool")
 		_ = fs.Bool("quiet", false, "suppress non-error output")
@@ -85,12 +84,11 @@ func main() {
 		_ = fs.Parse(os.Args[2:])
 
 		ev.CWD = *cwd
-		ev.GitBranch = *branch
 		ev.LastCommand = *lastCommand
 		ev.InputKind = *inputKind
 
-		if ev.CWD == "" && ev.GitBranch == "" && ev.LastCommand == "" {
-			fmt.Fprintln(os.Stderr, "meta requires --cwd, --branch or --last-command")
+		if ev.CWD == "" && ev.LastCommand == "" {
+			fmt.Fprintln(os.Stderr, "meta requires --cwd or --last-command")
 			os.Exit(2)
 		}
 
@@ -135,7 +133,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  notify --title TITLE --body BODY --level info|success|warning|error")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE|--agent STATE")
-	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --branch BRANCH --last-command CMD --input-kind shell|agent_prompt|agent_tool")
+	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --last-command CMD --input-kind shell|agent_prompt|agent_tool")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
 	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required")

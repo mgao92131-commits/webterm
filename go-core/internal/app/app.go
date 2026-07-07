@@ -37,9 +37,10 @@ func New(cfg config.Config, version string) *App {
 		Command: cfg.Shell.Command,
 	})
 	manager.SetSessionEnv(map[string]string{
-		"WEBTERM":             "1",
-		"WEBTERM_INTEGRATION": "1",
-		"WEBTERM_SOCKET_PATH": socketPath,
+		"WEBTERM":                "1",
+		"WEBTERM_INTEGRATION":    "1",
+		"WEBTERM_SOCKET_PATH":    socketPath,
+		"WEBTERM_SHELL_INIT_DIR": shellInitDir(),
 	})
 
 	application := &App{
@@ -75,6 +76,12 @@ func installAgentHook(logger *logs.Logger) string {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("install hook script failed: %v", err))
 		return ""
 	}
+	if _, _, err := agenthooks.InstallShellHook(webtermBin); err != nil {
+		logger.Add("warn", "agenthooks", fmt.Sprintf("install shell hook failed: %v", err))
+	}
+	if err := agenthooks.MergeUserHooks(hookPath); err != nil {
+		logger.Add("warn", "agenthooks", fmt.Sprintf("merge user hooks failed: %v", err))
+	}
 	return hookPath
 }
 
@@ -84,6 +91,14 @@ func defaultSocketPath() string {
 		home = os.TempDir()
 	}
 	return filepath.Join(home, ".webterm", "webterm.sock")
+}
+
+func shellInitDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	return filepath.Join(home, ".webterm", "shell-init")
 }
 
 func (app *App) Config() config.Config {

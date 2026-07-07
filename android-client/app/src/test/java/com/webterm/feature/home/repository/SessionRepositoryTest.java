@@ -2,6 +2,12 @@ package com.webterm.feature.home.repository;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+
+import android.os.Handler;
 
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.cache.TerminalDiskCache;
@@ -91,7 +97,28 @@ public class SessionRepositoryTest {
     }
 
     private static SessionRepository repository(FakeApi api, List<TerminalDiskCache.Metadata> cached) {
-        return new SessionRepository(api, server -> cached, Runnable::run);
+        return new SessionRepository(
+            api,
+            server -> cached,
+            Runnable::run,
+            null,
+            null,
+            null,
+            fakeHandler()
+        );
+    }
+
+    private static Handler fakeHandler() {
+        Handler handler = mock(Handler.class);
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return true;
+        }).when(handler).post(any(Runnable.class));
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return true;
+        }).when(handler).postDelayed(any(Runnable.class), anyLong());
+        return handler;
     }
 
     private static JSONArray sessions(String json) {

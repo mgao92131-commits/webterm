@@ -113,6 +113,10 @@ public final class TerminalConnection {
         this.lastSeq = lastSeq;
     }
 
+    public long getLastSeq() {
+        return lastSeq;
+    }
+
     public void updateSize(int columns, int rows) {
         this.columns = columns;
         this.rows = rows;
@@ -143,6 +147,9 @@ public final class TerminalConnection {
                 relayMuxRegistry.releaseIfIdle(relayMuxSession);
             }
             relayMuxSession = relayMuxRegistry.forDevice(baseUrl, cookie, relayDeviceId);
+        } else if (relayChannelId != null) {
+            // mux 物理连接未变但重连：先关旧 channel，避免服务端残留旧 client 重复推送
+            relayMuxSession.closeChannel(relayChannelId);
         }
         relayChannelId = nextChannelId;
         relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
@@ -177,6 +184,15 @@ public final class TerminalConnection {
                 state = State.RECONNECTING;
                 listener.onConnectionStatus(state, reconnectAttempts);
             }
+
+            @Override public void onClosed(String channelId) {
+                if (!channelId.equals(relayChannelId)) return;
+                if (state == State.DISCONNECTED) return;
+                Log.i(TAG, "channel closed: " + channelId);
+                socketGeneration++;
+                mainHandler.removeCallbacks(sendResizeRunnable);
+                scheduleChannelReconnect();
+            }
         });
     }
 
@@ -201,9 +217,21 @@ public final class TerminalConnection {
         listener.onConnectionStatus(state, reconnectAttempts);
     }
 
+    private void scheduleChannelReconnect() {
+        if (state == State.DISCONNECTED || sessionId == null || cookie == null || baseUrl == null) return;
+        if (state == State.RECONNECTING) return;
+        reconnectAttempts++;
+        state = State.RECONNECTING;
+        Log.i(TAG, "channel closed, reconnecting after delay. attempt=" + reconnectAttempts);
+        listener.onConnectionStatus(state, reconnectAttempts);
+        long delayMs = Math.min(100L * reconnectAttempts, 2000L);
+        mainHandler.postDelayed(this::connectNow, delayMs);
+    }
+
     private void handleServerMessage(byte[] frame) {
         if (frame.length == 0) return;
         byte type = frame[0];
+        Log.d(TAG, "handleServerMessage type=" + type + " len=" + frame.length);
         byte[] payload = Arrays.copyOfRange(frame, 1, frame.length);
         if (type == WebTermProtocol.MSG_OUTPUT) {
             if (payload.length >= 8) {

@@ -13,7 +13,6 @@ type HookEvent struct {
 	AgentState string `json:"agent_state,omitempty"`
 
 	CWD         string `json:"cwd,omitempty"`
-	GitBranch   string `json:"git_branch,omitempty"`
 	LastCommand string `json:"last_command,omitempty"`
 	InputKind   string `json:"input_kind,omitempty"` // last_command 的类型：shell / agent_prompt / agent_tool
 

@@ -24,7 +24,6 @@ type Info struct {
 	Status            string        `json:"status"`
 	ShellState        string        `json:"shellState,omitempty"`
 	AgentState        string        `json:"agentState,omitempty"`
-	GitBranch         string        `json:"gitBranch,omitempty"`
 	LastCommand       string        `json:"lastCommand,omitempty"`
 	LastInputKind     string        `json:"lastInputKind,omitempty"`
 	Notification      *Notification `json:"notification,omitempty"`

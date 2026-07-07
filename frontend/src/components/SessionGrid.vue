@@ -86,18 +86,13 @@
           <span v-else class="text-fg-disabled italic">等待输入...</span>
         </div>
 
-        <!-- Git branch line -->
-        <div v-if="s.gitBranch" class="flex items-center gap-1.5 text-[10px] text-fg-subtle font-mono truncate">
-          <GitBranch class="w-3 h-3 flex-shrink-0" />
-          <span class="truncate">{{ s.gitBranch }}</span>
-        </div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Plus, Monitor, Terminal, Folder, X, GitBranch, AlertCircle } from '@lucide/vue';
+import { Plus, Monitor, Terminal, Folder, X, AlertCircle } from '@lucide/vue';
 import type { Session } from '../store';
 
 defineProps<{
