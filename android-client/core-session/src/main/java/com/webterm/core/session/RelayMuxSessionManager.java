@@ -217,7 +217,7 @@ public final class RelayMuxSessionManager {
     }
 
     public void forceReconnect(String reason) {
-        reconnectTransport(reason, false);
+        reconnectTransport(reason, true);
     }
 
     public boolean hasTerminalChannel(String localSessionId) {

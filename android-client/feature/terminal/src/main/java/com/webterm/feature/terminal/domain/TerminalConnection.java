@@ -87,7 +87,9 @@ public final class TerminalConnection {
     public void reconnectNow() {
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
-        this.pendingForceReconnect = true;
+        if (relayMuxSession != null && relayMuxSession.matches(baseUrl, cookie, relayDeviceId)) {
+            this.pendingForceReconnect = true;
+        }
         connectNow();
     }
 
