@@ -109,6 +109,7 @@ func TestStartAppliesShellInit(t *testing.T) {
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("bash not available")
 	}
+	t.Setenv("SHELL", "/bin/bash")
 	tmp := t.TempDir()
 	rc := filepath.Join(tmp, bashRcName)
 	if err := os.WriteFile(rc, []byte("echo __WEBTERM_BASH_RC_LOADED__\n"), 0o600); err != nil {
