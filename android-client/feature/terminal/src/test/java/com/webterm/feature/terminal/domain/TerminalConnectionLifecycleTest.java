@@ -16,6 +16,7 @@ import com.webterm.core.session.RelayMuxSessionRegistry;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 
 public class TerminalConnectionLifecycleTest {
 
@@ -76,5 +77,40 @@ public class TerminalConnectionLifecycleTest {
 
         verify(manager, times(1)).closeChannel("term:s1");
         verify(registry, times(1)).releaseIfIdle(manager);
+    }
+
+    @Test
+    public void channelGoneGuardPreventsDuplicateExit() {
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        ArgumentCaptor<RelayMuxSessionManager.ChannelListener> listenerCaptor =
+            ArgumentCaptor.forClass(RelayMuxSessionManager.ChannelListener.class);
+        verify(manager).openTerminalChannel(anyString(), listenerCaptor.capture());
+
+        RelayMuxSessionManager.ChannelListener channelListener = listenerCaptor.getValue();
+        channelListener.onChannelGone("term:s1", 404, "not found");
+
+        verify(listener, times(1)).onExit(0);
+        assertEquals(TerminalConnection.State.DISCONNECTED, connection.getState());
+
+        channelListener.onChannelGone("term:s1", 404, "not found");
+
+        verify(listener, times(1)).onExit(0);
+    }
+
+    @Test
+    public void detachIgnoresChannelGone() {
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        ArgumentCaptor<RelayMuxSessionManager.ChannelListener> listenerCaptor =
+            ArgumentCaptor.forClass(RelayMuxSessionManager.ChannelListener.class);
+        verify(manager).openTerminalChannel(anyString(), listenerCaptor.capture());
+
+        connection.detach();
+
+        listenerCaptor.getValue().onChannelGone("term:s1", 0, "gone");
+
+        verify(listener, never()).onExit(any(int.class));
+        assertEquals(TerminalConnection.State.DISCONNECTED, connection.getState());
     }
 }

@@ -186,6 +186,7 @@ public final class TerminalConnection {
 
             @Override public void onError(String channelId, int code, String message) {
                 if (!channelId.equals(relayChannelId)) return;
+                if (state == State.DISCONNECTED) return;
                 listener.onProtocolError("tunnel error: " + message);
             }
 
@@ -216,6 +217,7 @@ public final class TerminalConnection {
 
             @Override public void onChannelGone(String channelId, int code, String reason) {
                 if (!channelId.equals(relayChannelId)) return;
+                if (state == State.DISCONNECTED) return;
                 state = State.DISCONNECTED;
                 socketGeneration++;
                 mainHandler.removeCallbacks(sendResizeRunnable);
@@ -293,7 +295,16 @@ public final class TerminalConnection {
         }
         if (type == WebTermProtocol.MSG_HOOK) {
             try {
-                listener.onHook(WebTermProtocol.controlPayload(payload));
+                JSONObject hook = WebTermProtocol.controlPayload(payload);
+                listener.onHook(hook);
+                if ("download".equals(hook.optString("type"))) {
+                    listener.onDownloadHook(
+                        hook.optString("download_id"),
+                        hook.optString("file_name"),
+                        hook.optLong("file_size", -1),
+                        hook.optString("session_id")
+                    );
+                }
             } catch (JSONException ignored) {
             }
             return;
@@ -337,12 +348,18 @@ public final class TerminalConnection {
         relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
+    public void sendDownloadProgress(String downloadId, long current, long total) {
+        String payload = downloadId + ":" + current + ":" + total;
+        sendBinary(WebTermProtocol.MSG_DOWNLOAD_PROGRESS, payload.getBytes(StandardCharsets.UTF_8));
+    }
+
     public interface Listener {
         void onConnectionStatus(State state, int reconnectAttempts);
         void onOutput(long seq, byte[] data);
         void onState(long seq, byte[] data);
         void onInfo(JSONObject info);
         void onHook(JSONObject ev);
+        void onDownloadHook(String downloadId, String fileName, long fileSize, String sessionId);
         void onExit(int code);
         void onProtocolError(String message);
     }
