@@ -199,6 +199,11 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 		return
 	}
 
+	if strings.HasPrefix(path, "/api/fs/") {
+		direct.routeFS(w, r)
+		return
+	}
+
 	writeError(w, http.StatusNotFound, "not found")
 }
 
@@ -215,10 +220,32 @@ func (direct *Server) routeSessions(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
+	router := direct.sessionRouter()
+	result, err := router.RouteHTTPv2(r.Method, r.URL.Path+"?"+r.URL.RawQuery, r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	for key, values := range result.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(result.StatusCode)
+
+	if result.Body != nil {
+		defer result.Body.Close()
+		_, _ = io.Copy(w, result.Body)
+		return
+	}
+	_, _ = w.Write(result.Data)
+}
+
 func (direct *Server) sessionRouter() *application.SessionRouter {
-	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
-	router.SetAgentHooks(direct.app.SocketPath(), direct.app.AgentHookScriptPath())
-	return router
+	return application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
 }
 
 func readRequestBody(w http.ResponseWriter, r *http.Request) []byte {

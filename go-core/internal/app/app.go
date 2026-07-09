@@ -18,39 +18,49 @@ type App struct {
 	version             string
 	sessions            *session.Manager
 	logger              *logs.Logger
-	mu                  sync.RWMutex
-	runtimeMode         string
-	restartRequired     bool
-	socketPath          string
-	agentHookScriptPath string
-	direct              DirectStatus
-	relay               RelayStatus
+	mu              sync.RWMutex
+	runtimeMode     string
+	restartRequired bool
+	socketPath      string
+	direct          DirectStatus
+	relay           RelayStatus
 }
 
 func New(cfg config.Config, version string) *App {
 	logger := logs.New(logs.DefaultCapacity)
 	socketPath := defaultSocketPath()
-	hookPath := installAgentHook(logger)
+	installShellHook(logger)
 
 	manager := session.NewManager(session.TerminalDefaults{
 		CWD:     cfg.Shell.CWD,
 		Command: cfg.Shell.Command,
 	})
-	manager.SetSessionEnv(map[string]string{
+
+	sessionEnv := map[string]string{
 		"WEBTERM":                "1",
 		"WEBTERM_INTEGRATION":    "1",
 		"WEBTERM_SOCKET_PATH":    socketPath,
-		"WEBTERM_SHELL_INIT_DIR": shellInitDir(),
-	})
+		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDir(),
+	}
+
+	if webtermBin, err := agenthooks.ResolveWebtermBinary(); err == nil && webtermBin != "" {
+		binDir := filepath.Dir(webtermBin)
+		if currentPath := os.Getenv("PATH"); currentPath != "" {
+			sessionEnv["PATH"] = binDir + string(filepath.ListSeparator) + currentPath
+		} else {
+			sessionEnv["PATH"] = binDir
+		}
+	}
+
+	manager.SetSessionEnv(sessionEnv)
 
 	application := &App{
-		cfg:                 cfg,
-		version:             version,
-		logger:              logger,
-		runtimeMode:         cfg.Mode,
-		socketPath:          socketPath,
-		agentHookScriptPath: hookPath,
-		sessions:            manager,
+		cfg:         cfg,
+		version:     version,
+		logger:      logger,
+		runtimeMode: cfg.Mode,
+		socketPath:  socketPath,
+		sessions:    manager,
 		direct: DirectStatus{
 			Listening: false,
 			Addr:      cfg.Direct.Addr,
@@ -61,28 +71,19 @@ func New(cfg config.Config, version string) *App {
 			URL:        cfg.Relay.URL,
 		},
 	}
-	application.Log("info", "core", fmt.Sprintf("app initialized mode=%s socket=%s hook=%s", cfg.Mode, socketPath, hookPath))
+	application.Log("info", "core", fmt.Sprintf("app initialized mode=%s socket=%s", cfg.Mode, socketPath))
 	return application
 }
 
-func installAgentHook(logger *logs.Logger) string {
+func installShellHook(logger *logs.Logger) {
 	webtermBin, err := agenthooks.ResolveWebtermBinary()
 	if err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("webterm binary not found: %v", err))
-		return ""
-	}
-	hookPath, err := agenthooks.InstallHookScript(webtermBin)
-	if err != nil {
-		logger.Add("warn", "agenthooks", fmt.Sprintf("install hook script failed: %v", err))
-		return ""
+		return
 	}
 	if _, _, err := agenthooks.InstallShellHook(webtermBin); err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("install shell hook failed: %v", err))
 	}
-	if err := agenthooks.MergeUserHooks(hookPath); err != nil {
-		logger.Add("warn", "agenthooks", fmt.Sprintf("merge user hooks failed: %v", err))
-	}
-	return hookPath
 }
 
 func defaultSocketPath() string {
@@ -91,14 +92,6 @@ func defaultSocketPath() string {
 		home = os.TempDir()
 	}
 	return filepath.Join(home, ".webterm", "webterm.sock")
-}
-
-func shellInitDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.TempDir()
-	}
-	return filepath.Join(home, ".webterm", "shell-init")
 }
 
 func (app *App) Config() config.Config {
@@ -170,12 +163,6 @@ func (app *App) SocketPath() string {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.socketPath
-}
-
-func (app *App) AgentHookScriptPath() string {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.agentHookScriptPath
 }
 
 func (app *App) Status() Status {

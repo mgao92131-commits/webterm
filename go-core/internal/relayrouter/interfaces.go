@@ -25,6 +25,7 @@ type StreamController interface {
 type AgentRegistry interface {
 	RegisterAgentConnection(presence relaycore.DevicePresence, sender AgentSender)
 	RemoveAgent(deviceID string)
+	RemoveAgentConnection(deviceID string, connectionID string)
 	GetAgentForUser(userID, deviceID string) (relaycore.DevicePresence, bool)
 	GetSenderForUser(userID, deviceID string) (relaycore.DevicePresence, AgentSender, bool)
 	ListPresence(userID string) []relaycore.DevicePresence

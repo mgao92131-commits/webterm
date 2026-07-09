@@ -200,6 +200,28 @@ public final class SettingsDialogHelper {
         p2pRow.addView(p2pToggle, new LinearLayout.LayoutParams(-2, -2));
         container.addView(p2pRow);
 
+        // ----------------- 下载保存位置 -----------------
+        LinearLayout downloadDirRow = new LinearLayout(activity);
+        downloadDirRow.setOrientation(LinearLayout.HORIZONTAL);
+        downloadDirRow.setGravity(Gravity.CENTER_VERTICAL);
+        downloadDirRow.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_5));
+
+        TextView downloadDirLabel = new TextView(activity);
+        downloadDirLabel.setText("下载保存位置");
+        downloadDirLabel.setTextColor(DesignTokens.TEXT_PRIMARY);
+        downloadDirLabel.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        downloadDirRow.addView(downloadDirLabel, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView downloadDirValue = new TextView(activity);
+        downloadDirValue.setText(host.getDownloadDirDisplayName());
+        downloadDirValue.setTextColor(DesignTokens.TEXT_SECONDARY);
+        downloadDirValue.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        downloadDirValue.setGravity(Gravity.END);
+        downloadDirRow.addView(downloadDirValue, new LinearLayout.LayoutParams(-2, -2));
+
+        downloadDirRow.setOnClickListener((v) -> host.openDownloadDirPicker());
+        container.addView(downloadDirRow);
+
         // ----------------- 关闭/确定按钮 -----------------
         LinearLayout btnBar = new LinearLayout(activity);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -236,5 +258,7 @@ public final class SettingsDialogHelper {
         void saveP2PEnabled(boolean enabled);
         void applyTerminalFontSize(int size);
         void applyTerminalTypeface(Typeface typeface);
+        String getDownloadDirDisplayName();
+        void openDownloadDirPicker();
     }
 }

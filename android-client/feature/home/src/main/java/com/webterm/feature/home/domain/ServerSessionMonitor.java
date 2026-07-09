@@ -99,8 +99,7 @@ public final class ServerSessionMonitor {
                     JSONObject n = sessionData.optJSONObject("notification");
                     Log.i(TAG, "TitleTrace manager message type=session id=" + sessionData.optString("id")
                         + " termTitle=" + sessionData.optString("termTitle")
-                        + " agentState=" + sessionData.optString("agentState")
-                        + " notification=" + (n != null ? n.optString("title", "") : "null")
+                        + " notification=" + (n != null ? n.optString("message", "") : "null")
                         + " lastCommand=" + sessionData.optString("lastCommand"));
                     listener.onMonitorSession(sessionData);
                 }

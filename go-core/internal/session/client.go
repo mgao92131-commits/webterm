@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -261,6 +263,18 @@ func (client *Client) handleBinary(frame []byte) {
 	case protocol.MsgTitle:
 		// Client-originated title updates are accepted later when manager
 		// broadcasts are implemented.
+	case protocol.MsgDownloadProgress:
+		parts := strings.SplitN(string(payload), ":", 3)
+		if len(parts) != 3 {
+			return
+		}
+		downloadID := parts[0]
+		current, err1 := strconv.ParseInt(parts[1], 10, 64)
+		total, err2 := strconv.ParseInt(parts[2], 10, 64)
+		if err1 != nil || err2 != nil {
+			return
+		}
+		client.session.OnDownloadProgress(downloadID, current, total)
 	}
 }
 
@@ -276,12 +290,51 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 		return
 	}
 	if lastSeq > 0 && lastSeq <= latest && client.session.CanReplayFrom(lastSeq) {
-		for _, frame := range client.session.ReplayAfter(lastSeq) {
-			if client.mode == ClientModeBinary {
-				client.enqueueBinary(protocol.EncodeOutput(frame.Seq, frame.Bytes))
-			} else {
-				client.SendOutput(frame, ScreenDelta{Seq: frame.Seq})
+		frames := client.session.ReplayAfter(lastSeq)
+		totalBytes := 0
+		for _, frame := range frames {
+			totalBytes += len(frame.Bytes)
+		}
+
+		batchCount := (len(frames) + 99) / 100
+		if len(client.send)+batchCount+1 >= cap(client.send) {
+			if client.logger != nil {
+				client.logger.Add("warn", "session", fmt.Sprintf("replay batch count too large for send queue (%d batches, queue len=%d), downgrading to snapshot session=%s", batchCount, len(client.send), client.session.ID()))
 			}
+			client.SendState(latest, client.session.StateBytes())
+		} else if totalBytes > 512*1024 {
+			if client.logger != nil {
+				client.logger.Add("warn", "session", fmt.Sprintf("replay bytes too large (%d bytes), downgrading to snapshot session=%s", totalBytes, client.session.ID()))
+			}
+			client.SendState(latest, client.session.StateBytes())
+		} else if len(frames) > 0 {
+			batchFrames := 0
+			var batchBytes []byte
+			var batchLastSeq uint64
+
+			flushBatch := func() {
+				if len(batchBytes) == 0 {
+					return
+				}
+				if client.mode == ClientModeBinary {
+					client.enqueueBinary(protocol.EncodeOutput(batchLastSeq, batchBytes))
+				} else {
+					client.SendOutput(EventFrame{Seq: batchLastSeq, Bytes: batchBytes}, ScreenDelta{Seq: batchLastSeq})
+				}
+				batchBytes = nil
+				batchFrames = 0
+			}
+
+			for _, frame := range frames {
+				batchBytes = append(batchBytes, frame.Bytes...)
+				batchLastSeq = frame.Seq
+				batchFrames++
+
+				if batchFrames >= 100 || len(batchBytes) >= 32*1024 {
+					flushBatch()
+				}
+			}
+			flushBatch()
 		}
 	} else {
 		client.SendState(latest, client.session.StateBytes())

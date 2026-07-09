@@ -1,9 +1,16 @@
 package session
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"webterm/go-core/internal/protocol"
 )
 
 func TestManagerCreateListRenameClose(t *testing.T) {
@@ -148,5 +155,139 @@ func TestManagerTitleBroadcast(t *testing.T) {
 
 	if !found {
 		t.Fatalf("expected to receive session broadcast with TermTitle=%q, but did not. messages=%#v", "IntegratedTitle", sink.all())
+	}
+}
+
+func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
+	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	terminal, err := manager.Create("work", ".")
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	shellPID := terminal.ShellPID()
+	if shellPID <= 0 {
+		t.Fatalf("shell pid <= 0: %d", shellPID)
+	}
+
+	// 1. 直接通过 shell PID 解析到 session
+	sid, err := manager.ResolveSessionForPID(shellPID)
+	if err != nil {
+		t.Fatalf("ResolveSessionForPID(shellPID) error: %v", err)
+	}
+	if sid != terminal.ID() {
+		t.Fatalf("ResolveSessionForPID(shellPID) = %q, want %q", sid, terminal.ID())
+	}
+
+	// 2. 通过子进程 PID 沿父进程链解析到 session
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "child.pid")
+	cmd := fmt.Sprintf("(sleep 3 & echo $! > %s)\r", pidFile)
+	if err := terminal.WriteInput([]byte(cmd)); err != nil {
+		t.Fatalf("WriteInput returned error: %v", err)
+	}
+
+	var childPID int
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			if pid > 0 {
+				childPID = pid
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if childPID <= 0 {
+		t.Fatalf("failed to capture child pid")
+	}
+
+	sid, err = manager.ResolveSessionForPID(childPID)
+	if err != nil {
+		t.Fatalf("ResolveSessionForPID(childPID) error: %v", err)
+	}
+	if sid != terminal.ID() {
+		t.Fatalf("ResolveSessionForPID(childPID) = %q, want %q", sid, terminal.ID())
+	}
+
+	// 3. 关闭 session 后映射被清理
+	if !manager.Close(terminal.ID()) {
+		t.Fatalf("Close returned false")
+	}
+	if _, err := manager.ResolveSessionForPID(shellPID); err == nil {
+		t.Fatalf("expected error after closing session, got nil")
+	}
+}
+
+func TestDownloadTaskConsumeAndPeek(t *testing.T) {
+	manager := NewManager()
+
+	task := &DownloadTask{
+		ID:        "d_test",
+		SessionID: "s1",
+		Path:      "/tmp/test.txt",
+		FileName:  "test.txt",
+		Size:      1234,
+		StateChan: make(chan protocol.CLIResponse, 4),
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	manager.AddDownloadTask("s1", task)
+
+	// Peek 可以重复读到任务
+	peek1, ok := manager.PeekDownloadTask("d_test")
+	if !ok || peek1.ID != "d_test" {
+		t.Fatalf("first Peek failed")
+	}
+	peek2, ok := manager.PeekDownloadTask("d_test")
+	if !ok || peek2.ID != "d_test" {
+		t.Fatalf("second Peek failed")
+	}
+
+	// 首次 Get 消费成功，任务仍保留（供 Peek 查找进度）
+	got, ok := manager.GetDownloadTask("d_test")
+	if !ok || got.ID != "d_test" || !got.consumed {
+		t.Fatalf("first Get should consume task")
+	}
+
+	// 再次 Get 应失败（一次性消费）
+	if _, ok := manager.GetDownloadTask("d_test"); ok {
+		t.Fatalf("second Get should fail")
+	}
+
+	// Peek 仍能查到任务，直到 RemoveDownloadTask 删除
+	if _, ok := manager.PeekDownloadTask("d_test"); !ok {
+		t.Fatalf("Peek after consume should still find task")
+	}
+
+	manager.RemoveDownloadTask("d_test")
+	if _, ok := manager.PeekDownloadTask("d_test"); ok {
+		t.Fatalf("Peek after remove should fail")
+	}
+}
+
+func TestDownloadTaskExpires(t *testing.T) {
+	manager := NewManager()
+
+	task := &DownloadTask{
+		ID:        "d_expired",
+		SessionID: "s1",
+		Path:      "/tmp/test.txt",
+		FileName:  "test.txt",
+		Size:      100,
+		StateChan: make(chan protocol.CLIResponse, 1),
+		CreatedAt: time.Now().Add(-20 * time.Minute),
+		ExpiresAt: time.Now().Add(-10 * time.Minute),
+	}
+	manager.AddDownloadTask("s1", task)
+
+	if _, ok := manager.GetDownloadTask("d_expired"); ok {
+		t.Fatalf("expired task should not be returned")
+	}
+	if _, ok := manager.PeekDownloadTask("d_expired"); ok {
+		t.Fatalf("expired task should not be peeked")
 	}
 }

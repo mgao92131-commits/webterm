@@ -43,6 +43,15 @@ func (registry *Registry) RegisterAgentConnection(presence relaycore.DevicePrese
 	}
 }
 
+func (registry *Registry) RemoveAgentConnection(deviceID string, connectionID string) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry, ok := registry.agents[deviceID]
+	if ok && entry.Presence.AgentConnectionID == connectionID {
+		delete(registry.agents, deviceID)
+	}
+}
+
 func (registry *Registry) RemoveAgent(deviceID string) {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()

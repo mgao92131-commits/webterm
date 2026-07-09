@@ -20,21 +20,21 @@ describe('parseSessionId', () => {
 });
 
 describe('sortSessionsByAttention', () => {
-  it('puts approval_required and error notifications at the top', () => {
+  it('puts error and running notifications at the top', () => {
     const sessions = [
-      { id: 'idle', agentState: 'idle' },
-      { id: 'running', agentState: 'running' },
-      { id: 'approval', agentState: 'approval_required' },
-      { id: 'notify', notification: { level: 'error' } },
+      { id: 'idle', notification: { level: 'idle' } },
+      { id: 'running', notification: { level: 'running' } },
+      { id: 'error', notification: { level: 'error' } },
+      { id: 'plain' },
     ];
     const sorted = sortSessionsByAttention(sessions);
-    expect(sorted.map((s: any) => s.id)).toEqual(['approval', 'notify', 'running', 'idle']);
+    expect(sorted.map((s: any) => s.id)).toEqual(['error', 'running', 'idle', 'plain']);
   });
 
-  it('orders by notification > running > idle', () => {
+  it('orders by notification > running state > idle', () => {
     const sessions = [
       { id: 'idle' },
-      { id: 'notify', notification: { level: 'info' } },
+      { id: 'notify', notification: { level: 'idle' } },
       { id: 'running', state: 'running' },
     ];
     const sorted = sortSessionsByAttention(sessions);

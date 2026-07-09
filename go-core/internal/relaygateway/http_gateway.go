@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"webterm/go-core/internal/relaycore"
@@ -57,7 +58,12 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Path:   r.URL.Path,
 		Query:  r.URL.RawQuery,
 	}
-	handle := gateway.streams.CreateStream(relaycore.StreamKindHTTP, route, user.ID, presence.DeviceID, presence.AgentConnectionID, gateway.timeout)
+	// 文件下载等流式响应不设总超时
+	timeout := gateway.timeout
+	if strings.HasPrefix(r.URL.Path, "/api/fs/") {
+		timeout = 0
+	}
+	handle := gateway.streams.CreateStream(relaycore.StreamKindHTTP, route, user.ID, presence.DeviceID, presence.AgentConnectionID, timeout)
 	gateway.streams.AttachClient(handle.ID, "client:http:"+handle.ID)
 	defer handle.Close("http request finished")
 	gateway.streams.Open(handle.ID)
@@ -91,14 +97,20 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Context, handle relayrouter.StreamHandle) {
 	statusCode := http.StatusOK
 	wroteHeader := false
-	timer := time.NewTimer(gateway.timeout)
-	defer timer.Stop()
+
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	if gateway.timeout > 0 {
+		timer = time.NewTimer(gateway.timeout)
+		defer timer.Stop()
+		timerC = timer.C
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
+		case <-timerC:
 			if !wroteHeader {
 				http.Error(w, "agent response timeout", http.StatusGatewayTimeout)
 			}

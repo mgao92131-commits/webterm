@@ -62,6 +62,19 @@ public final class SessionRowHelper {
 
         content.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
+        // 会话别名/名称副标题（始终可见，没有时留空行）
+        TextView subtitleView = new TextView(context);
+        subtitleView.setTag("subtitle");
+        subtitleView.setTextColor(DesignTokens.TEXT_SECONDARY);
+        subtitleView.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        subtitleView.setTypeface(DesignTokens.fontGeistSans(context));
+        subtitleView.setSingleLine(true);
+        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+        subtitleView.setVisibility(View.VISIBLE);
+        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+        subtitleLp.setMargins(0, UIUtils.dp(context, DesignTokens.SPACE_1), 0, 0); // 与主标题空开小间距
+        content.addView(subtitleView, subtitleLp);
+
         // 最近命令行
         TextView commandView = new TextView(context);
         commandView.setTag("command_box");
@@ -71,13 +84,9 @@ public final class SessionRowHelper {
         commandView.setSingleLine(true);
         commandView.setEllipsize(TextUtils.TruncateAt.END);
         commandView.setVisibility(View.GONE);
-        commandView.setPadding(
-            UIUtils.dp(context, DesignTokens.SPACE_2),
-            UIUtils.dp(context, DesignTokens.SPACE_1 + 2),
-            UIUtils.dp(context, DesignTokens.SPACE_2),
-            UIUtils.dp(context, DesignTokens.SPACE_1 + 2)
-        );
-        content.addView(commandView, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams cmdLp = new LinearLayout.LayoutParams(-1, -2);
+        cmdLp.setMargins(0, UIUtils.dp(context, DesignTokens.SPACE_2), 0, 0);
+        content.addView(commandView, cmdLp);
 
         row.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
@@ -86,6 +95,7 @@ public final class SessionRowHelper {
 
     public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
         TextView titleView = row.findViewWithTag("title");
+        TextView subtitleView = row.findViewWithTag("subtitle");
         TextView agentChip = row.findViewWithTag("agent_chip");
         TextView commandView = row.findViewWithTag("command_box");
 
@@ -101,7 +111,16 @@ public final class SessionRowHelper {
         final String cwd = session.optString("cwd", "").trim();
 
         if (titleView != null) {
-            titleView.setText(!displayTitle.isEmpty() ? displayTitle : (!nameText.isEmpty() ? nameText : termTitle));
+            titleView.setText(termTitle);
+        }
+
+        if (subtitleView != null) {
+            if (nameText.isEmpty()) {
+                subtitleView.setVisibility(View.GONE);
+            } else {
+                subtitleView.setText(nameText);
+                subtitleView.setVisibility(View.VISIBLE);
+            }
         }
 
         updateAgentChip(agentChip, session);
@@ -119,29 +138,18 @@ public final class SessionRowHelper {
     private static void updateAgentChip(TextView agentChip, JSONObject session) {
         if (agentChip == null) return;
         JSONObject notification = session.optJSONObject("notification");
-        String agentState = session.optString("agentState", "").trim();
         Context context = agentChip.getContext();
 
         if (notification != null) {
-            String title = notification.optString("title", "").trim();
-            String level = notification.optString("level", "info").trim();
-            agentChip.setText(title.isEmpty() ? "●" : title);
+            String source = notification.optString("source", "").trim();
+            String level = notification.optString("level", "idle").trim();
+            if (source.isEmpty()) {
+                agentChip.setVisibility(View.GONE);
+                return;
+            }
+            agentChip.setText(source);
             agentChip.setTextColor(chipTextColor(level));
             agentChip.setBackground(chipBackground(context, level));
-            agentChip.setPadding(
-                UIUtils.dp(context, DesignTokens.SPACE_2),
-                UIUtils.dp(context, 2),
-                UIUtils.dp(context, DesignTokens.SPACE_2),
-                UIUtils.dp(context, 2)
-            );
-            agentChip.setVisibility(View.VISIBLE);
-            return;
-        }
-
-        if (!agentState.isEmpty()) {
-            agentChip.setText(agentState);
-            agentChip.setTextColor(chipTextColor(agentState));
-            agentChip.setBackground(chipBackground(context, agentState));
             agentChip.setPadding(
                 UIUtils.dp(context, DesignTokens.SPACE_2),
                 UIUtils.dp(context, 2),
@@ -157,12 +165,16 @@ public final class SessionRowHelper {
 
     private static void updateCommandLine(TextView commandView, JSONObject session) {
         if (commandView == null) return;
-        String command = recentCommandText(session);
+        String command = "";
+        JSONObject notification = session.optJSONObject("notification");
+        if (notification != null) {
+            command = notification.optString("message", "").trim();
+        }
+        if (command.isEmpty()) {
+            command = recentCommandText(session);
+        }
         if (command.isEmpty()) {
             command = session.optString("lastCommand", "").trim();
-        }
-        if (command.isEmpty() && session.optJSONObject("notification") != null) {
-            command = session.optJSONObject("notification").optString("body", "").trim();
         }
         if (command.isEmpty()) {
             commandView.setVisibility(View.GONE);
@@ -182,43 +194,29 @@ public final class SessionRowHelper {
         return last;
     }
 
-    private static int chipTextColor(String levelOrState) {
-        switch (levelOrState) {
+    private static int chipTextColor(String level) {
+        switch (level) {
             case "error":
-            case "failed":
-            case "approval_required":
                 return DesignTokens.DANGER;
-            case "warning":
-                return DesignTokens.WARNING;
-            case "success":
-            case "done":
-                return DesignTokens.SUCCESS;
             case "running":
                 return DesignTokens.ACCENT;
+            case "idle":
             default:
                 return DesignTokens.TEXT_SECONDARY;
         }
     }
 
-    private static android.graphics.drawable.Drawable chipBackground(Context context, String levelOrState) {
+    private static android.graphics.drawable.Drawable chipBackground(Context context, String level) {
         GradientDrawable gd = new GradientDrawable();
         gd.setCornerRadius(UIUtils.dp(context, DesignTokens.RADIUS_SM));
-        switch (levelOrState) {
+        switch (level) {
             case "error":
-            case "failed":
-            case "approval_required":
                 gd.setColor(DesignTokens.dangerBg());
-                break;
-            case "warning":
-                gd.setColor(DesignTokens.warningBg());
-                break;
-            case "success":
-            case "done":
-                gd.setColor(DesignTokens.successBg());
                 break;
             case "running":
                 gd.setColor(DesignTokens.accentBg());
                 break;
+            case "idle":
             default:
                 gd.setColor(DesignTokens.BG_TERTIARY);
         }

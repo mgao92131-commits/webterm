@@ -144,6 +144,9 @@ func (s *Session) handleBinaryFrame(data []byte) {
 func (s *Session) newSocket(id string, protocolName string) *VirtualSocket {
 	s.channelsMu.Lock()
 	defer s.channelsMu.Unlock()
+	if old, ok := s.channels[id]; ok {
+		_ = old.Close()
+	}
 	socket := newVirtualSocket(id, protocolName, s, func() {
 		s.removeSocket(id)
 	}, s.logger)

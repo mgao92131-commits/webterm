@@ -83,7 +83,7 @@ func InstallShellHook(webtermBin string) (string, string, error) {
 		return "", "", fmt.Errorf("write shell hook: %w", err)
 	}
 
-	initDir := filepath.Join(baseDir(), "shell-init")
+	initDir := ShellInitDir()
 	if err := os.MkdirAll(initDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create shell init dir: %w", err)
 	}

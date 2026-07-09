@@ -21,6 +21,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 @Singleton
 public final class WebTermApi {
@@ -272,10 +273,23 @@ public final class WebTermApi {
         });
     }
 
+    public Response downloadFile(ServerConfig server, String downloadId, String sessionId) throws IOException {
+        String url = server.getUrl() + "/api/fs/download" +
+            "?downloadId=" + WebTermUrls.encodePath(downloadId) +
+            "&sessionId=" + WebTermUrls.encodePath(sessionId);
+        Request.Builder builder = new Request.Builder()
+            .url(url)
+            .header("Cookie", server.getCookie() != null ? server.getCookie() : "");
+        if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
+            builder.header("x-device-id", server.getDeviceId());
+        }
+        return http.newCall(builder.build()).execute();
+    }
+
     public void createSession(ServerConfig server, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
-            body.put("name", "Android");
+            body.put("name", "");
         } catch (JSONException ignored) {
         }
         Request.Builder builder = new Request.Builder()
@@ -312,7 +326,7 @@ public final class WebTermApi {
     public void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {
-            body.put("name", "Android");
+            body.put("name", "");
         } catch (JSONException ignored) {
         }
         Request request = new Request.Builder()

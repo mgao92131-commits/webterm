@@ -143,7 +143,7 @@ func TestTerminalSessionBroadcastsOnCwdChange(t *testing.T) {
 }
 
 
-func TestTerminalSessionClearsNotificationWhenAgentRunning(t *testing.T) {
+func TestTerminalSessionNotificationOverride(t *testing.T) {
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
@@ -157,26 +157,28 @@ func TestTerminalSessionClearsNotificationWhenAgentRunning(t *testing.T) {
 	terminal.ApplyHookEvent(protocol.HookEvent{
 		Type:      "notify",
 		SessionID: "s1",
-		Title:     "Turn completed",
-		Level:     "success",
+		Level:     "idle",
+		Message:   "Done",
+		Source:    "claude",
 		Timestamp: time.Now().Unix(),
 	})
 
-	if info := terminal.Info(); info.Notification == nil || info.Notification.Title != "Turn completed" {
+	info := terminal.Info()
+	if info.Notification == nil || info.Notification.Level != "idle" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
 		t.Fatalf("expected notification to be set, got %+v", info.Notification)
 	}
 
 	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:       "state",
-		SessionID:  "s1",
-		AgentState: "running",
-		Timestamp:  time.Now().Unix(),
+		Type:      "notify",
+		SessionID: "s1",
+		Level:     "running",
+		Message:   "Running",
+		Source:    "claude",
+		Timestamp: time.Now().Unix(),
 	})
 
-	if info := terminal.Info(); info.Notification != nil {
-		t.Errorf("expected notification to be cleared when agent becomes running, got %+v", info.Notification)
-	}
-	if info := terminal.Info(); info.AgentState != "running" {
-		t.Errorf("expected agentState to be running, got %q", info.AgentState)
+	info = terminal.Info()
+	if info.Notification == nil || info.Notification.Level != "running" || info.Notification.Message != "Running" {
+		t.Errorf("expected notification to be overridden, got %+v", info.Notification)
 	}
 }

@@ -30,14 +30,13 @@ export interface Session {
   recentInputLines?: string[];
   /** Agent / shell 上报的细粒度状态 */
   shellState?: string;
-  agentState?: string;
   /** 最后执行的完整命令（可作为 recentInputLines 的 fallback） */
   lastCommand?: string;
   /** 最新通知（由 webterm notify 上报） */
   notification?: {
-    title: string;
-    body?: string;
-    level?: 'info' | 'success' | 'warning' | 'error';
+    level: 'idle' | 'running' | 'error';
+    message: string;
+    source?: string;
     timestamp: number;
   };
 }

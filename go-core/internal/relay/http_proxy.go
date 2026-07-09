@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"nhooyr.io/websocket"
@@ -108,6 +110,13 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 	if meta.Query != "" {
 		path += "?" + meta.Query
 	}
+
+	// 文件下载等流式接口走 RouteHTTPv2
+	if strings.HasPrefix(meta.Path, "/api/fs/") {
+		p.respondStream(ctx, conn, streamID, meta, body)
+		return
+	}
+
 	status, payload, err := p.router.RouteHTTP(meta.Method, path, body)
 	if err != nil && status == 0 {
 		status = http.StatusInternalServerError
@@ -125,6 +134,65 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 	})
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, streamID, 0, responseMeta))
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
+}
+
+func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte) {
+	path := meta.Path
+	if meta.Query != "" {
+		path += "?" + meta.Query
+	}
+
+	var bodyReader io.Reader
+	if len(body) > 0 {
+		bodyReader = strings.NewReader(string(body))
+	}
+
+	result, err := p.router.RouteHTTPv2(meta.Method, path, bodyReader)
+	if err != nil {
+		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
+		return
+	}
+
+	headers := map[string]string{}
+	if result.Header != nil {
+		for key, values := range result.Header {
+			if len(values) > 0 {
+				headers[key] = values[0]
+			}
+		}
+	}
+	if _, ok := headers["content-type"]; !ok {
+		headers["content-type"] = "application/octet-stream"
+	}
+
+	responseMeta, _ := json.Marshal(relaycore.HTTPResponseMeta{
+		StatusCode: result.StatusCode,
+		Headers:    headers,
+	})
+	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, streamID, 0, responseMeta))
+
+	// 小文件兜底：Body 为 nil 时直接发 Data
+	if result.Body == nil {
+		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, result.Data))
+		return
+	}
+	defer result.Body.Close()
+
+	buf := make([]byte, 64*1024)
+	for {
+		n, readErr := result.Body.Read(buf)
+		if n > 0 {
+			p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, 0, buf[:n]))
+		}
+		if readErr == io.EOF {
+			p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, nil))
+			return
+		}
+		if readErr != nil {
+			p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(readErr.Error())))
+			return
+		}
+	}
 }
 
 func (p *HTTPProxy) writeHTTPError(ctx context.Context, conn *websocket.Conn, streamID string, status int, message string) {

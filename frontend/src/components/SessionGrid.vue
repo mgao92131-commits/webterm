@@ -52,17 +52,11 @@
           </h3>
           <div class="flex items-center gap-1.5 flex-shrink-0">
             <span
-              v-if="s.agentState && !s.notification"
-              :class="['px-1.5 py-0.5 rounded-sm text-[10px] font-medium whitespace-nowrap', agentStateClass(s.agentState)]"
-            >
-              {{ s.agentState }}
-            </span>
-            <span
               v-if="s.notification"
               :class="['flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-medium whitespace-nowrap', notificationClass(s.notification.level)]"
             >
-              <AlertCircle class="w-3 h-3" />
-              <span class="truncate max-w-[80px]">{{ s.notification.title }}</span>
+              <AlertCircle v-if="s.notification.level === 'error'" class="w-3 h-3" />
+              <span class="truncate max-w-[80px]">{{ notificationText(s.notification) }}</span>
             </span>
             <button
               type="button"
@@ -82,7 +76,7 @@
           <span v-if="s.recentInputHidden" class="text-fg-disabled italic">敏感输入已隐藏</span>
           <pre v-else-if="recentCommandText(s)" class="w-full truncate leading-relaxed">{{ recentCommandText(s) }}</pre>
           <span v-else-if="s.lastCommand" class="w-full truncate leading-relaxed">{{ s.lastCommand }}</span>
-          <span v-else-if="s.notification?.body" class="truncate text-fg-subtle">{{ s.notification.body }}</span>
+          <span v-else-if="s.notification?.message" class="truncate text-fg-subtle">{{ s.notification.message }}</span>
           <span v-else class="text-fg-disabled italic">等待输入...</span>
         </div>
 
@@ -116,39 +110,32 @@ function recentCommandText(session: Session): string {
 
 function cardBorderClass(session: Session): string {
   const level = session.notification?.level;
-  if (session.agentState === 'approval_required' || level === 'error') {
-    return 'bg-app-panel border-status-warning/60 hover:border-status-warning';
+  if (level === 'error') {
+    return 'bg-app-panel border-status-danger/60 hover:border-status-danger';
   }
-  if (level === 'warning') {
-    return 'bg-app-panel border-status-warning/40 hover:border-status-warning/60';
+  if (level === 'running') {
+    return 'bg-app-panel border-status-success/40 hover:border-status-success/60';
   }
   return 'bg-app-panel border-border hover:border-border-hover';
-}
-
-function agentStateClass(state: string): string {
-  switch (state) {
-    case 'approval_required':
-    case 'failed':
-      return 'bg-status-danger/10 text-status-danger border border-status-danger/20';
-    case 'done':
-      return 'bg-status-success/10 text-status-success border border-status-success/20';
-    case 'running':
-      return 'bg-accent/10 text-accent border border-accent/20';
-    default:
-      return 'bg-bg-tertiary text-fg-subtle border border-border';
-  }
 }
 
 function notificationClass(level?: string): string {
   switch (level) {
     case 'error':
       return 'bg-status-danger/10 text-status-danger border border-status-danger/20';
-    case 'warning':
-      return 'bg-status-warning/10 text-status-warning border border-status-warning/20';
-    case 'success':
+    case 'running':
       return 'bg-status-success/10 text-status-success border border-status-success/20';
+    case 'idle':
     default:
-      return 'bg-accent/10 text-accent border border-accent/20';
+      return 'bg-bg-tertiary text-fg-subtle border border-border';
   }
+}
+
+function notificationText(notification: Session['notification']): string {
+  if (!notification) return '';
+  if (notification.source) {
+    return `${notification.source}: ${notification.message}`;
+  }
+  return notification.message;
 }
 </script>

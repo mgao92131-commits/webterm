@@ -60,9 +60,13 @@ public final class TerminalScreenBuilder {
         topBar.addView(sessions, new LinearLayout.LayoutParams(UIUtils.dp(activity, 40), UIUtils.dp(activity, 40)));
 
         // 标题区域
+        LinearLayout heading = new LinearLayout(activity);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_2), 0, 0, 0);
+
         LinearLayout labels = new LinearLayout(activity);
         labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView title = new TextView(activity);
         title.setText(headerTitle);
@@ -95,7 +99,8 @@ public final class TerminalScreenBuilder {
         subtitleContainer.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
 
         labels.addView(subtitleContainer, new LinearLayout.LayoutParams(-1, -2));
-        topBar.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        heading.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        topBar.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
 
         // 右侧按钮组
         LinearLayout buttonGroup = new LinearLayout(activity);

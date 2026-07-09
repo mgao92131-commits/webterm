@@ -81,6 +81,36 @@ func TestAnsiTextRoundTrip(t *testing.T) {
 }
 
 
+func TestAnsiTextAltScreenExcludesScrollback(t *testing.T) {
+	screen := NewScreenState(4, 20, nil, nil)
+
+	// Fill main screen history so it overflows into scrollback.
+	if err := screen.Write([]byte("line1\r\nline2\r\nline3\r\nline4\r\nline5")); err != nil {
+		t.Fatalf("Write to main screen failed: %v", err)
+	}
+
+	// Switch to alternate screen and write fresh content there.
+	if err := screen.Write([]byte("\x1b[?1049h\x1b[Halt-content")); err != nil {
+		t.Fatalf("Write alt screen switch failed: %v", err)
+	}
+
+	snapshot := screen.AnsiText()
+	t.Logf("Alt screen snapshot: %q", snapshot)
+
+	if !strings.HasPrefix(snapshot, "\x1b[?1049h\x1b[H") {
+		t.Errorf("expected alt screen prefix \\x1b[?1049h\\x1b[H; got %q", snapshot)
+	}
+
+	// Main screen scrollback must not leak into the alt screen snapshot.
+	if strings.Contains(snapshot, "line1") || strings.Contains(snapshot, "line2") {
+		t.Errorf("alt screen snapshot unexpectedly contains main screen scrollback: %q", snapshot)
+	}
+
+	if !strings.Contains(snapshot, "alt-content") {
+		t.Errorf("alt screen snapshot missing expected alt screen content: %q", snapshot)
+	}
+}
+
 func TestAnsiTextCrossPlatformAlignment(t *testing.T) {
 	nodeSnapshotBytes, err := os.ReadFile("../../../scripts/claude_node_snapshot.txt")
 	if err != nil {

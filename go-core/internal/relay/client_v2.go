@@ -36,7 +36,6 @@ type V2Client struct {
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter, appInstance.Logs())
-	router.SetAgentHooks(appInstance.SocketPath(), appInstance.AgentHookScriptPath())
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,

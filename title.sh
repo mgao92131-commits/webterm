@@ -5,10 +5,11 @@ set -euo pipefail
 DATA=$(cat)
 
 # Extract fields using jq
+# 优先用 notification.level，没有再回退到 idle
+# CWD 优先用 .cwd，兼容旧的 .workspace.current_dir
 eval $(echo "$DATA" | jq -r '
-  "STATE=\"\(.agent_state // "idle")\"
-   CWD=\"\(.workspace.current_dir // "")\"
-  "
+  "STATE=\"\(.notification.level // .agent_state // "idle")\""
+  "CWD=\"\(.cwd // .workspace.current_dir // "")\""
 ' 2>/dev/null || echo 'STATE="idle" CWD=""')
 
 # Try to extract CitC workspace name from CWD
@@ -22,14 +23,12 @@ else
   WORKSPACE="unknown"
 fi
 
-# Map state to emoji
+# Map notification level to emoji
 case "$STATE" in
-  initializing) EMOJI="🚀" ;;
-  idle)         EMOJI="😴" ;;
-  thinking)     EMOJI="🤔" ;;
-  working)      EMOJI="🏃" ;;
-  tool_use)     EMOJI="🛠️" ;;
-  *)            EMOJI="🤖" ;;
+  idle)    EMOJI="😴" ;;
+  running|working) EMOJI="🏃" ;;
+  error)   EMOJI="⚠️" ;;
+  *)       EMOJI="🤖" ;;
 esac
 
 TITLE="$EMOJI $STATE | $WORKSPACE"

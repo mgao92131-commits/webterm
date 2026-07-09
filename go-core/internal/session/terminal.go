@@ -3,14 +3,19 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
 
+	"webterm/go-core/internal/fsops"
 	"webterm/go-core/internal/infrastructure/emulator"
 	"webterm/go-core/internal/infrastructure/pty"
 	"webterm/go-core/internal/protocol"
@@ -48,7 +53,6 @@ type TerminalSession struct {
 	command          string
 	status           string
 	shellState       string
-	agentState       string
 	lastInput        *LastInput
 	notification     *Notification
 	cols             int
@@ -58,6 +62,8 @@ type TerminalSession struct {
 	ring             *EventRing
 	screen           *ScreenState
 	process          *pty.Process
+	shellPid         int
+	ttyPath          string
 	clients          map[*Client]struct{}
 	onTitleChanged   func()
 	onInfoChanged    func()
@@ -65,12 +71,13 @@ type TerminalSession struct {
 	stateCache       []byte
 	stateCacheValid  bool
 	stateCacheGen    uint64
+	manager          *Manager
 }
 
 type Notification struct {
-	Title     string `json:"title"`
-	Body      string `json:"body,omitempty"`
-	Level     string `json:"level,omitempty"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	Source    string `json:"source,omitempty"`
 	Timestamp int64  `json:"timestamp"`
 }
 
@@ -126,6 +133,8 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		ring:           NewEventRing(0, 0),
 		screen:         NewScreenState(rows, cols, process.PTY(), titleProvider),
 		process:        process,
+		shellPid:       process.PID(),
+		ttyPath:        process.TTYPath(),
 		clients:        make(map[*Client]struct{}),
 		onTitleChanged: options.OnTitle,
 		onInfoChanged:  options.OnInfoChanged,
@@ -139,6 +148,18 @@ func (terminal *TerminalSession) ID() string {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
 	return terminal.id
+}
+
+func (terminal *TerminalSession) ShellPID() int {
+	terminal.mu.RLock()
+	defer terminal.mu.RUnlock()
+	return terminal.shellPid
+}
+
+func (terminal *TerminalSession) TTYPath() string {
+	terminal.mu.RLock()
+	defer terminal.mu.RUnlock()
+	return terminal.ttyPath
 }
 
 func (terminal *TerminalSession) Info() Info {
@@ -160,7 +181,6 @@ func (terminal *TerminalSession) Info() Info {
 		Command:           terminal.command,
 		Status:            terminal.status,
 		ShellState:        terminal.shellState,
-		AgentState:        terminal.agentState,
 		LastCommand:       terminal.lastInputText(),
 		LastInputKind:     terminal.lastInputKind(),
 		Notification:      terminal.notification,
@@ -504,21 +524,15 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 	switch ev.Type {
 	case "notify":
 		terminal.notification = &Notification{
-			Title:     ev.Title,
-			Body:      ev.Body,
 			Level:     ev.Level,
+			Message:   ev.Message,
+			Source:    ev.Source,
 			Timestamp: ev.Timestamp,
 		}
 		terminal.touchLocked()
 	case "state":
 		if ev.ShellState != "" {
 			terminal.shellState = ev.ShellState
-		}
-		if ev.AgentState != "" {
-			terminal.agentState = ev.AgentState
-			if ev.AgentState == "running" {
-				terminal.notification = nil
-			}
 		}
 		terminal.touchLocked()
 	case "meta":
@@ -568,6 +582,179 @@ func (terminal *TerminalSession) broadcastHook(ev protocol.HookEvent) {
 	for _, client := range clients {
 		client.SendHook(ev)
 	}
+}
+
+// HandleCLICommand 处理 CLI 主动发起的命令请求。
+func (terminal *TerminalSession) HandleCLICommand(conn net.Conn, cmd protocol.CLICommand) {
+	switch cmd.Type {
+	case "download":
+		terminal.handleDownloadCommand(conn, cmd)
+	default:
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   cmd.Type + "_status",
+			Status: "failed",
+			Error:  "unknown_command",
+		})
+	}
+}
+
+func (terminal *TerminalSession) handleDownloadCommand(conn net.Conn, cmd protocol.CLICommand) {
+	terminal.mu.RLock()
+	if terminal.status == StatusClosed {
+		terminal.mu.RUnlock()
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "session_closed",
+		})
+		return
+	}
+	clients := terminal.clientSnapshotLocked()
+	terminal.mu.RUnlock()
+
+	if len(clients) == 0 {
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "android_not_connected",
+		})
+		return
+	}
+
+	targetPath, err := fsops.ResolveCLIPath(cmd.CWD, cmd.FilePath)
+	if err != nil {
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "invalid_path",
+		})
+		return
+	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "file_not_found",
+		})
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "not_a_regular_file",
+		})
+		return
+	}
+
+	f, err := os.Open(targetPath)
+	if err != nil {
+		writeCLIResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "download_status",
+			Status: "failed",
+			Error:  "permission_denied",
+		})
+		return
+	}
+	_ = f.Close()
+
+	downloadID := generateDownloadID()
+	task := &DownloadTask{
+		ID:        downloadID,
+		SessionID: terminal.id,
+		Path:      targetPath,
+		FileName:  filepath.Base(targetPath),
+		Size:      info.Size(),
+		StateChan: make(chan protocol.CLIResponse, 32),
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	terminal.manager.AddDownloadTask(terminal.id, task)
+
+	terminal.broadcastHook(protocol.HookEvent{
+		Type:       "download",
+		DownloadID: downloadID,
+		SessionID:  terminal.id,
+		FilePath:   task.FileName,
+		FileName:   task.FileName,
+		TotalBytes: task.Size,
+		FileSize:   task.Size,
+		Status:     "pending",
+		Timestamp:  time.Now().Unix(),
+	})
+
+	writeCLIResponse(conn, protocol.CLIResponse{
+		Kind:       "response",
+		Type:       "download_status",
+		Status:     "preparing",
+		DownloadID: downloadID,
+		FilePath:   task.FileName,
+		TotalBytes: task.Size,
+	})
+
+	for {
+		select {
+		case event, ok := <-task.StateChan:
+			if !ok {
+				return
+			}
+			writeCLIResponse(conn, event)
+			if event.Status == "complete" || event.Status == "failed" {
+				terminal.manager.RemoveDownloadTask(downloadID)
+				return
+			}
+		case <-time.After(10 * time.Minute):
+			writeCLIResponse(conn, protocol.CLIResponse{
+				Kind:   "response",
+				Type:   "download_status",
+				Status: "failed",
+				Error:  "timeout",
+			})
+			terminal.manager.RemoveDownloadTask(downloadID)
+			return
+		}
+	}
+}
+
+// OnDownloadProgress 处理 Android 回传的下载进度。
+func (terminal *TerminalSession) OnDownloadProgress(downloadID string, current, total int64) {
+	task, ok := terminal.manager.PeekDownloadTask(downloadID)
+	if !ok {
+		return
+	}
+	select {
+	case task.StateChan <- protocol.CLIResponse{
+		Kind:             "response",
+		Type:             "download_status",
+		Status:           "progress",
+		DownloadID:       downloadID,
+		BytesTransferred: current,
+		TotalBytes:       total,
+	}:
+	default:
+		// 通道满则丢弃，避免阻塞终端
+	}
+}
+
+func writeCLIResponse(conn net.Conn, resp protocol.CLIResponse) {
+	if resp.Timestamp == 0 {
+		resp.Timestamp = time.Now().Unix()
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, _ = conn.Write(append(data, '\n'))
 }
 
 func (terminal *TerminalSession) clientSnapshotLocked() []*Client {

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 
-	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -41,11 +43,9 @@ type MuxVirtualSocket interface {
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager     *session.Manager
-	muxServe    MuxServeFunc // 可选：用于 mux 子协议包装
-	logger      *logs.Logger
-	socketPath  string
-	hookBinPath string
+	manager  *session.Manager
+	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
+	logger   *logs.Logger
 }
 
 func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
@@ -60,12 +60,6 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 		log = logger[0]
 	}
 	return &SessionRouter{manager: manager, muxServe: muxServe, logger: log}
-}
-
-// SetAgentHooks 配置 Agent hook 所需的 socket 路径和 hook 脚本路径。
-func (r *SessionRouter) SetAgentHooks(socketPath, hookBinPath string) {
-	r.socketPath = socketPath
-	r.hookBinPath = hookBinPath
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -121,12 +115,11 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 		var req struct {
 			Name string `json:"name"`
 			CWD  string `json:"cwd"`
-			Agent string `json:"agent"`
 		}
 		if len(body) > 0 {
 			_ = json.Unmarshal(body, &req)
 		}
-		terminal, err := r.createSession(req.Name, req.CWD, req.Agent)
+		terminal, err := r.manager.Create(req.Name, req.CWD)
 		if err != nil {
 			return http.StatusBadRequest, nil, err
 		}
@@ -158,41 +151,150 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 	return http.StatusNotFound, nil, errors.New("not found")
 }
 
-func (r *SessionRouter) createSession(name, cwd, agent string) (*session.TerminalSession, error) {
-	if agent == "" {
-		return r.manager.Create(name, cwd)
-	}
-	if r.socketPath == "" || r.hookBinPath == "" {
-		return nil, errors.New("agent hooks are not configured")
-	}
-	adapter, err := agenthooks.NewAdapter(agenthooks.AgentKind(agent))
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(name) == "" {
-		name = agent
-	}
-	return r.manager.CreateWithPreparer(name, cwd, func(id string) (string, []string, map[string]string, error) {
-		spec, err := adapter.Prepare(id, cwd, r.socketPath, r.hookBinPath)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		if err := agenthooks.WriteFiles(spec.Files); err != nil {
-			return "", nil, nil, err
-		}
-		command := ""
-		var args []string
-		if len(spec.Command) > 0 {
-			command = spec.Command[0]
-			args = spec.Command[1:]
-		}
-		return command, args, spec.Env, nil
-	})
-}
-
 // Manager 返回内部的 session.Manager（供 P2P 等组件需要直接访问时使用）。
 func (r *SessionRouter) Manager() *session.Manager {
 	return r.manager
+}
+
+// HTTPResult 是 RouteHTTPv2 的流式返回结果。
+type HTTPResult struct {
+	StatusCode int
+	Header     http.Header
+	Body       io.ReadCloser
+	Data       []byte // 小文件兜底：当 Body 为 nil 时使用 Data
+}
+
+// RouteHTTPv2 处理需要流式响应的 HTTP 请求（例如文件下载）。
+func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reader) (*HTTPResult, error) {
+	path := cleanPath(rawPath)
+
+	if strings.HasPrefix(path, "/api/fs/download") {
+		parsed, err := url.Parse(rawPath)
+		if err != nil {
+			return nil, err
+		}
+		return r.handleDownload(parsed.RawQuery)
+	}
+
+	// 其他路由回退到 RouteHTTP
+	status, data, err := r.RouteHTTP(method, rawPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &HTTPResult{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Data:       data,
+	}, nil
+}
+
+func (r *SessionRouter) handleDownload(query string) (*HTTPResult, error) {
+	params, err := url.ParseQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	downloadID := params.Get("downloadId")
+	if downloadID == "" {
+		return nil, errors.New("missing downloadId")
+	}
+
+	task, ok := r.manager.GetDownloadTask(downloadID)
+	if !ok {
+		return &HTTPResult{
+			StatusCode: http.StatusGone,
+			Data:       []byte("download task not found"),
+		}, nil
+	}
+	if task.SessionID != params.Get("sessionId") {
+		r.notifyDownloadStatus(task, "failed", "session mismatch")
+		return &HTTPResult{
+			StatusCode: http.StatusGone,
+			Data:       []byte("download task not found"),
+		}, nil
+	}
+
+	file, err := os.Open(task.Path)
+	if err != nil {
+		r.notifyDownloadStatus(task, "failed", err.Error())
+		return &HTTPResult{
+			StatusCode: http.StatusForbidden,
+			Data:       []byte(err.Error()),
+		}, nil
+	}
+
+	header := http.Header{}
+	header.Set("Content-Type", "application/octet-stream")
+	header.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, task.FileName))
+	header.Set("Content-Length", strconv.FormatInt(task.Size, 10))
+
+	r.notifyDownloadStatus(task, "started", "")
+
+	return &HTTPResult{
+		StatusCode: http.StatusOK,
+		Header:     header,
+		Body:       &downloadNotifyReader{ReadCloser: file, task: task},
+	}, nil
+}
+
+// downloadNotifyReader 在读取到 EOF 时自动发送 complete 状态。
+type downloadNotifyReader struct {
+	io.ReadCloser
+	task *session.DownloadTask
+	done bool
+}
+
+func (r *downloadNotifyReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err == io.EOF && !r.done {
+		r.done = true
+		notifyDownloadTaskComplete(r.task)
+	}
+	return n, err
+}
+
+func notifyDownloadTaskComplete(task *session.DownloadTask) {
+	if task == nil {
+		return
+	}
+	select {
+	case task.StateChan <- protocol.CLIResponse{
+		Kind:             "response",
+		Type:             "download_status",
+		Status:           "complete",
+		DownloadID:       task.ID,
+		BytesTransferred: task.Size,
+		TotalBytes:       task.Size,
+	}:
+	default:
+	}
+}
+
+func (r *SessionRouter) notifyDownloadStatus(task *session.DownloadTask, status, errMsg string) {
+	if task == nil {
+		return
+	}
+	var resp protocol.CLIResponse
+	if status == "failed" {
+		resp = protocol.CLIResponse{
+			Kind:       "response",
+			Type:       "download_status",
+			Status:     "failed",
+			DownloadID: task.ID,
+			Error:      errMsg,
+		}
+	} else {
+		resp = protocol.CLIResponse{
+			Kind:       "response",
+			Type:       "download_status",
+			Status:     status,
+			DownloadID: task.ID,
+			TotalBytes: task.Size,
+		}
+	}
+	select {
+	case task.StateChan <- resp:
+	default:
+	}
 }
 
 // --- helpers ---

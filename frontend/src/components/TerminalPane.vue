@@ -82,8 +82,7 @@
         :class="toastClass"
       >
         <div class="flex items-center gap-2 min-w-0">
-          <span class="font-medium text-[13px] truncate">{{ hookToast.title }}</span>
-          <span v-if="hookToast.body" class="text-[12px] opacity-80 truncate">{{ hookToast.body }}</span>
+          <span class="font-medium text-[13px] truncate">{{ hookToast.text }}</span>
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
           <button
@@ -130,9 +129,8 @@ import { store } from '../store';
 import { TerminalSessionContext } from '../lib/terminal-session-context';
 
 interface HookToast {
-  title: string;
-  body?: string;
-  level?: 'info' | 'success' | 'warning' | 'error';
+  text: string;
+  level?: 'idle' | 'running' | 'error';
   sticky: boolean;
 }
 
@@ -271,11 +269,13 @@ function debugEnabled() {
 function onHookEvent(event: Event) {
   const detail = (event as CustomEvent).detail;
   if (!detail || detail.sessionId !== props.sessionId) return;
+  const text = detail.source
+    ? `${detail.source}: ${detail.message}`
+    : String(detail.message || '');
   showHookToast({
-    title: String(detail.title || ''),
-    body: detail.body ? String(detail.body) : undefined,
+    text,
     level: detail.level,
-    sticky: detail.level === 'error' || detail.agentState === 'approval_required',
+    sticky: detail.level === 'error',
   });
 }
 
@@ -311,12 +311,11 @@ const toastClass = computed(() => {
   switch (level) {
     case 'error':
       return base + 'border-status-danger/50 text-status-danger';
-    case 'warning':
-      return base + 'border-status-warning/50 text-status-warning';
-    case 'success':
+    case 'running':
       return base + 'border-status-success/50 text-status-success';
+    case 'idle':
     default:
-      return base + 'border-accent/50 text-accent';
+      return base + 'border-border/50 text-fg-subtle';
   }
 });
 

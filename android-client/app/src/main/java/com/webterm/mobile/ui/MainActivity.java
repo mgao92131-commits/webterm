@@ -1,5 +1,6 @@
 package com.webterm.mobile.ui;
 
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -43,6 +44,14 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     @Override protected void onResume() { super.onResume(); coordinator.onResume(); }
     @Override protected void onPause() { coordinator.onPause(); super.onPause(); }
     @Override protected void onDestroy() { coordinator.onDestroy(); super.onDestroy(); }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == AppFlowCoordinator.REQUEST_CODE_DOWNLOAD_DIR) {
+            coordinator.onDownloadDirPickerResult(resultCode, data);
+        }
+    }
 
     @Override
     public void onBackPressed() {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/creack/pty"
@@ -128,6 +129,23 @@ func (p *Process) Close() error {
 	return p.ptmx.Close()
 }
 
+// PID 返回底层 shell 进程的 PID。
+func (p *Process) PID() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
+// TTYPath 返回 PTY slave 路径，例如 /dev/ttys004 或 /dev/pts/0。
+func (p *Process) TTYPath() string {
+	pid := p.PID()
+	if pid == 0 {
+		return ""
+	}
+	return getTTYPathByPID(pid)
+}
+
 // PTY 返回底层的 PTY 文件描述符。
 func (p *Process) PTY() *os.File {
 	return p.ptmx
@@ -240,4 +258,40 @@ func setEnv(env []string, key string, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+// getTTYPathByPID 查询指定 PID 的 TTY 设备路径。
+// 优先使用 /proc/<pid>/fd/0（Linux），回退到 ps -o tty=（通用）。
+func getTTYPathByPID(pid int) string {
+	if runtime.GOOS == "linux" {
+		if tty := linuxTTYPath(pid); tty != "" {
+			return tty
+		}
+	}
+
+	out, err := exec.Command("ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+
+	tty := strings.TrimSpace(string(out))
+	if tty == "" || tty == "??" || tty == "?" {
+		return ""
+	}
+	if strings.HasPrefix(tty, "/dev/") {
+		return tty
+	}
+	return "/dev/" + tty
+}
+
+func linuxTTYPath(pid int) string {
+	path := fmt.Sprintf("/proc/%d/fd/0", pid)
+	target, err := os.Readlink(path)
+	if err != nil {
+		return ""
+	}
+	if strings.HasPrefix(target, "/dev/pts/") || strings.HasPrefix(target, "/dev/tty") {
+		return target
+	}
+	return ""
 }

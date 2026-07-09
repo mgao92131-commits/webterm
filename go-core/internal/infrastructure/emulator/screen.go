@@ -151,7 +151,11 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 	s.mu.Lock()
 	rows := s.Terminal.Rows()
 	cols := s.Terminal.Cols()
+	isAltScreen := s.Terminal.IsAlternateScreen()
 	scrollbackLen := s.Terminal.ScrollbackLen()
+	if isAltScreen {
+		scrollbackLen = 0
+	}
 	startLine := 0
 	if maxScrollback > 0 && scrollbackLen > maxScrollback {
 		startLine = scrollbackLen - maxScrollback
@@ -191,7 +195,6 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 
 	curRow, curCol := s.Terminal.CursorPos()
 	cursorVisible := s.Terminal.CursorVisible()
-	isAltScreen := s.Terminal.IsAlternateScreen()
 	s.mu.Unlock()
 
 	// 转换 Ambiguous 宽字符为单宽，以对齐 Node 端的 xterm.js 宽度映射
@@ -213,9 +216,15 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 	}
 	if lastRow < 0 {
 		absRow := scrollbackLen + curRow
-		if absRow > 0 || curCol > 0 {
+		// clamp curCol：go-headless-term 在 pending wrap 时 cursor.Col 可能溢出到 cols，
+		// 生成的定位序列列号不能超过 cols-1。
+		safeCurCol := curCol
+		if safeCurCol >= cols {
+			safeCurCol = cols - 1
+		}
+		if absRow > 0 || safeCurCol > 0 {
 			var buf strings.Builder
-			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
+			buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, safeCurCol+1))
 			if cursorVisible {
 				buf.WriteString("\x1b[?25h")
 			} else {
@@ -370,18 +379,25 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 		}
 	}
 
+	// clamp curCol：go-headless-term 在 pending wrap 时 cursor.Col 可能溢出到 cols，
+	// 生成的定位序列列号不能超过 cols-1，否则 xterm.js 收到后光标位置与服务端 buffer 不一致。
+	safeCurCol := curCol
+	if safeCurCol >= cols {
+		safeCurCol = cols - 1
+	}
+
 	lastCol := lastActiveCol(cells[lastRow])
 	expectedNaturalCol := lastCol + 1
 	if lastCol >= 0 && cells[lastRow][lastCol].HasFlag(headlessterm.CellFlagWideChar) {
 		expectedNaturalCol = lastCol + 2
 	}
-	if absRow != lastRow || curCol != expectedNaturalCol {
-		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, curCol+1))
+	if absRow != lastRow || safeCurCol != expectedNaturalCol {
+		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", curRow+1, safeCurCol+1))
 	}
 
 	if !cursorVisible {
 		buf.WriteString("\x1b[?25l")
-	} else if absRow != lastRow || curCol != expectedNaturalCol {
+	} else if absRow != lastRow || safeCurCol != expectedNaturalCol {
 		buf.WriteString("\x1b[?25h")
 	}
 

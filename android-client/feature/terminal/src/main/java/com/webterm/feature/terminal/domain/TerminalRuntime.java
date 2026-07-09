@@ -26,6 +26,7 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     public interface HookListener {
         void onHook(JSONObject ev);
+        void onDownloadHook(String downloadId, String fileName, long fileSize, String sessionId);
     }
 
     private final Activity activity;
@@ -238,7 +239,8 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     @Override
     public void onDownloadHook(String downloadId, String fileName, long fileSize, String sessionId) {
-        // Download hooks are handled by FileDownloadHelper directly via connection.sendDownloadProgress.
+        if (hookListener == null) return;
+        activity.runOnUiThread(() -> hookListener.onDownloadHook(downloadId, fileName, fileSize, sessionId));
     }
 
     @Override

@@ -60,6 +60,10 @@ npm run build
 RELAY_BOOTSTRAP_PASSWORD='your-secure-password' ./deploy.sh
 ```
 
+## Agent Hook 配置
+
+Claude Code / Kimi Code / Codex 等 Agent 可以通过 hook 调用 `webterm notify` 上报状态。配置方法见 [docs/agent-hooks.md](docs/agent-hooks.md)。
+
 ## 验证
 
 ```sh

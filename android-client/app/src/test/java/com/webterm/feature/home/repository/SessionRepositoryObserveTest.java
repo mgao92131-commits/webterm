@@ -157,6 +157,107 @@ public class SessionRepositoryObserveTest {
         verify(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
     }
 
+    @Test
+    public void observeSessions_emitsConnectedP2PState() {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        assertTrue(wsListener.get() != null);
+        wsListener.get().onConnected(true);
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED_P2P, result.state);
+    }
+
+    @Test
+    public void observeSessions_preservesP2PStateWhenSessionsPushed() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected(true);
+        wsListener.get().onSessions(sessions("[{\"id\":\"s1\",\"termTitle\":\"zsh\"}]"));
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED_P2P, result.state);
+        assertEquals(1, result.sessions.length());
+    }
+
+    @Test
+    public void observeSessions_preservesP2PStateWhenSingleSessionPushed() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected(true);
+        wsListener.get().onSessions(sessions("[{\"id\":\"s1\",\"termTitle\":\"zsh\"}]"));
+        wsListener.get().onSession(session("{\"id\":\"s1\",\"termTitle\":\"vim\"}"));
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED_P2P, result.state);
+        assertEquals("vim", result.sessions.optJSONObject(0).optString("termTitle"));
+    }
+
+    @Test
+    public void observeSessions_preservesP2PStateWhenSessionClosed() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected(true);
+        wsListener.get().onSessions(sessions("[{\"id\":\"s1\"},{\"id\":\"s2\"}]"));
+        wsListener.get().onSessionClosed("s1");
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED_P2P, result.state);
+        assertEquals(1, result.sessions.length());
+    }
+
+    @Test
+    public void observeSessions_dropsP2PStateOnNonP2PReconnect() {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected(true);
+        wsListener.get().onConnected(false);
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED, result.state);
+    }
+
+    @Test
+    public void observeSessions_clearsP2PStateOnDisconnect() {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected(true);
+        wsListener.get().onDisconnected("network lost");
+
+        SessionRepository.SessionListResult result = observer.latest();
+        assertNotNull(result);
+        assertEquals(SessionRepository.SessionListResult.State.DISCONNECTED, result.state);
+    }
+
     private static ServerConfig server() {
         return new ServerConfig("srv", "Mac", "http://mac.test", "", "", "");
     }

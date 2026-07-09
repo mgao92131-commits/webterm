@@ -103,7 +103,7 @@ func (gateway *AgentGateway) handleConnection(ctx context.Context, conn *websock
 		},
 	})
 	defer func() {
-		gateway.registry.RemoveAgent(device.ID)
+		gateway.registry.RemoveAgentConnection(device.ID, connectionID)
 		if gateway.streams != nil {
 			gateway.streams.CancelByDevice(device.ID, "agent disconnected")
 		}

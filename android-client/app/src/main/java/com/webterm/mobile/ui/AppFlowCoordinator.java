@@ -4,11 +4,21 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Typeface;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.documentfile.provider.DocumentFile;
+
+import org.json.JSONObject;
+
+import org.json.JSONObject;
 
 import com.termux.terminal.TerminalSession;
 import com.webterm.mobile.CrashReporter;
@@ -30,6 +40,7 @@ import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
+import com.webterm.mobile.download.FileDownloadHelper;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
 import com.webterm.feature.home.DeviceSessionsFragment;
@@ -54,6 +65,8 @@ import dagger.hilt.android.scopes.ActivityScoped;
 public final class AppFlowCoordinator implements
     ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host {
 
+    public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
+
     private final WebTermApi api;
     private final RelayMuxSessionRegistry relayMuxRegistry;
     private final TerminalCacheCoordinator terminalCache;
@@ -65,6 +78,7 @@ public final class AppFlowCoordinator implements
     private final TerminalRuntime.Factory terminalRuntimeFactory;
     private final P2PConnectionManager p2pManager;
     private final RelayService mRelayService;
+    private FileDownloadHelper downloadHelper;
 
     private boolean mInForeground = true;
     private SessionCommandController mSessionCommands;
@@ -117,6 +131,9 @@ public final class AppFlowCoordinator implements
 
     public void attachActivity(MainActivity activity) {
         this.mActivity = activity;
+        if (this.downloadHelper == null) {
+            this.downloadHelper = new FileDownloadHelper(activity, api, configStore);
+        }
         androidx.navigation.fragment.NavHostFragment navHost = (androidx.navigation.fragment.NavHostFragment) activity.getSupportFragmentManager().findFragmentById(R.id.nav_host_fragment);
         this.mNavController = navHost != null ? navHost.getNavController() : null;
     }
@@ -534,7 +551,14 @@ public final class AppFlowCoordinator implements
         };
 
         mTerminalRuntime.attach(args, fragmentHost, this::showSessionListOrDeviceHome);
-        mTerminalRuntime.setHookListener(ev -> fragment.showHookNotification(ev));
+        mTerminalRuntime.setHookListener(new TerminalRuntime.HookListener() {
+            @Override public void onHook(JSONObject ev) {
+                fragment.showHookNotification(ev);
+            }
+            @Override public void onDownloadHook(String downloadId, String fileName, long fileSize, String sessionId) {
+                startFileDownload(downloadId, fileName, fileSize, sessionId);
+            }
+        });
     }
 
     // ── HomeHost ─────────────────────────────────────────────────────
@@ -548,6 +572,15 @@ public final class AppFlowCoordinator implements
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
         showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+    }
+
+    private void startFileDownload(String downloadId, String fileName, long fileSize, String sessionId) {
+        if (mSelectedServer == null) {
+            Toast.makeText(mActivity, "下载失败：未选择服务器", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        TerminalConnection connection = currentConnection();
+        downloadHelper.startDownload(mSelectedServer, downloadId, fileName, fileSize, sessionId, connection);
     }
 
     private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
@@ -708,6 +741,45 @@ public final class AppFlowCoordinator implements
     @Override
     public void applyTerminalTypeface(Typeface typeface) {
         if (mTerminalRuntime != null) mTerminalRuntime.updateTypeface(typeface);
+    }
+    @Override
+    public String getDownloadDirDisplayName() {
+        String uriStr = configStore.getDownloadDirUri();
+        if (uriStr == null || uriStr.isEmpty()) {
+            return "未设置";
+        }
+        try {
+            DocumentFile doc = DocumentFile.fromTreeUri(mActivity, Uri.parse(uriStr));
+            String name = doc != null ? doc.getName() : null;
+            return name != null && !name.isEmpty() ? name : "已设置";
+        } catch (Exception e) {
+            return "已设置";
+        }
+    }
+    @Override
+    public void openDownloadDirPicker() {
+        if (mActivity == null) return;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Uri initialUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
+        }
+        mActivity.startActivityForResult(intent, REQUEST_CODE_DOWNLOAD_DIR);
+    }
+
+    public void onDownloadDirPickerResult(int resultCode, Intent data) {
+        if (mActivity == null || resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        Uri treeUri = data.getData();
+        try {
+            mActivity.getContentResolver().takePersistableUriPermission(treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            configStore.setDownloadDirUri(treeUri.toString());
+            Toast.makeText(mActivity, "下载目录已保存", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(mActivity, "无法保存下载目录：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
 
     // ── Helpers ────────────────────────────────────────────────────
