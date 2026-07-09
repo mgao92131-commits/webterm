@@ -5,7 +5,7 @@ public interface MuxTransport {
         void onOpen();
         void onText(String text);
         void onBinary(byte[] data);
-        void onClosed(String reason);
+        void onClosed(int code, String reason);
         void onError(String message);
     }
 

@@ -38,7 +38,7 @@ public final class P2PDataChannelEndpoint {
                     String reason = "datachannel " + state.name().toLowerCase(java.util.Locale.US);
                     stateListener.onClosed(reason);
                     MuxTransport.Listener listener = muxListener;
-                    if (listener != null) listener.onClosed(reason);
+                    if (listener != null) listener.onClosed(1000, reason);
                 }
             }
 

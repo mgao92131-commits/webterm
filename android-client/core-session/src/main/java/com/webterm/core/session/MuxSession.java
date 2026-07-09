@@ -55,7 +55,8 @@ public final class MuxSession {
             return;
         }
         enabled = true;
-        if (connected) return;
+        if (connected && transport.isConnected()) return;
+        connected = false;
         connectNow();
     }
 
@@ -158,11 +159,11 @@ public final class MuxSession {
             }
 
             @Override
-            public void onClosed(String reason) {
+            public void onClosed(int code, String reason) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     connected = false;
-                    listener.onMuxDisconnected(reason);
+                    listener.onMuxDisconnected(reason + " (" + code + ")");
                     scheduleReconnect();
                 });
             }

@@ -12,4 +12,5 @@ dependencies {
     implementation(project(":transport-api"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.annotation:annotation:1.9.0")
+    testImplementation(libs.junit)
 }
