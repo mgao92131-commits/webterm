@@ -22,6 +22,15 @@ Base commit: `0d72bed` (recorded before Task 1 implementer dispatch)
 | 8: Add send queue for reconnect resilience | skipped | - | deferred per brief (existing synchronous sends acceptable) |
 | 9: Integration tests and final cleanup | complete | c59bb2d..8780a70 | approved, ready to merge |
 
+## Post-review fixes (commit `9d58274`)
+
+Addressed 4 review findings before merge:
+
+1. **go-core virtual socket backpressure close code**: changed from `StatusNormalClosure(1000)` to `StatusInternalError(1011)` with reason `"incoming buffer full"`, so Android no longer treats recoverable backpressure as permanent channel closure.
+2. **Channel CONNECTING/LIVE state**: `RelayMuxSessionManager` now tracks whether a channel has received its `ws-connected` ack; reattach only fires `onConnected` immediately for `LIVE` channels, preventing HELLO from being sent before the server ack.
+3. **ws-error 5xx recovery**: `ws-error` codes in the 5xx range are now treated as recoverable (same path as recoverable `ws-close`), re-opening the channel instead of leaving it half-broken.
+4. **detach listener cleanup**: `TerminalConnection.detach()` now calls `RelayMuxSessionManager.detachChannelListener()` to replace the old listener with a no-op, eliminating retention of `TerminalConnection` and stale callbacks after detach.
+
 - Task 5: `sendDownloadProgress` / `onDownloadHook` are pre-existing working-tree code retained because `AppFlowCoordinator` and `FileDownloadHelper` depend on them. Removing them would break app-module compilation. Accepted as scope carry-over for final whole-branch review.
 - Task 7: Pre-existing reconnect/P2P-fallback working-tree code was split into `942f13b` so the Task 7 commit stays scoped to `lastSeq`.
 - Task 9: Commit message only mentions the integration test but also includes the `relayChannelId` reattach bug fix. Minor; noted for final review.
