@@ -76,6 +76,42 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
+    public void reattachWhileConnectingWaitsForWsConnected() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean listener1Connected = new AtomicBoolean();
+        AtomicBoolean listener2Connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener1Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+        RelayMuxSessionManager.ChannelListener listener2 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener2Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        String channelId1 = manager.openTerminalChannel("s1", listener1);
+        manager.start();
+        transport.simulateOpen();
+        // ws-connected has NOT been received yet; channel is still CONNECTING.
+
+        String channelId2 = manager.openTerminalChannel("s1", listener2);
+        assertEquals("reattach should reuse the same channel id", channelId1, channelId2);
+        assertFalse("reattached listener should NOT be notified before ws-connected", listener2Connected.get());
+
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("reattached listener should be notified after ws-connected", listener2Connected.get());
+    }
+
+    @Test
     public void wsClose1001KeepsChannelAndReopens() {
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(
@@ -238,22 +274,27 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
-    public void wsError500KeepsChannel() {
+    public void wsError500ReopensChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(
                 null, synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         AtomicBoolean connected = new AtomicBoolean();
+        AtomicBoolean closed = new AtomicBoolean();
         AtomicBoolean error = new AtomicBoolean();
         AtomicBoolean gone = new AtomicBoolean();
+        AtomicInteger closedCode = new AtomicInteger();
 
         manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
             @Override public void onConnected(String channelId) { connected.set(true); }
             @Override public void onError(String channelId, int code, String message) { error.set(true); }
             @Override public void onData(String channelId, byte[] payload, boolean binary) {}
             @Override public void onMuxDisconnected(String reason) {}
-            @Override public void onClosed(String channelId, int code, String reason) {}
+            @Override public void onClosed(String channelId, int code, String reason) {
+                closed.set(true);
+                closedCode.set(code);
+            }
             @Override public void onChannelGone(String channelId, int code, String reason) { gone.set(true); }
         });
 
@@ -264,10 +305,47 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         transport.simulateText("{\"type\":\"ws-error\",\"tunnelConnectionId\":\"term:s1\",\"code\":500,\"message\":\"server error\"}");
 
-        assertTrue("onError should fire for non-permanent error", error.get());
-        assertFalse("onChannelGone should not fire for non-permanent error", gone.get());
+        assertTrue("onClosed should fire for 5xx error", closed.get());
+        assertEquals(500, closedCode.get());
+        assertFalse("onError should not fire for 5xx error", error.get());
+        assertFalse("onChannelGone should not fire for 5xx error", gone.get());
         assertFalse("channel should remain in channels", manager.isIdle());
-        assertEquals("ws-connect should not be resent after non-permanent error", 1, transport.wsConnectCount("term:s1"));
+        assertEquals("ws-connect should be resent after 5xx error", 2, transport.wsConnectCount("term:s1"));
+    }
+
+    @Test
+    public void wsError400ReportsError() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean connected = new AtomicBoolean();
+        AtomicBoolean error = new AtomicBoolean();
+        AtomicBoolean closed = new AtomicBoolean();
+        AtomicBoolean gone = new AtomicBoolean();
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) { error.set(true); }
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onClosed(String channelId, int code, String reason) { closed.set(true); }
+            @Override public void onChannelGone(String channelId, int code, String reason) { gone.set(true); }
+        });
+
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(connected.get());
+
+        transport.simulateText("{\"type\":\"ws-error\",\"tunnelConnectionId\":\"term:s1\",\"code\":400,\"message\":\"bad request\"}");
+
+        assertTrue("onError should fire for 4xx non-404 error", error.get());
+        assertFalse("onClosed should not fire for 4xx error", closed.get());
+        assertFalse("onChannelGone should not fire for 4xx error", gone.get());
+        assertFalse("channel should remain in channels", manager.isIdle());
+        assertEquals("ws-connect should not be resent after 4xx error", 1, transport.wsConnectCount("term:s1"));
     }
 
     @Test

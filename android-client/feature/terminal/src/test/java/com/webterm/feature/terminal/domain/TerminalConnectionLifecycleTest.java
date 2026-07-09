@@ -62,6 +62,17 @@ public class TerminalConnectionLifecycleTest {
     }
 
     @Test
+    public void detachReplacesChannelListener() {
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        connection.detach();
+
+        verify(manager).detachChannelListener("term:s1");
+        verify(manager, never()).closeChannel(anyString());
+        assertEquals(TerminalConnection.State.DISCONNECTED, connection.getState());
+    }
+
+    @Test
     public void closeSessionClosesChannel() {
         connection.connect("http://example.com", "cookie", "s1", 0, "device1");
 

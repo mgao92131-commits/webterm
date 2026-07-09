@@ -35,12 +35,22 @@ public final class RelayMuxSessionManager {
         default void onReconnectAttempt(int attempt) {}
     }
 
+    private static final ChannelListener NO_OP_LISTENER = new ChannelListener() {
+        @Override public void onConnected(String channelId) {}
+        @Override public void onError(String channelId, int code, String message) {}
+        @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+        @Override public void onMuxDisconnected(String reason) {}
+    };
+
     private static final class Channel {
+        enum State { CONNECTING, LIVE }
+
         final String id;
         final String path;
         final String[] protocols;
         ChannelListener listener;
         long lastSeq;
+        State state = State.CONNECTING;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
             this.id = id;
@@ -108,6 +118,7 @@ public final class RelayMuxSessionManager {
             @Override public void onMuxDisconnected(String reason) {
                 if (generation != muxGeneration) return;
                 for (Channel channel : snapshotChannels()) {
+                    channel.state = Channel.State.CONNECTING;
                     channel.listener.onMuxDisconnected(reason);
                 }
             }
@@ -122,7 +133,10 @@ public final class RelayMuxSessionManager {
             @Override public void onTunnelConnected(String tunnelId) {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
-                if (channel != null) channel.listener.onConnected(tunnelId);
+                if (channel != null) {
+                    channel.state = Channel.State.LIVE;
+                    channel.listener.onConnected(tunnelId);
+                }
             }
 
             @Override public void onTunnelError(String tunnelId, int code, String message) {
@@ -132,6 +146,13 @@ public final class RelayMuxSessionManager {
                 if (code == 404 || code == 401) {
                     channels.remove(tunnelId);
                     channel.listener.onChannelGone(tunnelId, code, message);
+                } else if (code >= 500 && code < 600) {
+                    // recoverable server-side error: reopen the channel
+                    channel.state = Channel.State.CONNECTING;
+                    channel.listener.onClosed(tunnelId, code, message);
+                    if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
+                        muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
+                    }
                 } else {
                     channel.listener.onError(tunnelId, code, message);
                 }
@@ -152,6 +173,7 @@ public final class RelayMuxSessionManager {
                     channel.listener.onChannelGone(tunnelId, code, reason);
                 } else {
                     // recoverable: network/backpressure; keep channel alive and reopen after reconnect
+                    channel.state = Channel.State.CONNECTING;
                     channel.listener.onClosed(tunnelId, code, reason);
                     if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
                         muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
@@ -239,7 +261,7 @@ public final class RelayMuxSessionManager {
         Channel existing = channels.get(channelId);
         if (existing != null) {
             existing.listener = listener;
-            if (muxSession.isConnected()) {
+            if (muxSession.isConnected() && existing.state == Channel.State.LIVE) {
                 // notify immediately so UI knows it's connected
                 listener.onConnected(channelId);
             }
@@ -248,6 +270,13 @@ public final class RelayMuxSessionManager {
         String path = "/ws/sessions/" + WebTermUrls.encodePath(localSessionId);
         openChannel(channelId, path, new String[]{BINARY_SUBPROTOCOL}, listener);
         return channelId;
+    }
+
+    public void detachChannelListener(String channelId) {
+        Channel ch = channels.get(channelId);
+        if (ch != null) {
+            ch.listener = NO_OP_LISTENER;
+        }
     }
 
     public void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {

@@ -99,7 +99,7 @@ func (socket *VirtualSocket) Emit(payload []byte, binary bool) bool {
 		if socket.logger != nil {
 			socket.logger.Add("warn", "mux", fmt.Sprintf("virtual socket incoming buffer full, closing id=%s", socket.id))
 		}
-		socket.close(true)
+		socket.CloseWithNotify(context.Background(), int(websocket.StatusInternalError), "incoming buffer full")
 		return false
 	}
 }

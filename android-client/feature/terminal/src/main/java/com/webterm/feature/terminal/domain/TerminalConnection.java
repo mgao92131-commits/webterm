@@ -99,8 +99,9 @@ public final class TerminalConnection {
         mainHandler.removeCallbacks(sendResizeRunnable);
         // Remove our listener so future events don't reach a dead UI,
         // but do NOT close the channel — it stays alive for reattach.
-        // Clearing the manager reference is enough: reattach will look up
-        // the same manager again, and openTerminalChannel replaces the listener.
+        if (relayMuxSession != null && relayChannelId != null) {
+            relayMuxSession.detachChannelListener(relayChannelId);
+        }
         relayMuxSession = null;
         relayChannelId = null;
     }
