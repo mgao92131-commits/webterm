@@ -40,6 +40,7 @@ public final class TerminalConnection {
     private volatile State state = State.DISCONNECTED;
     private int socketGeneration;
     private int reconnectAttempts;
+    private boolean pendingForceReconnect;
 
     private String baseUrl;
     private String cookie;
@@ -86,10 +87,23 @@ public final class TerminalConnection {
     public void reconnectNow() {
         this.state = State.CONNECTING;
         this.reconnectAttempts = 0;
+        this.pendingForceReconnect = true;
         connectNow();
     }
 
-    public void close(String reason) {
+    public void detach() {
+        this.state = State.DISCONNECTED;
+        this.socketGeneration++;
+        mainHandler.removeCallbacks(sendResizeRunnable);
+        // Remove our listener so future events don't reach a dead UI,
+        // but do NOT close the channel — it stays alive for reattach.
+        // Clearing the manager reference is enough: reattach will look up
+        // the same manager again, and openTerminalChannel replaces the listener.
+        relayMuxSession = null;
+        relayChannelId = null;
+    }
+
+    public void closeSession() {
         this.state = State.DISCONNECTED;
         this.socketGeneration++;
         mainHandler.removeCallbacks(sendResizeRunnable);
@@ -132,6 +146,7 @@ public final class TerminalConnection {
     }
 
     private void connectNow() {
+        if (state == State.DISCONNECTED) return;
         if (sessionId == null || baseUrl == null || cookie == null) return;
         connectRelayMux();
     }
@@ -140,19 +155,24 @@ public final class TerminalConnection {
         state = State.CONNECTING;
         listener.onConnectionStatus(state, reconnectAttempts);
         String localSessionId = RelayMuxSessionManager.localSessionId(sessionId, relayDeviceId);
-        String nextChannelId = RelayMuxSessionManager.terminalChannelId(localSessionId);
         if (relayMuxSession == null || !relayMuxSession.matches(baseUrl, cookie, relayDeviceId)) {
             if (relayMuxSession != null) {
-                relayMuxSession.closeChannel(relayChannelId);
+                // Don't close the channel here; just release the idle reference.
+                // The old manager keeps its channels alive for other consumers.
                 relayMuxRegistry.releaseIfIdle(relayMuxSession);
             }
             relayMuxSession = relayMuxRegistry.forDevice(baseUrl, cookie, relayDeviceId);
-        } else if (relayChannelId != null) {
-            // mux 物理连接未变但重连：先关旧 channel，避免服务端残留旧 client 重复推送
-            relayMuxSession.closeChannel(relayChannelId);
+            relayMuxSession.updateCookie(cookie);
+        } else {
+            // Reuse the same physical session, but sync the latest cookie in case it rotated.
+            relayMuxSession.updateCookie(cookie);
+            if (pendingForceReconnect) {
+                // Manual reconnect: force a new physical session to break a stale connected state.
+                relayMuxSession.forceReconnect("manual reconnect");
+                pendingForceReconnect = false;
+            }
         }
-        relayChannelId = nextChannelId;
-        relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
+        relayChannelId = relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
             @Override public void onConnected(String channelId) {
                 if (!channelId.equals(relayChannelId)) return;
                 state = State.CONNECTED;
@@ -192,6 +212,14 @@ public final class TerminalConnection {
                 socketGeneration++;
                 mainHandler.removeCallbacks(sendResizeRunnable);
                 scheduleChannelReconnect();
+            }
+
+            @Override public void onChannelGone(String channelId, int code, String reason) {
+                if (!channelId.equals(relayChannelId)) return;
+                state = State.DISCONNECTED;
+                socketGeneration++;
+                mainHandler.removeCallbacks(sendResizeRunnable);
+                listener.onExit(0);
             }
         });
     }

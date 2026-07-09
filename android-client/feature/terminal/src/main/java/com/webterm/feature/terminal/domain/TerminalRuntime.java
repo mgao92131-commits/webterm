@@ -91,13 +91,11 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     public void close(boolean closeRemote) {
         lifecycle.closeTerminal(closeRemote);
-        connection.close("runtime closed");
         currentViewHost = null;
     }
 
     public void disposeLocal() {
         lifecycle.disposeTerminal("runtime disposed");
-        connection.close("runtime disposed");
         currentViewHost = null;
     }
 

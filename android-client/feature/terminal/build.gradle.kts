@@ -11,6 +11,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildFeatures { compose = false; aidl = false; buildConfig = false; shaders = false }
 }
 
@@ -30,4 +34,7 @@ dependencies {
     implementation(libs.lifecycle.livedata)
     implementation("androidx.annotation:annotation:1.9.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+
+    testImplementation(libs.junit)
+    testImplementation("org.mockito:mockito-core:5.12.0")
 }

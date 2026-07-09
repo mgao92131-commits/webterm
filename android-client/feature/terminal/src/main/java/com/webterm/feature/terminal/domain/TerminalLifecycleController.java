@@ -184,7 +184,7 @@ public final class TerminalLifecycleController {
             cacheCurrentTerminal();
         }
         closed.set(true);
-        closeTerminalConnection("leaving terminal");
+        closeTerminalConnection(closeRemote);
         if (terminalSession != null && closeRemote) {
             terminalSession.finishIfRunning();
         }
@@ -226,7 +226,7 @@ public final class TerminalLifecycleController {
     public void disposeTerminal(String reason) {
         hideKeyboard();
         closed.set(true);
-        closeTerminalConnection(reason);
+        closeTerminalConnection(true);
         if (terminalSession != null) {
             terminalSession.finishIfRunning();
         }
@@ -249,7 +249,7 @@ public final class TerminalLifecycleController {
 
     public void pauseCurrentConnection() {
         cacheCurrentTerminal();
-        closeTerminalConnection("activity paused");
+        closeTerminalConnection(false);
     }
 
     public void connectTerminal() {
@@ -383,9 +383,14 @@ public final class TerminalLifecycleController {
         connectTerminal();
     }
 
-    private void closeTerminalConnection(String reason) {
+    private void closeTerminalConnection(boolean closeSession) {
         if (titleSynchronizer != null) titleSynchronizer.cancel();
-        if (terminalConnection != null) terminalConnection.close(reason);
+        if (terminalConnection == null) return;
+        if (closeSession) {
+            terminalConnection.closeSession();
+        } else {
+            terminalConnection.detach();
+        }
     }
 
     private void cacheCurrentTerminal() {
