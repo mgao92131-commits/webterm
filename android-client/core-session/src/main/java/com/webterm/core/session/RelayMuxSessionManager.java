@@ -26,6 +26,9 @@ public final class RelayMuxSessionManager {
         /** channel 被服务端主动关闭时触发（如 send buffer 满）。 */
         default void onClosed(String channelId, int code, String reason) {}
 
+        /** channel 永久关闭（如会话不存在、鉴权失败），不应再重连。 */
+        default void onChannelGone(String channelId, int code, String reason) {}
+
         /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
     }
@@ -113,7 +116,13 @@ public final class RelayMuxSessionManager {
             @Override public void onTunnelError(String tunnelId, int code, String message) {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
-                if (channel != null) channel.listener.onError(tunnelId, code, message);
+                if (channel == null) return;
+                if (code == 404 || code == 401) {
+                    channels.remove(tunnelId);
+                    channel.listener.onChannelGone(tunnelId, code, message);
+                } else {
+                    channel.listener.onError(tunnelId, code, message);
+                }
             }
 
             @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
@@ -124,8 +133,18 @@ public final class RelayMuxSessionManager {
 
             @Override public void onTunnelClosed(String tunnelId, int code, String reason) {
                 if (generation != muxGeneration) return;
-                Channel channel = channels.get(tunnelId);
-                if (channel != null) channel.listener.onClosed(tunnelId, code, reason);
+                Channel channel = channels.remove(tunnelId);
+                if (channel == null) return;
+                if (code == 1000 || code == 404 || code == 401) {
+                    channel.listener.onChannelGone(tunnelId, code, reason);
+                } else {
+                    // recoverable: network/backpressure; reopen channel after reconnect
+                    channels.put(tunnelId, channel); // keep channel alive
+                    channel.listener.onClosed(tunnelId, code, reason);
+                    if (muxSession.isConnected()) {
+                        muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
+                    }
+                }
             }
         });
     }
