@@ -55,8 +55,7 @@ public final class MuxSession {
             return;
         }
         enabled = true;
-        if (connected && transport.isConnected()) return;
-        connected = false;
+        if (connected) return;
         connectNow();
     }
 
