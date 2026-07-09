@@ -3,6 +3,7 @@ package com.webterm.feature.terminal.domain;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -13,10 +14,13 @@ import android.os.Handler;
 
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.WebTermProtocol;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.nio.charset.StandardCharsets;
 
 public class TerminalConnectionLifecycleTest {
 
@@ -112,5 +116,56 @@ public class TerminalConnectionLifecycleTest {
 
         verify(listener, never()).onExit(any(int.class));
         assertEquals(TerminalConnection.State.DISCONNECTED, connection.getState());
+    }
+
+    @Test
+    public void onDataUpdatesChannelLastSeq() {
+        when(manager.isConnected()).thenReturn(true);
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        ArgumentCaptor<RelayMuxSessionManager.ChannelListener> listenerCaptor =
+            ArgumentCaptor.forClass(RelayMuxSessionManager.ChannelListener.class);
+        verify(manager).openTerminalChannel(anyString(), listenerCaptor.capture());
+
+        RelayMuxSessionManager.ChannelListener channelListener = listenerCaptor.getValue();
+        channelListener.onConnected("term:s1");
+
+        byte[] payload = new byte[8 + 3];
+        writeUint64(payload, 0, 42L);
+        byte[] frame = WebTermProtocol.frame(WebTermProtocol.MSG_OUTPUT, payload).toByteArray();
+        channelListener.onData("term:s1", frame, true);
+
+        assertEquals(42L, connection.getLastSeq());
+        verify(manager).updateChannelLastSeq("term:s1", 42L);
+    }
+
+    @Test
+    public void reattachSeedsLastSeqFromChannel() {
+        when(manager.getChannelLastSeq("term:s1")).thenReturn(123L);
+        when(manager.isConnected()).thenReturn(true);
+
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        ArgumentCaptor<RelayMuxSessionManager.ChannelListener> listenerCaptor =
+            ArgumentCaptor.forClass(RelayMuxSessionManager.ChannelListener.class);
+        verify(manager).openTerminalChannel(anyString(), listenerCaptor.capture());
+
+        listenerCaptor.getValue().onConnected("term:s1");
+
+        ArgumentCaptor<byte[]> frameCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(manager).sendTunnelFrame(eq("term:s1"), frameCaptor.capture(), eq(true));
+        byte[] helloFrame = frameCaptor.getValue();
+        byte[] helloPayload = new byte[helloFrame.length - 1];
+        System.arraycopy(helloFrame, 1, helloPayload, 0, helloPayload.length);
+        String helloJson = new String(helloPayload, StandardCharsets.UTF_8);
+        org.junit.Assert.assertTrue("hello should contain channel seq: " + helloJson,
+            helloJson.contains("\"lastSeq\":123"));
+    }
+
+    private static void writeUint64(byte[] data, int offset, long value) {
+        for (int i = 7; i >= 0; i--) {
+            data[offset + i] = (byte) (value & 0xffL);
+            value >>= 8;
+        }
     }
 }

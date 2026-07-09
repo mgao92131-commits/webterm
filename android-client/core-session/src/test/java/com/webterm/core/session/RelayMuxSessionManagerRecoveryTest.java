@@ -304,6 +304,73 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals("ws-connect should not be resent after listener closed channel", 1, transport.wsConnectCount("term:s1"));
     }
 
+    @Test
+    public void channelLastSeqUpdatedAndRetainedOnReattach() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        String channelId1 = manager.openTerminalChannel("s1", listener1);
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(connected.get());
+
+        manager.updateChannelLastSeq(channelId1, 55L);
+        assertEquals(55L, manager.getChannelLastSeq(channelId1));
+
+        AtomicBoolean connected2 = new AtomicBoolean();
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected2.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        });
+
+        assertTrue(connected2.get());
+        assertEquals(55L, manager.getChannelLastSeq(channelId1));
+    }
+
+    @Test
+    public void channelLastSeqOnlyIncreases() {
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(new FakeMuxTransport()));
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) {}
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        });
+
+        String channelId = RelayMuxSessionManager.terminalChannelId("s1");
+        manager.updateChannelLastSeq(channelId, 100L);
+        manager.updateChannelLastSeq(channelId, 50L);
+        assertEquals(100L, manager.getChannelLastSeq(channelId));
+        manager.updateChannelLastSeq(channelId, 150L);
+        assertEquals(150L, manager.getChannelLastSeq(channelId));
+    }
+
+    @Test
+    public void getChannelLastSeqReturnsZeroForMissingChannel() {
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(new FakeMuxTransport()));
+
+        assertEquals(0L, manager.getChannelLastSeq("term:missing"));
+    }
+
     private static class FakeTransportFactory implements TransportFactory {
         private final FakeMuxTransport transport;
 

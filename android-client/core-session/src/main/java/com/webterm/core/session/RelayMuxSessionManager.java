@@ -40,12 +40,17 @@ public final class RelayMuxSessionManager {
         final String path;
         final String[] protocols;
         ChannelListener listener;
+        long lastSeq;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
             this.id = id;
             this.path = path;
             this.protocols = protocols;
             this.listener = listener;
+        }
+
+        void updateLastSeq(long seq) {
+            if (seq > lastSeq) lastSeq = seq;
         }
     }
 
@@ -217,6 +222,16 @@ public final class RelayMuxSessionManager {
 
     public boolean hasTerminalChannel(String localSessionId) {
         return channels.containsKey(terminalChannelId(localSessionId));
+    }
+
+    public long getChannelLastSeq(String channelId) {
+        Channel ch = channels.get(channelId);
+        return ch == null ? 0 : ch.lastSeq;
+    }
+
+    public void updateChannelLastSeq(String channelId, long seq) {
+        Channel ch = channels.get(channelId);
+        if (ch != null) ch.updateLastSeq(seq);
     }
 
     public String openTerminalChannel(String localSessionId, ChannelListener listener) {

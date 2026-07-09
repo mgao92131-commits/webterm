@@ -36,5 +36,6 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.4.0")
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     testImplementation("org.mockito:mockito-core:5.12.0")
 }

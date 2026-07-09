@@ -172,6 +172,11 @@ public final class TerminalConnection {
                 pendingForceReconnect = false;
             }
         }
+        String existingChannelId = RelayMuxSessionManager.terminalChannelId(localSessionId);
+        long channelSeq = relayMuxSession.getChannelLastSeq(existingChannelId);
+        if (channelSeq > 0) {
+            this.lastSeq = channelSeq;
+        }
         relayChannelId = relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
             @Override public void onConnected(String channelId) {
                 if (!channelId.equals(relayChannelId)) return;
@@ -193,6 +198,9 @@ public final class TerminalConnection {
             @Override public void onData(String channelId, byte[] payload, boolean binary) {
                 if (!channelId.equals(relayChannelId)) return;
                 handleServerMessage(payload);
+                if (relayMuxSession != null && relayChannelId != null) {
+                    relayMuxSession.updateChannelLastSeq(relayChannelId, lastSeq);
+                }
             }
 
             @Override public void onMuxDisconnected(String reason) {
