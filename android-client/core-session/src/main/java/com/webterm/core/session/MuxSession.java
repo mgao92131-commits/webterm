@@ -37,6 +37,7 @@ public final class MuxSession {
     private final Listener listener;
 
     private volatile boolean connected;
+    private volatile boolean connecting;
     private volatile boolean enabled;
     private int reconnectAttempts;
 
@@ -55,13 +56,15 @@ public final class MuxSession {
             return;
         }
         enabled = true;
-        if (connected) return;
+        if (connected && transport.isConnected()) return;
+        if (connecting) return;
         connectNow();
     }
 
     void stop() {
         enabled = false;
         connected = false;
+        connecting = false;
         if (transport != null) transport.close();
     }
 
@@ -121,6 +124,7 @@ public final class MuxSession {
     }
 
     private void connectNow() {
+        connecting = true;
         transport.start(new MuxTransport.Listener() {
             @Override
             public void onOpen() {
@@ -129,6 +133,7 @@ public final class MuxSession {
                     return;
                 }
                 connected = true;
+                connecting = false;
                 reconnectAttempts = 0;
                 Log.i(TAG, "mux open");
                 mainHandler.post(() -> listener.onMuxConnected());
@@ -151,6 +156,7 @@ public final class MuxSession {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     connected = false;
+                    connecting = false;
                     Log.e(TAG, "mux failure: " + message);
                     listener.onMuxDisconnected(message);
                     scheduleReconnect();
@@ -162,6 +168,7 @@ public final class MuxSession {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     connected = false;
+                    connecting = false;
                     listener.onMuxDisconnected(reason + " (" + code + ")");
                     scheduleReconnect();
                 });

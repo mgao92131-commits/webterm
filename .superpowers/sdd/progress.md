@@ -20,9 +20,16 @@ Base commit: `0d72bed` (recorded before Task 1 implementer dispatch)
 | 6: Fix TerminalLifecycleController lifecycle matrix | complete | c4a216f..366828d | approved |
 | 7: Propagate lastSeq correctly on reattach | complete | 366828d..c59bb2d (includes 942f13b compile fix) | approved |
 | 8: Add send queue for reconnect resilience | skipped | - | deferred per brief (existing synchronous sends acceptable) |
-| 9: Integration tests and final cleanup | complete | - | pending |
+| 9: Integration tests and final cleanup | complete | c59bb2d..f26c618 | approved, ready to merge |
 
 - Task 5: `sendDownloadProgress` / `onDownloadHook` are pre-existing working-tree code retained because `AppFlowCoordinator` and `FileDownloadHelper` depend on them. Removing them would break app-module compilation. Accepted as scope carry-over for final whole-branch review.
+- Task 7: Pre-existing reconnect/P2P-fallback working-tree code was split into `942f13b` so the Task 7 commit stays scoped to `lastSeq`.
+- Task 9: Commit message only mentions the integration test but also includes the `relayChannelId` reattach bug fix. Minor; noted for final review.
+
+- Final review Important fixes (commit `f26c618`):
+  - `RelayMuxSessionManager.forceReconnect` now uses `reconnectTransport(reason, true)` so a new session starts when channels exist.
+  - `TerminalConnection.reconnectNow()` only sets `pendingForceReconnect` when the current manager matches, avoiding a dirty flag.
+  - Added covering tests in `TerminalConnectionReconnectTest`.
 
 ## Minor Findings Log
 
