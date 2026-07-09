@@ -20,7 +20,7 @@ Base commit: `0d72bed` (recorded before Task 1 implementer dispatch)
 | 6: Fix TerminalLifecycleController lifecycle matrix | complete | c4a216f..366828d | approved |
 | 7: Propagate lastSeq correctly on reattach | complete | 366828d..c59bb2d (includes 942f13b compile fix) | approved |
 | 8: Add send queue for reconnect resilience | skipped | - | deferred per brief (existing synchronous sends acceptable) |
-| 9: Integration tests and final cleanup | complete | c59bb2d..f26c618 | approved, ready to merge |
+| 9: Integration tests and final cleanup | complete | c59bb2d..8780a70 | approved, ready to merge |
 
 - Task 5: `sendDownloadProgress` / `onDownloadHook` are pre-existing working-tree code retained because `AppFlowCoordinator` and `FileDownloadHelper` depend on them. Removing them would break app-module compilation. Accepted as scope carry-over for final whole-branch review.
 - Task 7: Pre-existing reconnect/P2P-fallback working-tree code was split into `942f13b` so the Task 7 commit stays scoped to `lastSeq`.
