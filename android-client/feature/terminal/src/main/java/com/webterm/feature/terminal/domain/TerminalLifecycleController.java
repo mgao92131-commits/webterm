@@ -377,10 +377,9 @@ public final class TerminalLifecycleController {
         terminalView.requestFocus();
         terminalView.updateSize();
         host.updateKeyboardAvoidance();
-        // 总是重新建立 channel + sendHello：channel 可能已被服务端静默关闭
-        // （isConnected 只反映 mux 物理连接，不感知 channel 级关闭）。
-        // 复用服务端 handleHello 的 ReplayAfter(lastSeq) 恢复数据，
-        // 客户端 seq<=lastSeq 去重避免重复。连接状态由 onConnectionStatus 回调刷新。
+        // 重新 attach：如果 RelayMuxSessionManager 仍持有该 channel，则复用并替换 listener；
+        // 否则 openTerminalChannel 会新建 channel 并发送 hello。
+        // hello 中的 lastSeq 优先取运行中 connection 的最新 seq，确保 ReplayAfter 不会重复。
         connectTerminal();
     }
 
