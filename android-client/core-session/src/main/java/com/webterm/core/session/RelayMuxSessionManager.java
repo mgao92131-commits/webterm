@@ -133,15 +133,15 @@ public final class RelayMuxSessionManager {
 
             @Override public void onTunnelClosed(String tunnelId, int code, String reason) {
                 if (generation != muxGeneration) return;
-                Channel channel = channels.remove(tunnelId);
+                Channel channel = channels.get(tunnelId);
                 if (channel == null) return;
                 if (code == 1000 || code == 404 || code == 401) {
+                    channels.remove(tunnelId);
                     channel.listener.onChannelGone(tunnelId, code, reason);
                 } else {
-                    // recoverable: network/backpressure; reopen channel after reconnect
-                    channels.put(tunnelId, channel); // keep channel alive
+                    // recoverable: network/backpressure; keep channel alive and reopen after reconnect
                     channel.listener.onClosed(tunnelId, code, reason);
-                    if (muxSession.isConnected()) {
+                    if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
                         muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
                     }
                 }

@@ -161,6 +161,112 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals("ws-connect should not be resent after permanent error", 1, transport.wsConnectCount("term:s1"));
     }
 
+    @Test
+    public void recoverableWsCloseWhileMuxDisconnectedBuffersReconnect() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean connected = new AtomicBoolean();
+        AtomicBoolean closed = new AtomicBoolean();
+        AtomicBoolean muxDisconnected = new AtomicBoolean();
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) { muxDisconnected.set(true); }
+            @Override public void onClosed(String channelId, int code, String reason) { closed.set(true); }
+            @Override public void onChannelGone(String channelId, int code, String reason) {}
+        });
+
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(connected.get());
+        assertEquals("one ws-connect after mux open", 1, transport.wsConnectCount("term:s1"));
+
+        transport.simulateClose(1001, "going away");
+        assertTrue("mux should report disconnected", muxDisconnected.get());
+
+        transport.simulateText("{\"type\":\"ws-close\",\"tunnelConnectionId\":\"term:s1\",\"code\":1001,\"reason\":\"going away\"}");
+
+        assertTrue("onClosed should fire for recoverable close", closed.get());
+        assertEquals("no ws-connect while mux disconnected", 1, transport.wsConnectCount("term:s1"));
+        assertFalse("channel should remain in channels", manager.isIdle());
+
+        transport.simulateOpen();
+        assertEquals("ws-connect resent via reopenChannels after mux reconnect", 2, transport.wsConnectCount("term:s1"));
+    }
+
+    @Test
+    public void wsError500KeepsChannel() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean connected = new AtomicBoolean();
+        AtomicBoolean error = new AtomicBoolean();
+        AtomicBoolean gone = new AtomicBoolean();
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) { error.set(true); }
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onClosed(String channelId, int code, String reason) {}
+            @Override public void onChannelGone(String channelId, int code, String reason) { gone.set(true); }
+        });
+
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(connected.get());
+
+        transport.simulateText("{\"type\":\"ws-error\",\"tunnelConnectionId\":\"term:s1\",\"code\":500,\"message\":\"server error\"}");
+
+        assertTrue("onError should fire for non-permanent error", error.get());
+        assertFalse("onChannelGone should not fire for non-permanent error", gone.get());
+        assertFalse("channel should remain in channels", manager.isIdle());
+        assertEquals("ws-connect should not be resent after non-permanent error", 1, transport.wsConnectCount("term:s1"));
+    }
+
+    @Test
+    public void recoverableWsCloseWithSynchronousCloseDoesNotReopen() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean connected = new AtomicBoolean();
+        AtomicBoolean closed = new AtomicBoolean();
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onClosed(String channelId, int code, String reason) {
+                closed.set(true);
+                manager.closeChannel(channelId);
+            }
+            @Override public void onChannelGone(String channelId, int code, String reason) {}
+        });
+
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(connected.get());
+
+        transport.simulateText("{\"type\":\"ws-close\",\"tunnelConnectionId\":\"term:s1\",\"code\":1001,\"reason\":\"going away\"}");
+
+        assertTrue("onClosed should fire for recoverable close", closed.get());
+        assertTrue("channel should be removed by synchronous close", manager.isIdle());
+        assertEquals("ws-connect should not be resent after listener closed channel", 1, transport.wsConnectCount("term:s1"));
+    }
+
     private static class FakeTransportFactory implements TransportFactory {
         private final FakeMuxTransport transport;
 
@@ -182,13 +288,20 @@ public class RelayMuxSessionManagerRecoveryTest {
     private static class FakeMuxTransport implements MuxTransport {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
+        private boolean open = false;
 
         @Override public void start(Listener listener) {
             this.listener = listener;
         }
 
         public void simulateOpen() {
+            open = true;
             if (listener != null) listener.onOpen();
+        }
+
+        public void simulateClose(int code, String reason) {
+            open = false;
+            if (listener != null) listener.onClosed(code, reason);
         }
 
         public void simulateText(String text) {
@@ -196,7 +309,7 @@ public class RelayMuxSessionManagerRecoveryTest {
         }
 
         @Override public void close() {}
-        @Override public boolean isConnected() { return listener != null; }
+        @Override public boolean isConnected() { return open; }
         @Override public boolean isP2P() { return false; }
 
         @Override public boolean sendText(String text) {
