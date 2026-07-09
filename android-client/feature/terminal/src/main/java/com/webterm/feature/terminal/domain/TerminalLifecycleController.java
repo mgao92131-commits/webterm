@@ -184,7 +184,7 @@ public final class TerminalLifecycleController {
             cacheCurrentTerminal();
         }
         closed.set(true);
-        closeTerminalConnection(closeRemote);
+        releaseTerminalConnection(closeRemote);
         if (terminalSession != null && closeRemote) {
             terminalSession.finishIfRunning();
         }
@@ -226,7 +226,7 @@ public final class TerminalLifecycleController {
     public void disposeTerminal(String reason) {
         hideKeyboard();
         closed.set(true);
-        closeTerminalConnection(true);
+        releaseTerminalConnection(true);
         if (terminalSession != null) {
             terminalSession.finishIfRunning();
         }
@@ -249,15 +249,16 @@ public final class TerminalLifecycleController {
 
     public void pauseCurrentConnection() {
         cacheCurrentTerminal();
-        closeTerminalConnection(false);
+        if (terminalConnection != null) terminalConnection.detach();
     }
 
     public void connectTerminal() {
         if (terminalConnection == null || !terminalState.hasSession() || terminalState.baseUrl() == null || terminalState.cookie() == null) return;
-        // 用 connection 实际收到的最新 lastSeq（detach 期间持续更新），
-        // 而非 terminalState.lastSeq()（被 applyLaunchState 重置为 cached 旧值，会导致 ReplayAfter 重放已收数据 → 重复）
-        long seq = terminalConnection.getLastSeq();
         terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
+        // If TerminalConnection has no active channel but RelayMuxSessionManager still has one,
+        // openTerminalChannel will reattach. Otherwise it creates a new channel.
+        // Use cached lastSeq only as seed when TerminalConnection has no lastSeq yet.
+        long seq = terminalConnection.getLastSeq() > 0 ? terminalConnection.getLastSeq() : terminalState.lastSeq();
         terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), seq, terminalState.relayDeviceId());
     }
 
@@ -383,10 +384,10 @@ public final class TerminalLifecycleController {
         connectTerminal();
     }
 
-    private void closeTerminalConnection(boolean closeSession) {
+    private void releaseTerminalConnection(boolean closeRemote) {
         if (titleSynchronizer != null) titleSynchronizer.cancel();
         if (terminalConnection == null) return;
-        if (closeSession) {
+        if (closeRemote) {
             terminalConnection.closeSession();
         } else {
             terminalConnection.detach();
