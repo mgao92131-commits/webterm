@@ -19,12 +19,12 @@ public final class RelayMuxSessionManager {
 
     public interface ChannelListener {
         void onConnected(String channelId);
-        void onError(String channelId, String message);
+        void onError(String channelId, int code, String message);
         void onData(String channelId, byte[] payload, boolean binary);
         void onMuxDisconnected(String reason);
 
         /** channel 被服务端主动关闭时触发（如 send buffer 满）。 */
-        default void onClosed(String channelId) {}
+        default void onClosed(String channelId, int code, String reason) {}
 
         /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
@@ -110,10 +110,10 @@ public final class RelayMuxSessionManager {
                 if (channel != null) channel.listener.onConnected(tunnelId);
             }
 
-            @Override public void onTunnelError(String tunnelId, String message) {
+            @Override public void onTunnelError(String tunnelId, int code, String message) {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
-                if (channel != null) channel.listener.onError(tunnelId, message);
+                if (channel != null) channel.listener.onError(tunnelId, code, message);
             }
 
             @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {
@@ -122,10 +122,10 @@ public final class RelayMuxSessionManager {
                 if (channel != null) channel.listener.onData(tunnelId, payload, binary);
             }
 
-            @Override public void onTunnelClosed(String tunnelId) {
+            @Override public void onTunnelClosed(String tunnelId, int code, String reason) {
                 if (generation != muxGeneration) return;
-                Channel channel = channels.remove(tunnelId);
-                if (channel != null) channel.listener.onClosed(tunnelId);
+                Channel channel = channels.get(tunnelId);
+                if (channel != null) channel.listener.onClosed(tunnelId, code, reason);
             }
         });
     }

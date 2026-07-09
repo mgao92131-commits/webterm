@@ -164,7 +164,7 @@ public final class TerminalConnection {
                 sendResizeNow();
             }
 
-            @Override public void onError(String channelId, String message) {
+            @Override public void onError(String channelId, int code, String message) {
                 if (!channelId.equals(relayChannelId)) return;
                 listener.onProtocolError("tunnel error: " + message);
             }
@@ -185,7 +185,7 @@ public final class TerminalConnection {
                 listener.onConnectionStatus(state, reconnectAttempts);
             }
 
-            @Override public void onClosed(String channelId) {
+            @Override public void onClosed(String channelId, int code, String reason) {
                 if (!channelId.equals(relayChannelId)) return;
                 if (state == State.DISCONNECTED) return;
                 Log.i(TAG, "channel closed: " + channelId);

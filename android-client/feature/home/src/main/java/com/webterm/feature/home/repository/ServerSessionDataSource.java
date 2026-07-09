@@ -48,7 +48,7 @@ public final class ServerSessionDataSource {
             }
 
             @Override
-            public void onError(String id, String message) {
+            public void onError(String id, int code, String message) {
                 if (!channelId.equals(id)) return;
                 listener.onDisconnected(message);
             }

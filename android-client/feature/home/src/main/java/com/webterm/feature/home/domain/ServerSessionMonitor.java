@@ -60,7 +60,7 @@ public final class ServerSessionMonitor {
                 listener.onMonitorConnected();
             }
 
-            @Override public void onError(String channelId, String message) {
+            @Override public void onError(String channelId, int code, String message) {
                 if (!managerId.equals(channelId)) return;
                 connected = false;
                 channelOpened = false;
