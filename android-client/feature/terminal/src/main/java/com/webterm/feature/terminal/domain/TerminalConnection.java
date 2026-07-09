@@ -177,7 +177,8 @@ public final class TerminalConnection {
         if (channelSeq > 0) {
             this.lastSeq = channelSeq;
         }
-        relayChannelId = relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
+        relayChannelId = existingChannelId;
+        relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
             @Override public void onConnected(String channelId) {
                 if (!channelId.equals(relayChannelId)) return;
                 state = State.CONNECTED;
