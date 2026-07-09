@@ -19,6 +19,7 @@ public final class WebTermProtocol {
     public static final byte MSG_TITLE = 0x09;
     public static final byte MSG_STATE = 0x0a;
     public static final byte MSG_HOOK = 0x0b;
+    public static final byte MSG_DOWNLOAD_PROGRESS = 0x0c;
 
     private WebTermProtocol() {}
 

@@ -237,6 +237,11 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
     }
 
     @Override
+    public void onDownloadHook(String downloadId, String fileName, long fileSize, String sessionId) {
+        // Download hooks are handled by FileDownloadHelper directly via connection.sendDownloadProgress.
+    }
+
+    @Override
     public void onExit(int code) {
         lifecycle.onExit(code);
         if (onFinished != null) onFinished.run();
