@@ -39,6 +39,43 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
+    public void reopenChannelReusesExisting() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean listener1Connected = new AtomicBoolean();
+        AtomicBoolean listener2Connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener1Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+        RelayMuxSessionManager.ChannelListener listener2 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener2Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        String channelId1 = manager.openTerminalChannel("s1", listener1);
+        assertTrue("manager should report existing terminal channel", manager.hasTerminalChannel("s1"));
+
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("original listener should be notified when mux connects", listener1Connected.get());
+
+        String channelId2 = manager.openTerminalChannel("s1", listener2);
+        assertEquals("reattach should reuse the same channel id", channelId1, channelId2);
+        assertTrue("reattached listener should be notified immediately when mux already connected", listener2Connected.get());
+        assertEquals("reattach should not send another ws-connect", 1, transport.wsConnectCount("term:s1"));
+    }
+
+    @Test
     public void wsClose1001KeepsChannelAndReopens() {
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(

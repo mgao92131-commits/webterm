@@ -37,7 +37,7 @@ public final class RelayMuxSessionManager {
         final String id;
         final String path;
         final String[] protocols;
-        final ChannelListener listener;
+        ChannelListener listener;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
             this.id = id;
@@ -179,10 +179,24 @@ public final class RelayMuxSessionManager {
         muxSession.start();
     }
 
-    public void openTerminalChannel(String localSessionId, ChannelListener listener) {
+    public boolean hasTerminalChannel(String localSessionId) {
+        return channels.containsKey(terminalChannelId(localSessionId));
+    }
+
+    public String openTerminalChannel(String localSessionId, ChannelListener listener) {
         String channelId = terminalChannelId(localSessionId);
+        Channel existing = channels.get(channelId);
+        if (existing != null) {
+            existing.listener = listener;
+            if (muxSession.isConnected()) {
+                // notify immediately so UI knows it's connected
+                listener.onConnected(channelId);
+            }
+            return channelId;
+        }
         String path = "/ws/sessions/" + WebTermUrls.encodePath(localSessionId);
         openChannel(channelId, path, new String[]{BINARY_SUBPROTOCOL}, listener);
+        return channelId;
     }
 
     public void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {
