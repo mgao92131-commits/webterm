@@ -16,6 +16,8 @@ public final class RelayMuxSessionManager {
     private static final String TAG = "RelayMuxSessionManager";
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
+    private static final long P2P_CONNECT_TIMEOUT_MS = 5000L;
+    private static final long P2P_BACKOFF_MS = 30000L;
 
     public interface ChannelListener {
         void onConnected(String channelId);
@@ -51,11 +53,13 @@ public final class RelayMuxSessionManager {
     private final Handler mainHandler;
     private final TransportFactory transportFactory;
     private final String baseUrl;
-    private String cookie;
+    private volatile String cookie;
     private final String deviceId;
     private MuxSession muxSession;
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
+    private long p2pBackoffUntil;
+    private Runnable p2pFallbackRunnable;
 
     RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this.http = http;
@@ -68,11 +72,13 @@ public final class RelayMuxSessionManager {
     }
 
     private MuxSession createMuxSession(int generation) {
-        if (transportFactory != null) {
+        cancelP2pFallback();
+        boolean tryP2P = transportFactory != null && System.currentTimeMillis() >= p2pBackoffUntil;
+        if (tryP2P) {
             transportFactory.prepareDataChannel(baseUrl, cookie, deviceId);
         }
         MuxTransport transport = null;
-        if (transportFactory != null) {
+        if (tryP2P && transportFactory != null) {
             transport = transportFactory.createDataChannel(deviceId);
         }
         if (transport == null) {
@@ -87,9 +93,10 @@ public final class RelayMuxSessionManager {
         } else {
             Log.i(TAG, "using p2p transport for " + deviceId + " generation=" + generation);
         }
-        return new MuxSession(transport, mainHandler, new MuxSession.Listener() {
+        MuxSession session = new MuxSession(transport, mainHandler, new MuxSession.Listener() {
             @Override public void onMuxConnected() {
                 if (generation != muxGeneration) return;
+                cancelP2pFallback();
                 reopenChannels();
             }
 
@@ -147,6 +154,26 @@ public final class RelayMuxSessionManager {
                 }
             }
         });
+        if (transport != null && transport.isP2P()) {
+            p2pFallbackRunnable = () -> {
+                if (generation != muxGeneration) return;
+                if (!muxSession.isConnected()) {
+                    Log.w(TAG, "p2p connect timeout for " + deviceId + " generation=" + generation);
+                    p2pBackoffUntil = System.currentTimeMillis() + P2P_BACKOFF_MS;
+                    reconnectTransport("p2p connect timeout");
+                }
+            };
+            mainHandler.postDelayed(p2pFallbackRunnable, P2P_CONNECT_TIMEOUT_MS);
+        }
+        return session;
+    }
+
+    private void cancelP2pFallback() {
+        Runnable r = p2pFallbackRunnable;
+        p2pFallbackRunnable = null;
+        if (r != null && mainHandler != null) {
+            mainHandler.removeCallbacks(r);
+        }
     }
 
     public boolean matches(String baseUrl, String cookie, String deviceId) {
@@ -156,7 +183,12 @@ public final class RelayMuxSessionManager {
     }
 
     public void updateCookie(String cookie) {
-        this.cookie = cookie == null ? "" : cookie;
+        String newCookie = cookie == null ? "" : cookie;
+        if (newCookie.equals(this.cookie)) {
+            return;
+        }
+        this.cookie = newCookie;
+        reconnectTransport("cookie updated");
     }
 
     public boolean isConnected() {
@@ -177,6 +209,10 @@ public final class RelayMuxSessionManager {
 
     public void start() {
         muxSession.start();
+    }
+
+    public void forceReconnect(String reason) {
+        reconnectTransport(reason, false);
     }
 
     public boolean hasTerminalChannel(String localSessionId) {
@@ -214,6 +250,10 @@ public final class RelayMuxSessionManager {
     }
 
     void reconnectTransport(String reason) {
+        reconnectTransport(reason, true);
+    }
+
+    private void reconnectTransport(String reason, boolean autoStart) {
         MuxSession oldSession = muxSession;
         muxGeneration++;
         Log.i(TAG, "reconnect transport for " + deviceId + " reason=" + reason + " channels=" + channels.size() + " generation=" + muxGeneration);
@@ -221,13 +261,14 @@ public final class RelayMuxSessionManager {
         if (oldSession != null) {
             oldSession.stop();
         }
-        if (!channels.isEmpty()) {
+        if (autoStart && !channels.isEmpty()) {
             muxSession.start();
         }
     }
 
     void stopIfIdle() {
         if (!channels.isEmpty()) return;
+        cancelP2pFallback();
         muxSession.stop();
     }
 
@@ -236,6 +277,7 @@ public final class RelayMuxSessionManager {
     }
 
     void stop() {
+        cancelP2pFallback();
         for (Channel channel : snapshotChannels()) {
             muxSession.sendWsClose(channel.id);
         }
