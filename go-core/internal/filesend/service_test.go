@@ -183,6 +183,25 @@ func TestHandleControlFailed(t *testing.T) {
 	}
 }
 
+func TestUnregisterSenderOnlyRemovesSameInstance(t *testing.T) {
+	svc := New(0)
+	old := &fakeSender{}
+	fresh := &fakeSender{}
+	svc.RegisterSender("dev-1", old)
+	// 模拟重连：新连接先注册覆盖
+	svc.RegisterSender("dev-1", fresh)
+	// 旧连接的延迟注销不应误删新 sender
+	svc.UnregisterSender("dev-1", old)
+	if !svc.HasSender("dev-1") {
+		t.Fatal("stale unregister must not remove the newer sender")
+	}
+	// 用正确实例注销才会删除
+	svc.UnregisterSender("dev-1", fresh)
+	if svc.HasSender("dev-1") {
+		t.Fatal("unregister with current instance should remove sender")
+	}
+}
+
 func TestCancelTask(t *testing.T) {
 	svc := New(0)
 	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x"})

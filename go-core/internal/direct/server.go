@@ -150,7 +150,26 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		},
 		Logger: direct.app.Logs(),
 	})
+	// 把这条直连 mux 注册成设备级 ControlSender，让 FileSendService 能把 offer 下发到 Android。
+	deviceID := r.URL.Query().Get("deviceId")
+	unbind := direct.bindDeviceSender(deviceID, sess)
+	defer unbind()
 	sess.Run(r.Context())
+}
+
+// bindDeviceSender 在直连 mux 生命周期内把它注册为 FileSendService 的设备级 sender。
+// deviceID 为空时使用占位 key "direct"（单设备直连场景）。返回的函数用于在连接结束时按实例注销。
+func (direct *Server) bindDeviceSender(deviceID string, sess *mux.Session) func() {
+	svc := direct.app.FileSendService()
+	if svc == nil || sess == nil {
+		return func() {}
+	}
+	key := deviceID
+	if key == "" {
+		key = "direct"
+	}
+	svc.RegisterSender(key, sess)
+	return func() { svc.UnregisterSender(key, sess) }
 }
 
 func (direct *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

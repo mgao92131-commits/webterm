@@ -54,14 +54,25 @@ func (s *Service) RegisterSender(deviceID string, sender ControlSender) {
 	s.senders[deviceID] = sender
 }
 
-// UnregisterSender 注销某设备的发送通道。
-func (s *Service) UnregisterSender(deviceID string) {
+// UnregisterSender 注销某设备的发送通道。仅当当前注册的 sender 与传入实例一致时才删除，
+// 避免旧连接的延迟注销误删新连接刚注册的 sender（重连竞态）。
+func (s *Service) UnregisterSender(deviceID string, sender ControlSender) {
 	if deviceID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.senders, deviceID)
+	if cur, ok := s.senders[deviceID]; ok && cur == sender {
+		delete(s.senders, deviceID)
+	}
+}
+
+// HasSender 报告某设备当前是否注册了 sender（用于诊断与测试）。
+func (s *Service) HasSender(deviceID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.senders[deviceID]
+	return ok
 }
 
 // CreateTask 创建并登记一个任务，生成 transfer_id 与 transfer_token。
