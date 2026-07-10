@@ -3,6 +3,7 @@ package com.webterm.mobile.device;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,7 @@ import android.os.IBinder;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.agentnotify.AgentAlertSink;
@@ -28,6 +30,7 @@ import com.webterm.core.filesend.FileSendProtocol;
 import com.webterm.core.filesend.OkHttpFileDownloader;
 import com.webterm.core.filesend.TransferNotificationSink;
 import com.webterm.core.notifications.NotificationController;
+import com.webterm.core.notifications.ConnectionStatusText;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 
@@ -54,6 +57,9 @@ public final class WebTermDeviceService extends Service {
      * onStartCommand 中消费并调用 FileReceiveController.cancel。 */
     public static final String ACTION_CANCEL_TRANSFER = "webterm.action.CANCEL_TRANSFER";
     public static final String EXTRA_TRANSFER_ID = "webterm.extra.transfer_id";
+
+    /** 前台通知「全部停止」action：释放所有设备在线租约并退出前台。 */
+    public static final String ACTION_STOP_ALL = "webterm.action.STOP_ALL_DEVICES";
 
     @Inject RelayMuxSessionRegistry registry;
     @Inject OkHttpClient http;
@@ -124,7 +130,11 @@ public final class WebTermDeviceService extends Service {
             }
             return START_STICKY;
         }
-        startForeground(NOTIFICATION_ID, buildNotification());
+        if (intent != null && ACTION_STOP_ALL.equals(intent.getAction())) {
+            stopAllDevices();
+            return START_NOT_STICKY;
+        }
+        startForeground(NOTIFICATION_ID, buildNotification(managers.size()));
         refreshConnections();
         return START_STICKY;
     }
@@ -162,6 +172,25 @@ public final class WebTermDeviceService extends Service {
             manager.setControlListener(msg -> routeControl(key, msg));
             manager.start();
         }
+        updateConnectionNotification();
+    }
+
+    /** 用当前在线设备数刷新持久前台通知（计数文案见 ConnectionStatusText）。 */
+    private void updateConnectionNotification() {
+        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(managers.size()));
+    }
+
+    /** 用户从持久通知选择「全部停止」：释放所有设备在线租约（经 releaseIfIdle 归还共享连接），
+     * 清空路由并退出前台。这是一次显式用户动作，与 onDestroy 不强行 stop 共享连接不同。 */
+    private void stopAllDevices() {
+        for (RelayMuxSessionManager manager : managers.values()) {
+            manager.setControlListener(null);
+            registry.releaseIfIdle(manager);
+        }
+        managers.clear();
+        configs.clear();
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
     }
 
     private void routeControl(String connectionKey, JSONObject msg) {
@@ -211,14 +240,27 @@ public final class WebTermDeviceService extends Service {
         }
     }
 
-    private Notification buildNotification() {
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
+    private Notification buildNotification(int onlineCount) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("WebTerm 设备在线")
-            .setContentText("等待接收文件与代理通知")
+            .setContentTitle(ConnectionStatusText.title())
+            .setContentText(ConnectionStatusText.contentText(onlineCount))
             .setOngoing(true)
             .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .build();
+            .setPriority(NotificationCompat.PRIORITY_MIN);
+        if (onlineCount > 0) {
+            builder.addAction(0, "全部停止", buildStopAllIntent());
+        }
+        return builder.build();
+    }
+
+    private PendingIntent buildStopAllIntent() {
+        Intent intent = new Intent(this, WebTermDeviceService.class);
+        intent.setAction(ACTION_STOP_ALL);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getService(this, NOTIFICATION_ID, intent, flags);
     }
 }
