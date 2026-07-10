@@ -29,6 +29,10 @@
             android:name=".MainActivity"
             android:targetActivity=".ui.MainActivity"
             android:exported="true" />
+        <service
+            android:name=".device.WebTermDeviceService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>
