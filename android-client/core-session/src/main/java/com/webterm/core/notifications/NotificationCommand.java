@@ -19,10 +19,22 @@ public final class NotificationCommand {
     /** 非空表示 “Open terminal” 动作路由目标。 */
     public final String openConnectionKey;
     public final String openSessionId;
+    /** 0..100 表示确定进度；-1 表示不显示进度条。 */
+    public final int progress;
+    /** 非空表示渲染 “取消传输” 动作，点击后回调到 WebTermDeviceService 取消该 transfer。 */
+    public final String cancelTransferId;
 
     public NotificationCommand(int id, String channelId, String groupKey, String title, String text,
                                int priority, boolean ongoing, boolean autoCancel, boolean onlyAlertOnce,
                                String openConnectionKey, String openSessionId) {
+        this(id, channelId, groupKey, title, text, priority, ongoing, autoCancel, onlyAlertOnce,
+            openConnectionKey, openSessionId, -1, null);
+    }
+
+    public NotificationCommand(int id, String channelId, String groupKey, String title, String text,
+                               int priority, boolean ongoing, boolean autoCancel, boolean onlyAlertOnce,
+                               String openConnectionKey, String openSessionId,
+                               int progress, String cancelTransferId) {
         this.id = id;
         this.channelId = channelId;
         this.groupKey = groupKey;
@@ -34,5 +46,7 @@ public final class NotificationCommand {
         this.onlyAlertOnce = onlyAlertOnce;
         this.openConnectionKey = openConnectionKey;
         this.openSessionId = openSessionId;
+        this.progress = progress;
+        this.cancelTransferId = cancelTransferId;
     }
 }

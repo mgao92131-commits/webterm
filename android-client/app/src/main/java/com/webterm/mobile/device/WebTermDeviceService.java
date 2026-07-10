@@ -26,6 +26,7 @@ import com.webterm.core.filesend.FileDownloader;
 import com.webterm.core.filesend.FileReceiveController;
 import com.webterm.core.filesend.FileSendProtocol;
 import com.webterm.core.filesend.OkHttpFileDownloader;
+import com.webterm.core.filesend.TransferNotificationSink;
 import com.webterm.core.notifications.NotificationController;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
@@ -48,6 +49,11 @@ import okhttp3.OkHttpClient;
 public final class WebTermDeviceService extends Service {
     private static final String CHANNEL_ID = "webterm.device";
     private static final int NOTIFICATION_ID = 1001;
+
+    /** 通知 “取消传输” action：renderer 通过 PendingIntent.getService 回投，本服务在
+     * onStartCommand 中消费并调用 FileReceiveController.cancel。 */
+    public static final String ACTION_CANCEL_TRANSFER = "webterm.action.CANCEL_TRANSFER";
+    public static final String EXTRA_TRANSFER_ID = "webterm.extra.transfer_id";
 
     @Inject RelayMuxSessionRegistry registry;
     @Inject OkHttpClient http;
@@ -90,6 +96,20 @@ public final class WebTermDeviceService extends Service {
             DedupeStore.DEFAULT_MAX_ENTRIES,
             System::currentTimeMillis);
         notifications = new NotificationController(new AndroidNotificationRenderer(this));
+        controller.setNotificationSink(new TransferNotificationSink() {
+            @Override public void onProgress(String connectionKey, String transferId, String fileName, long bytes, long total) {
+                notifications.postTransferProgress(connectionKey, transferId, fileName, bytes, total);
+            }
+            @Override public void onSaved(String connectionKey, String transferId, String fileName, String savedName) {
+                notifications.postTransferSaved(connectionKey, transferId, fileName, savedName);
+            }
+            @Override public void onFailed(String connectionKey, String transferId, String fileName, String error) {
+                notifications.postTransferFailed(connectionKey, transferId, fileName, error);
+            }
+            @Override public void onCancelled(String connectionKey, String transferId, String fileName) {
+                notifications.postTransferCancelled(connectionKey, transferId, fileName);
+            }
+        });
         AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) ->
             notifications.postAgent(connectionKey, sessionId, level, title, message);
         agentController = new AgentNotificationController(lookup, sink, dedupe);
@@ -97,6 +117,13 @@ public final class WebTermDeviceService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_CANCEL_TRANSFER.equals(intent.getAction())) {
+            String transferId = intent.getStringExtra(EXTRA_TRANSFER_ID);
+            if (transferId != null && !transferId.isEmpty()) {
+                controller.cancel(transferId);
+            }
+            return START_STICKY;
+        }
         startForeground(NOTIFICATION_ID, buildNotification());
         refreshConnections();
         return START_STICKY;

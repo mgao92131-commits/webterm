@@ -44,6 +44,14 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
         if (command.groupKey != null && !command.groupKey.isEmpty()) {
             builder.setGroup(command.groupKey);
         }
+        if (command.progress >= 0) {
+            builder.setProgress(100, command.progress, false);
+        } else if (command.ongoing) {
+            builder.setProgress(0, 0, true);
+        }
+        if (command.cancelTransferId != null && !command.cancelTransferId.isEmpty()) {
+            builder.addAction(0, "取消", buildCancelTransferIntent(command));
+        }
         if (command.openSessionId != null && !command.openSessionId.isEmpty()) {
             PendingIntent intent = buildOpenTerminalIntent(command);
             builder.setContentIntent(intent);
@@ -72,6 +80,17 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
             flags |= PendingIntent.FLAG_IMMUTABLE;
         }
         return PendingIntent.getActivity(context, command.id, intent, flags);
+    }
+
+    private PendingIntent buildCancelTransferIntent(NotificationCommand command) {
+        Intent intent = new Intent(context, WebTermDeviceService.class);
+        intent.setAction(WebTermDeviceService.ACTION_CANCEL_TRANSFER);
+        intent.putExtra(WebTermDeviceService.EXTRA_TRANSFER_ID, command.cancelTransferId);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getService(context, command.id, intent, flags);
     }
 
     private void ensureChannels() {

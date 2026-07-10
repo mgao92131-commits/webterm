@@ -211,4 +211,55 @@ public class FileReceiveControllerTest {
         ctl.cancel("does-not-exist");
         assertTrue(sender.types().isEmpty());
     }
+
+    private static final class FakeSink implements TransferNotificationSink {
+        final List<String> events = Collections.synchronizedList(new ArrayList<>());
+        @Override public void onProgress(String c, String t, String n, long b, long total) {
+            events.add("progress:" + t + ":" + b + "/" + total);
+        }
+        @Override public void onSaved(String c, String t, String n, String saved) {
+            events.add("saved:" + t + ":" + saved);
+        }
+        @Override public void onFailed(String c, String t, String n, String error) {
+            events.add("failed:" + t + ":" + error);
+        }
+        @Override public void onCancelled(String c, String t, String n) {
+            events.add("cancelled:" + t);
+        }
+    }
+
+    @Test
+    public void notificationSinkReceivesProgressAndSaved() throws Exception {
+        File dir = tmp.newFolder("recv");
+        byte[] data = new byte[300 * 1024]; // 超过 PROGRESS_STEP_BYTES，触发一次 progress
+        FakeSender sender = new FakeSender();
+        FakeDownloader dl = new FakeDownloader();
+        dl.body = data;
+        FakeSink sink = new FakeSink();
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
+        ctl.setNotificationSink(sink);
+
+        ctl.onOffer("connA", offer("t_n1", "big.bin", data.length, "tok", sha256(data)));
+
+        List<String> events;
+        synchronized (sink.events) { events = new ArrayList<>(sink.events); }
+        assertTrue(events.stream().anyMatch(e -> e.startsWith("progress:t_n1:")));
+        assertTrue(events.contains("saved:t_n1:big.bin"));
+    }
+
+    @Test
+    public void notificationSinkReceivesFailedOnError() {
+        File dir = tmp.getRoot();
+        FakeDownloader dl = new FakeDownloader();
+        dl.error = new IOException("boom");
+        FakeSink sink = new FakeSink();
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(new FakeSender()), dl, SYNC);
+        ctl.setNotificationSink(sink);
+
+        ctl.onOffer("connA", offer("t_n2", "a.bin", 10, "tok", ""));
+
+        synchronized (sink.events) {
+            assertTrue(sink.events.contains("failed:t_n2:io_error"));
+        }
+    }
 }

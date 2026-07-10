@@ -20,12 +20,18 @@ public final class FileReceiveController {
     private final FileDownloader downloader;
     private final Executor executor;
     private final Map<String, ReceiveTask> tasks = new LinkedHashMap<>();
+    private TransferNotificationSink notifications;
 
     public FileReceiveController(File receiveDir, ControlSenderLookup senders, FileDownloader downloader, Executor executor) {
         this.receiveDir = receiveDir;
         this.senders = senders;
         this.downloader = downloader;
         this.executor = executor;
+    }
+
+    /** 注入通知出口（可选，null 时不发通知）。 */
+    public void setNotificationSink(TransferNotificationSink notifications) {
+        this.notifications = notifications;
     }
 
     public synchronized ReceiveTask task(String transferId) {
@@ -73,6 +79,7 @@ public final class FileReceiveController {
         if (task == null) return;
         if (task.transition(FileSendProtocol.Status.CANCELLED)) {
             send(task.connectionKey, cancelled(transferId));
+            notifyCancelled(task);
         }
     }
 
@@ -96,6 +103,7 @@ public final class FileReceiveController {
                 if (sink.bytesWritten() - lastReport >= PROGRESS_STEP_BYTES || sink.bytesWritten() == task.fileSize) {
                     lastReport = sink.bytesWritten();
                     send(task.connectionKey, progress(transferId, sink.bytesWritten()));
+                    notifyProgress(task, sink.bytesWritten());
                 }
             }
             if (task.status() == FileSendProtocol.Status.CANCELLED) {
@@ -108,11 +116,13 @@ public final class FileReceiveController {
             committed = true;
             task.transition(FileSendProtocol.Status.SAVED);
             send(task.connectionKey, saved(transferId, saved.getName()));
+            notifySaved(task, saved.getName());
         } catch (IOException e) {
             if (!task.status().isTerminal() && task.status() != FileSendProtocol.Status.CANCELLED) {
                 String reason = mapError(e);
                 task.fail(reason);
                 send(task.connectionKey, failed(transferId, reason));
+                notifyFailed(task, reason);
             }
         } finally {
             if (sink != null && !committed) {
@@ -140,6 +150,26 @@ public final class FileReceiveController {
         if (sender != null) {
             sender.sendControl(msg);
         }
+    }
+
+    private void notifyProgress(ReceiveTask task, long bytes) {
+        if (notifications == null) return;
+        notifications.onProgress(task.connectionKey, task.transferId, task.fileName, bytes, task.fileSize);
+    }
+
+    private void notifySaved(ReceiveTask task, String savedName) {
+        if (notifications == null) return;
+        notifications.onSaved(task.connectionKey, task.transferId, task.fileName, savedName);
+    }
+
+    private void notifyFailed(ReceiveTask task, String reason) {
+        if (notifications == null) return;
+        notifications.onFailed(task.connectionKey, task.transferId, task.fileName, reason);
+    }
+
+    private void notifyCancelled(ReceiveTask task) {
+        if (notifications == null) return;
+        notifications.onCancelled(task.connectionKey, task.transferId, task.fileName);
     }
 
     private static JSONObject accepted(String id) {
