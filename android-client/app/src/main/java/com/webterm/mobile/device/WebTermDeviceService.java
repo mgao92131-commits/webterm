@@ -26,6 +26,7 @@ import com.webterm.core.filesend.FileDownloader;
 import com.webterm.core.filesend.FileReceiveController;
 import com.webterm.core.filesend.FileSendProtocol;
 import com.webterm.core.filesend.OkHttpFileDownloader;
+import com.webterm.core.notifications.NotificationController;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 
@@ -57,6 +58,7 @@ public final class WebTermDeviceService extends Service {
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
     private FileReceiveController controller;
     private AgentNotificationController agentController;
+    private NotificationController notifications;
 
     public static void start(Context context) {
         Intent intent = new Intent(context, WebTermDeviceService.class);
@@ -87,8 +89,9 @@ public final class WebTermDeviceService extends Service {
             DedupeStore.DEFAULT_TTL_MILLIS,
             DedupeStore.DEFAULT_MAX_ENTRIES,
             System::currentTimeMillis);
+        notifications = new NotificationController(new AndroidNotificationRenderer(this));
         AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) ->
-            android.util.Log.i("WebTermDevice", "agent alert level=" + level + " session=" + sessionId);
+            notifications.postAgent(connectionKey, sessionId, level, title, message);
         agentController = new AgentNotificationController(lookup, sink, dedupe);
     }
 
