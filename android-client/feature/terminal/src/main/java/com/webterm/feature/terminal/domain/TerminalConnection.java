@@ -41,6 +41,7 @@ public final class TerminalConnection {
     private int socketGeneration;
     private int reconnectAttempts;
     private boolean pendingForceReconnect;
+    private volatile boolean pendingFreshState;
 
     private String baseUrl;
     private String cookie;
@@ -93,6 +94,32 @@ public final class TerminalConnection {
         connectNow();
     }
 
+    public void reconnectFresh(String cookie) {
+        if (baseUrl == null || sessionId == null) return;
+        this.cookie = cookie == null ? "" : cookie;
+        this.state = State.CONNECTING;
+        this.reconnectAttempts = 0;
+        // A device owns one mux connection shared by every terminal channel.
+        // Replacing the registry entry discards sibling channels and leaves
+        // their runtimes holding stopped managers. Reconnect that shared
+        // physical transport instead; its channel map will reopen as a unit.
+        relayMuxSession = relayMuxRegistry.forDevice(baseUrl, this.cookie, relayDeviceId);
+        this.pendingForceReconnect = true;
+        connectNow();
+    }
+
+    /** Request a server-authoritative state when no local projection remains. */
+    public void requestFreshState() {
+        lastSeq = 0;
+        if (relayMuxSession != null && relayChannelId != null) {
+            relayMuxSession.resetChannelLastSeq(relayChannelId);
+        } else {
+            // Physical session is not currently bound (e.g. after detach).
+            // Defer the reset until connectRelayMux() has a real channel handle.
+            pendingFreshState = true;
+        }
+    }
+
     public void detach() {
         this.state = State.DISCONNECTED;
         this.socketGeneration++;
@@ -116,6 +143,7 @@ public final class TerminalConnection {
             relayMuxSession = null;
         }
         relayChannelId = null;
+        pendingFreshState = false;
     }
 
     public boolean isConnected() {
@@ -171,14 +199,20 @@ public final class TerminalConnection {
             relayMuxSession.updateCookie(cookie);
             if (pendingForceReconnect) {
                 // Manual reconnect: force a new physical session to break a stale connected state.
-                relayMuxSession.forceReconnect("manual reconnect");
+                relayMuxSession.forceReconnect("manual reconnect", true);
                 pendingForceReconnect = false;
             }
         }
         String existingChannelId = RelayMuxSessionManager.terminalChannelId(localSessionId);
-        long channelSeq = relayMuxSession.getChannelLastSeq(existingChannelId);
-        if (channelSeq > 0) {
-            this.lastSeq = channelSeq;
+        if (pendingFreshState) {
+            relayMuxSession.resetChannelLastSeq(existingChannelId);
+            this.lastSeq = 0;
+            pendingFreshState = false;
+        } else {
+            long channelSeq = relayMuxSession.getChannelLastSeq(existingChannelId);
+            if (channelSeq > 0) {
+                this.lastSeq = channelSeq;
+            }
         }
         relayChannelId = existingChannelId;
         relayMuxSession.openTerminalChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
