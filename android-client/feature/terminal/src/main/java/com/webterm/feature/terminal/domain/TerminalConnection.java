@@ -1,6 +1,7 @@
 package com.webterm.feature.terminal.domain;
 
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.webterm.core.session.MuxSession;
@@ -166,7 +167,14 @@ public final class TerminalConnection {
     }
 
     public void sendInput(String data) {
-        sendBinary(WebTermProtocol.MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
+        long startedAt = SystemClock.elapsedRealtime();
+        boolean sent = sendBinary(WebTermProtocol.MSG_INPUT, data.getBytes(StandardCharsets.UTF_8));
+        Log.i("TerminalPerf", "input-send session=" + sessionId
+            + " bytes=" + data.length()
+            + " sent=" + sent
+            + " state=" + state
+            + " p2p=" + isP2PConnected()
+            + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt));
     }
 
     public void sendTitle(String title) {
@@ -387,9 +395,9 @@ public final class TerminalConnection {
         }
     }
 
-    private void sendBinary(byte type, byte[] payload) {
-        if (relayMuxSession == null || relayChannelId == null || !relayMuxSession.isConnected() || state != State.CONNECTED) return;
-        relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
+    private boolean sendBinary(byte type, byte[] payload) {
+        if (relayMuxSession == null || relayChannelId == null || !relayMuxSession.isConnected() || state != State.CONNECTED) return false;
+        return relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
     public void sendDownloadProgress(String downloadId, long current, long total) {

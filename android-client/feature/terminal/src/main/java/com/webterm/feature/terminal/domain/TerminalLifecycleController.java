@@ -1,6 +1,8 @@
 package com.webterm.feature.terminal.domain;
 
 import android.app.Activity;
+import android.os.SystemClock;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.inputmethod.InputMethodManager;
@@ -28,6 +30,8 @@ import dagger.assisted.AssistedInject;
 
 public final class TerminalLifecycleController {
     private static final int TRANSCRIPT_ROWS = 10000;
+    private static final String PERF_TAG = "TerminalPerf";
+    private static final long SLOW_RENDER_MS = 16L;
 
     private final Activity activity;
     private final Host host;
@@ -314,7 +318,9 @@ public final class TerminalLifecycleController {
     }
 
     public void onOutput(long seq, byte[] data) {
+        long receivedAt = SystemClock.elapsedRealtime();
         activity.runOnUiThread(() -> {
+            long uiStartedAt = SystemClock.elapsedRealtime();
             if (closed.get()) return;
             projection.recordOutput(seq, data);
             if (terminalSession == null) return;
@@ -323,11 +329,14 @@ public final class TerminalLifecycleController {
                 if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
             }
             terminalSession.appendOutput(data);
+            logRender("output", seq, data.length, receivedAt, uiStartedAt);
         });
     }
 
     public void onState(long seq, byte[] data) {
+        long receivedAt = SystemClock.elapsedRealtime();
         activity.runOnUiThread(() -> {
+            long uiStartedAt = SystemClock.elapsedRealtime();
             if (closed.get() || activeSessionClient == null) return;
             projection.recordState(seq, data);
             // Reuse the existing session instead of recreating it on every snapshot.
@@ -353,7 +362,22 @@ public final class TerminalLifecycleController {
                 terminalView.onScreenUpdated();
                 host.updateKeyboardAvoidance();
             }
+            logRender("state", seq, data.length, receivedAt, uiStartedAt);
         });
+    }
+
+    private void logRender(String kind, long seq, int bytes, long receivedAt, long uiStartedAt) {
+        long now = SystemClock.elapsedRealtime();
+        long queueMs = uiStartedAt - receivedAt;
+        long renderMs = now - uiStartedAt;
+        if ("state".equals(kind) || queueMs >= SLOW_RENDER_MS || renderMs >= SLOW_RENDER_MS) {
+            Log.i(PERF_TAG, "render kind=" + kind
+                + " session=" + terminalState.sessionId()
+                + " seq=" + seq
+                + " bytes=" + bytes
+                + " mainQueueMs=" + queueMs
+                + " renderMs=" + renderMs);
+        }
     }
 
     public void onInfo(org.json.JSONObject info) {

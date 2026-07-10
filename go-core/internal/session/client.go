@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -17,6 +18,8 @@ import (
 )
 
 type ClientMode string
+
+var performanceTraceEnabled = os.Getenv("WEBTERM_PERF_TRACE") == "1"
 
 const (
 	ClientModeJSON   ClientMode = "json"
@@ -198,6 +201,8 @@ func (client *Client) writeLoop(ctx context.Context) {
 		case <-client.done:
 			return
 		case message := <-client.send:
+			queued := len(client.send)
+			startedAt := time.Now()
 			writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			var err error
 			if message.binary != nil {
@@ -206,6 +211,7 @@ func (client *Client) writeLoop(ctx context.Context) {
 				err = client.socket.Write(writeCtx, MessageText, message.text)
 			}
 			cancel()
+			client.tracef("write session=%s queued=%d bytes=%d binary=%t elapsed_ms=%d", client.session.ID(), queued, messageSize(message), message.binary != nil, time.Since(startedAt).Milliseconds())
 			if err != nil {
 				client.Close()
 				return
@@ -230,7 +236,9 @@ func (client *Client) handleJSON(data []byte) {
 	case "hello":
 		client.handleHello(msg.LastSeq, msg.Cols, msg.Rows)
 	case "input":
-		_ = client.session.WriteInput([]byte(msg.Data))
+		startedAt := time.Now()
+		err := client.session.WriteInput([]byte(msg.Data))
+		client.tracef("input session=%s bytes=%d pty_write_ms=%d err=%v", client.session.ID(), len(msg.Data), time.Since(startedAt).Milliseconds(), err)
 	case "resize":
 		if msg.Visible != nil && !*msg.Visible {
 			return
@@ -257,7 +265,9 @@ func (client *Client) handleBinary(frame []byte) {
 		_ = protocol.DecodeJSONPayload(payload, &hello)
 		client.handleHello(hello.LastSeq, hello.Cols, hello.Rows)
 	case protocol.MsgInput:
-		_ = client.session.WriteInput(payload)
+		startedAt := time.Now()
+		err := client.session.WriteInput(payload)
+		client.tracef("input session=%s bytes=%d pty_write_ms=%d err=%v", client.session.ID(), len(payload), time.Since(startedAt).Milliseconds(), err)
 	case protocol.MsgResize:
 		var resize struct {
 			Cols int `json:"cols"`
@@ -287,6 +297,7 @@ func (client *Client) handleBinary(frame []byte) {
 }
 
 func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
+	startedAt := time.Now()
 	latest := client.session.LatestSeq()
 	if client.mode == ClientModeScreen {
 		if cols > 0 && rows > 0 {
@@ -309,6 +320,7 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 
 	if lastSeq > 0 && lastSeq <= latest && client.session.CanReplayFrom(lastSeq) {
 		frames := client.session.ReplayAfter(lastSeq)
+		client.tracef("hello-replay session=%s last_seq=%d latest=%d frames=%d", client.session.ID(), lastSeq, latest, len(frames))
 		if client.mode == ClientModeBinary {
 			if len(frames) > 0 {
 				client.sendBinaryReplayBatches(frames)
@@ -319,9 +331,13 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 		}
 	} else {
 		if client.mode == ClientModeBinary {
-			client.SendState(latest, client.session.StateBytes())
+			state := client.session.StateBytes()
+			client.tracef("hello-state session=%s latest=%d bytes=%d", client.session.ID(), latest, len(state))
+			client.SendState(latest, state)
 		} else {
-			client.SendState(latest, client.session.StateBytesJSON())
+			state := client.session.StateBytesJSON()
+			client.tracef("hello-state session=%s latest=%d bytes=%d", client.session.ID(), latest, len(state))
+			client.SendState(latest, state)
 		}
 	}
 
@@ -330,6 +346,20 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 		client.SendInfo()
 	}
 	client.ready.Store(true)
+	client.tracef("hello-complete session=%s elapsed_ms=%d", client.session.ID(), time.Since(startedAt).Milliseconds())
+}
+
+func (client *Client) tracef(format string, args ...any) {
+	if performanceTraceEnabled && client.logger != nil {
+		client.logger.Add("info", "perf", fmt.Sprintf(format, args...))
+	}
+}
+
+func messageSize(message outboundMessage) int {
+	if message.binary != nil {
+		return len(message.binary)
+	}
+	return len(message.text)
 }
 
 // sendJSONReplay 发送 Node 形状的单个 replay 消息，保留每帧 seq/data。

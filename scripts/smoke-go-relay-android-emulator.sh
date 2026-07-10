@@ -14,11 +14,14 @@ ANDROID_RELAY_URL="${ANDROID_RELAY_URL:-http://10.0.2.2:19091}"
 RELAY_USER="${RELAY_USER:-admin}"
 RELAY_PASSWORD="${RELAY_PASSWORD:-admin}"
 DEVICE_NAME="${DEVICE_NAME:-Android E2E Agent}"
+AGENT_HOME="${AGENT_HOME:-$HOME}"
 RUN_TERMINAL=false
 EXPECT_MUX=false
 ENABLE_P2P=false
 EXPECT_P2P=false
 EXPECT_FALLBACK=false
+KEEP_TMP="${KEEP_TMP:-false}"
+HOLD_AFTER_TERMINAL_SECONDS="${HOLD_AFTER_TERMINAL_SECONDS:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +66,10 @@ RELAY_PID=""
 AGENT_PID=""
 
 cleanup() {
+  if [[ "$KEEP_TMP" == true ]]; then
+    echo "retaining temporary relay resources at $TMP_DIR"
+    return
+  fi
   if [[ -n "$AGENT_PID" ]]; then
     kill "$AGENT_PID" >/dev/null 2>&1 || true
     wait "$AGENT_PID" >/dev/null 2>&1 || true
@@ -224,6 +231,7 @@ echo "[5/9] starting Go Agent"
   WEBTERM_CONTROL_ADDR=127.0.0.1:0 \
   WEBTERM_SHELL=/bin/sh \
   WEBTERM_DISABLE_P2P="$([[ "$EXPECT_FALLBACK" == true ]] && printf '1' || printf '0')" \
+  HOME="$AGENT_HOME" \
   "$AGENT_BIN" --mode relay
 ) >"$AGENT_LOG" 2>&1 &
 AGENT_PID="$!"
@@ -302,8 +310,8 @@ if [[ "$RUN_TERMINAL" == true ]]; then
   "$ADB" shell input keyevent ENTER
   if [[ "$EXPECT_P2P" == true ]]; then
     deadline=$((SECONDS + 10))
-    until "$ADB" logcat -d | grep -q 'WebRtcMuxTransport.*p2p mux binary out' \
-      && "$ADB" logcat -d | grep -q 'WebRtcMuxTransport.*p2p mux binary in'; do
+    until "$ADB" logcat -d | grep -q 'P2PDataChannelEndpoint.*p2p mux binary out' \
+      && "$ADB" logcat -d | grep -q 'P2PDataChannelEndpoint.*p2p mux binary in'; do
       if (( SECONDS >= deadline )); then
         echo "P2P DataChannel did not carry terminal payload" >&2
         "$ADB" logcat -d | grep -E 'P2PConnectionManager|WebRtcMuxTransport|MuxSession|TerminalConnection' >&2 || true
@@ -326,6 +334,10 @@ if [[ "$RUN_TERMINAL" == true ]]; then
   fi
   if [[ "$EXPECT_MUX" == true && "$EXPECT_P2P" != true ]]; then
     assert_single_mux_stream
+  fi
+  if (( HOLD_AFTER_TERMINAL_SECONDS > 0 )); then
+    echo "holding terminal test environment for ${HOLD_AFTER_TERMINAL_SECONDS}s"
+    sleep "$HOLD_AFTER_TERMINAL_SECONDS"
   fi
 else
   echo "[9/9] skipping optional terminal UI smoke"

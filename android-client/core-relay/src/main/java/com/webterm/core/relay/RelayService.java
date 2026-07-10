@@ -1,6 +1,7 @@
 package com.webterm.core.relay;
 
 import android.os.Handler;
+import android.util.Log;
 
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
@@ -23,6 +24,7 @@ import okhttp3.OkHttpClient;
 
 @Singleton
 public final class RelayService {
+    private static final String TAG = "RelayService";
     private static final int MAX_HTTP_AUTH_RETRIES = 2;
 
     /** Status dot constants – keep in sync with StatusIndicatorView.Status. */
@@ -201,8 +203,12 @@ public final class RelayService {
     }
 
     private void refreshSavedCookieOrFail() {
-        if (relayMasterConfig == null || relayMasterConfig.getCookie() == null || relayMasterConfig.getCookie().isEmpty()) {
+        if (relayMasterConfig == null) {
             updateState(RelayState.AUTH_FAILED);
+            return;
+        }
+        if (relayMasterConfig.getCookie() == null || relayMasterConfig.getCookie().isEmpty()) {
+            performPasswordLogin();
             return;
         }
         if (refreshInFlight) return;
@@ -271,6 +277,7 @@ public final class RelayService {
                 @Override
                 public void onError(String message) {
                     loginInFlight = false;
+                    Log.w(TAG, "relay password login failed: " + message);
                     updateState(RelayState.AUTH_FAILED);
                 }
             });

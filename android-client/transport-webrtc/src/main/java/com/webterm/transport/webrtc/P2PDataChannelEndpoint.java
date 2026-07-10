@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 
 public final class P2PDataChannelEndpoint {
     private static final String TAG = "P2PDataChannelEndpoint";
+    private static final long HIGH_BUFFERED_AMOUNT_BYTES = 256 * 1024L;
 
     interface StateListener {
         void onOpen();
@@ -26,6 +27,10 @@ public final class P2PDataChannelEndpoint {
         this.stateListener = stateListener;
         this.dataChannel.registerObserver(new DataChannel.Observer() {
             @Override public void onBufferedAmountChange(long previousAmount) {
+                long currentAmount = dataChannel.bufferedAmount();
+                if (currentAmount >= HIGH_BUFFERED_AMOUNT_BYTES || previousAmount >= HIGH_BUFFERED_AMOUNT_BYTES) {
+                    Log.i("TerminalPerf", "p2p-buffer previous=" + previousAmount + " current=" + currentAmount);
+                }
             }
 
             @Override public void onStateChange() {
