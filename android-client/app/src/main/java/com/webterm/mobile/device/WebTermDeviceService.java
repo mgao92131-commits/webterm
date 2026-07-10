@@ -14,6 +14,10 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.agentnotify.AgentAlertSink;
+import com.webterm.core.agentnotify.AgentNotificationController;
+import com.webterm.core.agentnotify.AgentProtocol;
+import com.webterm.core.agentnotify.DedupeStore;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.filesend.ControlSender;
@@ -52,6 +56,7 @@ public final class WebTermDeviceService extends Service {
     private final ConcurrentHashMap<String, RelayMuxSessionManager> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
     private FileReceiveController controller;
+    private AgentNotificationController agentController;
 
     public static void start(Context context) {
         Intent intent = new Intent(context, WebTermDeviceService.class);
@@ -76,6 +81,15 @@ public final class WebTermDeviceService extends Service {
         };
         FileDownloader downloader = new OkHttpFileDownloader(http, resolver);
         controller = new FileReceiveController(receiveDir, lookup, downloader, ioExecutor);
+
+        DedupeStore dedupe = new DedupeStore(
+            new File(getFilesDir(), "agent-notif-dedup.json"),
+            DedupeStore.DEFAULT_TTL_MILLIS,
+            DedupeStore.DEFAULT_MAX_ENTRIES,
+            System::currentTimeMillis);
+        AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) ->
+            android.util.Log.i("WebTermDevice", "agent alert level=" + level + " session=" + sessionId);
+        agentController = new AgentNotificationController(lookup, sink, dedupe);
     }
 
     @Override
@@ -125,8 +139,9 @@ public final class WebTermDeviceService extends Service {
         String type = msg.optString("type", "");
         if (FileSendProtocol.TYPE_OFFER.equals(type)) {
             controller.onOffer(connectionKey, msg);
+        } else if (AgentProtocol.TYPE_AGENT_NOTIFICATION.equals(type)) {
+            agentController.onNotification(connectionKey, msg);
         }
-        // agent_notification 等其它设备级消息留给里程碑 D 处理。
     }
 
     private ControlSender senderFor(String connectionKey) {
