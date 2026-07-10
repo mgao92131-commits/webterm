@@ -68,9 +68,14 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
 
     @Override
     public void onDestroyView() {
+        super.onDestroyView();
+    }
+
+    @Override
+    public void onDestroy() {
         mSessionAdapter = null;
         mScreen = null;
-        super.onDestroyView();
+        super.onDestroy();
     }
 
     @Nullable
@@ -81,6 +86,14 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
         if (server == null) {
             if (mHost != null) mHost.navigateHome();
             return new View(requireContext());
+        }
+
+        if (mScreen != null) {
+            View root = mScreen.root;
+            if (root.getParent() instanceof ViewGroup) {
+                ((ViewGroup) root.getParent()).removeView(root);
+            }
+            return root;
         }
 
         mScreen = DeviceSessionsScreenBuilder.build(
