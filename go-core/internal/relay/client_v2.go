@@ -160,6 +160,8 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 		client.streams.DeliverWS(frame)
 	case relaycore.FrameTypeStreamClose, relaycore.FrameTypeStreamError:
 		client.streams.CloseStream(frame.StreamID, false)
+		// 同时通知 HTTP 代理：若该 stream 正在流式转发文件，及时中止上游读取。
+		client.http.CloseStream(frame.StreamID)
 	case relaycore.FrameTypeP2POffer:
 		if err := client.p2p.AcceptOffer(ctx, conn, frame); err != nil {
 			payload, _ := json.Marshal(relaycore.P2PUnavailable{
