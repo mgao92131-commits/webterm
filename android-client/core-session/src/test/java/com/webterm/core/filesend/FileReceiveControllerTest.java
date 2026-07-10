@@ -54,6 +54,10 @@ public class FileReceiveControllerTest {
         }
     }
 
+    private static ControlSenderLookup lookupOf(ControlSender sender) {
+        return connectionKey -> sender;
+    }
+
     private static final class FakeSender implements ControlSender {
         final List<JSONObject> sent = Collections.synchronizedList(new ArrayList<>());
         @Override public boolean sendControl(JSONObject msg) {
@@ -73,7 +77,7 @@ public class FileReceiveControllerTest {
         byte[] body;
         IOException error;
         int openCount;
-        @Override public InputStream open(String transferId, String token) throws IOException {
+        @Override public InputStream open(String connectionKey, String transferId, String token) throws IOException {
             openCount++;
             if (error != null) throw error;
             return new ByteArrayInputStream(body);
@@ -87,7 +91,7 @@ public class FileReceiveControllerTest {
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
         dl.body = data;
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
         ctl.onOffer("connA", offer("t_1", "p.bin", data.length, "tok", sha256(data)));
 
@@ -108,7 +112,7 @@ public class FileReceiveControllerTest {
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
         dl.body = data;
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
         ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", ""));
         ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", ""));
@@ -120,7 +124,7 @@ public class FileReceiveControllerTest {
         File dir = tmp.getRoot();
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
         // 缺少 token
         ctl.onOffer("connA", offer("t_2", "a.bin", 10, "", ""));
@@ -135,7 +139,7 @@ public class FileReceiveControllerTest {
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
         dl.error = new IOException("boom");
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
         ctl.onOffer("connA", offer("t_3", "a.bin", 10, "tok", ""));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_3").status());
@@ -150,7 +154,7 @@ public class FileReceiveControllerTest {
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
         dl.body = data;
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
         ctl.onOffer("connA", offer("t_4", "a.bin", data.length, "tok", "deadbeef"));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_4").status());
@@ -164,7 +168,7 @@ public class FileReceiveControllerTest {
         java.util.concurrent.CountDownLatch block = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
         byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
-        FileDownloader slow = (id, token) -> new InputStream() {
+        FileDownloader slow = (key, id, token) -> new InputStream() {
             private int pos;
             @Override public int read(byte[] b, int off, int len) {
                 if (pos >= data.length) {
@@ -176,7 +180,7 @@ public class FileReceiveControllerTest {
             }
             @Override public int read() { return -1; }
         };
-        FileReceiveController ctl = new FileReceiveController(dir, sender, slow, pool);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), slow, pool);
         try {
             ctl.onOffer("connA", offer("t_5", "a.bin", 100, "tok", ""));
             long deadline = System.currentTimeMillis() + 2000;
@@ -203,7 +207,7 @@ public class FileReceiveControllerTest {
         File dir = tmp.getRoot();
         FakeSender sender = new FakeSender();
         FakeDownloader dl = new FakeDownloader();
-        FileReceiveController ctl = new FileReceiveController(dir, sender, dl, SYNC);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
         ctl.cancel("does-not-exist");
         assertTrue(sender.types().isEmpty());
     }

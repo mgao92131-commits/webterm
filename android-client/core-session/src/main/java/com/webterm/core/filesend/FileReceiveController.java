@@ -16,14 +16,14 @@ public final class FileReceiveController {
     private static final long PROGRESS_STEP_BYTES = 256 * 1024;
 
     private final File receiveDir;
-    private final ControlSender sender;
+    private final ControlSenderLookup senders;
     private final FileDownloader downloader;
     private final Executor executor;
     private final Map<String, ReceiveTask> tasks = new LinkedHashMap<>();
 
-    public FileReceiveController(File receiveDir, ControlSender sender, FileDownloader downloader, Executor executor) {
+    public FileReceiveController(File receiveDir, ControlSenderLookup senders, FileDownloader downloader, Executor executor) {
         this.receiveDir = receiveDir;
-        this.sender = sender;
+        this.senders = senders;
         this.downloader = downloader;
         this.executor = executor;
     }
@@ -55,12 +55,12 @@ public final class FileReceiveController {
 
         if (fileName.isEmpty() || token.isEmpty() || fileSize < 0) {
             task.transition(FileSendProtocol.Status.REJECTED);
-            send(reject(transferId, "invalid_offer"));
+            send(connectionKey, reject(transferId, "invalid_offer"));
             return;
         }
 
         task.transition(FileSendProtocol.Status.ACCEPTED);
-        send(accepted(transferId));
+        send(connectionKey, accepted(transferId));
         executor.execute(() -> doReceive(task));
     }
 
@@ -72,7 +72,7 @@ public final class FileReceiveController {
         }
         if (task == null) return;
         if (task.transition(FileSendProtocol.Status.CANCELLED)) {
-            send(cancelled(transferId));
+            send(task.connectionKey, cancelled(transferId));
         }
     }
 
@@ -80,7 +80,7 @@ public final class FileReceiveController {
         final String transferId = task.transferId;
         PartFileSink sink = null;
         boolean committed = false;
-        try (InputStream in = downloader.open(transferId, task.token)) {
+        try (InputStream in = downloader.open(task.connectionKey, transferId, task.token)) {
             task.transition(FileSendProtocol.Status.RECEIVING);
             sink = PartFileSink.create(receiveDir, transferId, task.fileName, task.fileSize, task.sha256);
             byte[] buf = new byte[BUFFER_SIZE];
@@ -95,7 +95,7 @@ public final class FileReceiveController {
                 task.markBytes(sink.bytesWritten());
                 if (sink.bytesWritten() - lastReport >= PROGRESS_STEP_BYTES || sink.bytesWritten() == task.fileSize) {
                     lastReport = sink.bytesWritten();
-                    send(progress(transferId, sink.bytesWritten()));
+                    send(task.connectionKey, progress(transferId, sink.bytesWritten()));
                 }
             }
             if (task.status() == FileSendProtocol.Status.CANCELLED) {
@@ -103,16 +103,16 @@ public final class FileReceiveController {
                 return;
             }
             task.transition(FileSendProtocol.Status.SAVING);
-            send(saving(transferId));
+            send(task.connectionKey, saving(transferId));
             File saved = sink.commit(task.fileSize, task.sha256);
             committed = true;
             task.transition(FileSendProtocol.Status.SAVED);
-            send(saved(transferId, saved.getName()));
+            send(task.connectionKey, saved(transferId, saved.getName()));
         } catch (IOException e) {
             if (!task.status().isTerminal() && task.status() != FileSendProtocol.Status.CANCELLED) {
                 String reason = mapError(e);
                 task.fail(reason);
-                send(failed(transferId, reason));
+                send(task.connectionKey, failed(transferId, reason));
             }
         } finally {
             if (sink != null && !committed) {
@@ -134,7 +134,9 @@ public final class FileReceiveController {
         }
     }
 
-    private void send(JSONObject msg) {
+    private void send(String connectionKey, JSONObject msg) {
+        if (senders == null) return;
+        ControlSender sender = senders.senderFor(connectionKey);
         if (sender != null) {
             sender.sendControl(msg);
         }
