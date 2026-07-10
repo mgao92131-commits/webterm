@@ -104,6 +104,13 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
         mSessionAdapter = new SessionRecyclerAdapter(requireActivity(), this,
             () -> mViewModel.refresh());
         mScreen.sessionList.setAdapter(mSessionAdapter);
+
+        // 禁用内容更新时的默认 change 动画，防止列表因数据高频更新而在滚动时产生乱晃和闪烁
+        RecyclerView.ItemAnimator animator = mScreen.sessionList.getItemAnimator();
+        if (animator instanceof androidx.recyclerview.widget.SimpleItemAnimator) {
+            ((androidx.recyclerview.widget.SimpleItemAnimator) animator).setSupportsChangeAnimations(false);
+        }
+
         setupSwipeToDelete(mScreen.sessionList, mSessionAdapter);
         return mScreen.root;
     }
