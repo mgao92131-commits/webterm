@@ -58,9 +58,9 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Path:   r.URL.Path,
 		Query:  r.URL.RawQuery,
 	}
-	// 文件下载等流式响应不设总超时
+	// 文件下载、文件发送等流式响应不设总超时
 	timeout := gateway.timeout
-	if strings.HasPrefix(r.URL.Path, "/api/fs/") {
+	if strings.HasPrefix(r.URL.Path, "/api/fs/") || strings.HasPrefix(r.URL.Path, "/api/file-send/") {
 		timeout = 0
 	}
 	handle := gateway.streams.CreateStream(relaycore.StreamKindHTTP, route, user.ID, presence.DeviceID, presence.AgentConnectionID, timeout)

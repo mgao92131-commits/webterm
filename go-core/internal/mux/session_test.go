@@ -368,3 +368,82 @@ func TestMuxWSCloseClosesChannel(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 }
+
+// TestMuxControlRoundTrip 验证设备级 mux text control 消息可以双向传递：
+// 客户端发未知类型控制消息，服务端 OnControl 收到后通过 SendControl 回一条。
+func TestMuxControlRoundTrip(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	router := application.NewSessionRouter(manager)
+
+	controlReceived := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			Subprotocols: []string{protocol.MuxSubprotocol},
+		})
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		var sess *Session
+		sess = Serve(session.NewWebSocketAdapter(conn), &ServeOpts{
+			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (func(), error) {
+				return OpenSessionOrManager(ctx, router, vs, path, protocols)
+			},
+			OnControl: func(ctx context.Context, msg map[string]any) {
+				controlReceived <- msg
+				// 回一条 file_send.test 控制消息，证明双向通道可用。
+				_ = sess.SendControl(ctx, map[string]any{
+					"type":   "file_send.test_ack",
+					"echo":   msg["echo"],
+					"source": "server",
+				})
+			},
+		})
+		_ = sess.Run(ctx)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[len("http"):]
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// 发送一个设备级控制消息，不经虚拟通道。
+	writeJSONMsg(t, ctx, conn, map[string]any{
+		"type": "file_send.test",
+		"echo": "hello-from-client",
+	})
+
+	select {
+	case got := <-controlReceived:
+		if got["type"] != "file_send.test" {
+			t.Fatalf("server received control type = %#v", got["type"])
+		}
+		if got["echo"] != "hello-from-client" {
+			t.Fatalf("server received control echo = %#v", got["echo"])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not receive control message")
+	}
+
+	// 客户端应收到服务端 SendControl 回的消息。
+	ack := readJSON(t, ctx, conn)
+	if ack["type"] != "file_send.test_ack" {
+		t.Fatalf("client received control type = %#v", ack["type"])
+	}
+	if ack["echo"] != "hello-from-client" {
+		t.Fatalf("client received control echo = %#v", ack["echo"])
+	}
+	if ack["source"] != "server" {
+		t.Fatalf("client received control source = %#v", ack["source"])
+	}
+}

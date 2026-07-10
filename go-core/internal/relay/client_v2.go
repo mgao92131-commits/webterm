@@ -36,6 +36,11 @@ type V2Client struct {
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter, appInstance.Logs())
+	router.SetControlHandler(func(ctx context.Context, msg map[string]any) {
+		if appInstance.Logs() != nil {
+			appInstance.Logs().Add("debug", "relay", "mux control message type="+stringValue(msg["type"]))
+		}
+	})
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,

@@ -43,9 +43,10 @@ type MuxVirtualSocket interface {
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager  *session.Manager
-	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
-	logger   *logs.Logger
+	manager   *session.Manager
+	muxServe  MuxServeFunc // 可选：用于 mux 子协议包装
+	onControl func(ctx context.Context, msg map[string]any)
+	logger    *logs.Logger
 }
 
 func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
@@ -60,6 +61,12 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 		log = logger[0]
 	}
 	return &SessionRouter{manager: manager, muxServe: muxServe, logger: log}
+}
+
+// SetControlHandler 设置 mux 设备级控制消息处理器。
+// 用于 file_send.*、agent_notification 等不经过虚拟通道的控制消息。
+func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, msg map[string]any)) {
+	r.onControl = onControl
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -78,7 +85,8 @@ func (r *SessionRouter) RouteOpen(
 				OnOpen: func(ctx context.Context, vs MuxVirtualSocket, p string, protos []string) (func(), error) {
 					return r.RouteOpen(ctx, vs, p, protos)
 				},
-				Logger: r.logger,
+				OnControl: r.onControl,
+				Logger:    r.logger,
 			})
 			return func() {
 				defer socket.Close()
@@ -174,6 +182,14 @@ func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reade
 			return nil, err
 		}
 		return r.handleDownload(parsed.RawQuery)
+	}
+
+	if strings.HasPrefix(path, "/api/file-send/") {
+		// Phase 0 占位：FileSendService 尚未接入，返回 501。
+		return &HTTPResult{
+			StatusCode: http.StatusNotImplemented,
+			Data:       []byte("file-send service not yet implemented"),
+		}, nil
 	}
 
 	// 其他路由回退到 RouteHTTP

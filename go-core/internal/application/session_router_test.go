@@ -240,3 +240,18 @@ readLoop:
 		t.Fatalf("second status = %d, want 410", result2.StatusCode)
 	}
 }
+
+func TestRouteHTTPv2FileSendStub(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{
+		Command: "/bin/sh",
+		CWD:     ".",
+	})
+	router := NewSessionRouter(manager)
+	result, err := router.RouteHTTPv2("GET", "/api/file-send/t_abc123", nil)
+	if err != nil {
+		t.Fatalf("RouteHTTPv2 error: %v", err)
+	}
+	if result.StatusCode != 501 {
+		t.Fatalf("status = %d, want 501 for unimplemented file-send stub", result.StatusCode)
+	}
+}

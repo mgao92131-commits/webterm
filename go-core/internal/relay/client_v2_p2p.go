@@ -91,6 +91,11 @@ func (h *P2PHandler) AcceptOffer(ctx context.Context, conn *websocket.Conn, fram
 					OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 						return mux.OpenSessionOrManager(ctx, h.router, vs, p, protos)
 					},
+					OnControl: func(ctx context.Context, msg map[string]any) {
+						if h.logger != nil {
+							h.logger.Add("debug", "relay-p2p", "mux control message type="+stringValue(msg["type"]))
+						}
+					},
 					Logger: h.logger,
 				})
 				go func() {

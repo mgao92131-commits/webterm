@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -139,6 +140,11 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
+		OnControl: func(ctx context.Context, msg map[string]any) {
+			if direct.app.Logs() != nil {
+				direct.app.Logs().Add("debug", "direct", "mux control message type="+muxStringValue(msg["type"]))
+			}
+		},
 		Logger: direct.app.Logs(),
 	})
 	sess.Run(r.Context())
@@ -200,6 +206,11 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 	}
 
 	if strings.HasPrefix(path, "/api/fs/") {
+		direct.routeFS(w, r)
+		return
+	}
+
+	if strings.HasPrefix(path, "/api/file-send/") {
 		direct.routeFS(w, r)
 		return
 	}
@@ -316,4 +327,14 @@ func randomToken() string {
 		return time.Now().UTC().Format("20060102150405.000000000")
 	}
 	return hex.EncodeToString(bytes[:])
+}
+
+func muxStringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }
