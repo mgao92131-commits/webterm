@@ -44,6 +44,8 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	// 在 SetControlHandler 之后注入，使 file_send.* 优先分发到 FileSendService，
 	// 其余控制消息继续落到上面的 debug logger。
 	router.SetFileSendService(appInstance.FileSendService())
+	// agent_notification.ack 链到 Dispatcher（清 pending），顺序在 file_send 之后无冲突。
+	router.SetAgentNotificationDispatcher(appInstance.AgentNotificationDispatcher())
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,
@@ -52,6 +54,9 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	client.http = NewHTTPProxy(router, client)
 	client.p2p = NewP2PHandler(router, client, appInstance.Logs())
 	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
+	// 让 relay 重建出的 mux session 注册为设备级 ControlSender，
+	// 打通 agent→device 的 file_send.offer / agent_notification。
+	client.streams.SetControlSenderRegistry(appInstance.FileSendService())
 	return client
 }
 

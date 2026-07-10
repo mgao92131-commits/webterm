@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"webterm/go-core/internal/filesend"
+	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -25,6 +26,10 @@ type MuxServeFunc func(conn session.Socket, opts *MuxServeOpts) MuxSession
 // MuxSession 是 mux.Session 的接口抽象。
 type MuxSession interface {
 	Run(ctx context.Context) error
+	// SendControl 发送设备级控制消息（file_send.* / agent_notification）。
+	// *mux.Session 已实现；签名与 filesend.ControlSender 一致，便于在 relay 代理侧
+	// 把重建出的 mux session 直接注册为设备 ControlSender。
+	SendControl(ctx context.Context, msg map[string]any) error
 }
 
 // MuxServeOpts 是 mux.ServeOpts 的类型投影。
@@ -86,6 +91,26 @@ func (r *SessionRouter) SetFileSendService(svc *filesend.Service) {
 	}
 }
 
+// SetAgentNotificationDispatcher 注入 AgentNotificationDispatcher 并链接到控制链前端：
+// agent_notification.ack 交给 Dispatcher.HandleAck 清理 pending，其余消息继续传递。
+// 首版按单设备处理，deviceID 留空（与 Dispatcher.Notify 的 deviceID="" 一致）。
+func (r *SessionRouter) SetAgentNotificationDispatcher(d *agentnotify.Dispatcher) {
+	prev := r.onControl
+	r.onControl = func(ctx context.Context, msg map[string]any) {
+		if d != nil {
+			if typ, _ := msg["type"].(string); typ == agentnotify.TypeAgentAck {
+				if eventID, _ := msg["event_id"].(string); eventID != "" {
+					d.HandleAck("", eventID)
+				}
+				return
+			}
+		}
+		if prev != nil {
+			prev(ctx, msg)
+		}
+	}
+}
+
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
 // 返回 start 函数由调用方在握手 ack 完成后调用。
 func (r *SessionRouter) RouteOpen(
@@ -94,6 +119,18 @@ func (r *SessionRouter) RouteOpen(
 	path string,
 	protocols []string,
 ) (func(), error) {
+	start, _, err := r.RouteOpenWithControl(ctx, socket, path, protocols)
+	return start, err
+}
+
+// RouteOpenWithControl 与 RouteOpen 相同，但在 mux 分支额外返回重建出的 mux session
+// 作为 filesend.ControlSender，供 relay 代理侧注册为设备级控制通道。非 mux 分支 ctrl 为 nil。
+func (r *SessionRouter) RouteOpenWithControl(
+	ctx context.Context,
+	socket session.Socket,
+	path string,
+	protocols []string,
+) (func(), filesend.ControlSender, error) {
 	clean := cleanPath(path)
 	switch {
 	case clean == "/ws/sessions":
@@ -105,27 +142,28 @@ func (r *SessionRouter) RouteOpen(
 				OnControl: r.onControl,
 				Logger:    r.logger,
 			})
-			return func() {
+			start := func() {
 				defer socket.Close()
 				_ = muxSession.Run(ctx)
-			}, nil
+			}
+			return start, muxSession, nil
 		}
 		mc := session.NewManagerClient(socket, r.logger)
-		return func() { go mc.Run(ctx, r.manager) }, nil
+		return func() { go mc.Run(ctx, r.manager) }, nil, nil
 
 	case strings.HasPrefix(clean, "/ws/sessions/"):
 		id := strings.TrimPrefix(clean, "/ws/sessions/")
 		id, _ = url.PathUnescape(id)
 		terminal, ok := r.manager.Get(id)
 		if !ok {
-			return nil, fmt.Errorf("session %s not found", id)
+			return nil, nil, fmt.Errorf("session %s not found", id)
 		}
 		mode := session.ClientModeFromProtocol(selectProtocol(protocols))
 		client := session.NewClient(socket, terminal, mode, r.logger)
-		return func() { go client.Run(ctx) }, nil
+		return func() { go client.Run(ctx) }, nil, nil
 
 	default:
-		return nil, fmt.Errorf("unknown path: %s", path)
+		return nil, nil, fmt.Errorf("unknown path: %s", path)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/filesend"
+	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
@@ -329,5 +330,105 @@ func TestRouteHTTPv2FileSendTokenAuthAndStream(t *testing.T) {
 	}
 	if gone.StatusCode != http.StatusGone && gone.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("after-saved status = %d, want 410 or 401", gone.StatusCode)
+	}
+}
+
+type fakeMuxSession struct {
+	mu   sync.Mutex
+	sent []map[string]any
+}
+
+func (f *fakeMuxSession) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (f *fakeMuxSession) SendControl(_ context.Context, msg map[string]any) error {
+	f.mu.Lock()
+	f.sent = append(f.sent, msg)
+	f.mu.Unlock()
+	return nil
+}
+
+type fakeAgentSender struct{}
+
+func (fakeAgentSender) SendControlToDevice(_ context.Context, _ string, _ map[string]any) error {
+	return nil
+}
+
+func TestRouteOpenWithControlReturnsControlSender(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{})
+	sess := &fakeMuxSession{}
+	router := NewSessionRouterWithMux(manager, func(_ session.Socket, _ *MuxServeOpts) MuxSession {
+		return sess
+	})
+
+	start, ctrl, err := router.RouteOpenWithControl(context.Background(), newRecordingSocket(), "/ws/sessions", []string{protocol.MuxSubprotocol})
+	if err != nil {
+		t.Fatalf("RouteOpenWithControl: %v", err)
+	}
+	if start == nil {
+		t.Fatal("start is nil")
+	}
+	if ctrl == nil {
+		t.Fatal("ctrl is nil for mux /ws/sessions")
+	}
+	if err := ctrl.SendControl(context.Background(), map[string]any{"type": "x"}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+	sess.mu.Lock()
+	n := len(sess.sent)
+	sess.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("expected 1 sent control, got %d", n)
+	}
+}
+
+func TestRouteOpenWithControlNonMuxReturnsNilControl(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{})
+	sess := &fakeMuxSession{}
+	router := NewSessionRouterWithMux(manager, func(_ session.Socket, _ *MuxServeOpts) MuxSession {
+		return sess
+	})
+	_, ctrl, err := router.RouteOpenWithControl(context.Background(), newRecordingSocket(), "/ws/sessions", nil)
+	if err != nil {
+		t.Fatalf("RouteOpenWithControl: %v", err)
+	}
+	if ctrl != nil {
+		t.Fatal("expected nil ctrl for non-mux /ws/sessions")
+	}
+}
+
+func TestSetAgentNotificationDispatcherRoutesAck(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{})
+	router := NewSessionRouter(manager)
+
+	var prev []map[string]any
+	router.SetControlHandler(func(_ context.Context, m map[string]any) {
+		prev = append(prev, m)
+	})
+	d := agentnotify.New(fakeAgentSender{})
+	router.SetAgentNotificationDispatcher(d)
+
+	// 非 ack 消息穿透到 prev。
+	router.onControl(context.Background(), map[string]any{"type": "other"})
+	if len(prev) != 1 {
+		t.Fatalf("prev should receive non-ack, got %d", len(prev))
+	}
+
+	// ack 被消费并清理 pending，不再传给 prev。
+	eventID, err := d.Notify(context.Background(), "", "s", agentnotify.LevelIdle, "t", "m")
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if d.PendingCount() != 1 {
+		t.Fatalf("pending before ack = %d", d.PendingCount())
+	}
+	router.onControl(context.Background(), map[string]any{"type": agentnotify.TypeAgentAck, "event_id": eventID})
+	if d.PendingCount() != 0 {
+		t.Fatalf("pending after ack = %d", d.PendingCount())
+	}
+	if len(prev) != 1 {
+		t.Fatalf("ack must not reach prev, prev len=%d", len(prev))
 	}
 }
