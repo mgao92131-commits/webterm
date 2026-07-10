@@ -26,6 +26,23 @@ public class MuxSessionControlTest {
         return handler;
     }
 
+    private static final class CapturingHandler {
+        final Handler handler = mock(Handler.class);
+        Runnable delayed;
+
+        CapturingHandler() {
+            when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {
+                Runnable r = invocation.getArgument(0);
+                r.run();
+                return true;
+            });
+            when(handler.postDelayed(any(Runnable.class), any(long.class))).thenAnswer(invocation -> {
+                delayed = invocation.getArgument(0);
+                return true;
+            });
+        }
+    }
+
     @Test
     public void wsErrorCarriesCodeAndMessage() {
         FakeMuxTransport transport = new FakeMuxTransport();
@@ -114,18 +131,49 @@ public class MuxSessionControlTest {
         assertEquals("", msgRef.get());
     }
 
+    @Test
+    public void connectTimeoutClearsConnectingAndAllowsRestart() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        CapturingHandler capturing = new CapturingHandler();
+        AtomicReference<String> disconnectReason = new AtomicReference<>();
+        AtomicInteger reconnectAttempts = new AtomicInteger();
+        MuxSession session = new MuxSession(transport, capturing.handler, new MuxSession.Listener() {
+            @Override public void onMuxConnected() {}
+            @Override public void onMuxDisconnected(String reason) { disconnectReason.set(reason); }
+            @Override public void onTunnelConnected(String tunnelId) {}
+            @Override public void onTunnelError(String tunnelId, int code, String message) {}
+            @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}
+            @Override public void onTunnelClosed(String tunnelId, int code, String reason) {}
+            @Override public void onReconnectAttempt(int attempt) { reconnectAttempts.set(attempt); }
+        });
+
+        session.start();
+        assertEquals(1, transport.startCount);
+        capturing.delayed.run();
+
+        assertEquals("connect timeout", disconnectReason.get());
+        assertEquals(1, reconnectAttempts.get());
+        assertEquals(1, transport.closeCount);
+
+        session.start();
+        assertEquals("timeout should clear connecting so start can retry", 2, transport.startCount);
+    }
+
     static class FakeMuxTransport implements MuxTransport {
         private Listener listener;
+        int startCount;
+        int closeCount;
 
         @Override public void start(Listener listener) {
             this.listener = listener;
+            startCount++;
         }
 
         public void simulateText(String text) {
             if (listener != null) listener.onText(text);
         }
 
-        @Override public void close() {}
+        @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return true; }
         @Override public boolean isP2P() { return false; }
         @Override public boolean sendText(String text) { return true; }

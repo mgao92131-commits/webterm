@@ -1,6 +1,8 @@
 package session
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +37,21 @@ func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("terminal output did not contain WEBTERM_GO_OK; frames=%#v", terminal.ReplayAfter(0))
+}
+
+func TestTerminalStateBytesRetainsNodeScrollbackWindow(t *testing.T) {
+	terminal := newTestTerminalWithSize(20, 4)
+	for i := 0; i < 10005; i++ {
+		terminal.PushOutput([]byte(fmt.Sprintf("line-%05d\r\n", i)))
+	}
+
+	state := string(terminal.StateBytesJSON())
+	if !strings.Contains(state, "line-00500") {
+		t.Fatalf("state omitted a line inside Node's 10k scrollback window")
+	}
+	if !strings.Contains(state, "line-10004") {
+		t.Fatalf("state omitted most recent output")
+	}
 }
 
 func stringContains(value string, needle string) bool {
@@ -141,7 +158,6 @@ func TestTerminalSessionBroadcastsOnCwdChange(t *testing.T) {
 		t.Errorf("expected no extra broadcast when cwd unchanged, got delta %d", broadcastCount-before)
 	}
 }
-
 
 func TestTerminalSessionNotificationOverride(t *testing.T) {
 	terminal, err := NewTerminalSession(TerminalOptions{

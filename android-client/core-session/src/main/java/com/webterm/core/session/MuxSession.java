@@ -19,6 +19,7 @@ import java.util.Map;
  */
 public final class MuxSession {
     private static final String TAG = "MuxSession";
+    private static final long CONNECT_TIMEOUT_MS = 10000L;
 
     interface Listener {
         void onMuxConnected();
@@ -40,6 +41,7 @@ public final class MuxSession {
     private volatile boolean connecting;
     private volatile boolean enabled;
     private int reconnectAttempts;
+    private final Runnable connectTimeoutRunnable = this::onConnectTimeout;
 
     // 待发 ws-connect 后等待 ws-connected 的回调登记（仅记录已发 connect 的 tunnelId）。
     private final Map<String, Boolean> pendingConnects = new HashMap<>();
@@ -65,6 +67,7 @@ public final class MuxSession {
         enabled = false;
         connected = false;
         connecting = false;
+        mainHandler.removeCallbacks(connectTimeoutRunnable);
         if (transport != null) transport.close();
     }
 
@@ -125,6 +128,8 @@ public final class MuxSession {
 
     private void connectNow() {
         connecting = true;
+        mainHandler.removeCallbacks(connectTimeoutRunnable);
+        mainHandler.postDelayed(connectTimeoutRunnable, CONNECT_TIMEOUT_MS);
         transport.start(new MuxTransport.Listener() {
             @Override
             public void onOpen() {
@@ -132,6 +137,7 @@ public final class MuxSession {
                     transport.close();
                     return;
                 }
+                mainHandler.removeCallbacks(connectTimeoutRunnable);
                 connected = true;
                 connecting = false;
                 reconnectAttempts = 0;
@@ -155,6 +161,7 @@ public final class MuxSession {
             public void onError(String message) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
+                    mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
                     Log.e(TAG, "mux failure: " + message);
@@ -167,6 +174,7 @@ public final class MuxSession {
             public void onClosed(int code, String reason) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
+                    mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
                     listener.onMuxDisconnected(reason + " (" + code + ")");
@@ -174,6 +182,17 @@ public final class MuxSession {
                 });
             }
         });
+    }
+
+    private void onConnectTimeout() {
+        if (!enabled || !connecting || connected) return;
+        connecting = false;
+        connected = false;
+        if (transport != null) {
+            transport.close();
+        }
+        listener.onMuxDisconnected("connect timeout");
+        scheduleReconnect();
     }
 
     private void handleControlMessage(String text) {

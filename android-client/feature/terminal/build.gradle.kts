@@ -19,6 +19,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core-api"))
     implementation(project(":core-config"))
     implementation(project(":core-cache"))
     implementation(project(":core-session"))

@@ -1,0 +1,41 @@
+{
+  "protocol": "webterm.json.v1",
+  "description": "Alternate screen buffer enter, content and exit (JSON state)",
+  "frames": [
+    {
+      "index": 0,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"state\",\"seq\":2,\"data\":\"main screen line\\u001b[1B\\u001b[16D\"}",
+      "decoded": {
+        "type": "state",
+        "seq": 2,
+        "data": "main screen line\u001b[1B\u001b[16D"
+      }
+    },
+    {
+      "index": 1,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-alternate-screen-json-state\",\"instanceId\":\"a060c2bc-6326-42dc-b058-e25d6d86776c\",\"name\":\"Trace\",\"termTitle\":\"\",\"displayTitle\":\"Trace - Terminal\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:43.874Z\",\"lastActiveAt\":\"2026-07-10T01:39:43.969Z\"}}",
+      "decoded": {
+        "type": "info",
+        "data": {
+          "id": "trace-alternate-screen-json-state",
+          "instanceId": "a060c2bc-6326-42dc-b058-e25d6d86776c",
+          "name": "Trace",
+          "termTitle": "",
+          "displayTitle": "Trace - Terminal",
+          "cwd": "/private/tmp",
+          "recentInputLines": [],
+          "recentInputHidden": false,
+          "command": "/bin/cat",
+          "status": "running",
+          "clients": 1,
+          "cols": 100,
+          "rows": 30,
+          "createdAt": "2026-07-10T01:39:43.874Z",
+          "lastActiveAt": "2026-07-10T01:39:43.969Z"
+        }
+      }
+    }
+  ]
+}

@@ -62,6 +62,10 @@ public final class RelayMuxSessionManager {
         void updateLastSeq(long seq) {
             if (seq > lastSeq) lastSeq = seq;
         }
+
+        void resetLastSeq() {
+            lastSeq = 0;
+        }
     }
 
     private final OkHttpClient http;
@@ -75,20 +79,28 @@ public final class RelayMuxSessionManager {
     private final Map<String, Channel> channels = new LinkedHashMap<>();
     private long p2pBackoffUntil;
     private Runnable p2pFallbackRunnable;
+    private boolean skipNextP2P;
 
     RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
+        this(http, mainHandler, baseUrl, cookie, deviceId, transportFactory, false);
+    }
+
+    RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory, boolean skipInitialP2P) {
         this.http = http;
         this.mainHandler = mainHandler;
         this.transportFactory = transportFactory;
         this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         this.cookie = cookie;
         this.deviceId = deviceId == null ? "" : deviceId;
+        this.skipNextP2P = skipInitialP2P;
         this.muxSession = createMuxSession(++muxGeneration);
     }
 
     private MuxSession createMuxSession(int generation) {
         cancelP2pFallback();
-        boolean tryP2P = transportFactory != null && System.currentTimeMillis() >= p2pBackoffUntil;
+        boolean skipP2P = skipNextP2P;
+        skipNextP2P = false;
+        boolean tryP2P = !skipP2P && transportFactory != null && System.currentTimeMillis() >= p2pBackoffUntil;
         if (tryP2P) {
             transportFactory.prepareDataChannel(baseUrl, cookie, deviceId);
         }
@@ -242,6 +254,13 @@ public final class RelayMuxSessionManager {
         reconnectTransport(reason, true);
     }
 
+    public void forceReconnect(String reason, boolean skipP2POnce) {
+        if (skipP2POnce) {
+            skipNextP2P = true;
+        }
+        reconnectTransport(reason, true);
+    }
+
     public boolean hasTerminalChannel(String localSessionId) {
         return channels.containsKey(terminalChannelId(localSessionId));
     }
@@ -256,12 +275,31 @@ public final class RelayMuxSessionManager {
         if (ch != null) ch.updateLastSeq(seq);
     }
 
+    public void resetChannelLastSeq(String channelId) {
+        Channel ch = channels.get(channelId);
+        if (ch != null) ch.resetLastSeq();
+    }
+
     public String openTerminalChannel(String localSessionId, ChannelListener listener) {
         String channelId = terminalChannelId(localSessionId);
         Channel existing = channels.get(channelId);
         if (existing != null) {
+            boolean wasDetached = existing.listener == NO_OP_LISTENER;
             existing.listener = listener;
-            if (muxSession.isConnected() && existing.state == Channel.State.LIVE) {
+            // A physical mux reconnect marks every logical channel CONNECTING.
+            // A terminal Fragment can be recreated in the small window after that
+            // transition but before its old view has detached. In that case the
+            // listener is not NO_OP, yet there may no longer be a server-side
+            // tunnel acknowledgement to complete the handshake. Re-send
+            // ws-connect whenever a reattached channel is CONNECTING. The server
+            // replaces a same-id virtual socket atomically, so this is safe and
+            // prevents the UI from remaining in the yellow reconnecting state.
+            if (wasDetached || existing.state == Channel.State.CONNECTING) {
+                existing.state = Channel.State.CONNECTING;
+                if (muxSession.isConnected()) {
+                    muxSession.sendWsConnect(channelId, existing.path, existing.protocols);
+                }
+            } else if (muxSession.isConnected() && existing.state == Channel.State.LIVE) {
                 // notify immediately so UI knows it's connected
                 listener.onConnected(channelId);
             }

@@ -40,6 +40,7 @@ func New(cfg config.Config, version string) *App {
 		"WEBTERM":                "1",
 		"WEBTERM_INTEGRATION":    "1",
 		"WEBTERM_SOCKET_PATH":    socketPath,
+		"WEBTERM_CONTROL_ADDR":   cfg.Control.Addr,
 		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDir(),
 	}
 

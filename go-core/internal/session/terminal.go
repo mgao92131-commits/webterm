@@ -25,8 +25,8 @@ const (
 	DefaultCols = 100
 	DefaultRows = 30
 
-	// StateBytes 重建 ANSI 文本时最多包含的 scrollback 行数，避免重连时全量复制 10k 行。
-	maxStateScrollbackLines = 1000
+	// StateBytes 与 Node @xterm/headless 保持相同的 10k scrollback 契约。
+	maxStateScrollbackLines = 10000
 )
 
 type TerminalOptions struct {
@@ -43,35 +43,35 @@ type TerminalOptions struct {
 }
 
 type TerminalSession struct {
-	mu               sync.RWMutex
-	id               string
-	instance         string
-	name             string
-	termTitle        string
-	cwd              string
-	liveCwd          string
-	command          string
-	status           string
-	shellState       string
-	lastInput        *LastInput
-	notification     *Notification
-	cols             int
-	rows             int
-	createdAt        time.Time
-	activeAt         time.Time
-	ring             *EventRing
-	screen           *ScreenState
-	process          *pty.Process
-	shellPid         int
-	ttyPath          string
-	clients          map[*Client]struct{}
-	onTitleChanged   func()
-	onInfoChanged    func()
-	titleChanged     bool
-	stateCache       []byte
-	stateCacheValid  bool
-	stateCacheGen    uint64
-	manager          *Manager
+	mu              sync.RWMutex
+	id              string
+	instance        string
+	name            string
+	termTitle       string
+	cwd             string
+	liveCwd         string
+	command         string
+	status          string
+	shellState      string
+	lastInput       *LastInput
+	notification    *Notification
+	cols            int
+	rows            int
+	createdAt       time.Time
+	activeAt        time.Time
+	ring            *EventRing
+	screen          *ScreenState
+	process         *pty.Process
+	shellPid        int
+	ttyPath         string
+	clients         map[*Client]struct{}
+	onTitleChanged  func()
+	onInfoChanged   func()
+	titleChanged    bool
+	stateCache      []byte
+	stateCacheValid bool
+	stateCacheGen   uint64
+	manager         *Manager
 }
 
 type Notification struct {
@@ -183,6 +183,7 @@ func (terminal *TerminalSession) Info() Info {
 		ShellState:        terminal.shellState,
 		LastCommand:       terminal.lastInputText(),
 		LastInputKind:     terminal.lastInputKind(),
+		TTY:               terminal.ttyPath,
 		Notification:      terminal.notification,
 		Clients:           len(terminal.clients),
 		Cols:              terminal.cols,
@@ -368,7 +369,19 @@ func (terminal *TerminalSession) terminalModes() []byte {
 	return buf
 }
 
+// StateBytes 返回 binary MSG_STATE 的 payload：包含清屏前缀 + 序列化状态 + 终端模式。
+// 为兼容既有测试，它继续返回带清屏前缀的字节；JSON state 请使用 StateBytesJSON()。
 func (terminal *TerminalSession) StateBytes() []byte {
+	return terminal.encodeSnapshot(SnapshotModeBinary)
+}
+
+// StateBytesJSON 返回 JSON state 的 payload：不包含清屏前缀，与 Node JSON 契约一致。
+func (terminal *TerminalSession) StateBytesJSON() []byte {
+	return terminal.encodeSnapshot(SnapshotModeJSON)
+}
+
+// encodeSnapshot 生成指定线协议的快照 payload，并处理 screen 为 nil 的私有容错路径。
+func (terminal *TerminalSession) encodeSnapshot(mode SnapshotMode) []byte {
 	terminal.mu.RLock()
 	cache := terminal.stateCache
 	valid := terminal.stateCacheValid
@@ -376,21 +389,17 @@ func (terminal *TerminalSession) StateBytes() []byte {
 	screen := terminal.screen
 	terminal.mu.RUnlock()
 	if valid {
-		return append([]byte(nil), cache...)
+		payload := append([]byte(nil), cache...)
+		return terminal.wrapSnapshotPayload(payload, mode)
 	}
 
-	var out []byte
+	var payload []byte
 	if screen != nil {
-		text := screen.AnsiTextWithScrollbackLimit(maxStateScrollbackLines)
-		out = []byte("\x1b[3J\x1b[2J\x1b[H")
-		if text != "" {
-			out = append(out, []byte(text)...)
-		}
-		// 追加终端模式恢复序列（与 @xterm/addon-serialize 对齐）
-		if modes := terminal.terminalModes(); len(modes) > 0 {
-			out = append(out, modes...)
-		}
+		encoder := NewSnapshotEncoder(screen, terminal.terminalModes)
+		encoder.SetScrollbackLimit(maxStateScrollbackLines)
+		payload = encoder.Encode(SnapshotModeJSON)
 	} else {
+		// Go 私有容错路径：screen 为 nil 时从 ring 拼接文本。Node 没有等价生产路径。
 		terminal.mu.RLock()
 		frames := terminal.ring.After(0)
 		terminal.mu.RUnlock()
@@ -405,19 +414,28 @@ func (terminal *TerminalSession) StateBytes() []byte {
 			total += len(frames[i].Bytes)
 		}
 		reverse(selected)
-		out = []byte("\x1b[3J\x1b[2J\x1b[H")
 		for _, frame := range selected {
-			out = append(out, frame.Bytes...)
+			payload = append(payload, frame.Bytes...)
 		}
 	}
 
 	terminal.mu.Lock()
 	if terminal.stateCacheGen == gen {
-		terminal.stateCache = append([]byte(nil), out...)
+		terminal.stateCache = append([]byte(nil), payload...)
 		terminal.stateCacheValid = true
 	}
 	terminal.mu.Unlock()
-	return out
+	return terminal.wrapSnapshotPayload(payload, mode)
+}
+
+func (terminal *TerminalSession) wrapSnapshotPayload(payload []byte, mode SnapshotMode) []byte {
+	if mode == SnapshotModeBinary {
+		out := make([]byte, 0, len(clearStatePrefix)+len(payload))
+		out = append(out, clearStatePrefix...)
+		out = append(out, payload...)
+		return out
+	}
+	return payload
 }
 
 func (terminal *TerminalSession) ScreenSnapshot() *ScreenSnapshot {

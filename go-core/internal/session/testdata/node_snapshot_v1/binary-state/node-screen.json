@@ -1,0 +1,479 @@
+{
+  "fromBinaryPayload": {
+    "cols": 100,
+    "rows": 30,
+    "cursor": {},
+    "cursorStyle": "block",
+    "cursorBlink": false,
+    "lines": [
+      {
+        "index": 0,
+        "text": "hello world",
+        "wrapped": false
+      },
+      {
+        "index": 1,
+        "text": "line two",
+        "wrapped": false
+      },
+      {
+        "index": 2,
+        "text": "line three with red text",
+        "wrapped": false
+      },
+      {
+        "index": 3,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 4,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 5,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 6,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 7,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 8,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 9,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 10,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 11,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 12,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 13,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 14,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 15,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 16,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 17,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 18,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 19,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 20,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 21,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 22,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 23,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 24,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 25,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 26,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 27,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 28,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 29,
+        "text": "",
+        "wrapped": false
+      }
+    ]
+  },
+  "fromJsonPayload": {
+    "cols": 100,
+    "rows": 30,
+    "cursor": {},
+    "cursorStyle": "block",
+    "cursorBlink": false,
+    "lines": [
+      {
+        "index": 0,
+        "text": "hello world",
+        "wrapped": false
+      },
+      {
+        "index": 1,
+        "text": "line two",
+        "wrapped": false
+      },
+      {
+        "index": 2,
+        "text": "line three with red text",
+        "wrapped": false
+      },
+      {
+        "index": 3,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 4,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 5,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 6,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 7,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 8,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 9,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 10,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 11,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 12,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 13,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 14,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 15,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 16,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 17,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 18,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 19,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 20,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 21,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 22,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 23,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 24,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 25,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 26,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 27,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 28,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 29,
+        "text": "",
+        "wrapped": false
+      }
+    ]
+  },
+  "fromReferenceTerminal": {
+    "cols": 100,
+    "rows": 30,
+    "cursor": {},
+    "cursorStyle": "block",
+    "cursorBlink": false,
+    "lines": [
+      {
+        "index": 0,
+        "text": "hello world",
+        "wrapped": false
+      },
+      {
+        "index": 1,
+        "text": "line two",
+        "wrapped": false
+      },
+      {
+        "index": 2,
+        "text": "line three with red text",
+        "wrapped": false
+      },
+      {
+        "index": 3,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 4,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 5,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 6,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 7,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 8,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 9,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 10,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 11,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 12,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 13,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 14,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 15,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 16,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 17,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 18,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 19,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 20,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 21,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 22,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 23,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 24,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 25,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 26,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 27,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 28,
+        "text": "",
+        "wrapped": false
+      },
+      {
+        "index": 29,
+        "text": "",
+        "wrapped": false
+      }
+    ]
+  }
+}

@@ -128,9 +128,14 @@ for block in blocks:
     kept_blocks.append(block)
 
 # 重新组装，确保块之间有一个空行
-result = prefix.rstrip() + '\n\n' + '\n'.join(b.rstrip() for b in kept_blocks)
 if kept_blocks:
-    result += '\n'
+    body = '\n\n'.join(b.rstrip() for b in kept_blocks) + '\n'
+    if prefix.strip():
+        result = prefix.rstrip() + '\n\n' + body
+    else:
+        result = body
+else:
+    result = prefix.rstrip() + '\n'
 
 with open(dst, 'w') as f:
     f.write(result)
@@ -141,6 +146,17 @@ PY
   chmod 600 "$path"
   echo "  -> $path"
 }
+
+remove_legacy_binary() {
+  local bin="$HOME_DIR/.webterm/bin/webterm-agent-hook"
+  if [ -f "$bin" ] || [ -L "$bin" ]; then
+    rm -f "$bin"
+    echo "  已删除 $bin"
+  fi
+}
+
+echo "清理旧 webterm-agent-hook 二进制..."
+remove_legacy_binary
 
 echo "清理 Claude Code 旧 hook..."
 cleanup_json_hooks "$CLAUDE_SETTINGS" "Claude"

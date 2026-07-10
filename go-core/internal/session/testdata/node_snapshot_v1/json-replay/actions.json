@@ -1,0 +1,18 @@
+{
+  "cols": 100,
+  "rows": 30,
+  "actions": [
+    {
+      "type": "write",
+      "data": "hello world\r\n"
+    },
+    {
+      "type": "write",
+      "data": "line two\r\n"
+    },
+    {
+      "type": "write",
+      "data": "line three with \u001b[31mred\u001b[0m text\r\n"
+    }
+  ]
+}

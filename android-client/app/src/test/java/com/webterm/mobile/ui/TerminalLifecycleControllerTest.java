@@ -49,6 +49,14 @@ public class TerminalLifecycleControllerTest {
     }
 
     @Test
+    public void detachTerminalViewDetachesWithoutClosing() {
+        controller.detachTerminalView();
+
+        verify(terminalConnection).detach();
+        verify(terminalConnection, never()).closeSession();
+    }
+
+    @Test
     public void pauseDetachesWithoutClosing() {
         controller.pauseCurrentConnection();
 

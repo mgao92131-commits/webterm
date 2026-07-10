@@ -31,6 +31,10 @@ public final class TerminalRuntimeState {
         return cookie;
     }
 
+    public void updateCookie(String cookie) {
+        this.cookie = cookie;
+    }
+
     public String sessionId() {
         return sessionId;
     }

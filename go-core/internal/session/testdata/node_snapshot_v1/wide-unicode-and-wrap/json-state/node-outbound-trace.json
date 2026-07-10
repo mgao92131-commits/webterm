@@ -1,0 +1,41 @@
+{
+  "protocol": "webterm.json.v1",
+  "description": "Wide characters, emoji, ambiguous symbols and soft wrap (JSON state)",
+  "frames": [
+    {
+      "index": 0,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"state\",\"seq\":2,\"data\":\"中文\\u001b[1C日本語\\u001b[1C🎉\\u001b[1C±\\u001b[1C½\\r\\nthis is a very long line that should soft wrap on a one hundred column screen boundary to test wrap state preservation properly\\u001b[1B\\u001b[27D\"}",
+      "decoded": {
+        "type": "state",
+        "seq": 2,
+        "data": "中文\u001b[1C日本語\u001b[1C🎉\u001b[1C±\u001b[1C½\r\nthis is a very long line that should soft wrap on a one hundred column screen boundary to test wrap state preservation properly\u001b[1B\u001b[27D"
+      }
+    },
+    {
+      "index": 1,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-wide-unicode-and-wrap-json-state\",\"instanceId\":\"9a2da783-3268-44ff-a948-d9d1aacbc145\",\"name\":\"Trace\",\"termTitle\":\"\",\"displayTitle\":\"Trace - Terminal\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:43.627Z\",\"lastActiveAt\":\"2026-07-10T01:39:43.721Z\"}}",
+      "decoded": {
+        "type": "info",
+        "data": {
+          "id": "trace-wide-unicode-and-wrap-json-state",
+          "instanceId": "9a2da783-3268-44ff-a948-d9d1aacbc145",
+          "name": "Trace",
+          "termTitle": "",
+          "displayTitle": "Trace - Terminal",
+          "cwd": "/private/tmp",
+          "recentInputLines": [],
+          "recentInputHidden": false,
+          "command": "/bin/cat",
+          "status": "running",
+          "clients": 1,
+          "cols": 100,
+          "rows": 30,
+          "createdAt": "2026-07-10T01:39:43.627Z",
+          "lastActiveAt": "2026-07-10T01:39:43.721Z"
+        }
+      }
+    }
+  ]
+}

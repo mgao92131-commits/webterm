@@ -30,11 +30,7 @@ public class RelayMuxSessionManagerRecoveryTest {
             r.run();
             return true;
         });
-        when(handler.postDelayed(any(Runnable.class), any(long.class))).thenAnswer(invocation -> {
-            Runnable r = invocation.getArgument(0);
-            r.run();
-            return true;
-        });
+        when(handler.postDelayed(any(Runnable.class), any(long.class))).thenReturn(true);
         return handler;
     }
 
@@ -109,6 +105,160 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
         assertTrue("reattached listener should be notified after ws-connected", listener2Connected.get());
+    }
+
+    @Test
+    public void reattachAfterDetachRehandshakesToReplaceStaleServerClient() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean listener1Connected = new AtomicBoolean();
+        AtomicBoolean listener2Connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener1Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+        RelayMuxSessionManager.ChannelListener listener2 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener2Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        String channelId1 = manager.openTerminalChannel("s1", listener1);
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("original listener should be notified", listener1Connected.get());
+        assertEquals("one ws-connect after mux open", 1, transport.wsConnectCount("term:s1"));
+
+        // Simulate background detach: listener replaced with no-op, but channel stays alive.
+        manager.detachChannelListener(channelId1);
+
+        String channelId2 = manager.openTerminalChannel("s1", listener2);
+        assertEquals("reattach should reuse the same channel id", channelId1, channelId2);
+        assertFalse("reattached listener should NOT be notified before re-handshake", listener2Connected.get());
+        assertEquals("reattach after detach must send a new ws-connect",
+            2, transport.wsConnectCount("term:s1"));
+
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("reattached listener should be notified after server ack", listener2Connected.get());
+    }
+
+    @Test
+    public void reattachWithoutDetachWhileChannelConnectingRehandshakes() {
+        // Regression test for the yellow-indicator stuck scenario. A physical mux
+        // reconnect can put a channel into CONNECTING before the old Fragment has
+        // detached. Reattaching must explicitly re-handshake instead of waiting
+        // forever for a stale ws-connected acknowledgement.
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean listener1Connected = new AtomicBoolean();
+        AtomicBoolean listener1MuxDisconnected = new AtomicBoolean();
+        AtomicBoolean listener2Connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener1Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) { listener1MuxDisconnected.set(true); }
+        };
+        RelayMuxSessionManager.ChannelListener listener2 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener2Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        manager.openTerminalChannel("s1", listener1);
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("original listener should be connected", listener1Connected.get());
+        assertEquals("one ws-connect after mux open", 1, transport.wsConnectCount("term:s1"));
+
+        // Physical mux reconnects (e.g. cookie refresh) before UI detaches.
+        transport.simulateClose(1001, "going away");
+        assertTrue("original listener should get mux disconnected", listener1MuxDisconnected.get());
+
+        transport.simulateOpen();
+        assertEquals("reopen after reconnect should send ws-connect",
+            2, transport.wsConnectCount("term:s1"));
+        // Do NOT ack ws-connected yet: the channel is still CONNECTING.
+
+        // UI returns without ever calling detachChannelListener().
+        manager.openTerminalChannel("s1", listener2);
+        assertFalse("new listener should NOT be connected while channel is CONNECTING",
+            listener2Connected.get());
+        assertEquals("reattach must replace the stale pending handshake",
+            3, transport.wsConnectCount("term:s1"));
+
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("new listener should connect after the replacement handshake", listener2Connected.get());
+    }
+
+    @Test
+    public void detachBeforeMuxReconnectAllowsCleanReattach() {
+        // Counter-test: if the UI properly detaches before the mux reconnect,
+        // reattach is recognized as wasDetached=true. The re-handshake ws-connect
+        // is sent once the mux is back up, and the new listener connects after ack.
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        AtomicBoolean listener1Connected = new AtomicBoolean();
+        AtomicBoolean listener2Connected = new AtomicBoolean();
+
+        RelayMuxSessionManager.ChannelListener listener1 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener1Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+        RelayMuxSessionManager.ChannelListener listener2 = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { listener2Connected.set(true); }
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        };
+
+        manager.openTerminalChannel("s1", listener1);
+        manager.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue(listener1Connected.get());
+        assertEquals("one ws-connect after mux open", 1, transport.wsConnectCount("term:s1"));
+
+        // UI properly detaches before leaving.
+        manager.detachChannelListener("term:s1");
+
+        // Physical mux drops while the UI is away.
+        transport.simulateClose(1001, "going away");
+
+        // UI returns before the mux has reconnected: wasDetached is true, so the
+        // listener is rebound but no ws-connect is sent yet.
+        manager.openTerminalChannel("s1", listener2);
+        assertFalse("new listener should wait for re-handshake ack",
+            listener2Connected.get());
+        assertEquals("no extra ws-connect while mux is still down",
+            1, transport.wsConnectCount("term:s1"));
+
+        // Mux reconnects and reopens the channel.
+        transport.simulateOpen();
+        assertEquals("reopen after reconnect should send ws-connect",
+            2, transport.wsConnectCount("term:s1"));
+
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+        assertTrue("new listener should be connected after server ack", listener2Connected.get());
     }
 
     @Test
@@ -449,6 +599,30 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(0L, manager.getChannelLastSeq("term:missing"));
     }
 
+    @Test
+    public void manualForceReconnectCanSkipP2POnce() {
+        FakeMuxTransport p2pTransport = new FakeMuxTransport(true);
+        FakeMuxTransport wsTransport = new FakeMuxTransport(false);
+        P2PThenWebSocketFactory factory = new P2PThenWebSocketFactory(p2pTransport, wsTransport);
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1", factory);
+
+        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) {}
+            @Override public void onError(String channelId, int code, String message) {}
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onMuxDisconnected(String reason) {}
+        });
+        assertEquals(1, factory.dataChannelCount);
+        assertEquals(0, factory.webSocketCount);
+
+        manager.forceReconnect("manual retry", true);
+
+        assertEquals("skip once should avoid starting another P2P attempt", 1, factory.dataChannelCount);
+        assertEquals("skip once should fall back to websocket immediately", 1, factory.webSocketCount);
+        assertEquals("old P2P transport should be closed", 1, p2pTransport.closeCount);
+    }
+
     private static class FakeTransportFactory implements TransportFactory {
         private final FakeMuxTransport transport;
 
@@ -467,10 +641,42 @@ public class RelayMuxSessionManagerRecoveryTest {
         @Override public void prepareDataChannel(String baseUrl, String cookie, String deviceId) {}
     }
 
+    private static class P2PThenWebSocketFactory implements TransportFactory {
+        private final FakeMuxTransport p2pTransport;
+        private final FakeMuxTransport wsTransport;
+        private int dataChannelCount;
+        private int webSocketCount;
+
+        P2PThenWebSocketFactory(FakeMuxTransport p2pTransport, FakeMuxTransport wsTransport) {
+            this.p2pTransport = p2pTransport;
+            this.wsTransport = wsTransport;
+        }
+
+        @Override public MuxTransport createWebSocket(String url, String cookie, String protocol) {
+            webSocketCount++;
+            return wsTransport;
+        }
+
+        @Override public MuxTransport createDataChannel(String deviceId) {
+            dataChannelCount++;
+            return p2pTransport;
+        }
+    }
+
     private static class FakeMuxTransport implements MuxTransport {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
+        private final boolean p2p;
+        private int closeCount;
+
+        FakeMuxTransport() {
+            this(false);
+        }
+
+        FakeMuxTransport(boolean p2p) {
+            this.p2p = p2p;
+        }
 
         @Override public void start(Listener listener) {
             this.listener = listener;
@@ -490,9 +696,9 @@ public class RelayMuxSessionManagerRecoveryTest {
             if (listener != null) listener.onText(text);
         }
 
-        @Override public void close() {}
+        @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return open; }
-        @Override public boolean isP2P() { return false; }
+        @Override public boolean isP2P() { return p2p; }
 
         @Override public boolean sendText(String text) {
             sentTexts.add(text);
@@ -507,6 +713,22 @@ public class RelayMuxSessionManagerRecoveryTest {
                 try {
                     JSONObject msg = new JSONObject(text);
                     if ("ws-connect".equals(msg.optString("type"))
+                            && tunnelId.equals(msg.optString("tunnelConnectionId"))) {
+                        count++;
+                    }
+                } catch (JSONException e) {
+                    // ignore non-JSON
+                }
+            }
+            return count;
+        }
+
+        int wsCloseCount(String tunnelId) {
+            int count = 0;
+            for (String text : sentTexts) {
+                try {
+                    JSONObject msg = new JSONObject(text);
+                    if ("ws-close".equals(msg.optString("type"))
                             && tunnelId.equals(msg.optString("tunnelConnectionId"))) {
                         count++;
                     }

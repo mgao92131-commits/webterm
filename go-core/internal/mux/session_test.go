@@ -148,6 +148,46 @@ func TestMuxManagerChannel(t *testing.T) {
 	cancel()
 }
 
+func TestMuxDuplicateChannelIDReplacesChannel(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	wsURL, cleanup := startMuxServer(t, ctx, manager)
+	defer cleanup()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	openManager := func() {
+		writeJSONMsg(t, ctx, conn, map[string]any{
+			"type":               protocol.WSConnect,
+			"tunnelConnectionId": "manager",
+			"path":               "/ws/sessions",
+			"protocols":          []string{},
+		})
+		connected := readJSON(t, ctx, conn)
+		if connected["type"] != protocol.WSConnected || connected["tunnelConnectionId"] != "manager" {
+			t.Fatalf("ws-connected = %#v", connected)
+		}
+		frame := readTunnel(t, ctx, conn)
+		if frame.ID != "manager" || !strings.Contains(string(frame.Payload), `"type":"sessions"`) {
+			t.Fatalf("manager frame = %#v payload=%s", frame, frame.Payload)
+		}
+	}
+
+	openManager()
+	// Replaying the same logical ID is the terminal-page reattach path. It must
+	// replace the old virtual socket without deadlocking the mux read loop.
+	openManager()
+}
+
 func TestMuxUnknownPathReturnsWSError(t *testing.T) {
 	testutil.SkipIfLoopbackListenUnavailable(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

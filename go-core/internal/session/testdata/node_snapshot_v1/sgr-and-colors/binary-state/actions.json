@@ -1,0 +1,14 @@
+{
+  "cols": 100,
+  "rows": 30,
+  "actions": [
+    {
+      "type": "write",
+      "data": "\u001b[1mbold\u001b[0m \u001b[3mitalic\u001b[0m \u001b[4munderline\u001b[0m\r\n"
+    },
+    {
+      "type": "write",
+      "data": "\u001b[38;5;196m256-fg\u001b[0m \u001b[48;5;21m256-bg\u001b[0m \u001b[38;2;255;128;0mrgb-fg\u001b[0m\r\n"
+    }
+  ]
+}

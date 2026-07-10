@@ -70,7 +70,15 @@ func (client *Client) Run(ctx context.Context) {
 }
 
 func (client *Client) SendInfo() {
-	client.sendJSONType("info", map[string]any{"type": "info", "data": client.session.Info()})
+	info := client.session.Info()
+	if client.mode == ClientModeBinary {
+		frame, err := protocol.EncodeJSONMessage(protocol.MsgInfo, info)
+		if err == nil {
+			client.enqueueBinary(frame)
+		}
+		return
+	}
+	client.sendJSONType("info", map[string]any{"type": "info", "data": info})
 }
 
 func (client *Client) SendHook(ev protocol.HookEvent) {
@@ -279,68 +287,90 @@ func (client *Client) handleBinary(frame []byte) {
 }
 
 func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
-	if cols > 0 && rows > 0 {
-		_ = client.session.Resize(cols, rows)
-	}
 	latest := client.session.LatestSeq()
 	if client.mode == ClientModeScreen {
+		if cols > 0 && rows > 0 {
+			_ = client.session.Resize(cols, rows)
+		}
 		client.SendScreenState(latest)
 		client.SendInfo()
 		client.ready.Store(true)
 		return
 	}
+
+	// binary hello 在 resize/state/replay 前先发一条 MSG_INFO，与 Node 参考实现一致。
+	if client.mode == ClientModeBinary {
+		client.SendInfo()
+	}
+
+	if cols > 0 && rows > 0 {
+		_ = client.session.Resize(cols, rows)
+	}
+
 	if lastSeq > 0 && lastSeq <= latest && client.session.CanReplayFrom(lastSeq) {
 		frames := client.session.ReplayAfter(lastSeq)
-		totalBytes := 0
-		for _, frame := range frames {
-			totalBytes += len(frame.Bytes)
-		}
-
-		batchCount := (len(frames) + 99) / 100
-		if len(client.send)+batchCount+1 >= cap(client.send) {
-			if client.logger != nil {
-				client.logger.Add("warn", "session", fmt.Sprintf("replay batch count too large for send queue (%d batches, queue len=%d), downgrading to snapshot session=%s", batchCount, len(client.send), client.session.ID()))
+		if client.mode == ClientModeBinary {
+			if len(frames) > 0 {
+				client.sendBinaryReplayBatches(frames)
 			}
-			client.SendState(latest, client.session.StateBytes())
-		} else if totalBytes > 512*1024 {
-			if client.logger != nil {
-				client.logger.Add("warn", "session", fmt.Sprintf("replay bytes too large (%d bytes), downgrading to snapshot session=%s", totalBytes, client.session.ID()))
-			}
-			client.SendState(latest, client.session.StateBytes())
-		} else if len(frames) > 0 {
-			batchFrames := 0
-			var batchBytes []byte
-			var batchLastSeq uint64
-
-			flushBatch := func() {
-				if len(batchBytes) == 0 {
-					return
-				}
-				if client.mode == ClientModeBinary {
-					client.enqueueBinary(protocol.EncodeOutput(batchLastSeq, batchBytes))
-				} else {
-					client.SendOutput(EventFrame{Seq: batchLastSeq, Bytes: batchBytes}, ScreenDelta{Seq: batchLastSeq})
-				}
-				batchBytes = nil
-				batchFrames = 0
-			}
-
-			for _, frame := range frames {
-				batchBytes = append(batchBytes, frame.Bytes...)
-				batchLastSeq = frame.Seq
-				batchFrames++
-
-				if batchFrames >= 100 || len(batchBytes) >= 32*1024 {
-					flushBatch()
-				}
-			}
-			flushBatch()
+		} else {
+			// Node JSON 路径即使没有增量帧，也会发送 replay: []，以触发客户端恢复流程。
+			client.sendJSONReplay(lastSeq, frames, latest)
 		}
 	} else {
-		client.SendState(latest, client.session.StateBytes())
+		if client.mode == ClientModeBinary {
+			client.SendState(latest, client.session.StateBytes())
+		} else {
+			client.SendState(latest, client.session.StateBytesJSON())
+		}
 	}
-	client.SendInfo()
+
+	// JSON hello 在 state/replay 后再发一条 text info；binary 不重复发送。
+	if client.mode != ClientModeBinary {
+		client.SendInfo()
+	}
 	client.ready.Store(true)
+}
+
+// sendJSONReplay 发送 Node 形状的单个 replay 消息，保留每帧 seq/data。
+func (client *Client) sendJSONReplay(from uint64, frames []EventFrame, latest uint64) {
+	replayFrames := make([]map[string]any, 0, len(frames))
+	for _, frame := range frames {
+		replayFrames = append(replayFrames, map[string]any{
+			"seq":  frame.Seq,
+			"data": string(frame.Bytes),
+		})
+	}
+	client.sendJSONType("replay", map[string]any{
+		"type":   "replay",
+		"from":   from,
+		"frames": replayFrames,
+		"seq":    latest,
+	})
+}
+
+// sendBinaryReplayBatches 按 Node 的 64 KiB 上限将回放帧合并为若干 MSG_OUTPUT。
+func (client *Client) sendBinaryReplayBatches(frames []EventFrame) {
+	const maxBatchBytes = 64 * 1024
+	var batchBytes []byte
+	var batchLastSeq uint64
+
+	flushBatch := func() {
+		if len(batchBytes) == 0 {
+			return
+		}
+		client.enqueueBinary(protocol.EncodeOutput(batchLastSeq, batchBytes))
+		batchBytes = nil
+	}
+
+	for _, frame := range frames {
+		if len(batchBytes) > 0 && len(batchBytes)+len(frame.Bytes) > maxBatchBytes {
+			flushBatch()
+		}
+		batchBytes = append(batchBytes, frame.Bytes...)
+		batchLastSeq = frame.Seq
+	}
+	flushBatch()
 }
 
 func (client *Client) sendJSONType(_ string, value any) {

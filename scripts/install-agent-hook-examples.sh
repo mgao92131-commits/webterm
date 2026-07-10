@@ -215,6 +215,14 @@ PY
 
 # main
 install_helper
+
+# 先清理旧版 webterm-agent-hook，避免与新 helper 并存导致
+# "flag provided but not defined: -agent" 这类错误。
+CLEANUP_SCRIPT="$REPO_ROOT/scripts/cleanup-old-agent-hooks.sh"
+if [ -x "$CLEANUP_SCRIPT" ]; then
+  bash "$CLEANUP_SCRIPT" >/dev/null 2>&1 || true
+fi
+
 install_claude
 install_kimi
 install_codex

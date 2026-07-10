@@ -107,6 +107,9 @@ trap cleanup EXIT
 echo "== 测试 webterm-notify-helper =="
 setup_mock_webterm
 
+# 默认给 helper 一个 session id，避免 TTY 解析警告干扰测试
+export WEBTERM_SESSION_ID="test-session"
+
 # 缺少参数
 test "$($HELPER_SCRIPT 2>&1; echo $?)" != "0" && pass=$((pass + 1)) || fail=$((fail + 1))
 echo "  ✓ 缺少参数时退出非零"
@@ -115,15 +118,16 @@ echo "  ✓ 缺少参数时退出非零"
 $HELPER_SCRIPT invalid "msg" src >/dev/null 2>&1 && fail=$((fail + 1)) || pass=$((pass + 1))
 echo "  ✓ 非法 level 时退出非零"
 
-# 空 stdin 时使用默认消息
+# 空 stdin 时使用默认消息，并传递 --session
 clear_calls
 $HELPER_SCRIPT running "Running" claude </dev/null
-assert_contains "notify --level running --message Running --source claude" "$(last_call)" "空 stdin 时使用默认消息"
+assert_contains "notify --level running --message Running --source claude --session test-session" "$(last_call)" "空 stdin 时使用默认消息并传递 session"
 
 # 从顶层 prompt 字段提取
 clear_calls
 echo '{"prompt":"deploy to production"}' | $HELPER_SCRIPT running "Running" claude
 assert_contains "--message deploy to production" "$(last_call)" "提取顶层 prompt"
+assert_contains "--session test-session" "$(last_call)" "提取 prompt 时传递 session"
 
 # 从 messages 数组提取最后一条
 clear_calls
@@ -150,7 +154,7 @@ assert_contains "--message Waiting for approval" "$(last_call)" "无效 JSON 回
 # idle 状态
 clear_calls
 $HELPER_SCRIPT idle "Idle" codex </dev/null
-assert_contains "notify --level idle --message Idle --source codex" "$(last_call)" "idle 状态调用正确"
+assert_contains "notify --level idle --message Idle --source codex --session test-session" "$(last_call)" "idle 状态调用正确"
 
 # webterm 缺失时不应中断 agent（退出 0）
 unset WEBTERM_BIN
@@ -172,15 +176,13 @@ clear_calls
 unset WEBTERM_BIN
 HOME="$TMP_HOME" "$helper_tmp_dir/webterm-notify-helper" running "Running" claude </dev/null
 export WEBTERM_BIN="$MOCK_WEBTERM_DIR/webterm"
-assert_contains "notify --level running --message Running --source claude" "$(last_call)" "helper 在同目录找到 webterm"
+assert_contains "notify --level running --message Running --source claude --session test-session" "$(last_call)" "helper 在同目录找到 webterm"
 
-# helper 不再自己解析 session/socket；没有 env 时直接调用 webterm notify，由后端通过 PID 解析。
+# 无 env 时 helper fallback 到 --pid，由后端通过调用者 PID 解析
 mkdir -p "$TMP_HOME/.webterm"
 clear_calls
-HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH "$HELPER_SCRIPT" running "Running" claude </dev/null
-assert_contains "notify --level running --message Running --source claude" "$(last_call)" "无 env 时 helper 仍调用 webterm notify"
-session_line=$(tail -n 3 "$WEBTERM_CALLS" | head -n 1)
-assert_eq "SESSION_ID=<unset>" "$session_line" "helper 不伪造 SESSION_ID"
+HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH WEBTERM_HOOK_PID=1 "$HELPER_SCRIPT" running "Running" claude </dev/null
+assert_contains "notify --level running --message Running --source claude --pid 1" "$(last_call)" "无 env 时 helper fallback 到 pid"
 
 echo ""
 echo "== 测试 install-agent-hook-examples.sh =="
@@ -237,6 +239,31 @@ bash "$INSTALL_SCRIPT" >/dev/null 2>&1
 refute_file_contains "$TMP_HOME/.codex/hooks.json" '~/.webterm/bin' "旧 ~ 路径已被迁移"
 assert_file_contains "$TMP_HOME/.codex/hooks.json" "$abs_helper" "迁移后使用绝对路径"
 
+# 安装脚本应同时清理残留的旧 webterm-agent-hook
+rm -rf "$TMP_HOME/.codex"
+mkdir -p "$TMP_HOME/.codex"
+echo '{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "$abs_helper running \"Running\" codex"}]},
+      {"matcher": "*", "hooks": [{"type": "command", "command": "$TMP_HOME/.webterm/bin/webterm-agent-hook codex user_prompt_submit"}]}
+    ]
+  }
+}' > "$TMP_HOME/.codex/hooks.json"
+# 同时保留旧二进制，验证 install 也会触发 cleanup 删除它
+mkdir -p "$TMP_HOME/.webterm/bin"
+touch "$TMP_HOME/.webterm/bin/webterm-agent-hook"
+chmod +x "$TMP_HOME/.webterm/bin/webterm-agent-hook"
+bash "$INSTALL_SCRIPT" >/dev/null 2>&1
+refute_file_contains "$TMP_HOME/.codex/hooks.json" "webterm-agent-hook" "install 脚本清理旧 hook 配置"
+if [ -e "$TMP_HOME/.webterm/bin/webterm-agent-hook" ]; then
+  fail=$((fail + 1))
+  echo "  ✗ install 脚本应删除旧 webterm-agent-hook 二进制"
+else
+  pass=$((pass + 1))
+  echo "  ✓ install 脚本删除旧 webterm-agent-hook 二进制"
+fi
+
 echo ""
 echo "== 测试 cleanup-old-agent-hooks.sh =="
 
@@ -278,6 +305,20 @@ EOF
 bash "$CLEANUP_SCRIPT" >/dev/null 2>&1
 assert_file_contains "$TMP_HOME/.kimi-code/config.toml" "webterm-notify-helper" "Kimi 保留新 hook"
 refute_file_contains "$TMP_HOME/.kimi-code/config.toml" "webterm-agent-hook" "Kimi 移除旧 hook"
+
+# cleanup 脚本应删除遗留的旧二进制
+mkdir -p "$TMP_HOME/.webterm/bin"
+legacy_bin="$TMP_HOME/.webterm/bin/webterm-agent-hook"
+touch "$legacy_bin"
+chmod +x "$legacy_bin"
+bash "$CLEANUP_SCRIPT" >/dev/null 2>&1
+if [ -e "$legacy_bin" ]; then
+  fail=$((fail + 1))
+  echo "  ✗ cleanup 脚本应删除旧 webterm-agent-hook 二进制"
+else
+  pass=$((pass + 1))
+  echo "  ✓ cleanup 脚本删除旧 webterm-agent-hook 二进制"
+fi
 
 echo ""
 echo "== 结果 =="

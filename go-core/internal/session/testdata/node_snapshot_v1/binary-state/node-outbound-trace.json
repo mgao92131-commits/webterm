@@ -1,0 +1,39 @@
+{
+  "protocol": "webterm.binary.v1",
+  "description": "Binary hello with state fallback",
+  "frames": [
+    {
+      "index": 0,
+      "isBinary": true,
+      "rawBase64": "BXsiaWQiOiJ0cmFjZS1iaW5hcnktc3RhdGUiLCJpbnN0YW5jZUlkIjoiYWViZjVkOTktYWEzZC00NmIyLTkwY2EtOGU4NDZkNjY2OGI0IiwibmFtZSI6IlRyYWNlIiwidGVybVRpdGxlIjoiIiwiZGlzcGxheVRpdGxlIjoiVHJhY2UgLSBUZXJtaW5hbCIsImN3ZCI6Ii9wcml2YXRlL3RtcCIsInJlY2VudElucHV0TGluZXMiOltdLCJyZWNlbnRJbnB1dEhpZGRlbiI6ZmFsc2UsImNvbW1hbmQiOiIvYmluL2NhdCIsInN0YXR1cyI6InJ1bm5pbmciLCJjbGllbnRzIjoxLCJjb2xzIjoxMDAsInJvd3MiOjMwLCJjcmVhdGVkQXQiOiIyMDI2LTA3LTEwVDAxOjM5OjQzLjI0OVoiLCJsYXN0QWN0aXZlQXQiOiIyMDI2LTA3LTEwVDAxOjM5OjQzLjM0OVoifQ==",
+      "decoded": {
+        "type": 5,
+        "id": "trace-binary-state",
+        "instanceId": "aebf5d99-aa3d-46b2-90ca-8e846d6668b4",
+        "name": "Trace",
+        "termTitle": "",
+        "displayTitle": "Trace - Terminal",
+        "cwd": "/private/tmp",
+        "recentInputLines": [],
+        "recentInputHidden": false,
+        "command": "/bin/cat",
+        "status": "running",
+        "clients": 1,
+        "cols": 100,
+        "rows": 30,
+        "createdAt": "2026-07-10T01:39:43.249Z",
+        "lastActiveAt": "2026-07-10T01:39:43.349Z"
+      }
+    },
+    {
+      "index": 1,
+      "isBinary": true,
+      "rawBase64": "CgAAAAAAAAADG1szShtbMkobW0hoZWxsbyB3b3JsZA0KbGluZSB0d28NCmxpbmUgdGhyZWUgd2l0aCAbWzMxbXJlZBtbMG0gdGV4dBtbMUIbWzI0RA==",
+      "decoded": {
+        "type": 10,
+        "seq": 3,
+        "payloadBase64": "G1szShtbMkobW0hoZWxsbyB3b3JsZA0KbGluZSB0d28NCmxpbmUgdGhyZWUgd2l0aCAbWzMxbXJlZBtbMG0gdGV4dBtbMUIbWzI0RA=="
+      }
+    }
+  ]
+}

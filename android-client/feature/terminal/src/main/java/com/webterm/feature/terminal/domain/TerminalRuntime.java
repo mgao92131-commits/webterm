@@ -151,6 +151,10 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
         lifecycle.connectTerminal();
     }
 
+    public void reconnectFresh(String cookie) {
+        lifecycle.reconnectFresh(cookie);
+    }
+
     public void showKeyboard() {
         lifecycle.showKeyboard();
     }
@@ -261,6 +265,7 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
         void installTerminalInsets(View root);
         void setContentRoot(View root);
         void updateKeyboardAvoidance();
+        void requestTerminalReconnect();
     }
 
     private final class DelegatingViewHost implements TerminalLifecycleController.Host {
@@ -281,6 +286,9 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
         }
         @Override public void updateKeyboardAvoidance() {
             if (currentViewHost != null) currentViewHost.updateKeyboardAvoidance();
+        }
+        @Override public void requestTerminalReconnect() {
+            if (currentViewHost != null) currentViewHost.requestTerminalReconnect();
         }
     }
 

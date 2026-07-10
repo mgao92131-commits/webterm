@@ -31,7 +31,7 @@ import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
-import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.api.SessionIds;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.feature.terminal.domain.TerminalConnection;
 import com.webterm.feature.terminal.domain.TerminalRuntime;
@@ -84,6 +84,12 @@ public final class AppFlowCoordinator implements
     private SessionCommandController mSessionCommands;
     private TerminalRuntimeRegistry mTerminalRuntimeRegistry;
     private TerminalRuntime mTerminalRuntime;
+    // Auth refresh is asynchronous. Bind callbacks to the terminal that requested
+    // them so a response from a terminal the user has already left cannot reconnect
+    // the terminal currently on screen with the wrong server cookie.
+    private int mTerminalReconnectGeneration;
+    private boolean mTerminalReconnectInFlight;
+    private TerminalReconnectTarget mTerminalReconnectInFlightTarget;
 
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
     private ServerConfig mSelectedServer;
@@ -148,7 +154,7 @@ public final class AppFlowCoordinator implements
             if (mScreenMode == ScreenMode.TERMINAL && hasTerminalSession() && connection != null) {
                 TerminalConnection.State s = connection.getState();
                 if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
-                    connection.reconnectNow();
+                    requestTerminalFreshReconnect();
                 }
             }
         });
@@ -176,6 +182,11 @@ public final class AppFlowCoordinator implements
                 relayMuxRegistry.reconnectDevice(deviceId, "p2p connected");
             }
             @Override public void onDisconnected(String deviceId, String reason) {
+                if (isP2pDisabledReason(reason)) {
+                    // P2P is administratively disabled on the server. The mux is
+                    // already running over relay websocket; do not trigger a reconnect.
+                    return;
+                }
                 relayMuxRegistry.reconnectDevice(deviceId, "p2p disconnected: " + reason);
             }
             @Override public void onError(String deviceId, String message) { }
@@ -202,9 +213,9 @@ public final class AppFlowCoordinator implements
         if (hasTerminalSession() && hasActiveTerminal() && connection != null) {
             TerminalConnection.State s = connection.getState();
             if (s == TerminalConnection.State.RECONNECTING) {
-                connection.reconnectNow();
+                requestTerminalFreshReconnect();
             } else if (s == TerminalConnection.State.DISCONNECTED) {
-                mTerminalRuntime.connectTerminal();
+                requestTerminalFreshReconnect();
             }
         }
         mNetworkRecoveryController.register();
@@ -548,6 +559,9 @@ public final class AppFlowCoordinator implements
                     mTerminalRuntime.terminalRoot(), mTerminalRuntime.terminalViewport(),
                     mTerminalRuntime.quickBar(), mTerminalRuntime.terminalView(), mImeOverlap);
             }
+            @Override public void requestTerminalReconnect() {
+                AppFlowCoordinator.this.requestTerminalFreshReconnect();
+            }
         };
 
         mTerminalRuntime.attach(args, fragmentHost, this::showSessionListOrDeviceHome);
@@ -591,6 +605,158 @@ public final class AppFlowCoordinator implements
         mTerminalRuntime.state().setCwd(cwd);
     }
 
+    private void requestTerminalFreshReconnect() {
+        if (mTerminalRuntime == null || !mTerminalRuntime.state().hasSession()) return;
+        TerminalReconnectTarget target = TerminalReconnectTarget.capture(mTerminalRuntime);
+        if (target == null) return;
+        if (mTerminalReconnectInFlight && target.equals(mTerminalReconnectInFlightTarget)) return;
+        int generation = ++mTerminalReconnectGeneration;
+        ServerConfig server = findServerForRuntime();
+        if (server == null) {
+            mTerminalReconnectInFlight = false;
+            mTerminalReconnectInFlightTarget = null;
+            if (target.matches(mTerminalRuntime)) {
+                mTerminalRuntime.reconnectFresh(mTerminalRuntime.state().cookie());
+            }
+            return;
+        }
+        mTerminalReconnectInFlight = true;
+        mTerminalReconnectInFlightTarget = target;
+        String currentCookie = server.getCookie() != null ? server.getCookie() : mTerminalRuntime.state().cookie();
+        if (currentCookie == null || currentCookie.isEmpty()) {
+            loginAndReconnectTerminal(server, target, generation);
+            return;
+        }
+        api.refresh(server.getUrl(), currentCookie, new WebTermApi.LoginCallback() {
+            @Override public void onReady(String baseUrl, String cookie) {
+                mActivity.runOnUiThread(() -> reconnectTerminalWithCookie(server, cookie, target, generation));
+            }
+
+            @Override public void onError(String message) {
+                mActivity.runOnUiThread(() -> {
+                    if (isCurrentTerminalReconnect(target, generation)) {
+                        loginAndReconnectTerminal(server, target, generation);
+                    }
+                });
+            }
+        });
+    }
+
+    private void loginAndReconnectTerminal(ServerConfig server, TerminalReconnectTarget target, int generation) {
+        if (!isCurrentTerminalReconnect(target, generation)) return;
+        if (server == null || server.getPassword() == null || server.getPassword().isEmpty()) {
+            clearTerminalReconnectInFlight(target, generation);
+            if (target.matches(mTerminalRuntime)) {
+                mTerminalRuntime.reconnectFresh(mTerminalRuntime.state().cookie());
+            }
+            return;
+        }
+        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
+            @Override public void onReady(String baseUrl, String cookie) {
+                mActivity.runOnUiThread(() -> reconnectTerminalWithCookie(server, cookie, target, generation));
+            }
+
+            @Override public void onError(String message) {
+                mActivity.runOnUiThread(() -> {
+                    if (!isCurrentTerminalReconnect(target, generation)) return;
+                    clearTerminalReconnectInFlight(target, generation);
+                    if (target.matches(mTerminalRuntime)) {
+                        mTerminalRuntime.appendOutput("\r\n[重连鉴权失败: " + message + "]\r\n");
+                    }
+                });
+            }
+        });
+    }
+
+    private void reconnectTerminalWithCookie(ServerConfig server, String cookie, TerminalReconnectTarget target, int generation) {
+        if (!isCurrentTerminalReconnect(target, generation)) return;
+        clearTerminalReconnectInFlight(target, generation);
+        if (server != null && cookie != null && !cookie.isEmpty()) {
+            server.setCookie(cookie);
+            saveServers();
+        }
+        if (target.matches(mTerminalRuntime)) {
+            mTerminalRuntime.reconnectFresh(cookie);
+        }
+    }
+
+    private boolean isCurrentTerminalReconnect(TerminalReconnectTarget target, int generation) {
+        return generation == mTerminalReconnectGeneration
+            && mTerminalReconnectInFlight
+            && target != null
+            && target.equals(mTerminalReconnectInFlightTarget)
+            && target.matches(mTerminalRuntime);
+    }
+
+    private void clearTerminalReconnectInFlight(TerminalReconnectTarget target, int generation) {
+        if (generation != mTerminalReconnectGeneration || !target.equals(mTerminalReconnectInFlightTarget)) return;
+        mTerminalReconnectInFlight = false;
+        mTerminalReconnectInFlightTarget = null;
+    }
+
+    private static final class TerminalReconnectTarget {
+        final String baseUrl;
+        final String relayDeviceId;
+        final String sessionId;
+
+        private TerminalReconnectTarget(String baseUrl, String relayDeviceId, String sessionId) {
+            this.baseUrl = baseUrl;
+            this.relayDeviceId = relayDeviceId;
+            this.sessionId = sessionId;
+        }
+
+        static TerminalReconnectTarget capture(TerminalRuntime runtime) {
+            if (runtime == null || !runtime.state().hasSession()) return null;
+            String sessionId = runtime.state().sessionId();
+            if (sessionId == null || sessionId.isEmpty()) return null;
+            return new TerminalReconnectTarget(
+                WebTermUrls.normalizeBaseUrl(runtime.state().baseUrl()),
+                runtime.state().relayDeviceId() == null ? "" : runtime.state().relayDeviceId(),
+                sessionId
+            );
+        }
+
+        boolean matches(TerminalRuntime runtime) {
+            if (runtime == null || !runtime.state().hasSession()) return false;
+            return baseUrl.equals(WebTermUrls.normalizeBaseUrl(runtime.state().baseUrl()))
+                && relayDeviceId.equals(runtime.state().relayDeviceId() == null ? "" : runtime.state().relayDeviceId())
+                && sessionId.equals(runtime.state().sessionId());
+        }
+
+        @Override public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof TerminalReconnectTarget)) return false;
+            TerminalReconnectTarget that = (TerminalReconnectTarget) other;
+            return baseUrl.equals(that.baseUrl)
+                && relayDeviceId.equals(that.relayDeviceId)
+                && sessionId.equals(that.sessionId);
+        }
+
+        @Override public int hashCode() {
+            int result = baseUrl.hashCode();
+            result = 31 * result + relayDeviceId.hashCode();
+            return 31 * result + sessionId.hashCode();
+        }
+    }
+
+    private ServerConfig findServerForRuntime() {
+        if (mTerminalRuntime == null || !mTerminalRuntime.state().hasSession()) return null;
+        String baseUrl = WebTermUrls.normalizeBaseUrl(mTerminalRuntime.state().baseUrl());
+        String relayDeviceId = mTerminalRuntime.state().relayDeviceId() == null ? "" : mTerminalRuntime.state().relayDeviceId();
+        if (mSelectedServer != null
+            && WebTermUrls.normalizeBaseUrl(mSelectedServer.getUrl()).equals(baseUrl)
+            && relayDeviceId.equals(mSelectedServer.getDeviceId() == null ? "" : mSelectedServer.getDeviceId())) {
+            return mSelectedServer;
+        }
+        for (ServerConfig server : serverConfigs.servers()) {
+            String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+            if (WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(baseUrl) && relayDeviceId.equals(deviceId)) {
+                return server;
+            }
+        }
+        return null;
+    }
+
     public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
         updateCurrentSessionCwd(server, sessionId, cwd);
     }
@@ -598,8 +764,8 @@ public final class AppFlowCoordinator implements
     private static boolean sameTerminalSessionId(String a, String b, String deviceId) {
         if (a == null || b == null) return false;
         if (a.equals(b)) return true;
-        return RelayMuxSessionManager.localSessionId(a, deviceId)
-            .equals(RelayMuxSessionManager.localSessionId(b, deviceId));
+        return SessionIds.local(a, deviceId)
+            .equals(SessionIds.local(b, deviceId));
     }
 
     // ── Terminal preferences ───────────────────────────────────────
@@ -608,6 +774,12 @@ public final class AppFlowCoordinator implements
     public String getSavedFontType() { return configStore.getFontType(); }
     public boolean isP2PEnabled() { return configStore.isP2PEnabled(); }
     public void saveP2PEnabled(boolean enabled) { configStore.saveP2PEnabled(enabled); }
+
+    private static boolean isP2pDisabledReason(String reason) {
+        if (reason == null) return false;
+        String lower = reason.toLowerCase(java.util.Locale.US);
+        return lower.contains("p2p disabled") || lower.contains("503");
+    }
 
     public Typeface getTypefaceByName(String type) {
         if ("sans-serif".equals(type)) return Typeface.SANS_SERIF;

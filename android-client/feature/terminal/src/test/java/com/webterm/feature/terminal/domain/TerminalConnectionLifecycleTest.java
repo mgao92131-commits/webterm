@@ -175,6 +175,47 @@ public class TerminalConnectionLifecycleTest {
     }
 
     @Test
+    public void stateSnapshotResetsLastSeqAndOldOutputIsFiltered() {
+        when(manager.isConnected()).thenReturn(true);
+        connection.connect("http://example.com", "cookie", "s1", 0, "device1");
+
+        ArgumentCaptor<RelayMuxSessionManager.ChannelListener> listenerCaptor =
+            ArgumentCaptor.forClass(RelayMuxSessionManager.ChannelListener.class);
+        verify(manager).openTerminalChannel(anyString(), listenerCaptor.capture());
+
+        RelayMuxSessionManager.ChannelListener channelListener = listenerCaptor.getValue();
+        channelListener.onConnected("term:s1");
+
+        // Advance client lastSeq to 100 via normal output.
+        byte[] outputPayload = new byte[8 + 3];
+        writeUint64(outputPayload, 0, 100L);
+        byte[] outputFrame = WebTermProtocol.frame(WebTermProtocol.MSG_OUTPUT, outputPayload).toByteArray();
+        channelListener.onData("term:s1", outputFrame, true);
+
+        assertEquals(100L, connection.getLastSeq());
+        verify(listener).onOutput(eq(100L), any(byte[].class));
+
+        // Server rebuilds the session and sends an authoritative state snapshot with a regressed seq.
+        byte[] statePayload = new byte[8 + 3];
+        writeUint64(statePayload, 0, 5L);
+        byte[] stateFrame = WebTermProtocol.frame(WebTermProtocol.MSG_STATE, statePayload).toByteArray();
+        channelListener.onData("term:s1", stateFrame, true);
+
+        // The snapshot must be accepted and lastSeq must reset to the new epoch.
+        assertEquals(5L, connection.getLastSeq());
+        verify(listener).onState(eq(5L), any(byte[].class));
+
+        // Output from before the snapshot must still be discarded.
+        byte[] staleOutputPayload = new byte[8 + 3];
+        writeUint64(staleOutputPayload, 0, 3L);
+        byte[] staleOutputFrame = WebTermProtocol.frame(WebTermProtocol.MSG_OUTPUT, staleOutputPayload).toByteArray();
+        channelListener.onData("term:s1", staleOutputFrame, true);
+
+        verify(listener, never()).onOutput(eq(3L), any(byte[].class));
+        assertEquals(5L, connection.getLastSeq());
+    }
+
+    @Test
     public void freshReconnectKeepsTheSharedDeviceManagerAndChannels() {
         when(manager.matches("http://example.com", "new-cookie", "device1")).thenReturn(true);
         connection.connect("http://example.com", "cookie", "s1", 0, "device1");

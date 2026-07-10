@@ -1,0 +1,105 @@
+{
+  "generatedAt": "2026-07-10T01:39:42.752Z",
+  "generator": "scripts/generate-snapshot-fixtures.js",
+  "dependencies": {
+    "lockHash": "6169f7f7620237712a013d1904dddc1728e4c9adcb1a06dfafc4d3e63b591b9e",
+    "headlessVersion": "6.0.0",
+    "serializeVersion": "0.14.0",
+    "expectedLockHash": "6169f7f7620237712a013d1904dddc1728e4c9adcb1a06dfafc4d3e63b591b9e",
+    "expectedHeadlessVersion": "6.0.0",
+    "expectedSerializeVersion": "0.14.0",
+    "valid": true
+  },
+  "cases": {
+    "initial-info-json": {
+      "description": "JSON attach only, no hello",
+      "protocol": "webterm.json.v1",
+      "inputHash": "7043fa35523f619dbfb37e57c3e8b3ba06d0e324220271e33456e31d0cb7b64a",
+      "latestSeq": 3
+    },
+    "json-replay": {
+      "description": "JSON hello with replay",
+      "protocol": "webterm.json.v1",
+      "inputHash": "7043fa35523f619dbfb37e57c3e8b3ba06d0e324220271e33456e31d0cb7b64a",
+      "latestSeq": 3
+    },
+    "json-state": {
+      "description": "JSON hello with state fallback",
+      "protocol": "webterm.json.v1",
+      "inputHash": "7043fa35523f619dbfb37e57c3e8b3ba06d0e324220271e33456e31d0cb7b64a",
+      "latestSeq": 3
+    },
+    "binary-replay": {
+      "description": "Binary hello with replay",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "7043fa35523f619dbfb37e57c3e8b3ba06d0e324220271e33456e31d0cb7b64a",
+      "latestSeq": 3
+    },
+    "binary-state": {
+      "description": "Binary hello with state fallback",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "7043fa35523f619dbfb37e57c3e8b3ba06d0e324220271e33456e31d0cb7b64a",
+      "latestSeq": 3
+    },
+    "sgr-and-colors/json-state": {
+      "description": "SGR attributes and color spaces (JSON state)",
+      "protocol": "webterm.json.v1",
+      "inputHash": "f9dde471058597373e80c731ec7dbb3c7c8452d36e5f830da0d735849dce51b2",
+      "latestSeq": 2
+    },
+    "sgr-and-colors/binary-state": {
+      "description": "SGR attributes and color spaces (binary state)",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "f9dde471058597373e80c731ec7dbb3c7c8452d36e5f830da0d735849dce51b2",
+      "latestSeq": 2
+    },
+    "wide-unicode-and-wrap/json-state": {
+      "description": "Wide characters, emoji, ambiguous symbols and soft wrap (JSON state)",
+      "protocol": "webterm.json.v1",
+      "inputHash": "0e7193cd2e2ed6e90ce25f11be6cbf395923edfca34e82c25d51fa7e7581636b",
+      "latestSeq": 2
+    },
+    "wide-unicode-and-wrap/binary-state": {
+      "description": "Wide characters, emoji, ambiguous symbols and soft wrap (binary state)",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "0e7193cd2e2ed6e90ce25f11be6cbf395923edfca34e82c25d51fa7e7581636b",
+      "latestSeq": 2
+    },
+    "alternate-screen/json-state": {
+      "description": "Alternate screen buffer enter, content and exit (JSON state)",
+      "protocol": "webterm.json.v1",
+      "inputHash": "11ea5aa3e8341f5d1d1210397a872992a1ec0bfe72db54f652bccd94a1dc9b7c",
+      "latestSeq": 2
+    },
+    "alternate-screen/binary-state": {
+      "description": "Alternate screen buffer enter, content and exit (binary state)",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "11ea5aa3e8341f5d1d1210397a872992a1ec0bfe72db54f652bccd94a1dc9b7c",
+      "latestSeq": 2
+    },
+    "terminal-modes/json-state": {
+      "description": "Cursor keys, bracketed paste and mouse reporting modes (JSON state)",
+      "protocol": "webterm.json.v1",
+      "inputHash": "9568942cd7e3d900d4b33f20a9413ddd530931ce53897c6d40f5d1ad441afc66",
+      "latestSeq": 1
+    },
+    "terminal-modes/binary-state": {
+      "description": "Cursor keys, bracketed paste and mouse reporting modes (binary state)",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "9568942cd7e3d900d4b33f20a9413ddd530931ce53897c6d40f5d1ad441afc66",
+      "latestSeq": 1
+    },
+    "scrollback-boundary/json-state": {
+      "description": "Output exceeding scrollback limit (JSON state)",
+      "protocol": "webterm.json.v1",
+      "inputHash": "dd6f065157b17e92a8c143f86c3d0ece28af28ae1c1f9235f5962e30da1f33d2",
+      "latestSeq": 50
+    },
+    "scrollback-boundary/binary-state": {
+      "description": "Output exceeding scrollback limit (binary state)",
+      "protocol": "webterm.binary.v1",
+      "inputHash": "dd6f065157b17e92a8c143f86c3d0ece28af28ae1c1f9235f5962e30da1f33d2",
+      "latestSeq": 50
+    }
+  }
+}

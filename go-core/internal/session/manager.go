@@ -32,6 +32,7 @@ type Info struct {
 	ShellState        string        `json:"shellState,omitempty"`
 	LastCommand       string        `json:"lastCommand,omitempty"`
 	LastInputKind     string        `json:"lastInputKind,omitempty"`
+	TTY               string        `json:"tty,omitempty"`
 	Notification      *Notification `json:"notification,omitempty"`
 	Clients           int           `json:"clients"`
 	Cols              int           `json:"cols"`

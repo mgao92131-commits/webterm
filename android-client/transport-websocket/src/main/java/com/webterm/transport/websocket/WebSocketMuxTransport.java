@@ -34,6 +34,7 @@ public final class WebSocketMuxTransport implements MuxTransport {
     public void start(Listener listener) {
         if (wsUrl == null || wsUrl.isEmpty()) {
             close();
+            listener.onError("empty websocket url");
             return;
         }
         enabled = true;

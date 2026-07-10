@@ -142,21 +142,38 @@ func (s *Session) handleBinaryFrame(data []byte) {
 }
 
 func (s *Session) newSocket(id string, protocolName string) *VirtualSocket {
+	var socket *VirtualSocket
+	socket = newVirtualSocket(id, protocolName, s, func() {
+		s.removeSocketIfCurrent(id, socket)
+	}, s.logger)
+
 	s.channelsMu.Lock()
-	defer s.channelsMu.Unlock()
-	if old, ok := s.channels[id]; ok {
+	old := s.channels[id]
+	s.channels[id] = socket
+	s.channelsMu.Unlock()
+
+	// The Android client may re-send ws-connect for the same logical terminal
+	// channel while repairing a lost handshake. Close the replaced socket only
+	// after releasing channelsMu: Close invokes its callback, which also touches
+	// the channel map. The conditional callback ensures an old socket cannot
+	// remove the replacement from the map.
+	if old != nil {
 		_ = old.Close()
 	}
-	socket := newVirtualSocket(id, protocolName, s, func() {
-		s.removeSocket(id)
-	}, s.logger)
-	s.channels[id] = socket
 	return socket
 }
 
 func (s *Session) removeSocket(id string) {
 	s.channelsMu.Lock()
 	delete(s.channels, id)
+	s.channelsMu.Unlock()
+}
+
+func (s *Session) removeSocketIfCurrent(id string, expected *VirtualSocket) {
+	s.channelsMu.Lock()
+	if s.channels[id] == expected {
+		delete(s.channels, id)
+	}
 	s.channelsMu.Unlock()
 }
 

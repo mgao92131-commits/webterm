@@ -82,7 +82,7 @@ public final class TerminalSession extends TerminalOutput {
     private final String[] mArgs;
     private final String[] mEnv;
     private final Integer mTranscriptRows;
-    private final ExternalIOClient mExternalIOClient;
+    private ExternalIOClient mExternalIOClient;
     private byte[] mPendingExternalOutput = new byte[0];
 
 
@@ -122,6 +122,16 @@ public final class TerminalSession extends TerminalOutput {
 
         if (mEmulator != null)
             mEmulator.updateTerminalSessionClient(client);
+    }
+
+    /**
+     * Update the {@link ExternalIOClient} callback for external sessions.
+     * Must be called when a cached {@link TerminalSession} is reused with a new
+     * connection/UI, otherwise input and resize events will be delivered to the
+     * stale callback.
+     */
+    public void updateExternalIOClient(ExternalIOClient externalIOClient) {
+        mExternalIOClient = externalIOClient;
     }
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */

@@ -38,7 +38,6 @@ public final class TerminalConnection {
     private String relayDeviceId;
     private String relayChannelId;
     private volatile State state = State.DISCONNECTED;
-    private int socketGeneration;
     private int reconnectAttempts;
     private boolean pendingForceReconnect;
     private volatile boolean pendingFreshState;
@@ -122,7 +121,6 @@ public final class TerminalConnection {
 
     public void detach() {
         this.state = State.DISCONNECTED;
-        this.socketGeneration++;
         mainHandler.removeCallbacks(sendResizeRunnable);
         // Remove our listener so future events don't reach a dead UI,
         // but do NOT close the channel — it stays alive for reattach.
@@ -135,7 +133,6 @@ public final class TerminalConnection {
 
     public void closeSession() {
         this.state = State.DISCONNECTED;
-        this.socketGeneration++;
         mainHandler.removeCallbacks(sendResizeRunnable);
         if (relayMuxSession != null) {
             relayMuxSession.closeChannel(relayChannelId);
@@ -256,7 +253,6 @@ public final class TerminalConnection {
                 if (!channelId.equals(relayChannelId)) return;
                 if (state == State.DISCONNECTED) return;
                 Log.i(TAG, "channel closed: " + channelId);
-                socketGeneration++;
                 mainHandler.removeCallbacks(sendResizeRunnable);
                 scheduleChannelReconnect();
             }
@@ -265,7 +261,6 @@ public final class TerminalConnection {
                 if (!channelId.equals(relayChannelId)) return;
                 if (state == State.DISCONNECTED) return;
                 state = State.DISCONNECTED;
-                socketGeneration++;
                 mainHandler.removeCallbacks(sendResizeRunnable);
                 listener.onExit(0);
             }
@@ -323,7 +318,10 @@ public final class TerminalConnection {
         if (type == WebTermProtocol.MSG_STATE) {
             if (payload.length >= 8) {
                 long seq = WebTermProtocol.readUint64(payload, 0);
-                if (seq < lastSeq) return;
+                // MSG_STATE is a server-authoritative snapshot. Accept it unconditionally
+                // and reset lastSeq so subsequent MSG_OUTPUT deduplication is judged against
+                // the new epoch. This is required when the server rebuilds the session and
+                // its sequence number regresses.
                 lastSeq = seq;
                 listener.onState(seq, Arrays.copyOfRange(payload, 8, payload.length));
             }

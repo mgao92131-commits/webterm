@@ -1,0 +1,41 @@
+{
+  "protocol": "webterm.json.v1",
+  "description": "SGR attributes and color spaces (JSON state)",
+  "frames": [
+    {
+      "index": 0,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"state\",\"seq\":2,\"data\":\"\\u001b[1mbold\\u001b[0m \\u001b[3mitalic\\u001b[0m \\u001b[4munderline\\r\\n\\u001b[38;5;196;24m256-fg\\u001b[0m \\u001b[48;5;21m256-bg\\u001b[0m \\u001b[38;2;255;128;0mrgb-fg\\u001b[1B\\u001b[20D\\u001b[0m\"}",
+      "decoded": {
+        "type": "state",
+        "seq": 2,
+        "data": "\u001b[1mbold\u001b[0m \u001b[3mitalic\u001b[0m \u001b[4munderline\r\n\u001b[38;5;196;24m256-fg\u001b[0m \u001b[48;5;21m256-bg\u001b[0m \u001b[38;2;255;128;0mrgb-fg\u001b[1B\u001b[20D\u001b[0m"
+      }
+    },
+    {
+      "index": 1,
+      "isBinary": false,
+      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-sgr-and-colors-json-state\",\"instanceId\":\"5d0ceee2-d397-4e8b-a57f-87ead7a7be60\",\"name\":\"Trace\",\"termTitle\":\"\",\"displayTitle\":\"Trace - Terminal\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:43.378Z\",\"lastActiveAt\":\"2026-07-10T01:39:43.471Z\"}}",
+      "decoded": {
+        "type": "info",
+        "data": {
+          "id": "trace-sgr-and-colors-json-state",
+          "instanceId": "5d0ceee2-d397-4e8b-a57f-87ead7a7be60",
+          "name": "Trace",
+          "termTitle": "",
+          "displayTitle": "Trace - Terminal",
+          "cwd": "/private/tmp",
+          "recentInputLines": [],
+          "recentInputHidden": false,
+          "command": "/bin/cat",
+          "status": "running",
+          "clients": 1,
+          "cols": 100,
+          "rows": 30,
+          "createdAt": "2026-07-10T01:39:43.378Z",
+          "lastActiveAt": "2026-07-10T01:39:43.471Z"
+        }
+      }
+    }
+  ]
+}

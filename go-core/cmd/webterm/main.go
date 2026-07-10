@@ -52,6 +52,7 @@ func main() {
 		message := fs.String("message", "", "notification message")
 		source := fs.String("source", "webterm-cli", "notification source")
 		session := fs.String("session", os.Getenv("WEBTERM_SESSION_ID"), "target session id")
+		pid := fs.Int("pid", 0, "caller process id for session resolution")
 		_ = fs.Bool("quiet", false, "suppress non-error output")
 		_ = fs.Bool("q", false, "suppress non-error output")
 		_ = fs.Parse(os.Args[2:])
@@ -60,8 +61,9 @@ func main() {
 		ev.Message = *message
 		ev.Source = *source
 		ev.SessionID = *session
+		ev.PID = *pid
 
-		if ev.SessionID == "" {
+		if ev.SessionID == "" && ev.PID == 0 {
 			ev.PID = os.Getpid()
 		}
 

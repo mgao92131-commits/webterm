@@ -1,6 +1,11 @@
-package com.webterm.core.session;
+package com.webterm.core.api;
 
-import com.webterm.core.api.WebTermUrls;
+/**
+ * Stable identity helpers shared by cache, UI and session modules.
+ *
+ * <p>This is deliberately a value-only type: cache and UI code must not
+ * depend on the mux/session implementation just to identify a terminal.</p>
+ */
 public final class SessionIdentity {
     private SessionIdentity() {}
 

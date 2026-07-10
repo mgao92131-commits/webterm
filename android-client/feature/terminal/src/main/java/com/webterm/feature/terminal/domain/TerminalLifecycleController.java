@@ -11,7 +11,7 @@ import com.webterm.core.cache.CachedTerminal;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.ui.common.command.SessionCommandController;
-import com.webterm.core.session.SessionIdentity;
+import com.webterm.core.api.SessionIdentity;
 import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalScreenBuilder;
 import com.webterm.feature.terminal.WebTermTerminalSessionClient;
@@ -50,6 +50,7 @@ public final class TerminalLifecycleController {
     private boolean terminalAttachStarted;
     private boolean ctrlDown;
     private WebTermTerminalSessionClient activeSessionClient;
+    private final TerminalProjection projection = new TerminalProjection();
 
     @AssistedInject
     public TerminalLifecycleController(
@@ -152,7 +153,7 @@ public final class TerminalLifecycleController {
             host.getTypefaceByName(host.getSavedFontType()),
             new WebTermTerminalViewClient(viewClientHost),
             onBack,
-            () -> { if (terminalConnection != null) terminalConnection.reconnectNow(); },
+            host::requestTerminalReconnect,
             () -> setCtrlKey(!ctrlDown),
             this::write
         );
@@ -168,9 +169,20 @@ public final class TerminalLifecycleController {
         terminalSubtitle.setText(launchState.headerSubtitle);
         connectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton, terminalScreen.reconnectOverlay);
         host.installTerminalInsets(terminalRoot);
-        terminalSession = cached != null && cached.terminalSession != null
-            ? cached.terminalSession
-            : TerminalSession.createExternalSession(TRANSCRIPT_ROWS, sessionClient, sessionClient);
+        if (cached != null && cached.terminalSession != null) {
+            // Reuse the cached emulator state, but re-bind the callbacks to the
+            // current connection/UI. Otherwise the stale mClient/mExternalIOClient
+            // will silently drop input and screen-update notifications.
+            terminalSession = cached.terminalSession;
+            terminalSession.updateTerminalSessionClient(sessionClient);
+            terminalSession.updateExternalIOClient(sessionClient);
+        } else {
+            terminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, sessionClient, sessionClient);
+        }
+        if (cached == null && projection.hasReplayMaterial()) {
+            terminalSession.appendOutput(projection.stateBytes());
+            terminalSession.appendOutput(projection.outputBytes());
+        }
         host.setContentRoot(terminalRoot);
         terminalRoot.post(host::updateKeyboardAvoidance);
         attachTerminalWhenLaidOut();
@@ -198,6 +210,7 @@ public final class TerminalLifecycleController {
         quickBar = null;
         ctrlButton = null;
         activeSessionClient = null;
+        projection.clear();
         terminalAttachStarted = false;
         ctrlDown = false;
         terminalState.clearTerminalDetails();
@@ -212,6 +225,7 @@ public final class TerminalLifecycleController {
     public void detachTerminalView() {
         hideKeyboard();
         cacheCurrentTerminal();
+        if (terminalConnection != null) terminalConnection.detach();
         connectionStatus.clear();
         terminalView = null;
         terminalRoot = null;
@@ -240,6 +254,7 @@ public final class TerminalLifecycleController {
         quickBar = null;
         ctrlButton = null;
         activeSessionClient = null;
+        projection.clear();
         terminalAttachStarted = false;
         ctrlDown = false;
         terminalState.clearTerminalDetails();
@@ -258,8 +273,17 @@ public final class TerminalLifecycleController {
         // If TerminalConnection has no active channel but RelayMuxSessionManager still has one,
         // openTerminalChannel will reattach. Otherwise it creates a new channel.
         // Use cached lastSeq only as seed when TerminalConnection has no lastSeq yet.
-        long seq = terminalConnection.getLastSeq() > 0 ? terminalConnection.getLastSeq() : terminalState.lastSeq();
+        long seq = projection.requiresFreshState()
+            ? 0
+            : (terminalConnection.getLastSeq() > 0 ? terminalConnection.getLastSeq() : terminalState.lastSeq());
         terminalConnection.connect(terminalState.baseUrl(), terminalState.cookie(), terminalState.sessionId(), seq, terminalState.relayDeviceId());
+    }
+
+    public void reconnectFresh(String cookie) {
+        if (terminalConnection == null || !terminalState.hasSession()) return;
+        terminalState.updateCookie(cookie);
+        terminalConnection.updateSize(terminalState.columns(), terminalState.rows());
+        terminalConnection.reconnectFresh(cookie);
     }
 
     public void showKeyboard() {
@@ -291,7 +315,9 @@ public final class TerminalLifecycleController {
 
     public void onOutput(long seq, byte[] data) {
         activity.runOnUiThread(() -> {
-            if (closed.get() || terminalSession == null) return;
+            if (closed.get()) return;
+            projection.recordOutput(seq, data);
+            if (terminalSession == null) return;
             if (seq > 0) {
                 terminalState.onOutput(seq, data);
                 if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
@@ -302,18 +328,31 @@ public final class TerminalLifecycleController {
 
     public void onState(long seq, byte[] data) {
         activity.runOnUiThread(() -> {
-            if (closed.get() || terminalView == null || activeSessionClient == null) return;
-            terminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, activeSessionClient, activeSessionClient);
-            terminalView.attachSession(terminalSession);
-            terminalView.requestFocus();
-            terminalView.updateSize();
+            if (closed.get() || activeSessionClient == null) return;
+            projection.recordState(seq, data);
+            // Reuse the existing session instead of recreating it on every snapshot.
+            // The snapshot itself starts with \x1b[3J\x1b[2J\x1b[H which clears
+            // scrollback and screen, so replaying into the current emulator is safe.
+            // Creating a new session re-initializes the emulator with the current view
+            // size, which can mismatch the size the server used to generate the snapshot
+            // (e.g. after keyboard/rotation changes) and produce a different layout.
+            if (terminalSession == null || terminalSession.getEmulator() == null) {
+                terminalSession = TerminalSession.createExternalSession(TRANSCRIPT_ROWS, activeSessionClient, activeSessionClient);
+                if (terminalView != null) {
+                    terminalView.attachSession(terminalSession);
+                    terminalView.requestFocus();
+                    terminalView.updateSize();
+                }
+            }
             if (seq > 0) {
                 terminalState.onOutput(seq, data);
                 if (terminalConnection != null) terminalConnection.updateLastSeq(seq);
             }
             terminalSession.appendOutput(data);
-            terminalView.onScreenUpdated();
-            host.updateKeyboardAvoidance();
+            if (terminalView != null) {
+                terminalView.onScreenUpdated();
+                host.updateKeyboardAvoidance();
+            }
         });
     }
 
@@ -377,6 +416,9 @@ public final class TerminalLifecycleController {
         terminalView.requestFocus();
         terminalView.updateSize();
         host.updateKeyboardAvoidance();
+        if (projection.requiresFreshState() && terminalConnection != null) {
+            terminalConnection.requestFreshState();
+        }
         // 重新 attach：如果 RelayMuxSessionManager 仍持有该 channel，则复用并替换 listener；
         // 否则 openTerminalChannel 会新建 channel 并发送 hello。
         // hello 中的 lastSeq 优先取运行中 connection 的最新 seq，确保 ReplayAfter 不会重复。
@@ -418,5 +460,6 @@ public final class TerminalLifecycleController {
         void installTerminalInsets(View root);
         void setContentRoot(View root);
         void updateKeyboardAvoidance();
+        void requestTerminalReconnect();
     }
 }

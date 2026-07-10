@@ -1,0 +1,14 @@
+{
+  "cols": 100,
+  "rows": 30,
+  "actions": [
+    {
+      "type": "write",
+      "data": "main screen line\r\n"
+    },
+    {
+      "type": "write",
+      "data": "\u001b[?1049halternate content\u001b[?1049l"
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import android.widget.Toast;
 
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.api.SessionIds;
 import com.webterm.ui.common.dialog.RenameSessionDialogHelper;
 
 public final class SessionCommandController {
@@ -25,7 +25,7 @@ public final class SessionCommandController {
             @Override
             public void onReady(String sessionId) {
                 String canonicalSessionId = server.isRelayDevice()
-                    ? RelayMuxSessionManager.canonicalSessionId(sessionId, server.getDeviceId())
+                    ? SessionIds.canonical(sessionId, server.getDeviceId())
                     : sessionId;
                 activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), canonicalSessionId, "Terminal", "", server.isRelayDevice(), server.getDeviceId()));
             }

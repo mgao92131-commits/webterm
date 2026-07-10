@@ -38,11 +38,7 @@ public class TerminalConnectionIntegrationTest {
             r.run();
             return true;
         });
-        when(testHandler.postDelayed(any(Runnable.class), anyLong())).thenAnswer(invocation -> {
-            Runnable r = invocation.getArgument(0);
-            r.run();
-            return true;
-        });
+        when(testHandler.postDelayed(any(Runnable.class), anyLong())).thenReturn(true);
 
         transport = new FakeMuxTransport();
         registry = new RelayMuxSessionRegistry(null, testHandler, new FakeTransportFactory(transport));
@@ -75,9 +71,16 @@ public class TerminalConnectionIntegrationTest {
         TerminalConnection connection2 = createConnection();
         connection2.connect("http://example.com", "cookie", "s1", 0, "device1");
 
-        assertEquals("reattach should reuse existing channel (no extra ws-connect)",
-            1, transport.wsConnectCount("term:s1"));
-        assertEquals("reattached connection should be connected",
+        // After detach, the channel listener is NO_OP; re-attach must re-handshake
+        // to force the server to replace any stale client bound to this tunnel id.
+        assertEquals("reattach should send a new ws-connect for the existing channel",
+            2, transport.wsConnectCount("term:s1"));
+        assertEquals("reattached connection should wait for server ack",
+            TerminalConnection.State.CONNECTING, connection2.getState());
+
+        transport.simulateText("{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"term:s1\"}");
+
+        assertEquals("reattached connection should be connected after ws-connected",
             TerminalConnection.State.CONNECTED, connection2.getState());
 
         HelloFrame hello2 = transport.lastHelloFrame("term:s1");

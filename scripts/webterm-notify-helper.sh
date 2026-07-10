@@ -3,7 +3,11 @@ set -euo pipefail
 
 # WebTerm Agent Hook 辅助脚本。
 # 从 stdin 读取 Agent 事件 JSON，提取最有意义的文本，然后调用 webterm notify。
-# 目标 session 由 webterm notify 通过自身 PID 交给后端解析，本脚本不再判断。
+#
+# 目标 session 解析顺序：
+#   1. 环境变量 WEBTERM_SESSION_ID
+#   2. 调用者进程（PPID）所在 TTY 对应的 WebTerm session
+#   3.  fallback：把调用者 PID 交给 webterm notify / agent 解析
 #
 # 用法：
 #   webterm-notify-helper <level> <default-message> <source>
@@ -111,7 +115,71 @@ WEBTERM="$(resolve_webterm)" || {
   exit 0
 }
 
+# 通过调用者 PID 的 TTY 查找 WebTerm session ID。
+# 返回：找到时打印 session id，找不到时打印空行。
+resolve_session_by_tty() {
+  local caller_pid="$1"
+  local control_addr="${2:-http://127.0.0.1:18081}"
+
+  local tty
+  tty="$(ps -o tty= -p "$caller_pid" 2>/dev/null | tr -d ' ')" || true
+  if [ -z "$tty" ] || [ "$tty" = "??" ] || [ "$tty" = "?" ]; then
+    return 0
+  fi
+
+  # ps 在 macOS 上可能返回 s023，而 session.ttyPath 是 /dev/ttys023
+  if [[ "$tty" != /dev/* ]]; then
+    tty="/dev/$tty"
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  python3 -c '
+import sys, json, subprocess
+tty = sys.argv[1]
+addr = sys.argv[2]
+try:
+    out = subprocess.check_output(["curl", "-s", "--max-time", "3", f"{addr}/control/sessions"], text=True)
+    sessions = json.loads(out)
+    for s in sessions:
+        if s.get("tty") == tty:
+            print(s.get("id", ""))
+            sys.exit(0)
+except Exception:
+    pass
+' "$tty" "$control_addr" 2>/dev/null || true
+}
+
+# 确定目标 session / pid
+session_id="${WEBTERM_SESSION_ID:-}"
+caller_pid="${WEBTERM_HOOK_PID:-$PPID}"
+control_addr="${WEBTERM_CONTROL_ADDR:-http://127.0.0.1:18081}"
+
+if [ -z "$session_id" ]; then
+  resolved_session="$(resolve_session_by_tty "$caller_pid" "$control_addr")" || true
+  if [ -n "$resolved_session" ]; then
+    session_id="$resolved_session"
+  fi
+fi
+
+notify_args=(
+  notify
+  --level "$level"
+  --message "$msg"
+  --source "$source"
+)
+
+if [ -n "$session_id" ]; then
+  notify_args+=(--session "$session_id")
+else
+  # 没有 session id，把调用者 PID 传过去，让 agent 沿父进程链解析
+  notify_args+=(--pid "$caller_pid")
+  echo "webterm-notify-helper: cannot resolve WebTerm session for pid $caller_pid (is this Agent started inside a WebTerm terminal?)" >&2
+fi
+
 # 调用 webterm notify；失败也不应中断 agent 工作流
-"$WEBTERM" notify --level "$level" --message "$msg" --source "$source" >/dev/null 2>&1 || true
+"$WEBTERM" "${notify_args[@]}" >/dev/null 2>&1 || true
 
 exit 0

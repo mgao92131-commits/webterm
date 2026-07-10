@@ -9,7 +9,7 @@ import com.webterm.core.cache.CachedTerminal;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.core.session.RelayMuxSessionManager;
+import com.webterm.core.api.SessionIds;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -596,7 +596,7 @@ public final class SessionRepository {
     }
 
     private static String normalizeSessionId(ServerConfig server, String sessionId) {
-        return RelayMuxSessionManager.localSessionId(sessionId, server.getDeviceId());
+        return SessionIds.local(sessionId, server.getDeviceId());
     }
 
     private static void upsertSession(JSONArray sessions, JSONObject normalizedData) {
