@@ -168,7 +168,27 @@ func (s *Server) dispatch(ev protocol.HookEvent) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 	terminal.ApplyHookEvent(ev)
+	s.dispatchAgentNotification(sessionID, ev)
 	return nil
+}
+
+// dispatchAgentNotification 把 Hook 事件同时以设备级 agent_notification 下发到 Android。
+// 首版 deviceID 留空，依赖底层单设备回退；多设备精确路由留待后续。失败仅记录，不影响原有 MSG_HOOK 路径。
+func (s *Server) dispatchAgentNotification(sessionID string, ev protocol.HookEvent) {
+	dispatcher := s.app.AgentNotificationDispatcher()
+	if dispatcher == nil {
+		return
+	}
+	level := ev.Level
+	title := ev.Source
+	if title == "" {
+		title = ev.Type
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := dispatcher.Notify(ctx, "", sessionID, level, title, ev.Message); err != nil {
+		s.app.Log("warn", "hook", fmt.Sprintf("agent_notification dispatch failed: %v", err))
+	}
 }
 
 func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {

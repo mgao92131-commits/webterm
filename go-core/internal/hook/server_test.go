@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
@@ -260,4 +261,56 @@ func TestSendCommandOfferAndSaved(t *testing.T) {
 	if statuses[len(statuses)-1] != string(filesend.StatusSaved) {
 		t.Fatalf("last status = %q, want saved; all=%v", statuses[len(statuses)-1], statuses)
 	}
+}
+
+func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
+	application, socketPath, cancel := startHookServer(t)
+	defer cancel()
+
+	sender := &recordingSender{}
+	application.FileSendService().RegisterSender("dev-1", sender)
+
+	terminal, err := application.Sessions().Create("work", ".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer terminal.Close()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	ev := protocol.HookEvent{
+		Type:      "notify",
+		SessionID: terminal.ID(),
+		Level:     "error",
+		Message:   "agent failed",
+		Source:    "claude-code",
+	}
+	data, _ := json.Marshal(ev)
+	if _, err := conn.Write(append(data, '\n')); err != nil {
+		t.Fatalf("write event: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msg := sender.last()
+		if msg != nil && msg["type"] == agentnotify.TypeAgentNotification {
+			if msg["session_id"] != terminal.ID() {
+				t.Fatalf("session_id=%v", msg["session_id"])
+			}
+			if msg["level"] != "error" || msg["message"] != "agent failed" {
+				t.Fatalf("msg=%v", msg)
+			}
+			eid, _ := msg["event_id"].(string)
+			if len(eid) < 8 || eid[:3] != "ev_" {
+				t.Fatalf("event_id=%q", eid)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("agent_notification not dispatched")
 }

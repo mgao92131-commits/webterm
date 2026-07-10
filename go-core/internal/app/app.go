@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"webterm/go-core/internal/agenthooks"
+	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/logs"
@@ -19,6 +20,7 @@ type App struct {
 	version             string
 	sessions            *session.Manager
 	fileSend            *filesend.Service
+	agentNotify         *agentnotify.Dispatcher
 	logger              *logs.Logger
 	mu              sync.RWMutex
 	runtimeMode     string
@@ -57,6 +59,7 @@ func New(cfg config.Config, version string) *App {
 
 	manager.SetSessionEnv(sessionEnv)
 
+	fileSendSvc := filesend.New(0)
 	application := &App{
 		cfg:         cfg,
 		version:     version,
@@ -64,7 +67,8 @@ func New(cfg config.Config, version string) *App {
 		runtimeMode: cfg.Mode,
 		socketPath:  socketPath,
 		sessions:    manager,
-		fileSend:    filesend.New(0),
+		fileSend:    fileSendSvc,
+		agentNotify: agentnotify.New(fileSendSvc),
 		direct: DirectStatus{
 			Listening: false,
 			Addr:      cfg.Direct.Addr,
@@ -165,6 +169,10 @@ func (app *App) Sessions() *session.Manager {
 
 func (app *App) FileSendService() *filesend.Service {
 	return app.fileSend
+}
+
+func (app *App) AgentNotificationDispatcher() *agentnotify.Dispatcher {
+	return app.agentNotify
 }
 
 func (app *App) SocketPath() string {

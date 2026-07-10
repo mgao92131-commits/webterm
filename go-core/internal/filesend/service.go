@@ -198,6 +198,24 @@ func (s *Service) SendOffer(ctx context.Context, task *Task) error {
 	return nil
 }
 
+// SendControlToDevice 向目标设备发送一条任意设备级 mux control 消息。
+// deviceID 为空且当前仅注册一个 sender 时默认发往该 sender（单设备直连场景）。
+// 供 file_send 之外的设备级消息（如 agent_notification）复用同一发送通道。
+func (s *Service) SendControlToDevice(ctx context.Context, deviceID string, msg map[string]any) error {
+	s.mu.RLock()
+	sender := s.senders[deviceID]
+	if sender == nil && deviceID == "" && len(s.senders) == 1 {
+		for _, only := range s.senders {
+			sender = only
+		}
+	}
+	s.mu.RUnlock()
+	if sender == nil {
+		return fmt.Errorf("no control sender for device %q", deviceID)
+	}
+	return sender.SendControl(ctx, msg)
+}
+
 // HandleControl 路由一条 file_send.* 控制消息到对应任务。
 // 返回 true 表示消息已被本服务处理；非 file_send 消息返回 false。
 func (s *Service) HandleControl(msg map[string]any) bool {
