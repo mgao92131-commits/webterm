@@ -30,17 +30,10 @@ func main() {
 		socketPath = os.ExpandEnv("$HOME/.webterm/webterm.sock")
 	}
 
-	// download/send 是命令协议，单独处理
+	// send 是命令协议，单独处理
 	if cmd == "send" {
 		if err := runSend(socketPath, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "[WebTerm] 发送失败：%s\n", mapErrorToChinese(err.Error()))
-			os.Exit(1)
-		}
-		return
-	}
-	if cmd == "download" || cmd == "dl" {
-		if err := runDownload(socketPath, os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "[WebTerm] Download failed: %s\n", mapErrorToChinese(err.Error()))
 			os.Exit(1)
 		}
 		return
@@ -141,48 +134,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to send event: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func runDownload(socketPath string, args []string) error {
-	fs := flag.NewFlagSet("download", flag.ExitOnError)
-	quiet := fs.Bool("quiet", false, "suppress non-error output")
-	_ = fs.Bool("q", false, "suppress non-error output")
-	_ = fs.Parse(args)
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: webterm download <file>")
-		os.Exit(2)
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
-	sessionID := os.Getenv("WEBTERM_SESSION_ID")
-	pid := 0
-	if sessionID == "" {
-		pid = os.Getppid() // 用 PPID（Shell PID）解析 session
-	}
-
-	cmd := protocol.CLICommand{
-		Kind:      "command",
-		Type:      "download",
-		SessionID: sessionID,
-		PID:       pid,
-		CWD:       cwd,
-		FilePath:  expandPath(fs.Arg(0)),
-		Timestamp: time.Now().Unix(),
-	}
-
-	if !*quiet {
-		fmt.Fprintf(os.Stderr, "[WebTerm] Preparing download: %s\n", filepath.Base(cmd.FilePath))
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
-	return sendCommandAndListen(ctx, socketPath, cmd, *quiet)
 }
 
 func runSend(socketPath string, args []string) error {
@@ -425,12 +376,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  send <file>            send a file to the connected Android device")
-	fmt.Fprintln(os.Stderr, "  download <file>        download a file to Android (deprecated)")
 	fmt.Fprintln(os.Stderr, "  notify --level idle|running|error --message MSG --source SRC [--session ID]")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE")
 	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --last-command CMD --input-kind shell|agent_prompt|agent_tool")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
-	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify/download will fall back to PID resolution")
+	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify/send will fall back to PID resolution")
 	fmt.Fprintln(os.Stderr, "  WEBTERM_SOCKET_PATH  optional, defaults to $HOME/.webterm/webterm.sock")
 }

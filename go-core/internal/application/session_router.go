@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"strconv"
 	"strings"
 
 	"webterm/go-core/internal/filesend"
@@ -232,14 +230,6 @@ type HTTPResult struct {
 func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.Header, body io.Reader) (*HTTPResult, error) {
 	path := cleanPath(rawPath)
 
-	if strings.HasPrefix(path, "/api/fs/download") {
-		parsed, err := url.Parse(rawPath)
-		if err != nil {
-			return nil, err
-		}
-		return r.handleDownload(parsed.RawQuery)
-	}
-
 	if strings.HasPrefix(path, "/api/file-send/") {
 		if r.fileSend == nil {
 			return &HTTPResult{
@@ -268,115 +258,6 @@ func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.H
 		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 		Data:       data,
 	}, nil
-}
-
-func (r *SessionRouter) handleDownload(query string) (*HTTPResult, error) {
-	params, err := url.ParseQuery(query)
-	if err != nil {
-		return nil, err
-	}
-	downloadID := params.Get("downloadId")
-	if downloadID == "" {
-		return nil, errors.New("missing downloadId")
-	}
-
-	task, ok := r.manager.GetDownloadTask(downloadID)
-	if !ok {
-		return &HTTPResult{
-			StatusCode: http.StatusGone,
-			Data:       []byte("download task not found"),
-		}, nil
-	}
-	if task.SessionID != params.Get("sessionId") {
-		r.notifyDownloadStatus(task, "failed", "session mismatch")
-		return &HTTPResult{
-			StatusCode: http.StatusGone,
-			Data:       []byte("download task not found"),
-		}, nil
-	}
-
-	file, err := os.Open(task.Path)
-	if err != nil {
-		r.notifyDownloadStatus(task, "failed", err.Error())
-		return &HTTPResult{
-			StatusCode: http.StatusForbidden,
-			Data:       []byte(err.Error()),
-		}, nil
-	}
-
-	header := http.Header{}
-	header.Set("Content-Type", "application/octet-stream")
-	header.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, task.FileName))
-	header.Set("Content-Length", strconv.FormatInt(task.Size, 10))
-
-	r.notifyDownloadStatus(task, "started", "")
-
-	return &HTTPResult{
-		StatusCode: http.StatusOK,
-		Header:     header,
-		Body:       &downloadNotifyReader{ReadCloser: file, task: task},
-	}, nil
-}
-
-// downloadNotifyReader 在读取到 EOF 时自动发送 complete 状态。
-type downloadNotifyReader struct {
-	io.ReadCloser
-	task *session.DownloadTask
-	done bool
-}
-
-func (r *downloadNotifyReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if err == io.EOF && !r.done {
-		r.done = true
-		notifyDownloadTaskComplete(r.task)
-	}
-	return n, err
-}
-
-func notifyDownloadTaskComplete(task *session.DownloadTask) {
-	if task == nil {
-		return
-	}
-	select {
-	case task.StateChan <- protocol.CLIResponse{
-		Kind:             "response",
-		Type:             "download_status",
-		Status:           "complete",
-		DownloadID:       task.ID,
-		BytesTransferred: task.Size,
-		TotalBytes:       task.Size,
-	}:
-	default:
-	}
-}
-
-func (r *SessionRouter) notifyDownloadStatus(task *session.DownloadTask, status, errMsg string) {
-	if task == nil {
-		return
-	}
-	var resp protocol.CLIResponse
-	if status == "failed" {
-		resp = protocol.CLIResponse{
-			Kind:       "response",
-			Type:       "download_status",
-			Status:     "failed",
-			DownloadID: task.ID,
-			Error:      errMsg,
-		}
-	} else {
-		resp = protocol.CLIResponse{
-			Kind:       "response",
-			Type:       "download_status",
-			Status:     status,
-			DownloadID: task.ID,
-			TotalBytes: task.Size,
-		}
-	}
-	select {
-	case task.StateChan <- resp:
-	default:
-	}
 }
 
 // --- helpers ---

@@ -227,11 +227,6 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 		return
 	}
 
-	if strings.HasPrefix(path, "/api/fs/") {
-		direct.routeFS(w, r)
-		return
-	}
-
 	if strings.HasPrefix(path, "/api/file-send/") {
 		direct.routeFS(w, r)
 		return

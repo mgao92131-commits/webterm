@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -271,18 +269,6 @@ func (client *Client) handleBinary(frame []byte) {
 	case protocol.MsgTitle:
 		// Client-originated title updates are accepted later when manager
 		// broadcasts are implemented.
-	case protocol.MsgDownloadProgress:
-		parts := strings.SplitN(string(payload), ":", 3)
-		if len(parts) != 3 {
-			return
-		}
-		downloadID := parts[0]
-		current, err1 := strconv.ParseInt(parts[1], 10, 64)
-		total, err2 := strconv.ParseInt(parts[2], 10, 64)
-		if err1 != nil || err2 != nil {
-			return
-		}
-		client.session.OnDownloadProgress(downloadID, current, total)
 	}
 }
 

@@ -58,9 +58,9 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Path:   r.URL.Path,
 		Query:  r.URL.RawQuery,
 	}
-	// 文件下载、文件发送等流式响应不设总超时
+	// 文件发送等流式响应不设总超时
 	timeout := gateway.timeout
-	if strings.HasPrefix(r.URL.Path, "/api/fs/") || strings.HasPrefix(r.URL.Path, "/api/file-send/") {
+	if strings.HasPrefix(r.URL.Path, "/api/file-send/") {
 		timeout = 0
 	}
 	handle := gateway.streams.CreateStream(relaycore.StreamKindHTTP, route, user.ID, presence.DeviceID, presence.AgentConnectionID, timeout)
@@ -100,7 +100,7 @@ func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Con
 
 	var timer *time.Timer
 	var timerC <-chan time.Time
-	// 文件流（/api/file-send/、/api/fs/）由调用方传入 streamTimeout=0，禁用总超时，
+	// 文件流（/api/file-send/）由调用方传入 streamTimeout=0，禁用总超时，
 	// 避免大文件/慢链路在 30s 处被强制中断（见计划 Phase 8）。
 	if streamTimeout > 0 {
 		timer = time.NewTimer(streamTimeout)

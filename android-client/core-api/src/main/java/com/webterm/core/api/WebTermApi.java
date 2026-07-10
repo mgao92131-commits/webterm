@@ -273,19 +273,6 @@ public final class WebTermApi {
         });
     }
 
-    public Response downloadFile(ServerConfig server, String downloadId, String sessionId) throws IOException {
-        String url = server.getUrl() + "/api/fs/download" +
-            "?downloadId=" + WebTermUrls.encodePath(downloadId) +
-            "&sessionId=" + WebTermUrls.encodePath(sessionId);
-        Request.Builder builder = new Request.Builder()
-            .url(url)
-            .header("Cookie", server.getCookie() != null ? server.getCookie() : "");
-        if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
-            builder.header("x-device-id", server.getDeviceId());
-        }
-        return http.newCall(builder.build()).execute();
-    }
-
     public void createSession(ServerConfig server, SessionCreateCallback callback) {
         JSONObject body = new JSONObject();
         try {

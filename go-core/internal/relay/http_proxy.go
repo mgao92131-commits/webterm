@@ -137,8 +137,8 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 		path += "?" + meta.Query
 	}
 
-	// 文件下载、文件发送等流式接口走 RouteHTTPv2
-	if strings.HasPrefix(meta.Path, "/api/fs/") || strings.HasPrefix(meta.Path, "/api/file-send/") {
+	// 文件发送等流式接口走 RouteHTTPv2
+	if strings.HasPrefix(meta.Path, "/api/file-send/") {
 		p.respondStream(ctx, conn, streamID, meta, body, done)
 		return
 	}
