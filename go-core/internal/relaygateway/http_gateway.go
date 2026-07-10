@@ -91,17 +91,19 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "send request body failed", http.StatusBadGateway)
 		return
 	}
-	gateway.writeResponse(w, r.Context(), handle)
+	gateway.writeResponse(w, r.Context(), handle, timeout)
 }
 
-func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Context, handle relayrouter.StreamHandle) {
+func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Context, handle relayrouter.StreamHandle, streamTimeout time.Duration) {
 	statusCode := http.StatusOK
 	wroteHeader := false
 
 	var timer *time.Timer
 	var timerC <-chan time.Time
-	if gateway.timeout > 0 {
-		timer = time.NewTimer(gateway.timeout)
+	// 文件流（/api/file-send/、/api/fs/）由调用方传入 streamTimeout=0，禁用总超时，
+	// 避免大文件/慢链路在 30s 处被强制中断（见计划 Phase 8）。
+	if streamTimeout > 0 {
+		timer = time.NewTimer(streamTimeout)
 		defer timer.Stop()
 		timerC = timer.C
 	}
