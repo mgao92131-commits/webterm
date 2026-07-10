@@ -1,6 +1,7 @@
 package filesend
 
 import (
+	"io"
 	"sync"
 	"time"
 
@@ -29,6 +30,30 @@ type Task struct {
 
 	mu        sync.RWMutex
 	closeOnce sync.Once
+
+	// stream 持有当前进行中的 HTTP 响应体（io.PipeReader），用于在控制面收到
+	// cancelled/failed 时立即关闭上游流，避免在 Android 取消后仍读完整个文件。
+	streamMu sync.Mutex
+	stream   io.Closer
+}
+
+// bindStream 绑定/解绑当前流式响应体；传 nil 表示解绑。
+func (t *Task) bindStream(c io.Closer) {
+	t.streamMu.Lock()
+	t.stream = c
+	t.streamMu.Unlock()
+}
+
+// abortStream 关闭当前流式响应体（若存在），使上游 io.Copy 立即收到 broken pipe 并退出。
+// Close 在锁外调用，避免与 copy goroutine 的状态写相互阻塞。
+func (t *Task) abortStream() {
+	t.streamMu.Lock()
+	c := t.stream
+	t.stream = nil
+	t.streamMu.Unlock()
+	if c != nil {
+		_ = c.Close()
+	}
 }
 
 // Snapshot 返回任务当前状态的只读副本。

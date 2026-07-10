@@ -57,8 +57,12 @@ func (s *Service) HandleFileSendRequest(transferID, token string) HTTPResult {
 	}
 
 	// 用 pipe 流式转发，避免把整个文件读入内存。
+	// 把 PipeReader 绑定到任务：当控制面收到 cancelled/failed 时，Service 会关闭 pr，
+	// 使 pw.Write 立即返回 broken pipe，从而中止上游 io.Copy 并关闭源文件。
 	pr, pw := io.Pipe()
+	task.bindStream(pr)
 	go func() {
+		defer task.bindStream(nil)
 		_, copyErr := io.Copy(pw, file)
 		_ = file.Close()
 		_ = pw.CloseWithError(copyErr)

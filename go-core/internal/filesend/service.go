@@ -265,11 +265,13 @@ func (s *Service) HandleControl(msg map[string]any) bool {
 		errMsg, _ := msg["error"].(string)
 		if task.SetFailed(errMsg) {
 			s.emit(task, StatusFailed, 0, errMsg)
+			task.abortStream()
 			s.Remove(task.ID)
 		}
 	case TypeCancelled:
 		if task.SetStatus(StatusCancelled) {
 			s.emit(task, StatusCancelled, 0, "")
+			task.abortStream()
 			s.Remove(task.ID)
 		}
 	}
