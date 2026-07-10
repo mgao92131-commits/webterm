@@ -9,8 +9,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"webterm/go-core/internal/protocol"
 )
 
 func TestManagerCreateListRenameClose(t *testing.T) {
@@ -222,72 +220,4 @@ func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 	}
 }
 
-func TestDownloadTaskConsumeAndPeek(t *testing.T) {
-	manager := NewManager()
 
-	task := &DownloadTask{
-		ID:        "d_test",
-		SessionID: "s1",
-		Path:      "/tmp/test.txt",
-		FileName:  "test.txt",
-		Size:      1234,
-		StateChan: make(chan protocol.CLIResponse, 4),
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-	}
-	manager.AddDownloadTask("s1", task)
-
-	// Peek 可以重复读到任务
-	peek1, ok := manager.PeekDownloadTask("d_test")
-	if !ok || peek1.ID != "d_test" {
-		t.Fatalf("first Peek failed")
-	}
-	peek2, ok := manager.PeekDownloadTask("d_test")
-	if !ok || peek2.ID != "d_test" {
-		t.Fatalf("second Peek failed")
-	}
-
-	// 首次 Get 消费成功，任务仍保留（供 Peek 查找进度）
-	got, ok := manager.GetDownloadTask("d_test")
-	if !ok || got.ID != "d_test" || !got.consumed {
-		t.Fatalf("first Get should consume task")
-	}
-
-	// 再次 Get 应失败（一次性消费）
-	if _, ok := manager.GetDownloadTask("d_test"); ok {
-		t.Fatalf("second Get should fail")
-	}
-
-	// Peek 仍能查到任务，直到 RemoveDownloadTask 删除
-	if _, ok := manager.PeekDownloadTask("d_test"); !ok {
-		t.Fatalf("Peek after consume should still find task")
-	}
-
-	manager.RemoveDownloadTask("d_test")
-	if _, ok := manager.PeekDownloadTask("d_test"); ok {
-		t.Fatalf("Peek after remove should fail")
-	}
-}
-
-func TestDownloadTaskExpires(t *testing.T) {
-	manager := NewManager()
-
-	task := &DownloadTask{
-		ID:        "d_expired",
-		SessionID: "s1",
-		Path:      "/tmp/test.txt",
-		FileName:  "test.txt",
-		Size:      100,
-		StateChan: make(chan protocol.CLIResponse, 1),
-		CreatedAt: time.Now().Add(-20 * time.Minute),
-		ExpiresAt: time.Now().Add(-10 * time.Minute),
-	}
-	manager.AddDownloadTask("s1", task)
-
-	if _, ok := manager.GetDownloadTask("d_expired"); ok {
-		t.Fatalf("expired task should not be returned")
-	}
-	if _, ok := manager.PeekDownloadTask("d_expired"); ok {
-		t.Fatalf("expired task should not be peeked")
-	}
-}

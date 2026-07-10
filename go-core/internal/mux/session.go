@@ -198,6 +198,12 @@ func (s *Session) closeAllChannels() {
 	}
 }
 
+// SendControl 发送一条设备级文本控制消息，不经过虚拟通道。
+// 用于 file_send.*、agent_notification 等控制面协议。
+func (s *Session) SendControl(ctx context.Context, msg map[string]any) error {
+	return s.sendJSON(ctx, msg)
+}
+
 func (s *Session) writeBinary(ctx context.Context, data []byte) error {
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

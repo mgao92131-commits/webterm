@@ -19,6 +19,7 @@ import (
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 	"webterm/go-core/internal/testutil"
@@ -513,4 +514,56 @@ func writeMuxText(ctx context.Context, conn *websocket.Conn, id string, payload 
 		return err
 	}
 	return conn.Write(ctx, websocket.MessageBinary, frame)
+}
+
+type noopSocket struct{}
+
+func (noopSocket) Read(ctx context.Context) (session.MessageType, []byte, error) {
+	<-ctx.Done()
+	return 0, nil, ctx.Err()
+}
+func (noopSocket) Write(context.Context, session.MessageType, []byte) error { return nil }
+func (noopSocket) Close() error                                             { return nil }
+
+func TestBindDeviceSenderRegistersAndUnregisters(t *testing.T) {
+	cfg := config.Config{Mode: config.ModeDirect, Direct: config.DirectConfig{Addr: "127.0.0.1:0"}}
+	application := app.New(cfg, "test")
+	server := New(cfg.Direct, application)
+	svc := application.FileSendService()
+
+	sess := mux.Serve(noopSocket{}, &mux.ServeOpts{})
+
+	if svc.HasSender("dev-1") {
+		t.Fatal("sender should not be registered before bind")
+	}
+	unbind := server.bindDeviceSender("dev-1", sess)
+	if !svc.HasSender("dev-1") {
+		t.Fatal("sender should be registered after bind")
+	}
+	unbind()
+	if svc.HasSender("dev-1") {
+		t.Fatal("sender should be unregistered after unbind")
+	}
+}
+
+func TestBindDeviceSenderEmptyDeviceUsesPlaceholder(t *testing.T) {
+	cfg := config.Config{Mode: config.ModeDirect, Direct: config.DirectConfig{Addr: "127.0.0.1:0"}}
+	application := app.New(cfg, "test")
+	server := New(cfg.Direct, application)
+	svc := application.FileSendService()
+
+	sess := mux.Serve(noopSocket{}, &mux.ServeOpts{})
+	unbind := server.bindDeviceSender("", sess)
+	defer unbind()
+	if !svc.HasSender("direct") {
+		t.Fatal("empty deviceID should register under placeholder key 'direct'")
+	}
+}
+
+func TestBindDeviceSenderNilSessionIsNoOp(t *testing.T) {
+	cfg := config.Config{Mode: config.ModeDirect, Direct: config.DirectConfig{Addr: "127.0.0.1:0"}}
+	application := app.New(cfg, "test")
+	server := New(cfg.Direct, application)
+	unbind := server.bindDeviceSender("dev-1", nil)
+	unbind() // 不应 panic
 }

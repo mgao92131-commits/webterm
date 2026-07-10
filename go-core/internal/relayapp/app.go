@@ -72,7 +72,7 @@ func NewWithEvents(config Config, store *relaystore.MemoryStore, registry *relay
 	p2pGateway := relaygateway.NewP2PGateway(store, registry, streams)
 	mux.Handle("/api/sessions", httpGateway)
 	mux.Handle("/api/sessions/", httpGateway)
-	mux.Handle("/api/fs/", httpGateway)
+	mux.Handle("/api/file-send/", httpGateway)
 	mux.Handle("/api/p2p/offer", p2pGateway)
 	mux.Handle("/api/p2p/ice", p2pGateway)
 	mux.Handle("/ws/sessions", wsGateway)

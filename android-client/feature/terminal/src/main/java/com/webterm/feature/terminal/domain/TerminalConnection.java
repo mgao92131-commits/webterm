@@ -400,11 +400,6 @@ public final class TerminalConnection {
         return relayMuxSession.sendTunnelFrame(relayChannelId, WebTermProtocol.frame(type, payload).toByteArray(), true);
     }
 
-    public void sendDownloadProgress(String downloadId, long current, long total) {
-        String payload = downloadId + ":" + current + ":" + total;
-        sendBinary(WebTermProtocol.MSG_DOWNLOAD_PROGRESS, payload.getBytes(StandardCharsets.UTF_8));
-    }
-
     public interface Listener {
         void onConnectionStatus(State state, int reconnectAttempts);
         void onOutput(long seq, byte[] data);

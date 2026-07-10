@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
 )
 
@@ -167,7 +168,27 @@ func (s *Server) dispatch(ev protocol.HookEvent) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 	terminal.ApplyHookEvent(ev)
+	s.dispatchAgentNotification(sessionID, ev)
 	return nil
+}
+
+// dispatchAgentNotification 把 Hook 事件同时以设备级 agent_notification 下发到 Android。
+// 首版 deviceID 留空，依赖底层单设备回退；多设备精确路由留待后续。失败仅记录，不影响原有 MSG_HOOK 路径。
+func (s *Server) dispatchAgentNotification(sessionID string, ev protocol.HookEvent) {
+	dispatcher := s.app.AgentNotificationDispatcher()
+	if dispatcher == nil {
+		return
+	}
+	level := ev.Level
+	title := ev.Source
+	if title == "" {
+		title = ev.Type
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := dispatcher.Notify(ctx, "", sessionID, level, title, ev.Message); err != nil {
+		s.app.Log("warn", "hook", fmt.Sprintf("agent_notification dispatch failed: %v", err))
+	}
 }
 
 func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
@@ -216,7 +237,86 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 		return
 	}
 
+	if cmd.Type == "send" {
+		s.handleSendCommand(conn, cmd, sessionID)
+		return
+	}
+
 	terminal.HandleCLICommand(conn, cmd)
+}
+
+func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessionID string) {
+	fail := func(errCode string) {
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "file_send_status",
+			Status: string(filesend.StatusFailed),
+			Error:  errCode,
+		})
+	}
+
+	if cmd.FilePath == "" {
+		fail("missing_file_path")
+		return
+	}
+	absPath := cmd.FilePath
+	if !filepath.IsAbs(absPath) && cmd.CWD != "" {
+		absPath = filepath.Join(cmd.CWD, absPath)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		fail("file_not_found")
+		return
+	}
+
+	svc := s.app.FileSendService()
+	task, err := svc.CreateTask(filesend.CreateTaskOptions{
+		SessionID: sessionID,
+		Path:      absPath,
+		FileName:  info.Name(),
+		Size:      info.Size(),
+	})
+	if err != nil {
+		fail("create_task_failed")
+		return
+	}
+
+	// 先发一个 offered 响应，让 CLI 立即进入等待态。
+	writeResponse(conn, protocol.CLIResponse{
+		Kind:       "response",
+		Type:       "file_send_status",
+		Status:     string(filesend.StatusOffered),
+		DownloadID: task.ID,
+		FilePath:   task.FileName,
+		TotalBytes: task.Size,
+	})
+
+	if err := svc.SendOffer(context.Background(), task); err != nil {
+		// 里程碑 B：设备级 sender 尚未注册（Android WebTermDeviceService 在里程碑 C 接入）。
+		s.app.Log("warn", "hook", fmt.Sprintf("send offer not delivered: %v", err))
+		task.SetFailed("device_not_connected")
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:       "response",
+			Type:       "file_send_status",
+			Status:     string(filesend.StatusFailed),
+			DownloadID: task.ID,
+			FilePath:   task.FileName,
+			Error:      "device_not_connected",
+		})
+		svc.Remove(task.ID)
+		return
+	}
+
+	// 转发 file_send.* 状态流直到终态。
+	for resp := range task.StateChan {
+		if resp.Timestamp == 0 {
+			resp.Timestamp = time.Now().Unix()
+		}
+		writeResponse(conn, resp)
+		if filesend.Status(resp.Status).IsTerminal() {
+			return
+		}
+	}
 }
 
 func writeResponse(conn net.Conn, resp protocol.CLIResponse) {

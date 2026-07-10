@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -139,9 +140,36 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
+		OnControl: func(ctx context.Context, msg map[string]any) {
+			if svc := direct.app.FileSendService(); svc != nil && svc.HandleControl(msg) {
+				return
+			}
+			if direct.app.Logs() != nil {
+				direct.app.Logs().Add("debug", "direct", "mux control message type="+muxStringValue(msg["type"]))
+			}
+		},
 		Logger: direct.app.Logs(),
 	})
+	// 把这条直连 mux 注册成设备级 ControlSender，让 FileSendService 能把 offer 下发到 Android。
+	deviceID := r.URL.Query().Get("deviceId")
+	unbind := direct.bindDeviceSender(deviceID, sess)
+	defer unbind()
 	sess.Run(r.Context())
+}
+
+// bindDeviceSender 在直连 mux 生命周期内把它注册为 FileSendService 的设备级 sender。
+// deviceID 为空时使用占位 key "direct"（单设备直连场景）。返回的函数用于在连接结束时按实例注销。
+func (direct *Server) bindDeviceSender(deviceID string, sess *mux.Session) func() {
+	svc := direct.app.FileSendService()
+	if svc == nil || sess == nil {
+		return func() {}
+	}
+	key := deviceID
+	if key == "" {
+		key = "direct"
+	}
+	svc.RegisterSender(key, sess)
+	return func() { svc.UnregisterSender(key, sess) }
 }
 
 func (direct *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +227,7 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 		return
 	}
 
-	if strings.HasPrefix(path, "/api/fs/") {
+	if strings.HasPrefix(path, "/api/file-send/") {
 		direct.routeFS(w, r)
 		return
 	}
@@ -222,7 +250,7 @@ func (direct *Server) routeSessions(w http.ResponseWriter, r *http.Request) {
 
 func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 	router := direct.sessionRouter()
-	result, err := router.RouteHTTPv2(r.Method, r.URL.Path+"?"+r.URL.RawQuery, r.Body)
+	result, err := router.RouteHTTPv2(r.Method, r.URL.Path+"?"+r.URL.RawQuery, r.Header, r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -245,7 +273,9 @@ func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (direct *Server) sessionRouter() *application.SessionRouter {
-	return application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router.SetFileSendService(direct.app.FileSendService())
+	return router
 }
 
 func readRequestBody(w http.ResponseWriter, r *http.Request) []byte {
@@ -316,4 +346,14 @@ func randomToken() string {
 		return time.Now().UTC().Format("20060102150405.000000000")
 	}
 	return hex.EncodeToString(bytes[:])
+}
+
+func muxStringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }

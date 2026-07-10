@@ -30,10 +30,10 @@ func main() {
 		socketPath = os.ExpandEnv("$HOME/.webterm/webterm.sock")
 	}
 
-	// download 是命令协议，单独处理
-	if cmd == "download" || cmd == "dl" {
-		if err := runDownload(socketPath, os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "[WebTerm] Download failed: %s\n", mapErrorToChinese(err.Error()))
+	// send 是命令协议，单独处理
+	if cmd == "send" {
+		if err := runSend(socketPath, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "[WebTerm] 发送失败：%s\n", mapErrorToChinese(err.Error()))
 			os.Exit(1)
 		}
 		return
@@ -136,14 +136,14 @@ func main() {
 	}
 }
 
-func runDownload(socketPath string, args []string) error {
-	fs := flag.NewFlagSet("download", flag.ExitOnError)
+func runSend(socketPath string, args []string) error {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	quiet := fs.Bool("quiet", false, "suppress non-error output")
 	_ = fs.Bool("q", false, "suppress non-error output")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: webterm download <file>")
+		fmt.Fprintln(os.Stderr, "Usage: webterm send <file>")
 		os.Exit(2)
 	}
 
@@ -155,12 +155,12 @@ func runDownload(socketPath string, args []string) error {
 	sessionID := os.Getenv("WEBTERM_SESSION_ID")
 	pid := 0
 	if sessionID == "" {
-		pid = os.Getppid() // 用 PPID（Shell PID）解析 session
+		pid = os.Getppid()
 	}
 
 	cmd := protocol.CLICommand{
 		Kind:      "command",
-		Type:      "download",
+		Type:      "send",
 		SessionID: sessionID,
 		PID:       pid,
 		CWD:       cwd,
@@ -169,7 +169,7 @@ func runDownload(socketPath string, args []string) error {
 	}
 
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "[WebTerm] Preparing download: %s\n", filepath.Base(cmd.FilePath))
+		fmt.Fprintf(os.Stderr, "[WebTerm] 准备发送：%s\n", filepath.Base(cmd.FilePath))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -260,14 +260,43 @@ func sendCommandAndListen(ctx context.Context, socketPath string, cmd protocol.C
 			}
 		case "progress":
 			if !quiet {
-				drawProgressBar(resp.BytesTransferred, resp.TotalBytes)
+				drawProgressBar("Downloading", resp.BytesTransferred, resp.TotalBytes)
 			}
 		case "complete":
 			if !quiet {
-				drawProgressBar(resp.TotalBytes, resp.TotalBytes)
+				drawProgressBar("Downloading", resp.TotalBytes, resp.TotalBytes)
 				fmt.Fprintln(os.Stderr, "\n[WebTerm] Download complete.")
 			}
 			return nil
+		case "offered":
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "[WebTerm] 已发送文件请求，等待设备确认...")
+			}
+		case "accepted":
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "[WebTerm] 设备已接收，开始传输...")
+			}
+		case "receiving":
+			if !quiet {
+				drawProgressBar("Sending", resp.BytesTransferred, resp.TotalBytes)
+			}
+		case "saving":
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "\n[WebTerm] 设备正在写入文件...")
+			}
+		case "saved":
+			if !quiet {
+				drawProgressBar("Sending", resp.TotalBytes, resp.TotalBytes)
+				fmt.Fprintln(os.Stderr, "\n[WebTerm] 文件已送达设备。")
+			}
+			return nil
+		case "rejected":
+			if resp.Error != "" {
+				return errors.New(resp.Error)
+			}
+			return errors.New("rejected")
+		case "cancelled":
+			return errors.New("cancelled")
 		case "failed":
 			return errors.New(resp.Error)
 		}
@@ -284,9 +313,9 @@ func expandPath(input string) string {
 	return input
 }
 
-func drawProgressBar(current, total int64) {
+func drawProgressBar(verb string, current, total int64) {
 	if total <= 0 {
-		fmt.Fprintf(os.Stderr, "\r[WebTerm] Downloading... %d bytes", current)
+		fmt.Fprintf(os.Stderr, "\r[WebTerm] %s... %d bytes", verb, current)
 		return
 	}
 	const barWidth = 30
@@ -296,7 +325,7 @@ func drawProgressBar(current, total int64) {
 		pos = barWidth
 	}
 
-	fmt.Fprintf(os.Stderr, "\r[WebTerm] Downloading: [")
+	fmt.Fprintf(os.Stderr, "\r[WebTerm] %s: [", verb)
 	for i := 0; i < barWidth; i++ {
 		if i < pos {
 			fmt.Fprint(os.Stderr, "=")
@@ -314,22 +343,24 @@ func drawProgressBar(current, total int64) {
 
 func mapErrorToChinese(code string) string {
 	switch code {
-	case "file_not_found":
+	case "file_not_found", "missing_file_path":
 		return "文件不存在"
 	case "not_a_regular_file":
 		return "不是普通文件，请先压缩文件夹"
 	case "permission_denied":
 		return "没有读取权限"
-	case "android_not_connected":
-		return "Android 未连接"
+	case "android_not_connected", "device_not_connected":
+		return "Android 设备未连接"
+	case "rejected":
+		return "设备拒绝了文件"
 	case "timeout":
-		return "下载超时"
+		return "传输超时"
 	case "download_task_not_found", "session_not_found":
-		return "下载任务已过期或会话不存在"
+		return "传输任务已过期或会话不存在"
 	case "invalid_path":
 		return "文件路径无效"
 	case "cancelled":
-		return "下载已取消"
+		return "传输已取消"
 	case "agent_not_responding":
 		return "Agent 无响应，请确认 webterm-agent 已升级并正在运行"
 	default:
@@ -344,12 +375,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Usage: webterm <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  download <file>        download a file to Android")
+	fmt.Fprintln(os.Stderr, "  send <file>            send a file to the connected Android device")
 	fmt.Fprintln(os.Stderr, "  notify --level idle|running|error --message MSG --source SRC [--session ID]")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE")
 	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --last-command CMD --input-kind shell|agent_prompt|agent_tool")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
-	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify/download will fall back to PID resolution")
+	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify/send will fall back to PID resolution")
 	fmt.Fprintln(os.Stderr, "  WEBTERM_SOCKET_PATH  optional, defaults to $HOME/.webterm/webterm.sock")
 }

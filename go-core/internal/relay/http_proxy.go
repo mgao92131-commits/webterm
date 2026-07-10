@@ -24,7 +24,20 @@ type HTTPProxy struct {
 	router  *application.SessionRouter
 	writer  frameWriter
 	mu      sync.Mutex
-	streams map[string]chan relaycore.Frame
+	streams map[string]*httpStream
+}
+
+// httpStream 是一条 HTTP 代理流的请求体通道与对端关闭信号。
+// done 在 gateway 发来 StreamClose/StreamError（Android 端断开）时被关闭，
+// 用于及时中止上游文件流读取，避免在对端已走后仍读完整个文件。
+type httpStream struct {
+	ch        chan relaycore.Frame
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func (s *httpStream) signalClosed() {
+	s.closeOnce.Do(func() { close(s.done) })
 }
 
 // frameWriter 是写入 relay 帧的抽象，由 V2Client 实现。
@@ -37,38 +50,49 @@ func NewHTTPProxy(router *application.SessionRouter, writer frameWriter) *HTTPPr
 	return &HTTPProxy{
 		router:  router,
 		writer:  writer,
-		streams: make(map[string]chan relaycore.Frame),
+		streams: make(map[string]*httpStream),
 	}
 }
 
 // HandleHTTPHeaders 处理 HTTPHeaders 帧——创建新 stream 并启动处理。
 func (p *HTTPProxy) HandleHTTPHeaders(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) {
-	ch := make(chan relaycore.Frame, 8)
+	hs := &httpStream{ch: make(chan relaycore.Frame, 8), done: make(chan struct{})}
 	p.mu.Lock()
-	p.streams[frame.StreamID] = ch
+	p.streams[frame.StreamID] = hs
 	p.mu.Unlock()
-	go p.processStream(ctx, conn, frame, ch)
+	go p.processStream(ctx, conn, frame, hs.ch, hs.done)
 }
 
 // DeliverChunk 将 HTTPChunk 帧投递到对应 stream。
 func (p *HTTPProxy) DeliverChunk(frame relaycore.Frame) {
 	p.mu.Lock()
-	ch := p.streams[frame.StreamID]
+	hs := p.streams[frame.StreamID]
 	p.mu.Unlock()
-	if ch == nil {
+	if hs == nil {
 		return
 	}
 	select {
-	case ch <- frame:
+	case hs.ch <- frame:
 	default:
-		close(ch)
+		close(hs.ch)
 		p.mu.Lock()
 		delete(p.streams, frame.StreamID)
 		p.mu.Unlock()
 	}
 }
 
-func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, first relaycore.Frame, ch <-chan relaycore.Frame) {
+// CloseStream 由对端 StreamClose/StreamError 触发：通知该 HTTP 流的处理 goroutine
+// 尽快退出；若正在流式转发文件，则关闭上游 Body 以中止 io.Copy。
+func (p *HTTPProxy) CloseStream(streamID string) {
+	p.mu.Lock()
+	hs := p.streams[streamID]
+	p.mu.Unlock()
+	if hs != nil {
+		hs.signalClosed()
+	}
+}
+
+func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, first relaycore.Frame, ch <-chan relaycore.Frame, done <-chan struct{}) {
 	defer func() {
 		p.mu.Lock()
 		delete(p.streams, first.StreamID)
@@ -85,6 +109,8 @@ func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, fir
 		select {
 		case <-ctx.Done():
 			return
+		case <-done:
+			return
 		case frame, ok := <-ch:
 			if !ok {
 				return
@@ -98,22 +124,22 @@ func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, fir
 			}
 			body = append(body, frame.Payload...)
 			if frame.Flags.Has(relaycore.FrameFlagFin) {
-				p.respond(ctx, conn, first.StreamID, meta, body)
+				p.respond(ctx, conn, first.StreamID, meta, body, done)
 				return
 			}
 		}
 	}
 }
 
-func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte) {
+func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
 	path := meta.Path
 	if meta.Query != "" {
 		path += "?" + meta.Query
 	}
 
-	// 文件下载等流式接口走 RouteHTTPv2
-	if strings.HasPrefix(meta.Path, "/api/fs/") {
-		p.respondStream(ctx, conn, streamID, meta, body)
+	// 文件发送等流式接口走 RouteHTTPv2
+	if strings.HasPrefix(meta.Path, "/api/file-send/") {
+		p.respondStream(ctx, conn, streamID, meta, body, done)
 		return
 	}
 
@@ -136,7 +162,7 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
 }
 
-func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte) {
+func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
 	path := meta.Path
 	if meta.Query != "" {
 		path += "?" + meta.Query
@@ -147,7 +173,7 @@ func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, str
 		bodyReader = strings.NewReader(string(body))
 	}
 
-	result, err := p.router.RouteHTTPv2(meta.Method, path, bodyReader)
+	result, err := p.router.RouteHTTPv2(meta.Method, path, metaHeaderToHTTP(meta.Headers), bodyReader)
 	if err != nil {
 		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
 		return
@@ -178,6 +204,19 @@ func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, str
 	}
 	defer result.Body.Close()
 
+	// 对端断开（Android 关闭/relay stream close）时，立即关闭上游 Body，
+	// 使阻塞中的 Read 返回错误、流式循环退出，并把 filesend 的 io.Copy 顶出 broken pipe，
+	// 避免在 Android 已走后仍读完整个文件。
+	stopWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-done:
+			result.Body.Close()
+		case <-stopWatch:
+		}
+	}()
+	defer close(stopWatch)
+
 	buf := make([]byte, 64*1024)
 	for {
 		n, readErr := result.Body.Read(buf)
@@ -206,4 +245,15 @@ func (p *HTTPProxy) writeHTTPError(ctx context.Context, conn *websocket.Conn, st
 	})
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, streamID, 0, responseMeta))
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
+}
+
+func metaHeaderToHTTP(meta map[string]string) http.Header {
+	if len(meta) == 0 {
+		return nil
+	}
+	header := make(http.Header, len(meta))
+	for key, value := range meta {
+		header.Set(key, value)
+	}
+	return header
 }

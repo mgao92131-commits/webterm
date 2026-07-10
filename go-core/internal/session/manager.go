@@ -1,16 +1,12 @@
 package session
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"webterm/go-core/internal/protocol"
 )
 
 const (
@@ -47,37 +43,6 @@ type LastInput struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// DownloadTask 是 webterm download 命令创建的一次性下载任务。
-type DownloadTask struct {
-	ID        string
-	SessionID string
-	Path      string
-	FileName  string
-	Size      int64
-	StateChan chan protocol.CLIResponse
-	closeOnce sync.Once
-	CreatedAt time.Time
-	ExpiresAt time.Time
-	consumed  bool
-}
-
-// Close 保证 StateChan 只被关闭一次。
-func (t *DownloadTask) Close() {
-	if t == nil {
-		return
-	}
-	t.closeOnce.Do(func() { close(t.StateChan) })
-}
-
-// TryConsume 尝试将任务标记为已消费。返回 true 表示首次消费；false 表示已被消费过或已过期。
-func (t *DownloadTask) TryConsume() bool {
-	if t.consumed {
-		return false
-	}
-	t.consumed = true
-	return true
-}
-
 type Manager struct {
 	mu                   sync.RWMutex
 	nextID               int
@@ -88,7 +53,6 @@ type Manager struct {
 	managerClients       map[managerSink]struct{}
 	defaults             TerminalDefaults
 	sessionEnv           map[string]string
-	downloadTasks        map[string]*DownloadTask
 }
 
 type TerminalDefaults struct {
@@ -109,7 +73,6 @@ func NewManager(defaults ...TerminalDefaults) *Manager {
 		resolvedPidToSession: make(map[int]string),
 		managerClients:       make(map[managerSink]struct{}),
 		defaults:             config,
-		downloadTasks:        make(map[string]*DownloadTask),
 	}
 }
 
@@ -373,66 +336,4 @@ func getTTYPathByPID(pid int) string {
 		return tty
 	}
 	return "/dev/" + tty
-}
-
-// AddDownloadTask 注册一个下载任务。
-func (manager *Manager) AddDownloadTask(sessionID string, task *DownloadTask) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	task.SessionID = sessionID
-	manager.downloadTasks[task.ID] = task
-}
-
-// GetDownloadTask 首次消费返回任务，但不删除；任务会在完成/失败/超时后由 RemoveDownloadTask 删除。
-// 已过期或已被消费的任务返回 false。
-func (manager *Manager) GetDownloadTask(id string) (*DownloadTask, bool) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	task, ok := manager.downloadTasks[id]
-	if !ok {
-		return nil, false
-	}
-	if time.Now().After(task.ExpiresAt) {
-		task.Close()
-		delete(manager.downloadTasks, id)
-		return nil, false
-	}
-	if !task.TryConsume() {
-		return nil, false
-	}
-	return task, true
-}
-
-// PeekDownloadTask 只读查询任务，不删除。用于接收 Android 进度回传。
-func (manager *Manager) PeekDownloadTask(id string) (*DownloadTask, bool) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	task, ok := manager.downloadTasks[id]
-	if !ok {
-		return nil, false
-	}
-	if time.Now().After(task.ExpiresAt) {
-		task.Close()
-		delete(manager.downloadTasks, id)
-		return nil, false
-	}
-	return task, true
-}
-
-// RemoveDownloadTask 强制移除并关闭任务通道。
-func (manager *Manager) RemoveDownloadTask(id string) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	if task, ok := manager.downloadTasks[id]; ok {
-		task.Close()
-		delete(manager.downloadTasks, id)
-	}
-}
-
-func generateDownloadID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("d_%d", time.Now().UnixNano())
-	}
-	return fmt.Sprintf("d_%d_%s", time.Now().UnixNano(), hex.EncodeToString(b[:]))
 }
