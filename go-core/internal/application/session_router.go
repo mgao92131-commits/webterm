@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -46,6 +47,7 @@ type SessionRouter struct {
 	manager   *session.Manager
 	muxServe  MuxServeFunc // 可选：用于 mux 子协议包装
 	onControl func(ctx context.Context, msg map[string]any)
+	fileSend  *filesend.Service
 	logger    *logs.Logger
 }
 
@@ -67,6 +69,21 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 // 用于 file_send.*、agent_notification 等不经过虚拟通道的控制消息。
 func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, msg map[string]any)) {
 	r.onControl = onControl
+}
+
+// SetFileSendService 注入 FileSendService，并把它链接到 mux 控制消息处理链前端：
+// file_send.* 消息优先交给 Service.HandleControl，未处理的消息继续传递给此前注册的处理器。
+func (r *SessionRouter) SetFileSendService(svc *filesend.Service) {
+	r.fileSend = svc
+	prev := r.onControl
+	r.onControl = func(ctx context.Context, msg map[string]any) {
+		if svc != nil && svc.HandleControl(msg) {
+			return
+		}
+		if prev != nil {
+			prev(ctx, msg)
+		}
+	}
 }
 
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
@@ -172,8 +189,9 @@ type HTTPResult struct {
 	Data       []byte // 小文件兜底：当 Body 为 nil 时使用 Data
 }
 
-// RouteHTTPv2 处理需要流式响应的 HTTP 请求（例如文件下载）。
-func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reader) (*HTTPResult, error) {
+// RouteHTTPv2 处理需要流式响应的 HTTP 请求（例如文件下载/发送）。
+// header 用于提取授权信息（例如 transfer_token），可为 nil。
+func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.Header, body io.Reader) (*HTTPResult, error) {
 	path := cleanPath(rawPath)
 
 	if strings.HasPrefix(path, "/api/fs/download") {
@@ -185,10 +203,20 @@ func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reade
 	}
 
 	if strings.HasPrefix(path, "/api/file-send/") {
-		// Phase 0 占位：FileSendService 尚未接入，返回 501。
+		if r.fileSend == nil {
+			return &HTTPResult{
+				StatusCode: http.StatusServiceUnavailable,
+				Data:       []byte("file-send service unavailable"),
+			}, nil
+		}
+		transferID := strings.TrimPrefix(path, "/api/file-send/")
+		transferID, _, _ = strings.Cut(transferID, "?")
+		token := filesend.TokenFromRequest(header)
+		res := r.fileSend.HandleFileSendRequest(transferID, token)
 		return &HTTPResult{
-			StatusCode: http.StatusNotImplemented,
-			Data:       []byte("file-send service not yet implemented"),
+			StatusCode: res.StatusCode,
+			Header:     res.Header,
+			Body:       res.Body,
 		}, nil
 	}
 

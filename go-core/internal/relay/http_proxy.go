@@ -147,7 +147,7 @@ func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, str
 		bodyReader = strings.NewReader(string(body))
 	}
 
-	result, err := p.router.RouteHTTPv2(meta.Method, path, bodyReader)
+	result, err := p.router.RouteHTTPv2(meta.Method, path, metaHeaderToHTTP(meta.Headers), bodyReader)
 	if err != nil {
 		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
 		return
@@ -206,4 +206,15 @@ func (p *HTTPProxy) writeHTTPError(ctx context.Context, conn *websocket.Conn, st
 	})
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, streamID, 0, responseMeta))
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
+}
+
+func metaHeaderToHTTP(meta map[string]string) http.Header {
+	if len(meta) == 0 {
+		return nil
+	}
+	header := make(http.Header, len(meta))
+	for key, value := range meta {
+		header.Set(key, value)
+	}
+	return header
 }

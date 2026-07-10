@@ -9,6 +9,7 @@ import (
 
 	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/session"
 )
@@ -17,6 +18,7 @@ type App struct {
 	cfg                 config.Config
 	version             string
 	sessions            *session.Manager
+	fileSend            *filesend.Service
 	logger              *logs.Logger
 	mu              sync.RWMutex
 	runtimeMode     string
@@ -62,6 +64,7 @@ func New(cfg config.Config, version string) *App {
 		runtimeMode: cfg.Mode,
 		socketPath:  socketPath,
 		sessions:    manager,
+		fileSend:    filesend.New(0),
 		direct: DirectStatus{
 			Listening: false,
 			Addr:      cfg.Direct.Addr,
@@ -158,6 +161,10 @@ func (app *App) SetRuntimeStopped() {
 
 func (app *App) Sessions() *session.Manager {
 	return app.sessions
+}
+
+func (app *App) FileSendService() *filesend.Service {
+	return app.fileSend
 }
 
 func (app *App) SocketPath() string {

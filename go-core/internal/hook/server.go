@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
 )
 
@@ -216,7 +217,86 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 		return
 	}
 
+	if cmd.Type == "send" {
+		s.handleSendCommand(conn, cmd, sessionID)
+		return
+	}
+
 	terminal.HandleCLICommand(conn, cmd)
+}
+
+func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessionID string) {
+	fail := func(errCode string) {
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "file_send_status",
+			Status: string(filesend.StatusFailed),
+			Error:  errCode,
+		})
+	}
+
+	if cmd.FilePath == "" {
+		fail("missing_file_path")
+		return
+	}
+	absPath := cmd.FilePath
+	if !filepath.IsAbs(absPath) && cmd.CWD != "" {
+		absPath = filepath.Join(cmd.CWD, absPath)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		fail("file_not_found")
+		return
+	}
+
+	svc := s.app.FileSendService()
+	task, err := svc.CreateTask(filesend.CreateTaskOptions{
+		SessionID: sessionID,
+		Path:      absPath,
+		FileName:  info.Name(),
+		Size:      info.Size(),
+	})
+	if err != nil {
+		fail("create_task_failed")
+		return
+	}
+
+	// 先发一个 offered 响应，让 CLI 立即进入等待态。
+	writeResponse(conn, protocol.CLIResponse{
+		Kind:       "response",
+		Type:       "file_send_status",
+		Status:     string(filesend.StatusOffered),
+		DownloadID: task.ID,
+		FilePath:   task.FileName,
+		TotalBytes: task.Size,
+	})
+
+	if err := svc.SendOffer(context.Background(), task); err != nil {
+		// 里程碑 B：设备级 sender 尚未注册（Android WebTermDeviceService 在里程碑 C 接入）。
+		s.app.Log("warn", "hook", fmt.Sprintf("send offer not delivered: %v", err))
+		task.SetFailed("device_not_connected")
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:       "response",
+			Type:       "file_send_status",
+			Status:     string(filesend.StatusFailed),
+			DownloadID: task.ID,
+			FilePath:   task.FileName,
+			Error:      "device_not_connected",
+		})
+		svc.Remove(task.ID)
+		return
+	}
+
+	// 转发 file_send.* 状态流直到终态。
+	for resp := range task.StateChan {
+		if resp.Timestamp == 0 {
+			resp.Timestamp = time.Now().Unix()
+		}
+		writeResponse(conn, resp)
+		if filesend.Status(resp.Status).IsTerminal() {
+			return
+		}
+	}
 }
 
 func writeResponse(conn net.Conn, resp protocol.CLIResponse) {

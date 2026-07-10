@@ -41,6 +41,9 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 			appInstance.Logs().Add("debug", "relay", "mux control message type="+stringValue(msg["type"]))
 		}
 	})
+	// 在 SetControlHandler 之后注入，使 file_send.* 优先分发到 FileSendService，
+	// 其余控制消息继续落到上面的 debug logger。
+	router.SetFileSendService(appInstance.FileSendService())
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,

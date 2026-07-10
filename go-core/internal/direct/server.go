@@ -141,6 +141,9 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
 		OnControl: func(ctx context.Context, msg map[string]any) {
+			if svc := direct.app.FileSendService(); svc != nil && svc.HandleControl(msg) {
+				return
+			}
 			if direct.app.Logs() != nil {
 				direct.app.Logs().Add("debug", "direct", "mux control message type="+muxStringValue(msg["type"]))
 			}
@@ -233,7 +236,7 @@ func (direct *Server) routeSessions(w http.ResponseWriter, r *http.Request) {
 
 func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 	router := direct.sessionRouter()
-	result, err := router.RouteHTTPv2(r.Method, r.URL.Path+"?"+r.URL.RawQuery, r.Body)
+	result, err := router.RouteHTTPv2(r.Method, r.URL.Path+"?"+r.URL.RawQuery, r.Header, r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -256,7 +259,9 @@ func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (direct *Server) sessionRouter() *application.SessionRouter {
-	return application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
+	router.SetFileSendService(direct.app.FileSendService())
+	return router
 }
 
 func readRequestBody(w http.ResponseWriter, r *http.Request) []byte {
