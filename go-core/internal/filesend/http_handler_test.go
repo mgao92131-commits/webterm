@@ -152,3 +152,27 @@ func TestHandleFileSendRequestFailedAbortsUpstreamStream(t *testing.T) {
 		t.Fatal("upstream stream did not abort within 2s after failed")
 	}
 }
+
+// Phase 8 续传决策：响应必须显式声明不支持 Range（重连从 byte 0 重传），
+// 且不出现 Content-Range。
+func TestHandleFileSendRequestAdvertisesNoResume(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.bin")
+	if err := os.WriteFile(path, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(0)
+	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: path, FileName: "a.bin", Size: 7})
+
+	res := svc.HandleFileSendRequest(task.ID, task.Token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := res.Header.Get("Accept-Ranges"); got != "none" {
+		t.Fatalf("Accept-Ranges = %q, want none (resume unsupported)", got)
+	}
+	if res.Header.Get("Content-Range") != "" {
+		t.Fatalf("unexpected Content-Range header: %q", res.Header.Get("Content-Range"))
+	}
+	_ = res.Body.Close()
+}

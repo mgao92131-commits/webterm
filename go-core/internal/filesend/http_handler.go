@@ -35,6 +35,11 @@ func TokenFromRequest(header http.Header) string {
 // 关键不变量：HTTP 流结束（EOF）绝不等于成功。只有当 Android 通过设备级 mux control
 // 回传 file_send.saved，任务才会进入 saved 终态。因此本 handler 不修改任务为成功态，
 // 只在拒绝/缺失/已完成等情况下返回合适的 HTTP 状态码。
+//
+// 慢链/续传策略（Phase 8 显式决策）：
+//   - 不设应用层总超时与空闲超时：活性由 mux Ping/Pong 与下游关闭（cancel/disconnect 会
+//     关闭上游 Body，见 Task.abortStream / relay HTTPProxy.CloseStream）保证。
+//   - 不支持 Range/断点续传：重连后 Android 从 byte 0 重新 GET；响应声明 Accept-Ranges: none。
 func (s *Service) HandleFileSendRequest(transferID, token string) HTTPResult {
 	if transferID == "" || token == "" {
 		return errorResult(http.StatusUnauthorized, "missing transfer credentials")
@@ -71,6 +76,9 @@ func (s *Service) HandleFileSendRequest(transferID, token string) HTTPResult {
 	header := http.Header{}
 	header.Set("Content-Type", "application/octet-stream")
 	header.Set("Cache-Control", "no-store")
+	// Phase 8 续传决策（显式）：首版不支持 Range/断点续传；重连后 Android 从 byte 0 重新 GET。
+	// 声明 Accept-Ranges: none，避免客户端尝试 206 分段（本端会忽略 Range 并始终返回完整流）。
+	header.Set("Accept-Ranges", "none")
 	if task.FileName != "" {
 		header.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", task.FileName))
 	}
