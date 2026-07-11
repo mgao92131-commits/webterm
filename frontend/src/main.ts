@@ -22,7 +22,7 @@ configureApiClient({
   },
 });
 
-// 初始化连接服务（触发 P2P/Mux 协调器与事件监听）
+// 初始化连接服务（启动 Relay mux 事件监听）
 connectionService.initialize();
 
 const app = createApp(App);

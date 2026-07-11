@@ -11,7 +11,6 @@ public final class DeviceSessionsUiState {
     public enum ConnectionState {
         CONNECTING,
         CONNECTED,
-        CONNECTED_P2P,
         DISCONNECTED,
         AUTH_REQUIRED,
         ERROR

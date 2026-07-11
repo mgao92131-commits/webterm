@@ -24,7 +24,6 @@ const (
 	StreamKindHTTP      StreamKind = "http"
 	StreamKindWebSocket StreamKind = "websocket"
 	StreamKindTerminal  StreamKind = "terminal"
-	StreamKindP2P       StreamKind = "p2p"
 )
 
 type StreamState string

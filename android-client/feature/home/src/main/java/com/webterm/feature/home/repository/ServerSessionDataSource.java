@@ -29,7 +29,7 @@ public final class ServerSessionDataSource {
     }
 
     public interface Listener {
-        void onConnected(boolean p2p);
+        void onConnected();
         void onConnecting();
         void onDisconnected(String reason);
         void onSessions(JSONArray sessions);
@@ -44,7 +44,7 @@ public final class ServerSessionDataSource {
             @Override
             public void onConnected(String id) {
                 if (!channelId.equals(id)) return;
-                listener.onConnected(mux.isP2PConnected());
+                listener.onConnected();
             }
 
             @Override

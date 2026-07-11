@@ -20,7 +20,6 @@ public final class ServerConfigStore {
     private static final String KEY_SERVERS_LIST = "servers_list";
     private static final String KEY_TERMINAL_FONT_SIZE = "terminal_font_size";
     private static final String KEY_TERMINAL_FONT_TYPE = "terminal_font_type";
-    private static final String KEY_ENABLE_P2P = "enable_p2p";
     private static final String KEY_DOWNLOAD_DIR_URI = "download_dir_uri";
 
     private final SharedPreferences prefs;
@@ -86,14 +85,6 @@ public final class ServerConfigStore {
 
     public void saveFontType(String type) {
         prefs.edit().putString(KEY_TERMINAL_FONT_TYPE, type).apply();
-    }
-
-    public boolean isP2PEnabled() {
-        return prefs.getBoolean(KEY_ENABLE_P2P, true);
-    }
-
-    public void saveP2PEnabled(boolean enabled) {
-        prefs.edit().putBoolean(KEY_ENABLE_P2P, enabled).apply();
     }
 
     public String getDownloadDirUri() {

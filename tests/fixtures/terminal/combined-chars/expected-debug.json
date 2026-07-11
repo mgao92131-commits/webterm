@@ -1,0 +1,24 @@
+{
+  "description": "Combining characters and CJK must be preserved as single text clusters with correct widths.",
+  "geometry": {"rows": 30, "cols": 80},
+  "active_buffer": "main",
+  "cursor": {"row": 1, "col": 0, "visible": true, "shape": "block", "blink": true},
+  "screen": {
+    "rows": [
+      {"row": 0, "line_id": 0, "wrapped": false, "runs": [
+        {"col": 0, "cells": [
+          {"text": "é", "width": 1, "style_id": 0, "link_id": 0},
+          {"text": " ", "width": 1, "style_id": 0, "link_id": 0},
+          {"text": "日", "width": 2, "style_id": 0, "link_id": 0},
+          {"text": "", "width": 0, "style_id": 0, "link_id": 0},
+          {"text": "本", "width": 2, "style_id": 0, "link_id": 0},
+          {"text": "", "width": 0, "style_id": 0, "link_id": 0},
+          {"text": "語", "width": 2, "style_id": 0, "link_id": 0},
+          {"text": "", "width": 0, "style_id": 0, "link_id": 0}
+        ]}
+      ]}
+    ]
+  },
+  "styles": [],
+  "links": []
+}

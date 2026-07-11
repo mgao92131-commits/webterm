@@ -1,0 +1,3 @@
+webterm-agent 0.1.0-dev starting mode=direct control=http://127.0.0.1:18082 hook-socket=/Users/gao/.webterm/webterm.sock
+direct runtime scaffold configured for 0.0.0.0:8080
+webterm-agent failed: socket already in use: /Users/gao/.webterm/webterm.sock

@@ -1,0 +1,480 @@
+syntax = "proto3";
+
+package webterm.terminal.screen.v1;
+
+option go_package = "webterm/go-core/internal/screenprotocol/generated";
+option java_package = "com.webterm.terminal.protocol.generated";
+option java_outer_classname = "TerminalScreenProto";
+
+// webterm.screen.v1 是 Android 远程终端渲染的唯一正式协议。
+// 所有消息通过 WebSocket binary frame 发送，一个 payload 对应一个 ScreenEnvelope。
+// 资源限制（服务端和客户端分配内存前必须同时校验）：
+//   rows                    5..200
+//   cols                   10..500
+//   history page            1..500 行
+//   snapshot history       <=500 行
+//   ScreenEnvelope         <=2 MiB
+//   title/cwd              <=4 KiB
+//   hyperlink URI          <=8 KiB
+//   clipboard payload      <=1 MiB
+//   notification payload   <=64 KiB
+//   styles per layoutEpoch <=4096
+//   links per layoutEpoch  <=4096
+//   cell text              <=64 UTF-8 bytes
+
+message ScreenEnvelope {
+  uint32 protocol_version = 1; // 固定为 1
+
+  oneof payload {
+    Hello hello = 10;
+    ScreenSnapshot snapshot = 11;
+    ScreenPatch patch = 12;
+    HistoryRequest history_request = 13;
+    HistoryPage history_page = 14;
+    HistoryTrim history_trim = 15;
+    ResyncRequest resync = 16;
+    AcquireLayout acquire_layout = 17;
+    LayoutLease layout_lease = 18;
+    ReleaseLayout release_layout = 19;
+    Resize resize = 20;
+    TerminalInput input = 21;
+    TerminalEffect effect = 22;
+    ClipboardResponse clipboard_response = 23;
+    TerminalInfo info = 24;
+    Exit exit = 25;
+    Ping ping = 26;
+    Pong pong = 27;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 协商与心跳
+// ---------------------------------------------------------------------------
+
+message Hello {
+  uint32 version = 1;              // 固定为 1
+  int32 cols = 2;                  // 客户端期望列数，>0 时才表示希望 resize
+  int32 rows = 3;                  // 客户端期望行数
+  string instance_id = 4;          // 本地已有投影的 instance id，空表示冷启动
+  uint64 layout_epoch = 5;         // 本地已有投影的 layout epoch
+  uint64 screen_revision = 6;      // 本地最后已应用的 screen revision
+  bool has_projection = 7;         // 是否持有完整可用投影
+  HistoryPreference history = 8;   // 历史分页偏好
+  CapabilitySet capabilities = 9;  // 客户端能力
+}
+
+message HistoryPreference {
+  int32 tail_lines = 1;   // 首次快照希望附带的最近历史行数，默认 300
+  int32 page_size = 2;    // 历史分页大小，默认 250
+}
+
+message CapabilitySet {
+  bool row_patches = 1;   // 是否支持 row patch（首版必须 true）
+  bool scroll_ops = 2;    // 是否支持 scroll op 优化（首版固定 false）
+  bool images = 3;        // 是否支持图片（首版固定 false）
+}
+
+message Ping {
+  uint64 screen_revision = 1;
+}
+
+message Pong {
+  uint64 screen_revision = 1;
+}
+
+// ---------------------------------------------------------------------------
+// 屏幕快照与增量
+// ---------------------------------------------------------------------------
+
+message ScreenSnapshot {
+  string session_id = 1;
+  string instance_id = 2;
+  uint64 layout_epoch = 3;
+  uint64 screen_revision = 4;
+  Size geometry = 5;
+  BufferKind active_buffer = 6;
+  Cursor cursor = 7;
+  Modes modes = 8;
+  TerminalPalette palette = 9;
+  HistoryWindow history = 10;
+  repeated TerminalLine screen = 11;
+  repeated TerminalStyle styles = 12;    // 完整 style 字典
+  repeated Hyperlink links = 13;         // 完整 hyperlink 字典
+  string title = 14;
+  string working_directory = 15;
+}
+
+message ScreenPatch {
+  uint64 layout_epoch = 1;
+  uint64 base_revision = 2;      // 必须等于客户端当前 screen_revision
+  uint64 screen_revision = 3;    // 应用后的新 revision
+  repeated HistoryLine history_append = 4;   // 新进入 scrollback 的行
+  repeated TerminalLine screen_rows = 5;     // 被替换的活动屏幕行（row 索引由 TerminalLine.row 指定）
+  Cursor cursor = 6;
+  Modes modes = 7;               // 只在变化时非空
+  TerminalPalette palette = 8;   // 只在变化时非空
+  repeated TerminalStyle new_styles = 9;     // 本 patch 新增的 style
+  repeated Hyperlink new_links = 10;         // 本 patch 新增的 link
+  string title = 11;             // 只在变化时非空
+  string working_directory = 12; // 只在变化时非空
+  repeated PromotedRow promoted_rows = 13;   // 活动行滚入历史时的 ID 映射
+  string instance_id = 14;          // 必须匹配当前 snapshot.instance_id
+}
+
+message PromotedRow {
+  int32 screen_row = 1;     // 旧活动屏幕行索引
+  uint64 history_line_id = 2; // 晋升后的历史行 ID
+}
+
+message Size {
+  int32 rows = 1;
+  int32 cols = 2;
+}
+
+enum BufferKind {
+  BUFFER_KIND_UNSPECIFIED = 0;
+  BUFFER_KIND_MAIN = 1;
+  BUFFER_KIND_ALTERNATE = 2;
+}
+
+// ---------------------------------------------------------------------------
+// 行 / Cell / 样式 / 颜色
+// ---------------------------------------------------------------------------
+
+message TerminalLine {
+  int32 row = 1;          // 活动屏幕行索引；历史行不使用此字段
+  uint64 line_id = 2;     // 历史行 ID，活动屏幕行为 0
+  bool wrapped = 3;       // 是否因列溢出而软换行
+  repeated CellRun runs = 4;
+}
+
+message CellRun {
+  int32 col = 1;          // run 起始列（0-based）
+  repeated Cell cells = 2; // 从 col 开始向右连续填充，cells 长度 >=1
+}
+
+message Cell {
+  string text = 1;        // UTF-8 字符簇；空视为空格
+  uint32 width = 2;       // 0=spacer, 1=single, 2=wide
+  uint32 style_id = 3;    // 0 表示默认样式
+  uint32 link_id = 4;     // 0 表示无 hyperlink
+}
+
+message Color {
+  ColorKind kind = 1;
+  int32 index = 2;        // indexed 颜色时使用
+  uint32 rgb = 3;         // rgb 颜色时使用，格式 0xAARRGGBB 或 0xRRGGBB
+}
+
+enum ColorKind {
+  COLOR_KIND_UNSPECIFIED = 0;
+  COLOR_KIND_DEFAULT_FG = 1;
+  COLOR_KIND_DEFAULT_BG = 2;
+  COLOR_KIND_CURSOR = 3;
+  COLOR_KIND_INDEXED = 4;
+  COLOR_KIND_RGB = 5;
+}
+
+message TerminalStyle {
+  uint32 id = 1;
+  Color fg = 2;
+  Color bg = 3;
+  Color underline_color = 4;
+  CellAttrs attrs = 5;
+}
+
+message CellAttrs {
+  bool bold = 1;
+  bool dim = 2;
+  bool italic = 3;
+  bool underline = 4;
+  bool double_underline = 5;
+  bool curly_underline = 6;
+  bool dotted_underline = 7;
+  bool dashed_underline = 8;
+  bool blink_slow = 9;
+  bool blink_fast = 10;
+  bool reverse = 11;
+  bool hidden = 12;
+  bool strike = 13;
+}
+
+message Hyperlink {
+  uint32 id = 1;
+  string uri = 2;
+  string params = 3;      // OSC 8 的 params 部分，如 id=xyz
+}
+
+// ---------------------------------------------------------------------------
+// 光标 / 模式 / 调色板
+// ---------------------------------------------------------------------------
+
+message Cursor {
+  int32 row = 1;
+  int32 col = 2;
+  bool visible = 3;
+  CursorShape shape = 4;
+  bool blink = 5;
+}
+
+enum CursorShape {
+  CURSOR_SHAPE_UNSPECIFIED = 0;
+  CURSOR_SHAPE_BLOCK = 1;
+  CURSOR_SHAPE_BAR = 2;
+  CURSOR_SHAPE_UNDERLINE = 3;
+}
+
+message Modes {
+  bool application_cursor = 1;
+  bool application_keypad = 2;
+  bool bracketed_paste = 3;
+  MouseTracking mouse_tracking = 4;
+  MouseEncoding mouse_encoding = 5;
+  bool focus_reporting = 6;
+}
+
+enum MouseTracking {
+  MOUSE_TRACKING_UNSPECIFIED = 0;
+  MOUSE_TRACKING_NONE = 1;
+  MOUSE_TRACKING_X10 = 2;
+  MOUSE_TRACKING_VT200 = 3;
+  MOUSE_TRACKING_VT200_HIGHLIGHT = 4;
+  MOUSE_TRACKING_BUTTON_EVENT = 5;
+  MOUSE_TRACKING_ANY_EVENT = 6;
+  MOUSE_TRACKING_SGR_PIXELS = 7;
+}
+
+enum MouseEncoding {
+  MOUSE_ENCODING_UNSPECIFIED = 0;
+  MOUSE_ENCODING_X10 = 1;
+  MOUSE_ENCODING_UTF8 = 2;
+  MOUSE_ENCODING_SGR = 3;
+  MOUSE_ENCODING_URXVT = 4;
+}
+
+message TerminalPalette {
+  Color default_fg = 1;
+  Color default_bg = 2;
+  Color cursor_color = 3;
+  bool reverse_video = 4;
+}
+
+// ---------------------------------------------------------------------------
+// 历史分页
+// ---------------------------------------------------------------------------
+
+message HistoryWindow {
+  uint64 first_available_line_id = 1;
+  uint64 first_included_line_id = 2;
+  uint64 last_included_line_id = 3;
+  bool has_more_before = 4;
+  repeated HistoryLine lines = 5;
+}
+
+message HistoryLine {
+  uint64 id = 1;
+  bool wrapped = 2;
+  repeated CellRun runs = 3;
+}
+
+message HistoryRequest {
+  string request_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 before_line_id = 3; // 请求严格小于此 ID 的行
+  int32 limit = 4;
+}
+
+message HistoryPage {
+  string request_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 as_of_revision = 3;
+  uint64 first_available_line_id = 4;
+  bool has_more_before = 5;
+  repeated HistoryLine lines = 6; // 按 line_id 升序
+  repeated TerminalStyle styles = 7;
+  repeated Hyperlink links = 8;
+}
+
+message HistoryTrim {
+  uint64 layout_epoch = 1;
+  uint64 first_available_line_id = 2; // 所有小于此 ID 的本地缓存应删除
+}
+
+// ---------------------------------------------------------------------------
+// Resync / 布局租约 / Resize
+// ---------------------------------------------------------------------------
+
+message ResyncRequest {
+  uint64 layout_epoch = 1;
+  uint64 screen_revision = 2;
+  string reason = 3;
+}
+
+message AcquireLayout {
+  string request_id = 1;
+  bool interactive = 2; // 是否申请为交互式 controller
+}
+
+message LayoutLease {
+  string request_id = 1;
+  string lease_id = 2;
+  bool granted = 3;
+  bool interactive = 4;
+  Size geometry = 5;
+  uint64 expires_at_ms = 6; // 服务端lease过期时间戳（可选）
+}
+
+message ReleaseLayout {
+  string lease_id = 1;
+}
+
+message Resize {
+  int32 cols = 1;
+  int32 rows = 2;
+  string lease_id = 3;
+  string request_id = 4;
+}
+
+// ---------------------------------------------------------------------------
+// 语义输入
+// ---------------------------------------------------------------------------
+
+message TerminalInput {
+  string lease_id = 1; // 只有持有 layout lease 的交互客户端才可输入
+
+  oneof input {
+    TextInput text = 10;
+    KeyInput key = 11;
+    PasteInput paste = 12;
+    MouseInput mouse = 13;
+    FocusInput focus = 14;
+  }
+}
+
+message TextInput {
+  string data = 1; // 原始 UTF-8 文本，通常来自 IME
+}
+
+message KeyInput {
+  string key = 1;       // 逻辑键名，如 "Enter", "ArrowUp", "F1"
+  ModifierSet modifiers = 2;
+  bool pressed = 3;     // true=按下，false=释放（部分协议需要）
+}
+
+message PasteInput {
+  string data = 1; // 原始 UTF-8 文本
+}
+
+message MouseInput {
+  int32 row = 1;
+  int32 col = 2;
+  MouseButton button = 3;
+  int32 wheel_delta = 4; // 滚轮：正值向上，负值向下
+  ModifierSet modifiers = 5;
+  bool pressed = 6;
+}
+
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_MIDDLE = 2;
+  MOUSE_BUTTON_RIGHT = 3;
+  MOUSE_BUTTON_WHEEL = 4;
+  MOUSE_BUTTON_MOVE = 5;
+}
+
+message FocusInput {
+  bool focused = 1; // true=获得焦点，false=失去焦点
+}
+
+message ModifierSet {
+  bool shift = 1;
+  bool alt = 2;
+  bool ctrl = 3;
+  bool meta = 4;
+}
+
+// ---------------------------------------------------------------------------
+// 终端副作用事件
+// ---------------------------------------------------------------------------
+
+message TerminalEffect {
+  string instance_id = 1;
+  uint64 screen_revision = 2;
+
+  oneof effect {
+    Bell bell = 10;
+    TitleChanged title = 11;
+    WorkingDirectoryChanged cwd = 12;
+    ClipboardReadRequest clipboard_read = 13;
+    ClipboardWriteRequest clipboard_write = 14;
+    DesktopNotification notification = 15;
+    PaletteChanged palette = 16;
+    ShellIntegrationMark shell_mark = 17;
+  }
+}
+
+message Bell {}
+
+message TitleChanged {
+  string title = 1;
+}
+
+message WorkingDirectoryChanged {
+  string path = 1;
+}
+
+message ClipboardReadRequest {
+  string request_id = 1;
+  string clipboard = 2; // "c"=clipboard, "p"=primary
+}
+
+message ClipboardWriteRequest {
+  string request_id = 1;
+  string clipboard = 2;
+  bytes data = 3;
+}
+
+message DesktopNotification {
+  string title = 1;
+  string body = 2;
+}
+
+message PaletteChanged {
+  TerminalPalette palette = 1;
+}
+
+message ShellIntegrationMark {
+  string type = 1; // 如 "prompt", "command_start", "command_complete"
+  string data = 2;
+}
+
+message ClipboardResponse {
+  string request_id = 1;
+  bool allowed = 2;    // 用户是否允许
+  bool timeout = 3;    // 是否超时
+  bytes data = 4;      // 读取到的内容（<=1MiB）
+}
+
+// ---------------------------------------------------------------------------
+// 会话元信息 / 退出
+// ---------------------------------------------------------------------------
+
+message TerminalInfo {
+  string session_id = 1;
+  string instance_id = 2;
+  string name = 3;
+  string title = 4;
+  string display_title = 5;
+  string cwd = 6;
+  string command = 7;
+  string status = 8;
+  int32 cols = 9;
+  int32 rows = 10;
+  int64 created_at_ms = 11;
+  int64 last_active_at_ms = 12;
+}
+
+message Exit {
+  int32 code = 1;
+}

@@ -7,7 +7,7 @@ android {
     namespace = "com.webterm.mobile"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.webterm.mobile.new"
+        applicationId = "com.webterm.mobile.c2"
         minSdk = 23
         targetSdk = 36
         versionCode = 2
@@ -54,7 +54,6 @@ dependencies {
   implementation(project(":terminal-view"))
   implementation(project(":transport-api"))
   implementation(project(":transport-websocket"))
-  implementation(project(":transport-webrtc"))
   implementation(project(":core-api"))
   implementation(project(":core-config"))
   implementation(project(":core-cache"))
@@ -67,7 +66,6 @@ dependencies {
   implementation(project(":feature:terminal"))
   implementation(project(":feature:home"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
-  implementation("io.github.webrtc-sdk:android:144.7559.09")
   implementation("androidx.annotation:annotation:1.9.0")
   implementation("androidx.recyclerview:recyclerview:1.4.0")
   implementation(libs.navigation.fragment)

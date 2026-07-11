@@ -1,0 +1,12 @@
+{
+  "description": "Enter alternate buffer, write one line, then exit back to main. After exiting the main screen is empty and alternate content does not leak into scrollback.",
+  "geometry": {"rows": 5, "cols": 80},
+  "active_buffer": "main",
+  "cursor": {"row": 0, "col": 0, "visible": true, "shape": "block", "blink": true},
+  "history": {"first_available_line_id": 0, "first_included_line_id": 0, "last_included_line_id": 0, "has_more_before": false, "lines": []},
+  "screen": {
+    "rows": []
+  },
+  "styles": [],
+  "links": []
+}

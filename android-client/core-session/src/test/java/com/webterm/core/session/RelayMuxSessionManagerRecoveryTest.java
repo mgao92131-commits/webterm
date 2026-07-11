@@ -599,30 +599,6 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(0L, manager.getChannelLastSeq("term:missing"));
     }
 
-    @Test
-    public void manualForceReconnectCanSkipP2POnce() {
-        FakeMuxTransport p2pTransport = new FakeMuxTransport(true);
-        FakeMuxTransport wsTransport = new FakeMuxTransport(false);
-        P2PThenWebSocketFactory factory = new P2PThenWebSocketFactory(p2pTransport, wsTransport);
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1", factory);
-
-        manager.openTerminalChannel("s1", new RelayMuxSessionManager.ChannelListener() {
-            @Override public void onConnected(String channelId) {}
-            @Override public void onError(String channelId, int code, String message) {}
-            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
-            @Override public void onMuxDisconnected(String reason) {}
-        });
-        assertEquals(1, factory.dataChannelCount);
-        assertEquals(0, factory.webSocketCount);
-
-        manager.forceReconnect("manual retry", true);
-
-        assertEquals("skip once should avoid starting another P2P attempt", 1, factory.dataChannelCount);
-        assertEquals("skip once should fall back to websocket immediately", 1, factory.webSocketCount);
-        assertEquals("old P2P transport should be closed", 1, p2pTransport.closeCount);
-    }
-
     private static class FakeTransportFactory implements TransportFactory {
         private final FakeMuxTransport transport;
 
@@ -630,36 +606,8 @@ public class RelayMuxSessionManagerRecoveryTest {
             this.transport = transport;
         }
 
-        @Override public MuxTransport createWebSocket(String url, String cookie, String protocol) {
+        @Override public MuxTransport create(String url, String cookie, String protocol) {
             return transport;
-        }
-
-        @Override public MuxTransport createDataChannel(String deviceId) {
-            return transport;
-        }
-
-        @Override public void prepareDataChannel(String baseUrl, String cookie, String deviceId) {}
-    }
-
-    private static class P2PThenWebSocketFactory implements TransportFactory {
-        private final FakeMuxTransport p2pTransport;
-        private final FakeMuxTransport wsTransport;
-        private int dataChannelCount;
-        private int webSocketCount;
-
-        P2PThenWebSocketFactory(FakeMuxTransport p2pTransport, FakeMuxTransport wsTransport) {
-            this.p2pTransport = p2pTransport;
-            this.wsTransport = wsTransport;
-        }
-
-        @Override public MuxTransport createWebSocket(String url, String cookie, String protocol) {
-            webSocketCount++;
-            return wsTransport;
-        }
-
-        @Override public MuxTransport createDataChannel(String deviceId) {
-            dataChannelCount++;
-            return p2pTransport;
         }
     }
 
@@ -667,16 +615,7 @@ public class RelayMuxSessionManagerRecoveryTest {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
-        private final boolean p2p;
         private int closeCount;
-
-        FakeMuxTransport() {
-            this(false);
-        }
-
-        FakeMuxTransport(boolean p2p) {
-            this.p2p = p2p;
-        }
 
         @Override public void start(Listener listener) {
             this.listener = listener;
@@ -698,7 +637,6 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return open; }
-        @Override public boolean isP2P() { return p2p; }
 
         @Override public boolean sendText(String text) {
             sentTexts.add(text);

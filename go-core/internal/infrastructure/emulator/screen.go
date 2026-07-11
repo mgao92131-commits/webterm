@@ -106,7 +106,7 @@ func (s *Screen) DirtyDelta(seq uint64) Delta {
 		if cell == nil {
 			continue
 		}
-		cells = append(cells, DirtyCell{Row: pos.Row, Col: pos.Col, Char: string(cell.Char)})
+		cells = append(cells, DirtyCell{Row: pos.Row, Col: pos.Col, Char: cell.Char})
 	}
 	s.Terminal.ClearDirty()
 	return Delta{Seq: seq, Cells: cells}
@@ -170,13 +170,13 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 		historyLine := s.Terminal.ScrollbackLine(startLine + r)
 		cells[r] = make([]headlessterm.Cell, cols)
 		for c := 0; c < cols; c++ {
-			if c < len(historyLine) {
-				cells[r][c] = historyLine[c].Copy()
+			if c < len(historyLine.Cells) {
+				cells[r][c] = historyLine.Cells[c].Copy()
 			} else {
 				cells[r][c] = headlessterm.NewCell()
 			}
 		}
-		wrapped[r] = false
+		wrapped[r] = historyLine.Wrapped
 	}
 
 	for r := 0; r < rows; r++ {
@@ -201,10 +201,13 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 	for r := 0; r < len(cells); r++ {
 		for c := 0; c < cols; c++ {
 			cell := &cells[r][c]
-			if ambiguousWideRunes[cell.Char] {
-				cell.ClearFlag(headlessterm.CellFlagWideChar)
-				if c+1 < cols && cells[r][c+1].HasFlag(headlessterm.CellFlagWideCharSpacer) {
-					cells[r][c+1] = headlessterm.NewCell()
+			if cell.Char != "" {
+				firstRune := []rune(cell.Char)[0]
+				if ambiguousWideRunes[firstRune] {
+					cell.ClearFlag(headlessterm.CellFlagWideChar)
+					if c+1 < cols && cells[r][c+1].HasFlag(headlessterm.CellFlagWideCharSpacer) {
+						cells[r][c+1] = headlessterm.NewCell()
+					}
 				}
 			}
 		}
@@ -263,7 +266,7 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 				continue
 			}
 
-			isEmpty := cell.Char == ' ' || cell.Char == 0
+			isEmpty := cell.Char == " " || cell.Char == ""
 			if isEmpty && isDefaultStyle(cell) {
 				if (activeFlags&styleFlagsMask) != 0 || !isDefaultFg(activeFg) || !isDefaultBg(activeBg) || activeUlColor != nil {
 					buf.WriteString("\x1b[0m")
@@ -340,10 +343,10 @@ func (s *Screen) AnsiTextWithScrollbackLimit(maxScrollback int) string {
 				activeFlags = cell.Flags
 			}
 
-			if cell.Char == 0 {
+			if cell.Char == "" {
 				buf.WriteRune(' ')
 			} else {
-				buf.WriteRune(cell.Char)
+				buf.WriteString(cell.Char)
 			}
 		}
 
@@ -597,7 +600,7 @@ func lastActiveCol(line []headlessterm.Cell) int {
 		if cell.IsWideSpacer() {
 			continue
 		}
-		if cell.Char != ' ' && cell.Char != 0 {
+		if cell.Char != " " && cell.Char != "" {
 			return c
 		}
 		if !isDefaultFg(cell.Fg) {

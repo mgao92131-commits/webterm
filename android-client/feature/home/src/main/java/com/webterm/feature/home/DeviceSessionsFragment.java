@@ -167,8 +167,6 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
                 return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTING;
             case CONNECTED:
                 return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTED;
-            case CONNECTED_P2P:
-                return com.webterm.ui.common.StatusIndicatorView.Status.CONNECTED_P2P;
             case DISCONNECTED:
             case AUTH_REQUIRED:
             case ERROR:

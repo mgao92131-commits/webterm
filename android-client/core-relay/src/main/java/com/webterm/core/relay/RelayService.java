@@ -162,8 +162,7 @@ public final class RelayService {
                             relayMasterConfig.getCookie(),
                             relayMasterConfig.getUsername(),
                             "",
-                            false, true, deviceId,
-                            relayMasterConfig.isP2PEnabled()
+                            false, true, deviceId
                         ));
                     }
                     updateState(RelayState.CONNECTED);
@@ -335,8 +334,7 @@ public final class RelayService {
             "",
             true,
             false,
-            "",
-            true
+            ""
         );
         if (host != null) {
             host.serverConfigs().servers().add(relayMasterConfig);

@@ -216,8 +216,7 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
 
     @Override
     public void onConnectionStatus(TerminalConnection.State state, int reconnectAttempts) {
-        boolean isP2P = connection.isP2PConnected();
-        activity.runOnUiThread(() -> connectionStatus.update(state, reconnectAttempts, isP2P));
+        activity.runOnUiThread(() -> connectionStatus.update(state, reconnectAttempts));
     }
 
     @Override

@@ -266,9 +266,9 @@ describe('RelayMuxSession', () => {
     expect(channel.readyState).toBe(WebSocket.OPEN);
     expect(openSpy).toHaveBeenCalledTimes(1);
 
-    session.reconnect('p2p connected');
+    session.reconnect('transport changed');
 
-    expect(first.closeCalls).toEqual([{ code: 1000, reason: 'p2p connected' }]);
+    expect(first.closeCalls).toEqual([{ code: 1000, reason: 'transport changed' }]);
     expect(channel.readyState).toBe(WebSocket.CONNECTING);
     expect(closeSpy).not.toHaveBeenCalled();
     expect(transports).toHaveLength(2);

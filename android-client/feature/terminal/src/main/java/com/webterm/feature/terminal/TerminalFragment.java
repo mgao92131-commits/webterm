@@ -91,7 +91,7 @@ public final class TerminalFragment extends Fragment {
             mViewModel.setSessionArgs(sessionArgs);
 
             if (mHost != null) {
-                mHost.startTerminalInFragment(sessionArgs, this);
+                mHost.startRemoteTerminalInFragment(sessionArgs, this);
             }
         }
     }

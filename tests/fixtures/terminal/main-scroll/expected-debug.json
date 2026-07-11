@@ -1,0 +1,31 @@
+{
+  "description": "Ten lines output on a 5-row screen: the first five lines scroll into history with stable line IDs.",
+  "geometry": {"rows": 5, "cols": 80},
+  "active_buffer": "main",
+  "cursor": {"row": 4, "col": 5, "visible": true, "shape": "block", "blink": true},
+  "history": {
+    "first_available_line_id": 1,
+    "first_included_line_id": 1,
+    "last_included_line_id": 6,
+    "has_more_before": false,
+    "lines": [
+      {"id": 1, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line0", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"id": 2, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line1", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"id": 3, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line2", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"id": 4, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line3", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"id": 5, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line4", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"id": 6, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line5", "width": 1, "style_id": 0, "link_id": 0}]}]}
+    ]
+  },
+  "screen": {
+    "rows": [
+      {"row": 0, "line_id": 0, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line6", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"row": 1, "line_id": 0, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line7", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"row": 2, "line_id": 0, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line8", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"row": 3, "line_id": 0, "wrapped": false, "runs": [{"col": 0, "cells": [{"text": "line9", "width": 1, "style_id": 0, "link_id": 0}]}]},
+      {"row": 4, "line_id": 0, "wrapped": false, "runs": []}
+    ]
+  },
+  "styles": [],
+  "links": []
+}

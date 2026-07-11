@@ -15,7 +15,7 @@ import java.util.Map;
 
 /**
  * 客户端角色 mux：一条 /ws/sessions 连接（webterm.mux.v1 子协议）复用多个终端通道。
- * 通道由 ws-connect 建立；数据经 tunnel frame 收发。第一阶段仅用于 direct 路径。
+ * 通道由 ws-connect 建立；数据经 tunnel frame 收发。
  */
 public final class MuxSession {
     private static final String TAG = "MuxSession";
@@ -73,10 +73,6 @@ public final class MuxSession {
 
     boolean isConnected() {
         return connected;
-    }
-
-    boolean isP2PTransport() {
-        return transport.isP2P();
     }
 
     boolean sendWsConnect(String tunnelId, String path, String[] protocols) {

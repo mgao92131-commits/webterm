@@ -16,9 +16,6 @@ RELAY_PASSWORD="${RELAY_PASSWORD:-admin}"
 DEVICE_NAME="${DEVICE_NAME:-Android E2E Agent}"
 RUN_TERMINAL=false
 EXPECT_MUX=false
-ENABLE_P2P=false
-EXPECT_P2P=false
-EXPECT_FALLBACK=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,20 +25,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mux)
       EXPECT_MUX=true
-      shift
-      ;;
-    --p2p)
-      ENABLE_P2P=true
-      shift
-      ;;
-    --expect-p2p)
-      ENABLE_P2P=true
-      EXPECT_P2P=true
-      shift
-      ;;
-    --expect-fallback)
-      ENABLE_P2P=true
-      EXPECT_FALLBACK=true
       shift
       ;;
     *)
@@ -223,7 +206,6 @@ echo "[5/9] starting Go Agent"
   WEBTERM_RELAY_PROTOCOL=v2 \
   WEBTERM_CONTROL_ADDR=127.0.0.1:0 \
   WEBTERM_SHELL=/bin/sh \
-  WEBTERM_DISABLE_P2P="$([[ "$EXPECT_FALLBACK" == true ]] && printf '1' || printf '0')" \
   "$AGENT_BIN" --mode relay
 ) >"$AGENT_LOG" 2>&1 &
 AGENT_PID="$!"
@@ -249,8 +231,7 @@ echo "[7/9] injecting relay master config"
 cat >"$PREFS_XML" <<XML
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <map>
-    <string name="servers_list">[{&quot;id&quot;:&quot;relay_mst_e2e&quot;,&quot;name&quot;:&quot;中转服务&quot;,&quot;url&quot;:&quot;${ANDROID_RELAY_URL//\//\\/}&quot;,&quot;cookie&quot;:&quot;&quot;,&quot;username&quot;:&quot;$RELAY_USER&quot;,&quot;password&quot;:&quot;$RELAY_PASSWORD&quot;,&quot;isRelayMaster&quot;:true,&quot;isRelayDevice&quot;:false,&quot;deviceId&quot;:&quot;&quot;,&quot;enableP2P&quot;:$ENABLE_P2P}]</string>
-    <boolean name="enable_p2p" value="$ENABLE_P2P" />
+    <string name="servers_list">[{&quot;id&quot;:&quot;relay_mst_e2e&quot;,&quot;name&quot;:&quot;中转服务&quot;,&quot;url&quot;:&quot;${ANDROID_RELAY_URL//\//\\/}&quot;,&quot;cookie&quot;:&quot;&quot;,&quot;username&quot;:&quot;$RELAY_USER&quot;,&quot;password&quot;:&quot;$RELAY_PASSWORD&quot;,&quot;isRelayMaster&quot;:true,&quot;isRelayDevice&quot;:false,&quot;deviceId&quot;:&quot;&quot;}]</string>
 </map>
 XML
 "$ADB" push "$PREFS_XML" /data/local/tmp/webterm.xml >/dev/null
@@ -285,46 +266,16 @@ if [[ "$RUN_TERMINAL" == true ]]; then
     sleep 0.5
   done
   wait_for_ui_text "Terminal"
-  if [[ "$EXPECT_P2P" == true ]]; then
-    deadline=$((SECONDS + 15))
-    until "$ADB" logcat -d | grep -q 'P2PConnectionManager.*p2p datachannel open'; do
-      if (( SECONDS >= deadline )); then
-        echo "expected Android P2P datachannel to open" >&2
-        "$ADB" logcat -d | grep 'P2PConnectionManager' >&2 || true
-        exit 1
-      fi
-      sleep 0.5
-    done
-  else
-    wait_for_terminal_stream
-  fi
+  wait_for_terminal_stream
   "$ADB" shell input text pwd
   "$ADB" shell input keyevent ENTER
-  if [[ "$EXPECT_P2P" == true ]]; then
-    deadline=$((SECONDS + 10))
-    until "$ADB" logcat -d | grep -q 'WebRtcMuxTransport.*p2p mux binary out' \
-      && "$ADB" logcat -d | grep -q 'WebRtcMuxTransport.*p2p mux binary in'; do
-      if (( SECONDS >= deadline )); then
-        echo "P2P DataChannel did not carry terminal payload" >&2
-        "$ADB" logcat -d | grep -E 'P2PConnectionManager|WebRtcMuxTransport|MuxSession|TerminalConnection' >&2 || true
-        exit 1
-      fi
-      sleep 0.5
-    done
-  else
-    wait_for_terminal_traffic
-  fi
-  if [[ "$EXPECT_FALLBACK" == true ]] && "$ADB" logcat -d | grep -q 'P2PConnectionManager.*p2p datachannel open'; then
-    echo "unexpected Android P2P datachannel open while expecting fallback" >&2
-    "$ADB" logcat -d | grep 'P2PConnectionManager' >&2 || true
-    exit 1
-  fi
+  wait_for_terminal_traffic
   if [[ "$EXPECT_MUX" == true ]] && curl -fsS "http://$RELAY_ADDR/debug/streams" | grep -q '"/ws/terminal/'; then
     echo "unexpected legacy /ws/terminal stream while expecting mux" >&2
     curl -fsS "http://$RELAY_ADDR/debug/streams" >&2 || true
     exit 1
   fi
-  if [[ "$EXPECT_MUX" == true && "$EXPECT_P2P" != true ]]; then
+  if [[ "$EXPECT_MUX" == true ]]; then
     assert_single_mux_stream
   fi
 else

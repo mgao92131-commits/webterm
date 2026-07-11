@@ -3,7 +3,6 @@ package com.webterm.core.session;
 import android.os.Handler;
 
 import com.webterm.core.api.WebTermUrls;
-import com.webterm.transport.api.ReconnectTrigger;
 import com.webterm.transport.api.TransportFactory;
 
 import java.util.LinkedHashMap;
@@ -15,7 +14,7 @@ import javax.inject.Singleton;
 import okhttp3.OkHttpClient;
 
 @Singleton
-public final class RelayMuxSessionRegistry implements ReconnectTrigger {
+public final class RelayMuxSessionRegistry {
     private final OkHttpClient http;
     private final Handler mainHandler;
     private final TransportFactory transportFactory;
@@ -38,15 +37,6 @@ public final class RelayMuxSessionRegistry implements ReconnectTrigger {
             manager.updateCookie(cookie);
         }
         return manager;
-    }
-
-    @Override
-    public synchronized void reconnectDevice(String deviceId, String reason) {
-        for (RelayMuxSessionManager manager : managers.values().toArray(new RelayMuxSessionManager[0])) {
-            if (RelayMuxSessionManager.safeEquals(manager.deviceId(), deviceId)) {
-                manager.reconnectTransport(reason);
-            }
-        }
     }
 
     public synchronized void releaseIfIdle(RelayMuxSessionManager manager) {

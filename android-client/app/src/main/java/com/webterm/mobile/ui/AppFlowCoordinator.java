@@ -33,11 +33,11 @@ import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.api.SessionIds;
 import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.feature.terminal.domain.RemoteTerminalIntegration;
 import com.webterm.feature.terminal.domain.TerminalConnection;
 import com.webterm.feature.terminal.domain.TerminalRuntime;
 import com.webterm.feature.terminal.domain.TerminalRuntimeRegistry;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
-import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.download.FileDownloadHelper;
@@ -76,7 +76,7 @@ public final class AppFlowCoordinator implements
     private final OkHttpClient http;
 
     private final TerminalRuntime.Factory terminalRuntimeFactory;
-    private final P2PConnectionManager p2pManager;
+    private final RemoteTerminalIntegration remoteTerminalIntegration;
     private final RelayService mRelayService;
     private FileDownloadHelper downloadHelper;
 
@@ -120,7 +120,7 @@ public final class AppFlowCoordinator implements
         Handler mainHandler,
         OkHttpClient http,
         TerminalRuntime.Factory terminalRuntimeFactory,
-        P2PConnectionManager p2pManager,
+        RemoteTerminalIntegration remoteTerminalIntegration,
         RelayService relayService
     ) {
         this.api = api;
@@ -131,7 +131,7 @@ public final class AppFlowCoordinator implements
         this.mainHandler = mainHandler;
         this.http = http;
         this.terminalRuntimeFactory = terminalRuntimeFactory;
-        this.p2pManager = p2pManager;
+        this.remoteTerminalIntegration = remoteTerminalIntegration;
         this.mRelayService = relayService;
     }
 
@@ -151,11 +151,15 @@ public final class AppFlowCoordinator implements
                 mRelayService.resetAndRefresh();
             }
             TerminalConnection connection = currentConnection();
-            if (mScreenMode == ScreenMode.TERMINAL && hasTerminalSession() && connection != null) {
-                TerminalConnection.State s = connection.getState();
-                if (s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING) {
-                    requestTerminalFreshReconnect();
+            if (mScreenMode == ScreenMode.TERMINAL && hasTerminalSession()) {
+                boolean shouldReconnect = false;
+                if (connection != null) {
+                    TerminalConnection.State s = connection.getState();
+                    shouldReconnect = s == TerminalConnection.State.DISCONNECTED || s == TerminalConnection.State.RECONNECTING;
+                } else if (isRemoteTerminalActive()) {
+                    shouldReconnect = true; // 新路径在恢复网络时尝试重连
                 }
+                if (shouldReconnect) requestTerminalFreshReconnect();
             }
         });
         mRelayService.setHost(this);
@@ -176,21 +180,6 @@ public final class AppFlowCoordinator implements
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
         mTerminalRuntimeRegistry = new TerminalRuntimeRegistry(mActivity, terminalRuntimeFactory, mSessionCommands);
-        p2pManager.setListener(new P2PConnectionManager.Listener() {
-            @Override public void onConnecting(String deviceId) { }
-            @Override public void onConnected(String deviceId) {
-                relayMuxRegistry.reconnectDevice(deviceId, "p2p connected");
-            }
-            @Override public void onDisconnected(String deviceId, String reason) {
-                if (isP2pDisabledReason(reason)) {
-                    // P2P is administratively disabled on the server. The mux is
-                    // already running over relay websocket; do not trigger a reconnect.
-                    return;
-                }
-                relayMuxRegistry.reconnectDevice(deviceId, "p2p disconnected: " + reason);
-            }
-            @Override public void onError(String deviceId, String message) { }
-        });
         loadServersFromPrefs();
     }
 
@@ -235,7 +224,7 @@ public final class AppFlowCoordinator implements
         mainHandler.removeCallbacksAndMessages(null);
         mRelayService.stop();
         if (mTerminalRuntimeRegistry != null) mTerminalRuntimeRegistry.shutdown();
-        if (p2pManager != null) p2pManager.disconnect();
+        remoteTerminalIntegration.closeSession();
         terminalCache.shutdown(null);
         relayMuxRegistry.shutdown();
         http.dispatcher().cancelAll();
@@ -270,7 +259,6 @@ public final class AppFlowCoordinator implements
     public ServerConfigStore getConfigStore() { return configStore; }
     public WebTermApi getApi() { return api; }
     public Handler getMainHandler() { return mainHandler; }
-    public P2PConnectionManager getP2PManager() { return p2pManager; }
     public SessionCommandController getSessionCommands() { return mSessionCommands; }
     public RelayMuxSessionRegistry getRelayMuxRegistry() { return relayMuxRegistry; }
     public TerminalCacheCoordinator getTerminalCache() { return terminalCache; }
@@ -334,15 +322,21 @@ public final class AppFlowCoordinator implements
     }
 
     private boolean hasTerminalSession() {
-        return mTerminalRuntime != null && mTerminalRuntime.hasSession();
+        return (mTerminalRuntime != null && mTerminalRuntime.hasSession())
+            || remoteTerminalIntegration.hasSession();
     }
 
     private boolean hasActiveTerminal() {
-        return mTerminalRuntime != null && mTerminalRuntime.hasActiveTerminal();
+        return (mTerminalRuntime != null && mTerminalRuntime.hasActiveTerminal())
+            || remoteTerminalIntegration.hasSession();
     }
 
     private TerminalConnection currentConnection() {
         return mTerminalRuntime == null ? null : mTerminalRuntime.connection();
+    }
+
+    private boolean isRemoteTerminalActive() {
+        return remoteTerminalIntegration.hasSession();
     }
 
     private TerminalSession currentTerminalSession() {
@@ -412,7 +406,6 @@ public final class AppFlowCoordinator implements
 
     public void showSessionHome() {
         detachCurrentTerminalView();
-        if (p2pManager != null) p2pManager.disconnect();
         mScreenMode = ScreenMode.DEVICES;
         mSelectedServer = null;
 
@@ -513,11 +506,21 @@ public final class AppFlowCoordinator implements
 
     // ── TerminalHost ─────────────────────────────────────────────────
 
-    public void startTerminalInFragment(Activity activity, TerminalViewModel.TerminalSessionArgs args,
-                                          TerminalFragment fragment) {
-        startTerminalInFragment(activity, args.baseUrl, args.cookie, args.sessionId,
-            args.termTitle, args.sessionName, args.createdAt, args.instanceId,
-            args.relayDevice, args.relayDeviceId, args.cwd, fragment);
+    public void startRemoteTerminalInFragment(Activity activity, TerminalViewModel.TerminalSessionArgs args,
+                                                TerminalFragment fragment) {
+        mScreenMode = ScreenMode.TERMINAL;
+        mTerminalRuntime = null;
+        remoteTerminalIntegration.start(activity, fragment, args);
+        remoteTerminalIntegration.setTitleListener(new RemoteTerminalIntegration.TitleListener() {
+            @Override public void onTitleChanged(String title) {
+                // TODO: 更新 Activity/Fragment 标题
+            }
+            @Override public void onWorkingDirectoryChanged(String cwd) {
+                if (mSelectedServer != null && remoteTerminalIntegration.sessionId() != null) {
+                    updateCurrentSessionCwd(mSelectedServer, remoteTerminalIntegration.sessionId(), cwd);
+                }
+            }
+        });
     }
 
     public void detachTerminalFragment(TerminalFragment fragment) {
@@ -599,13 +602,44 @@ public final class AppFlowCoordinator implements
 
     private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
         if (server == null || sessionId == null || sessionId.isEmpty()) return;
-        if (mTerminalRuntime == null) return;
-        if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(mTerminalRuntime.state().baseUrl()))) return;
-        if (!sameTerminalSessionId(sessionId, mTerminalRuntime.state().sessionId(), server.getDeviceId())) return;
-        mTerminalRuntime.state().setCwd(cwd);
+        if (mTerminalRuntime != null) {
+            if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(mTerminalRuntime.state().baseUrl()))) return;
+            if (!sameTerminalSessionId(sessionId, mTerminalRuntime.state().sessionId(), server.getDeviceId())) return;
+            mTerminalRuntime.state().setCwd(cwd);
+        } else if (isRemoteTerminalActive()) {
+            if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) return;
+            if (!sameTerminalSessionId(sessionId, remoteTerminalIntegration.sessionId(), server.getDeviceId())) return;
+            // 新路径的 cwd 由 effect 事件驱动，这里仅做匹配校验。
+        }
     }
 
     private void requestTerminalFreshReconnect() {
+        if (isRemoteTerminalActive()) {
+            ServerConfig server = findServerForRemoteTerminal();
+            if (server != null) {
+                String currentCookie = server.getCookie() != null ? server.getCookie() : remoteTerminalIntegration.cookie();
+                if (currentCookie == null || currentCookie.isEmpty()) {
+                    remoteTerminalIntegration.reconnectFresh(currentCookie);
+                    return;
+                }
+                api.refresh(server.getUrl(), currentCookie, new WebTermApi.LoginCallback() {
+                    @Override public void onReady(String baseUrl, String cookie) {
+                        mActivity.runOnUiThread(() -> {
+                            server.setCookie(cookie);
+                            saveServers();
+                            remoteTerminalIntegration.reconnectFresh(cookie);
+                        });
+                    }
+                    @Override public void onError(String message) {
+                        mActivity.runOnUiThread(() -> remoteTerminalIntegration.reconnectFresh(remoteTerminalIntegration.cookie()));
+                    }
+                });
+            } else {
+                remoteTerminalIntegration.reconnectFresh(remoteTerminalIntegration.cookie());
+            }
+            return;
+        }
+
         if (mTerminalRuntime == null || !mTerminalRuntime.state().hasSession()) return;
         TerminalReconnectTarget target = TerminalReconnectTarget.capture(mTerminalRuntime);
         if (target == null) return;
@@ -686,6 +720,17 @@ public final class AppFlowCoordinator implements
             && target != null
             && target.equals(mTerminalReconnectInFlightTarget)
             && target.matches(mTerminalRuntime);
+    }
+
+    private ServerConfig findServerForRemoteTerminal() {
+        if (!isRemoteTerminalActive()) return null;
+        String baseUrl = WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl());
+        for (ServerConfig server : serverConfigs.servers()) {
+            if (WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(baseUrl)) {
+                return server;
+            }
+        }
+        return null;
     }
 
     private void clearTerminalReconnectInFlight(TerminalReconnectTarget target, int generation) {
@@ -772,15 +817,6 @@ public final class AppFlowCoordinator implements
 
     public int getSavedFontSize() { return configStore.getFontSize(); }
     public String getSavedFontType() { return configStore.getFontType(); }
-    public boolean isP2PEnabled() { return configStore.isP2PEnabled(); }
-    public void saveP2PEnabled(boolean enabled) { configStore.saveP2PEnabled(enabled); }
-
-    private static boolean isP2pDisabledReason(String reason) {
-        if (reason == null) return false;
-        String lower = reason.toLowerCase(java.util.Locale.US);
-        return lower.contains("p2p disabled") || lower.contains("503");
-    }
-
     public Typeface getTypefaceByName(String type) {
         if ("sans-serif".equals(type)) return Typeface.SANS_SERIF;
         if ("serif".equals(type)) return Typeface.SERIF;
@@ -789,10 +825,13 @@ public final class AppFlowCoordinator implements
     }
 
     public void updateKeyboardAvoidance() {
-        if (mTerminalRuntime == null) return;
-        TerminalWindowInsetsController.updateKeyboardAvoidance(mActivity,
-            mTerminalRuntime.terminalRoot(), mTerminalRuntime.terminalViewport(),
-            mTerminalRuntime.quickBar(), mTerminalRuntime.terminalView(), mImeOverlap);
+        if (mTerminalRuntime != null) {
+            TerminalWindowInsetsController.updateKeyboardAvoidance(mActivity,
+                mTerminalRuntime.terminalRoot(), mTerminalRuntime.terminalViewport(),
+                mTerminalRuntime.quickBar(), mTerminalRuntime.terminalView(), mImeOverlap);
+        } else if (isRemoteTerminalActive()) {
+            remoteTerminalIntegration.updateKeyboardAvoidance();
+        }
     }
 
     // ── SessionRowActions (not implemented by AppFlowCoordinator directly; handled via MainActivity) ──────────────────────────────────────────
@@ -824,6 +863,10 @@ public final class AppFlowCoordinator implements
             if (!mTerminalRuntimeRegistry.contains(mTerminalRuntime)) {
                 mTerminalRuntime = null;
             }
+        }
+        if (isRemoteTerminalActive()
+            && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {
+            remoteTerminalIntegration.closeSession();
         }
         removeCachedTerminalsForServer(server);
         serverConfigs.remove(server);
@@ -908,11 +951,19 @@ public final class AppFlowCoordinator implements
     public void saveFontType(String type) { configStore.saveFontType(type); }
     @Override
     public void applyTerminalFontSize(int size) {
-        if (mTerminalRuntime != null) mTerminalRuntime.updateFontSize(size);
+        if (mTerminalRuntime != null) {
+            mTerminalRuntime.updateFontSize(size);
+        } else if (isRemoteTerminalActive()) {
+            remoteTerminalIntegration.updateFontSize(size);
+        }
     }
     @Override
     public void applyTerminalTypeface(Typeface typeface) {
-        if (mTerminalRuntime != null) mTerminalRuntime.updateTypeface(typeface);
+        if (mTerminalRuntime != null) {
+            mTerminalRuntime.updateTypeface(typeface);
+        } else if (isRemoteTerminalActive()) {
+            remoteTerminalIntegration.updateTypeface(typeface);
+        }
     }
     @Override
     public String getDownloadDirDisplayName() {
@@ -976,8 +1027,18 @@ public final class AppFlowCoordinator implements
     }
 
     public void removeCachedTerminal(String baseUrl, String sessionId) {
-        String currentBaseUrl = mTerminalRuntime == null ? null : mTerminalRuntime.state().baseUrl();
-        String currentSessionId = mTerminalRuntime == null ? null : mTerminalRuntime.state().sessionId();
+        String currentBaseUrl;
+        String currentSessionId;
+        if (mTerminalRuntime != null) {
+            currentBaseUrl = mTerminalRuntime.state().baseUrl();
+            currentSessionId = mTerminalRuntime.state().sessionId();
+        } else if (isRemoteTerminalActive()) {
+            currentBaseUrl = remoteTerminalIntegration.baseUrl();
+            currentSessionId = remoteTerminalIntegration.sessionId();
+        } else {
+            currentBaseUrl = null;
+            currentSessionId = null;
+        }
         if (terminalCache.removeTerminal(baseUrl, sessionId, currentBaseUrl, currentSessionId,
             currentTerminalSession())) {
             if (mTerminalRuntime != null) mTerminalRuntime.state().clearPersistence();
@@ -993,6 +1054,12 @@ public final class AppFlowCoordinator implements
     }
 
     private void disposeRuntimeForSession(ServerConfig server, String sessionId) {
+        if (isRemoteTerminalActive()
+            && sessionId.equals(remoteTerminalIntegration.sessionId())
+            && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {
+            remoteTerminalIntegration.closeSession();
+            return;
+        }
         if (mTerminalRuntimeRegistry == null) return;
         TerminalRuntime runtime = mTerminalRuntimeRegistry.find(server, sessionId);
         if (runtime == null) return;

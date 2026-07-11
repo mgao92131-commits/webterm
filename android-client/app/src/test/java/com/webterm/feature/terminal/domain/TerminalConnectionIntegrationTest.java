@@ -234,14 +234,8 @@ public class TerminalConnectionIntegrationTest {
             this.transport = transport;
         }
 
-        @Override public MuxTransport createWebSocket(String url, String cookie, String protocol) {
+        @Override public MuxTransport create(String url, String cookie, String protocol) {
             return transport;
         }
-
-        @Override public MuxTransport createDataChannel(String deviceId) {
-            return null;
-        }
-
-        @Override public void prepareDataChannel(String baseUrl, String cookie, String deviceId) {}
     }
 }

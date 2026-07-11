@@ -8,8 +8,8 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.core.session.RelayMuxSessionRegistry;
-import com.webterm.transport.api.ReconnectTrigger;
 import com.webterm.transport.api.TransportFactory;
+import com.webterm.transport.websocket.WebSocketMuxTransport;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -61,13 +61,7 @@ public class AppModule {
 
     @Provides
     @Singleton
-    static TransportFactory provideTransportFactory(DefaultTransportFactory impl) {
-        return impl;
-    }
-
-    @Provides
-    @Singleton
-    static ReconnectTrigger provideReconnectTrigger(RelayMuxSessionRegistry registry) {
-        return registry;
+    static TransportFactory provideTransportFactory(OkHttpClient http) {
+        return (wsUrl, cookie, subprotocol) -> new WebSocketMuxTransport(http, wsUrl, cookie, subprotocol);
     }
 }

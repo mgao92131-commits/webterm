@@ -33,7 +33,6 @@ public class TerminalViewModelTest {
     public void setUp() {
         when(configStore.getFontSize()).thenReturn(24);
         when(configStore.getFontType()).thenReturn("monospace");
-        when(configStore.isP2PEnabled()).thenReturn(true);
         viewModel = new TerminalViewModel(configStore);
     }
 
@@ -59,12 +58,6 @@ public class TerminalViewModelTest {
     public void saveFontSize_delegatesToStore() {
         viewModel.saveFontSize(32);
         verify(configStore).saveFontSize(32);
-    }
-
-    @Test
-    public void saveP2PEnabled_delegatesToStore() {
-        viewModel.saveP2PEnabled(false);
-        verify(configStore).saveP2PEnabled(false);
     }
 
     @Test

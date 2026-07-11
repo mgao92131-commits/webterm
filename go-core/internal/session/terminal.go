@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"webterm/go-core/internal/infrastructure/emulator"
 	"webterm/go-core/internal/infrastructure/pty"
 	"webterm/go-core/internal/protocol"
+	"webterm/go-core/internal/terminalsession"
 )
 
 const (
@@ -61,6 +61,7 @@ type TerminalSession struct {
 	activeAt        time.Time
 	ring            *EventRing
 	screen          *ScreenState
+	runtime         *terminalsession.Runtime
 	process         *pty.Process
 	shellPid        int
 	ttyPath         string
@@ -139,7 +140,16 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		onTitleChanged: options.OnTitle,
 		onInfoChanged:  options.OnInfoChanged,
 	}
-	go terminal.readLoop()
+	terminal.runtime = terminalsession.NewRuntime(
+		terminal.id,
+		process.PTY(),
+		rows,
+		cols,
+		terminalsession.WithOnOutput(func(data []byte) {
+			frame := terminal.PushOutput(data)
+			terminal.broadcastOutput(frame)
+		}),
+	)
 	go terminal.waitLoop()
 	return terminal, nil
 }
@@ -169,9 +179,13 @@ func (terminal *TerminalSession) Info() Info {
 	if terminal.liveCwd != "" {
 		cwd = terminal.liveCwd
 	}
+	instanceID := terminal.instance
+	if terminal.runtime != nil {
+		instanceID = terminal.runtime.Info().InstanceID
+	}
 	return Info{
 		ID:                terminal.id,
-		InstanceID:        terminal.instance,
+		InstanceID:        instanceID,
 		Name:              terminal.name,
 		TermTitle:         terminal.termTitle,
 		DisplayTitle:      displayTitle(terminal.name, terminal.termTitle),
@@ -228,6 +242,9 @@ func (terminal *TerminalSession) Close() {
 	if terminal.process != nil {
 		_ = terminal.process.Close()
 		terminal.process.Kill()
+	}
+	if terminal.runtime != nil {
+		_ = terminal.runtime.Close()
 	}
 	for _, client := range clients {
 		client.Close()
@@ -300,6 +317,9 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 	if terminal.process != nil {
 		terminal.process.Resize(cols, rows)
 	}
+	if terminal.runtime != nil {
+		terminal.runtime.ResizeEngine(rows, cols)
+	}
 	terminal.touchLocked()
 	terminal.invalidateStateCache()
 	terminal.mu.Unlock()
@@ -318,6 +338,33 @@ func (terminal *TerminalSession) Detach(client *Client) {
 	delete(terminal.clients, client)
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+}
+
+// AttachScreenClient 把 screen protocol 客户端附加到权威 Runtime。
+func (terminal *TerminalSession) AttachScreenClient(c *terminalsession.ScreenClient) {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt != nil {
+		rt.AttachClient(c)
+	}
+}
+
+// DetachScreenClient 从 Runtime 分离 screen protocol 客户端。
+func (terminal *TerminalSession) DetachScreenClient(clientID string) {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt != nil {
+		rt.DetachClient(clientID)
+	}
+}
+
+// ScreenRuntime 返回底层 Runtime（screen client 集成用）。
+func (terminal *TerminalSession) ScreenRuntime() *terminalsession.Runtime {
+	terminal.mu.RLock()
+	defer terminal.mu.RUnlock()
+	return terminal.runtime
 }
 
 // terminalModes 生成终端模式恢复 ANSI 序列（与 @xterm/addon-serialize 对齐）
@@ -457,24 +504,6 @@ func (terminal *TerminalSession) ScreenDelta() ScreenDelta {
 		return ScreenDelta{Seq: seq}
 	}
 	return screen.DirtyDelta(seq)
-}
-
-func (terminal *TerminalSession) readLoop() {
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := terminal.process.Read(buf)
-		if n > 0 {
-			bytes := append([]byte(nil), buf[:n]...)
-			frame := terminal.PushOutput(bytes)
-			terminal.broadcastOutput(frame)
-		}
-		if err != nil {
-			if err != io.EOF {
-				terminal.markClosed()
-			}
-			return
-		}
-	}
 }
 
 func (terminal *TerminalSession) waitLoop() {

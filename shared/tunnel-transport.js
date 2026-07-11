@@ -1,5 +1,5 @@
 // Shared tunnel transport abstractions.
-// Works with Node.js Buffer; browser equivalent is in frontend/src/lib/p2p.ts.
+// Works with Node.js Buffer; browser equivalent uses the same protocol.
 
 import {
   MSG_TYPE_WS_DATA,

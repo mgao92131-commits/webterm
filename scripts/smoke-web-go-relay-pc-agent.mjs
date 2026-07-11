@@ -10,16 +10,10 @@ import { chromium } from '@playwright/test';
 
 const args = parseArgs(process.argv.slice(2));
 const timeoutMs = Number(args.timeout || 60000);
-const expectP2P = Boolean(args['expect-p2p']);
-const expectFallback = Boolean(args['expect-fallback']);
-const p2pRequested = Boolean(args.p2p || expectP2P || expectFallback);
 const externalRelayURL = args['relay-url'] ? normalizeBaseURL(String(args['relay-url'])) : '';
 const externalWebURL = args['web-url'] ? normalizeBaseURL(String(args['web-url'])) : externalRelayURL;
 const externalMode = Boolean(externalRelayURL);
 const debugBaseURL = args['debug-url'] ? normalizeBaseURL(String(args['debug-url'])) : (externalMode ? '' : null);
-if (expectP2P && expectFallback) {
-  throw new Error('--expect-p2p and --expect-fallback are mutually exclusive');
-}
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const goCoreRoot = path.join(repoRoot, 'go-core');
 const webRoot = path.join(repoRoot, 'web');
@@ -138,7 +132,6 @@ try {
       RELAY_SECRET: createdDevice.agentSecret,
       DEVICE_NAME: 'Web Smoke Go Agent',
       WEBTERM_RELAY_PROTOCOL: 'v2',
-      WEBTERM_DISABLE_P2P: (!p2pRequested || expectFallback) ? '1' : '0',
       WEBTERM_CONTROL_ADDR: '127.0.0.1:0',
       WEBTERM_SHELL: '/bin/sh',
     },
@@ -180,13 +173,6 @@ try {
   currentStep = 'wait for online device';
   await page.getByRole('button', { name: 'Web Smoke Go Agent' }).waitFor({ timeout: remaining() });
   await page.getByRole('button', { name: /新建终端/ }).waitFor({ state: 'visible', timeout: remaining() });
-  if (expectP2P) {
-    currentStep = 'wait for p2p connection';
-    await page.getByText('P2P').first().waitFor({ state: 'visible', timeout: remaining() });
-  } else if (expectFallback) {
-    currentStep = 'wait for p2p fallback';
-    await page.getByText('RELAY').first().waitFor({ state: 'visible', timeout: remaining() });
-  }
 
   currentStep = 'create first terminal';
   await page.getByRole('button', { name: /新建终端/ }).click();
@@ -210,14 +196,12 @@ try {
 
   currentStep = 'assert mux websocket shape';
   await assertNoLegacyWebSockets(websocketURLs);
-  if (!expectP2P) {
-    await assertMuxOnlyWebSockets(websocketURLs);
-  }
+  await assertMuxOnlyWebSockets(websocketURLs);
   if (debugBaseURL !== '') {
-    await assertRelayStreams(debugBaseURL || relayBaseURL, apiJar, { expectP2P });
+    await assertRelayStreams(debugBaseURL || relayBaseURL, apiJar);
   }
 
-  console.log(`web go-relay pc-agent smoke ok${externalMode ? ' (external)' : ''}${expectP2P ? ' (p2p)' : expectFallback ? ' (fallback)' : ''}`);
+  console.log(`web go-relay pc-agent smoke ok${externalMode ? ' (external)' : ''}`);
 
   await browser.close();
   browser = null;
@@ -422,7 +406,7 @@ async function assertNoLegacyWebSockets(urls) {
   }
 }
 
-async function assertRelayStreams(baseURL, cookieJar, { expectP2P = false } = {}) {
+async function assertRelayStreams(baseURL, cookieJar) {
   const streams = await requestJSON({
     method: 'GET',
     url: `${baseURL}/debug/streams`,
@@ -433,7 +417,7 @@ async function assertRelayStreams(baseURL, cookieJar, { expectP2P = false } = {}
   if (text.includes('/ws/sessions/')) {
     throw new Error(`/debug/streams contains legacy physical session path: ${text}`);
   }
-  if (!expectP2P && !text.includes('/ws/sessions')) {
+  if (!text.includes('/ws/sessions')) {
     throw new Error(`/debug/streams does not show relay mux stream: ${text}`);
   }
 }

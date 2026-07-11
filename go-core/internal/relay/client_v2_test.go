@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/webrtc/v4"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
@@ -135,138 +134,6 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	t.Fatalf("did not receive V2_MUX_RELAY_OK")
 }
 
-func TestV2ClientP2PDataChannelServesMuxManager(t *testing.T) {
-	testutil.SkipIfLoopbackListenUnavailable(t)
-
-	relayApp := relayapp.NewInMemory(relayapp.Config{})
-	user, err := relayApp.Store().CreateUser("owner@example.com", "secret", "admin")
-	if err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
-	}
-	device, credential, err := relayApp.Store().CreateDevice(user.ID, "Go Agent")
-	if err != nil {
-		t.Fatalf("CreateDevice returned error: %v", err)
-	}
-	token, err := relayApp.Store().IssueToken(user.ID, time.Hour)
-	if err != nil {
-		t.Fatalf("IssueToken returned error: %v", err)
-	}
-
-	server := httptest.NewServer(relayApp.Handler())
-	defer server.Close()
-
-	cfg := config.Config{
-		Mode:  config.ModeRelay,
-		Relay: config.RelayConfig{URL: server.URL, Secret: credential, DeviceName: "Go Agent"},
-		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
-	}
-	agentApp := app.New(cfg, "test")
-	client := NewV2(cfg.Relay, agentApp)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- client.runOnce(ctx)
-	}()
-	waitForV2Presence(t, relayApp, user.ID, device.ID)
-
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection returned error: %v", err)
-	}
-	defer pc.Close()
-
-	dc, err := pc.CreateDataChannel("tunnel", nil)
-	if err != nil {
-		t.Fatalf("CreateDataChannel returned error: %v", err)
-	}
-	textMessages := make(chan string, 8)
-	binaryMessages := make(chan []byte, 8)
-	opened := make(chan struct{})
-	dc.OnOpen(func() {
-		close(opened)
-	})
-	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		if msg.IsString {
-			textMessages <- string(msg.Data)
-			return
-		}
-		binaryMessages <- append([]byte(nil), msg.Data...)
-	})
-
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		t.Fatalf("CreateOffer returned error: %v", err)
-	}
-	gatherComplete := webrtc.GatheringCompletePromise(pc)
-	if err := pc.SetLocalDescription(offer); err != nil {
-		t.Fatalf("SetLocalDescription returned error: %v", err)
-	}
-	select {
-	case <-gatherComplete:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("browser-side offer ICE gathering timed out")
-	}
-
-	offerBody, _ := json.Marshal(relaycore.P2POffer{
-		DeviceID: device.ID,
-		SDP:      pc.LocalDescription().SDP,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/p2p/offer", bytes.NewReader(offerBody))
-	if err != nil {
-		t.Fatalf("new p2p offer request: %v", err)
-	}
-	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value})
-	req.Header.Set("content-type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("p2p offer request failed: %v", err)
-	}
-	answerBody, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("p2p offer status = %d body=%s", res.StatusCode, answerBody)
-	}
-	var answer relaycore.P2PAnswer
-	if err := json.Unmarshal(answerBody, &answer); err != nil {
-		t.Fatalf("decode p2p answer: %v body=%s", err, answerBody)
-	}
-	if answer.SDP == "" {
-		t.Fatalf("p2p answer missing SDP")
-	}
-	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer.SDP}); err != nil {
-		t.Fatalf("SetRemoteDescription returned error: %v", err)
-	}
-
-	select {
-	case <-opened:
-	case <-ctx.Done():
-		t.Fatalf("datachannel did not open: %v", ctx.Err())
-	}
-
-	managerConnect, _ := json.Marshal(map[string]any{
-		"type":               protocol.WSConnect,
-		"tunnelConnectionId": "manager:" + device.ID,
-		"path":               "/ws/sessions",
-	})
-	if err := dc.SendText(string(managerConnect)); err != nil {
-		t.Fatalf("send mux ws-connect failed: %v", err)
-	}
-	msg := readP2PTextJSON(t, ctx, textMessages)
-	if msg["type"] != protocol.WSConnected || msg["tunnelConnectionId"] != "manager:"+device.ID {
-		t.Fatalf("manager ws-connected over p2p = %#v", msg)
-	}
-	frame := readP2PTunnel(t, ctx, binaryMessages)
-	if frame.ID != "manager:"+device.ID || !strings.Contains(string(frame.Payload), `"type":"sessions"`) {
-		t.Fatalf("manager initial p2p frame = %#v payload=%s", frame, frame.Payload)
-	}
-
-	cancel()
-	if err := <-errCh; !isContextCanceledError(err) {
-		t.Fatalf("client returned %v, want context.Canceled", err)
-	}
-}
-
 func isContextCanceledError(err error) bool {
 	if err == nil {
 		return false
@@ -336,38 +203,6 @@ func readMuxTunnel(t *testing.T, ctx context.Context, conn *websocket.Conn) prot
 			t.Fatalf("decode mux tunnel: %v", err)
 		}
 		return frame
-	}
-}
-
-func readP2PTextJSON(t *testing.T, ctx context.Context, messages <-chan string) map[string]any {
-	t.Helper()
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("read p2p text: %v", ctx.Err())
-		case data := <-messages:
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				t.Fatalf("decode p2p json %q: %v", data, err)
-			}
-			return msg
-		}
-	}
-}
-
-func readP2PTunnel(t *testing.T, ctx context.Context, messages <-chan []byte) protocol.TunnelFrame {
-	t.Helper()
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("read p2p tunnel: %v", ctx.Err())
-		case data := <-messages:
-			frame, err := protocol.DecodeTunnelFrame(data)
-			if err != nil {
-				t.Fatalf("decode p2p tunnel: %v", err)
-			}
-			return frame
-		}
 	}
 }
 

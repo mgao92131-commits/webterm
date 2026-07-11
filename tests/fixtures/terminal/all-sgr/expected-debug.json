@@ -1,0 +1,29 @@
+{
+  "description": "Common SGR attributes and color kinds must be preserved in Cell/style dictionary.",
+  "geometry": {"rows": 30, "cols": 80},
+  "active_buffer": "main",
+  "cursor": {"row": 3, "col": 0, "visible": true, "shape": "block", "blink": true},
+  "styles": [
+    {"id": 1, "fg": {"kind": "default-fg"}, "bg": {"kind": "default-bg"}, "attrs": {"bold": true}},
+    {"id": 2, "fg": {"kind": "default-fg"}, "bg": {"kind": "default-bg"}, "attrs": {"italic": true}},
+    {"id": 3, "fg": {"kind": "default-fg"}, "bg": {"kind": "default-bg"}, "attrs": {"underline": true}},
+    {"id": 4, "fg": {"kind": "indexed", "index": 1}, "bg": {"kind": "default-bg"}, "attrs": {}},
+    {"id": 5, "fg": {"kind": "default-fg"}, "bg": {"kind": "indexed", "index": 2}, "attrs": {}},
+    {"id": 6, "fg": {"kind": "indexed", "index": 208}, "bg": {"kind": "default-bg"}, "attrs": {}},
+    {"id": 7, "fg": {"kind": "rgb", "rgb": 16744448}, "bg": {"kind": "default-bg"}, "attrs": {}}
+  ],
+  "links": [],
+  "screen": {
+    "rows": [
+      {"row": 0, "line_id": 0, "wrapped": false, "runs": [
+        {"col": 0, "cells": [{"text": "bold", "width": 1, "style_id": 1, "link_id": 0}, {"text": " ", "width": 1, "style_id": 0, "link_id": 0}, {"text": "italic", "width": 1, "style_id": 2, "link_id": 0}, {"text": " ", "width": 1, "style_id": 0, "link_id": 0}, {"text": "underline", "width": 1, "style_id": 3, "link_id": 0}]}
+      ]},
+      {"row": 1, "line_id": 0, "wrapped": false, "runs": [
+        {"col": 0, "cells": [{"text": "red fg", "width": 1, "style_id": 4, "link_id": 0}, {"text": " ", "width": 1, "style_id": 0, "link_id": 0}, {"text": "green bg", "width": 1, "style_id": 5, "link_id": 0}]}
+      ]},
+      {"row": 2, "line_id": 0, "wrapped": false, "runs": [
+        {"col": 0, "cells": [{"text": "indexed", "width": 1, "style_id": 6, "link_id": 0}, {"text": " ", "width": 1, "style_id": 0, "link_id": 0}, {"text": "rgb", "width": 1, "style_id": 7, "link_id": 0}]}
+      ]}
+    ]
+  }
+}

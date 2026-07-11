@@ -2,7 +2,6 @@ package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -60,7 +59,7 @@ public class TerminalConnectionReconnectTest {
 
         connection.reconnectNow();
 
-        verify(manager).forceReconnect("manual reconnect", true);
+        verify(manager).forceReconnect("manual reconnect");
     }
 
     @Test
@@ -73,7 +72,6 @@ public class TerminalConnectionReconnectTest {
         connection.reconnectNow();
 
         verify(manager, never()).forceReconnect(anyString());
-        verify(manager, never()).forceReconnect(anyString(), anyBoolean());
     }
 
     @Test
@@ -91,7 +89,7 @@ public class TerminalConnectionReconnectTest {
         // Trigger manual reconnect: should force a new physical session.
         connection.reconnectNow();
 
-        verify(manager).forceReconnect("manual reconnect", true);
+        verify(manager).forceReconnect("manual reconnect");
 
         // The second openTerminalChannel call supplies the listener for the new session.
         verify(manager, times(2)).openTerminalChannel(anyString(), listenerCaptor.capture());
@@ -120,7 +118,6 @@ public class TerminalConnectionReconnectTest {
 
         // No force reconnect should happen while the manager does not match.
         verify(manager, never()).forceReconnect(anyString());
-        verify(manager, never()).forceReconnect(anyString(), anyBoolean());
 
         // A subsequent normal connect with the same matching manager must not be
         // treated as a pending manual reconnect.
@@ -128,6 +125,5 @@ public class TerminalConnectionReconnectTest {
         connection.connect("http://example.com", "cookie", "s1", 0, "device1");
 
         verify(manager, never()).forceReconnect(anyString());
-        verify(manager, never()).forceReconnect(anyString(), anyBoolean());
     }
 }

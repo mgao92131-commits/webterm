@@ -71,23 +71,6 @@ public class DeviceSessionsViewModelTest {
     }
 
     @Test
-    public void getUiState_mapsP2PState() {
-        ServerConfig server = server();
-        RecordingObserver<DeviceSessionsUiState> observer = new RecordingObserver<>();
-        viewModel.setServer(server);
-        viewModel.getUiState().observeForever(observer);
-
-        repoData.setValue(new SessionRepository.SessionListResult(
-            new JSONArray(),
-            SessionRepository.SessionListResult.State.CONNECTED_P2P,
-            null,
-            false
-        ));
-
-        assertEquals(DeviceSessionsUiState.ConnectionState.CONNECTED_P2P, observer.latest().connectionState);
-    }
-
-    @Test
     public void refresh_delegatesToRepository() {
         ServerConfig server = server();
         viewModel.setServer(server);

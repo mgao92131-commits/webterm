@@ -122,10 +122,10 @@ describe('RelayMuxSessionManager transport selection', () => {
 
     expect(first.sentText).toHaveLength(1);
     current = second;
-    relayMuxSessionManager.reconnectDevice('d1', 'p2p connected');
+    relayMuxSessionManager.reconnectDevice('d1', 'transport changed');
     await Promise.resolve();
 
-    expect(first.closeCalls).toEqual([{ code: 1000, reason: 'p2p connected' }]);
+    expect(first.closeCalls).toEqual([{ code: 1000, reason: 'transport changed' }]);
     expect(second.sentText).toHaveLength(1);
     expect(JSON.parse(second.sentText[0])).toEqual({
       type: 'ws-connect',

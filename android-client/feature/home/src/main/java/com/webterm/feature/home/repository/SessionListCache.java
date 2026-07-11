@@ -24,7 +24,6 @@ public final class SessionListCache {
     public enum State {
         CONNECTING,
         CONNECTED,
-        CONNECTED_P2P,
         DISCONNECTED,
         AUTH_REQUIRED,
         ERROR

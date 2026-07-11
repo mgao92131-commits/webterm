@@ -13,7 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel;
 
 /**
  * ViewModel for the settings screen.
- * Holds font/P2P settings state.
+ * Holds font settings state.
  */
 @HiltViewModel
 public final class SettingsViewModel extends ViewModel {
@@ -23,7 +23,6 @@ public final class SettingsViewModel extends ViewModel {
     // Font settings
     private final MutableLiveData<Integer> fontSize = new MutableLiveData<>();
     private final MutableLiveData<String> fontType = new MutableLiveData<>();
-    private final MutableLiveData<Boolean> p2pEnabled = new MutableLiveData<>();
 
     // Events
     private final SingleLiveEvent<Void> showSettingsDialog = new SingleLiveEvent<>();
@@ -37,14 +36,12 @@ public final class SettingsViewModel extends ViewModel {
     private void loadSettings() {
         fontSize.setValue(configStore.getFontSize());
         fontType.setValue(configStore.getFontType());
-        p2pEnabled.setValue(configStore.isP2PEnabled());
     }
 
     // ── Accessors ────────────────────────────────────────────────
 
     public LiveData<Integer> getFontSize() { return fontSize; }
     public LiveData<String> getFontType() { return fontType; }
-    public LiveData<Boolean> getP2PEnabled() { return p2pEnabled; }
     public LiveData<Void> getShowSettingsDialog() { return showSettingsDialog; }
     public ServerConfigStore getConfigStore() { return configStore; }
 
@@ -58,11 +55,6 @@ public final class SettingsViewModel extends ViewModel {
     public void setFontType(String type) {
         configStore.saveFontType(type);
         fontType.setValue(type);
-    }
-
-    public void setP2PEnabled(boolean enabled) {
-        configStore.saveP2PEnabled(enabled);
-        p2pEnabled.setValue(enabled);
     }
 
     public void requestShowSettingsDialog() {

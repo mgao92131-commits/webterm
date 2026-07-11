@@ -28,7 +28,6 @@ type V2Client struct {
 	app     *app.App
 	router  *application.SessionRouter
 	http    *HTTPProxy
-	p2p     *P2PHandler
 	streams *StreamMultiplexer
 
 	writeMu sync.Mutex
@@ -42,7 +41,6 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 		router: router,
 	}
 	client.http = NewHTTPProxy(router, client)
-	client.p2p = NewP2PHandler(router, client, appInstance.Logs())
 	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
 	return client
 }
@@ -118,7 +116,6 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn) er
 }
 
 func (client *V2Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
-	defer client.p2p.CloseAll()
 	for {
 		messageType, data, err := conn.Read(ctx)
 		if err != nil {
@@ -147,15 +144,6 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 		client.streams.DeliverWS(frame)
 	case relaycore.FrameTypeStreamClose, relaycore.FrameTypeStreamError:
 		client.streams.CloseStream(frame.StreamID, false)
-	case relaycore.FrameTypeP2POffer:
-		if err := client.p2p.AcceptOffer(ctx, conn, frame); err != nil {
-			payload, _ := json.Marshal(relaycore.P2PUnavailable{
-				Message: err.Error(),
-			})
-			client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PUnavailable, frame.StreamID, 0, payload))
-		}
-	case relaycore.FrameTypeP2PIce:
-		client.p2p.DeliverICE(frame)
 	}
 }
 

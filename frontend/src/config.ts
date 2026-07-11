@@ -4,21 +4,6 @@
  */
 
 export const CONFIG = {
-  /** WebRTC STUN 服务器 */
-  stunServers: [{ urls: 'stun:stun.l.google.com:19302' }] as RTCIceServer[],
-
-  /** P2P 连接超时（毫秒） */
-  p2pConnectTimeoutMs: 3000,
-
-  /** P2P 物理断连宽限期（毫秒） */
-  p2pDisconnectedGraceMs: 8000,
-
-  /** P2P HTTP 请求超时（毫秒） */
-  p2pRequestTimeoutMs: 30000,
-
-  /** P2P WebSocket Mock 连接超时（毫秒） */
-  p2pWsMockConnectTimeoutMs: 5000,
-
   /** Manager 会话列表轮询间隔（毫秒） */
   managerPollIntervalMs: 3000,
 

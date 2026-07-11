@@ -6,9 +6,10 @@ package com.webterm.feature.terminal;
  */
 public interface TerminalHost {
     /**
-     * Start a terminal session within the given fragment.
+     * Start a terminal session within the given fragment using the new
+     * webterm.screen.v1 remote rendering path.
      */
-    void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment);
+    void startRemoteTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment);
 
     /**
      * Detach the fragment view from the terminal runtime without closing the runtime.

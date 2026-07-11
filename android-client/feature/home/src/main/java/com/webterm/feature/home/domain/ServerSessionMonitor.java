@@ -181,10 +181,6 @@ public final class ServerSessionMonitor {
         return connected || (relayMuxSession != null && relayMuxSession.isConnected());
     }
 
-    boolean isP2PConnected() {
-        return relayMuxSession != null && relayMuxSession.isP2PConnected();
-    }
-
     boolean isEnabled() {
         return enabled;
     }

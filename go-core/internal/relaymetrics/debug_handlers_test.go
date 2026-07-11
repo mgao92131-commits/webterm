@@ -20,9 +20,8 @@ func TestDebugAndMetricsHandlers(t *testing.T) {
 	handle := streams.CreateStream(relaycore.StreamKindHTTP, relaycore.StreamRoute{Path: "/api/sessions"}, "u1", "d1", "agent-1", 0)
 	streams.RecordClientFrame(relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, handle.ID, 0, []byte("abc")))
 	streams.HandleAgentFrame(relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, handle.ID, 0, []byte("abcd")))
-	streams.CreateStream(relaycore.StreamKindP2P, relaycore.StreamRoute{Path: "/api/p2p/offer"}, "u1", "d1", "agent-1", 0)
-	if got := len(events.Snapshot()); got != 2 {
-		t.Fatalf("event snapshot len after create = %d, want 2", got)
+	if got := len(events.Snapshot()); got != 1 {
+		t.Fatalf("event snapshot len after create = %d, want 1", got)
 	}
 
 	mux := http.NewServeMux()
@@ -46,11 +45,10 @@ func TestDebugAndMetricsHandlers(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"relay_agents_online 1",
-		"relay_streams_active 2",
-		"relay_events_buffered 2",
+		"relay_streams_active 1",
+		"relay_events_buffered 1",
 		"relay_backpressure_total 0",
 		"relay_streams_active_by_kind{kind=\"http\"} 1",
-		"relay_streams_active_by_kind{kind=\"p2p\"} 1",
 		"relay_stream_bytes_in_total{kind=\"http\"} 3",
 		"relay_stream_bytes_out_total{kind=\"http\"} 4",
 	} {

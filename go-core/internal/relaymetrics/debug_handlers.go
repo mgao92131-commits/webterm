@@ -106,7 +106,7 @@ func (server *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"control": []string{"/api/auth/login", "/api/devices", "/api/presence"},
 		"agent":   []string{"/ws/agent"},
-		"streams": []string{"/api/sessions", "/api/sessions/", "/ws/sessions?deviceId={deviceId}", "/api/p2p/offer"},
+		"streams": []string{"/api/sessions", "/api/sessions/", "/ws/sessions?deviceId={deviceId}"},
 	})
 }
 

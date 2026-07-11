@@ -79,7 +79,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     // ── TerminalHost ─────────────────────────────────────────────
 
-    @Override public void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment) { coordinator.startTerminalInFragment(this, args, fragment); }
+    @Override public void startRemoteTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment) { coordinator.startRemoteTerminalInFragment(this, args, fragment); }
     @Override public void detachTerminalFragment(TerminalFragment fragment) { coordinator.detachTerminalFragment(fragment); }
 
     // ── RelayHost ─────────────────────────────────────────────────

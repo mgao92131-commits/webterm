@@ -17,6 +17,7 @@ lifecycleViewmodelNav3 = "2.10.0"
 navigationView = "2.8.5"
 lifecycleView = "2.8.7"
 fragmentVersion = "1.8.6"
+protobufJava = "4.29.2"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -50,6 +51,8 @@ navigation-ui = { module = "androidx.navigation:navigation-ui", version.ref = "n
 lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycleView" }
 lifecycle-livedata = { module = "androidx.lifecycle:lifecycle-livedata", version.ref = "lifecycleView" }
 fragment-ktx = { module = "androidx.fragment:fragment", version.ref = "fragmentVersion" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobufJava" }
+protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobufJava" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

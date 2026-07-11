@@ -31,7 +31,6 @@ public class SettingsViewModelTest {
     public void setUp() {
         when(configStore.getFontSize()).thenReturn(24);
         when(configStore.getFontType()).thenReturn("monospace");
-        when(configStore.isP2PEnabled()).thenReturn(true);
         viewModel = new SettingsViewModel(configStore);
     }
 
@@ -39,7 +38,6 @@ public class SettingsViewModelTest {
     public void constructor_loadsInitialSettings() {
         assertEquals(Integer.valueOf(24), viewModel.getFontSize().getValue());
         assertEquals("monospace", viewModel.getFontType().getValue());
-        assertTrue(viewModel.getP2PEnabled().getValue());
     }
 
     @Test
@@ -54,13 +52,6 @@ public class SettingsViewModelTest {
         viewModel.setFontType("sans-serif");
         verify(configStore).saveFontType("sans-serif");
         assertEquals("sans-serif", viewModel.getFontType().getValue());
-    }
-
-    @Test
-    public void setP2PEnabled_updatesStoreAndLiveData() {
-        viewModel.setP2PEnabled(false);
-        verify(configStore).saveP2PEnabled(false);
-        assertFalse(viewModel.getP2PEnabled().getValue());
     }
 
     @Test

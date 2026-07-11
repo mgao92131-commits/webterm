@@ -84,9 +84,6 @@ public final class DeviceSessionsViewModel extends ViewModel {
                 case CONNECTED:
                     state = DeviceSessionsUiState.ConnectionState.CONNECTED;
                     break;
-                case CONNECTED_P2P:
-                    state = DeviceSessionsUiState.ConnectionState.CONNECTED_P2P;
-                    break;
                 case DISCONNECTED:
                     state = DeviceSessionsUiState.ConnectionState.DISCONNECTED;
                     break;

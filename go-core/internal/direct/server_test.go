@@ -15,11 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/protocol"
+	pb "webterm/go-core/internal/screenprotocol/generated"
 	"webterm/go-core/internal/session"
 	"webterm/go-core/internal/testutil"
 )
@@ -372,28 +374,35 @@ func TestDirectMuxTerminalChannel(t *testing.T) {
 		t.Fatalf("open terminal channel: %v", err)
 	}
 
-	hello, _ := json.Marshal(map[string]any{"type": "hello", "cols": 100, "rows": 30, "lastSeq": 0})
-	if err := writeMuxText(ctx, conn, "term1", hello); err != nil {
+	hello, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 100, Rows: 30}},
+	})
+	if err := writeMuxBinary(ctx, conn, "term1", hello); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 
-	var sawScreenState, sawInfo bool
+	var sawSnapshot, sawInfo bool
 	for i := 0; i < 2; i++ {
-		_, data, err := readMuxText(ctx, conn, "term1")
+		_, data, err := readMuxBinary(ctx, conn, "term1")
 		if err != nil {
 			t.Fatalf("read terminal message: %v", err)
 		}
-		switch {
-		case strings.Contains(string(data), `"type":"screen-state"`):
-			sawScreenState = true
-		case strings.Contains(string(data), `"type":"info"`):
+		var env pb.ScreenEnvelope
+		if err := proto.Unmarshal(data, &env); err != nil {
+			t.Fatalf("unmarshal screen envelope: %v", err)
+		}
+		switch env.Payload.(type) {
+		case *pb.ScreenEnvelope_Snapshot:
+			sawSnapshot = true
+		case *pb.ScreenEnvelope_Info:
 			sawInfo = true
 		default:
-			t.Fatalf("unexpected message: %s", data)
+			t.Fatalf("unexpected message type: %T", env.Payload)
 		}
 	}
-	if !sawScreenState {
-		t.Fatalf("did not receive screen-state")
+	if !sawSnapshot {
+		t.Fatalf("did not receive screen snapshot")
 	}
 	if !sawInfo {
 		t.Fatalf("did not receive info")
@@ -509,6 +518,34 @@ func readMuxText(ctx context.Context, conn *websocket.Conn, id string) (websocke
 
 func writeMuxText(ctx context.Context, conn *websocket.Conn, id string, payload []byte) error {
 	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, id, protocol.WSDataText, payload)
+	if err != nil {
+		return err
+	}
+	return conn.Write(ctx, websocket.MessageBinary, frame)
+}
+
+func readMuxBinary(ctx context.Context, conn *websocket.Conn, id string) (websocket.MessageType, []byte, error) {
+	for {
+		mt, data, err := conn.Read(ctx)
+		if err != nil {
+			return 0, nil, err
+		}
+		if mt != websocket.MessageBinary {
+			continue
+		}
+		frame, err := protocol.DecodeTunnelFrame(data)
+		if err != nil {
+			continue
+		}
+		if frame.MsgType != protocol.MsgTypeWSData || frame.ID != id || frame.ExtraByte != protocol.WSDataBinary {
+			continue
+		}
+		return mt, frame.Payload, nil
+	}
+}
+
+func writeMuxBinary(ctx context.Context, conn *websocket.Conn, id string, payload []byte) error {
+	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, id, protocol.WSDataBinary, payload)
 	if err != nil {
 		return err
 	}

@@ -10,10 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
+	"webterm/go-core/internal/screenprotocol"
+	pb "webterm/go-core/internal/screenprotocol/generated"
+	"webterm/go-core/internal/terminalengine"
+	"webterm/go-core/internal/terminalsession"
 )
 
 type ClientMode string
@@ -25,14 +30,16 @@ const (
 )
 
 type Client struct {
-	socket   Socket
-	session  *TerminalSession
-	mode     ClientMode
-	send     chan outboundMessage
-	ready    atomic.Bool
-	done     chan struct{}
-	doneOnce chan struct{}
-	logger   *logs.Logger
+	socket         Socket
+	session        *TerminalSession
+	mode           ClientMode
+	send           chan outboundMessage
+	ready          atomic.Bool
+	done           chan struct{}
+	doneOnce       chan struct{}
+	logger         *logs.Logger
+	screenClientID string
+	screenAttached atomic.Bool
 }
 
 type outboundMessage struct {
@@ -49,13 +56,14 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger
 		log = logger[0]
 	}
 	return &Client{
-		socket:   socket,
-		session:  terminal,
-		mode:     mode,
-		send:     make(chan outboundMessage, 256),
-		done:     make(chan struct{}),
-		doneOnce: make(chan struct{}, 1),
-		logger:   log,
+		socket:         socket,
+		session:        terminal,
+		mode:           mode,
+		send:           make(chan outboundMessage, 256),
+		done:           make(chan struct{}),
+		doneOnce:       make(chan struct{}, 1),
+		logger:         log,
+		screenClientID: randomID(),
 	}
 }
 
@@ -63,14 +71,26 @@ func (client *Client) Run(ctx context.Context) {
 	client.session.Attach(client)
 	defer client.session.Detach(client)
 	defer client.Close()
+	if client.mode == ClientModeScreen {
+		defer client.session.DetachScreenClient(client.screenClientID)
+	}
 
 	go client.writeLoop(ctx)
-	client.SendInfo()
+	if client.mode != ClientModeScreen {
+		client.SendInfo()
+	}
 	client.readLoop(ctx)
 }
 
 func (client *Client) SendInfo() {
 	info := client.session.Info()
+	if client.mode == ClientModeScreen {
+		payload, err := encodeTerminalInfo(info)
+		if err == nil {
+			client.enqueueBinary(payload)
+		}
+		return
+	}
 	if client.mode == ClientModeBinary {
 		frame, err := protocol.EncodeJSONMessage(protocol.MsgInfo, info)
 		if err == nil {
@@ -79,6 +99,29 @@ func (client *Client) SendInfo() {
 		return
 	}
 	client.sendJSONType("info", map[string]any{"type": "info", "data": info})
+}
+
+func encodeTerminalInfo(info Info) ([]byte, error) {
+	envelope := &pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_Info{
+			Info: &pb.TerminalInfo{
+				SessionId:      info.ID,
+				InstanceId:     info.InstanceID,
+				Name:           info.Name,
+				Title:          info.TermTitle,
+				DisplayTitle:   info.DisplayTitle,
+				Cwd:            info.CWD,
+				Command:        info.Command,
+				Status:         info.Status,
+				Cols:           int32(info.Cols),
+				Rows:           int32(info.Rows),
+				CreatedAtMs:    info.CreatedAt.UnixMilli(),
+				LastActiveAtMs: info.LastActiveAt.UnixMilli(),
+			},
+		},
+	}
+	return proto.Marshal(envelope)
 }
 
 func (client *Client) SendHook(ev protocol.HookEvent) {
@@ -100,7 +143,7 @@ func (client *Client) SendOutput(frame EventFrame, delta ScreenDelta) {
 		return
 	}
 	if client.mode == ClientModeScreen {
-		client.SendScreenDelta(delta)
+		// screen protocol 由 Runtime 通过 ScreenClient.Send 回调主动推送 frame。
 		return
 	}
 	if client.mode == ClientModeBinary {
@@ -116,7 +159,7 @@ func (client *Client) SendOutput(frame EventFrame, delta ScreenDelta) {
 
 func (client *Client) SendState(seq uint64, bytes []byte) {
 	if client.mode == ClientModeScreen {
-		client.SendScreenState(seq)
+		// screen protocol 由 Runtime 主动推送 snapshot/patch。
 		return
 	}
 	if client.mode == ClientModeBinary {
@@ -131,6 +174,16 @@ func (client *Client) SendState(seq uint64, bytes []byte) {
 }
 
 func (client *Client) SendExit(code int) {
+	if client.mode == ClientModeScreen {
+		payload, err := proto.Marshal(&pb.ScreenEnvelope{
+			ProtocolVersion: 1,
+			Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
+		})
+		if err == nil {
+			client.enqueueBinary(payload)
+		}
+		return
+	}
 	if client.mode == ClientModeBinary {
 		frame, err := protocol.EncodeJSONMessage(protocol.MsgExit, map[string]int{"code": code})
 		if err == nil {
@@ -139,22 +192,6 @@ func (client *Client) SendExit(code int) {
 		return
 	}
 	client.sendJSONType("exit", map[string]any{"type": "exit", "code": code})
-}
-
-func (client *Client) SendScreenState(seq uint64) {
-	client.sendJSONType("screen-state", map[string]any{
-		"type":     "screen-state",
-		"seq":      seq,
-		"snapshot": client.session.ScreenSnapshot(),
-	})
-}
-
-func (client *Client) SendScreenDelta(delta ScreenDelta) {
-	client.sendJSONType("screen-delta", map[string]any{
-		"type":  "screen-delta",
-		"seq":   delta.Seq,
-		"cells": delta.Cells,
-	})
 }
 
 type closeNotifier interface {
@@ -242,6 +279,10 @@ func (client *Client) handleJSON(data []byte) {
 }
 
 func (client *Client) handleBinary(frame []byte) {
+	if client.mode == ClientModeScreen {
+		client.handleScreenBinary(frame)
+		return
+	}
 	if len(frame) == 0 {
 		return
 	}
@@ -286,13 +327,101 @@ func (client *Client) handleBinary(frame []byte) {
 	}
 }
 
+func (client *Client) handleScreenBinary(frame []byte) {
+	rt := client.session.ScreenRuntime()
+	if rt == nil {
+		return
+	}
+	handler := screenprotocol.NewHandler(
+		screenprotocol.WithHelloCallback(func(hello *pb.Hello) {
+			client.handleScreenHello(hello)
+		}),
+		screenprotocol.WithInputCallback(func(input *pb.TerminalInput) {
+			rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
+		}),
+		screenprotocol.WithResizeCallback(func(resize *pb.Resize) {
+			rt.Resize(client.screenClientID, resize.LeaseId, int(resize.Cols), int(resize.Rows))
+		}),
+		screenprotocol.WithHistoryRequestCallback(func(req *pb.HistoryRequest) {
+			rt.RequestHistory(client.screenClientID, req.RequestId, req.BeforeLineId, int(req.Limit))
+		}),
+		screenprotocol.WithResyncCallback(func(req *pb.ResyncRequest) {
+			rt.Resync(client.screenClientID)
+		}),
+		screenprotocol.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
+			leaseID, granted := rt.AcquireLayout(client.screenClientID, req.Interactive)
+			client.sendLayoutLease(leaseID, granted)
+		}),
+		screenprotocol.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
+			rt.ReleaseLayout(client.screenClientID, req.LeaseId)
+		}),
+		screenprotocol.WithClipboardResponseCallback(func(resp *pb.ClipboardResponse) {
+			rt.ClipboardResponse(client.screenClientID, resp.RequestId, resp.Allowed && !resp.Timeout, resp.Data)
+		}),
+		screenprotocol.WithPingCallback(func(screenRevision uint64) {
+			payload, err := screenprotocol.EncodePong(screenRevision)
+			if err == nil {
+				client.enqueueBinary(payload)
+			}
+		}),
+	)
+	if err := handler.HandleMessage(frame); err != nil {
+		if client.logger != nil {
+			client.logger.Add("warn", "session", fmt.Sprintf("screen protocol handler: %v", err))
+		}
+	}
+}
+
+func (client *Client) sendLayoutLease(leaseID string, granted bool) {
+	envelope := &pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_LayoutLease{
+			LayoutLease: &pb.LayoutLease{
+				LeaseId: leaseID,
+				Granted: granted,
+			},
+		},
+	}
+	payload, err := proto.Marshal(envelope)
+	if err == nil {
+		client.enqueueBinary(payload)
+	}
+}
+
+func (client *Client) handleScreenHello(hello *pb.Hello) {
+	client.handleHello(0, int(hello.Cols), int(hello.Rows))
+}
+
+func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {
+	mods := func(m *pb.ModifierSet) terminalengine.Modifiers {
+		if m == nil {
+			return terminalengine.Modifiers{}
+		}
+		return terminalengine.Modifiers{Shift: m.Shift, Alt: m.Alt, Ctrl: m.Ctrl, Meta: m.Meta}
+	}
+	switch p := input.Input.(type) {
+	case *pb.TerminalInput_Text:
+		return terminalengine.SemanticInput{Kind: terminalengine.InputText, Data: p.Text.Data}
+	case *pb.TerminalInput_Paste:
+		return terminalengine.SemanticInput{Kind: terminalengine.InputPaste, Data: p.Paste.Data}
+	case *pb.TerminalInput_Key:
+		return terminalengine.SemanticInput{Kind: terminalengine.InputKey, Key: p.Key.Key, Pressed: p.Key.Pressed, Modifiers: mods(p.Key.Modifiers)}
+	case *pb.TerminalInput_Mouse:
+		button := int(p.Mouse.Button) - int(pb.MouseButton_MOUSE_BUTTON_LEFT)
+		return terminalengine.SemanticInput{Kind: terminalengine.InputMouse, Row: int(p.Mouse.Row), Col: int(p.Mouse.Col), Button: button, WheelDelta: int(p.Mouse.WheelDelta), Pressed: p.Mouse.Pressed, Modifiers: mods(p.Mouse.Modifiers)}
+	case *pb.TerminalInput_Focus:
+		return terminalengine.SemanticInput{Kind: terminalengine.InputFocus, Focused: p.Focus.Focused}
+	default:
+		return terminalengine.SemanticInput{}
+	}
+}
+
 func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 	latest := client.session.LatestSeq()
 	if client.mode == ClientModeScreen {
-		if cols > 0 && rows > 0 {
-			_ = client.session.Resize(cols, rows)
+		if client.screenAttached.CompareAndSwap(false, true) {
+			client.attachScreenClient()
 		}
-		client.SendScreenState(latest)
 		client.SendInfo()
 		client.ready.Store(true)
 		return
@@ -330,6 +459,48 @@ func (client *Client) handleHello(lastSeq uint64, cols int, rows int) {
 		client.SendInfo()
 	}
 	client.ready.Store(true)
+}
+
+func (client *Client) attachScreenClient() {
+	client.session.AttachScreenClient(&terminalsession.ScreenClient{
+		ID:              client.screenClientID,
+		Send:            client.sendScreenFrame,
+		SendHistory:     client.sendScreenHistory,
+		SendHistoryTrim: client.sendScreenHistoryTrim,
+		SendEffect:      client.sendScreenEffect,
+	})
+}
+
+func (client *Client) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
+	payload, err := screenprotocol.EncodeEffect(instanceID, revision, effect)
+	if err == nil {
+		client.enqueueBinary(payload)
+	}
+}
+
+func (client *Client) sendScreenHistory(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData) {
+	payload, err := screenprotocol.EncodeHistoryPage(requestID, epoch, revision, page)
+	if err == nil {
+		client.enqueueBinary(payload)
+	}
+}
+
+func (client *Client) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
+	payload, err := screenprotocol.EncodeHistoryTrim(epoch, firstAvailableID)
+	if err == nil {
+		client.enqueueBinary(payload)
+	}
+}
+
+func (client *Client) sendScreenFrame(frame terminalengine.ScreenFrame) {
+	payload, err := screenprotocol.EncodeFrame(frame)
+	if err != nil {
+		if client.logger != nil {
+			client.logger.Add("error", "session", fmt.Sprintf("encode screen frame failed: %v", err))
+		}
+		return
+	}
+	client.enqueueBinary(payload)
 }
 
 // sendJSONReplay 发送 Node 形状的单个 replay 消息，保留每帧 seq/data。
