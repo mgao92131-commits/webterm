@@ -141,7 +141,6 @@ public final class SessionRepository {
         final AtomicLong hydrateGeneration = new AtomicLong(0);
         int observerCount = 0;
         boolean wsStarted = false;
-        boolean p2pActive = false;
         long fallbackDelayMs = FALLBACK_INITIAL_DELAY_MS;
         final Runnable fallbackRunnable = this::runFallbackRefresh;
 
@@ -167,10 +166,8 @@ public final class SessionRepository {
         void startObserving() {
             SessionListCache.Snapshot snapshot = sessionCache.get(server);
             if (snapshot != null) {
-                p2pActive = snapshot.state == SessionListCache.State.CONNECTED_P2P;
                 liveData.setValueIfNeeded(toResult(snapshot));
             } else {
-                p2pActive = false;
                 liveData.setValueIfNeeded(new SessionListResult(
                     new JSONArray(),
                     SessionListResult.State.CONNECTING,
@@ -225,16 +222,7 @@ public final class SessionRepository {
             ));
         }
 
-        /**
-         * Returns the connected state that preserves the current P2P flag.
-         * Used when emitting session-list updates so the indicator stays blue
-         * while the underlying transport remains on a P2P data channel.
-         */
-        private SessionListResult.State connectedState() {
-            return p2pActive
-                ? SessionListResult.State.CONNECTED_P2P
-                : SessionListResult.State.CONNECTED;
-        }
+
 
         /**
          * Hydrates session names off the main thread (the disk cache may do IO)
@@ -270,8 +258,7 @@ public final class SessionRepository {
         @Override
         public void onConnected(boolean p2p) {
             cancelFallback();
-            p2pActive = p2p;
-            updateState(p2p ? SessionListResult.State.CONNECTED_P2P : SessionListResult.State.CONNECTED);
+            updateState(SessionListResult.State.CONNECTED);
             // Sync with HTTP after reconnect to ensure we did not miss WS pushes
             // while the channel was reconnecting or the observer was inactive.
             SessionListCache.Snapshot snapshot = sessionCache.get(server);
@@ -287,7 +274,6 @@ public final class SessionRepository {
 
         @Override
         public void onDisconnected(String reason) {
-            p2pActive = false;
             updateState(SessionListResult.State.DISCONNECTED);
             scheduleFallback();
         }
@@ -295,7 +281,7 @@ public final class SessionRepository {
         @Override
         public void onSessions(JSONArray sessions) {
             JSONArray filtered = filterAndNormalize(server, sessions);
-            hydrateAndEmit(filtered, connectedState(), null);
+            hydrateAndEmit(filtered, SessionListResult.State.CONNECTED, null);
         }
 
         @Override
@@ -308,7 +294,7 @@ public final class SessionRepository {
                 ? copySessions(snapshot.sessions)
                 : new JSONArray();
             upsertSession(sessions, normalized);
-            hydrateAndEmit(sessions, connectedState(), null);
+            hydrateAndEmit(sessions, SessionListResult.State.CONNECTED, null);
         }
 
         @Override
@@ -324,7 +310,7 @@ public final class SessionRepository {
                     next.put(s);
                 }
             }
-            putSnapshot(next, connectedState());
+            putSnapshot(next, SessionListResult.State.CONNECTED);
         }
 
         // ── Fallback ─────────────────────────────────────────────────
@@ -424,10 +410,7 @@ public final class SessionRepository {
 
         switch (result.kind) {
             case ONLINE:
-                // Preserve P2P indicator if the WebSocket is currently connected over P2P.
-                state = (sub != null && sub.p2pActive)
-                    ? SessionListResult.State.CONNECTED_P2P
-                    : SessionListResult.State.CONNECTED;
+                state = SessionListResult.State.CONNECTED;
                 JSONArray onlineSessions = result.sessions != null ? result.sessions : new JSONArray();
                 if (sub != null) {
                     sub.hydrateAndEmit(onlineSessions, state, null);
@@ -682,8 +665,6 @@ public final class SessionRepository {
                 return SessionListCache.State.CONNECTING;
             case CONNECTED:
                 return SessionListCache.State.CONNECTED;
-            case CONNECTED_P2P:
-                return SessionListCache.State.CONNECTED_P2P;
             case DISCONNECTED:
                 return SessionListCache.State.DISCONNECTED;
             case AUTH_REQUIRED:
@@ -701,8 +682,6 @@ public final class SessionRepository {
                 return SessionListResult.State.CONNECTING;
             case CONNECTED:
                 return SessionListResult.State.CONNECTED;
-            case CONNECTED_P2P:
-                return SessionListResult.State.CONNECTED_P2P;
             case DISCONNECTED:
                 return SessionListResult.State.DISCONNECTED;
             case AUTH_REQUIRED:
@@ -728,7 +707,6 @@ public final class SessionRepository {
         public enum State {
             CONNECTING,
             CONNECTED,
-            CONNECTED_P2P,
             DISCONNECTED,
             AUTH_REQUIRED,
             ERROR

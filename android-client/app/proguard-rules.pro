@@ -48,10 +48,7 @@
     @okhttp3.* <methods>;
 }
 
-# WebRTC: keep observer interfaces and data-channel classes that are called
-# from native code or registered as callbacks.
--keep class org.webrtc.** { *; }
--dontwarn org.webrtc.**
+
 
 # org.json: keep public constructors/methods used to parse and build payloads.
 -keep class org.json.** { public protected *; }
@@ -81,13 +78,3 @@
     public static final ** CREATOR;
 }
 -keep class * implements java.io.Serializable { *; }
-
-# Disable R8 optimization to prevent WebRTC JNI Reflection / obfuscation crash.
--dontoptimize
-
-# Disable shrinking and class merging to prevent WebRTC JNI JNI_OnLoad SIGTRAP crash
--dontshrink
-
-# Keep jni_zero and chromium classes used by WebRTC JNI
--keep class org.jni_zero.** { *; }
--keep class org.chromium.** { *; }

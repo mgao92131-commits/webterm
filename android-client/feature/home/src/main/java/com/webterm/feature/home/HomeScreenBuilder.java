@@ -179,7 +179,7 @@ public final class HomeScreenBuilder {
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView detail = new TextView(activity);
         if (server.isRelayDevice()) {
-            detail.setText(server.isP2PEnabled() ? "中转设备 · P2P" : "中转设备 · Relay");
+            detail.setText("中转设备");
         } else {
             detail.setText(server.getUrl());
         }

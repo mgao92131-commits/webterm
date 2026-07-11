@@ -41,6 +41,20 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         coordinator.attachActivity(this);
         coordinator.onCreate();
         handleNotificationIntent(getIntent());
+        checkAndRequestNotificationPermission();
+    }
+
+    private void checkAndRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                    102
+                );
+            }
+        }
     }
 
     @Override

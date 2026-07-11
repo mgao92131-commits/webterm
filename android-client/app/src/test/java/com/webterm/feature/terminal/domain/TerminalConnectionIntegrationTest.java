@@ -238,10 +238,5 @@ public class TerminalConnectionIntegrationTest {
             return transport;
         }
 
-        @Override public MuxTransport createDataChannel(String deviceId) {
-            return null;
-        }
-
-        @Override public void prepareDataChannel(String baseUrl, String cookie, String deviceId) {}
     }
 }

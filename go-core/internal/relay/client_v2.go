@@ -28,7 +28,6 @@ type V2Client struct {
 	app     *app.App
 	router  *application.SessionRouter
 	http    *HTTPProxy
-	p2p     *P2PHandler
 	streams *StreamMultiplexer
 
 	writeMu sync.Mutex
@@ -52,7 +51,6 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 		router: router,
 	}
 	client.http = NewHTTPProxy(router, client)
-	client.p2p = NewP2PHandler(router, client, appInstance.Logs())
 	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
 	// 让 relay 重建出的 mux session 注册为设备级 ControlSender，
 	// 打通 agent→device 的 file_send.offer / agent_notification。
@@ -131,7 +129,6 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn) er
 }
 
 func (client *V2Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
-	defer client.p2p.CloseAll()
 	for {
 		messageType, data, err := conn.Read(ctx)
 		if err != nil {
@@ -162,15 +159,6 @@ func (client *V2Client) handleFrame(ctx context.Context, conn *websocket.Conn, f
 		client.streams.CloseStream(frame.StreamID, false)
 		// 同时通知 HTTP 代理：若该 stream 正在流式转发文件，及时中止上游读取。
 		client.http.CloseStream(frame.StreamID)
-	case relaycore.FrameTypeP2POffer:
-		if err := client.p2p.AcceptOffer(ctx, conn, frame); err != nil {
-			payload, _ := json.Marshal(relaycore.P2PUnavailable{
-				Message: err.Error(),
-			})
-			client.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeP2PUnavailable, frame.StreamID, 0, payload))
-		}
-	case relaycore.FrameTypeP2PIce:
-		client.p2p.DeliverICE(frame)
 	}
 }
 

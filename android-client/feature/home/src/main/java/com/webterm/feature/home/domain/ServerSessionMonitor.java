@@ -182,7 +182,7 @@ public final class ServerSessionMonitor {
     }
 
     boolean isP2PConnected() {
-        return relayMuxSession != null && relayMuxSession.isP2PConnected();
+        return false;
     }
 
     boolean isEnabled() {

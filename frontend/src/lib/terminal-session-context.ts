@@ -39,7 +39,6 @@ export interface TerminalSessionContextOptions {
   theme: 'solarized' | 'dracula';
   mode: 'direct' | 'relay';
   deviceId: string | null;
-  p2pActive: boolean;
   setDocumentTitle?: boolean;
   onStateChange?: (state: Partial<TerminalSessionState>) => void;
   onExit?: () => void;
@@ -209,7 +208,7 @@ export class TerminalSessionContext implements IDisposable {
     const deviceId = this.options.deviceId || '';
 
     // mux 传输（direct/relay）都走二进制帧；只有 P2P mock 保持 JSON
-    this.binaryTransport = !connectionService.isP2PActive();
+    this.binaryTransport = true;
     this.ws = connectionService.openTerminalChannel(deviceId, id);
 
     // 本条连接专属的监听器容器 + 代际号码牌

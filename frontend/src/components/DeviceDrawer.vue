@@ -45,7 +45,6 @@
               <Monitor class="w-4 h-4 flex-shrink-0" :class="selectedDeviceId === d.deviceId ? 'text-accent' : 'text-fg-subtle'" />
               <span class="text-[13px] text-fg truncate flex-1">{{ d.deviceName }}</span>
               <span class="flex items-center gap-1 flex-shrink-0">
-                <span v-if="selectedDeviceId === d.deviceId && p2pActive" class="text-[9px] text-accent font-mono">P2P</span>
                 <span class="w-1.5 h-1.5 rounded-full" :class="d.status === 'online' ? 'bg-status-success animate-pulse-dot' : 'bg-fg-disabled'"></span>
               </span>
             </button>
@@ -68,7 +67,6 @@ const props = defineProps<{
   modelValue: boolean;
   devices: Device[];
   selectedDeviceId: string | null;
-  p2pActive?: boolean;
 }>();
 
 const emit = defineEmits<{

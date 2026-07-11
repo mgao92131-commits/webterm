@@ -44,7 +44,7 @@ public final class ServerSessionDataSource {
             @Override
             public void onConnected(String id) {
                 if (!channelId.equals(id)) return;
-                listener.onConnected(mux.isP2PConnected());
+                listener.onConnected(false);
             }
 
             @Override

@@ -18,8 +18,6 @@ public final class RelayMuxSessionManager {
     private static final String TAG = "RelayMuxSessionManager";
     private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
-    private static final long P2P_CONNECT_TIMEOUT_MS = 5000L;
-    private static final long P2P_BACKOFF_MS = 30000L;
 
     public interface ChannelListener {
         void onConnected(String channelId);
@@ -84,54 +82,30 @@ public final class RelayMuxSessionManager {
     private MuxSession muxSession;
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
-    private long p2pBackoffUntil;
-    private Runnable p2pFallbackRunnable;
-    private boolean skipNextP2P;
     private volatile ControlListener controlListener;
 
     RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
-        this(http, mainHandler, baseUrl, cookie, deviceId, transportFactory, false);
-    }
-
-    RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory, boolean skipInitialP2P) {
         this.http = http;
         this.mainHandler = mainHandler;
         this.transportFactory = transportFactory;
         this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         this.cookie = cookie;
         this.deviceId = deviceId == null ? "" : deviceId;
-        this.skipNextP2P = skipInitialP2P;
         this.muxSession = createMuxSession(++muxGeneration);
     }
 
     private MuxSession createMuxSession(int generation) {
-        cancelP2pFallback();
-        boolean skipP2P = skipNextP2P;
-        skipNextP2P = false;
-        boolean tryP2P = !skipP2P && transportFactory != null && System.currentTimeMillis() >= p2pBackoffUntil;
-        if (tryP2P) {
-            transportFactory.prepareDataChannel(baseUrl, cookie, deviceId);
+        String wsUrl = WebTermUrls.toWebSocketUrl(this.baseUrl) + "/ws/sessions";
+        if (this.deviceId != null && !this.deviceId.isEmpty()) {
+            wsUrl += "?deviceId=" + WebTermUrls.encodePath(this.deviceId);
         }
-        MuxTransport transport = null;
-        if (tryP2P && transportFactory != null) {
-            transport = transportFactory.createDataChannel(deviceId);
-        }
-        if (transport == null) {
-            String wsUrl = WebTermUrls.toWebSocketUrl(this.baseUrl) + "/ws/sessions";
-            if (this.deviceId != null && !this.deviceId.isEmpty()) {
-                wsUrl += "?deviceId=" + WebTermUrls.encodePath(this.deviceId);
-            }
-            transport = transportFactory != null
-                ? transportFactory.createWebSocket(wsUrl, cookie, MUX_SUBPROTOCOL)
-                : null;
-            Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
-        } else {
-            Log.i(TAG, "using p2p transport for " + deviceId + " generation=" + generation);
-        }
+        MuxTransport transport = transportFactory != null
+            ? transportFactory.createWebSocket(wsUrl, cookie, MUX_SUBPROTOCOL)
+            : null;
+        Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
         MuxSession session = new MuxSession(transport, mainHandler, new MuxSession.Listener() {
             @Override public void onMuxConnected() {
                 if (generation != muxGeneration) return;
-                cancelP2pFallback();
                 reopenChannels();
             }
 
@@ -209,27 +183,10 @@ public final class RelayMuxSessionManager {
                 }
             }
         });
-        if (transport != null && transport.isP2P()) {
-            p2pFallbackRunnable = () -> {
-                if (generation != muxGeneration) return;
-                if (!muxSession.isConnected()) {
-                    Log.w(TAG, "p2p connect timeout for " + deviceId + " generation=" + generation);
-                    p2pBackoffUntil = System.currentTimeMillis() + P2P_BACKOFF_MS;
-                    reconnectTransport("p2p connect timeout");
-                }
-            };
-            mainHandler.postDelayed(p2pFallbackRunnable, P2P_CONNECT_TIMEOUT_MS);
-        }
         return session;
     }
 
-    private void cancelP2pFallback() {
-        Runnable r = p2pFallbackRunnable;
-        p2pFallbackRunnable = null;
-        if (r != null && mainHandler != null) {
-            mainHandler.removeCallbacks(r);
-        }
-    }
+
 
     public boolean matches(String baseUrl, String cookie, String deviceId) {
         // Cookie is a rotating auth token; identity is baseUrl + deviceId only.
@@ -250,9 +207,7 @@ public final class RelayMuxSessionManager {
         return muxSession.isConnected();
     }
 
-    public boolean isP2PConnected() {
-        return muxSession.isConnected() && muxSession.isP2PTransport();
-    }
+
 
     boolean isIdle() {
         return channels.isEmpty();
@@ -267,13 +222,6 @@ public final class RelayMuxSessionManager {
     }
 
     public void forceReconnect(String reason) {
-        reconnectTransport(reason, true);
-    }
-
-    public void forceReconnect(String reason, boolean skipP2POnce) {
-        if (skipP2POnce) {
-            skipNextP2P = true;
-        }
         reconnectTransport(reason, true);
     }
 
@@ -366,7 +314,6 @@ public final class RelayMuxSessionManager {
 
     void stopIfIdle() {
         if (!channels.isEmpty()) return;
-        cancelP2pFallback();
         muxSession.stop();
     }
 
@@ -385,7 +332,6 @@ public final class RelayMuxSessionManager {
     }
 
     void stop() {
-        cancelP2pFallback();
         for (Channel channel : snapshotChannels()) {
             muxSession.sendWsClose(channel.id);
         }

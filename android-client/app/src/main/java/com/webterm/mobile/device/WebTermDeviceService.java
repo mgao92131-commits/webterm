@@ -208,7 +208,7 @@ public final class WebTermDeviceService extends Service {
 
     private void syncRelayDevices(List<ServerConfig> devices) {
         if (!connectionsEnabled(this)) return;
-        configManager.save();
+        configManager.save(); // Persist a refreshed Relay Master cookie before its next service restart.
         Set<String> nextKeys = new HashSet<>();
         for (ServerConfig config : devices) {
             String key = connectDevice(config, true);
@@ -233,11 +233,15 @@ public final class WebTermDeviceService extends Service {
         if (config == null) return null;
         String deviceId = config.getDeviceId();
         String url = config.getUrl();
-        if (url == null || url.isEmpty()) return null;
+        if (url == null || url.isEmpty()) {
+            return null;
+        }
         if ((deviceId == null || deviceId.isEmpty()) && !config.isRelayDevice()) {
             deviceId = "direct";
         }
-        if (deviceId == null || deviceId.isEmpty()) return null;
+        if (deviceId == null || deviceId.isEmpty()) {
+            return null;
+        }
         String key = connectionKey(url, deviceId);
         RelayMuxSessionManager manager = registry.forDevice(url, config.getCookie(), deviceId);
         managers.put(key, manager);
@@ -325,7 +329,7 @@ public final class WebTermDeviceService extends Service {
                 NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
                     "WebTerm 设备连接",
-                    NotificationManager.IMPORTANCE_MIN);
+                    NotificationManager.IMPORTANCE_LOW);
                 channel.setDescription("保持与 PC 的长期连接以接收文件与代理通知");
                 nm.createNotificationChannel(channel);
             }
@@ -339,7 +343,7 @@ public final class WebTermDeviceService extends Service {
             .setContentText(ConnectionStatusText.contentText(onlineCount))
             .setOngoing(true)
             .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN);
+            .setPriority(NotificationCompat.PRIORITY_LOW);
         if (onlineCount > 0) {
             builder.addAction(0, "全部停止", buildStopAllIntent());
         }

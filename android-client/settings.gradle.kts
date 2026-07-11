@@ -36,7 +36,7 @@ include(":core-config")
 include(":core-cache")
 include(":core-session")
 include(":core-relay")
-include(":transport-webrtc")
+
 include(":ui-common")
 include(":terminal-ui")
 include(":feature:settings")

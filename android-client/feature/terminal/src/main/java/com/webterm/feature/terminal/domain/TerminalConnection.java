@@ -149,7 +149,7 @@ public final class TerminalConnection {
     }
 
     public boolean isP2PConnected() {
-        return relayMuxSession != null && relayMuxSession.isP2PConnected();
+        return false;
     }
 
     public void updateLastSeq(long lastSeq) {
@@ -204,7 +204,7 @@ public final class TerminalConnection {
             relayMuxSession.updateCookie(cookie);
             if (pendingForceReconnect) {
                 // Manual reconnect: force a new physical session to break a stale connected state.
-                relayMuxSession.forceReconnect("manual reconnect", true);
+                relayMuxSession.forceReconnect("manual reconnect");
                 pendingForceReconnect = false;
             }
         }

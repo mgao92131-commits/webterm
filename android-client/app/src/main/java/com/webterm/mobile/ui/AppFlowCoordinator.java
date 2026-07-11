@@ -38,7 +38,6 @@ import com.webterm.feature.terminal.domain.TerminalConnection;
 import com.webterm.feature.terminal.domain.TerminalRuntime;
 import com.webterm.feature.terminal.domain.TerminalRuntimeRegistry;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
-import com.webterm.transport.webrtc.P2PConnectionManager;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.download.FileDownloadHelper;
@@ -78,7 +77,6 @@ public final class AppFlowCoordinator implements
     private final TerminalFocusStore terminalFocus;
 
     private final TerminalRuntime.Factory terminalRuntimeFactory;
-    private final P2PConnectionManager p2pManager;
     private final RelayService mRelayService;
     private FileDownloadHelper downloadHelper;
 
@@ -122,7 +120,6 @@ public final class AppFlowCoordinator implements
         Handler mainHandler,
         OkHttpClient http,
         TerminalRuntime.Factory terminalRuntimeFactory,
-        P2PConnectionManager p2pManager,
         RelayService relayService,
         TerminalFocusStore terminalFocus
     ) {
@@ -134,7 +131,6 @@ public final class AppFlowCoordinator implements
         this.mainHandler = mainHandler;
         this.http = http;
         this.terminalRuntimeFactory = terminalRuntimeFactory;
-        this.p2pManager = p2pManager;
         this.mRelayService = relayService;
         this.terminalFocus = terminalFocus;
     }
@@ -180,21 +176,6 @@ public final class AppFlowCoordinator implements
             public void onShowHome() { showSessionListOrDeviceHome(); }
         });
         mTerminalRuntimeRegistry = new TerminalRuntimeRegistry(mActivity, terminalRuntimeFactory, mSessionCommands);
-        p2pManager.setListener(new P2PConnectionManager.Listener() {
-            @Override public void onConnecting(String deviceId) { }
-            @Override public void onConnected(String deviceId) {
-                relayMuxRegistry.reconnectDevice(deviceId, "p2p connected");
-            }
-            @Override public void onDisconnected(String deviceId, String reason) {
-                if (isP2pDisabledReason(reason)) {
-                    // P2P is administratively disabled on the server. The mux is
-                    // already running over relay websocket; do not trigger a reconnect.
-                    return;
-                }
-                relayMuxRegistry.reconnectDevice(deviceId, "p2p disconnected: " + reason);
-            }
-            @Override public void onError(String deviceId, String message) { }
-        });
         loadServersFromPrefs();
     }
 
@@ -240,7 +221,6 @@ public final class AppFlowCoordinator implements
         mainHandler.removeCallbacksAndMessages(null);
         mRelayService.stop();
         if (mTerminalRuntimeRegistry != null) mTerminalRuntimeRegistry.shutdown();
-        if (p2pManager != null) p2pManager.disconnect();
         terminalCache.shutdown(null);
         // RelayMuxSessionRegistry 与 OkHttp 同时被 WebTermDeviceService 复用。
         // Activity 销毁（尤其旋转或通知跳转）只能释放页面资源，不能中断后台连接或文件接收。
@@ -275,7 +255,6 @@ public final class AppFlowCoordinator implements
     public ServerConfigStore getConfigStore() { return configStore; }
     public WebTermApi getApi() { return api; }
     public Handler getMainHandler() { return mainHandler; }
-    public P2PConnectionManager getP2PManager() { return p2pManager; }
     public SessionCommandController getSessionCommands() { return mSessionCommands; }
     public RelayMuxSessionRegistry getRelayMuxRegistry() { return relayMuxRegistry; }
     public TerminalCacheCoordinator getTerminalCache() { return terminalCache; }
@@ -417,7 +396,6 @@ public final class AppFlowCoordinator implements
 
     public void showSessionHome() {
         detachCurrentTerminalView();
-        if (p2pManager != null) p2pManager.disconnect();
         mScreenMode = ScreenMode.DEVICES;
         mSelectedServer = null;
 
@@ -793,14 +771,7 @@ public final class AppFlowCoordinator implements
 
     public int getSavedFontSize() { return configStore.getFontSize(); }
     public String getSavedFontType() { return configStore.getFontType(); }
-    public boolean isP2PEnabled() { return configStore.isP2PEnabled(); }
-    public void saveP2PEnabled(boolean enabled) { configStore.saveP2PEnabled(enabled); }
 
-    private static boolean isP2pDisabledReason(String reason) {
-        if (reason == null) return false;
-        String lower = reason.toLowerCase(java.util.Locale.US);
-        return lower.contains("p2p disabled") || lower.contains("503");
-    }
 
     public Typeface getTypefaceByName(String type) {
         if ("sans-serif".equals(type)) return Typeface.SANS_SERIF;

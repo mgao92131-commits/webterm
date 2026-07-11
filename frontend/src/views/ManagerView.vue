@@ -6,11 +6,7 @@
         <span class="text-[15px] font-semibold tracking-tight text-fg flex-shrink-0">WebTerm</span>
         <!-- Connection health badge -->
         <ConnectionBadge :health="connectionHealth" />
-        <!-- P2P badge -->
-        <span v-if="store.mode === 'relay' && store.selectedDeviceId" class="hidden sm:inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm font-medium font-mono"
-          :class="store.p2pActive ? 'bg-accent-muted text-accent border border-accent/30' : 'bg-bg-tertiary text-fg-subtle border border-border'">
-          {{ store.p2pActive ? 'P2P' : 'RELAY' }}
-        </span>
+
         <!-- Device selector trigger -->
         <button
           v-if="store.mode === 'relay'"
@@ -95,7 +91,6 @@
       v-model="isDrawerOpen"
       :devices="store.devices"
       :selected-device-id="store.selectedDeviceId"
-      :p2p-active="store.p2pActive"
       @select="selectDevice"
     />
 
@@ -133,7 +128,6 @@
             <Monitor class="w-4 h-4 flex-shrink-0" :class="store.selectedDeviceId === d.deviceId ? 'text-accent' : 'text-fg-subtle'" />
             <span class="text-[13px] text-fg truncate flex-1">{{ d.deviceName }}</span>
             <span class="flex items-center gap-1 flex-shrink-0">
-              <span v-if="store.selectedDeviceId === d.deviceId && store.p2pActive" class="text-[9px] text-accent font-mono">P2P</span>
               <span class="w-1.5 h-1.5 rounded-full" :class="d.status === 'online' ? 'bg-status-success animate-pulse-dot' : 'bg-fg-disabled'"></span>
             </span>
           </button>
@@ -265,8 +259,6 @@ function handleManagerMessage(msg: ManagerServerMessage) {
     if (store.selectedSessionId === msg.id) {
       store.selectedSessionId = null;
     }
-  } else if (msg.type === 'p2p-ice') {
-    connectionService.handleRemoteCandidate(msg.candidate);
   } else if (msg.type === 'error') {
     store.managerError = msg.message;
   }
@@ -315,9 +307,6 @@ function getSelectedDeviceName(): string {
 async function bootstrapManager() {
   if (store.mode === 'relay') {
     await refreshDeviceList();
-    if (store.selectedDeviceId) {
-      connectionService.connectToDevice(store.selectedDeviceId);
-    }
   }
   if (store.selectedDeviceId) {
     await refreshSessionList();
@@ -377,9 +366,7 @@ async function selectDevice(deviceId: string) {
   store.sessions = [];
   isDrawerOpen.value = false;
 
-  if (store.mode === 'relay') {
-    connectionService.connectToDevice(deviceId);
-  }
+
 
   try {
     await refreshSessionList();

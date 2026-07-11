@@ -55,13 +55,7 @@ public final class TerminalViewModel extends ViewModel {
         return configStore.getFontType();
     }
 
-    public boolean isP2PEnabled() {
-        return configStore.isP2PEnabled();
-    }
 
-    public void saveP2PEnabled(boolean enabled) {
-        configStore.saveP2PEnabled(enabled);
-    }
 
     public void saveFontSize(int size) {
         configStore.saveFontSize(size);

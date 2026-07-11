@@ -224,7 +224,7 @@ public class TerminalConnectionLifecycleTest {
 
         verify(registry).forDevice("http://example.com", "cookie", "device1");
         verify(registry).forDevice("http://example.com", "new-cookie", "device1");
-        verify(manager).forceReconnect("manual reconnect", true);
+        verify(manager).forceReconnect("manual reconnect");
     }
 
     @Test

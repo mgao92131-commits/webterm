@@ -51,7 +51,6 @@ export interface AppStore {
   theme: Theme;
   clientId: string;
   managerError: string;
-  p2pActive: boolean;
   connectionStates: Record<string, 'connected' | 'connecting' | 'disconnected' | 'polling'>;
 }
 
@@ -68,7 +67,6 @@ export const store = reactive<AppStore>({
   theme: savedTheme || 'solarized',
   clientId: getClientId(),
   managerError: '',
-  p2pActive: false,
   connectionStates: {},
 });
 
@@ -80,6 +78,5 @@ export function resetStore() {
   store.selectedDeviceId = null;
   store.selectedSessionId = null;
   store.managerError = '';
-  store.p2pActive = false;
   store.connectionStates = {};
 }

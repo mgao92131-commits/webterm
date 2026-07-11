@@ -2,20 +2,11 @@ import { BINARY_SUBPROTOCOL, JSON_SUBPROTOCOL } from './mux-protocol';
 import {
   RelayMuxChannel,
   RelayMuxSession,
-  type RelayMuxTransport,
-  type RelayMuxTransportFactory,
   webSocketRelayMuxTransportFactory,
 } from './relay-mux-session';
 
-type OptionalTransportProvider = (deviceId: string) => RelayMuxTransport | null;
-
 class RelayMuxSessionManager {
   private sessions = new Map<string, RelayMuxSession>();
-  private transportProvider: OptionalTransportProvider | null = null;
-
-  setTransportProvider(provider: OptionalTransportProvider | null) {
-    this.transportProvider = provider;
-  }
 
   openManagerChannel(deviceId: string): RelayMuxChannel {
     return this.forDevice(deviceId).openChannel(`manager:${deviceId}`, '/ws/sessions', [JSON_SUBPROTOCOL]);
@@ -37,12 +28,6 @@ class RelayMuxSessionManager {
     this.sessions.delete(deviceId);
   }
 
-  reconnectDevice(deviceId: string, reason = 'mux transport changed') {
-    const session = this.sessions.get(deviceId);
-    if (!session) return;
-    session.reconnect(reason);
-  }
-
   closeAll() {
     for (const session of this.sessions.values()) {
       session.stop();
@@ -53,14 +38,10 @@ class RelayMuxSessionManager {
   private forDevice(deviceId: string): RelayMuxSession {
     let session = this.sessions.get(deviceId);
     if (!session) {
-      session = new RelayMuxSession(deviceId, this.createTransportFactory());
+      session = new RelayMuxSession(deviceId, webSocketRelayMuxTransportFactory);
       this.sessions.set(deviceId, session);
     }
     return session;
-  }
-
-  private createTransportFactory(): RelayMuxTransportFactory {
-    return (deviceId) => this.transportProvider?.(deviceId) ?? webSocketRelayMuxTransportFactory(deviceId);
   }
 }
 

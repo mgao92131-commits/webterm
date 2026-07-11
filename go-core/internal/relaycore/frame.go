@@ -15,10 +15,6 @@ const (
 	FrameTypeWSBinary       FrameType = 0x08
 	FrameTypePing           FrameType = 0x09
 	FrameTypePong           FrameType = 0x0a
-	FrameTypeP2POffer       FrameType = 0x0b
-	FrameTypeP2PAnswer      FrameType = 0x0c
-	FrameTypeP2PIce         FrameType = 0x0d
-	FrameTypeP2PUnavailable FrameType = 0x0e
 )
 
 type FrameFlags byte

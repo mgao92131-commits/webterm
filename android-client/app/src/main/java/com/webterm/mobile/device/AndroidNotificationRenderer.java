@@ -97,7 +97,7 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = context.getSystemService(NotificationManager.class);
         if (nm == null) return;
-        createIfAbsent(nm, NotificationChannels.DEVICE, "WebTerm 设备连接", NotificationManager.IMPORTANCE_MIN,
+        createIfAbsent(nm, NotificationChannels.DEVICE, "WebTerm 设备连接", NotificationManager.IMPORTANCE_LOW,
             "保持与 PC 的长期连接");
         createIfAbsent(nm, NotificationChannels.TRANSFER, "文件传输", NotificationManager.IMPORTANCE_DEFAULT,
             "文件接收进度与结果");

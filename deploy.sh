@@ -31,7 +31,6 @@ for arg in "$@"; do
             echo "  WEBTERM_RELAY_ALLOW_REGISTRATION 默认 1"
             echo "  WEBTERM_RELAY_REQUIRE_EMAIL_OTP 默认 0"
             echo "  WEBTERM_RELAY_SMTP_*            可选，OTP 邮件配置"
-            echo "  WEBTERM_DISABLE_P2P             默认 0"
             exit 0
             ;;
         *)
@@ -66,6 +65,7 @@ WEBTERM_RELAY_REQUIRE_EMAIL_OTP="${WEBTERM_RELAY_REQUIRE_EMAIL_OTP:-0}"
 WEBTERM_RELAY_DEV_PRINT_OTP="${WEBTERM_RELAY_DEV_PRINT_OTP:-0}"
 WEBTERM_DISABLE_P2P="${WEBTERM_DISABLE_P2P:-0}"
 
+
 shell_quote() {
     printf '%q' "$1"
 }
@@ -76,12 +76,13 @@ Q_WEBTERM_RELAY_PUBLIC_URL="$(shell_quote "${WEBTERM_RELAY_PUBLIC_URL:-}")"
 Q_WEBTERM_RELAY_ALLOW_REGISTRATION="$(shell_quote "$WEBTERM_RELAY_ALLOW_REGISTRATION")"
 Q_WEBTERM_RELAY_REQUIRE_EMAIL_OTP="$(shell_quote "$WEBTERM_RELAY_REQUIRE_EMAIL_OTP")"
 Q_WEBTERM_RELAY_DEV_PRINT_OTP="$(shell_quote "$WEBTERM_RELAY_DEV_PRINT_OTP")"
+Q_WEBTERM_DISABLE_P2P="$(shell_quote "$WEBTERM_DISABLE_P2P")"
 Q_WEBTERM_RELAY_SMTP_HOST="$(shell_quote "${WEBTERM_RELAY_SMTP_HOST:-}")"
 Q_WEBTERM_RELAY_SMTP_PORT="$(shell_quote "${WEBTERM_RELAY_SMTP_PORT:-}")"
 Q_WEBTERM_RELAY_SMTP_USERNAME="$(shell_quote "${WEBTERM_RELAY_SMTP_USERNAME:-}")"
 Q_WEBTERM_RELAY_SMTP_PASSWORD="$(shell_quote "${WEBTERM_RELAY_SMTP_PASSWORD:-}")"
 Q_WEBTERM_RELAY_SMTP_FROM="$(shell_quote "${WEBTERM_RELAY_SMTP_FROM:-}")"
-Q_WEBTERM_DISABLE_P2P="$(shell_quote "$WEBTERM_DISABLE_P2P")"
+
 
 REMOTE_DIR="/opt/webterm-relay-go"
 
@@ -97,23 +98,24 @@ npm run validate:deploy
 
 REMOTE_COMMAND="
     cd ${REMOTE_DIR} && \
+    find . -mindepth 1 -maxdepth 1 ! -name 'data' ! -name 'webterm_deploy_temp.tar.gz' -exec rm -rf {} + && \
     tar -xzf webterm_deploy_temp.tar.gz && \
     rm -f webterm_deploy_temp.tar.gz && \
     mkdir -p data && \
-    echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
-    docker compose down && \
     export RELAY_BOOTSTRAP_USER=${Q_RELAY_BOOTSTRAP_USER} && \
     export RELAY_BOOTSTRAP_PASSWORD=${Q_RELAY_BOOTSTRAP_PASSWORD} && \
     export WEBTERM_RELAY_PUBLIC_URL=${Q_WEBTERM_RELAY_PUBLIC_URL} && \
     export WEBTERM_RELAY_ALLOW_REGISTRATION=${Q_WEBTERM_RELAY_ALLOW_REGISTRATION} && \
     export WEBTERM_RELAY_REQUIRE_EMAIL_OTP=${Q_WEBTERM_RELAY_REQUIRE_EMAIL_OTP} && \
     export WEBTERM_RELAY_DEV_PRINT_OTP=${Q_WEBTERM_RELAY_DEV_PRINT_OTP} && \
+    export WEBTERM_DISABLE_P2P=${Q_WEBTERM_DISABLE_P2P} && \
     export WEBTERM_RELAY_SMTP_HOST=${Q_WEBTERM_RELAY_SMTP_HOST} && \
     export WEBTERM_RELAY_SMTP_PORT=${Q_WEBTERM_RELAY_SMTP_PORT} && \
     export WEBTERM_RELAY_SMTP_USERNAME=${Q_WEBTERM_RELAY_SMTP_USERNAME} && \
     export WEBTERM_RELAY_SMTP_PASSWORD=${Q_WEBTERM_RELAY_SMTP_PASSWORD} && \
     export WEBTERM_RELAY_SMTP_FROM=${Q_WEBTERM_RELAY_SMTP_FROM} && \
-    export WEBTERM_DISABLE_P2P=${Q_WEBTERM_DISABLE_P2P} && \
+    echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
+    docker compose down && \
     docker compose up -d --build
 "
 
@@ -127,6 +129,7 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "  WEBTERM_RELAY_ALLOW_REGISTRATION=${WEBTERM_RELAY_ALLOW_REGISTRATION}"
     echo "  WEBTERM_RELAY_REQUIRE_EMAIL_OTP=${WEBTERM_RELAY_REQUIRE_EMAIL_OTP}"
     echo "  WEBTERM_DISABLE_P2P=${WEBTERM_DISABLE_P2P}"
+
     echo "远程动作:"
     echo "  1. 解压 webterm_deploy_temp.tar.gz 到 ${REMOTE_DIR}"
     echo "  2. 创建 data/ 持久化目录"
@@ -180,5 +183,5 @@ echo "查看容器日志:"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"
 echo ""
 echo "部署后建议在本机执行外部 smoke:"
-echo "  WEBTERM_SMOKE_EMAIL=${RELAY_BOOTSTRAP_USER} WEBTERM_SMOKE_PASSWORD='你的密码' npm run smoke:web-go-relay-pc-agent -- --relay-url http://${SERVER_IP}:9001 --register false --p2p --expect-p2p --timeout 120000"
+echo "  WEBTERM_SMOKE_EMAIL=${RELAY_BOOTSTRAP_USER} WEBTERM_SMOKE_PASSWORD='你的密码' npm run smoke:web-go-relay-pc-agent -- --relay-url http://${SERVER_IP}:9001 --register false --timeout 120000"
 echo "=========================================="

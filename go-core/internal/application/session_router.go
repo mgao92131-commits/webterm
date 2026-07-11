@@ -212,7 +212,7 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 	return http.StatusNotFound, nil, errors.New("not found")
 }
 
-// Manager 返回内部的 session.Manager（供 P2P 等组件需要直接访问时使用）。
+// Manager 返回内部的 session.Manager。
 func (r *SessionRouter) Manager() *session.Manager {
 	return r.manager
 }

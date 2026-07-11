@@ -9,7 +9,6 @@ import type { RelayMuxChannel } from '../lib/relay-mux-session';
 vi.mock('../services/connection.service', () => ({
   connectionService: {
     openManagerChannel: vi.fn(),
-    handleRemoteCandidate: vi.fn(),
   },
 }));
 
@@ -75,7 +74,6 @@ describe('useManagerConnection', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.mocked(connectionService.openManagerChannel).mockReset();
-    vi.mocked(connectionService.handleRemoteCandidate).mockReset();
     resetStore();
   });
 
@@ -133,22 +131,6 @@ describe('useManagerConnection', () => {
     wrapper.unmount();
   });
 
-  it('forwards p2p-ice candidate via onMessage', async () => {
-    const ws = new MockWebSocket();
-    vi.mocked(connectionService.openManagerChannel).mockReturnValueOnce(asChannel(ws));
-
-    store.mode = 'relay';
-    const wrapper = mount(TestComponent, { props: { deviceId: 'd1' } });
-    await nextTick();
-
-    ws.triggerMessage({ type: 'p2p-ice', candidate: { ice: 'candidate' } });
-    await nextTick();
-
-    const messages = wrapper.emitted('message') as ManagerServerMessage[][];
-    expect(messages).toHaveLength(1);
-    expect(messages[0][0]).toMatchObject({ type: 'p2p-ice', candidate: { ice: 'candidate' } });
-    wrapper.unmount();
-  });
 
   it('enters polling and schedules reconnect after abnormal close', async () => {
     const ws = new MockWebSocket();

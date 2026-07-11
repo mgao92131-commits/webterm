@@ -50,7 +50,7 @@ for (const required of [
   'WEBTERM_RELAY_SMTP_USERNAME=${WEBTERM_RELAY_SMTP_USERNAME:-}',
   'WEBTERM_RELAY_SMTP_PASSWORD=${WEBTERM_RELAY_SMTP_PASSWORD:-}',
   'WEBTERM_RELAY_SMTP_FROM=${WEBTERM_RELAY_SMTP_FROM:-}',
-  'WEBTERM_DISABLE_P2P=${WEBTERM_DISABLE_P2P:-0}',
+
   'WEBTERM_RELAY_BOOTSTRAP_USER=${RELAY_BOOTSTRAP_USER:-admin}',
   'WEBTERM_RELAY_BOOTSTRAP_PASSWORD=${RELAY_BOOTSTRAP_PASSWORD:?required}',
   './web:/app/web:ro',
@@ -74,7 +74,7 @@ requireIncludes('deploy.sh', deploy, '--dry-run');
 requireIncludes('deploy.sh', deploy, 'dry-run: 不打包、不上传、不执行 SSH。');
 requireIncludes('deploy.sh', deploy, 'docker compose up -d --build');
 requireIncludes('deploy.sh', deploy, 'WEBTERM_RELAY_PUBLIC_URL');
-requireIncludes('deploy.sh', deploy, 'WEBTERM_DISABLE_P2P');
+
 requireMatch('deploy.sh', deploy, /if \[ -z "\$\{RELAY_BOOTSTRAP_PASSWORD:-\}" \]/, 'bootstrap password guard');
 if (/RELAY_BOOTSTRAP_PASSWORD=changeme/.test(deploy)) {
   failures.push('deploy.sh: must not deploy with RELAY_BOOTSTRAP_PASSWORD=changeme');

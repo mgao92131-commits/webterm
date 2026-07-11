@@ -23,11 +23,7 @@
       </div>
 
       <div class="flex items-center gap-1 flex-shrink-0">
-        <!-- P2P/Relay badge -->
-        <span v-if="store.mode === 'relay'" :class="['text-[10px] px-1.5 py-0.5 rounded-sm font-medium font-mono hidden sm:inline-flex',
-          store.p2pActive ? 'bg-accent-muted text-accent border border-accent/30' : 'bg-bg-tertiary text-fg-subtle border border-border']">
-          {{ store.p2pActive ? 'P2P' : 'RELAY' }}
-        </span>
+
 
         <!-- Copy selection — bound by terminal-selection.ts via #copySelection -->
         <button
@@ -166,7 +162,6 @@ function createContext(sessionId: string): void {
     theme: store.theme,
     mode: store.mode,
     deviceId: store.selectedDeviceId,
-    p2pActive: store.p2pActive,
     setDocumentTitle: !props.inline,
     onStateChange: (change) => {
       if (change.isSelectionMode !== undefined) isSelectionMode.value = change.isSelectionMode;

@@ -10,7 +10,6 @@ export type ManagerServerMessage =
   | { type: 'sessions'; data: unknown[] }
   | { type: 'session'; data: unknown }
   | { type: 'session-closed'; id: string }
-  | { type: 'p2p-ice'; candidate: RTCIceCandidateInit }
   | { type: 'error'; message: string };
 
 export interface UseManagerConnectionOptions {
