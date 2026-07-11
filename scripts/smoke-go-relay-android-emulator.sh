@@ -16,6 +16,7 @@ RELAY_PASSWORD="${RELAY_PASSWORD:-admin}"
 DEVICE_NAME="${DEVICE_NAME:-Android E2E Agent}"
 AGENT_HOME="${AGENT_HOME:-$HOME}"
 RUN_TERMINAL=false
+RUN_FILE_SEND=false
 EXPECT_MUX=false
 ENABLE_P2P=false
 EXPECT_P2P=false
@@ -26,6 +27,11 @@ HOLD_AFTER_TERMINAL_SECONDS="${HOLD_AFTER_TERMINAL_SECONDS:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --terminal)
+      RUN_TERMINAL=true
+      shift
+      ;;
+    --file-send)
+      RUN_FILE_SEND=true
       RUN_TERMINAL=true
       shift
       ;;
@@ -57,6 +63,7 @@ done
 TMP_DIR="$(mktemp -d /private/tmp/webterm-android-relay-smoke.XXXXXX)"
 RELAY_BIN="$TMP_DIR/webterm-relay"
 AGENT_BIN="$TMP_DIR/webterm-agent"
+CLI_BIN="$TMP_DIR/webterm"
 STORE_PATH="$TMP_DIR/relay-store.json"
 COOKIE_JAR="$TMP_DIR/cookies.txt"
 PREFS_XML="$TMP_DIR/webterm.xml"
@@ -173,6 +180,18 @@ assert_single_mux_stream() {
   fi
 }
 
+wait_for_device_mux() {
+  local deadline=$((SECONDS + 15))
+  until curl -fsS "http://$RELAY_ADDR/debug/streams" | grep -q '"Path":"/ws/sessions"'; do
+    if (( SECONDS >= deadline )); then
+      echo "Android foreground device service did not open its mux stream" >&2
+      curl -fsS "http://$RELAY_ADDR/debug/streams" >&2 || true
+      exit 1
+    fi
+    sleep 0.5
+  done
+}
+
 echo "[1/9] checking adb device"
 "$ADB" devices | grep -qE 'device$|device product:' || {
   "$ADB" devices -l
@@ -185,6 +204,7 @@ echo "[2/9] building Go Relay and Agent"
   cd "$GO_DIR"
   GOCACHE="$GOCACHE" go build -o "$RELAY_BIN" ./cmd/webterm-relay
   GOCACHE="$GOCACHE" go build -o "$AGENT_BIN" ./cmd/webterm-agent
+  GOCACHE="$GOCACHE" go build -o "$CLI_BIN" ./cmd/webterm
 )
 
 echo "[3/9] starting Go Relay"
@@ -274,6 +294,8 @@ if "$ADB" logcat -d | grep -q 'ServerSessionMonitor.*ws/sessions'; then
   "$ADB" logcat -d | grep 'ServerSessionMonitor.*ws/sessions' >&2
   exit 1
 fi
+wait_for_device_mux
+assert_single_mux_stream
 
 if [[ "$RUN_TERMINAL" == true ]]; then
   echo "[9/9] creating terminal session from Android UI"
@@ -292,6 +314,12 @@ if [[ "$RUN_TERMINAL" == true ]]; then
     fi
     sleep 0.5
   done
+  sessions_json="$(curl -fsS -b "$COOKIE_JAR" -H "x-device-id: $device_id" "http://$RELAY_ADDR/api/sessions")"
+  session_id="$(printf '%s' "$sessions_json" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)"
+  if [[ -z "$session_id" ]]; then
+    echo "failed to determine created relay session: $sessions_json" >&2
+    exit 1
+  fi
   wait_for_ui_text "Terminal"
   if [[ "$EXPECT_P2P" == true ]]; then
     deadline=$((SECONDS + 15))
@@ -334,6 +362,22 @@ if [[ "$RUN_TERMINAL" == true ]]; then
   fi
   if [[ "$EXPECT_MUX" == true && "$EXPECT_P2P" != true ]]; then
     assert_single_mux_stream
+  fi
+  if [[ "$RUN_FILE_SEND" == true ]]; then
+    echo "[file-send] sending go.mod through the device service"
+    WEBTERM_SOCKET_PATH="$AGENT_HOME/.webterm/webterm.sock" \
+    WEBTERM_SESSION_ID="$session_id" \
+    "$CLI_BIN" send "$GO_DIR/go.mod"
+    remote_file="$("$ADB" shell 'ls -t /sdcard/Download/WebTerm/go*.mod 2>/dev/null | head -1' | tr -d '\r')"
+    if [[ -z "$remote_file" ]]; then
+      echo "Android did not publish the received file to Downloads/WebTerm" >&2
+      exit 1
+    fi
+    "$ADB" pull "$remote_file" "$TMP_DIR/received-go.mod" >/dev/null
+    if ! cmp -s "$GO_DIR/go.mod" "$TMP_DIR/received-go.mod"; then
+      echo "received file content differs from source: $remote_file" >&2
+      exit 1
+    fi
   fi
   if (( HOLD_AFTER_TERMINAL_SECONDS > 0 )); then
     echo "holding terminal test environment for ${HOLD_AFTER_TERMINAL_SECONDS}s"

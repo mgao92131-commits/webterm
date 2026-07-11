@@ -15,6 +15,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import javax.inject.Inject;
@@ -45,6 +46,7 @@ public final class RelayService {
     private final WebTermApi api;
 
     private Host host;
+    private DeviceListener deviceListener;
     private ServerConfig relayMasterConfig;
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private RelayState relayState = RelayState.NOT_CONFIGURED;
@@ -73,6 +75,12 @@ public final class RelayService {
 
     public void setHost(Host host) {
         this.host = host;
+    }
+
+    /** Independent consumer for device-level background work. Unlike Host, this
+     * listener is not owned by an Activity and survives UI recreation. */
+    public void setDeviceListener(DeviceListener listener) {
+        this.deviceListener = listener;
     }
 
     // ── Public API ───────────────────────────────────────────────
@@ -130,6 +138,7 @@ public final class RelayService {
     public void destroy() {
         stop();
         relayDevices.clear();
+        notifyDeviceListener();
         relayMasterConfig = null;
     }
 
@@ -148,28 +157,10 @@ public final class RelayService {
                     devicesFetchInFlight = false;
                     httpAuthFailures = 0;
                     relayDevices.clear();
-                    for (int i = 0; i < devices.length(); i++) {
-                        JSONObject deviceObj = devices.optJSONObject(i);
-                        if (deviceObj == null) continue;
-                        String deviceId = deviceObj.optString("deviceId");
-                        String deviceName = deviceObj.optString("deviceName");
-                        if (deviceId.isEmpty()) continue;
-
-                        if (!isDeviceOnline(deviceObj)) continue;
-
-                        relayDevices.add(new ServerConfig(
-                            "relay_dev_" + deviceId,
-                            deviceName,
-                            relayMasterConfig.getUrl(),
-                            relayMasterConfig.getCookie(),
-                            relayMasterConfig.getUsername(),
-                            "",
-                            false, true, deviceId,
-                            relayMasterConfig.isP2PEnabled()
-                        ));
-                    }
+                    relayDevices.addAll(toOnlineDeviceConfigs(relayMasterConfig, devices));
                     updateState(RelayState.CONNECTED);
                     if (host != null) host.onRelayDevicesChanged();
+                    notifyDeviceListener();
                 });
             }
 
@@ -412,13 +403,42 @@ public final class RelayService {
         if (host != null) host.saveServers();
         stop();
         relayDevices.clear();
+        notifyDeviceListener();
         updateState(RelayState.NOT_CONFIGURED);
         if (host != null) host.onRelayAuthDone();
     }
 
     // ── Internal helpers ─────────────────────────────────────────
 
-    private boolean isDeviceOnline(JSONObject deviceObj) {
+    static List<ServerConfig> toOnlineDeviceConfigs(ServerConfig master, JSONArray devices) {
+        if (master == null || devices == null) return Collections.emptyList();
+        List<ServerConfig> result = new ArrayList<>();
+        for (int i = 0; i < devices.length(); i++) {
+            JSONObject deviceObj = devices.optJSONObject(i);
+            if (deviceObj == null || !isDeviceOnline(deviceObj)) continue;
+            String deviceId = deviceObj.optString("deviceId");
+            if (deviceId.isEmpty()) continue;
+            result.add(new ServerConfig(
+                "relay_dev_" + deviceId,
+                deviceObj.optString("deviceName"),
+                master.getUrl(),
+                master.getCookie(),
+                master.getUsername(),
+                "",
+                false, true, deviceId,
+                master.isP2PEnabled()
+            ));
+        }
+        return result;
+    }
+
+    private void notifyDeviceListener() {
+        if (deviceListener != null) {
+            deviceListener.onRelayDevicesChanged(new ArrayList<>(relayDevices));
+        }
+    }
+
+    private static boolean isDeviceOnline(JSONObject deviceObj) {
         return deviceObj.optBoolean("online", false)
             || "online".equalsIgnoreCase(deviceObj.optString("status", ""));
     }
@@ -463,5 +483,9 @@ public final class RelayService {
         void onRelayAuthDone();
         void saveServers();
         ServerConfigManager serverConfigs();
+    }
+
+    public interface DeviceListener {
+        void onRelayDevicesChanged(List<ServerConfig> devices);
     }
 }

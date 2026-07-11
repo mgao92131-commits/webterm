@@ -32,12 +32,16 @@ import com.webterm.core.filesend.OkHttpFileDownloader;
 import com.webterm.core.filesend.TransferNotificationSink;
 import com.webterm.core.notifications.NotificationController;
 import com.webterm.core.notifications.ConnectionStatusText;
+import com.webterm.core.relay.RelayService;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
@@ -71,9 +75,11 @@ public final class WebTermDeviceService extends Service {
     @Inject Executor ioExecutor;
     @Inject ServerConfigManager configManager;
     @Inject ServerConfigStore configStore;
+    @Inject RelayService relayService;
 
     private final ConcurrentHashMap<String, RelayMuxSessionManager> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
+    private final Set<String> relayConnectionKeys = ConcurrentHashMap.newKeySet();
     private FileReceiveController controller;
     private AgentNotificationController agentController;
     private NotificationController notifications;
@@ -136,6 +142,7 @@ public final class WebTermDeviceService extends Service {
         AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) ->
             notifications.postAgent(connectionKey, sessionId, level, title, message);
         agentController = new AgentNotificationController(lookup, sink, dedupe);
+        relayService.setDeviceListener(this::syncRelayDevices);
     }
 
     @Override
@@ -173,6 +180,8 @@ public final class WebTermDeviceService extends Service {
         }
         managers.clear();
         configs.clear();
+        relayConnectionKeys.clear();
+        relayService.setDeviceListener(null);
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
@@ -184,19 +193,54 @@ public final class WebTermDeviceService extends Service {
         }
         configManager.load();
         for (ServerConfig config : configManager.servers()) {
-            String deviceId = config.getDeviceId();
-            String url = config.getUrl();
-            if (deviceId == null || deviceId.isEmpty() || url == null || url.isEmpty()) {
-                continue;
-            }
-            String key = connectionKey(url, deviceId);
-            RelayMuxSessionManager manager = registry.forDevice(url, config.getCookie(), deviceId);
-            managers.put(key, manager);
-            configs.put(key, config);
-            manager.setControlListener(msg -> routeControl(key, msg));
-            manager.start();
+            if (config.isRelayMaster()) continue;
+            connectDevice(config, false);
         }
+        relayService.loadMasterFromServers(configManager.servers());
+        relayService.start();
         updateConnectionNotification();
+    }
+
+    private void syncRelayDevices(List<ServerConfig> devices) {
+        if (!connectionsEnabled(this)) return;
+        configManager.save();
+        Set<String> nextKeys = new HashSet<>();
+        for (ServerConfig config : devices) {
+            String key = connectDevice(config, true);
+            if (key != null) nextKeys.add(key);
+        }
+        for (String key : new HashSet<>(relayConnectionKeys)) {
+            if (nextKeys.contains(key)) continue;
+            RelayMuxSessionManager manager = managers.remove(key);
+            configs.remove(key);
+            if (manager != null) {
+                manager.setControlListener(null);
+                registry.releaseIfIdle(manager);
+            }
+        }
+        relayConnectionKeys.clear();
+        relayConnectionKeys.addAll(nextKeys);
+        updateConnectionNotification();
+    }
+
+    @Nullable
+    private String connectDevice(ServerConfig config, boolean relayDevice) {
+        if (config == null) return null;
+        String deviceId = config.getDeviceId();
+        String url = config.getUrl();
+        if (url == null || url.isEmpty()) return null;
+        if ((deviceId == null || deviceId.isEmpty()) && !config.isRelayDevice()) {
+            deviceId = "direct";
+        }
+        if (deviceId == null || deviceId.isEmpty()) return null;
+        String key = connectionKey(url, deviceId);
+        RelayMuxSessionManager manager = registry.forDevice(url, config.getCookie(), deviceId);
+        managers.put(key, manager);
+        configs.put(key, config);
+        manager.setControlListener(msg -> routeControl(key, msg));
+        manager.start();
+        if (relayDevice) relayConnectionKeys.add(key);
+        return key;
     }
 
     /** 用当前在线设备数刷新持久前台通知（计数文案见 ConnectionStatusText）。 */
@@ -214,6 +258,7 @@ public final class WebTermDeviceService extends Service {
         }
         managers.clear();
         configs.clear();
+        relayConnectionKeys.clear();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
