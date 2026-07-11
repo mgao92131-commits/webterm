@@ -26,7 +26,7 @@ public class NotificationControllerTest {
 
         assertEquals(1, r.shown.size());
         NotificationCommand c = r.shown.get(0);
-        assertEquals(NotificationChannels.AGENT_ALERTS, c.channelId);
+        assertEquals(NotificationChannels.AGENT_COMPLETED_V2, c.channelId);
         assertEquals("connA", c.groupKey);
         assertEquals(NotificationCommand.PRIORITY_DEFAULT, c.priority);
         assertEquals("sess1", c.openSessionId);
@@ -50,6 +50,14 @@ public class NotificationControllerTest {
         assertEquals(NotificationCommand.PRIORITY_HIGH, r.shown.get(0).priority);
         // 空标题按级别落到默认标题
         assertEquals("Agent 出错", r.shown.get(0).title);
+    }
+
+    @Test
+    public void attentionUsesHighPriorityAttentionChannel() {
+        FakeRenderer r = new FakeRenderer();
+        new NotificationController(r).postAgent("c", "s", "attention", "", "approve");
+        assertEquals(NotificationChannels.AGENT_ATTENTION_V2, r.shown.get(0).channelId);
+        assertEquals(NotificationCommand.PRIORITY_HIGH, r.shown.get(0).priority);
     }
 
     @Test

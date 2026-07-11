@@ -101,8 +101,10 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
             "保持与 PC 的长期连接");
         createIfAbsent(nm, NotificationChannels.TRANSFER, "文件传输", NotificationManager.IMPORTANCE_DEFAULT,
             "文件接收进度与结果");
-        createIfAbsent(nm, NotificationChannels.AGENT_ALERTS, "Agent 告警", NotificationManager.IMPORTANCE_HIGH,
-            "Claude Code / Codex / Kimi 等 Agent 事件");
+        createIfAbsent(nm, NotificationChannels.AGENT_COMPLETED_V2, "Agent 完成", NotificationManager.IMPORTANCE_DEFAULT,
+            "Agent 完成任务时提醒");
+        createIfAbsent(nm, NotificationChannels.AGENT_ATTENTION_V2, "Agent 需要处理", NotificationManager.IMPORTANCE_HIGH,
+            "Agent 出错或等待用户处理时提醒");
     }
 
     private static void createIfAbsent(NotificationManager nm, String id, String name, int importance, String description) {

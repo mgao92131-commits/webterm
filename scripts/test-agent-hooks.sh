@@ -120,45 +120,45 @@ echo "  ✓ 非法 level 时退出非零"
 
 # 空 stdin 时使用默认消息，并传递 --session
 clear_calls
-$HELPER_SCRIPT running "Running" claude </dev/null
-assert_contains "notify --level running --message Running --source claude --session test-session" "$(last_call)" "空 stdin 时使用默认消息并传递 session"
+$HELPER_SCRIPT started "Running" claude </dev/null
+assert_contains "agent-event --kind started --message Running --source claude --session test-session" "$(last_call)" "空 stdin 时使用默认消息并传递 session"
 
 # 从顶层 prompt 字段提取
 clear_calls
-echo '{"prompt":"deploy to production"}' | $HELPER_SCRIPT running "Running" claude
+echo '{"prompt":"deploy to production"}' | $HELPER_SCRIPT started "Running" claude
 assert_contains "--message deploy to production" "$(last_call)" "提取顶层 prompt"
 assert_contains "--session test-session" "$(last_call)" "提取 prompt 时传递 session"
 
 # 从 messages 数组提取最后一条
 clear_calls
-echo '{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"done"}]}' | $HELPER_SCRIPT running "Running" claude
+echo '{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"done"}]}' | $HELPER_SCRIPT started "Running" claude
 assert_contains "--message done" "$(last_call)" "提取 messages 数组最后一条"
 
 # 从 tool_input 提取
 clear_calls
-echo '{"tool_input":{"command":"git status"}}' | $HELPER_SCRIPT running "Running" claude
+echo '{"tool_input":{"command":"git status"}}' | $HELPER_SCRIPT started "Running" claude
 assert_contains "--message git status" "$(last_call)" "提取 tool_input.command"
 
 # 超长文本截断到 60 字符
 clear_calls
 long_msg=$(python3 -c 'print("a"*100)')
-echo "{\"prompt\":\"$long_msg\"}" | $HELPER_SCRIPT running "Running" claude
+echo "{\"prompt\":\"$long_msg\"}" | $HELPER_SCRIPT started "Running" claude
 call_len=$(last_call | sed 's/.*--message //;s/ --source.*//' | tr -d '\n' | wc -c | tr -d '[:space:]')
 assert_eq "60" "$call_len" "超长消息截断为 60 字符"
 
 # 无效 JSON 回退到默认消息
 clear_calls
-echo 'not json' | $HELPER_SCRIPT error "Waiting for approval" kimi
+echo 'not json' | $HELPER_SCRIPT attention "Waiting for approval" kimi
 assert_contains "--message Waiting for approval" "$(last_call)" "无效 JSON 回退默认消息"
 
-# idle 状态
+# completed 状态
 clear_calls
-$HELPER_SCRIPT idle "Idle" codex </dev/null
-assert_contains "notify --level idle --message Idle --source codex --session test-session" "$(last_call)" "idle 状态调用正确"
+$HELPER_SCRIPT completed "Done" codex </dev/null
+assert_contains "agent-event --kind completed --message Done --source codex --session test-session" "$(last_call)" "completed 状态调用正确"
 
 # webterm 缺失时不应中断 agent（退出 0）
 unset WEBTERM_BIN
-result=$($HELPER_SCRIPT running "Running" claude </dev/null >/dev/null 2>&1; echo $?)
+result=$($HELPER_SCRIPT started "Running" claude </dev/null >/dev/null 2>&1; echo $?)
 export WEBTERM_BIN="$MOCK_WEBTERM_DIR/webterm"
 assert_eq "0" "$result" "webterm 缺失时 helper 退出 0"
 
@@ -174,15 +174,15 @@ EOF
 chmod +x "$helper_tmp_dir/webterm"
 clear_calls
 unset WEBTERM_BIN
-HOME="$TMP_HOME" "$helper_tmp_dir/webterm-notify-helper" running "Running" claude </dev/null
+HOME="$TMP_HOME" "$helper_tmp_dir/webterm-notify-helper" started "Running" claude </dev/null
 export WEBTERM_BIN="$MOCK_WEBTERM_DIR/webterm"
-assert_contains "notify --level running --message Running --source claude --session test-session" "$(last_call)" "helper 在同目录找到 webterm"
+assert_contains "agent-event --kind started --message Running --source claude --session test-session" "$(last_call)" "helper 在同目录找到 webterm"
 
 # 无 env 时 helper fallback 到 --pid，由后端通过调用者 PID 解析
 mkdir -p "$TMP_HOME/.webterm"
 clear_calls
-HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH WEBTERM_HOOK_PID=1 "$HELPER_SCRIPT" running "Running" claude </dev/null
-assert_contains "notify --level running --message Running --source claude --pid 1" "$(last_call)" "无 env 时 helper fallback 到 pid"
+HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH WEBTERM_HOOK_PID=1 "$HELPER_SCRIPT" started "Running" claude </dev/null
+assert_contains "agent-event --kind started --message Running --source claude --pid 1" "$(last_call)" "无 env 时 helper fallback 到 pid"
 
 echo ""
 echo "== 测试 install-agent-hook-examples.sh =="

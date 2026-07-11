@@ -45,6 +45,21 @@ func main() {
 	}
 
 	switch cmd {
+	case "agent-event":
+		ev.Type = "agent_event"
+		fs := flag.NewFlagSet("agent-event", flag.ExitOnError)
+		kind := fs.String("kind", "", "started|completed|failed|attention|session-ended")
+		message := fs.String("message", "", "event message")
+		source := fs.String("source", "webterm-cli", "agent source")
+		session := fs.String("session", os.Getenv("WEBTERM_SESSION_ID"), "target session id")
+		pid := fs.Int("pid", 0, "caller process id for session resolution")
+		_ = fs.Parse(os.Args[2:])
+		if *kind != "started" && *kind != "completed" && *kind != "failed" && *kind != "attention" && *kind != "session-ended" {
+			fmt.Fprintln(os.Stderr, "agent-event requires --kind started|completed|failed|attention|session-ended")
+			os.Exit(2)
+		}
+		ev.AgentEvent, ev.Message, ev.Source, ev.SessionID, ev.PID = *kind, *message, *source, *session, *pid
+		if ev.SessionID == "" && ev.PID == 0 { ev.PID = os.Getpid() }
 	case "notify":
 		ev.Type = "notify"
 		fs := flag.NewFlagSet("notify", flag.ExitOnError)
@@ -375,6 +390,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Usage: webterm <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  agent-event --kind started|completed|failed|attention|session-ended [--message MSG] [--source SRC]")
 	fmt.Fprintln(os.Stderr, "  send <file>            send a file to the connected Android device")
 	fmt.Fprintln(os.Stderr, "  notify --level idle|running|error --message MSG --source SRC [--session ID]")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE")

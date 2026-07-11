@@ -182,6 +182,17 @@ func (s *Server) dispatchAgentNotification(sessionID string, ev protocol.HookEve
 		return
 	}
 	level := ev.Level
+	if ev.AgentEvent != "" {
+		switch ev.AgentEvent {
+		case "completed", "failed", "attention":
+			level = ev.AgentEvent
+		default:
+			return
+		}
+	}
+	if level == "" {
+		return
+	}
 	title := ev.Source
 	if title == "" {
 		title = ev.Type

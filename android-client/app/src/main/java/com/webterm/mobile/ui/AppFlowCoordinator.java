@@ -29,6 +29,7 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
+import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.api.SessionIds;
@@ -74,6 +75,7 @@ public final class AppFlowCoordinator implements
     private final ServerConfigManager serverConfigs;
     private final Handler mainHandler;
     private final OkHttpClient http;
+    private final TerminalFocusStore terminalFocus;
 
     private final TerminalRuntime.Factory terminalRuntimeFactory;
     private final P2PConnectionManager p2pManager;
@@ -121,7 +123,8 @@ public final class AppFlowCoordinator implements
         OkHttpClient http,
         TerminalRuntime.Factory terminalRuntimeFactory,
         P2PConnectionManager p2pManager,
-        RelayService relayService
+        RelayService relayService,
+        TerminalFocusStore terminalFocus
     ) {
         this.api = api;
         this.relayMuxRegistry = relayMuxRegistry;
@@ -133,6 +136,7 @@ public final class AppFlowCoordinator implements
         this.terminalRuntimeFactory = terminalRuntimeFactory;
         this.p2pManager = p2pManager;
         this.mRelayService = relayService;
+        this.terminalFocus = terminalFocus;
     }
 
     public void attachActivity(MainActivity activity) {
@@ -224,6 +228,7 @@ public final class AppFlowCoordinator implements
     public void onPause() {
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
+        terminalFocus.clear();
         if (!hasTerminalSession()) {
             mRelayService.stop();
         } else {
@@ -507,6 +512,7 @@ public final class AppFlowCoordinator implements
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
+        terminalFocus.setVisible(WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (relayDeviceId == null ? "" : relayDeviceId), sessionId);
         navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
             relayDevice, relayDeviceId, cwd);
     }

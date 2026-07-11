@@ -31,6 +31,7 @@ import com.webterm.core.filesend.FileSendProtocol;
 import com.webterm.core.filesend.OkHttpFileDownloader;
 import com.webterm.core.filesend.TransferNotificationSink;
 import com.webterm.core.notifications.NotificationController;
+import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.core.notifications.ConnectionStatusText;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.session.RelayMuxSessionManager;
@@ -76,6 +77,7 @@ public final class WebTermDeviceService extends Service {
     @Inject ServerConfigManager configManager;
     @Inject ServerConfigStore configStore;
     @Inject RelayService relayService;
+    @Inject TerminalFocusStore terminalFocus;
 
     private final ConcurrentHashMap<String, RelayMuxSessionManager> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
@@ -139,8 +141,11 @@ public final class WebTermDeviceService extends Service {
                 notifications.postTransferCancelled(connectionKey, transferId, fileName);
             }
         });
-        AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) ->
-            notifications.postAgent(connectionKey, sessionId, level, title, message);
+        AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) -> {
+            if (!terminalFocus.isVisible(connectionKey, sessionId)) {
+                notifications.postAgent(connectionKey, sessionId, level, title, message);
+            }
+        };
         agentController = new AgentNotificationController(lookup, sink, dedupe);
         relayService.setDeviceListener(this::syncRelayDevices);
     }

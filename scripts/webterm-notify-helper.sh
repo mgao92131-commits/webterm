@@ -10,7 +10,7 @@ set -euo pipefail
 #   3.  fallback：把调用者 PID 交给 webterm notify / agent 解析
 #
 # 用法：
-#   webterm-notify-helper <level> <default-message> <source>
+#   webterm-notify-helper <kind> <default-message> <source>
 #
 # 示例：
 #   echo '{"prompt":"hello world"}' | webterm-notify-helper running "Running" claude
@@ -25,8 +25,8 @@ if [ -z "$level" ] || [ -z "$default_msg" ] || [ -z "$source" ]; then
   exit 2
 fi
 
-if [ "$level" != "idle" ] && [ "$level" != "running" ] && [ "$level" != "error" ]; then
-  echo "Invalid level '$level'. Must be idle|running|error." >&2
+if [ "$level" != "started" ] && [ "$level" != "completed" ] && [ "$level" != "failed" ] && [ "$level" != "attention" ] && [ "$level" != "session-ended" ]; then
+  echo "Invalid event '$level'." >&2
   exit 2
 fi
 
@@ -165,8 +165,8 @@ if [ -z "$session_id" ]; then
 fi
 
 notify_args=(
-  notify
-  --level "$level"
+  agent-event
+  --kind "$level"
   --message "$msg"
   --source "$source"
 )

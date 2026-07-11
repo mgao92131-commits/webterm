@@ -10,4 +10,5 @@ public final class AgentProtocol {
     public static final String LEVEL_RUNNING = "running";
     public static final String LEVEL_IDLE = "idle";
     public static final String LEVEL_ERROR = "error";
+    public static final String LEVEL_ATTENTION = "attention";
 }

@@ -77,22 +77,15 @@ install_claude() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ error \"Waiting for approval\" claude"}]}],
-    "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ error \"Needs attention\" claude"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Done\" claude"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Idle\" claude"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ started \"Running\" claude"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ attention \"Waiting for approval\" claude"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ completed \"Done\" claude"}]}],
+    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ session-ended \"Session ended\" claude"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CLAUDE_SETTINGS" ]; then
-    if grep -q 'webterm-notify-helper' "$CLAUDE_SETTINGS" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
-    fi
     python3 - "$CLAUDE_SETTINGS" "$new_hooks" <<'PY' 2>/dev/null || true
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
@@ -100,6 +93,8 @@ with open(path, 'r') as f:
     existing = json.load(f)
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
+for event, entries in list(existing_hooks.items()):
+    existing_hooks[event] = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:
@@ -123,47 +118,50 @@ install_kimi() {
   block='[[hooks]]
 event = "UserPromptSubmit"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ running \"Running\" kimi"
-timeout = 5
-
-[[hooks]]
-event = "PreToolUse"
-matcher = ".*"
-command = "__WEBTERM_HELPER__ running \"Running\" kimi"
+command = "__WEBTERM_HELPER__ started \"Running\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "PermissionRequest"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Waiting for approval\" kimi"
-timeout = 5
-
-[[hooks]]
-event = "Notification"
-matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Needs attention\" kimi"
+command = "__WEBTERM_HELPER__ attention \"Waiting for approval\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "StopFailure"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Task failed\" kimi"
+command = "__WEBTERM_HELPER__ failed \"Task failed\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "Stop"
+matcher = ".*"
+command = "__WEBTERM_HELPER__ completed \"Done\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "SessionEnd"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ idle \"Idle\" kimi"
+command = "__WEBTERM_HELPER__ session-ended \"Session ended\" kimi"
 timeout = 5
 '
   block="${block//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$KIMI_CONFIG" ]; then
-    if grep -q 'webterm-notify-helper' "$KIMI_CONFIG" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
-    fi
-    printf '\n%s' "$block" >> "$KIMI_CONFIG"
+    python3 - "$KIMI_CONFIG" "$block" <<'PY' 2>/dev/null || true
+import sys
+path, replacement = sys.argv[1], sys.argv[2]
+text = open(path, 'r').read()
+parts = text.split('[[hooks]]')
+head, blocks = parts[0], parts[1:]
+kept = [part for part in blocks if 'webterm-notify-helper' not in part]
+with open(path, 'w') as f:
+    f.write(head.rstrip())
+    for part in kept:
+        f.write('\n\n[[hooks]]' + part.rstrip())
+    f.write('\n\n' + replacement)
+    f.write('\n')
+PY
   else
     printf '%s' "$block" > "$KIMI_CONFIG"
   fi
@@ -180,19 +178,14 @@ install_codex() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" codex"}]}],
-    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" codex"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Done\" codex"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Idle\" codex"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ started \"Running\" codex"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ completed \"Done\" codex"}]}],
+    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ session-ended \"Session ended\" codex"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CODEX_HOOKS" ]; then
-    if grep -q 'webterm-notify-helper' "$CODEX_HOOKS" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
-    fi
     python3 - "$CODEX_HOOKS" "$new_hooks" <<'PY' 2>/dev/null || true
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
@@ -200,6 +193,8 @@ with open(path, 'r') as f:
     existing = json.load(f)
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
+for event, entries in list(existing_hooks.items()):
+    existing_hooks[event] = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:

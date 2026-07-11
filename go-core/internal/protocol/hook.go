@@ -6,9 +6,10 @@ type HookEvent struct {
 	SessionID string `json:"session_id,omitempty"`
 	PID       int    `json:"pid,omitempty"`
 
-	Level   string `json:"level,omitempty"`
-	Message string `json:"message,omitempty"`
-	Source  string `json:"source,omitempty"`
+	Level      string `json:"level,omitempty"`
+	AgentEvent string `json:"agent_event,omitempty"` // started|completed|failed|attention|session_ended
+	Message    string `json:"message,omitempty"`
+	Source     string `json:"source,omitempty"`
 
 	ShellState string `json:"shell_state,omitempty"`
 

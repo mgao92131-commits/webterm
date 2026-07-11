@@ -26,7 +26,7 @@ public final class NotificationController {
         String resolvedText = message == null ? "" : message;
         NotificationCommand cmd = new NotificationCommand(
             id,
-            NotificationChannels.AGENT_ALERTS,
+            channelForLevel(level),
             connectionKey,
             resolvedTitle,
             resolvedText,
@@ -149,10 +149,15 @@ public final class NotificationController {
         if (AgentProtocol.LEVEL_RUNNING.equals(level)) {
             return NotificationCommand.PRIORITY_LOW;
         }
-        if (AgentProtocol.LEVEL_ERROR.equals(level)) {
+        if (AgentProtocol.LEVEL_ERROR.equals(level) || AgentProtocol.LEVEL_ATTENTION.equals(level)) {
             return NotificationCommand.PRIORITY_HIGH;
         }
         return NotificationCommand.PRIORITY_DEFAULT;
+    }
+
+    static String channelForLevel(String level) {
+        return (AgentProtocol.LEVEL_ERROR.equals(level) || AgentProtocol.LEVEL_ATTENTION.equals(level))
+            ? NotificationChannels.AGENT_ATTENTION_V2 : NotificationChannels.AGENT_COMPLETED_V2;
     }
 
     private static String defaultTitle(String level) {

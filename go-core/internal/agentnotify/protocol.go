@@ -11,4 +11,5 @@ const (
 	LevelRunning = "running"
 	LevelIdle    = "idle"
 	LevelError   = "error"
+	LevelAttention = "attention"
 )
