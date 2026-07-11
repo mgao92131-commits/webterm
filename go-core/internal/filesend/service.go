@@ -29,10 +29,11 @@ type CreateTaskOptions struct {
 
 // Service 拥有所有 file_send 任务的生命周期，并路由 file_send.* 控制消息。
 type Service struct {
-	mu          sync.RWMutex
-	tasks       map[string]*Task
-	senders     map[string]ControlSender
-	maxFileSize int64
+	mu                 sync.RWMutex
+	tasks              map[string]*Task
+	senders            map[string]ControlSender
+	maxFileSize        int64
+	onSenderRegistered func()
 }
 
 // New 创建一个 FileSendService。maxFileSize <= 0 表示不限制。
@@ -50,8 +51,20 @@ func (s *Service) RegisterSender(deviceID string, sender ControlSender) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.senders[deviceID] = sender
+	onRegistered := s.onSenderRegistered
+	s.mu.Unlock()
+	if onRegistered != nil {
+		onRegistered()
+	}
+}
+
+// SetSenderRegisteredHandler 设置控制连接注册后的回调。
+// Agent 通知使用它在连接恢复后重放尚未收到 ack 的事件。
+func (s *Service) SetSenderRegisteredHandler(handler func()) {
+	s.mu.Lock()
+	s.onSenderRegistered = handler
+	s.mu.Unlock()
 }
 
 // UnregisterSender 注销某设备的发送通道。仅当当前注册的 sender 与传入实例一致时才删除，
@@ -91,9 +104,17 @@ func (s *Service) CreateTask(opts CreateTaskOptions) (*Task, error) {
 		ttl = 10 * time.Minute
 	}
 	now := time.Now()
+	id, err := generateID("t_")
+	if err != nil {
+		return nil, err
+	}
+	token, err := generateID("tok_")
+	if err != nil {
+		return nil, err
+	}
 	task := &Task{
-		ID:        generateID("t_"),
-		Token:     generateID("tok_"),
+		ID:        id,
+		Token:     token,
 		SessionID: opts.SessionID,
 		DeviceID:  opts.DeviceID,
 		Path:      opts.Path,
@@ -114,16 +135,22 @@ func (s *Service) CreateTask(opts CreateTaskOptions) (*Task, error) {
 // GetTask 按 transfer_id 查询任务，过期任务会被移除。
 func (s *Service) GetTask(id string) (*Task, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	task, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
 		return nil, false
 	}
 	if task.Expired(time.Now()) {
-		task.Close()
 		delete(s.tasks, id)
+		s.mu.Unlock()
+		if task.SetFailed("offer_timeout") {
+			s.emit(task, StatusFailed, 0, "offer_timeout")
+		}
+		task.abortStream()
+		task.Close()
 		return nil, false
 	}
+	s.mu.Unlock()
 	return task, true
 }
 
@@ -149,6 +176,7 @@ func (s *Service) CancelTask(id string) bool {
 		return false
 	}
 	s.emit(task, StatusCancelled, 0, "")
+	task.abortStream()
 	return true
 }
 
@@ -161,6 +189,7 @@ func (s *Service) Remove(id string) {
 	}
 	s.mu.Unlock()
 	if ok {
+		task.abortStream()
 		task.Close()
 	}
 }
@@ -169,6 +198,9 @@ func (s *Service) Remove(id string) {
 // 若 task.DeviceID 为空且当前仅注册了一个 sender，则默认发往该 sender（单设备直连场景）。
 // 若设备尚未注册 sender，返回错误，调用方应据此向 CLI 回报 "waiting for Android"。
 func (s *Service) SendOffer(ctx context.Context, task *Task) error {
+	if task == nil || !validSHA256(task.SHA256) {
+		return fmt.Errorf("missing or invalid file sha256")
+	}
 	s.mu.RLock()
 	sender := s.senders[task.DeviceID]
 	if sender == nil && task.DeviceID == "" && len(s.senders) == 1 {
@@ -181,16 +213,14 @@ func (s *Service) SendOffer(ctx context.Context, task *Task) error {
 		return fmt.Errorf("no control sender for device %q", task.DeviceID)
 	}
 	offer := map[string]any{
-		"type":          TypeOffer,
-		"transfer_id":   task.ID,
-		"session_id":    task.SessionID,
-		"file_name":     task.FileName,
-		"file_size":     task.Size,
+		"type":           TypeOffer,
+		"transfer_id":    task.ID,
+		"session_id":     task.SessionID,
+		"file_name":      task.FileName,
+		"file_size":      task.Size,
 		"transfer_token": task.Token,
 	}
-	if task.SHA256 != "" {
-		offer["file_hash_sha256"] = task.SHA256
-	}
+	offer["file_hash_sha256"] = task.SHA256
 	if err := sender.SendControl(ctx, offer); err != nil {
 		return err
 	}
@@ -234,6 +264,7 @@ func (s *Service) HandleControl(msg map[string]any) bool {
 	switch typ {
 	case TypeAccepted:
 		if task.SetStatus(StatusAccepted) {
+			task.ClearExpiry()
 			s.emit(task, StatusAccepted, 0, "")
 		}
 	case TypeRejected:
@@ -315,12 +346,12 @@ func (s *Service) emitProgress(task *Task, bytes int64) {
 	}
 }
 
-func generateID(prefix string) string {
+func generateID(prefix string) (string, error) {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		return prefix + fmt.Sprintf("%d", time.Now().UnixNano())
+		return "", fmt.Errorf("generate random id: %w", err)
 	}
-	return prefix + hex.EncodeToString(buf[:])
+	return prefix + hex.EncodeToString(buf[:]), nil
 }
 
 func constantTimeEqual(a, b string) bool {
@@ -332,6 +363,14 @@ func constantTimeEqual(a, b string) bool {
 		diff |= a[i] ^ b[i]
 	}
 	return diff == 0
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func int64FromAny(value any) int64 {

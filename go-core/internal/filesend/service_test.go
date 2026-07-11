@@ -16,6 +16,8 @@ type fakeSender struct {
 	err  error
 }
 
+const testSHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func (f *fakeSender) SendControl(_ context.Context, msg map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -43,6 +45,7 @@ func TestCreateTaskGeneratesCredentials(t *testing.T) {
 		Path:      "/tmp/a.txt",
 		FileName:  "a.txt",
 		Size:      10,
+		SHA256:    testSHA256,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -77,7 +80,7 @@ func TestCreateTaskRejectsOversize(t *testing.T) {
 
 func TestSendOfferRequiresSender(t *testing.T) {
 	svc := New(0)
-	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x", FileName: "x"})
+	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x", FileName: "x", SHA256: testSHA256})
 	if err := svc.SendOffer(context.Background(), task); err == nil {
 		t.Fatal("SendOffer without sender must error")
 	}
@@ -107,7 +110,7 @@ func TestSendOfferRequiresSender(t *testing.T) {
 
 func TestSendOfferPropagatesSenderError(t *testing.T) {
 	svc := New(0)
-	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x"})
+	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x", SHA256: testSHA256})
 	svc.RegisterSender("dev-1", &fakeSender{err: errors.New("boom")})
 	if err := svc.SendOffer(context.Background(), task); err == nil {
 		t.Fatal("SendOffer must propagate sender error")
@@ -170,6 +173,56 @@ func TestHandleControlRejected(t *testing.T) {
 	}
 	if _, ok := svc.GetTask(task.ID); ok {
 		t.Fatal("rejected task must be removed")
+	}
+}
+
+func TestAcceptedTaskClearsOfferTimeout(t *testing.T) {
+	svc := New(0)
+	task, err := svc.CreateTask(CreateTaskOptions{
+		DeviceID: "dev-1",
+		Path:     "/x",
+		SHA256:   testSHA256,
+		TTL:      time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	svc.HandleControl(map[string]any{"type": TypeAccepted, "transfer_id": task.ID})
+	if !task.ExpiresAt.IsZero() {
+		t.Fatalf("accepted task still has offer expiry: %v", task.ExpiresAt)
+	}
+}
+
+func TestExpiredOfferReportsFailure(t *testing.T) {
+	svc := New(0)
+	task, err := svc.CreateTask(CreateTaskOptions{
+		DeviceID: "dev-1",
+		Path:     "/x",
+		SHA256:   testSHA256,
+		TTL:      time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	task.ExpiresAt = time.Now().Add(-time.Second)
+	if _, ok := svc.GetTask(task.ID); ok {
+		t.Fatal("expired offer must be removed")
+	}
+	resp := readResponse(t, task.StateChan)
+	if resp.Status != string(StatusFailed) || resp.Error != "offer_timeout" {
+		t.Fatalf("unexpected timeout response: %+v", resp)
+	}
+}
+
+func TestSendOfferRequiresSHA256(t *testing.T) {
+	svc := New(0)
+	svc.RegisterSender("dev-1", &fakeSender{})
+	task, err := svc.CreateTask(CreateTaskOptions{DeviceID: "dev-1", Path: "/x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := svc.SendOffer(context.Background(), task); err == nil {
+		t.Fatal("SendOffer must reject a missing SHA-256")
 	}
 }
 

@@ -16,12 +16,12 @@ import (
 )
 
 type App struct {
-	cfg                 config.Config
-	version             string
-	sessions            *session.Manager
-	fileSend            *filesend.Service
-	agentNotify         *agentnotify.Dispatcher
-	logger              *logs.Logger
+	cfg             config.Config
+	version         string
+	sessions        *session.Manager
+	fileSend        *filesend.Service
+	agentNotify     *agentnotify.Dispatcher
+	logger          *logs.Logger
 	mu              sync.RWMutex
 	runtimeMode     string
 	restartRequired bool
@@ -60,6 +60,10 @@ func New(cfg config.Config, version string) *App {
 	manager.SetSessionEnv(sessionEnv)
 
 	fileSendSvc := filesend.New(0)
+	notificationDispatcher := agentnotify.New(fileSendSvc)
+	fileSendSvc.SetSenderRegisteredHandler(func() {
+		notificationDispatcher.ReplayPending(context.Background())
+	})
 	application := &App{
 		cfg:         cfg,
 		version:     version,
@@ -68,7 +72,7 @@ func New(cfg config.Config, version string) *App {
 		socketPath:  socketPath,
 		sessions:    manager,
 		fileSend:    fileSendSvc,
-		agentNotify: agentnotify.New(fileSendSvc),
+		agentNotify: notificationDispatcher,
 		direct: DirectStatus{
 			Listening: false,
 			Addr:      cfg.Direct.Addr,

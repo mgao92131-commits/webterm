@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.webterm.mobile.R;
+import com.webterm.mobile.device.AndroidNotificationRenderer;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.feature.home.HomeHost;
@@ -39,6 +40,22 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) getWindow().setDecorFitsSystemWindows(false);
         coordinator.attachActivity(this);
         coordinator.onCreate();
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL, false)) return;
+        String connectionKey = intent.getStringExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY);
+        String sessionId = intent.getStringExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID);
+        coordinator.openTerminalFromNotification(connectionKey, sessionId);
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL);
     }
 
     @Override protected void onResume() { super.onResume(); coordinator.onResume(); }

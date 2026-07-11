@@ -52,6 +52,8 @@ func (s *Service) HandleFileSendRequest(transferID, token string) HTTPResult {
 	if status.IsTerminal() {
 		return errorResult(http.StatusGone, "transfer already finalized")
 	}
+	// HTTP 请求已开始，后续传输不受 offer 等待超时影响。
+	task.ClearExpiry()
 
 	file, err := os.Open(task.Path)
 	if err != nil {

@@ -7,8 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
-import android.os.Environment;
 import android.os.IBinder;
 
 import androidx.annotation.Nullable;
@@ -22,6 +22,7 @@ import com.webterm.core.agentnotify.AgentProtocol;
 import com.webterm.core.agentnotify.DedupeStore;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
+import com.webterm.core.config.ServerConfigStore;
 import com.webterm.core.filesend.ControlSender;
 import com.webterm.core.filesend.ControlSenderLookup;
 import com.webterm.core.filesend.FileDownloader;
@@ -60,11 +61,16 @@ public final class WebTermDeviceService extends Service {
 
     /** 前台通知「全部停止」action：释放所有设备在线租约并退出前台。 */
     public static final String ACTION_STOP_ALL = "webterm.action.STOP_ALL_DEVICES";
+    public static final String ACTION_START_ALL = "webterm.action.START_ALL_DEVICES";
+
+    private static final String PREFS = "webterm.device_service";
+    private static final String KEY_CONNECTIONS_ENABLED = "connections_enabled";
 
     @Inject RelayMuxSessionRegistry registry;
     @Inject OkHttpClient http;
     @Inject Executor ioExecutor;
     @Inject ServerConfigManager configManager;
+    @Inject ServerConfigStore configStore;
 
     private final ConcurrentHashMap<String, RelayMuxSessionManager> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
@@ -73,7 +79,16 @@ public final class WebTermDeviceService extends Service {
     private NotificationController notifications;
 
     public static void start(Context context) {
+        if (!connectionsEnabled(context)) return;
         Intent intent = new Intent(context, WebTermDeviceService.class);
+        androidx.core.content.ContextCompat.startForegroundService(context, intent);
+    }
+
+    /** 用户显式恢复所有设备连接时调用。 */
+    public static void startAll(Context context) {
+        preferences(context).edit().putBoolean(KEY_CONNECTIONS_ENABLED, true).apply();
+        Intent intent = new Intent(context, WebTermDeviceService.class);
+        intent.setAction(ACTION_START_ALL);
         androidx.core.content.ContextCompat.startForegroundService(context, intent);
     }
 
@@ -81,7 +96,8 @@ public final class WebTermDeviceService extends Service {
     public void onCreate() {
         super.onCreate();
         ensureChannel();
-        File receiveDir = resolveReceiveDir();
+        File receiveDir = resolveStagingDir();
+        cleanupStaleParts(receiveDir);
         ControlSenderLookup lookup = this::senderFor;
         OkHttpFileDownloader.EndpointResolver resolver = new OkHttpFileDownloader.EndpointResolver() {
             @Override public String baseUrl(String connectionKey) {
@@ -95,6 +111,7 @@ public final class WebTermDeviceService extends Service {
         };
         FileDownloader downloader = new OkHttpFileDownloader(http, resolver);
         controller = new FileReceiveController(receiveDir, lookup, downloader, ioExecutor);
+        controller.setFilePublisher(new SafFilePublisher(this, configStore));
 
         DedupeStore dedupe = new DedupeStore(
             new File(getFilesDir(), "agent-notif-dedup.json"),
@@ -134,6 +151,9 @@ public final class WebTermDeviceService extends Service {
             stopAllDevices();
             return START_NOT_STICKY;
         }
+        if (intent != null && ACTION_START_ALL.equals(intent.getAction())) {
+            preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, true).apply();
+        }
         startForeground(NOTIFICATION_ID, buildNotification(managers.size()));
         refreshConnections();
         return START_STICKY;
@@ -158,6 +178,10 @@ public final class WebTermDeviceService extends Service {
     }
 
     private void refreshConnections() {
+        if (!connectionsEnabled(this)) {
+            stopAllDevices();
+            return;
+        }
         configManager.load();
         for (ServerConfig config : configManager.servers()) {
             String deviceId = config.getDeviceId();
@@ -183,6 +207,7 @@ public final class WebTermDeviceService extends Service {
     /** 用户从持久通知选择「全部停止」：释放所有设备在线租约（经 releaseIfIdle 归还共享连接），
      * 清空路由并退出前台。这是一次显式用户动作，与 onDestroy 不强行 stop 共享连接不同。 */
     private void stopAllDevices() {
+        preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, false).apply();
         for (RelayMuxSessionManager manager : managers.values()) {
             manager.setControlListener(null);
             registry.releaseIfIdle(manager);
@@ -214,16 +239,33 @@ public final class WebTermDeviceService extends Service {
         return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + deviceId;
     }
 
-    private File resolveReceiveDir() {
-        File base = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (base == null) {
-            base = getFilesDir();
-        }
-        File dir = new File(base, "webterm-incoming");
-        // 目录创建失败时控制器仍可用；写入时若失败会按 io_error 回报。
+    private File resolveStagingDir() {
+        File dir = new File(getCacheDir(), "file-send-staging");
         //noinspection ResultOfMethodCallIgnored
         dir.mkdirs();
         return dir;
+    }
+
+    private static SharedPreferences preferences(Context context) {
+        return context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private static boolean connectionsEnabled(Context context) {
+        return preferences(context).getBoolean(KEY_CONNECTIONS_ENABLED, true);
+    }
+
+    private static void cleanupStaleParts(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        long cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L;
+        for (File file : files) {
+            if (file.lastModified() >= cutoff) continue;
+            String name = file.getName();
+            if (name.endsWith(".part") || name.endsWith(".part.meta.json")) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
+            }
+        }
     }
 
     private void ensureChannel() {

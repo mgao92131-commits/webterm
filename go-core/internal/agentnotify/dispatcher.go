@@ -17,7 +17,7 @@ type DeviceSender interface {
 const defaultMaxPending = 1024
 
 // Dispatcher 负责生成 event_id、下发 agent_notification，并在收到 ack 后清理
-// 待重放状态。pending 仅用于重连补发的边界（首版不在此处主动重放）。
+// 待重放状态。控制连接恢复时由 ReplayPending 重放尚未确认的事件。
 type Dispatcher struct {
 	sender     DeviceSender
 	maxPending int
@@ -61,11 +61,30 @@ func (d *Dispatcher) Notify(ctx context.Context, deviceID, sessionID, level, tit
 		"title":      title,
 		"message":    message,
 	}
-	if err := d.sender.SendControlToDevice(ctx, deviceID, msg); err != nil {
-		return "", err
-	}
 	d.storePending(deviceID, eventID, msg)
+	if err := d.sender.SendControlToDevice(ctx, deviceID, msg); err != nil {
+		// 发送失败也保留 pending；下一个控制连接注册时会重放。
+		return eventID, err
+	}
 	return eventID, nil
+}
+
+// ReplayPending 在控制连接恢复后重发所有尚未收到 ack 的事件。
+// 事件原始 deviceID 为空时继续走 FileSendService 的单设备回退，避免把一个事件
+// 广播给多个无关 Android 设备。
+func (d *Dispatcher) ReplayPending(ctx context.Context) {
+	if d == nil || d.sender == nil {
+		return
+	}
+	d.mu.Lock()
+	pending := make([]pendingEvent, 0, len(d.pending))
+	for _, event := range d.pending {
+		pending = append(pending, event)
+	}
+	d.mu.Unlock()
+	for _, event := range pending {
+		_ = d.sender.SendControlToDevice(ctx, event.deviceID, event.msg)
+	}
 }
 
 // HandleAck 在收到 Android 的 agent_notification.ack 后移除 pending 状态。

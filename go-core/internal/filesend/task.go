@@ -65,7 +65,17 @@ func (t *Task) Snapshot() (Status, int64, string) {
 
 // Expired 报告任务是否已过有效期。
 func (t *Task) Expired(now time.Time) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return !t.ExpiresAt.IsZero() && now.After(t.ExpiresAt)
+}
+
+// ClearExpiry 将任务从“等待 Android 接受”的短期状态切换为活跃传输状态。
+// 大文件流没有总时长限制，完成由 Android 的 saved/failed/cancelled 控制消息决定。
+func (t *Task) ClearExpiry() {
+	t.mu.Lock()
+	t.ExpiresAt = time.Time{}
+	t.mu.Unlock()
 }
 
 // Close 关闭 StateChan，保证只关闭一次。

@@ -275,6 +275,7 @@ func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 func (direct *Server) sessionRouter() *application.SessionRouter {
 	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
 	router.SetFileSendService(direct.app.FileSendService())
+	router.SetAgentNotificationDispatcher(direct.app.AgentNotificationDispatcher())
 	return router
 }
 

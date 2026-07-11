@@ -3,8 +3,10 @@ package hook
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -264,8 +266,17 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessi
 		absPath = filepath.Join(cmd.CWD, absPath)
 	}
 	info, err := os.Stat(absPath)
-	if err != nil || info.IsDir() {
+	if err != nil {
 		fail("file_not_found")
+		return
+	}
+	if !info.Mode().IsRegular() {
+		fail("file_not_regular")
+		return
+	}
+	sha256Hex, err := fileSHA256(absPath)
+	if err != nil {
+		fail("hash_failed")
 		return
 	}
 
@@ -275,6 +286,7 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessi
 		Path:      absPath,
 		FileName:  info.Name(),
 		Size:      info.Size(),
+		SHA256:    sha256Hex,
 	})
 	if err != nil {
 		fail("create_task_failed")
@@ -317,6 +329,19 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessi
 			return
 		}
 	}
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func writeResponse(conn net.Conn, resp protocol.CLIResponse) {

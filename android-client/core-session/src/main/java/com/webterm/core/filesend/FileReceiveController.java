@@ -21,6 +21,7 @@ public final class FileReceiveController {
     private final Executor executor;
     private final Map<String, ReceiveTask> tasks = new LinkedHashMap<>();
     private TransferNotificationSink notifications;
+    private ReceivedFilePublisher publisher;
 
     public FileReceiveController(File receiveDir, ControlSenderLookup senders, FileDownloader downloader, Executor executor) {
         this.receiveDir = receiveDir;
@@ -34,11 +35,16 @@ public final class FileReceiveController {
         this.notifications = notifications;
     }
 
+    /** 注入最终文件发布器；未设置时保留 staging 文件，便于纯 JVM 测试。 */
+    public void setFilePublisher(ReceivedFilePublisher publisher) {
+        this.publisher = publisher;
+    }
+
     public synchronized ReceiveTask task(String transferId) {
         return tasks.get(transferId);
     }
 
-    /** 处理一条 file_send.offer。重复 transfer_id 被幂等忽略。 */
+    /** 处理一条 file_send.offer。重复 transfer_id 不会重复下载，会回报当前状态。 */
     public void onOffer(String connectionKey, JSONObject offer) {
         final String transferId = offer.optString("transfer_id", "");
         if (transferId.isEmpty()) return;
@@ -49,20 +55,24 @@ public final class FileReceiveController {
         final String sha256 = offer.optString("file_hash_sha256", "");
         final String sessionId = offer.optString("session_id", "");
 
+        if (fileName.isEmpty() || token.isEmpty() || fileSize < 0 || !isSha256(sha256)) {
+            send(connectionKey, reject(transferId, "invalid_offer"));
+            return;
+        }
+        if (!isReceiveDirectoryReady() || (publisher != null && !publisher.isReady())) {
+            send(connectionKey, reject(transferId, "storage_unavailable"));
+            return;
+        }
+
         ReceiveTask task;
         synchronized (this) {
             if (tasks.containsKey(transferId)) {
-                // 重复 offer：不再启动第二次下载。
+                // 重复 offer：不再启动第二次下载，但重发当前状态，帮助重连后的 Go 恢复 CLI。
+                sendCurrentStatus(tasks.get(transferId));
                 return;
             }
             task = new ReceiveTask(transferId, connectionKey, sessionId, fileName, fileSize, sha256, token);
             tasks.put(transferId, task);
-        }
-
-        if (fileName.isEmpty() || token.isEmpty() || fileSize < 0) {
-            task.transition(FileSendProtocol.Status.REJECTED);
-            send(connectionKey, reject(transferId, "invalid_offer"));
-            return;
         }
 
         task.transition(FileSendProtocol.Status.ACCEPTED);
@@ -78,6 +88,7 @@ public final class FileReceiveController {
         }
         if (task == null) return;
         if (task.transition(FileSendProtocol.Status.CANCELLED)) {
+            task.abortInput();
             send(task.connectionKey, cancelled(transferId));
             notifyCancelled(task);
         }
@@ -87,36 +98,51 @@ public final class FileReceiveController {
         final String transferId = task.transferId;
         PartFileSink sink = null;
         boolean committed = false;
-        try (InputStream in = downloader.open(task.connectionKey, transferId, task.token)) {
-            task.transition(FileSendProtocol.Status.RECEIVING);
-            sink = PartFileSink.create(receiveDir, transferId, task.fileName, task.fileSize, task.sha256);
-            byte[] buf = new byte[BUFFER_SIZE];
-            long lastReport = 0;
-            int n;
-            while ((n = in.read(buf)) != -1) {
+        InputStream input = null;
+        try {
+            input = downloader.open(task.connectionKey, transferId, task.token);
+            task.bindInput(input);
+            try (InputStream in = input) {
+                if (task.status() == FileSendProtocol.Status.CANCELLED) return;
+                task.transition(FileSendProtocol.Status.RECEIVING);
+                sink = PartFileSink.create(receiveDir, transferId, task.fileName, task.fileSize, task.sha256);
+                byte[] buf = new byte[BUFFER_SIZE];
+                long lastReport = 0;
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    if (task.status() == FileSendProtocol.Status.CANCELLED) {
+                        sink.abort();
+                        return;
+                    }
+                    sink.write(buf, 0, n);
+                    task.markBytes(sink.bytesWritten());
+                    if (sink.bytesWritten() - lastReport >= PROGRESS_STEP_BYTES || sink.bytesWritten() == task.fileSize) {
+                        lastReport = sink.bytesWritten();
+                        send(task.connectionKey, progress(transferId, sink.bytesWritten()));
+                        notifyProgress(task, sink.bytesWritten());
+                    }
+                }
                 if (task.status() == FileSendProtocol.Status.CANCELLED) {
                     sink.abort();
                     return;
                 }
-                sink.write(buf, 0, n);
-                task.markBytes(sink.bytesWritten());
-                if (sink.bytesWritten() - lastReport >= PROGRESS_STEP_BYTES || sink.bytesWritten() == task.fileSize) {
-                    lastReport = sink.bytesWritten();
-                    send(task.connectionKey, progress(transferId, sink.bytesWritten()));
-                    notifyProgress(task, sink.bytesWritten());
+                task.transition(FileSendProtocol.Status.SAVING);
+                send(task.connectionKey, saving(transferId));
+                File saved = sink.commit(task.fileSize, task.sha256);
+                String savedName;
+                try {
+                    savedName = publisher == null ? saved.getName() : publisher.publish(saved);
+                } catch (IOException publishError) {
+                    // commit 后的 staging 文件不再由 sink.abort() 管理，失败时主动清掉。
+                    //noinspection ResultOfMethodCallIgnored
+                    saved.delete();
+                    throw publishError;
                 }
+                committed = true;
+                task.transition(FileSendProtocol.Status.SAVED);
+                send(task.connectionKey, saved(transferId, savedName));
+                notifySaved(task, savedName);
             }
-            if (task.status() == FileSendProtocol.Status.CANCELLED) {
-                sink.abort();
-                return;
-            }
-            task.transition(FileSendProtocol.Status.SAVING);
-            send(task.connectionKey, saving(transferId));
-            File saved = sink.commit(task.fileSize, task.sha256);
-            committed = true;
-            task.transition(FileSendProtocol.Status.SAVED);
-            send(task.connectionKey, saved(transferId, saved.getName()));
-            notifySaved(task, saved.getName());
         } catch (IOException e) {
             if (!task.status().isTerminal() && task.status() != FileSendProtocol.Status.CANCELLED) {
                 String reason = mapError(e);
@@ -125,6 +151,7 @@ public final class FileReceiveController {
                 notifyFailed(task, reason);
             }
         } finally {
+            task.clearInput(input);
             if (sink != null && !committed) {
                 sink.abort();
             }
@@ -141,6 +168,49 @@ public final class FileReceiveController {
                 return msg;
             default:
                 return "io_error";
+        }
+    }
+
+    private boolean isReceiveDirectoryReady() {
+        return receiveDir.exists() ? receiveDir.isDirectory() && receiveDir.canWrite()
+            : receiveDir.mkdirs() && receiveDir.canWrite();
+    }
+
+    private static boolean isSha256(String value) {
+        if (value == null || value.length() != 64) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!hex) return false;
+        }
+        return true;
+    }
+
+    private void sendCurrentStatus(ReceiveTask task) {
+        if (task == null) return;
+        switch (task.status()) {
+            case ACCEPTED:
+            case RECEIVING:
+                send(task.connectionKey, accepted(task.transferId));
+                if (task.bytesReceived() > 0) send(task.connectionKey, progress(task.transferId, task.bytesReceived()));
+                return;
+            case SAVING:
+                send(task.connectionKey, saving(task.transferId));
+                return;
+            case SAVED:
+                send(task.connectionKey, saved(task.transferId, task.fileName));
+                return;
+            case REJECTED:
+                send(task.connectionKey, reject(task.transferId, "invalid_offer"));
+                return;
+            case FAILED:
+                send(task.connectionKey, failed(task.transferId, task.error()));
+                return;
+            case CANCELLED:
+                send(task.connectionKey, cancelled(task.transferId));
+                return;
+            default:
+                return;
         }
     }
 

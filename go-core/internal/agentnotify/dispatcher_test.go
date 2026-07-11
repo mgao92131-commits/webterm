@@ -51,14 +51,19 @@ func TestNotifyBuildsMessageAndTracksPending(t *testing.T) {
 	}
 }
 
-func TestNotifySendErrorDoesNotStorePending(t *testing.T) {
+func TestNotifySendErrorKeepsPendingForReconnect(t *testing.T) {
 	fs := &fakeSender{err: errors.New("boom")}
 	d := New(fs)
 	if _, err := d.Notify(context.Background(), "dev1", "s", LevelError, "t", "m"); err == nil {
 		t.Fatal("expected error")
 	}
-	if d.PendingCount() != 0 {
-		t.Fatalf("pending should be 0 on send error, got %d", d.PendingCount())
+	if d.PendingCount() != 1 {
+		t.Fatalf("pending should survive send error, got %d", d.PendingCount())
+	}
+	fs.err = nil
+	d.ReplayPending(context.Background())
+	if fs.calls != 2 {
+		t.Fatalf("expected replay send, got %d calls", fs.calls)
 	}
 }
 

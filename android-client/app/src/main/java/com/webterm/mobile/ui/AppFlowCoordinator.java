@@ -237,8 +237,8 @@ public final class AppFlowCoordinator implements
         if (mTerminalRuntimeRegistry != null) mTerminalRuntimeRegistry.shutdown();
         if (p2pManager != null) p2pManager.disconnect();
         terminalCache.shutdown(null);
-        relayMuxRegistry.shutdown();
-        http.dispatcher().cancelAll();
+        // RelayMuxSessionRegistry 与 OkHttp 同时被 WebTermDeviceService 复用。
+        // Activity 销毁（尤其旋转或通知跳转）只能释放页面资源，不能中断后台连接或文件接收。
     }
 
     public boolean onBackPressed() {
@@ -586,6 +586,21 @@ public final class AppFlowCoordinator implements
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
         showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+    }
+
+    /** 处理 Agent 通知点击：connectionKey 由设备服务生成，定位后复用既有终端导航。 */
+    public void openTerminalFromNotification(String connectionKey, String sessionId) {
+        if (connectionKey == null || connectionKey.isEmpty() || sessionId == null || sessionId.isEmpty() || mActivity == null) {
+            return;
+        }
+        for (ServerConfig server : serverConfigs.servers()) {
+            String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+            String key = WebTermUrls.normalizeBaseUrl(server.getUrl()) + "\n" + deviceId;
+            if (connectionKey.equals(key)) {
+                openSession(mActivity, server, sessionId, "Terminal", "", "", "", "");
+                return;
+            }
+        }
     }
 
     private void startFileDownload(String downloadId, String fileName, long fileSize, String sessionId) {

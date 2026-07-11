@@ -49,7 +49,6 @@ func TestManagerCreateListRenameClose(t *testing.T) {
 		t.Fatalf("Count after close = %d, want 1", manager.Count())
 	}
 }
-
 func TestManagerBroadcastsSessionLifecycle(t *testing.T) {
 	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
 	sink := &recordingSink{}
@@ -219,5 +218,4 @@ func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 		t.Fatalf("expected error after closing session, got nil")
 	}
 }
-
 

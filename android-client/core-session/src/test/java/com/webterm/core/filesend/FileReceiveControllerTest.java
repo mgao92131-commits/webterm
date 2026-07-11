@@ -26,6 +26,7 @@ public class FileReceiveControllerTest {
     public final TemporaryFolder tmp = new TemporaryFolder();
 
     private static final Executor SYNC = Runnable::run;
+    private static final String OTHER_SHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     private static String sha256(byte[] data) throws Exception {
         byte[] d = MessageDigest.getInstance("SHA-256").digest(data);
@@ -114,8 +115,9 @@ public class FileReceiveControllerTest {
         dl.body = data;
         FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
-        ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", ""));
-        ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", ""));
+        String hash = sha256(data);
+        ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", hash));
+        ctl.onOffer("connA", offer("t_1", "x.bin", data.length, "tok", hash));
         assertEquals(1, dl.openCount);
     }
 
@@ -141,7 +143,7 @@ public class FileReceiveControllerTest {
         dl.error = new IOException("boom");
         FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
-        ctl.onOffer("connA", offer("t_3", "a.bin", 10, "tok", ""));
+        ctl.onOffer("connA", offer("t_3", "a.bin", 10, "tok", OTHER_SHA256));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_3").status());
         assertEquals("io_error", ctl.task("t_3").error());
         assertFalse(new File(dir, "t_3.part").exists());
@@ -156,7 +158,7 @@ public class FileReceiveControllerTest {
         dl.body = data;
         FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
 
-        ctl.onOffer("connA", offer("t_4", "a.bin", data.length, "tok", "deadbeef"));
+        ctl.onOffer("connA", offer("t_4", "a.bin", data.length, "tok", OTHER_SHA256));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_4").status());
         assertEquals("hash_mismatch", ctl.task("t_4").error());
     }
@@ -166,6 +168,7 @@ public class FileReceiveControllerTest {
         File dir = tmp.newFolder("recv");
         FakeSender sender = new FakeSender();
         java.util.concurrent.CountDownLatch block = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
         byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
         FileDownloader slow = (key, id, token) -> new InputStream() {
@@ -179,16 +182,18 @@ public class FileReceiveControllerTest {
                 return 1;
             }
             @Override public int read() { return -1; }
+            @Override public void close() { closed.countDown(); }
         };
         FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), slow, pool);
         try {
-            ctl.onOffer("connA", offer("t_5", "a.bin", 100, "tok", ""));
+            ctl.onOffer("connA", offer("t_5", "a.bin", 100, "tok", OTHER_SHA256));
             long deadline = System.currentTimeMillis() + 2000;
             while (ctl.task("t_5").bytesReceived() < 1 && System.currentTimeMillis() < deadline) {
                 Thread.sleep(10);
             }
             ctl.cancel("t_5");
             assertEquals(FileSendProtocol.Status.CANCELLED, ctl.task("t_5").status());
+            assertTrue(closed.await(2, java.util.concurrent.TimeUnit.SECONDS));
             block.countDown();
             deadline = System.currentTimeMillis() + 2000;
             while (new File(dir, "t_5.part").exists() && System.currentTimeMillis() < deadline) {
@@ -256,7 +261,7 @@ public class FileReceiveControllerTest {
         FileReceiveController ctl = new FileReceiveController(dir, lookupOf(new FakeSender()), dl, SYNC);
         ctl.setNotificationSink(sink);
 
-        ctl.onOffer("connA", offer("t_n2", "a.bin", 10, "tok", ""));
+        ctl.onOffer("connA", offer("t_n2", "a.bin", 10, "tok", OTHER_SHA256));
 
         synchronized (sink.events) {
             assertTrue(sink.events.contains("failed:t_n2:io_error"));
