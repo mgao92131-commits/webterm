@@ -14,6 +14,7 @@ import android.widget.Button;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.lifecycle.LifecycleOwner;
 import androidx.core.app.NotificationCompat;
 
 import com.webterm.feature.terminal.R;
@@ -52,8 +53,10 @@ public final class RemoteTerminalIntegration {
   private TerminalClipboardPolicy clipboardPolicy;
 
   private TerminalViewModel.TerminalSessionArgs currentArgs;
+  private TerminalFragment activeFragment;
   private TerminalSessionRuntime runtime;
   private TerminalScreenController controller;
+  private LifecycleOwner controllerOwner;
   private ScreenMuxConnection connection;
   private RemoteTerminalView view;
   private View root;
@@ -77,15 +80,20 @@ public final class RemoteTerminalIntegration {
                     int fontSize, @NonNull Typeface typeface) {
     stop();
     this.currentArgs = args;
+    this.activeFragment = fragment;
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
 
     runtime = registry.getOrCreate(args.sessionId);
 
+    // The relay mux may already be live when a terminal page is reopened. Install
+    // the runtime listener before connect(), otherwise its synchronous HELLO /
+    // initial SNAPSHOT round trip can be dropped while ScreenMuxConnection has no
+    // listener yet. That snapshot is the only authoritative restoration of the
+    // local history window.
     connection = screenConnectionFactory.create(
         args.baseUrl, args.cookie, args.sessionId, args.relayDeviceId);
-    connection.connect(80, 24);
-
     runtime.attachConnection(connection);
+    connection.connect(80, 24);
 
     view = new RemoteTerminalView(activity);
     view.setTextSize(fontSize);
@@ -97,6 +105,7 @@ public final class RemoteTerminalIntegration {
     // 对应旧流程 onTerminalTextChanged → updateKeyboardAvoidance。
     screenView.setAfterRender(this::updateKeyboardAvoidance);
     controller.attach(fragment.getViewLifecycleOwner(), screenView);
+    controllerOwner = fragment.getViewLifecycleOwner();
     controller.setEffectListener(effect -> {
       switch (effect.type()) {
         case TITLE:
@@ -169,11 +178,21 @@ public final class RemoteTerminalIntegration {
   public void stop() {
     if (controller != null) {
       controller.setEffectListener(null);
+      if (controllerOwner != null) {
+        controller.detach(controllerOwner);
+      }
       controller = null;
     }
+    controllerOwner = null;
     if (connection != null) {
       connection.close();
       connection = null;
+    }
+    // A reopened page must never render a previous View's screen as if it were
+    // the newly attached projection. The following server snapshot repopulates
+    // both screen and history atomically after the listener is already active.
+    if (runtime != null) {
+      runtime.model().resetForReconnect();
     }
     runtime = null;
     view = null;
@@ -184,6 +203,17 @@ public final class RemoteTerminalIntegration {
     connectionStatusView.clear();
     ctrlArmed = false;
     currentArgs = null;
+    activeFragment = null;
+  }
+
+  /**
+   * Fragment 销毁只应释放它自己拥有的远程终端。导航快速切换时，旧
+   * Fragment 的 onDestroyView 不能关闭已经绑定到新 Fragment 的会话。
+   */
+  public void detach(@NonNull TerminalFragment fragment) {
+    if (fragment == activeFragment) {
+      stop();
+    }
   }
 
   public void closeSession() {
@@ -237,10 +267,10 @@ public final class RemoteTerminalIntegration {
       connection = screenConnectionFactory.create(
           currentArgs.baseUrl, currentArgs.cookie, currentArgs.sessionId,
           currentArgs.relayDeviceId);
-      connection.connect(80, 24);
       if (runtime != null) {
         runtime.attachConnection(connection);
       }
+      connection.connect(80, 24);
     }
   }
 
