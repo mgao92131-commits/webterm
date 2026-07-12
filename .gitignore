@@ -14,3 +14,10 @@ webterm_deploy_temp.tar.gz
 go-core/webterm-agent
 go-core/webterm-flow-smoke
 go-core/webterm-relay-flow-smoke
+
+# WebTerm local logs and clone configs
+agent-config-clone.json
+agent.log
+emulator_screenshot.png
+go-core/webterm-agent-clone
+go-core/webterm-agent-direct.log

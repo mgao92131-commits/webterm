@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Personal WebTerm frontend and Go relay smoke tooling.",
   "scripts": {
-    "start": "cd go-core && go run ./cmd/webterm-agent --mode direct",
+    "start": "cd go-core && go run ./cmd/webterm-agent --mode direct --config ../agent-config-clone.json --socket ../webterm-clone.sock",
     "test:e2e": "playwright test",
     "smoke:go-relay-server": "node scripts/smoke-go-relay-server.mjs",
     "smoke:web-go-relay-pc-agent": "node scripts/smoke-web-go-relay-pc-agent.mjs",
