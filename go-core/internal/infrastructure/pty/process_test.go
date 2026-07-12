@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,6 +103,40 @@ func TestResolveCommandNoShellInitDirWithoutEnv(t *testing.T) {
 	}
 	if len(args) != 0 {
 		t.Fatalf("expected no args, got %v", args)
+	}
+}
+
+func TestBuildEnvDoesNotInheritHostColorDisables(t *testing.T) {
+	env := buildEnv([]string{
+		"NO_COLOR=1",
+		"CLICOLOR=0",
+		"CLICOLOR_FORCE=0",
+		"FORCE_COLOR=0",
+		"TERM=dumb",
+	}, map[string]string{"EXTRA": "value"})
+	for _, key := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "FORCE_COLOR"} {
+		for _, item := range env {
+			if strings.HasPrefix(item, key+"=") {
+				t.Fatalf("%s must not reach the terminal child: %q", key, item)
+			}
+		}
+	}
+	want := map[string]string{
+		"TERM":      "xterm-256color",
+		"COLORTERM": "truecolor",
+		"EXTRA":     "value",
+	}
+	for key, value := range want {
+		found := false
+		for _, item := range env {
+			if item == key+"="+value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s=%s in %q", key, value, env)
+		}
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"io"
+	"os"
 	"sync"
+	"time"
 
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalengine"
@@ -22,6 +24,7 @@ type Runtime struct {
 	scrollback *terminalengine.TrackedScrollback
 	projector  *screenprojection.Projector
 	pty        io.ReadWriteCloser
+	ptyResizer func(cols, rows int) error
 
 	events   chan event
 	stopOnce sync.Once
@@ -35,6 +38,10 @@ type Runtime struct {
 
 	leaseManager     *LeaseManager
 	pendingClipboard map[string]byte
+	inputTrace       []InputTrace
+	capturePTYOutput bool
+	rawPTYOutput     []byte
+	rawPTYTruncated  bool
 
 	onTitle  func(string)
 	onBell   func()
@@ -83,6 +90,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
+		capturePTYOutput: os.Getenv("WEBTERM_CAPTURE_PTY_OUTPUT") == "1",
 	}
 	for _, opt := range options {
 		opt(r)
@@ -206,6 +214,66 @@ func (r *Runtime) ResizeEngine(rows, cols int) {
 	r.postEvent(resizeEngineEvent{rows: rows, cols: cols})
 }
 
+// ProjectedSnapshot returns the exact screen frame used by screen-protocol
+// clients. It is intentionally served by the actor so diagnostic readers never
+// race PTY output while inspecting the terminal state.
+func (r *Runtime) ProjectedSnapshot() terminalengine.ScreenFrame {
+	reply := make(chan terminalengine.ScreenFrame, 1)
+	r.postEvent(projectedSnapshotEvent{reply: reply})
+	select {
+	case frame := <-reply:
+		return frame
+	case <-r.stopCh:
+		return terminalengine.ScreenFrame{}
+	}
+}
+
+// InputTrace is a bounded, metadata-only diagnostic event. It never contains
+// terminal text, so it is safe to expose through the local control endpoint.
+type InputTrace struct {
+	At       time.Time `json:"at"`
+	Stage    string    `json:"stage"`
+	ClientID string    `json:"clientId"`
+	LeaseID  string    `json:"leaseId"`
+	Kind     string    `json:"kind"`
+	DataLen  int       `json:"dataLen"`
+	Key      string    `json:"key,omitempty"`
+	Bytes    int       `json:"bytes"`
+	Accepted bool      `json:"accepted"`
+}
+
+// InputTraceSnapshot returns the recent semantic-input path in actor order.
+func (r *Runtime) InputTraceSnapshot() []InputTrace {
+	reply := make(chan []InputTrace, 1)
+	r.postEvent(inputTraceSnapshotEvent{reply: reply})
+	select {
+	case trace := <-reply:
+		return trace
+	case <-r.stopCh:
+		return nil
+	}
+}
+
+// RawPTYOutputSnapshot returns an opt-in, bounded copy of bytes received from
+// the PTY before ANSI parsing. It is for local fixture capture only and is
+// disabled unless WEBTERM_CAPTURE_PTY_OUTPUT=1 was set at Agent startup.
+type RawPTYOutputSnapshot struct {
+	Enabled   bool   `json:"enabled"`
+	Truncated bool   `json:"truncated"`
+	Data      []byte `json:"data"`
+}
+
+func (r *Runtime) RawPTYOutputSnapshot() RawPTYOutputSnapshot {
+	reply := make(chan RawPTYOutputSnapshot, 1)
+	r.postEvent(rawPTYOutputSnapshotEvent{reply: reply})
+	select {
+	case snapshot := <-reply:
+		return snapshot
+	case <-r.stopCh:
+		return RawPTYOutputSnapshot{}
+	}
+}
+
 // Close 关闭 runtime。
 func (r *Runtime) Close() error {
 	r.stopOnce.Do(func() {
@@ -278,6 +346,19 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientResync(e.clientID)
 	case resizeEngineEvent:
 		r.engine.Resize(e.rows, e.cols)
+	case projectedSnapshotEvent:
+		info := r.Info()
+		e.reply <- screenprojection.ExportSnapshot(
+			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
+		)
+	case inputTraceSnapshotEvent:
+		trace := append([]InputTrace(nil), r.inputTrace...)
+		e.reply <- trace
+	case rawPTYOutputSnapshotEvent:
+		e.reply <- RawPTYOutputSnapshot{
+			Enabled: r.capturePTYOutput, Truncated: r.rawPTYTruncated,
+			Data: append([]byte(nil), r.rawPTYOutput...),
+		}
 	case acquireLayoutEvent:
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
@@ -328,20 +409,81 @@ func (r *Runtime) handleEffect(effect terminalengine.Effect) {
 func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 	client := r.clients[e.clientID]
 	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID || !r.leaseManager.Validate(e.clientID, e.leaseID) {
+		r.recordInputTrace("rejected", e, 0, false)
 		return
 	}
-	if data := r.engine.EncodeInput(e.input); len(data) > 0 {
+	data := r.engine.EncodeInput(e.input)
+	r.recordInputTrace("encoded", e, len(data), true)
+	if len(data) > 0 {
 		_, _ = r.pty.Write(data)
+		r.recordInputTrace("pty-write", e, len(data), true)
+	}
+}
+
+func (r *Runtime) recordInputTrace(stage string, e semanticInputEvent, bytes int, accepted bool) {
+	entry := InputTrace{
+		At:       time.Now().UTC(),
+		Stage:    stage,
+		ClientID: e.clientID,
+		LeaseID:  e.leaseID,
+		Kind:     inputKindName(e.input.Kind),
+		DataLen:  len(e.input.Data),
+		Key:      e.input.Key,
+		Bytes:    bytes,
+		Accepted: accepted,
+	}
+	const maxTraceEvents = 64
+	if len(r.inputTrace) == maxTraceEvents {
+		copy(r.inputTrace, r.inputTrace[1:])
+		r.inputTrace[len(r.inputTrace)-1] = entry
+		return
+	}
+	r.inputTrace = append(r.inputTrace, entry)
+}
+
+func inputKindName(kind terminalengine.InputKind) string {
+	switch kind {
+	case terminalengine.InputText:
+		return "text"
+	case terminalengine.InputKey:
+		return "key"
+	case terminalengine.InputPaste:
+		return "paste"
+	case terminalengine.InputMouse:
+		return "mouse"
+	case terminalengine.InputFocus:
+		return "focus"
+	default:
+		return "unknown"
 	}
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
+	r.captureRawPTYOutput(data)
 	_ = r.engine.Write(data)
 	if r.onOutput != nil {
 		r.onOutput(data)
 	}
 	r.bumpScreenRevision()
 	r.broadcastFrame()
+}
+
+func (r *Runtime) captureRawPTYOutput(data []byte) {
+	if !r.capturePTYOutput || len(data) == 0 || r.rawPTYTruncated {
+		return
+	}
+	const maxRawPTYOutputBytes = 256 << 10
+	remaining := maxRawPTYOutputBytes - len(r.rawPTYOutput)
+	if remaining <= 0 {
+		r.rawPTYTruncated = true
+		return
+	}
+	if len(data) > remaining {
+		r.rawPTYOutput = append(r.rawPTYOutput, data[:remaining]...)
+		r.rawPTYTruncated = true
+		return
+	}
+	r.rawPTYOutput = append(r.rawPTYOutput, data...)
 }
 
 func (r *Runtime) handleInput(e inputEvent) {
@@ -363,6 +505,11 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	}
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
 		return
+	}
+	// 先同步 PTY winsize（触发 SIGWINCH 让 shell/TUI 感知新尺寸），再调整无头终端几何。
+	// best-effort：PTY 调整失败不阻断引擎 resize，否则屏幕投影会与客户端请求脱节。
+	if r.ptyResizer != nil {
+		_ = r.ptyResizer(e.cols, e.rows)
 	}
 	r.layoutEpoch++
 	r.engine.Resize(e.rows, e.cols)
@@ -523,6 +670,18 @@ type clientResyncEvent struct {
 type resizeEngineEvent struct {
 	rows int
 	cols int
+}
+
+type projectedSnapshotEvent struct {
+	reply chan terminalengine.ScreenFrame
+}
+
+type inputTraceSnapshotEvent struct {
+	reply chan []InputTrace
+}
+
+type rawPTYOutputSnapshotEvent struct {
+	reply chan RawPTYOutputSnapshot
 }
 
 type acquireLayoutEvent struct {

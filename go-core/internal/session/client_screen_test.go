@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,80 @@ func TestScreenClientSendsSnapshotOnHello(t *testing.T) {
 	if !screenContains(snapshot, "hello") {
 		dumpScreen(t, snapshot)
 		t.Fatalf("snapshot did not contain 'hello'")
+	}
+}
+
+// screen 协议的 resize 必须同时落到 PTY winsize 上，
+// 否则 shell/TUI 程序（stty、vim、htop）看到的尺寸会停留在会话创建时的默认值。
+func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	gotCols, gotRows := 0, 0
+	terminal, _ := newScreenTestTerminalWithResizer(t, func(cols, rows int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		gotCols = cols
+		gotRows = rows
+		return nil
+	})
+
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := NewClient(socket, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 20, Rows: 10}},
+	})
+	client.handleBinary(helloBytes)
+
+	acquireBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{Interactive: true}},
+	})
+	client.handleBinary(acquireBytes)
+
+	// 读到租约授予消息（中间会夹带初始 snapshot）。
+	leaseID := ""
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && leaseID == "" {
+		msg := readClientBinary(t, client)
+		var env pb.ScreenEnvelope
+		if err := proto.Unmarshal(msg, &env); err != nil {
+			continue
+		}
+		if lease := env.GetLayoutLease(); lease != nil && lease.GetGranted() {
+			leaseID = lease.GetLeaseId()
+		}
+	}
+	if leaseID == "" {
+		t.Fatalf("expected granted layout lease")
+	}
+
+	resizeBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Resize{Resize: &pb.Resize{Cols: 132, Rows: 43, LeaseId: leaseID}},
+	})
+	client.handleBinary(resizeBytes)
+
+	waitDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		mu.Lock()
+		done := calls > 0
+		mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("expected pty resizer called once, got %d", calls)
+	}
+	if gotCols != 132 || gotRows != 43 {
+		t.Fatalf("expected pty resize 132x43, got %dx%d", gotCols, gotRows)
 	}
 }
 
@@ -115,6 +190,10 @@ func TestScreenClientSendsPatchOnOutput(t *testing.T) {
 }
 
 func newScreenTestTerminal(t *testing.T) (*TerminalSession, *io.PipeWriter) {
+	return newScreenTestTerminalWithResizer(t, nil)
+}
+
+func newScreenTestTerminalWithResizer(t *testing.T, resizer func(cols, rows int) error) (*TerminalSession, *io.PipeWriter) {
 	t.Helper()
 	outR, outW := io.Pipe()
 	inR, inW := io.Pipe()
@@ -134,15 +213,21 @@ func newScreenTestTerminal(t *testing.T) (*TerminalSession, *io.PipeWriter) {
 		screen:    NewScreenState(4, 20, nil, nil),
 		clients:   make(map[*Client]struct{}),
 	}
+	opts := []terminalsession.Option{
+		terminalsession.WithOnOutput(func(data []byte) {
+			frame := terminal.PushOutput(data)
+			terminal.broadcastOutput(frame)
+		}),
+	}
+	if resizer != nil {
+		opts = append(opts, terminalsession.WithPTYResizer(resizer))
+	}
 	terminal.runtime = terminalsession.NewRuntime(
 		terminal.id,
 		pty,
 		terminal.rows,
 		terminal.cols,
-		terminalsession.WithOnOutput(func(data []byte) {
-			frame := terminal.PushOutput(data)
-			terminal.broadcastOutput(frame)
-		}),
+		opts...,
 	)
 	t.Cleanup(func() {
 		_ = terminal.runtime.Close()

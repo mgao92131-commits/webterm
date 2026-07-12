@@ -33,6 +33,7 @@ func ExportSnapshot(engine *terminalengine.Engine, scrollback *terminalengine.Tr
 func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *terminalengine.TrackedScrollback, sessionID, instanceID string, epoch, seq uint64) terminalengine.ScreenFrame {
 	rows := engine.Rows()
 	cols := engine.Cols()
+	cursorRow, cursorCol := engine.CursorPos()
 
 	activeBuffer := terminalengine.BufferMain
 	if engine.IsAlternateScreen() {
@@ -41,11 +42,16 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 
 	screen := make([]terminalengine.Line, rows)
 	for r := 0; r < rows; r++ {
-		screen[r] = exp.exportScreenRow(engine, r, cols)
+		screen[r] = exp.exportScreenRow(engine, r, cols, cursorRow, cursorCol)
 	}
-
-	cursorRow, cursorCol := engine.CursorPos()
 	cursorStyle := engine.CursorStyle()
+
+	history := terminalengine.HistoryWindow{}
+	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
+	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
+	if activeBuffer == terminalengine.BufferMain {
+		history = exp.exportHistoryWindow(scrollback)
+	}
 
 	return terminalengine.ScreenFrame{
 		Version:      1,
@@ -68,7 +74,7 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 			Blink:   cursorStyle == headlessterm.CursorStyleBlinkingBlock || cursorStyle == headlessterm.CursorStyleBlinkingBar || cursorStyle == headlessterm.CursorStyleBlinkingUnderline,
 		},
 		Modes:      exportModes(engine),
-		History:    exp.exportHistoryWindow(scrollback),
+		History:    history,
 		Screen:     screen,
 		Styles:     exp.styleTable.Styles(),
 		Links:      exp.linkTable.Links(),
@@ -77,21 +83,30 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 	}
 }
 
-func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols int) terminalengine.Line {
+func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols, cursorRow, cursorCol int) terminalengine.Line {
 	return terminalengine.Line{
 		Row:     row,
 		Wrapped: engine.IsWrapped(row),
-		Runs:    exp.exportCells(engine, row, cols),
+		Runs:    exp.exportCells(engine, row, cols, cursorRow, cursorCol),
 	}
 }
 
-func (exp *exporter) exportCells(engine *terminalengine.Engine, row, cols int) []terminalengine.CellRun {
+func (exp *exporter) exportCells(engine *terminalengine.Engine, row, cols, cursorRow, cursorCol int) []terminalengine.CellRun {
 	var runs []terminalengine.CellRun
 	var current *terminalengine.CellRun
 
 	for c := 0; c < cols; {
 		cell := engine.Cell(row, c)
 		if cell == nil {
+			c++
+			continue
+		}
+		// Claude Code paints its own software caret as a reverse-video space.
+		// Some redraw paths leave an old, isolated caret behind. The terminal's
+		// authoritative cursor position identifies the one live caret; exporting
+		// any other plain reverse-space would turn it into a permanent ghost block
+		// on remote clients.
+		if staleSoftCursor(*cell, row, c, cursorRow, cursorCol) {
 			c++
 			continue
 		}
@@ -114,6 +129,17 @@ func (exp *exporter) exportCells(engine *terminalengine.Engine, row, cols int) [
 	}
 
 	return runs
+}
+
+func staleSoftCursor(cell headlessterm.Cell, row, col, cursorRow, cursorCol int) bool {
+	if row == cursorRow && col == cursorCol {
+		return false
+	}
+	if cell.Char != " " || !cell.HasFlag(headlessterm.CellFlagReverse) || cell.Hyperlink != nil || cell.Image != nil {
+		return false
+	}
+	const nonCursorFlags = ^(headlessterm.CellFlagReverse | headlessterm.CellFlagDirty)
+	return cell.Flags&nonCursorFlags == 0
 }
 
 func (exp *exporter) exportCell(cell headlessterm.Cell) terminalengine.Cell {

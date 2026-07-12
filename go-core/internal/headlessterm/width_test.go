@@ -31,6 +31,14 @@ func TestRuneWidth(t *testing.T) {
 	}
 }
 
+func TestRuneWidth_ClaudeTUISymbolsMatchXtermSingleCellPolicy(t *testing.T) {
+	for _, symbol := range []rune{'❯', '⏺'} {
+		if got := runeWidth(symbol); got != 1 {
+			t.Fatalf("runeWidth(%q) = %d, want 1", symbol, got)
+		}
+	}
+}
+
 func TestIsWideRune(t *testing.T) {
 	tests := []struct {
 		r        rune

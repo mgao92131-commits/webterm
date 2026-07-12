@@ -36,8 +36,8 @@ type Process struct {
 // Options 定义进程启动参数。
 type Options struct {
 	CWD     string
-	Command string            // 程序路径
-	Args    []string          // 程序参数
+	Command string   // 程序路径
+	Args    []string // 程序参数
 	Cols    int
 	Rows    int
 	Env     map[string]string // 额外注入到子进程的环境变量
@@ -238,6 +238,15 @@ func applyShellInit(shellCmd, initDir string) (string, []string, map[string]stri
 
 func buildEnv(source []string, extra ...map[string]string) []string {
 	env := append([]string(nil), source...)
+	// The agent can be launched by an IDE, CI, or a host shell that sets a
+	// global "no color" preference. A PTY is a real terminal surface, however,
+	// and its renderer receives color information from this child process.
+	// Do not let host-only presentation preferences silently turn every remote
+	// terminal session monochrome.
+	env = unsetEnv(env, "NO_COLOR")
+	env = unsetEnv(env, "CLICOLOR")
+	env = unsetEnv(env, "CLICOLOR_FORCE")
+	env = unsetEnv(env, "FORCE_COLOR")
 	for _, m := range extra {
 		for key, value := range m {
 			env = setEnv(env, key, value)
@@ -258,6 +267,17 @@ func setEnv(env []string, key string, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+func unsetEnv(env []string, key string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 // getTTYPathByPID 查询指定 PID 的 TTY 设备路径。

@@ -149,6 +149,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 			frame := terminal.PushOutput(data)
 			terminal.broadcastOutput(frame)
 		}),
+		terminalsession.WithPTYResizer(process.Resize),
 	)
 	go terminal.waitLoop()
 	return terminal, nil
@@ -365,6 +366,41 @@ func (terminal *TerminalSession) ScreenRuntime() *terminalsession.Runtime {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
 	return terminal.runtime
+}
+
+// ProjectedScreenSnapshot exposes the authoritative screen-protocol frame for
+// local diagnostics. Unlike ScreenSnapshot, it does not use the legacy
+// compatibility emulator.
+func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return nil
+	}
+	return rt.ProjectedSnapshot()
+}
+
+// ProjectedInputTrace exposes metadata-only input diagnostics for the
+// authoritative screen runtime.
+func (terminal *TerminalSession) ProjectedInputTrace() []terminalsession.InputTrace {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return nil
+	}
+	return rt.InputTraceSnapshot()
+}
+
+func (terminal *TerminalSession) RawPTYOutputSnapshot() terminalsession.RawPTYOutputSnapshot {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return terminalsession.RawPTYOutputSnapshot{}
+	}
+	return rt.RawPTYOutputSnapshot()
 }
 
 // terminalModes 生成终端模式恢复 ANSI 序列（与 @xterm/addon-serialize 对齐）

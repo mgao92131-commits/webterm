@@ -30,3 +30,12 @@ func WithOnOutput(fn func([]byte)) Option {
 		r.onOutput = fn
 	}
 }
+
+// WithPTYResizer 设置 PTY winsize 调整回调。
+// screen 协议处理 resize 时会先调用它同步 PTY 尺寸（向 shell 发 SIGWINCH），
+// 再调整无头终端几何，保证 stty/TUI 程序看到的尺寸与实际渲染一致。
+func WithPTYResizer(fn func(cols, rows int) error) Option {
+	return func(r *Runtime) {
+		r.ptyResizer = fn
+	}
+}
