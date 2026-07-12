@@ -24,20 +24,23 @@ func main() {
 	username := flag.String("user", "admin", "direct username")
 	password := flag.String("password", "", "direct password")
 	cwd := flag.String("cwd", "", "session working directory")
+	session := flag.String("session", "", "existing session id (skip session creation)")
+	input := flag.String("input", "", "raw terminal input to send (defaults to printf marker)")
+	expect := flag.String("expect", "", "text expected in terminal output (defaults to generated marker)")
 	timeout := flag.Duration("timeout", 8*time.Second, "smoke test timeout")
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	if err := run(ctx, *baseURL, *username, *password, *cwd); err != nil {
+	if err := run(ctx, *baseURL, *username, *password, *cwd, *session, *input, *expect); err != nil {
 		fmt.Fprintf(os.Stderr, "flow smoke failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Println("flow smoke ok")
 }
 
-func run(ctx context.Context, baseURL string, username string, password string, cwd string) error {
+func run(ctx context.Context, baseURL string, username string, password string, cwd string, existingSession string, input string, expect string) error {
 	base, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return err
@@ -51,11 +54,15 @@ func run(ctx context.Context, baseURL string, username string, password string, 
 	if err := login(ctx, client, base, username, password); err != nil {
 		return err
 	}
-	sessionID, err := createSession(ctx, client, base, cwd)
-	if err != nil {
-		return err
+	sessionID := existingSession
+	if sessionID == "" {
+		sessionID, err = createSession(ctx, client, base, cwd)
+		if err != nil {
+			return err
+		}
 	}
-	if err := runMuxSmoke(ctx, client, base, sessionID); err != nil {
+	fmt.Printf("session_id=%s\n", sessionID)
+	if err := runMuxSmoke(ctx, client, base, sessionID, input, expect); err != nil {
 		return err
 	}
 	return nil
@@ -96,7 +103,7 @@ func createSession(ctx context.Context, client *http.Client, base *url.URL, cwd 
 	return payload.ID, nil
 }
 
-func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessionID string) error {
+func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessionID string, input string, expect string) error {
 	wsURL := *base
 	if wsURL.Scheme == "https" {
 		wsURL.Scheme = "wss"
@@ -146,8 +153,14 @@ func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessio
 	}
 
 	marker := fmt.Sprintf("GO_CORE_FLOW_OK_%d", time.Now().UnixNano())
-	input := append([]byte{protocol.MsgInput}, []byte("printf "+marker+"\\n")...)
-	inputTunnel, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, "term1", protocol.WSDataBinary, input)
+	if input == "" {
+		input = "printf " + marker + "\\n"
+	}
+	if expect == "" {
+		expect = marker
+	}
+	inputFrame := append([]byte{protocol.MsgInput}, []byte(input)...)
+	inputTunnel, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, "term1", protocol.WSDataBinary, inputFrame)
 	if err != nil {
 		return fmt.Errorf("mux encode input: %w", err)
 	}
@@ -173,12 +186,12 @@ func runMuxSmoke(ctx context.Context, client *http.Client, base *url.URL, sessio
 		switch frame.Payload[0] {
 		case protocol.MsgOutput, protocol.MsgState:
 			_, _, payload, err := protocol.DecodeSequencedData(frame.Payload)
-			if err == nil && bytes.Contains(payload, []byte(marker)) {
+			if err == nil && bytes.Contains(payload, []byte(expect)) {
 				fmt.Println("mux smoke OK")
 				return nil
 			}
 		case protocol.MsgInfo:
-			if bytes.Contains(frame.Payload[1:], []byte(marker)) {
+			if bytes.Contains(frame.Payload[1:], []byte(expect)) {
 				fmt.Println("mux smoke OK")
 				return nil
 			}

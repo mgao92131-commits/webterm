@@ -24,11 +24,12 @@ type Options struct {
 }
 
 type Config struct {
-	Mode    string        `json:"mode"`
-	Direct  DirectConfig  `json:"direct"`
-	Relay   RelayConfig   `json:"relay"`
-	Control ControlConfig `json:"control"`
-	Shell   ShellConfig   `json:"shell"`
+	Mode       string        `json:"mode"`
+	SocketPath string        `json:"socketPath,omitempty"`
+	Direct     DirectConfig  `json:"direct"`
+	Relay      RelayConfig   `json:"relay"`
+	Control    ControlConfig `json:"control"`
+	Shell      ShellConfig   `json:"shell"`
 }
 
 type DirectConfig struct {
@@ -94,6 +95,9 @@ func Save(path string, cfg Config) error {
 func MergeEditable(current Config, next Config) Config {
 	if next.Mode != "" {
 		current.Mode = NormalizeMode(next.Mode)
+	}
+	if next.SocketPath != "" {
+		current.SocketPath = next.SocketPath
 	}
 	if next.Direct.Addr != "" {
 		current.Direct.Addr = next.Direct.Addr
@@ -198,7 +202,8 @@ func readConfigFile(path string) Config {
 
 func envConfig() Config {
 	return Config{
-		Mode: env("WEBTERM_MODE"),
+		Mode:       env("WEBTERM_MODE"),
+		SocketPath: env("WEBTERM_SOCKET_PATH"),
 		Direct: DirectConfig{
 			Addr:     env("WEBTERM_ADDR"),
 			User:     env("WEBTERM_USER"),
@@ -223,6 +228,9 @@ func envConfig() Config {
 func mergeConfig(base Config, override Config) Config {
 	if override.Mode != "" {
 		base.Mode = override.Mode
+	}
+	if override.SocketPath != "" {
+		base.SocketPath = override.SocketPath
 	}
 	if override.Direct.Addr != "" {
 		base.Direct.Addr = override.Direct.Addr

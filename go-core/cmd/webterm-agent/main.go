@@ -23,6 +23,7 @@ const version = "0.1.0-dev"
 func main() {
 	modeFlag := flag.String("mode", "", "agent mode: direct or relay")
 	configPathFlag := flag.String("config", "", "optional config file path")
+	socketPathFlag := flag.String("socket", "", "override unix socket path")
 	dryRunFlag := flag.Bool("dry-run", false, "load configuration and exit")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -37,6 +38,10 @@ func main() {
 		Mode:       *modeFlag,
 		ConfigPath: configPath,
 	})
+
+	if *socketPathFlag != "" {
+		cfg.SocketPath = *socketPathFlag
+	}
 
 	if *dryRunFlag {
 		if err := json.NewEncoder(os.Stdout).Encode(cfg.Redacted()); err != nil {

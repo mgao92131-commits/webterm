@@ -268,6 +268,18 @@ func (control *Server) handleSessionDetail(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, terminal.ScreenSnapshot())
 		return
 	}
+	if len(parts) == 3 && parts[2] == "projected" {
+		writeJSON(w, http.StatusOK, terminal.ProjectedScreenSnapshot())
+		return
+	}
+	if len(parts) == 3 && parts[2] == "input-trace" {
+		writeJSON(w, http.StatusOK, terminal.ProjectedInputTrace())
+		return
+	}
+	if len(parts) == 3 && parts[2] == "raw-pty-output" {
+		writeJSON(w, http.StatusOK, terminal.RawPTYOutputSnapshot())
+		return
+	}
 	if len(parts) == 3 && parts[2] == "delta" {
 		writeJSON(w, http.StatusOK, terminal.ScreenDelta())
 		return

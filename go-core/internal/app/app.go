@@ -28,7 +28,10 @@ type App struct {
 
 func New(cfg config.Config, version string) *App {
 	logger := logs.New(logs.DefaultCapacity)
-	socketPath := defaultSocketPath()
+	socketPath := cfg.SocketPath
+	if socketPath == "" {
+		socketPath = defaultSocketPath()
+	}
 	installShellHook(logger)
 
 	manager := session.NewManager(session.TerminalDefaults{
