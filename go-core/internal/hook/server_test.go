@@ -157,14 +157,8 @@ func runSendCommand(t *testing.T, socketPath string, cmd protocol.CLICommand) []
 }
 
 func TestSendCommandWithoutSenderFails(t *testing.T) {
-	application, socketPath, cancel := startHookServer(t)
+	_, socketPath, cancel := startHookServer(t)
 	defer cancel()
-
-	terminal, err := application.Sessions().Create("work", ".")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer terminal.Close()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.txt")
@@ -175,7 +169,6 @@ func TestSendCommandWithoutSenderFails(t *testing.T) {
 	responses := runSendCommand(t, socketPath, protocol.CLICommand{
 		Kind:      "command",
 		Type:      "send",
-		SessionID: terminal.ID(),
 		FilePath:  path,
 		Timestamp: time.Now().Unix(),
 	})
@@ -198,12 +191,6 @@ func TestSendCommandOfferAndSaved(t *testing.T) {
 	sender := &recordingSender{}
 	application.FileSendService().RegisterSender("dev-1", sender)
 
-	terminal, err := application.Sessions().Create("work", ".")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer terminal.Close()
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "b.txt")
 	if err := os.WriteFile(path, []byte("payload"), 0o644); err != nil {
@@ -216,7 +203,6 @@ func TestSendCommandOfferAndSaved(t *testing.T) {
 		done <- runSendCommand(t, socketPath, protocol.CLICommand{
 			Kind:      "command",
 			Type:      "send",
-			SessionID: terminal.ID(),
 			FilePath:  path,
 			Timestamp: time.Now().Unix(),
 		})

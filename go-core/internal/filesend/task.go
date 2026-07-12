@@ -10,14 +10,13 @@ import (
 
 // Task 是一次 webterm send 任务的完整生命周期。
 type Task struct {
-	ID        string
-	Token     string
-	SessionID string
-	DeviceID  string
-	Path      string
-	FileName  string
-	Size      int64
-	SHA256    string
+	ID       string
+	Token    string
+	DeviceID string
+	Path     string
+	FileName string
+	Size     int64
+	SHA256   string
 
 	Status    Status
 	BytesSent int64

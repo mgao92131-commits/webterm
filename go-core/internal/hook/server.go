@@ -215,6 +215,12 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 		return
 	}
 
+	// send 是设备级命令，与终端会话无关，不做 session 解析。
+	if cmd.Type == "send" {
+		s.handleSendCommand(conn, cmd)
+		return
+	}
+
 	sessionID := cmd.SessionID
 	if sessionID == "" && cmd.PID > 0 {
 		resolved, err := s.app.Sessions().ResolveSessionForPID(cmd.PID)
@@ -250,15 +256,10 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 		return
 	}
 
-	if cmd.Type == "send" {
-		s.handleSendCommand(conn, cmd, sessionID)
-		return
-	}
-
 	terminal.HandleCLICommand(conn, cmd)
 }
 
-func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessionID string) {
+func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 	fail := func(errCode string) {
 		writeResponse(conn, protocol.CLIResponse{
 			Kind:   "response",
@@ -293,8 +294,7 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand, sessi
 
 	svc := s.app.FileSendService()
 	task, err := svc.CreateTask(filesend.CreateTaskOptions{
-		SessionID: sessionID,
-		Path:      absPath,
+		Path:     absPath,
 		FileName:  info.Name(),
 		Size:      info.Size(),
 		SHA256:    sha256Hex,

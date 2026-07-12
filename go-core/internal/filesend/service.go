@@ -18,13 +18,12 @@ type ControlSender interface {
 
 // CreateTaskOptions 描述一次 send 任务的创建参数。
 type CreateTaskOptions struct {
-	SessionID string
-	DeviceID  string
-	Path      string
-	FileName  string
-	Size      int64
-	SHA256    string
-	TTL       time.Duration
+	DeviceID string
+	Path     string
+	FileName string
+	Size     int64
+	SHA256   string
+	TTL      time.Duration
 }
 
 // Service 拥有所有 file_send 任务的生命周期，并路由 file_send.* 控制消息。
@@ -115,7 +114,6 @@ func (s *Service) CreateTask(opts CreateTaskOptions) (*Task, error) {
 	task := &Task{
 		ID:        id,
 		Token:     token,
-		SessionID: opts.SessionID,
 		DeviceID:  opts.DeviceID,
 		Path:      opts.Path,
 		FileName:  opts.FileName,
@@ -215,7 +213,6 @@ func (s *Service) SendOffer(ctx context.Context, task *Task) error {
 	offer := map[string]any{
 		"type":           TypeOffer,
 		"transfer_id":    task.ID,
-		"session_id":     task.SessionID,
 		"file_name":      task.FileName,
 		"file_size":      task.Size,
 		"transfer_token": task.Token,

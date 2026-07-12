@@ -40,11 +40,10 @@ func (f *fakeSender) last() map[string]any {
 func TestCreateTaskGeneratesCredentials(t *testing.T) {
 	svc := New(0)
 	task, err := svc.CreateTask(CreateTaskOptions{
-		SessionID: "sess-1",
-		DeviceID:  "dev-1",
-		Path:      "/tmp/a.txt",
-		FileName:  "a.txt",
-		Size:      10,
+		DeviceID: "dev-1",
+		Path:     "/tmp/a.txt",
+		FileName: "a.txt",
+		Size:     10,
 		SHA256:    testSHA256,
 	})
 	if err != nil {
