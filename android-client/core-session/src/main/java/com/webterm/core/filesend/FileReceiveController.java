@@ -53,7 +53,6 @@ public final class FileReceiveController {
         final long fileSize = offer.optLong("file_size", -1L);
         final String token = offer.optString("transfer_token", "");
         final String sha256 = offer.optString("file_hash_sha256", "");
-        final String sessionId = offer.optString("session_id", "");
 
         if (fileName.isEmpty() || token.isEmpty() || fileSize < 0 || !isSha256(sha256)) {
             send(connectionKey, reject(transferId, "invalid_offer"));
@@ -71,7 +70,7 @@ public final class FileReceiveController {
                 sendCurrentStatus(tasks.get(transferId));
                 return;
             }
-            task = new ReceiveTask(transferId, connectionKey, sessionId, fileName, fileSize, sha256, token);
+            task = new ReceiveTask(transferId, connectionKey, fileName, fileSize, sha256, token);
             tasks.put(transferId, task);
         }
 

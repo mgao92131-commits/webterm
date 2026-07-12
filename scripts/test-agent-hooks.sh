@@ -120,45 +120,55 @@ echo "  ✓ 非法 level 时退出非零"
 
 # 空 stdin 时使用默认消息，并传递 --session
 clear_calls
-$HELPER_SCRIPT started "Running" claude </dev/null
-assert_contains "agent-event --kind started --message Running --source claude --session test-session" "$(last_call)" "空 stdin 时使用默认消息并传递 session"
+$HELPER_SCRIPT quiet "Running" claude </dev/null
+assert_contains "agent-event -i quiet -m Running -s claude --session test-session" "$(last_call)" "空 stdin 时使用默认消息并传递 session"
 
 # 从顶层 prompt 字段提取
 clear_calls
-echo '{"prompt":"deploy to production"}' | $HELPER_SCRIPT started "Running" claude
-assert_contains "--message deploy to production" "$(last_call)" "提取顶层 prompt"
+echo '{"prompt":"deploy to production"}' | $HELPER_SCRIPT quiet "Running" claude
+assert_contains "-m deploy to production" "$(last_call)" "提取顶层 prompt"
 assert_contains "--session test-session" "$(last_call)" "提取 prompt 时传递 session"
+
+# 从 last_assistant_message 提取（Claude Stop payload）
+clear_calls
+echo '{"last_assistant_message":"已完成修改"}' | $HELPER_SCRIPT normal "Done" claude
+assert_contains "-m 已完成修改" "$(last_call)" "提取 last_assistant_message"
 
 # 从 messages 数组提取最后一条
 clear_calls
-echo '{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"done"}]}' | $HELPER_SCRIPT started "Running" claude
-assert_contains "--message done" "$(last_call)" "提取 messages 数组最后一条"
+echo '{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"done"}]}' | $HELPER_SCRIPT quiet "Running" claude
+assert_contains "-m done" "$(last_call)" "提取 messages 数组最后一条"
 
-# 从 tool_input 提取
+# 从 tool_input 提取（无 tool_name 时维持原样）
 clear_calls
-echo '{"tool_input":{"command":"git status"}}' | $HELPER_SCRIPT started "Running" claude
-assert_contains "--message git status" "$(last_call)" "提取 tool_input.command"
+echo '{"tool_input":{"command":"git status"}}' | $HELPER_SCRIPT quiet "Running" claude
+assert_contains "-m git status" "$(last_call)" "提取 tool_input.command"
 
-# 超长文本截断到 60 字符
+# 带 tool_name 时输出 "工具名: 命令"
 clear_calls
-long_msg=$(python3 -c 'print("a"*100)')
-echo "{\"prompt\":\"$long_msg\"}" | $HELPER_SCRIPT started "Running" claude
-call_len=$(last_call | sed 's/.*--message //;s/ --source.*//' | tr -d '\n' | wc -c | tr -d '[:space:]')
-assert_eq "60" "$call_len" "超长消息截断为 60 字符"
+echo '{"tool_name":"Bash","tool_input":{"command":"git status"}}' | $HELPER_SCRIPT quiet "Running" claude
+assert_contains "-m Bash: git status" "$(last_call)" "带 tool_name 时输出 工具名: 命令"
+
+# 超长文本截断到 120 字符
+clear_calls
+long_msg=$(python3 -c 'print("a"*150)')
+echo "{\"prompt\":\"$long_msg\"}" | $HELPER_SCRIPT quiet "Running" claude
+call_len=$(last_call | sed 's/.*-m //;s/ -s.*//' | tr -d '\n' | wc -c | tr -d '[:space:]')
+assert_eq "120" "$call_len" "超长消息截断为 120 字符"
 
 # 无效 JSON 回退到默认消息
 clear_calls
-echo 'not json' | $HELPER_SCRIPT attention "Waiting for approval" kimi
-assert_contains "--message Waiting for approval" "$(last_call)" "无效 JSON 回退默认消息"
+echo 'not json' | $HELPER_SCRIPT alert "Waiting for approval" kimi
+assert_contains "-m Waiting for approval" "$(last_call)" "无效 JSON 回退默认消息"
 
-# completed 状态
+# normal 状态
 clear_calls
-$HELPER_SCRIPT completed "Done" codex </dev/null
-assert_contains "agent-event --kind completed --message Done --source codex --session test-session" "$(last_call)" "completed 状态调用正确"
+$HELPER_SCRIPT normal "Done" codex </dev/null
+assert_contains "agent-event -i normal -m Done -s codex --session test-session" "$(last_call)" "normal 状态调用正确"
 
 # webterm 缺失时不应中断 agent（退出 0）
 unset WEBTERM_BIN
-result=$($HELPER_SCRIPT started "Running" claude </dev/null >/dev/null 2>&1; echo $?)
+result=$($HELPER_SCRIPT quiet "Running" claude </dev/null >/dev/null 2>&1; echo $?)
 export WEBTERM_BIN="$MOCK_WEBTERM_DIR/webterm"
 assert_eq "0" "$result" "webterm 缺失时 helper 退出 0"
 
@@ -174,15 +184,15 @@ EOF
 chmod +x "$helper_tmp_dir/webterm"
 clear_calls
 unset WEBTERM_BIN
-HOME="$TMP_HOME" "$helper_tmp_dir/webterm-notify-helper" started "Running" claude </dev/null
+HOME="$TMP_HOME" "$helper_tmp_dir/webterm-notify-helper" quiet "Running" claude </dev/null
 export WEBTERM_BIN="$MOCK_WEBTERM_DIR/webterm"
-assert_contains "agent-event --kind started --message Running --source claude --session test-session" "$(last_call)" "helper 在同目录找到 webterm"
+assert_contains "agent-event -i quiet -m Running -s claude --session test-session" "$(last_call)" "helper 在同目录找到 webterm"
 
 # 无 env 时 helper fallback 到 --pid，由后端通过调用者 PID 解析
 mkdir -p "$TMP_HOME/.webterm"
 clear_calls
-HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH WEBTERM_HOOK_PID=1 "$HELPER_SCRIPT" started "Running" claude </dev/null
-assert_contains "agent-event --kind started --message Running --source claude --pid 1" "$(last_call)" "无 env 时 helper fallback 到 pid"
+HOME="$TMP_HOME" env -u WEBTERM_SESSION_ID -u WEBTERM_SOCKET_PATH WEBTERM_HOOK_PID=1 "$HELPER_SCRIPT" quiet "Running" claude </dev/null
+assert_contains "agent-event -i quiet -m Running -s claude --pid 1" "$(last_call)" "无 env 时 helper fallback 到 pid"
 
 echo ""
 echo "== 测试 install-agent-hook-examples.sh =="
@@ -190,7 +200,7 @@ echo "== 测试 install-agent-hook-examples.sh =="
 # 首次安装
 bash "$INSTALL_SCRIPT" >/dev/null 2>&1
 
-assert_file_contains "$TMP_HOME/.webterm/bin/webterm-notify-helper" "webterm notify" "helper 已安装到 ~/.webterm/bin"
+assert_file_contains "$TMP_HOME/.webterm/bin/webterm-notify-helper" "agent-event" "helper 已安装到 ~/.webterm/bin"
 if [ -x "$REPO_ROOT/go-core/webterm" ]; then
   link_target=$(readlink "$TMP_HOME/.webterm/bin/webterm" || true)
   assert_contains "$REPO_ROOT/go-core/webterm" "$link_target" "webterm CLI 已链接到 ~/.webterm/bin"
@@ -201,10 +211,26 @@ assert_file_contains "$TMP_HOME/.codex/hooks.json" "webterm-notify-helper" "Code
 
 # 验证统一的事件映射
 assert_file_contains "$TMP_HOME/.claude/settings.json" '"Stop"' "Claude 包含 Stop 事件"
+assert_file_contains "$TMP_HOME/.claude/settings.json" '"StopFailure"' "Claude 包含 StopFailure 事件"
 assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'event = "StopFailure"' "Kimi 包含 StopFailure 事件（Kimi 实际事件名）"
+assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'event = "Notification"' "Kimi 包含 Notification 事件（后台任务完成）"
 assert_file_contains "$TMP_HOME/.codex/hooks.json" '"Stop"' "Codex 包含 Stop 事件"
+assert_file_contains "$TMP_HOME/.codex/hooks.json" '"PermissionRequest"' "Codex 包含 PermissionRequest 事件"
 assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'event = "PermissionRequest"' "Kimi 包含 PermissionRequest"
-assert_file_contains "$TMP_HOME/.codex/hooks.json" '"SessionEnd"' "Codex 包含 SessionEnd"
+refute_file_contains "$TMP_HOME/.codex/hooks.json" '"SessionEnd"' "Codex 不含 SessionEnd（官方无此事件）"
+
+# 验证 importance 映射（配置层唯一的事件→重要性映射）
+assert_file_contains "$TMP_HOME/.claude/settings.json" 'quiet \"Running\" claude' "Claude UserPromptSubmit 映射 quiet"
+assert_file_contains "$TMP_HOME/.claude/settings.json" 'alert \"Waiting for approval\" claude' "Claude PermissionRequest 映射 alert"
+assert_file_contains "$TMP_HOME/.claude/settings.json" 'normal \"Done\" claude' "Claude Stop 映射 normal"
+assert_file_contains "$TMP_HOME/.claude/settings.json" 'alert \"Failed\" claude' "Claude StopFailure 映射 alert Failed"
+assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'quiet \"Running\" kimi' "Kimi UserPromptSubmit 映射 quiet"
+assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'alert \"Failed\" kimi' "Kimi StopFailure 映射 alert Failed"
+assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'normal \"Done\" kimi' "Kimi Stop 映射 normal"
+assert_file_contains "$TMP_HOME/.kimi-code/config.toml" 'matcher = "task\\.completed"' "Kimi Notification 匹配 task.completed"
+assert_file_contains "$TMP_HOME/.codex/hooks.json" 'quiet \"Running\" codex' "Codex UserPromptSubmit 映射 quiet"
+assert_file_contains "$TMP_HOME/.codex/hooks.json" 'alert \"Waiting for approval\" codex' "Codex PermissionRequest 映射 alert"
+assert_file_contains "$TMP_HOME/.codex/hooks.json" 'normal \"Done\" codex' "Codex Stop 映射 normal"
 
 # 验证使用绝对路径（Codex 等 agent 不会展开 ~）
 abs_helper="$TMP_HOME/.webterm/bin/webterm-notify-helper"

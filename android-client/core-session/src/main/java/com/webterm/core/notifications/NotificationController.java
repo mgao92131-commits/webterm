@@ -3,8 +3,9 @@ package com.webterm.core.notifications;
 import com.webterm.core.agentnotify.AgentProtocol;
 
 /** 通知的唯一持有者：决定告警的渠道、分组、优先级与“按 connectionKey+sessionId 替换”
- * 语义，再交给 NotificationRenderer 落到平台。当前覆盖 Agent 告警；传输/连接状态在
- * Phase 7 接入。纯逻辑，便于 JVM 测试。 */
+ * 语义，再交给 NotificationRenderer 落到平台。Agent 告警按 importance 三档直映：
+ * alert→高优先级紧急渠道（横幅+声音）、normal→默认渠道（声音）、quiet→不渲染。
+ * 传输/连接状态另走传输路径。纯逻辑，便于 JVM 测试。 */
 public final class NotificationController {
     public static final int AGENT_ID_BASE = 2000;
     public static final int AGENT_ID_RANGE = 1_000_000;
@@ -17,23 +18,27 @@ public final class NotificationController {
         this.renderer = renderer;
     }
 
-    /** 渲染（或替换）一条 Agent 告警。同一 connectionKey+sessionId 复用同一通知 id。 */
-    public void postAgent(String connectionKey, String sessionId, String level, String title, String message) {
+    /** 渲染（或替换）一条 Agent 告警。同一 connectionKey+sessionId 复用同一通知 id。
+     * importance==quiet 表示无需打扰用户，直接丢弃不调渲染器。 */
+    public void postAgent(String connectionKey, String sessionId, String importance, String title, String message) {
         if (renderer == null) return;
+        if (AgentProtocol.IMPORTANCE_QUIET.equals(importance)) return;
         int id = agentNotificationId(connectionKey, sessionId);
-        int priority = priorityForLevel(level);
-        String resolvedTitle = (title == null || title.isEmpty()) ? defaultTitle(level) : title;
+        boolean alert = AgentProtocol.IMPORTANCE_ALERT.equals(importance);
+        int priority = alert ? NotificationCommand.PRIORITY_HIGH : NotificationCommand.PRIORITY_DEFAULT;
+        String channel = alert ? NotificationChannels.AGENT_ALERT : NotificationChannels.AGENT_NORMAL;
+        String resolvedTitle = (title == null || title.isEmpty()) ? defaultTitle(importance) : title;
         String resolvedText = message == null ? "" : message;
         NotificationCommand cmd = new NotificationCommand(
             id,
-            channelForLevel(level),
+            channel,
             connectionKey,
             resolvedTitle,
             resolvedText,
             priority,
             /* ongoing */ false,
             /* autoCancel */ true,
-            /* onlyAlertOnce */ true,
+            /* onlyAlertOnce */ false,
             connectionKey,
             sessionId);
         renderer.show(cmd);
@@ -145,24 +150,9 @@ public final class NotificationController {
         return AGENT_ID_BASE + (hash % AGENT_ID_RANGE);
     }
 
-    static int priorityForLevel(String level) {
-        if (AgentProtocol.LEVEL_RUNNING.equals(level)) {
-            return NotificationCommand.PRIORITY_LOW;
-        }
-        if (AgentProtocol.LEVEL_ERROR.equals(level) || AgentProtocol.LEVEL_ATTENTION.equals(level)) {
-            return NotificationCommand.PRIORITY_HIGH;
-        }
-        return NotificationCommand.PRIORITY_DEFAULT;
-    }
-
-    static String channelForLevel(String level) {
-        return (AgentProtocol.LEVEL_ERROR.equals(level) || AgentProtocol.LEVEL_ATTENTION.equals(level))
-            ? NotificationChannels.AGENT_ATTENTION_V2 : NotificationChannels.AGENT_COMPLETED_V2;
-    }
-
-    private static String defaultTitle(String level) {
-        if (AgentProtocol.LEVEL_ERROR.equals(level)) return "Agent 出错";
-        if (AgentProtocol.LEVEL_RUNNING.equals(level)) return "Agent 运行中";
-        return "Agent 待处理";
+    private static String defaultTitle(String importance) {
+        if (AgentProtocol.IMPORTANCE_ALERT.equals(importance)) return "Agent 等待处理";
+        if (AgentProtocol.IMPORTANCE_NORMAL.equals(importance)) return "Agent 任务完成";
+        return "Agent 通知";
     }
 }

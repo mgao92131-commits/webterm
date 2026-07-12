@@ -19,63 +19,66 @@ public class NotificationControllerTest {
     }
 
     @Test
-    public void idlePostUsesDefaultPriorityGroupAndAction() {
+    public void normalPostUsesDefaultPriorityGroupAndAction() {
         FakeRenderer r = new FakeRenderer();
         NotificationController ctl = new NotificationController(r);
-        ctl.postAgent("connA", "sess1", "idle", "T", "hello");
+        ctl.postAgent("connA", "sess1", "normal", "T", "hello");
 
         assertEquals(1, r.shown.size());
         NotificationCommand c = r.shown.get(0);
-        assertEquals(NotificationChannels.AGENT_COMPLETED_V2, c.channelId);
+        assertEquals(NotificationChannels.AGENT_NORMAL, c.channelId);
         assertEquals("connA", c.groupKey);
         assertEquals(NotificationCommand.PRIORITY_DEFAULT, c.priority);
         assertEquals("sess1", c.openSessionId);
         assertEquals("connA", c.openConnectionKey);
         assertTrue(c.autoCancel);
-        assertTrue(c.onlyAlertOnce);
+        assertEquals(false, c.onlyAlertOnce);
         assertEquals(NotificationController.agentNotificationId("connA", "sess1"), c.id);
     }
 
     @Test
-    public void runningIsLowPriority() {
+    public void quietIsNotRendered() {
         FakeRenderer r = new FakeRenderer();
-        new NotificationController(r).postAgent("c", "s", "running", "", "m");
-        assertEquals(NotificationCommand.PRIORITY_LOW, r.shown.get(0).priority);
+        new NotificationController(r).postAgent("c", "s", "quiet", "", "m");
+        assertTrue(r.shown.isEmpty());
     }
 
     @Test
-    public void errorIsHighPriority() {
+    public void alertIsHighPriorityAlertChannel() {
         FakeRenderer r = new FakeRenderer();
-        new NotificationController(r).postAgent("c", "s", "error", "", "m");
+        new NotificationController(r).postAgent("c", "s", "alert", "", "approve");
+        assertEquals(NotificationChannels.AGENT_ALERT, r.shown.get(0).channelId);
         assertEquals(NotificationCommand.PRIORITY_HIGH, r.shown.get(0).priority);
-        // 空标题按级别落到默认标题
-        assertEquals("Agent 出错", r.shown.get(0).title);
+        // 空标题按 importance 落到默认标题
+        assertEquals("Agent 等待处理", r.shown.get(0).title);
     }
 
     @Test
-    public void attentionUsesHighPriorityAttentionChannel() {
+    public void normalEmptyTitleFallsBackToDefault() {
         FakeRenderer r = new FakeRenderer();
-        new NotificationController(r).postAgent("c", "s", "attention", "", "approve");
-        assertEquals(NotificationChannels.AGENT_ATTENTION_V2, r.shown.get(0).channelId);
-        assertEquals(NotificationCommand.PRIORITY_HIGH, r.shown.get(0).priority);
+        new NotificationController(r).postAgent("c", "s", "normal", "", "m");
+        assertEquals("Agent 任务完成", r.shown.get(0).title);
     }
 
     @Test
-    public void sameConnectionSessionReusesId() {
+    public void consecutiveEventsOnSameSessionBothAlert() {
         FakeRenderer r = new FakeRenderer();
         NotificationController ctl = new NotificationController(r);
-        ctl.postAgent("c", "s", "idle", "t1", "m");
-        ctl.postAgent("c", "s", "idle", "t2", "m");
+        ctl.postAgent("c", "s", "normal", "t1", "m1");
+        ctl.postAgent("c", "s", "normal", "t2", "m2");
         assertEquals(2, r.shown.size());
+        // 同 session 复用同一通知 id，但每条事件都应出声（onlyAlertOnce=false）
         assertEquals(r.shown.get(0).id, r.shown.get(1).id);
+        assertEquals(false, r.shown.get(0).onlyAlertOnce);
+        assertEquals(false, r.shown.get(1).onlyAlertOnce);
     }
 
     @Test
     public void differentSessionGetsDifferentId() {
         FakeRenderer r = new FakeRenderer();
         NotificationController ctl = new NotificationController(r);
-        ctl.postAgent("c", "s1", "idle", "t", "m");
-        ctl.postAgent("c", "s2", "idle", "t", "m");
+        ctl.postAgent("c", "s1", "normal", "t", "m");
+        ctl.postAgent("c", "s2", "normal", "t", "m");
         assertNotEquals(r.shown.get(0).id, r.shown.get(1).id);
     }
 

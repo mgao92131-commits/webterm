@@ -269,11 +269,11 @@ func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
 	defer conn.Close()
 
 	ev := protocol.HookEvent{
-		Type:      "notify",
-		SessionID: terminal.ID(),
-		Level:     "error",
-		Message:   "agent failed",
-		Source:    "claude-code",
+		Type:       "agent_event",
+		SessionID:  terminal.ID(),
+		Importance: "alert",
+		Message:    "agent failed",
+		Source:     "claude-code",
 	}
 	data, _ := json.Marshal(ev)
 	if _, err := conn.Write(append(data, '\n')); err != nil {
@@ -287,8 +287,11 @@ func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
 			if msg["session_id"] != terminal.ID() {
 				t.Fatalf("session_id=%v", msg["session_id"])
 			}
-			if msg["level"] != "error" || msg["message"] != "agent failed" {
+			if msg["importance"] != "alert" || msg["message"] != "agent failed" || msg["source"] != "claude-code" {
 				t.Fatalf("msg=%v", msg)
+			}
+			if msg["title"] != terminal.Info().DisplayTitle {
+				t.Fatalf("title=%v, want DisplayTitle %q", msg["title"], terminal.Info().DisplayTitle)
 			}
 			eid, _ := msg["event_id"].(string)
 			if len(eid) < 8 || eid[:3] != "ev_" {
@@ -299,4 +302,40 @@ func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("agent_notification not dispatched")
+}
+
+func TestDispatchHookEventWithoutImportanceSkipsAgentNotification(t *testing.T) {
+	application, socketPath, cancel := startHookServer(t)
+	defer cancel()
+
+	sender := &recordingSender{}
+	application.FileSendService().RegisterSender("dev-1", sender)
+
+	terminal, err := application.Sessions().Create("work", ".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer terminal.Close()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	ev := protocol.HookEvent{
+		Type:      "agent_event",
+		SessionID: terminal.ID(),
+		Message:   "no importance",
+		Source:    "claude-code",
+	}
+	data, _ := json.Marshal(ev)
+	if _, err := conn.Write(append(data, '\n')); err != nil {
+		t.Fatalf("write event: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	if msg := sender.last(); msg != nil && msg["type"] == agentnotify.TypeAgentNotification {
+		t.Fatalf("agent_notification should not be dispatched without importance, msg=%v", msg)
+	}
 }

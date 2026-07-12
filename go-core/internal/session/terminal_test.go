@@ -180,7 +180,7 @@ func TestTerminalSessionNotificationOverride(t *testing.T) {
 	})
 
 	info := terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "idle" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
+	if info.Notification == nil || info.Notification.Importance != "idle" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
 		t.Fatalf("expected notification to be set, got %+v", info.Notification)
 	}
 
@@ -194,7 +194,7 @@ func TestTerminalSessionNotificationOverride(t *testing.T) {
 	})
 
 	info = terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "running" || info.Notification.Message != "Running" {
+	if info.Notification == nil || info.Notification.Importance != "running" || info.Notification.Message != "Running" {
 		t.Errorf("expected notification to be overridden, got %+v", info.Notification)
 	}
 }

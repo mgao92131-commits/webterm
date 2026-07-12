@@ -7,7 +7,6 @@ import java.io.InputStream;
 public final class ReceiveTask {
     public final String transferId;
     public final String connectionKey;
-    public final String sessionId;
     public final String fileName;
     public final long fileSize;
     public final String sha256;
@@ -18,11 +17,10 @@ public final class ReceiveTask {
     private volatile String error = "";
     private InputStream activeInput;
 
-    ReceiveTask(String transferId, String connectionKey, String sessionId, String fileName,
+    ReceiveTask(String transferId, String connectionKey, String fileName,
                 long fileSize, String sha256, String token) {
         this.transferId = transferId;
         this.connectionKey = connectionKey;
-        this.sessionId = sessionId;
         this.fileName = fileName;
         this.fileSize = fileSize;
         this.sha256 = sha256 == null ? "" : sha256;

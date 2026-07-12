@@ -2,31 +2,31 @@
 set -euo pipefail
 
 # WebTerm Agent Hook 辅助脚本。
-# 从 stdin 读取 Agent 事件 JSON，提取最有意义的文本，然后调用 webterm notify。
+# 从 stdin 读取 Agent 事件 JSON，提取最有意义的文本，然后调用 webterm agent-event。
 #
 # 目标 session 解析顺序：
 #   1. 环境变量 WEBTERM_SESSION_ID
 #   2. 调用者进程（PPID）所在 TTY 对应的 WebTerm session
-#   3.  fallback：把调用者 PID 交给 webterm notify / agent 解析
+#   3.  fallback：把调用者 PID 交给 webterm agent-event / agent 解析
 #
 # 用法：
-#   webterm-notify-helper <kind> <default-message> <source>
+#   webterm-notify-helper <importance> <default-message> <source>
 #
 # 示例：
-#   echo '{"prompt":"hello world"}' | webterm-notify-helper running "Running" claude
+#   echo '{"prompt":"hello world"}' | webterm-notify-helper quiet "Running" claude
 
 level="${1:-}"
 default_msg="${2:-}"
 source="${3:-}"
 
 if [ -z "$level" ] || [ -z "$default_msg" ] || [ -z "$source" ]; then
-  echo "Usage: $0 <level> <default-message> <source>" >&2
-  echo "Example: echo '{\"prompt\":\"hi\"}' | $0 running \"Running\" claude" >&2
+  echo "Usage: $0 <importance> <default-message> <source>" >&2
+  echo "Example: echo '{\"prompt\":\"hi\"}' | $0 quiet \"Running\" claude" >&2
   exit 2
 fi
 
-if [ "$level" != "started" ] && [ "$level" != "completed" ] && [ "$level" != "failed" ] && [ "$level" != "attention" ] && [ "$level" != "session-ended" ]; then
-  echo "Invalid event '$level'." >&2
+if [ "$level" != "alert" ] && [ "$level" != "normal" ] && [ "$level" != "quiet" ]; then
+  echo "Invalid importance '$level' (expected alert|normal|quiet)." >&2
   exit 2
 fi
 
@@ -46,24 +46,30 @@ def first(d, keys):
     return None
 
 def extract(data):
+    if not isinstance(data, dict):
+        return ""
+
     # 顶层字段
-    text = first(data, ("prompt", "content", "message", "text"))
+    text = first(data, ("prompt", "content", "message", "last_assistant_message", "text"))
     if text:
         return text
 
     # messages 数组最后一个
-    msgs = data.get("messages") if isinstance(data, dict) else None
+    msgs = data.get("messages")
     if isinstance(msgs, list) and msgs:
         last = msgs[-1]
         text = first(last, ("content", "text", "prompt"))
         if text:
             return text
 
-    # tool_input 里的命令
-    ti = data.get("tool_input") if isinstance(data, dict) else None
+    # tool_input 里的命令；带 tool_name 时输出 "工具名: 命令"
+    ti = data.get("tool_input")
     if isinstance(ti, dict):
-        text = first(ti, ("command", "cmd", "code", "script"))
+        text = first(ti, ("command", "cmd", "code", "script", "description"))
         if text:
+            tool_name = data.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                return f"{tool_name}: {text}"
             return text
 
     return ""
@@ -73,7 +79,7 @@ try:
 except Exception:
     data = {}
 
-print(extract(data)[:60].strip())
+print(extract(data)[:120].strip())
 ' <<<"$payload" 2>/dev/null || true)
 
 # 如果提取不到，使用默认消息
@@ -166,9 +172,9 @@ fi
 
 notify_args=(
   agent-event
-  --kind "$level"
-  --message "$msg"
-  --source "$source"
+  -i "$level"
+  -m "$msg"
+  -s "$source"
 )
 
 if [ -n "$session_id" ]; then
@@ -179,7 +185,7 @@ else
   echo "webterm-notify-helper: cannot resolve WebTerm session for pid $caller_pid (is this Agent started inside a WebTerm terminal?)" >&2
 fi
 
-# 调用 webterm notify；失败也不应中断 agent 工作流
+# 调用 webterm agent-event；失败也不应中断 agent 工作流
 "$WEBTERM" "${notify_args[@]}" >/dev/null 2>&1 || true
 
 exit 0

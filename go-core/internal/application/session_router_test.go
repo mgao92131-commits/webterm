@@ -248,7 +248,7 @@ func TestSetAgentNotificationDispatcherRoutesAck(t *testing.T) {
 	}
 
 	// ack 被消费并清理 pending，不再传给 prev。
-	eventID, err := d.Notify(context.Background(), "", "s", agentnotify.LevelIdle, "t", "m")
+	eventID, err := d.Notify(context.Background(), "", "s", agentnotify.ImportanceQuiet, "t", "m", "src")
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}

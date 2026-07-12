@@ -7,7 +7,7 @@ type HookEvent struct {
 	PID       int    `json:"pid,omitempty"`
 
 	Level      string `json:"level,omitempty"`
-	AgentEvent string `json:"agent_event,omitempty"` // started|completed|failed|attention|session_ended
+	Importance string `json:"importance,omitempty"` // alert|normal|quiet
 	Message    string `json:"message,omitempty"`
 	Source     string `json:"source,omitempty"`
 

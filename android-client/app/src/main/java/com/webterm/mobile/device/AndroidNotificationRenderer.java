@@ -37,6 +37,7 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(command.title)
             .setContentText(command.text)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(command.text))
             .setPriority(command.priority)
             .setAutoCancel(command.autoCancel)
             .setOngoing(command.ongoing)
@@ -101,10 +102,13 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
             "保持与 PC 的长期连接");
         createIfAbsent(nm, NotificationChannels.TRANSFER, "文件传输", NotificationManager.IMPORTANCE_DEFAULT,
             "文件接收进度与结果");
-        createIfAbsent(nm, NotificationChannels.AGENT_COMPLETED_V2, "Agent 完成", NotificationManager.IMPORTANCE_DEFAULT,
-            "Agent 完成任务时提醒");
-        createIfAbsent(nm, NotificationChannels.AGENT_ATTENTION_V2, "Agent 需要处理", NotificationManager.IMPORTANCE_HIGH,
+        createIfAbsent(nm, NotificationChannels.AGENT_ALERT, "Agent 紧急提醒", NotificationManager.IMPORTANCE_HIGH,
             "Agent 出错或等待用户处理时提醒");
+        createIfAbsent(nm, NotificationChannels.AGENT_NORMAL, "Agent 任务提醒", NotificationManager.IMPORTANCE_DEFAULT,
+            "Agent 完成任务时提醒");
+        // 旧协议渠道（level 字符串时代）残留清理：个人项目不做向后兼容。
+        nm.deleteNotificationChannel("webterm.agent_completed.v2");
+        nm.deleteNotificationChannel("webterm.agent_attention.v2");
     }
 
     private static void createIfAbsent(NotificationManager nm, String id, String name, int importance, String description) {

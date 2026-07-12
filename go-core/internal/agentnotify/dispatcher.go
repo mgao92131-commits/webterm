@@ -40,14 +40,14 @@ func New(sender DeviceSender) *Dispatcher {
 	}
 }
 
-// Notify 构造并下发一条 agent_notification。level 为空时按 idle 处理。
+// Notify 构造并下发一条 agent_notification。importance 为空时按 quiet 处理。
 // 返回生成的 event_id（供调用方记录/去重）。deviceID 为空时由底层做单设备回退。
-func (d *Dispatcher) Notify(ctx context.Context, deviceID, sessionID, level, title, message string) (string, error) {
+func (d *Dispatcher) Notify(ctx context.Context, deviceID, sessionID, importance, title, message, source string) (string, error) {
 	if d == nil || d.sender == nil {
 		return "", fmt.Errorf("agentnotify: no device sender")
 	}
-	if level == "" {
-		level = LevelIdle
+	if importance == "" {
+		importance = ImportanceQuiet
 	}
 	eventID, err := newEventID()
 	if err != nil {
@@ -57,9 +57,10 @@ func (d *Dispatcher) Notify(ctx context.Context, deviceID, sessionID, level, tit
 		"type":       TypeAgentNotification,
 		"event_id":   eventID,
 		"session_id": sessionID,
-		"level":      level,
+		"importance": importance,
 		"title":      title,
 		"message":    message,
+		"source":     source,
 	}
 	d.storePending(deviceID, eventID, msg)
 	if err := d.sender.SendControlToDevice(ctx, deviceID, msg); err != nil {

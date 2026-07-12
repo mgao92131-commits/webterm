@@ -141,9 +141,9 @@ public final class WebTermDeviceService extends Service {
                 notifications.postTransferCancelled(connectionKey, transferId, fileName);
             }
         });
-        AgentAlertSink sink = (connectionKey, sessionId, eventId, level, title, message) -> {
+        AgentAlertSink sink = (connectionKey, sessionId, eventId, importance, title, message) -> {
             if (!terminalFocus.isVisible(connectionKey, sessionId)) {
-                notifications.postAgent(connectionKey, sessionId, level, title, message);
+                notifications.postAgent(connectionKey, sessionId, importance, title, message);
             }
         };
         agentController = new AgentNotificationController(lookup, sink, dedupe);

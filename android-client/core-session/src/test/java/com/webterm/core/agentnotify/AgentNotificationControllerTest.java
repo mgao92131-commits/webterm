@@ -41,24 +41,24 @@ public class AgentNotificationControllerTest {
 
     private static final class FakeSink implements AgentAlertSink {
         static final class Alert {
-            final String connectionKey, sessionId, eventId, level, title, message;
-            Alert(String c, String s, String e, String l, String t, String m) {
-                connectionKey = c; sessionId = s; eventId = e; level = l; title = t; message = m;
+            final String connectionKey, sessionId, eventId, importance, title, message;
+            Alert(String c, String s, String e, String i, String t, String m) {
+                connectionKey = c; sessionId = s; eventId = e; importance = i; title = t; message = m;
             }
         }
         final List<Alert> alerts = Collections.synchronizedList(new ArrayList<>());
-        @Override public void onAlert(String c, String s, String e, String l, String t, String m) {
-            alerts.add(new Alert(c, s, e, l, t, m));
+        @Override public void onAlert(String c, String s, String e, String i, String t, String m) {
+            alerts.add(new Alert(c, s, e, i, t, m));
         }
     }
 
-    private static JSONObject notif(String eventId, String sessionId, String level) {
+    private static JSONObject notif(String eventId, String sessionId, String importance) {
         try {
             JSONObject o = new JSONObject();
             o.put("type", AgentProtocol.TYPE_AGENT_NOTIFICATION);
             o.put("event_id", eventId);
             o.put("session_id", sessionId);
-            o.put("level", level);
+            o.put("importance", importance);
             o.put("title", "t");
             o.put("message", "m");
             return o;
@@ -80,14 +80,14 @@ public class AgentNotificationControllerTest {
         FakeSink sink = new FakeSink();
         AgentNotificationController ctl = new AgentNotificationController(lookup, sink, store);
 
-        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.LEVEL_ERROR));
+        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.IMPORTANCE_ALERT));
 
         assertEquals(1, sink.alerts.size());
         FakeSink.Alert a = sink.alerts.get(0);
         assertEquals("connA", a.connectionKey);
         assertEquals("sess1", a.sessionId);
         assertEquals("ev1", a.eventId);
-        assertEquals(AgentProtocol.LEVEL_ERROR, a.level);
+        assertEquals(AgentProtocol.IMPORTANCE_ALERT, a.importance);
         assertEquals(AgentProtocol.TYPE_AGENT_ACK, sender.types().get(0));
         assertEquals("ev1", sender.sent.get(0).optString("event_id"));
     }
@@ -101,8 +101,8 @@ public class AgentNotificationControllerTest {
         FakeSink sink = new FakeSink();
         AgentNotificationController ctl = new AgentNotificationController(lookup, sink, store);
 
-        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.LEVEL_IDLE));
-        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.LEVEL_IDLE));
+        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.IMPORTANCE_QUIET));
+        ctl.onNotification("connA", notif("ev1", "sess1", AgentProtocol.IMPORTANCE_QUIET));
 
         assertEquals(1, sink.alerts.size());
         assertEquals(2, sender.types().size());
@@ -117,8 +117,8 @@ public class AgentNotificationControllerTest {
         FakeSink sink = new FakeSink();
         AgentNotificationController ctl = new AgentNotificationController(lookup, sink, store);
 
-        ctl.onNotification("connA", notif("ev1", "s", AgentProtocol.LEVEL_IDLE));
-        ctl.onNotification("connB", notif("ev1", "s", AgentProtocol.LEVEL_IDLE));
+        ctl.onNotification("connA", notif("ev1", "s", AgentProtocol.IMPORTANCE_QUIET));
+        ctl.onNotification("connB", notif("ev1", "s", AgentProtocol.IMPORTANCE_QUIET));
 
         assertEquals(2, sink.alerts.size());
     }
@@ -132,7 +132,7 @@ public class AgentNotificationControllerTest {
         FakeSink sink = new FakeSink();
         AgentNotificationController ctl = new AgentNotificationController(lookup, sink, store);
 
-        ctl.onNotification("connA", notif("", "s", AgentProtocol.LEVEL_IDLE));
+        ctl.onNotification("connA", notif("", "s", AgentProtocol.IMPORTANCE_QUIET));
 
         assertTrue(sink.alerts.isEmpty());
         assertTrue(sender.types().isEmpty());

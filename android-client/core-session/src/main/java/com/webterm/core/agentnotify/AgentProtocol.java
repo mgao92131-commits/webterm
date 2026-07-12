@@ -7,8 +7,7 @@ public final class AgentProtocol {
     public static final String TYPE_AGENT_NOTIFICATION = "agent_notification";
     public static final String TYPE_AGENT_ACK = "agent_notification.ack";
 
-    public static final String LEVEL_RUNNING = "running";
-    public static final String LEVEL_IDLE = "idle";
-    public static final String LEVEL_ERROR = "error";
-    public static final String LEVEL_ATTENTION = "attention";
+    public static final String IMPORTANCE_ALERT = "alert";
+    public static final String IMPORTANCE_NORMAL = "normal";
+    public static final String IMPORTANCE_QUIET = "quiet";
 }

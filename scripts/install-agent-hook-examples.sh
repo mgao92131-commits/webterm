@@ -77,16 +77,17 @@ install_claude() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ started \"Running\" claude"}]}],
-    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ attention \"Waiting for approval\" claude"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ completed \"Done\" claude"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ session-ended \"Session ended\" claude"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" claude"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Waiting for approval\" claude"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" claude"}]}],
+    "StopFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Failed\" claude"}]}],
+    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Session ended\" claude"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CLAUDE_SETTINGS" ]; then
-    python3 - "$CLAUDE_SETTINGS" "$new_hooks" <<'PY' 2>/dev/null || true
+    if ! python3 - "$CLAUDE_SETTINGS" "$new_hooks" <<'PY'
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
 with open(path, 'r') as f:
@@ -101,6 +102,9 @@ with open(path, 'w') as f:
     json.dump(existing, f, indent=2)
     f.write('\n')
 PY
+    then
+      echo "警告: 合并 $CLAUDE_SETTINGS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
   else
     echo "$new_hooks" > "$CLAUDE_SETTINGS"
   fi
@@ -118,37 +122,43 @@ install_kimi() {
   block='[[hooks]]
 event = "UserPromptSubmit"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ started \"Running\" kimi"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "PermissionRequest"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ attention \"Waiting for approval\" kimi"
+command = "__WEBTERM_HELPER__ alert \"Waiting for approval\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "StopFailure"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ failed \"Task failed\" kimi"
+command = "__WEBTERM_HELPER__ alert \"Failed\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "Stop"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ completed \"Done\" kimi"
+command = "__WEBTERM_HELPER__ normal \"Done\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "Notification"
+matcher = "task\\.completed"
+command = "__WEBTERM_HELPER__ normal \"Done\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "SessionEnd"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ session-ended \"Session ended\" kimi"
+command = "__WEBTERM_HELPER__ quiet \"Session ended\" kimi"
 timeout = 5
 '
   block="${block//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$KIMI_CONFIG" ]; then
-    python3 - "$KIMI_CONFIG" "$block" <<'PY' 2>/dev/null || true
+    if ! python3 - "$KIMI_CONFIG" "$block" <<'PY'
 import sys
 path, replacement = sys.argv[1], sys.argv[2]
 text = open(path, 'r').read()
@@ -162,6 +172,9 @@ with open(path, 'w') as f:
     f.write('\n\n' + replacement)
     f.write('\n')
 PY
+    then
+      echo "警告: 合并 $KIMI_CONFIG 失败，WebTerm hook 未写入，请检查该文件" >&2
+    fi
   else
     printf '%s' "$block" > "$KIMI_CONFIG"
   fi
@@ -178,15 +191,15 @@ install_codex() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ started \"Running\" codex"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ completed \"Done\" codex"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ session-ended \"Session ended\" codex"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" codex"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Waiting for approval\" codex"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" codex"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CODEX_HOOKS" ]; then
-    python3 - "$CODEX_HOOKS" "$new_hooks" <<'PY' 2>/dev/null || true
+    if ! python3 - "$CODEX_HOOKS" "$new_hooks" <<'PY'
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
 with open(path, 'r') as f:
@@ -201,6 +214,9 @@ with open(path, 'w') as f:
     json.dump(existing, f, indent=2)
     f.write('\n')
 PY
+    then
+      echo "警告: 合并 $CODEX_HOOKS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
   else
     echo "$new_hooks" > "$CODEX_HOOKS"
   fi

@@ -142,14 +142,14 @@ public final class SessionRowHelper {
 
         if (notification != null) {
             String source = notification.optString("source", "").trim();
-            String level = notification.optString("level", "idle").trim();
+            String importance = notification.optString("importance", "quiet").trim();
             if (source.isEmpty()) {
                 agentChip.setVisibility(View.GONE);
                 return;
             }
             agentChip.setText(source);
-            agentChip.setTextColor(chipTextColor(level));
-            agentChip.setBackground(chipBackground(context, level));
+            agentChip.setTextColor(chipTextColor(importance));
+            agentChip.setBackground(chipBackground(context, importance));
             agentChip.setPadding(
                 UIUtils.dp(context, DesignTokens.SPACE_2),
                 UIUtils.dp(context, 2),
@@ -194,29 +194,30 @@ public final class SessionRowHelper {
         return last;
     }
 
-    private static int chipTextColor(String level) {
-        switch (level) {
-            case "error":
+    private static int chipTextColor(String importance) {
+        switch (importance) {
+            case "alert":
                 return DesignTokens.DANGER;
-            case "running":
+            case "normal":
                 return DesignTokens.ACCENT;
-            case "idle":
+            case "quiet":
             default:
+                // legacy 值（idle/running/error）按默认色处理
                 return DesignTokens.TEXT_SECONDARY;
         }
     }
 
-    private static android.graphics.drawable.Drawable chipBackground(Context context, String level) {
+    private static android.graphics.drawable.Drawable chipBackground(Context context, String importance) {
         GradientDrawable gd = new GradientDrawable();
         gd.setCornerRadius(UIUtils.dp(context, DesignTokens.RADIUS_SM));
-        switch (level) {
-            case "error":
+        switch (importance) {
+            case "alert":
                 gd.setColor(DesignTokens.dangerBg());
                 break;
-            case "running":
+            case "normal":
                 gd.setColor(DesignTokens.accentBg());
                 break;
-            case "idle":
+            case "quiet":
             default:
                 gd.setColor(DesignTokens.BG_TERTIARY);
         }

@@ -8,8 +8,8 @@ const (
 	// TypeAgentAck 是 Android→Go 的确认消息类型。
 	TypeAgentAck = "agent_notification.ack"
 
-	LevelRunning = "running"
-	LevelIdle    = "idle"
-	LevelError   = "error"
-	LevelAttention = "attention"
+	// importance 三档：alert（等审批/失败）| normal（任务完成）| quiet（运行中/会话结束）。
+	ImportanceAlert  = "alert"
+	ImportanceNormal = "normal"
+	ImportanceQuiet  = "quiet"
 )

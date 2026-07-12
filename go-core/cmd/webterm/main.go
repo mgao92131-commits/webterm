@@ -48,17 +48,17 @@ func main() {
 	case "agent-event":
 		ev.Type = "agent_event"
 		fs := flag.NewFlagSet("agent-event", flag.ExitOnError)
-		kind := fs.String("kind", "", "started|completed|failed|attention|session-ended")
-		message := fs.String("message", "", "event message")
-		source := fs.String("source", "webterm-cli", "agent source")
+		importance := fs.String("i", "", "alert|normal|quiet")
+		message := fs.String("m", "", "event message")
+		source := fs.String("s", "webterm-cli", "agent source")
 		session := fs.String("session", os.Getenv("WEBTERM_SESSION_ID"), "target session id")
 		pid := fs.Int("pid", 0, "caller process id for session resolution")
 		_ = fs.Parse(os.Args[2:])
-		if *kind != "started" && *kind != "completed" && *kind != "failed" && *kind != "attention" && *kind != "session-ended" {
-			fmt.Fprintln(os.Stderr, "agent-event requires --kind started|completed|failed|attention|session-ended")
+		if *importance != "alert" && *importance != "normal" && *importance != "quiet" {
+			fmt.Fprintln(os.Stderr, "agent-event requires -i alert|normal|quiet")
 			os.Exit(2)
 		}
-		ev.AgentEvent, ev.Message, ev.Source, ev.SessionID, ev.PID = *kind, *message, *source, *session, *pid
+		ev.Importance, ev.Message, ev.Source, ev.SessionID, ev.PID = *importance, *message, *source, *session, *pid
 		if ev.SessionID == "" && ev.PID == 0 { ev.PID = os.Getpid() }
 	case "notify":
 		ev.Type = "notify"
@@ -152,13 +152,21 @@ func main() {
 }
 
 func runSend(socketPath string, args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" || arg == "help" {
+			sendUsage()
+			os.Exit(0)
+		}
+	}
+
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	quiet := fs.Bool("quiet", false, "suppress non-error output")
 	_ = fs.Bool("q", false, "suppress non-error output")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: webterm send <file>")
+		fmt.Fprintln(os.Stderr, "Usage: webterm send [-q|--quiet] <file>")
+		fmt.Fprintln(os.Stderr, "运行 'webterm send --help' 查看详细说明")
 		os.Exit(2)
 	}
 
@@ -167,17 +175,9 @@ func runSend(socketPath string, args []string) error {
 		return err
 	}
 
-	sessionID := os.Getenv("WEBTERM_SESSION_ID")
-	pid := 0
-	if sessionID == "" {
-		pid = os.Getppid()
-	}
-
 	cmd := protocol.CLICommand{
 		Kind:      "command",
 		Type:      "send",
-		SessionID: sessionID,
-		PID:       pid,
 		CWD:       cwd,
 		FilePath:  expandPath(fs.Arg(0)),
 		Timestamp: time.Now().Unix(),
@@ -241,7 +241,7 @@ func sendCommandAndListen(ctx context.Context, socketPath string, cmd protocol.C
 		}
 
 		if first {
-			// 首次响应最多等待 10 秒（Agent 校验文件、解析 session）
+			// 首次响应最多等待 10 秒（Agent 校验文件、计算哈希）
 			if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 				return err
 			}
@@ -386,17 +386,37 @@ func mapErrorToChinese(code string) string {
 	}
 }
 
+func sendUsage() {
+	fmt.Fprintln(os.Stdout, "Usage: webterm send [-q|--quiet] <file>")
+	fmt.Fprintln(os.Stdout, "")
+	fmt.Fprintln(os.Stdout, "把本机文件发送到已连接的安卓设备（send a local file to the connected Android device）。")
+	fmt.Fprintln(os.Stdout, "设备收到请求后主动拉取文件并校验 SHA-256，传输完成后本机显示结果。")
+	fmt.Fprintln(os.Stdout, "大文件没有时长限制；不支持断点续传。")
+	fmt.Fprintln(os.Stdout, "")
+	fmt.Fprintln(os.Stdout, "Options:")
+	fmt.Fprintln(os.Stdout, "  -q, --quiet   只输出错误信息")
+	fmt.Fprintln(os.Stdout, "  -h, --help    显示本帮助")
+	fmt.Fprintln(os.Stdout, "")
+	fmt.Fprintln(os.Stdout, "Examples:")
+	fmt.Fprintln(os.Stdout, "  webterm send ./app-release.apk")
+	fmt.Fprintln(os.Stdout, "  webterm send ~/Documents/report.pdf")
+	fmt.Fprintln(os.Stdout, "")
+	fmt.Fprintln(os.Stdout, "Requirements:")
+	fmt.Fprintln(os.Stdout, "  - webterm-agent 正在运行（WEBTERM_SOCKET_PATH 可覆盖默认 socket 路径）")
+	fmt.Fprintln(os.Stdout, "  - 恰好一台安卓设备在线（多台设备同时在线时暂不支持）")
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage: webterm <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  agent-event --kind started|completed|failed|attention|session-ended [--message MSG] [--source SRC]")
+	fmt.Fprintln(os.Stderr, "  agent-event -i alert|normal|quiet [-m MSG] [-s SRC]")
 	fmt.Fprintln(os.Stderr, "  send <file>            send a file to the connected Android device")
 	fmt.Fprintln(os.Stderr, "  notify --level idle|running|error --message MSG --source SRC [--session ID]")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE")
 	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --last-command CMD --input-kind shell|agent_prompt|agent_tool")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
-	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify/send will fall back to PID resolution")
+	fmt.Fprintln(os.Stderr, "  WEBTERM_SESSION_ID   required for state/meta; notify will fall back to PID resolution")
 	fmt.Fprintln(os.Stderr, "  WEBTERM_SOCKET_PATH  optional, defaults to $HOME/.webterm/webterm.sock")
 }

@@ -499,7 +499,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
             if (notification == null) return "";
             return notification.optString("source", "") + "\u001f"
                 + notification.optString("message", "") + "\u001f"
-                + notification.optString("level", "");
+                + notification.optString("importance", "");
         }
 
         private static void append(StringBuilder builder, String value) {

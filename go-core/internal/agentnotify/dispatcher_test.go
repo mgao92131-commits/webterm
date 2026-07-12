@@ -24,7 +24,7 @@ func (f *fakeSender) SendControlToDevice(_ context.Context, deviceID string, msg
 func TestNotifyBuildsMessageAndTracksPending(t *testing.T) {
 	fs := &fakeSender{}
 	d := New(fs)
-	eventID, err := d.Notify(context.Background(), "dev1", "sess1", "", "T", "hello")
+	eventID, err := d.Notify(context.Background(), "dev1", "sess1", "", "T", "hello", "claude")
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestNotifyBuildsMessageAndTracksPending(t *testing.T) {
 	if fs.msg["type"] != TypeAgentNotification {
 		t.Fatalf("type=%v", fs.msg["type"])
 	}
-	if fs.msg["session_id"] != "sess1" || fs.msg["level"] != LevelIdle || fs.msg["message"] != "hello" {
+	if fs.msg["session_id"] != "sess1" || fs.msg["importance"] != ImportanceQuiet || fs.msg["message"] != "hello" || fs.msg["source"] != "claude" {
 		t.Fatalf("msg=%v", fs.msg)
 	}
 	if fs.msg["event_id"] != eventID {
@@ -54,7 +54,7 @@ func TestNotifyBuildsMessageAndTracksPending(t *testing.T) {
 func TestNotifySendErrorKeepsPendingForReconnect(t *testing.T) {
 	fs := &fakeSender{err: errors.New("boom")}
 	d := New(fs)
-	if _, err := d.Notify(context.Background(), "dev1", "s", LevelError, "t", "m"); err == nil {
+	if _, err := d.Notify(context.Background(), "dev1", "s", ImportanceAlert, "t", "m", "src"); err == nil {
 		t.Fatal("expected error")
 	}
 	if d.PendingCount() != 1 {
@@ -70,7 +70,7 @@ func TestNotifySendErrorKeepsPendingForReconnect(t *testing.T) {
 func TestHandleAckRemovesPending(t *testing.T) {
 	fs := &fakeSender{}
 	d := New(fs)
-	eventID, _ := d.Notify(context.Background(), "dev1", "s", LevelIdle, "t", "m")
+	eventID, _ := d.Notify(context.Background(), "dev1", "s", ImportanceQuiet, "t", "m", "src")
 	d.HandleAck("dev1", eventID)
 	if d.PendingCount() != 0 {
 		t.Fatalf("pending after ack=%d", d.PendingCount())
@@ -79,7 +79,7 @@ func TestHandleAckRemovesPending(t *testing.T) {
 
 func TestNotifyWithoutSenderFails(t *testing.T) {
 	d := New(nil)
-	if _, err := d.Notify(context.Background(), "dev1", "s", LevelIdle, "t", "m"); err == nil {
+	if _, err := d.Notify(context.Background(), "dev1", "s", ImportanceQuiet, "t", "m", "src"); err == nil {
 		t.Fatal("expected error when sender is nil")
 	}
 }

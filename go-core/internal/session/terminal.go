@@ -72,10 +72,10 @@ type TerminalSession struct {
 }
 
 type Notification struct {
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	Source    string `json:"source,omitempty"`
-	Timestamp int64  `json:"timestamp"`
+	Importance string `json:"importance"`
+	Message    string `json:"message"`
+	Source     string `json:"source,omitempty"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
@@ -539,10 +539,18 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 	switch ev.Type {
 	case "notify":
 		terminal.notification = &Notification{
-			Level:     ev.Level,
-			Message:   ev.Message,
-			Source:    ev.Source,
-			Timestamp: ev.Timestamp,
+			Importance: ev.Level,
+			Message:    ev.Message,
+			Source:     ev.Source,
+			Timestamp:  ev.Timestamp,
+		}
+		terminal.touchLocked()
+	case "agent_event":
+		terminal.notification = &Notification{
+			Importance: ev.Importance,
+			Message:    ev.Message,
+			Source:     ev.Source,
+			Timestamp:  ev.Timestamp,
 		}
 		terminal.touchLocked()
 	case "state":

@@ -14,3 +14,4 @@ webterm_deploy_temp.tar.gz
 go-core/webterm-agent
 go-core/webterm-flow-smoke
 go-core/webterm-relay-flow-smoke
+go-core/webterm-relay

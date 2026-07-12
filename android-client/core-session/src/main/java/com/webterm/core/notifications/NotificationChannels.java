@@ -8,8 +8,8 @@ public final class NotificationChannels {
     public static final String DEVICE = "webterm.device";
     /** 文件传输进度/结果通知。 */
     public static final String TRANSFER = "webterm.transfer";
-    /** Agent 正常完成；默认重要性，允许声音和横幅。 */
-    public static final String AGENT_COMPLETED_V2 = "webterm.agent_completed.v2";
-    /** Agent 出错或等待用户处理；高重要性。 */
-    public static final String AGENT_ATTENTION_V2 = "webterm.agent_attention.v2";
+    /** Agent 紧急提醒（等审批/失败）；高重要性，横幅+声音。 */
+    public static final String AGENT_ALERT = "webterm.agent.alert";
+    /** Agent 任务提醒（任务完成）；默认重要性，声音。 */
+    public static final String AGENT_NORMAL = "webterm.agent.normal";
 }

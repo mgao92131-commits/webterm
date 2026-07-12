@@ -27,14 +27,14 @@ public final class AgentNotificationController {
             return;
         }
         String sessionId = msg.optString("session_id", "");
-        String level = msg.optString("level", AgentProtocol.LEVEL_IDLE);
+        String importance = msg.optString("importance", AgentProtocol.IMPORTANCE_QUIET);
         String title = msg.optString("title", "");
         String message = msg.optString("message", "");
 
         boolean duplicate = store.seenOrAdd(dedupKey(connectionKey, eventId));
         sendAck(connectionKey, eventId);
         if (!duplicate && sink != null) {
-            sink.onAlert(connectionKey, sessionId, eventId, level, title, message);
+            sink.onAlert(connectionKey, sessionId, eventId, importance, title, message);
         }
     }
 
