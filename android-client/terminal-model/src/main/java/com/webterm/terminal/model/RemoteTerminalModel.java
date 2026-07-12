@@ -78,7 +78,7 @@ public final class RemoteTerminalModel {
     this.hasMoreHistoryBefore = snapshot.history.hasMoreBefore;
     for (TerminalLine line : snapshot.history.lines) {
       if (line.id != 0) {
-        this.historyCache.put(line.id, line);
+        this.historyCache.put(line.id, padOrCopyLine(line, this.columns));
       }
     }
 
@@ -117,7 +117,7 @@ public final class RemoteTerminalModel {
 
     for (TerminalLine line : patch.historyAppend) {
       if (line.id != 0) {
-        if (historyCache.put(line.id, line) == null) appendedHistoryLines++;
+        if (historyCache.put(line.id, padOrCopyLine(line, columns)) == null) appendedHistoryLines++;
       }
     }
 
@@ -174,7 +174,7 @@ public final class RemoteTerminalModel {
     }
     for (TerminalLine line : page.lines) {
       if (line.id != 0) {
-        historyCache.putIfAbsent(line.id, line);
+        historyCache.putIfAbsent(line.id, padOrCopyLine(line, columns));
       }
     }
     styles.putAll(page.styles);
@@ -218,6 +218,11 @@ public final class RemoteTerminalModel {
 
   public synchronized NavigableMap<Long, TerminalLine> historyCache() {
     return new TreeMap<>(historyCache);
+  }
+
+  /** 历史行数。比 {@link #historyCache()} 轻量，不需要拷贝整棵 TreeMap。 */
+  public synchronized int historySize() {
+    return historyCache.size();
   }
 
   public synchronized TerminalCursor cursor() {

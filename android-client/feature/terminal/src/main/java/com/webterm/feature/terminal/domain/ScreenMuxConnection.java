@@ -71,10 +71,9 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public void setLayoutLeaseId(@NonNull String leaseId) {
+    // 只记录租约；拿到租约后的首次 resize 由 TerminalSessionRuntime 用最新尺寸驱动，
+    // 这里不再回发 connect() 时的占位尺寸，避免先把无头终端改成 80x24 再改回来的抖动。
     this.layoutLeaseId = leaseId == null ? "" : leaseId;
-    if (!this.layoutLeaseId.isEmpty() && columns > 0 && rows > 0) {
-      requestResize(columns, rows);
-    }
   }
 
   @Override
@@ -117,9 +116,10 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public void requestResize(int cols, int rows) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    // 先记录最新尺寸（重连后 hello 也会用到），通道不可用时不发但状态保持真实。
     this.columns = clamp(cols, 10, 500);
     this.rows = clamp(rows, 5, 200);
+    if (relayMuxSession == null || relayChannelId == null) return;
     relayMuxSession.sendTunnelFrame(relayChannelId,
         ScreenMessageBuilder.resize(layoutLeaseId, this.columns, this.rows), true);
   }

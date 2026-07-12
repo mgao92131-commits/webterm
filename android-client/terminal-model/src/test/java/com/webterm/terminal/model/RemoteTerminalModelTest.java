@@ -26,6 +26,7 @@ public class RemoteTerminalModelTest {
     assertEquals("b", model.screen()[0].at(1).text);
     assertEquals(1, model.historyCache().size());
     assertEquals(100L, (long) model.historyCache().firstKey());
+    assertEquals(4, model.historyCache().firstEntry().getValue().length());
   }
 
   @Test
@@ -82,7 +83,7 @@ public class RemoteTerminalModelTest {
       screen.add(line(r, text));
     }
     List<TerminalLine> history = new ArrayList<>();
-    history.add(line(100, "hist"));
+    history.add(line(100, "h"));
     return new ScreenSnapshot(
         "s1", "i1", 1, revision, rows, cols, ScreenSnapshot.BufferKind.MAIN,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),

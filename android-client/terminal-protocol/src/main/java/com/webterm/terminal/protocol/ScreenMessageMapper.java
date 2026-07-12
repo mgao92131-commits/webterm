@@ -32,7 +32,7 @@ public final class ScreenMessageMapper {
         mapCursor(pb.getCursor()),
         mapModes(pb.getModes()),
         mapPalette(pb.getPalette()),
-        mapHistoryWindow(pb.getHistory()),
+        mapHistoryWindow(pb.getHistory(), pb.getGeometry().getCols()),
         screen,
         mapStyles(pb.getStylesList()),
         mapLinks(pb.getLinksList()),
@@ -201,10 +201,10 @@ public final class ScreenMessageMapper {
     }
   }
 
-  private static HistoryWindow mapHistoryWindow(TerminalScreenProto.HistoryWindow pb) {
+  private static HistoryWindow mapHistoryWindow(TerminalScreenProto.HistoryWindow pb, int columns) {
     List<TerminalLine> lines = new ArrayList<>();
     for (TerminalScreenProto.HistoryLine line : pb.getLinesList()) {
-      lines.add(mapHistoryLine(line));
+      lines.add(new TerminalLine(line.getId(), line.getWrapped(), expandRuns(line.getRunsList(), columns)));
     }
     return new HistoryWindow(
         pb.getFirstAvailableLineId(),

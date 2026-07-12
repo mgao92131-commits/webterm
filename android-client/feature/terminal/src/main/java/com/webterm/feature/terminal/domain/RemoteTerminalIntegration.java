@@ -9,6 +9,8 @@ import android.content.Context;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.Button;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -16,9 +18,13 @@ import androidx.core.app.NotificationCompat;
 
 import com.webterm.feature.terminal.R;
 import com.webterm.feature.terminal.TerminalFragment;
+import com.webterm.feature.terminal.TerminalScreenBuilder;
+import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalViewModel;
+import com.webterm.feature.terminal.WebTermTerminalViewClient;
 import com.webterm.terminal.renderer.RemoteTerminalView;
 import com.webterm.terminal.ui.TerminalWindowInsetsController;
+import com.webterm.ui.common.UIUtils;
 
 import java.nio.charset.StandardCharsets;
 
@@ -50,8 +56,14 @@ public final class RemoteTerminalIntegration {
   private TerminalScreenController controller;
   private ScreenMuxConnection connection;
   private RemoteTerminalView view;
+  private View root;
+  private View terminalViewport;
+  private View quickBar;
+  private Button ctrlButton;
+  private boolean ctrlArmed;
   private TitleListener titleListener;
   private int imeOverlap;
+  private final TerminalConnectionStatusView connectionStatusView = new TerminalConnectionStatusView();
 
   @Inject
   public RemoteTerminalIntegration(TerminalSessionRuntimeRegistry registry,
@@ -61,7 +73,8 @@ public final class RemoteTerminalIntegration {
   }
 
   public void start(@NonNull Activity activity, @NonNull TerminalFragment fragment,
-                    @NonNull TerminalViewModel.TerminalSessionArgs args) {
+                    @NonNull TerminalViewModel.TerminalSessionArgs args,
+                    int fontSize, @NonNull Typeface typeface) {
     stop();
     this.currentArgs = args;
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
@@ -75,8 +88,14 @@ public final class RemoteTerminalIntegration {
     runtime.attachConnection(connection);
 
     view = new RemoteTerminalView(activity);
+    view.setTextSize(fontSize);
+    view.setTypeface(typeface);
     controller = new TerminalScreenController(runtime);
-    RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(view, controller);
+    RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(view, controller,
+        connectionStatusView::updateRemote);
+    // 键盘弹出期间内容刷新（光标移动/新输出）时重算避让平移，
+    // 对应旧流程 onTerminalTextChanged → updateKeyboardAvoidance。
+    screenView.setAfterRender(this::updateKeyboardAvoidance);
     controller.attach(fragment.getViewLifecycleOwner(), screenView);
     controller.setEffectListener(effect -> {
       switch (effect.type()) {
@@ -104,8 +123,47 @@ public final class RemoteTerminalIntegration {
       }
     });
 
+    String subtitle = args.cwd != null && !args.cwd.isEmpty() ? args.cwd : args.sessionName;
+    TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
+        activity,
+        args.termTitle == null || args.termTitle.isEmpty() ? "Terminal" : args.termTitle,
+        subtitle == null ? "" : subtitle,
+        fontSize,
+        typeface,
+        new WebTermTerminalViewClient(new WebTermTerminalViewClient.Host() {
+          @Override public void onTerminalViewTapped() {}
+          @Override public boolean readTerminalControlKey() { return false; }
+          @Override public void clearTerminalControlKey() {}
+        }),
+        activity::onBackPressed,
+        () -> reconnectFresh(null),
+        () -> {
+          ctrlArmed = !ctrlArmed;
+          TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, ctrlArmed);
+        },
+        text -> {
+          if (controller == null) return;
+          if (ctrlArmed && text.codePointCount(0, text.length()) == 1) {
+            controller.sendKey(text, false, false, true, false, true);
+            ctrlArmed = false;
+            TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, false);
+          } else {
+            controller.sendText(text);
+          }
+        }
+    );
+    FrameLayout viewport = (FrameLayout) shell.terminalViewport;
+    viewport.removeView(shell.terminalView);
+    viewport.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
+    root = shell.root;
+    terminalViewport = viewport;
+    quickBar = shell.quickBar;
+    ctrlButton = shell.ctrlButton;
+    connectionStatusView.bind(shell.statusIndicator, shell.retryButton, shell.reconnectOverlay);
+    connectionStatusView.updateRemote(runtime.state());
+
     installInsets(activity);
-    fragment.setTerminalContent(view);
+    fragment.setTerminalContent(root);
   }
 
   public void stop() {
@@ -119,6 +177,12 @@ public final class RemoteTerminalIntegration {
     }
     runtime = null;
     view = null;
+    root = null;
+    terminalViewport = null;
+    quickBar = null;
+    ctrlButton = null;
+    connectionStatusView.clear();
+    ctrlArmed = false;
     currentArgs = null;
   }
 
@@ -209,24 +273,50 @@ public final class RemoteTerminalIntegration {
 
   @Nullable
   public View terminalRoot() {
-    return view;
+    return root;
   }
 
   @Nullable
   public View terminalViewport() {
-    return view;
+    return terminalViewport;
+  }
+
+  @Nullable
+  public View quickBar() {
+    return quickBar;
   }
 
   public void updateKeyboardAvoidance() {
-    if (view == null) return;
-    // 新 renderer 不需要旧 TerminalView 的 protectedRow 平移逻辑；
-    // IME 弹出时把 View 整体上移，避免光标被键盘遮挡，用户可滚动查看底部。
-    view.setTranslationY(imeOverlap > 0 ? -imeOverlap : 0);
+    if (root == null || view == null || terminalViewport == null) return;
+    // 快捷栏贴到键盘上方，与旧 TerminalView 流程一致。
+    if (quickBar != null) {
+      quickBar.setTranslationY(imeOverlap > 0 ? -imeOverlap : 0);
+    }
+    if (imeOverlap <= 0) {
+      view.setTranslationY(0);
+      return;
+    }
+    // 与旧 TerminalWindowInsetsController.updateKeyboardAvoidance 一致：只把视图上移
+    // "保护行（光标行与最后一个非空行中靠下者）底边 + 12dp 超出快捷栏顶边"的距离。
+    // 内容少时少移甚至不移，避免整体上移整个键盘高度把内容推出可视区顶部。
+    int[] rootLocation = new int[2];
+    int[] viewportLocation = new int[2];
+    root.getLocationOnScreen(rootLocation);
+    terminalViewport.getLocationOnScreen(viewportLocation);
+    int quickBarHeight = quickBar == null ? 0 : quickBar.getHeight();
+    int margin = UIUtils.dp(root.getContext(), 12);
+    float protectedBottom = (viewportLocation[1] - rootLocation[1]) + view.getKeyboardProtectedBottomY();
+    float quickBarTop = root.getHeight() - root.getPaddingBottom() - imeOverlap - quickBarHeight;
+    int neededShift = Math.round(protectedBottom + margin - quickBarTop);
+    // 旧流程 setTopRow(0) 后保护行必在视口内，平移量天然不超过 imeOverlap + margin；
+    // 显式 clamp 对齐该上界，避免用户上滑查看历史时过度平移。
+    int shift = Math.max(0, Math.min(neededShift, imeOverlap + margin));
+    view.setTranslationY(-shift);
   }
 
   private void installInsets(@NonNull Activity activity) {
-    if (view == null) return;
-    TerminalWindowInsetsController.installRootInsets(activity, view, 0, 0, 0, 0,
+    if (root == null) return;
+    TerminalWindowInsetsController.installRootInsets(activity, root, 0, 0, 0, 0,
         false, true, (imeOverlap) -> {
           this.imeOverlap = imeOverlap;
           updateKeyboardAvoidance();

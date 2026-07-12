@@ -29,6 +29,7 @@ rootProject.name = "webterm"
 include(":app")
 include(":terminal-emulator")
 include(":terminal-view")
+include(":terminal-interaction")
 include(":terminal-protocol")
 include(":terminal-model")
 include(":terminal-renderer")

@@ -73,6 +73,8 @@ public final class TerminalSessionRuntime {
   private volatile State state = State.CONNECTING;
   private volatile String layoutLeaseId = "";
   private volatile boolean layoutLeaseGranted;
+  private volatile int lastRequestedCols;
+  private volatile int lastRequestedRows;
   private ScreenConnection connection;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
@@ -135,6 +137,10 @@ public final class TerminalSessionRuntime {
 
       @Override
       public void onDisconnected(@Nullable String reason) {
+        // 断线后 Go 侧会释放租约；本地同步失效，避免 resize 丢进死通道，
+        // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
+        layoutLeaseGranted = false;
+        layoutLeaseId = "";
         updateState(State.RECONNECTING);
       }
 
@@ -199,6 +205,11 @@ public final class TerminalSessionRuntime {
   }
 
   public void requestResize(int cols, int rows) {
+    if (cols <= 0 || rows <= 0) return;
+    // 无论租约是否在手都先记下最新尺寸；租约授予时统一补发，
+    // 否则首次连接（租约往返慢于 View 首帧）或断线重连期间的尺寸请求会静默丢失。
+    lastRequestedCols = cols;
+    lastRequestedRows = rows;
     if (!layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
@@ -311,6 +322,11 @@ public final class TerminalSessionRuntime {
     ScreenConnection c = connection;
     if (c != null) {
       c.setLayoutLeaseId(layoutLeaseId);
+      // 租约到手后补发一次最新尺寸：覆盖连接时的占位 hello 尺寸，
+      // 以及租约往返期间/断线期间被缓存下来的 resize 请求。
+      if (layoutLeaseGranted && lastRequestedCols > 0 && lastRequestedRows > 0) {
+        c.requestResize(lastRequestedCols, lastRequestedRows);
+      }
     }
   }
 

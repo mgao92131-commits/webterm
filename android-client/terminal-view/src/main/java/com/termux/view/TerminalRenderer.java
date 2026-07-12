@@ -10,6 +10,7 @@ import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalRow;
 import com.termux.terminal.TextStyle;
 import com.termux.terminal.WcWidth;
+import com.webterm.terminal.renderer.TerminalVisualRules;
 
 /**
  * Renderer of a {@link TerminalEmulator} into a {@link Canvas}.
@@ -231,15 +232,9 @@ public final class TerminalRenderer {
 
         if ((effect & TextStyle.CHARACTER_ATTRIBUTE_INVISIBLE) == 0) {
             if (dim) {
-                int red = (0xFF & (foreColor >> 16));
-                int green = (0xFF & (foreColor >> 8));
-                int blue = (0xFF & foreColor);
                 // Dim color handling used by libvte which in turn took it from xterm
                 // (https://bug735245.bugzilla-attachments.gnome.org/attachment.cgi?id=284267):
-                red = red * 2 / 3;
-                green = green * 2 / 3;
-                blue = blue * 2 / 3;
-                foreColor = 0xFF000000 + (red << 16) + (green << 8) + blue;
+                foreColor = TerminalVisualRules.dim(foreColor);
             }
 
             mTextPaint.setFakeBoldText(bold);
@@ -258,14 +253,14 @@ public final class TerminalRenderer {
     private boolean shouldPreserveGlyphAspect(TerminalRow lineObject, char[] line, int charsUsedInLine,
                                               int charIndex, int charsForCodePoint, int column, int columns,
                                               int codePoint, int codePointWcWidth, long style, boolean fontWidthMismatch) {
-        if (!fontWidthMismatch || !isAspectPreservedGlyph(codePoint)) return false;
+        if (!fontWidthMismatch) return false;
         // Powerline glyphs are designed to connect seamlessly at their native width,
         // so always preserve their aspect ratio regardless of wcwidth.
         // For all other glyphs, only preserve aspect when wcwidth >= 2 (e.g. emoji).
         // wcwidth=1 symbols that render wider (like ● U+25CF) should be scaled to fit.
-        return isPowerlineGlyph(codePoint)
-            || (codePointWcWidth >= 2 && hasRightPaddingSpace(lineObject, line, charsUsedInLine,
-                charIndex, charsForCodePoint, column, columns, codePointWcWidth, style));
+        return TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, codePointWcWidth,
+            hasRightPaddingSpace(lineObject, line, charsUsedInLine, charIndex, charsForCodePoint,
+                column, columns, codePointWcWidth, style));
     }
 
     private boolean hasRightPaddingSpace(TerminalRow lineObject, char[] line, int charsUsedInLine,
@@ -281,42 +276,6 @@ public final class TerminalRenderer {
         return nextCharIndex >= charsUsedInLine || line[nextCharIndex] == ' ';
     }
 
-    private boolean isAspectPreservedGlyph(int codePoint) {
-        return isPowerlineGlyph(codePoint)
-            || isNerdFontGlyph(codePoint)
-            || isEmojiGlyph(codePoint)
-            || isSymbolGlyph(codePoint)
-            || isPrivateUseGlyph(codePoint);
-    }
-
-    private boolean isPowerlineGlyph(int codePoint) {
-        return codePoint >= 0xe0a0 && codePoint <= 0xe0d7;
-    }
-
-    private boolean isNerdFontGlyph(int codePoint) {
-        return (codePoint >= 0xe5fa && codePoint <= 0xe6b1)
-            || (codePoint >= 0xe700 && codePoint <= 0xe8ef)
-            || (codePoint >= 0xea60 && codePoint <= 0xebeb)
-            || (codePoint >= 0xed00 && codePoint <= 0xefc1)
-            || (codePoint >= 0xf000 && codePoint <= 0xf2ff)
-            || (codePoint >= 0xf300 && codePoint <= 0xfd46);
-    }
-
-    private boolean isPrivateUseGlyph(int codePoint) {
-        return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
-            || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
-            || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
-    }
-
-    private boolean isEmojiGlyph(int codePoint) {
-        return (codePoint >= 0x1f000 && codePoint <= 0x1faff)
-            || (codePoint >= 0x2600 && codePoint <= 0x27bf);
-    }
-
-    private boolean isSymbolGlyph(int codePoint) {
-        return (codePoint >= 0x25a0 && codePoint <= 0x25ff)
-            || (codePoint >= 0x2b00 && codePoint <= 0x2bff);
-    }
 
     public float getFontWidth() {
         return mFontWidth;

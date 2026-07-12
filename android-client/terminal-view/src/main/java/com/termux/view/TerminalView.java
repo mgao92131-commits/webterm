@@ -42,6 +42,7 @@ import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TextStyle;
 import com.termux.view.textselection.TextSelectionCursorController;
+import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
 /** View displaying and interacting with a {@link TerminalSession}. */
 public final class TerminalView extends View {

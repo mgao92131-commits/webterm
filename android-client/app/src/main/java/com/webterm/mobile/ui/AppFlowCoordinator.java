@@ -510,7 +510,8 @@ public final class AppFlowCoordinator implements
                                                 TerminalFragment fragment) {
         mScreenMode = ScreenMode.TERMINAL;
         mTerminalRuntime = null;
-        remoteTerminalIntegration.start(activity, fragment, args);
+        remoteTerminalIntegration.start(activity, fragment, args,
+            configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
         remoteTerminalIntegration.setTitleListener(new RemoteTerminalIntegration.TitleListener() {
             @Override public void onTitleChanged(String title) {
                 // TODO: 更新 Activity/Fragment 标题

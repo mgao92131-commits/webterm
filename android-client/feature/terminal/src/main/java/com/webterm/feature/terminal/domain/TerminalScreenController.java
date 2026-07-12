@@ -25,6 +25,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     void onTitleChanged(@Nullable String title);
     void requestInvalidate();
     default void onHistoryAppended(int lineCount) {}
+    default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
   }
 
   public interface EffectListener {
@@ -108,15 +109,9 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   public void onScrollPixels(int deltaPixels) {
     if (deltaPixels == 0) return;
-    viewport.followTail = false;
     viewport.scrollOffsetPixels = Math.max(0, viewport.scrollOffsetPixels + deltaPixels);
-    requestRender();
-  }
-
-  public void followTail() {
-    viewport.followTail = true;
-    viewport.scrollOffsetPixels = 0;
-    viewport.unreadLineCount = 0;
+    // 与 termux 的 mTopRow == 0 语义一致：滚到底部即自动恢复跟随新输出。
+    viewport.followTail = viewport.scrollOffsetPixels == 0;
     requestRender();
   }
 
@@ -144,7 +139,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   @Override
   public void onModelChange(@NonNull ModelChange change) {
     if (!viewport.followTail && change.historyChanged) {
-      viewport.unreadLineCount++;
       if (change.appendedHistoryLines > 0 && view != null) {
         view.onHistoryAppended(change.appendedHistoryLines);
       }
@@ -175,6 +169,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   @Override
   public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {
+    View v = view;
+    if (v != null) v.onConnectionStateChanged(state);
     requestRender();
   }
 

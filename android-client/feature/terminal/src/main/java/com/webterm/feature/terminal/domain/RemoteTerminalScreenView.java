@@ -17,19 +17,38 @@ import com.webterm.terminal.renderer.RemoteTerminalView;
 final class RemoteTerminalScreenView implements TerminalScreenController.View,
     RemoteTerminalView.Host {
 
+  interface ConnectionStateListener {
+    void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state);
+  }
+
   private final RemoteTerminalView view;
   private final TerminalScreenController controller;
+  @Nullable private final ConnectionStateListener connectionStateListener;
+  @Nullable private Runnable afterRender;
 
   RemoteTerminalScreenView(@NonNull RemoteTerminalView view,
                            @NonNull TerminalScreenController controller) {
+    this(view, controller, null);
+  }
+
+  RemoteTerminalScreenView(@NonNull RemoteTerminalView view,
+                           @NonNull TerminalScreenController controller,
+                           @Nullable ConnectionStateListener connectionStateListener) {
     this.view = view;
     this.controller = controller;
+    this.connectionStateListener = connectionStateListener;
     this.view.setHost(this);
+  }
+
+  /** 每次渲染后回调，用于键盘弹出期间随内容变化重算避让平移。 */
+  void setAfterRender(@Nullable Runnable afterRender) {
+    this.afterRender = afterRender;
   }
 
   @Override
   public void render(@NonNull RemoteTerminalModel model, @NonNull TerminalViewportState viewport) {
     view.setModel(model, viewport);
+    if (afterRender != null) afterRender.run();
   }
 
   @Override
@@ -50,6 +69,11 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   @Override
   public void onHistoryAppended(int lineCount) {
     view.preserveViewportForAppendedLines(lineCount);
+  }
+
+  @Override
+  public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
+    if (connectionStateListener != null) connectionStateListener.onConnectionStateChanged(state);
   }
 
   @Override
@@ -104,12 +128,22 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onFollowTail() {
-    controller.followTail();
+  public void onFocusChanged(boolean focused) {
+    controller.sendFocus(focused);
   }
 
   @Override
-  public void onFocusChanged(boolean focused) {
-    controller.sendFocus(focused);
+  public void onMouse(int row, int col, @NonNull String button, int wheelDelta,
+                      boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed) {
+    controller.sendMouse(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
+  }
+
+  @Override
+  public void onAlternateScreenScroll(int rowsDown) {
+    if (rowsDown == 0) return;
+    String key = rowsDown < 0 ? "ArrowUp" : "ArrowDown";
+    for (int i = 0; i < Math.abs(rowsDown); i++) {
+      controller.sendKey(key, false, false, false, false, true);
+    }
   }
 }

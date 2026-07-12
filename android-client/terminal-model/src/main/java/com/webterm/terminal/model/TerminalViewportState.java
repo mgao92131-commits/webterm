@@ -9,7 +9,6 @@ public final class TerminalViewportState {
   public int anchorPixelOffset;
   public int scrollOffsetPixels; // 从屏幕底部向上滚动的像素
   public TerminalSelection selection;
-  public int unreadLineCount;
   public boolean loadingOlderHistory;
 
   public void resetForSnapshot() {
@@ -17,7 +16,6 @@ public final class TerminalViewportState {
     anchorHistoryLineId = null;
     anchorPixelOffset = 0;
     selection = null;
-    unreadLineCount = 0;
     loadingOlderHistory = false;
   }
 }
