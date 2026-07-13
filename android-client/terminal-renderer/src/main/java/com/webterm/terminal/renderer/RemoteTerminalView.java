@@ -1003,7 +1003,7 @@ public final class RemoteTerminalView extends View {
       android.text.Editable content = getEditable();
       if (host != null && content != null && content.length() > 0) {
         String text = content.toString();
-        traceInput("ime-send", "len=" + text.length() + " hash=" + shortHash(text));
+        traceInput("ime-send", "len=" + text.length());
         host.onTextInput(text);
         content.clear();
       }
@@ -1072,25 +1072,11 @@ public final class RemoteTerminalView extends View {
 
   /**
    * 输入 trace 只记录阶段与长度/keyCode/action/deviceId 等元数据，绝不记录
-   * text、unicodeChar 或剪贴板内容。需要关联同一输入事件时使用不可逆短 hash。
+   * text、unicodeChar、文本 hash 或剪贴板内容。
    */
   private static void traceInput(String stage, String detail) {
     if (Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) {
       Log.d(INPUT_TRACE_TAG, stage + " " + detail);
-    }
-  }
-
-  private static String shortHash(String text) {
-    try {
-      java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-      StringBuilder sb = new StringBuilder();
-      for (int i = 0; i < 4; i++) {
-        sb.append(String.format(java.util.Locale.US, "%02x", hash[i]));
-      }
-      return sb.toString();
-    } catch (java.security.NoSuchAlgorithmException e) {
-      return "unavailable";
     }
   }
 
