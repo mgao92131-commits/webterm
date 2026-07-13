@@ -166,6 +166,10 @@
 //
 // Buffer.TakeDirty offers the same read-and-clear semantics at buffer level.
 //
+// ReadFullProjection returns every row (Full=true) regardless of dirty state;
+// use it to rebuild a dropped consumer cache when ReadProjection would only
+// return a partial dirty set.
+//
 // # Selection
 //
 // Manage text selections for copy/paste:

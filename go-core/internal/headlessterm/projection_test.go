@@ -380,3 +380,41 @@ func TestProjectionAutoResizeGrowRows(t *testing.T) {
 		t.Errorf("expected %d rows in full projection, got %d", p.Rows, len(p.DirtyRows))
 	}
 }
+
+func TestReadFullProjectionIgnoresDirtyState(t *testing.T) {
+	term := New(WithSize(4, 10))
+	consumeInitial(t, term)
+
+	term.WriteString("hello")
+	p := term.ReadProjection()
+	term.ConsumeProjectionDirty(p)
+
+	// No dirty state at all: ReadProjection would return zero rows, but
+	// ReadFullProjection must still return every row marked Full.
+	full := term.ReadFullProjection()
+	if !full.Full {
+		t.Error("expected Full=true from ReadFullProjection on a clean terminal")
+	}
+	if len(full.DirtyRows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(full.DirtyRows))
+	}
+	for i, row := range full.DirtyRows {
+		if row.Index != i {
+			t.Errorf("row %d has index %d", i, row.Index)
+		}
+		if len(row.Cells) != 10 {
+			t.Errorf("row %d has %d cells, want 10", i, len(row.Cells))
+		}
+	}
+	if got := full.DirtyRows[0].Cells[0].Char; got != "h" {
+		t.Errorf("expected row 0 to start with 'h', got %q", got)
+	}
+
+	// Dirty state is untouched: the next incremental read still sees a clean
+	// terminal, and consuming the full projection keeps it clean.
+	term.ConsumeProjectionDirty(full)
+	clean := term.ReadProjection()
+	if clean.Full || len(clean.DirtyRows) != 0 {
+		t.Errorf("expected clean incremental projection after full consume, got %+v", clean)
+	}
+}

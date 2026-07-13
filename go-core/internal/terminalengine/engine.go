@@ -155,6 +155,26 @@ func (e *Engine) IsWrapped(row int) bool {
 	return e.terminal.IsWrapped(row)
 }
 
+// ReadProjection 返回终端的原子只读投影：一次读锁内的元数据快照加上自上次
+// ConsumeProjectionDirty 以来变化的行（Full 时为全部行）。语义见
+// headlessterm.Terminal.ReadProjection。
+func (e *Engine) ReadProjection() headlessterm.ProjectionRead {
+	return e.terminal.ReadProjection()
+}
+
+// ReadFullProjection 返回包含全部行的完整投影，无视 dirty 状态；用于
+// Projector 缓存被丢弃后（epoch/字典世代重建）的全量重建。
+func (e *Engine) ReadFullProjection() headlessterm.ProjectionRead {
+	return e.terminal.ReadFullProjection()
+}
+
+// ConsumeProjectionDirty 在投影行合并进 Projector 缓存后清除 dirty 状态并
+// 推进光标基线。调用方必须保证 ReadProjection 与本调用之间没有写入到达终端
+// （runtime actor 单 goroutine 串行化天然满足）。
+func (e *Engine) ConsumeProjectionDirty(p headlessterm.ProjectionRead) {
+	e.terminal.ConsumeProjectionDirty(p)
+}
+
 // CursorStyle 返回光标样式。
 func (e *Engine) CursorStyle() headlessterm.CursorStyle {
 	return e.terminal.CursorStyle()

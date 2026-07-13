@@ -169,6 +169,7 @@ Interfaces for external events (all optional, default to no-ops):
 
 Dirty tracking is row-level:
 - `ReadProjection()`: Atomic snapshot of metadata plus copies of changed rows (`Full` = whole screen)
+- `ReadFullProjection()`: Same, but always copies every row (`Full` = true) for consumer cache rebuilds
 - `ConsumeProjectionDirty(proj)`: Clear dirty state after the projection has been merged into your cache
 - `Buffer.TakeDirty()`: Buffer-level read-and-clear of the dirty state
 

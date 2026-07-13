@@ -82,6 +82,23 @@ type ProjectionRead struct {
 // the rows into its own cache and then call ConsumeProjectionDirty. Cell
 // slices are copies; mutating the returned data does not affect the terminal.
 func (t *Terminal) ReadProjection() ProjectionRead {
+	return t.readProjection(false)
+}
+
+// ReadFullProjection returns a complete projection of the terminal: every row
+// copied, Full set to true, regardless of dirty state. It is the cache-rebuild
+// companion of ReadProjection for consumers that must re-export everything
+// even when no rows are dirty (first export after a cache drop, dictionary
+// rotation, epoch change without geometry dirty marks).
+//
+// Like ReadProjection it does not clear dirty state; pair it with
+// ConsumeProjectionDirty after the rows have been merged into the consumer's
+// cache.
+func (t *Terminal) ReadFullProjection() ProjectionRead {
+	return t.readProjection(true)
+}
+
+func (t *Terminal) readProjection(forceFull bool) ProjectionRead {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -96,7 +113,7 @@ func (t *Terminal) ReadProjection() ProjectionRead {
 	}
 
 	var rows []ProjectionRow
-	if dirtyAll {
+	if dirtyAll || forceFull {
 		rows = make([]ProjectionRow, 0, b.rows)
 		for r := 0; r < b.rows; r++ {
 			rows = append(rows, b.copyRow(r))
@@ -138,7 +155,7 @@ func (t *Terminal) ReadProjection() ProjectionRead {
 		WorkingDir:   workingDirPathFromURI(t.workingDir),
 		Colors:       colors,
 		DirtyRows:    rows,
-		Full:         dirtyAll,
+		Full:         dirtyAll || forceFull,
 		source:       b,
 	}
 }

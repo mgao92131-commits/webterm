@@ -3,8 +3,63 @@ package screenprojection
 import (
 	"sync"
 
+	headlessterm "github.com/danielgatis/go-headless-term"
 	"webterm/go-core/internal/terminalengine"
 )
+
+// projectedState 缓存最近一次完整权威投影。它只在导出侧（ExportState 持
+// p.mu 期间）读写，不跨 goroutine 共享。screen 中未变化的行复用旧 Line
+// 对象；Line 一旦创建即不可变，合并时只整体替换。
+type projectedState struct {
+	valid        bool
+	rows         int
+	cols         int
+	screen       []terminalengine.Line // len == rows
+	activeBuffer terminalengine.BufferKind
+	cursor       terminalengine.Cursor
+	modes        terminalengine.Modes
+	title        string
+	workingDir   string
+}
+
+// rebuild 用完整投影（Full）重建全部行与元数据。
+func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
+	screen := make([]terminalengine.Line, proj.Rows)
+	for _, row := range proj.DirtyRows {
+		if row.Index >= 0 && row.Index < len(screen) {
+			screen[row.Index] = exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+		}
+	}
+	s.screen = screen
+	s.rows = proj.Rows
+	s.cols = proj.Cols
+	s.mergeMeta(proj)
+	s.valid = true
+}
+
+// merge 只把 dirty 行重新转换为 Line 并替换缓存中对应下标；未变化行复用
+// 旧 Line 对象。元数据总是采用投影中的当前值，因此纯元数据变化（标题、
+// cwd、模式、光标移动）在无 dirty 行时也能反映到导出状态。
+func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
+	for _, row := range proj.DirtyRows {
+		if row.Index >= 0 && row.Index < len(s.screen) {
+			s.screen[row.Index] = exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+		}
+	}
+	s.mergeMeta(proj)
+}
+
+func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
+	activeBuffer := terminalengine.BufferMain
+	if proj.ActiveBuffer == headlessterm.BufferKindAlternate {
+		activeBuffer = terminalengine.BufferAlternate
+	}
+	s.activeBuffer = activeBuffer
+	s.cursor = exportProjectionCursor(proj.Cursor)
+	s.modes = exportProjectionModes(proj.Modes)
+	s.title = proj.Title
+	s.workingDir = proj.WorkingDir
+}
 
 // Projector 为每个 screen client 维护发送基线并生成 snapshot/patch。
 type Projector struct {
@@ -15,6 +70,7 @@ type Projector struct {
 	instanceID  string
 	exporter    *exporter
 	exportEpoch uint64
+	projected   projectedState
 	// dictGeneration increments every time the style/link exporter is rebuilt
 	// (layout epoch change or >4096 dictionary rotation). It is stamped onto
 	// every exported state so per-client FrameDerivers can detect a baseline
@@ -73,18 +129,81 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.exportEpoch = epoch
 		p.dictGeneration++
+		// 缓存行引用的 style/link ID 出自被废弃的字典，必须整体重建。
+		p.projected = projectedState{}
 	}
-	frame := p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
+	frame := p.mergeAndExport(epoch, seq)
 	// 字典只增不改；大量瞬时 RGB/OSC8 若使历史字典膨胀，则以权威 snapshot
 	// 旋转字典。当前可见状态仍超过上限时由协议校验拒绝。
 	if len(frame.Styles) > 4096 || len(frame.Links) > 4096 {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.dictGeneration++
-		frame = p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
+		p.projected = projectedState{}
+		frame = p.mergeAndExport(epoch, seq)
 		frame.ForceSnapshot = true
 	}
 	frame.DictionaryGeneration = p.dictGeneration
 	return frame
+}
+
+// mergeAndExport 读一次投影、合并进全屏缓存并产出完整 State。产出的帧始终
+// 是完整状态（全屏行 + 元数据），FrameDeriver 与协议层无感知。
+func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame {
+	s := &p.projected
+	proj := p.engine.ReadProjection()
+	if !proj.Full && (!s.valid || s.rows != proj.Rows || s.cols != proj.Cols) {
+		// 缓存不可用（首次导出后被 epoch/字典轮转丢弃）或几何与缓存不一致，
+		// 但终端未标全脏：dirty 行不足以重建，改取完整投影。
+		proj = p.engine.ReadFullProjection()
+	}
+	if proj.Full {
+		s.rebuild(proj, p.exporter)
+	} else {
+		s.merge(proj, p.exporter)
+	}
+	p.engine.ConsumeProjectionDirty(proj)
+	return p.assembleFrame(epoch, seq)
+}
+
+// assembleFrame 从全屏缓存组装完整 State。历史窗口维持每次全量导出尾部
+// 窗口（阶段 2c 才做历史增量）；备用屏绝不混入主屏 scrollback。
+func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame {
+	s := &p.projected
+	// State 被所有客户端及其 baseline 共享，必须不可变；缓存切片会在后续
+	// 增量合并中原地替换元素，因此每帧复制切片头。Line 为浅拷贝：未变化
+	// 行的 Runs 与缓存/历史帧共享且不可变，这是有意的零拷贝复用。
+	screen := make([]terminalengine.Line, len(s.screen))
+	copy(screen, s.screen)
+
+	history := terminalengine.HistoryWindow{}
+	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
+	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
+	if s.activeBuffer == terminalengine.BufferMain {
+		history = p.exporter.exportHistoryWindow(p.scrollback)
+	}
+
+	return terminalengine.ScreenFrame{
+		Version:      1,
+		SessionID:    p.sessionID,
+		InstanceID:   p.instanceID,
+		Epoch:        epoch,
+		Seq:          seq,
+		Rows:         s.rows,
+		Cols:         s.cols,
+		ActiveBuffer: s.activeBuffer,
+		ReverseVideo: false,
+		DefaultFG:    terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		DefaultBG:    terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+		CursorColor:  terminalengine.Color{Kind: terminalengine.ColorCursor},
+		Cursor:       s.cursor,
+		Modes:        s.modes,
+		History:      history,
+		Screen:       screen,
+		Styles:       p.exporter.styleTable.Styles(),
+		Links:        p.exporter.linkTable.Links(),
+		Title:        s.title,
+		WorkingDir:   s.workingDir,
+	}
 }
 
 func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {

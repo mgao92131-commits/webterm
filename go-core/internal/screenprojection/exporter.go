@@ -84,34 +84,50 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 }
 
 func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols, cursorRow, cursorCol int) terminalengine.Line {
+	// 逐格读取只保留给独立 ExportSnapshot 路径（fixture 生成、会话初始
+	// 快照）；连续投影走 Projector 的投影缓存（exportProjectionRow）。
+	// engine.Cell 仅在越界时返回 nil，这里坐标恒在界内，nil 分支不可达。
+	cells := make([]headlessterm.Cell, 0, cols)
+	for c := 0; c < cols; c++ {
+		if cell := engine.Cell(row, c); cell != nil {
+			cells = append(cells, *cell)
+		}
+	}
 	return terminalengine.Line{
 		Row:     row,
 		Wrapped: engine.IsWrapped(row),
-		Runs:    exp.exportCells(engine, row, cols, cursorRow, cursorCol),
+		Runs:    exp.exportCells(cells, row, cursorRow, cursorCol),
 	}
 }
 
-func (exp *exporter) exportCells(engine *terminalengine.Engine, row, cols, cursorRow, cursorCol int) []terminalengine.CellRun {
+// exportProjectionRow 把投影中的一行（已是不可变拷贝）转换为导出 Line。
+func (exp *exporter) exportProjectionRow(row headlessterm.ProjectionRow, cursorRow, cursorCol int) terminalengine.Line {
+	return terminalengine.Line{
+		Row:     row.Index,
+		Wrapped: row.Wrapped,
+		Runs:    exp.exportCells(row.Cells, row.Index, cursorRow, cursorCol),
+	}
+}
+
+// exportCells 把一行 cell 拷贝转换为 run 列表。cells 必须是不可变拷贝
+// （投影行或逐格收集的副本）；软光标处理与逐格读取时代完全一致。
+func (exp *exporter) exportCells(cells []headlessterm.Cell, row, cursorRow, cursorCol int) []terminalengine.CellRun {
 	var runs []terminalengine.CellRun
 	var current *terminalengine.CellRun
 
-	for c := 0; c < cols; {
-		cell := engine.Cell(row, c)
-		if cell == nil {
-			c++
-			continue
-		}
+	for c := 0; c < len(cells); {
+		cell := cells[c]
 		// Claude Code paints its own software caret as a reverse-video space.
 		// Some redraw paths leave an old, isolated caret behind. The terminal's
 		// authoritative cursor position identifies the one live caret; exporting
 		// any other plain reverse-space would turn it into a permanent ghost block
 		// on remote clients.
-		if staleSoftCursor(*cell, row, c, cursorRow, cursorCol) {
+		if staleSoftCursor(cell, row, c, cursorRow, cursorCol) {
 			c++
 			continue
 		}
 
-		exported := exp.exportCell(*cell)
+		exported := exp.exportCell(cell)
 		if exported.Width == 0 {
 			// spacer cell：跳过，不绘制。
 			c++
@@ -272,6 +288,51 @@ func exportCursorShape(s headlessterm.CursorStyle) terminalengine.CursorShape {
 		return terminalengine.CursorUnderline
 	default:
 		return terminalengine.CursorBlock
+	}
+}
+
+// exportProjectionCursor 把投影光标快照转换为导出光标。与 exportSnapshot
+// 中逐字段读取的结果一致。
+func exportProjectionCursor(c headlessterm.ProjectionCursor) terminalengine.Cursor {
+	return terminalengine.Cursor{
+		Row:     c.Row,
+		Col:     c.Col,
+		Visible: c.Visible,
+		Shape:   exportCursorShape(c.Style),
+		Blink:   c.Style == headlessterm.CursorStyleBlinkingBlock || c.Style == headlessterm.CursorStyleBlinkingBar || c.Style == headlessterm.CursorStyleBlinkingUnderline,
+	}
+}
+
+// exportProjectionModes 从投影的模式位掩码构建导出 Modes，与 exportModes
+// 逐项 HasMode 的结果一致。
+func exportProjectionModes(m headlessterm.TerminalMode) terminalengine.Modes {
+	has := func(mode headlessterm.TerminalMode) bool { return m&mode != 0 }
+
+	tracking := terminalengine.MouseNone
+	switch {
+	case has(headlessterm.ModeReportAllMouseMotion):
+		tracking = terminalengine.MouseAnyEvent
+	case has(headlessterm.ModeReportCellMouseMotion):
+		tracking = terminalengine.MouseVT200
+	case has(headlessterm.ModeReportMouseClicks):
+		tracking = terminalengine.MouseX10
+	}
+
+	encoding := terminalengine.MouseEncodingX10
+	switch {
+	case has(headlessterm.ModeSGRMouse):
+		encoding = terminalengine.MouseEncodingSGR
+	case has(headlessterm.ModeUTF8Mouse):
+		encoding = terminalengine.MouseEncodingUTF8
+	}
+
+	return terminalengine.Modes{
+		ApplicationCursor: has(headlessterm.ModeCursorKeys),
+		ApplicationKeypad: has(headlessterm.ModeKeypadApplication),
+		BracketedPaste:    has(headlessterm.ModeBracketedPaste),
+		MouseTracking:     tracking,
+		MouseEncoding:     encoding,
+		FocusReporting:    has(headlessterm.ModeReportFocusInOut),
 	}
 }
 
