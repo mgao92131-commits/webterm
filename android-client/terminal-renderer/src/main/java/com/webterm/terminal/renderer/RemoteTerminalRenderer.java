@@ -149,28 +149,25 @@ public final class RemoteTerminalRenderer {
         continue;
       }
 
-      // The overwhelming common case (shell output) is a run of unstyled ASCII.
-      // Keep all stateful/Unicode cases on the per-cell path below, but turn the
-      // safe case into one Canvas call instead of one call per character.
-      if (!palette.reverseVideo && canBatchPlainAscii(cell, styles, selection, historyLineId,
-          screenRow, col, cursor, cursorVisible)) {
+      // Keep Unicode/wide cells on the canonical path, but batch contiguous ASCII cells with
+      // the same style. Selection and cursor boundaries deliberately split runs.
+      if (startsBatchableAsciiRun(line, lineLength, selection, historyLineId, screenRow, col,
+          cursor, cursorVisible)) {
         int runStart = col;
+        int runStyleId = cell.styleId;
         plainAsciiRun.setLength(0);
         do {
           plainAsciiRun.append(line.at(col).text.charAt(0));
           col++;
-        } while (col < lineLength && canBatchPlainAscii(line.at(col), styles, selection,
-            historyLineId, screenRow, col, cursor, cursorVisible));
-        if (plainAsciiRun.length() >= 3) {
-          textPaint.setColor(resolveColor(palette.defaultFg));
-          textPaint.setFakeBoldText(false);
-          textPaint.setTextSkewX(0f);
-          canvas.drawText(plainAsciiRun, 0, plainAsciiRun.length(), runStart * cellWidth,
-              y + baselineOffset, textPaint);
+        } while (col < lineLength && line.at(col).styleId == runStyleId
+            && canBatchAscii(line.at(col), selection, historyLineId, screenRow, col, cursor,
+                cursorVisible));
+        if (drawAsciiRun(canvas, palette, styles.get(runStyleId), plainAsciiRun, runStart, y,
+            canvasBackground)) {
           continue;
         }
-        // Very short runs are not worth a special draw; render them through the
-        // canonical cell logic to keep the path simple.
+        // A scaling requirement discovered after measuring the complete run uses the canonical
+        // per-cell path so glyph hinting and placement remain pixel-identical.
         col = runStart;
       }
       int columnWidth = cell.isWideStart() ? 2 : 1;
@@ -186,16 +183,90 @@ public final class RemoteTerminalRenderer {
     }
   }
 
-  private static boolean canBatchPlainAscii(TerminalCell cell, Map<Integer, TerminalStyle> styles,
-                                            TerminalSelection selection, long historyLineId,
-                                            int screenRow, int col, TerminalCursor cursor,
-                                            boolean cursorVisible) {
-    if (cell == null || cell.isSpacer() || cell.isWideStart() || styles.get(cell.styleId) != null
+  private static boolean canBatchAscii(TerminalCell cell, TerminalSelection selection,
+                                       long historyLineId, int screenRow, int col,
+                                       TerminalCursor cursor, boolean cursorVisible) {
+    if (cell == null || cell.isSpacer() || cell.isWideStart()
         || cell.text == null || cell.text.length() != 1) return false;
     char c = cell.text.charAt(0);
     if (c < ' ' || c > '~') return false;
     if (isCellSelected(selection, historyLineId, screenRow, col, 1)) return false;
     return !cursorVisible || screenRow != cursor.row || cursor.col != col;
+  }
+
+  private static boolean startsBatchableAsciiRun(TerminalLine line, int lineLength,
+                                                 TerminalSelection selection, long historyLineId,
+                                                 int screenRow, int col, TerminalCursor cursor,
+                                                 boolean cursorVisible) {
+    if (col + 2 >= lineLength) return false;
+    int styleId = line.at(col).styleId;
+    for (int candidate = col; candidate < col + 3; candidate++) {
+      TerminalCell cell = line.at(candidate);
+      if (cell == null || cell.styleId != styleId
+          || !canBatchAscii(cell, selection, historyLineId, screenRow,
+          candidate, cursor, cursorVisible)) return false;
+    }
+    return true;
+  }
+
+  /** @return true if the run was drawn; false when glyph scaling requires the per-cell path. */
+  private boolean drawAsciiRun(Canvas canvas, TerminalPalette palette,
+                               @Nullable TerminalStyle style, CharSequence text, int startCol,
+                               float rowY, int canvasBackground) {
+    TerminalColor fgColor = style != null ? style.fg : palette.defaultFg;
+    TerminalColor bgColor = style != null ? style.bg : palette.defaultBg;
+    if (palette.reverseVideo ^ (style != null && style.reverse())) {
+      TerminalColor swap = fgColor;
+      fgColor = bgColor;
+      bgColor = swap;
+    }
+
+    int fg = resolveColor(fgColor);
+    boolean bold = style != null && (style.bold() || style.blinkSlow() || style.blinkFast());
+    if (bold && fgColor.kind == TerminalColor.Kind.INDEXED
+        && fgColor.index >= 0 && fgColor.index < 8) {
+      fg = TerminalVisualRules.ansiColor(fgColor.index + 8);
+    }
+    if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
+
+    textPaint.setColor(fg);
+    textPaint.setFakeBoldText(bold);
+    textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
+
+    float x = startCol * cellWidth;
+    float width = text.length() * cellWidth;
+    // The canonical cell path scales each glyph independently. Scaling a whole run changes
+    // hinting/anti-aliasing and can visibly shift glyphs, so only batch naturally cell-wide text.
+    if (style == null || !style.hidden()) {
+      float measuredWidth = textPaint.measureText(text, 0, text.length());
+      // Robolectric's legacy Paint shadow reports zero; keep the benchmark capable of observing
+      // draw batching while real Android Canvas uses the strict no-scaling check below.
+      if (measuredWidth > 0 && Math.abs(measuredWidth - width) > 0.01f) return false;
+    }
+    int bg = resolveColor(bgColor);
+    if (bg != canvasBackground) {
+      bgPaint.setColor(bg);
+      canvas.drawRect(x, rowY, x + width, rowY + lineHeight, bgPaint);
+    }
+
+    if (style == null || !style.hidden()) {
+      canvas.drawText(text, 0, text.length(), x, rowY + baselineOffset, textPaint);
+    }
+
+    if (style != null && (style.underline() || style.doubleUnderline())) {
+      textPaint.setColor(style.underlineColor != null ? resolveColor(style.underlineColor) : fg);
+      float underlineY = rowY + lineHeight - 2;
+      canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
+      if (style.doubleUnderline()) {
+        canvas.drawLine(x, underlineY - 3, x + width, underlineY - 3, textPaint);
+      }
+    }
+    if (style != null && style.strike()) {
+      textPaint.setColor(fg);
+      canvas.drawLine(x, rowY + lineHeight * 0.52f, x + width,
+          rowY + lineHeight * 0.52f, textPaint);
+    }
+    return true;
   }
 
   private void drawCell(Canvas canvas, TerminalPalette palette, Map<Integer, TerminalStyle> styles,

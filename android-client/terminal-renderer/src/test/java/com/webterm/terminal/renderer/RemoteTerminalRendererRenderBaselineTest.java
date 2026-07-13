@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -23,6 +24,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadow.api.Shadow;
+import org.robolectric.shadows.ShadowCanvas;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -69,7 +72,33 @@ public final class RemoteTerminalRendererRenderBaselineTest {
       "é", "à", "ñ", "ö", "û"};
 
   private enum Content {
-    ASCII, STYLED_ASCII, CJK, EMOJI, MIXED
+    ASCII, STYLED_ASCII, STYLED_RUNS, CJK, EMOJI, MIXED
+  }
+
+  @Test
+  public void styledAsciiRuns_areDrawnAsRuns() {
+    int cols = 200;
+    int rows = 50;
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    // Robolectric's legacy Paint shadow measures every ASCII glyph as exactly 1px.
+    renderer.setFontMetrics(1f, LINE_HEIGHT, BASELINE_OFFSET);
+    RemoteTerminalModel model = newModel(cols, rows, 100, Content.STYLED_RUNS);
+    Canvas canvas = new Canvas(Bitmap.createBitmap(cols,
+        (int) (rows * LINE_HEIGHT + renderer.getTopInset()), Bitmap.Config.ARGB_8888));
+
+    renderer.render(canvas, model.renderSnapshot(), new TerminalViewportState());
+
+    ShadowCanvas shadow = Shadow.extract(canvas);
+    assertTrue("styled ASCII should not draw one text event per cell",
+        shadow.getTextHistoryCount() < rows * cols / 4);
+    boolean sawMultiCellRun = false;
+    for (int i = 0; i < shadow.getTextHistoryCount(); i++) {
+      if (shadow.getDrawnTextEvent(i).text.length() >= 3) {
+        sawMultiCellRun = true;
+        break;
+      }
+    }
+    assertTrue("expected at least one batched styled text run", sawMultiCellRun);
   }
 
   @Test
@@ -80,9 +109,15 @@ public final class RemoteTerminalRendererRenderBaselineTest {
 
     for (int[] size : SIZES) {
       int cols = size[0], rows = size[1], history = size[2];
-      int widthPx = (int) Math.ceil(cols * CELL_WIDTH);
-      int heightPx = (int) Math.ceil(rows * LINE_HEIGHT + renderer.getTopInset());
       for (Content content : Content.values()) {
+        // Robolectric's legacy Paint measures ASCII as 1px. ASCII run scenarios therefore use
+        // that natural width to model the production monospace path; otherwise the renderer
+        // correctly detects a synthetic scaling requirement and falls back to per-cell drawing.
+        float scenarioCellWidth = content == Content.ASCII || content == Content.STYLED_RUNS
+            ? 1f : CELL_WIDTH;
+        renderer.setFontMetrics(scenarioCellWidth, LINE_HEIGHT, BASELINE_OFFSET);
+        int widthPx = (int) Math.ceil(cols * scenarioCellWidth);
+        int heightPx = (int) Math.ceil(rows * LINE_HEIGHT + renderer.getTopInset());
         RemoteTerminalModel model = newModel(cols, rows, history, content);
         RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
         assertNotNull(snapshot.screen);
@@ -118,7 +153,8 @@ public final class RemoteTerminalRendererRenderBaselineTest {
 
           // 正确性：渲染完成后 snapshot 与视口状态未被修改。
           assertEquals(history, snapshot.history.size());
-          assertEquals(scrolled ? (int) (history * LINE_HEIGHT) : 0, viewport.scrollOffsetPixels);
+          assertEquals(scrolled ? (int) (history * LINE_HEIGHT) : 0,
+              viewport.scrollOffsetPixels);
 
           report(cols, rows, history, content, scrolled ? "scrolled" : "follow-tail", times,
               allocPerOp);
@@ -165,6 +201,9 @@ public final class RemoteTerminalRendererRenderBaselineTest {
           break;
         case STYLED_ASCII:
           cells[col++] = asciiCell(rnd, 1 + rnd.nextInt(4));
+          break;
+        case STYLED_RUNS:
+          cells[col++] = asciiCell(rnd, 1 + (col / 12) % 4);
           break;
         case CJK:
           col = wide(cells, col, cols, cjkChar(rnd));
@@ -214,7 +253,8 @@ public final class RemoteTerminalRendererRenderBaselineTest {
   }
 
   private static boolean usesStyles(Content content) {
-    return content == Content.STYLED_ASCII || content == Content.MIXED;
+    return content == Content.STYLED_ASCII || content == Content.STYLED_RUNS
+        || content == Content.MIXED;
   }
 
   private static Map<Integer, TerminalStyle> styles() {

@@ -106,11 +106,55 @@ public final class TerminalHistoryTest {
     TerminalHistory h = history();
     h.append(line(1));
     h.append(line(2));
-    TerminalHistorySnapshot snap = h.snapshot();
-    assertEquals(2, snap.size());
     h.append(line(3));
-    assertEquals(2, snap.size()); // snapshot unaffected
-    assertEquals(3, h.size());
+    TerminalHistorySnapshot snap = h.snapshot();
+    assertEquals(3, snap.size());
+
+    h.append(line(4));
+    h.trimHeadUntil(2);
+    h.put(lineWithText(3, "z"));
+
+    // append/partial trim/replace must not mutate any chunk already published
+    // through an older RenderSnapshot.
+    assertEquals(3, snap.size());
+    assertEquals(1L, snap.lineAt(0).id);
+    assertEquals(2L, snap.lineAt(1).id);
+    assertEquals(3L, snap.lineAt(2).id);
+    assertEquals("a", snap.lineAt(2).at(0).text);
+    assertEquals(0, snap.findLineIndex(1));
+    assertEquals(2, snap.findLineIndex(3));
+  }
+
+  @Test
+  public void appendAfterPartialHeadTrim_startsNewChunkWithoutOverflow() {
+    TerminalHistory h = history();
+    for (long id = 1; id <= TerminalHistory.CHUNK_SIZE; id++) h.append(line(id));
+
+    h.trimHeadUntil(2);
+    h.append(line(TerminalHistory.CHUNK_SIZE + 1L));
+
+    assertEquals(TerminalHistory.CHUNK_SIZE, h.size());
+    assertEquals(2L, h.firstLineId());
+    assertEquals(TerminalHistory.CHUNK_SIZE + 1L, h.lastLineId());
+    TerminalHistorySnapshot snap = h.snapshot();
+    assertEquals(2L, snap.lineAt(0).id);
+    assertEquals(TerminalHistory.CHUNK_SIZE + 1L,
+        snap.lineAt(TerminalHistory.CHUNK_SIZE - 1).id);
+  }
+
+  @Test
+  public void snapshotIndexing_handlesPartialChunks() {
+    TerminalHistory h = history();
+    int count = TerminalHistory.CHUNK_SIZE * 3 + 17;
+    for (long id = 1; id <= count; id++) h.append(line(id));
+    h.trimHeadUntil(11);
+    TerminalHistorySnapshot snap = h.snapshot();
+
+    for (int index = 0; index < snap.size(); index++) {
+      long expectedId = index + 11L;
+      assertEquals(expectedId, snap.lineAt(index).id);
+      assertEquals(index, snap.findLineIndex(expectedId));
+    }
   }
 
   @Test
@@ -221,9 +265,13 @@ public final class TerminalHistoryTest {
   }
 
   private static TerminalLine line(long id) {
+    return lineWithText(id, "a");
+  }
+
+  private static TerminalLine lineWithText(long id, String text) {
     TerminalCell[] cells = new TerminalCell[10];
     for (int i = 0; i < cells.length; i++) {
-      cells[i] = new TerminalCell("a", (byte) 1, 0, 0);
+      cells[i] = new TerminalCell(text, (byte) 1, 0, 0);
     }
     return new TerminalLine(id, false, cells);
   }

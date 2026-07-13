@@ -95,6 +95,11 @@ public final class RemoteTerminalView extends View {
   private boolean scrolledWithFinger;
   private float lastPointerX;
   private float lastPointerY;
+  private boolean mouseMoveScheduled;
+  private int pendingMouseRow;
+  private int pendingMouseCol;
+  private int pendingMouseMeta;
+  private final Runnable mouseMoveRunnable = this::flushPendingMouseMove;
 
   public RemoteTerminalView(Context context) {
     this(context, null);
@@ -113,6 +118,7 @@ public final class RemoteTerminalView extends View {
   }
 
   public void setHost(@Nullable Host host) {
+    clearPendingMouseMove();
     this.host = host;
   }
 
@@ -174,6 +180,7 @@ public final class RemoteTerminalView extends View {
 
   @Override
   protected void onDetachedFromWindow() {
+    clearPendingMouseMove();
     stopSelection();
     super.onDetachedFromWindow();
   }
@@ -320,7 +327,12 @@ public final class RemoteTerminalView extends View {
     lastPointerY = event.getY();
     int col = Math.max(0, Math.min(snapshot.columns - 1, (int) (event.getX() / cellWidth())));
     int row = Math.max(0, Math.min(snapshot.rows - 1, (int) (event.getY() / lineHeight())));
-    int meta = event.getMetaState();
+    sendMouseAt(row, col, event.getMetaState(), button, wheelDelta, pressed);
+  }
+
+  private void sendMouseAt(int row, int col, int meta, @NonNull String button, int wheelDelta,
+                           boolean pressed) {
+    if (host == null) return;
     host.onMouse(row, col, button, wheelDelta,
         (meta & KeyEvent.META_SHIFT_ON) != 0,
         (meta & KeyEvent.META_ALT_ON) != 0,
@@ -329,8 +341,39 @@ public final class RemoteTerminalView extends View {
         pressed);
   }
 
+  private void scheduleMouseMove(MotionEvent event) {
+    if (model == null) return;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    if (snapshot.rows <= 0 || snapshot.columns <= 0) return;
+    lastPointerX = event.getX();
+    lastPointerY = event.getY();
+    pendingMouseCol = Math.max(0,
+        Math.min(snapshot.columns - 1, (int) (event.getX() / cellWidth())));
+    pendingMouseRow = Math.max(0,
+        Math.min(snapshot.rows - 1, (int) (event.getY() / lineHeight())));
+    pendingMouseMeta = event.getMetaState();
+    if (!mouseMoveScheduled) {
+      mouseMoveScheduled = true;
+      postOnAnimation(mouseMoveRunnable);
+    }
+  }
+
+  private void flushPendingMouseMove() {
+    if (!mouseMoveScheduled) return;
+    removeCallbacks(mouseMoveRunnable);
+    mouseMoveScheduled = false;
+    if (!isMouseTracking()) return;
+    sendMouseAt(pendingMouseRow, pendingMouseCol, pendingMouseMeta, "left", 0, true);
+  }
+
+  private void clearPendingMouseMove() {
+    removeCallbacks(mouseMoveRunnable);
+    mouseMoveScheduled = false;
+  }
+
   private boolean handleMouseEvent(MotionEvent event) {
     if (event.getActionMasked() == MotionEvent.ACTION_SCROLL && isMouseTracking()) {
+      flushPendingMouseMove();
       float wheel = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
       if (wheel != 0f) sendMouse(event, "wheel", wheel > 0 ? 1 : -1, true);
       return true;
@@ -338,13 +381,15 @@ public final class RemoteTerminalView extends View {
     if (!isMouseTracking()) return false;
     switch (event.getActionMasked()) {
       case MotionEvent.ACTION_DOWN:
+        flushPendingMouseMove();
         if (event.isButtonPressed(MotionEvent.BUTTON_PRIMARY)) sendMouse(event, "left", 0, true);
         return true;
       case MotionEvent.ACTION_UP:
+        flushPendingMouseMove();
         if (event.getButtonState() == 0) sendMouse(event, "left", 0, false);
         return true;
       case MotionEvent.ACTION_MOVE:
-        if (event.isButtonPressed(MotionEvent.BUTTON_PRIMARY)) sendMouse(event, "left", 0, true);
+        if (event.isButtonPressed(MotionEvent.BUTTON_PRIMARY)) scheduleMouseMove(event);
         return true;
       default:
         return true;

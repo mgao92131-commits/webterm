@@ -92,18 +92,16 @@ public final class TerminalHistory {
   public void append(TerminalLine line) {
     long bytes = lineByteEstimator.applyAsLong(line);
     HistoryChunk last = chunks.isEmpty() ? null : chunks.get(chunks.size() - 1);
-    if (last == null || last.size == CHUNK_SIZE) {
+    if (last == null || !last.canAppend()) {
       TerminalLine[] lines = new TerminalLine[CHUNK_SIZE];
       long[] lineBytes = new long[CHUNK_SIZE];
       lines[0] = line;
       lineBytes[0] = bytes;
       chunks.add(new HistoryChunk(lines, lineBytes, 0, 1, bytes));
     } else {
-      int idx = last.offset + last.size;
-      last.lines[idx] = line;
-      last.lineBytes[idx] = bytes;
-      last.size++;
-      last.estimatedBytes += bytes;
+      // Published snapshots may still reference last. Replace it with a new
+      // chunk instead of mutating the shared arrays/size in place.
+      chunks.set(chunks.size() - 1, last.appending(line, bytes));
     }
     size++;
     estimatedBytes += bytes;
@@ -205,6 +203,7 @@ public final class TerminalHistory {
     }
     return new TerminalHistorySnapshot(
         new ArrayList<>(chunks),
+        chunkStartIndices(),
         size,
         chunks.get(0).firstId(),
         chunks.get(chunks.size() - 1).lastId());
@@ -258,46 +257,37 @@ public final class TerminalHistory {
 
   private void removeFirstLines(HistoryChunk chunk, int count) {
     if (count <= 0 || count > chunk.size) return;
-    long removedBytes = 0;
-    for (int i = 0; i < count; i++) {
-      removedBytes += chunk.lineBytes[chunk.offset + i];
-    }
-    chunk.offset += count;
-    chunk.size -= count;
-    chunk.estimatedBytes -= removedBytes;
+    long removedBytes = chunk.firstBytes(count);
     size -= count;
     estimatedBytes -= removedBytes;
-    if (chunk.size == 0) {
+    if (count == chunk.size) {
       chunks.remove(0);
+    } else {
+      chunks.set(0, chunk.droppingFirst(count, removedBytes));
     }
   }
 
   private void removeLastLines(HistoryChunk chunk, int count) {
     if (count <= 0 || count > chunk.size) return;
-    long removedBytes = 0;
-    int start = chunk.offset + chunk.size - count;
-    for (int i = 0; i < count; i++) {
-      removedBytes += chunk.lineBytes[start + i];
-    }
-    chunk.size -= count;
-    chunk.estimatedBytes -= removedBytes;
+    long removedBytes = chunk.lastBytes(count);
     size -= count;
     estimatedBytes -= removedBytes;
-    if (chunk.size == 0) {
+    if (count == chunk.size) {
       chunks.remove(chunks.size() - 1);
+    } else {
+      chunks.set(chunks.size() - 1, chunk.droppingLast(count, removedBytes));
     }
   }
 
   private void replaceAt(int index, TerminalLine line) {
     int remaining = index;
-    for (HistoryChunk chunk : chunks) {
+    for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
+      HistoryChunk chunk = chunks.get(chunkIndex);
       if (remaining < chunk.size) {
         int local = chunk.offset + remaining;
         long oldBytes = chunk.lineBytes[local];
         long newBytes = lineByteEstimator.applyAsLong(line);
-        chunk.lines[local] = line;
-        chunk.lineBytes[local] = newBytes;
-        chunk.estimatedBytes += newBytes - oldBytes;
+        chunks.set(chunkIndex, chunk.replacing(remaining, line, newBytes));
         estimatedBytes += newBytes - oldBytes;
         return;
       }
@@ -338,13 +328,26 @@ public final class TerminalHistory {
     return sum;
   }
 
-  /** 内部 chunk。内容创建后不变，offset/size 支持头部/尾部的局部删除。 */
+  private int[] chunkStartIndices() {
+    int[] starts = new int[chunks.size()];
+    int start = 0;
+    for (int i = 0; i < chunks.size(); i++) {
+      starts[i] = start;
+      start += chunks.get(i).size;
+    }
+    return starts;
+  }
+
+  /**
+   * 内部不可变 chunk。数组在构造完成后永不修改；所有局部 append/trim/replace
+   * 都创建一个新 chunk，从而保证已发布的 TerminalHistorySnapshot 永远稳定。
+   */
   static final class HistoryChunk {
     final TerminalLine[] lines;
     final long[] lineBytes;
-    int offset;
-    int size;
-    long estimatedBytes;
+    final int offset;
+    final int size;
+    final long estimatedBytes;
 
     HistoryChunk(TerminalLine[] lines, long[] lineBytes, int offset, int size, long estimatedBytes) {
       this.lines = lines;
@@ -377,6 +380,54 @@ public final class TerminalHistory {
         else hi = mid - 1;
       }
       return -1;
+    }
+
+    boolean canAppend() {
+      return offset + size < lines.length;
+    }
+
+    HistoryChunk appending(TerminalLine line, long bytes) {
+      TerminalLine[] newLines = lines.clone();
+      long[] newLineBytes = lineBytes.clone();
+      int index = offset + size;
+      newLines[index] = line;
+      newLineBytes[index] = bytes;
+      return new HistoryChunk(newLines, newLineBytes, offset, size + 1,
+          estimatedBytes + bytes);
+    }
+
+    HistoryChunk replacing(int localIndex, TerminalLine line, long bytes) {
+      TerminalLine[] newLines = lines.clone();
+      long[] newLineBytes = lineBytes.clone();
+      int index = offset + localIndex;
+      long oldBytes = newLineBytes[index];
+      newLines[index] = line;
+      newLineBytes[index] = bytes;
+      return new HistoryChunk(newLines, newLineBytes, offset, size,
+          estimatedBytes + bytes - oldBytes);
+    }
+
+    HistoryChunk droppingFirst(int count, long removedBytes) {
+      return new HistoryChunk(lines, lineBytes, offset + count, size - count,
+          estimatedBytes - removedBytes);
+    }
+
+    HistoryChunk droppingLast(int count, long removedBytes) {
+      return new HistoryChunk(lines, lineBytes, offset, size - count,
+          estimatedBytes - removedBytes);
+    }
+
+    long firstBytes(int count) {
+      long result = 0;
+      for (int i = 0; i < count; i++) result += lineBytes[offset + i];
+      return result;
+    }
+
+    long lastBytes(int count) {
+      long result = 0;
+      int start = offset + size - count;
+      for (int i = 0; i < count; i++) result += lineBytes[start + i];
+      return result;
     }
   }
 }

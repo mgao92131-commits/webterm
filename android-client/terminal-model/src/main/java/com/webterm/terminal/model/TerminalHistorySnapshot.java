@@ -11,16 +11,18 @@ import java.util.List;
 public final class TerminalHistorySnapshot {
 
   private static final TerminalHistorySnapshot EMPTY =
-      new TerminalHistorySnapshot(Collections.emptyList(), 0, -1, -1);
+      new TerminalHistorySnapshot(Collections.emptyList(), new int[0], 0, -1, -1);
 
   private final List<TerminalHistory.HistoryChunk> chunks;
+  private final int[] chunkStartIndices;
   private final int size;
   private final long firstLineId;
   private final long lastLineId;
 
-  TerminalHistorySnapshot(List<TerminalHistory.HistoryChunk> chunks, int size,
+  TerminalHistorySnapshot(List<TerminalHistory.HistoryChunk> chunks, int[] chunkStartIndices, int size,
                           long firstLineId, long lastLineId) {
-    this.chunks = chunks;
+    this.chunks = Collections.unmodifiableList(new ArrayList<>(chunks));
+    this.chunkStartIndices = chunkStartIndices.clone();
     this.size = size;
     this.firstLineId = firstLineId;
     this.lastLineId = lastLineId;
@@ -46,17 +48,13 @@ public final class TerminalHistorySnapshot {
     return lastLineId;
   }
 
-  /** 按历史索引（0=最旧）O(chunk count) 取行。 */
+  /** 按历史索引（0=最旧）O(log chunk count) 取行。 */
   public TerminalLine lineAt(int index) {
     if (index < 0 || index >= size) {
       throw new IndexOutOfBoundsException("index=" + index + " size=" + size);
     }
-    int remaining = index;
-    for (TerminalHistory.HistoryChunk chunk : chunks) {
-      if (remaining < chunk.size) return chunk.lineAt(remaining);
-      remaining -= chunk.size;
-    }
-    throw new AssertionError();
+    int chunkIndex = chunkIndexForHistoryIndex(index);
+    return chunks.get(chunkIndex).lineAt(index - chunkStartIndices[chunkIndex]);
   }
 
   /**
@@ -76,7 +74,7 @@ public final class TerminalHistorySnapshot {
         lo = mid + 1;
       } else {
         int local = chunk.findLocalIndex(lineId);
-        return local >= 0 ? local + sizeBefore(mid) : -1;
+        return local >= 0 ? local + chunkStartIndices[mid] : -1;
       }
     }
     return -1;
@@ -94,11 +92,21 @@ public final class TerminalHistorySnapshot {
     return map;
   }
 
-  private int sizeBefore(int chunkIndex) {
-    int sum = 0;
-    for (int i = 0; i < chunkIndex; i++) {
-      sum += chunks.get(i).size;
+  private int chunkIndexForHistoryIndex(int index) {
+    int lo = 0;
+    int hi = chunkStartIndices.length - 1;
+    while (lo <= hi) {
+      int mid = (lo + hi) >>> 1;
+      int start = chunkStartIndices[mid];
+      int end = start + chunks.get(mid).size;
+      if (index < start) {
+        hi = mid - 1;
+      } else if (index >= end) {
+        lo = mid + 1;
+      } else {
+        return mid;
+      }
     }
-    return sum;
+    throw new AssertionError("missing chunk for history index " + index);
   }
 }
