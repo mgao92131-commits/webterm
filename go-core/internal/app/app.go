@@ -11,6 +11,7 @@ import (
 	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/filesend"
+	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/session"
 )
@@ -20,6 +21,7 @@ type App struct {
 	version         string
 	sessions        *session.Manager
 	fileSend        *filesend.Service
+	fileUpload      *fileupload.Service
 	agentNotify     *agentnotify.Dispatcher
 	logger          *logs.Logger
 	mu              sync.RWMutex
@@ -64,6 +66,11 @@ func New(cfg config.Config, version string) *App {
 	fileSendSvc.SetSenderRegisteredHandler(func() {
 		notificationDispatcher.ReplayPending(context.Background())
 	})
+	// 上传服务与 filesend 平行：由 app 创建和拥有，路由层（direct/relay）注入调用。
+	fileUploadSvc := &fileupload.Service{
+		Sessions:      manager,
+		MaxUploadSize: cfg.Upload.MaxBytes,
+	}
 	application := &App{
 		cfg:         cfg,
 		version:     version,
@@ -72,6 +79,7 @@ func New(cfg config.Config, version string) *App {
 		socketPath:  socketPath,
 		sessions:    manager,
 		fileSend:    fileSendSvc,
+		fileUpload:  fileUploadSvc,
 		agentNotify: notificationDispatcher,
 		direct: DirectStatus{
 			Listening: false,
@@ -154,6 +162,9 @@ func (app *App) ApplyRuntimeConfig(cfg config.Config) {
 		CWD:     cfg.Shell.CWD,
 		Command: cfg.Shell.Command,
 	})
+	if app.fileUpload != nil {
+		app.fileUpload.SetMaxUploadSize(cfg.Upload.MaxBytes)
+	}
 	app.Log("info", "runtime", fmt.Sprintf("runtime applied mode=%s", cfg.Mode))
 }
 
@@ -173,6 +184,10 @@ func (app *App) Sessions() *session.Manager {
 
 func (app *App) FileSendService() *filesend.Service {
 	return app.fileSend
+}
+
+func (app *App) FileUploadService() *fileupload.Service {
+	return app.fileUpload
 }
 
 func (app *App) AgentNotificationDispatcher() *agentnotify.Dispatcher {

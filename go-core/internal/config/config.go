@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 const (
@@ -18,6 +19,10 @@ const (
 
 const RedactedSecret = "********"
 
+// DefaultMaxUploadBytes 是单个上传文件的默认大小上限（100 MiB），
+// 可用 WEBTERM_MAX_UPLOAD_BYTES 覆盖；Agent 是最终限制执行者。
+const DefaultMaxUploadBytes int64 = 104857600
+
 type Options struct {
 	Mode       string
 	ConfigPath string
@@ -29,6 +34,7 @@ type Config struct {
 	Relay   RelayConfig   `json:"relay"`
 	Control ControlConfig `json:"control"`
 	Shell   ShellConfig   `json:"shell"`
+	Upload  UploadConfig  `json:"upload"`
 }
 
 type DirectConfig struct {
@@ -52,6 +58,12 @@ type ControlConfig struct {
 type ShellConfig struct {
 	Command string `json:"command"`
 	CWD     string `json:"cwd"`
+}
+
+// UploadConfig 是 Android/浏览器 -> Agent 文件上传的限制配置。
+type UploadConfig struct {
+	// MaxBytes 是单个上传的最大字节数；<= 0 表示不限制。
+	MaxBytes int64 `json:"maxBytes"`
 }
 
 func (cfg Config) Redacted() Config {
@@ -181,6 +193,9 @@ func defaultConfig() Config {
 		Shell: ShellConfig{
 			CWD: cwd,
 		},
+		Upload: UploadConfig{
+			MaxBytes: DefaultMaxUploadBytes,
+		},
 	}
 }
 
@@ -216,6 +231,9 @@ func envConfig() Config {
 		},
 		Shell: ShellConfig{
 			Command: env("WEBTERM_SHELL"),
+		},
+		Upload: UploadConfig{
+			MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES"),
 		},
 	}
 }
@@ -257,9 +275,25 @@ func mergeConfig(base Config, override Config) Config {
 	if override.Shell.CWD != "" {
 		base.Shell.CWD = override.Shell.CWD
 	}
+	if override.Upload.MaxBytes > 0 {
+		base.Upload.MaxBytes = override.Upload.MaxBytes
+	}
 	return base
 }
 
 func env(key string) string {
 	return os.Getenv(key)
+}
+
+// envInt64 读取整型环境变量；缺失、非法或非正值返回 0（表示“未覆盖”，由默认值兜底）。
+func envInt64(key string) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
 }

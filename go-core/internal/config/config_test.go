@@ -66,6 +66,32 @@ func TestLoadDefaultsRelayProtocolToV2(t *testing.T) {
 	}
 }
 
+func TestLoadMaxUploadBytes(t *testing.T) {
+	clearConfigEnv(t)
+	cfg := Load(Options{})
+	if cfg.Upload.MaxBytes != DefaultMaxUploadBytes {
+		t.Fatalf("default Upload.MaxBytes = %d, want %d", cfg.Upload.MaxBytes, DefaultMaxUploadBytes)
+	}
+
+	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "20971520")
+	cfg = Load(Options{})
+	if cfg.Upload.MaxBytes != 20971520 {
+		t.Fatalf("env Upload.MaxBytes = %d, want 20971520", cfg.Upload.MaxBytes)
+	}
+
+	// 非法或非正值视为未覆盖，回落默认值。
+	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "not-a-number")
+	cfg = Load(Options{})
+	if cfg.Upload.MaxBytes != DefaultMaxUploadBytes {
+		t.Fatalf("invalid env Upload.MaxBytes = %d, want default %d", cfg.Upload.MaxBytes, DefaultMaxUploadBytes)
+	}
+	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "-1")
+	cfg = Load(Options{})
+	if cfg.Upload.MaxBytes != DefaultMaxUploadBytes {
+		t.Fatalf("negative env Upload.MaxBytes = %d, want default %d", cfg.Upload.MaxBytes, DefaultMaxUploadBytes)
+	}
+}
+
 func TestLoadFlagModeOverridesEnv(t *testing.T) {
 	t.Setenv("WEBTERM_MODE", ModeRelay)
 	cfg := Load(Options{Mode: ModeDirect})
@@ -184,6 +210,7 @@ func clearConfigEnv(t *testing.T) {
 		"DEVICE_NAME",
 		"WEBTERM_RELAY_PROTOCOL",
 		"WEBTERM_SHELL",
+		"WEBTERM_MAX_UPLOAD_BYTES",
 	} {
 		t.Setenv(key, "")
 	}

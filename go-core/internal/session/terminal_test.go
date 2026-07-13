@@ -132,6 +132,29 @@ func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
 	}
 }
 
+func TestSnapshotUploadCWDUsesHookMetaDirectory(t *testing.T) {
+	initial := t.TempDir()
+	target := t.TempDir()
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     initial,
+		Command: "/bin/sh",
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession: %v", err)
+	}
+	defer terminal.Close()
+
+	terminal.ApplyHookEvent(protocol.HookEvent{Type: "meta", CWD: target, LastCommand: "cd target"})
+	cwd, err := terminal.SnapshotUploadCWD()
+	if err != nil {
+		t.Fatalf("SnapshotUploadCWD: %v", err)
+	}
+	if cwd != target {
+		t.Fatalf("cwd = %q, want hook-reported %q", cwd, target)
+	}
+}
+
 func TestTerminalSessionBroadcastsOnCwdChange(t *testing.T) {
 	var broadcastCount int
 	terminal, err := NewTerminalSession(TerminalOptions{

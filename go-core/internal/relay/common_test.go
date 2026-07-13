@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/session"
 )
 
@@ -24,6 +26,41 @@ func TestAgentWebSocketURL(t *testing.T) {
 		if got != want {
 			t.Fatalf("agentWebSocketURL(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestNewV2InjectsFileUploadService(t *testing.T) {
+	cfg := config.Config{
+		Mode:  config.ModeRelay,
+		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
+		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
+	}
+	application := app.New(cfg, "test")
+	client := NewV2(cfg.Relay, application)
+
+	header := http.Header{}
+	header.Set("X-File-Name", "demo.txt")
+	header.Set("X-File-Size", "4")
+	result, err := client.router.RouteHTTPv2(
+		http.MethodPost,
+		"/api/sessions/missing/upload",
+		header,
+		bytes.NewReader([]byte("data")),
+	)
+	if err != nil {
+		t.Fatalf("upload route returned error: %v", err)
+	}
+	if result.StatusCode != http.StatusNotFound {
+		t.Fatalf("upload status = %d, want 404; body=%s", result.StatusCode, result.Data)
+	}
+	var response struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(result.Data, &response); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if response.Code != string(fileupload.CodeSessionNotFound) {
+		t.Fatalf("upload code = %q, want %q", response.Code, fileupload.CodeSessionNotFound)
 	}
 }
 

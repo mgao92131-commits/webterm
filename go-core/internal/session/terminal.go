@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -188,6 +190,35 @@ func (terminal *TerminalSession) Info() Info {
 		CreatedAt:         terminal.createdAt,
 		LastActiveAt:      terminal.activeAt,
 	}
+}
+
+// SnapshotUploadCWD 返回上传开始时固定的会话工作目录快照。
+// 优先使用 liveCwd（OSC 7 或 hook meta 事件上报的实时目录），未上报时回退到
+// 启动时已验证的初始 CWD；会话已关闭、无已知目录或目录已失效时返回错误，
+// 绝不回退到用户 Home 目录。调用方应在上传开始时调用一次并固定结果。
+func (terminal *TerminalSession) SnapshotUploadCWD() (string, error) {
+	terminal.mu.RLock()
+	status := terminal.status
+	cwd := terminal.liveCwd
+	if cwd == "" {
+		cwd = terminal.cwd
+	}
+	terminal.mu.RUnlock()
+
+	if status == StatusClosed {
+		return "", errors.New("session is closed")
+	}
+	if cwd == "" {
+		return "", errors.New("session has no known working directory")
+	}
+	info, err := os.Stat(cwd)
+	if err != nil {
+		return "", fmt.Errorf("session working directory unavailable: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("session working directory is not a directory: %s", cwd)
+	}
+	return cwd, nil
 }
 
 func (terminal *TerminalSession) lastInputText() string {
