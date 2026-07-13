@@ -117,6 +117,27 @@ public final class TerminalHistory {
   }
 
   /**
+   * 插入或替换一行。若 line id 已存在则原地替换（id 不变），否则追加到尾部。
+   * 替换只应在同 id 内容更新时使用，以保持 LineID 升序不变。
+   */
+  public boolean put(TerminalLine line) {
+    int index = findLineIndex(line.id);
+    if (index >= 0) {
+      replaceAt(index, line);
+      return false;
+    }
+    append(line);
+    return true;
+  }
+
+  /** 清空全部历史。O(chunks)。 */
+  public void clear() {
+    chunks.clear();
+    size = 0;
+    estimatedBytes = 0;
+  }
+
+  /**
    * 在头部 prepend 一页。lines 必须按 lineId 升序，且全部 id 小于当前 {@link #firstLineId()}。
    * O(lines + chunks) 用于复制引用。
    */
@@ -265,6 +286,24 @@ public final class TerminalHistory {
     if (chunk.size == 0) {
       chunks.remove(chunks.size() - 1);
     }
+  }
+
+  private void replaceAt(int index, TerminalLine line) {
+    int remaining = index;
+    for (HistoryChunk chunk : chunks) {
+      if (remaining < chunk.size) {
+        int local = chunk.offset + remaining;
+        long oldBytes = chunk.lineBytes[local];
+        long newBytes = lineByteEstimator.applyAsLong(line);
+        chunk.lines[local] = line;
+        chunk.lineBytes[local] = newBytes;
+        chunk.estimatedBytes += newBytes - oldBytes;
+        estimatedBytes += newBytes - oldBytes;
+        return;
+      }
+      remaining -= chunk.size;
+    }
+    throw new AssertionError();
   }
 
   /** 判断是否能从头部（更旧端）删除一行而不触及 anchor。 */

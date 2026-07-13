@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -26,7 +25,7 @@ public final class RemoteTerminalModel {
   public int columns;
   public ScreenSnapshot.BufferKind activeBuffer;
 
-  private final NavigableMap<Long, TerminalLine> historyCache = new TreeMap<>();
+  private final TerminalHistory history;
   private TerminalLine[] screen;
 
   private long firstAvailableHistoryId;
@@ -72,6 +71,7 @@ public final class RemoteTerminalModel {
     this.softHistoryByteLimit = budget.softBytes;
     this.hardHistoryByteLimit = budget.hardBytes;
     this.activeBuffer = ScreenSnapshot.BufferKind.MAIN;
+    this.history = new TerminalHistory(RemoteTerminalModel::estimateHistoryLineBytes);
   }
 
   public synchronized ModelChange applySnapshot(ScreenSnapshot snapshot) {
@@ -101,7 +101,7 @@ public final class RemoteTerminalModel {
       this.links.putAll(snapshot.links);
     }
 
-    this.historyCache.clear();
+    this.history.clear();
     this.historyBytes = 0;
     this.firstAvailableHistoryId = snapshot.history.firstAvailableLineId;
     this.hasMoreHistoryBefore = snapshot.history.hasMoreBefore;
@@ -209,22 +209,25 @@ public final class RemoteTerminalModel {
     if (layoutEpoch != page.layoutEpoch) {
       return ModelChange.none();
     }
-    int historySizeBefore = historyCache.size();
+    int historySizeBefore = history.size();
     // 可见锚点：prepend 前缓存中最旧的行。用户向上翻页时视口钉在已缓存内容上，
     // 该行即翻页前可见窗口的顶部边界；驱逐必须保护它和刚加载的新页。
-    long anchorId = historyCache.isEmpty() ? -1 : historyCache.firstKey();
+    long anchorId = history.isEmpty() ? -1 : history.firstLineId();
+    List<TerminalLine> toPrepend = new ArrayList<>();
     for (TerminalLine line : page.lines) {
-      if (line.id != 0 && !historyCache.containsKey(line.id)) {
-        putHistoryLine(line);
+      if (line.id != 0 && history.findLineIndex(line.id) < 0) {
+        toPrepend.add(line);
       }
     }
+    history.prepend(toPrepend);
+    historyBytes += estimateBytes(toPrepend);
     styles.putAll(page.styles);
     links.putAll(page.links);
     this.firstAvailableHistoryId = page.firstAvailableLineId;
     this.hasMoreHistoryBefore = page.hasMoreBefore;
-    if (anchorId < 0 && !historyCache.isEmpty()) {
+    if (anchorId < 0 && !history.isEmpty()) {
       // prepend 前缓存为空：可见锚点是实时屏幕，保护新页中靠近屏幕的一侧。
-      anchorId = historyCache.lastKey();
+      anchorId = history.lastLineId();
     }
     evictHistoryAfterPrepend(anchorId);
     // The new rows are physically inserted above all cached rows. In the
@@ -232,7 +235,7 @@ public final class RemoteTerminalModel {
     // grow by the same amount, so old lines keep their screen Y with zero
     // viewport offset compensation. This count is reported separately from
     // tail appends and must never drive offset adjustments.
-    int insertedHistoryLines = Math.max(0, historyCache.size() - historySizeBefore);
+    int insertedHistoryLines = Math.max(0, history.size() - historySizeBefore);
     publishRenderSnapshot(true, !page.styles.isEmpty(), !page.links.isEmpty());
     return new ModelChange(false, null, true, false, false, false, 0, insertedHistoryLines);
   }
@@ -240,14 +243,8 @@ public final class RemoteTerminalModel {
   public synchronized ModelChange trimHistory(long trimLayoutEpoch, long firstAvailableLineId) {
     if (layoutEpoch != trimLayoutEpoch) return ModelChange.none();
     this.firstAvailableHistoryId = firstAvailableLineId;
-    Iterator<Map.Entry<Long, TerminalLine>> it = historyCache.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<Long, TerminalLine> entry = it.next();
-      if (entry.getKey() < firstAvailableLineId) {
-        historyBytes -= estimateHistoryLineBytes(entry.getValue());
-        it.remove();
-      }
-    }
+    history.trimHeadUntil(firstAvailableLineId);
+    recalculateHistoryBytes();
     publishRenderSnapshot(true, false, false);
     return new ModelChange(false, null, true, false, false, false);
   }
@@ -257,7 +254,7 @@ public final class RemoteTerminalModel {
     layoutEpoch = 0;
     screenRevision = 0;
     screen = null;
-    historyCache.clear();
+    history.clear();
     historyBytes = 0;
     styles.clear();
     links.clear();
@@ -278,23 +275,26 @@ public final class RemoteTerminalModel {
     return screen != null ? screen.clone() : null;
   }
 
+  /**
+   * 兼容过渡方法：按 id 升序导出历史副本。Renderer/View 迁移完成后删除。
+   */
   public synchronized NavigableMap<Long, TerminalLine> historyCache() {
-    return new TreeMap<>(historyCache);
+    return new TreeMap<>(history.asMap());
   }
 
-  /** 历史行数。比 {@link #historyCache()} 轻量，不需要拷贝整棵 TreeMap。 */
+  /** 历史行数。不需要拷贝全部历史。 */
   public synchronized int historySize() {
-    return historyCache.size();
+    return history.size();
   }
 
-  /** 本地缓存最旧行 id；缓存为空时返回 -1。分页请求用它作 beforeId，避免全量 TreeMap 拷贝。 */
+  /** 本地缓存最旧行 id；缓存为空时返回 -1。分页请求用它作 beforeId。 */
   public synchronized long firstCachedHistoryId() {
-    return historyCache.isEmpty() ? -1 : historyCache.firstKey();
+    return history.firstLineId();
   }
 
   /** 本地缓存最新行 id；缓存为空时返回 -1。 */
   public synchronized long lastCachedHistoryId() {
-    return historyCache.isEmpty() ? -1 : historyCache.lastKey();
+    return history.lastLineId();
   }
 
   /** Approximate bytes retained by the Android-side history cache. */
@@ -364,12 +364,37 @@ public final class RemoteTerminalModel {
     return new TerminalLine(line.id, line.wrapped, cells);
   }
 
-  /** Inserts or replaces one cached history line and updates its byte budget in O(1). */
+  /**
+   * 插入或替换一行历史。普通 tail append 走 O(1) 快速路径；
+   * 非递增 id（replace/resync）走 O(log n) 查找路径。
+   */
   private boolean putHistoryLine(TerminalLine line) {
     TerminalLine normalized = padOrCopyLine(line, columns);
-    TerminalLine previous = historyCache.put(normalized.id, normalized);
-    historyBytes += estimateHistoryLineBytes(normalized) - estimateHistoryLineBytes(previous);
-    return previous == null;
+    if (!history.isEmpty() && normalized.id <= history.lastLineId()) {
+      boolean inserted = history.put(normalized);
+      if (inserted) {
+        historyBytes += estimateHistoryLineBytes(normalized);
+      } else {
+        // replace: bytes updated inside TerminalHistory, recalibrate our external counter
+        recalculateHistoryBytes();
+      }
+      return inserted;
+    }
+    history.append(normalized);
+    historyBytes += estimateHistoryLineBytes(normalized);
+    return true;
+  }
+
+  private long estimateBytes(List<TerminalLine> lines) {
+    long sum = 0;
+    for (TerminalLine line : lines) {
+      sum += estimateHistoryLineBytes(line);
+    }
+    return sum;
+  }
+
+  private void recalculateHistoryBytes() {
+    historyBytes = history.estimatedBytes();
   }
 
   /**
@@ -380,12 +405,10 @@ public final class RemoteTerminalModel {
     if (!overHardLimits()) {
       return;
     }
-    while (historyCache.size() > 1 && overSoftTargets()) {
-      java.util.Map.Entry<Long, TerminalLine> removed = historyCache.pollFirstEntry();
-      if (removed != null) {
-        historyBytes -= estimateHistoryLineBytes(removed.getValue());
-      }
-    }
+    int targetLines = Math.max(softHistoryLimit, hardHistoryLimit / 2);
+    long targetBytes = softHistoryByteLimit > 0 ? softHistoryByteLimit : Long.MAX_VALUE;
+    history.trimHeadToBudget(targetLines, targetBytes);
+    recalculateHistoryBytes();
   }
 
   /**
@@ -401,40 +424,31 @@ public final class RemoteTerminalModel {
    *      （当前可见）的行；锚点本身永不驱逐，宁可暂时超预算。
    */
   private void evictHistoryAfterPrepend(long anchorId) {
-    if (!overHardLimits()) {
+    if (!overHardLimits() || anchorId < 0) {
       return;
     }
-    while (historyCache.size() > 1 && overSoftTargets()) {
-      java.util.Map.Entry<Long, TerminalLine> newest = historyCache.lastEntry();
-      if (newest != null && newest.getKey() > anchorId) {
-        historyBytes -= estimateHistoryLineBytes(newest.getValue());
-        historyCache.pollLastEntry();
-        continue;
-      }
-      if (!historyCache.isEmpty() && historyCache.firstKey() < anchorId) {
-        historyBytes -= estimateHistoryLineBytes(historyCache.firstEntry().getValue());
-        historyCache.pollFirstEntry();
-        continue;
-      }
-      break;
-    }
+    int targetLines = Math.max(softHistoryLimit, hardHistoryLimit / 2);
+    long targetBytes = softHistoryByteLimit > 0 ? softHistoryByteLimit : Long.MAX_VALUE;
+    history.trimTailToBudget(targetLines, targetBytes, anchorId);
+    recalculateHistoryBytes();
   }
 
   private boolean overHardLimits() {
-    return historyCache.size() > hardHistoryLimit
+    return history.size() > hardHistoryLimit
         || (hardHistoryByteLimit > 0 && historyBytes > hardHistoryByteLimit);
   }
 
   private boolean overSoftTargets() {
     int targetLines = Math.max(softHistoryLimit, hardHistoryLimit / 2);
     long targetBytes = softHistoryByteLimit > 0 ? softHistoryByteLimit : Long.MAX_VALUE;
-    return historyCache.size() > targetLines || historyBytes > targetBytes;
+    return history.size() > targetLines || historyBytes > targetBytes;
   }
 
   /**
    * 单行近似字节（JVM 口径，HotSpot 17 + compressed oops）：
-   *   - 112B 基线 = TerminalLine 对象（32B）+ cells 数组头（16B）+ TreeMap.Entry（40B）
-   *     + Long key（24B）；
+   *   - 48B 基线 = TerminalLine 对象（32B）+ cells 数组头（16B）。
+   *     旧 TreeMap 实现中 112B 还包含 TreeMap.Entry（40B）+ Long key（24B）共 64B
+   *     映射开销；TerminalHistory 分段结构下这部分开销几乎为 0，因此基线下调。
    *   - 每 cell 4B 数组槽 + 64B 对象开销（TerminalCell 32B + String 24B + 对齐）；
    *   - 文本按 UTF-16 2B/char 计（LATIN1 字符串实际约 1B/char，略有高估）。
    * representative 样本实测（80/200 列 ASCII/宽字符/多样式，见
@@ -444,7 +458,7 @@ public final class RemoteTerminalModel {
    */
   private static long estimateHistoryLineBytes(TerminalLine line) {
     if (line == null) return 0;
-    long bytes = 112 + line.cells.length * 4L;
+    long bytes = 48 + line.cells.length * 4L;
     for (TerminalCell cell : line.cells) {
       if (cell == null) continue;
       bytes += 64;
@@ -463,8 +477,11 @@ public final class RemoteTerminalModel {
                                      boolean linksChanged) {
     RenderSnapshot previous = renderSnapshot;
     TerminalLine[] screenCopy = screen != null ? screen.clone() : null;
+    TerminalHistorySnapshot historySnapshot = historyChanged
+        ? history.snapshot()
+        : previous.history;
     List<TerminalLine> historyLines = historyChanged
-        ? Collections.unmodifiableList(new ArrayList<>(historyCache.values()))
+        ? toLineList(historySnapshot)
         : previous.historyLines;
     Map<Integer, TerminalStyle> stylesCopy = stylesChanged
         ? Collections.unmodifiableMap(new HashMap<>(styles))
@@ -473,8 +490,18 @@ public final class RemoteTerminalModel {
         ? Collections.unmodifiableMap(new HashMap<>(links))
         : previous.links;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
-        activeBuffer, screenCopy, historyLines, cursor, modes, palette, stylesCopy, linksCopy,
-        title, workingDirectory, firstAvailableHistoryId, hasMoreHistoryBefore);
+        activeBuffer, screenCopy, historySnapshot, historyLines, cursor, modes, palette,
+        stylesCopy, linksCopy, title, workingDirectory, firstAvailableHistoryId,
+        hasMoreHistoryBefore);
+  }
+
+  private static List<TerminalLine> toLineList(TerminalHistorySnapshot snapshot) {
+    if (snapshot.isEmpty()) return Collections.emptyList();
+    List<TerminalLine> list = new ArrayList<>(snapshot.size());
+    for (int i = 0; i < snapshot.size(); i++) {
+      list.add(snapshot.lineAt(i));
+    }
+    return Collections.unmodifiableList(list);
   }
 
   /**
@@ -490,7 +517,10 @@ public final class RemoteTerminalModel {
     public final int columns;
     public final ScreenSnapshot.BufferKind activeBuffer;
     public final TerminalLine[] screen;
-    /** Ordered oldest-to-newest history for indexed rendering. */
+    /** Segmented immutable history snapshot for indexed rendering. */
+    public final TerminalHistorySnapshot history;
+    /** @deprecated Use {@link #history} after Renderer/View migration. */
+    @Deprecated
     public final List<TerminalLine> historyLines;
     public final TerminalCursor cursor;
     public final TerminalModes modes;
@@ -504,7 +534,8 @@ public final class RemoteTerminalModel {
 
     private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision, int rows,
                            int columns, ScreenSnapshot.BufferKind activeBuffer,
-                           TerminalLine[] screen, List<TerminalLine> historyLines,
+                           TerminalLine[] screen, TerminalHistorySnapshot history,
+                           List<TerminalLine> historyLines,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                            Map<Integer, TerminalStyle> styles, Map<Integer, Hyperlink> links,
                            String title, String workingDirectory, long firstAvailableHistoryId,
@@ -516,6 +547,7 @@ public final class RemoteTerminalModel {
       this.columns = columns;
       this.activeBuffer = activeBuffer;
       this.screen = screen;
+      this.history = history;
       this.historyLines = historyLines;
       this.cursor = cursor;
       this.modes = modes;
@@ -530,9 +562,9 @@ public final class RemoteTerminalModel {
 
     private static RenderSnapshot empty() {
       return new RenderSnapshot(null, 0, 0, 0, 0, ScreenSnapshot.BufferKind.MAIN, null,
-          Collections.emptyList(), TerminalCursor.hidden(), TerminalModes.defaults(),
-          TerminalPalette.defaults(), Collections.emptyMap(), Collections.emptyMap(), "", "", 0,
-          false);
+          TerminalHistorySnapshot.empty(), Collections.emptyList(), TerminalCursor.hidden(),
+          TerminalModes.defaults(), TerminalPalette.defaults(),
+          Collections.emptyMap(), Collections.emptyMap(), "", "", 0, false);
     }
   }
 
