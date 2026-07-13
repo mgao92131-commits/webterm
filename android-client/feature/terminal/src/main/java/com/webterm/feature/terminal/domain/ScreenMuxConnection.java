@@ -148,8 +148,8 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
   @Override
   public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
     if (relayMuxSession == null || relayChannelId == null) return false;
-    relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.historyRequest(requestId, beforeLineId, limit), true);
-    return true;
+    return relayMuxSession.sendTunnelFrame(
+        relayChannelId, ScreenMessageBuilder.historyRequest(requestId, beforeLineId, limit), true);
   }
 
   @Override
@@ -161,15 +161,18 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public void requestReconnect(@NonNull String reason) {
-    // resync 重试耗尽的最终恢复：重建 screen channel。closeChannel 只移除本地
-    // 通道记录并发送 ws close（与 mux 传输重连后重开 channel 的路径一致，服务端
-    // 保留会话）；connectNow() 重新 openScreenChannel，onConnected 后发送 hello，
-    // 服务端以权威 snapshot 回应，解除上层恢复围栏。
-    if (relayMuxSession != null && relayChannelId != null) {
-      relayMuxSession.closeChannel(relayChannelId);
-    }
-    relayChannelId = null;
-    connectNow();
+    // Runtime 从 modelExecutor 触发最终恢复，而 RelayMuxSessionManager 的 channel
+    // map 与 mux lifecycle 由主线程拥有。统一投递到 mainHandler，避免后台线程与
+    // mux callback 并发修改 LinkedHashMap/muxSession。若页面已 close，字段会先被
+    // 清空，排队任务自然失效，不能把已离开的终端重新打开。
+    mainHandler.post(() -> {
+      if (relayMuxSession == null) return;
+      if (relayChannelId != null) {
+        relayMuxSession.closeChannel(relayChannelId);
+      }
+      relayChannelId = null;
+      connectNow();
+    });
   }
 
   @Override
@@ -207,11 +210,14 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
       public void onFailure(String channelId, ChannelFailure failure) {
         switch (failure.kind) {
           case CHANNEL_NOT_FOUND:
-          case AUTH_REQUIRED:
           case REMOTE_CLOSED:
-            // channel 已被 mux 移除：会话不存在、鉴权失败或服务端正常关闭。
-            // 终端会话已结束，不重开（与 §5.2 REMOTE_CLOSED 矩阵一致）。
+            // 会话不存在或服务端确认终端已结束，不再重开。
             if (listener != null) listener.onClosed();
+            break;
+          case AUTH_REQUIRED:
+            // 401 只表示凭据过期，不表示远端 PTY 已结束。交给 Activity 级认证
+            // 协调器刷新 cookie，成功后通过 reconnectFresh 重建 screen channel。
+            if (listener != null) listener.onAuthenticationRequired(failure.message);
             break;
           case CLIENT_CLOSED:
             // 本地主动关闭：不自动恢复，也不需要通知（close() 已清理状态）。

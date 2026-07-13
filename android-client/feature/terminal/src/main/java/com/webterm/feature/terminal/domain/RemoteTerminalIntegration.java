@@ -44,6 +44,10 @@ public final class RemoteTerminalIntegration {
     void onWorkingDirectoryChanged(@Nullable String cwd);
   }
 
+  public interface AuthenticationListener {
+    void onAuthenticationRequired(@Nullable String reason);
+  }
+
   private final TerminalSessionRuntimeRegistry registry;
   private final ScreenMuxConnection.Factory screenConnectionFactory;
 
@@ -64,6 +68,7 @@ public final class RemoteTerminalIntegration {
   private Button ctrlButton;
   private boolean ctrlArmed;
   private TitleListener titleListener;
+  private AuthenticationListener authenticationListener;
   private int imeOverlap;
   private final TerminalConnectionStatusView connectionStatusView = new TerminalConnectionStatusView();
 
@@ -83,6 +88,10 @@ public final class RemoteTerminalIntegration {
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
 
     runtime = registry.getOrCreate(args.sessionId, TerminalHistoryBudgets.forDevice(activity));
+    runtime.setAuthenticationListener(reason -> {
+      AuthenticationListener listener = authenticationListener;
+      if (listener != null) listener.onAuthenticationRequired(reason);
+    });
 
     // The relay mux may already be live when a terminal page is reopened. Install
     // the runtime listener before connect(), otherwise its synchronous HELLO /
@@ -183,6 +192,7 @@ public final class RemoteTerminalIntegration {
     // the newly attached projection. The following server snapshot repopulates
     // both screen and history atomically after the listener is already active.
     if (runtime != null) {
+      runtime.setAuthenticationListener(null);
       runtime.model().resetForReconnect();
     }
     runtime = null;
@@ -290,6 +300,10 @@ public final class RemoteTerminalIntegration {
 
   public void setTitleListener(@Nullable TitleListener listener) {
     this.titleListener = listener;
+  }
+
+  public void setAuthenticationListener(@Nullable AuthenticationListener listener) {
+    this.authenticationListener = listener;
   }
 
   @Nullable

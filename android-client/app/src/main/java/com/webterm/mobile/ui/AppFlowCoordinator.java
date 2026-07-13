@@ -76,6 +76,8 @@ public final class AppFlowCoordinator implements
     private FileDownloadHelper downloadHelper;
 
     private boolean mInForeground = true;
+    private boolean terminalAuthRecoveryInFlight;
+    private int terminalAuthRecoveryGeneration;
     private SessionCommandController mSessionCommands;
 
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
@@ -303,6 +305,8 @@ public final class AppFlowCoordinator implements
         // webterm.screen.v1 owns a separate controller/connection lifecycle.
         // Do not leave its old View listener and mux channel alive after a
         // terminal page is popped; reopening must start from a fresh snapshot.
+        terminalAuthRecoveryGeneration++;
+        terminalAuthRecoveryInFlight = false;
         remoteTerminalIntegration.stop();
     }
 
@@ -468,6 +472,10 @@ public final class AppFlowCoordinator implements
     public void startRemoteTerminalInFragment(Activity activity, TerminalViewModel.TerminalSessionArgs args,
                                                 TerminalFragment fragment) {
         mScreenMode = ScreenMode.TERMINAL;
+        // Fragment/终端切换会让此前尚未返回的认证刷新回调失效。
+        terminalAuthRecoveryGeneration++;
+        terminalAuthRecoveryInFlight = false;
+        remoteTerminalIntegration.setAuthenticationListener(this::recoverTerminalAuthentication);
         remoteTerminalIntegration.start(activity, fragment, args,
             configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
         remoteTerminalIntegration.setTitleListener(new RemoteTerminalIntegration.TitleListener() {
@@ -544,15 +552,77 @@ public final class AppFlowCoordinator implements
 
     }
 
+    /**
+     * 活动终端收到 401 时只刷新一次 cookie。401 不代表 PTY 已结束；刷新成功后
+     * 重建 screen channel，明确失败则停留在可重试状态，绝不拿旧 cookie 自动循环。
+     */
+    private void recoverTerminalAuthentication(String reason) {
+        if (terminalAuthRecoveryInFlight || !isRemoteTerminalActive()) return;
+        ServerConfig server = findServerForRemoteTerminal();
+        if (server == null) {
+            Toast.makeText(mActivity, "终端认证已失效，请返回设备列表重新登录", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String cookie = server.getCookie() != null ? server.getCookie() : remoteTerminalIntegration.cookie();
+        if (cookie == null || cookie.isEmpty()) {
+            Toast.makeText(mActivity, "终端认证已失效，请重新登录", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        terminalAuthRecoveryInFlight = true;
+        int recoveryGeneration = terminalAuthRecoveryGeneration;
+        api.refresh(server.getUrl(), cookie, new WebTermApi.LoginCallback() {
+            @Override public void onReady(String baseUrl, String refreshedCookie) {
+                mActivity.runOnUiThread(() -> {
+                    if (recoveryGeneration != terminalAuthRecoveryGeneration) return;
+                    terminalAuthRecoveryInFlight = false;
+                    if (!isRemoteTerminalActive()) return;
+                    server.setCookie(refreshedCookie);
+                    saveServers();
+                    remoteTerminalIntegration.reconnectFresh(refreshedCookie);
+                });
+            }
+
+            @Override public void onError(String message) {
+                onFailure(message);
+            }
+
+            @Override public void onError(int code, String message) {
+                onFailure(message);
+            }
+
+            private void onFailure(String message) {
+                mActivity.runOnUiThread(() -> {
+                    if (recoveryGeneration != terminalAuthRecoveryGeneration) return;
+                    terminalAuthRecoveryInFlight = false;
+                    if (!isRemoteTerminalActive()) return;
+                    Toast.makeText(mActivity, "终端认证恢复失败，请点击重试", Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
     private ServerConfig findServerForRemoteTerminal() {
         if (!isRemoteTerminalActive()) return null;
         String baseUrl = WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl());
+        String terminalDeviceId = remoteTerminalIntegration.relayDeviceId() == null
+            ? "" : remoteTerminalIntegration.relayDeviceId();
+        // 同一 relay URL 下可能配置多个设备。优先匹配 URL + deviceId，避免
+        // 401 恢复时刷新并保存到同 URL 的另一个设备配置。
         for (ServerConfig server : serverConfigs.servers()) {
-            if (WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(baseUrl)) {
+            String serverDeviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+            if (WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(baseUrl)
+                && serverDeviceId.equals(terminalDeviceId)) {
                 return server;
             }
         }
-        return null;
+        // 非 relay/旧配置可能没有稳定 deviceId；仅在没有歧义时按 URL 回退。
+        ServerConfig onlyUrlMatch = null;
+        for (ServerConfig server : serverConfigs.servers()) {
+            if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(baseUrl)) continue;
+            if (onlyUrlMatch != null) return null;
+            onlyUrlMatch = server;
+        }
+        return onlyUrlMatch;
     }
 
     public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {

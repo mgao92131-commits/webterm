@@ -26,6 +26,10 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class TerminalSessionRuntime {
 
+  public interface AuthenticationListener {
+    void onAuthenticationRequired(@Nullable String reason);
+  }
+
   /** Bound retained wire data per session when a remote PTY outpaces model parsing. */
   private static final int MAX_PENDING_SCREEN_MESSAGES = 64;
   /** resync 最多重发次数；耗尽后升级为 channel 重建。 */
@@ -78,6 +82,7 @@ public final class TerminalSessionRuntime {
       void onScreenMessage(@NonNull byte[] payload);
       void onConnected();
       void onDisconnected(@Nullable String reason);
+      default void onAuthenticationRequired(@Nullable String reason) {}
       void onClosed();
     }
   }
@@ -113,6 +118,7 @@ public final class TerminalSessionRuntime {
   private final AtomicLong nextHistoryRequestId = new AtomicLong();
   @Nullable private volatile String pendingHistoryRequestId;
   private volatile ScreenConnection connection;
+  @Nullable private volatile AuthenticationListener authenticationListener;
   private final TimeoutScheduler timeoutScheduler;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
@@ -204,6 +210,23 @@ public final class TerminalSessionRuntime {
       }
 
       @Override
+      public void onAuthenticationRequired(@Nullable String reason) {
+        layoutLeaseGranted = false;
+        layoutLeaseId = "";
+        // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
+        // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
+        // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
+        modelExecutor.execute(() -> resetResyncRecovery());
+        updateState(State.RECONNECTING);
+        if (authenticationListener != null) {
+          callbackExecutor.execute(() -> {
+            AuthenticationListener currentListener = authenticationListener;
+            if (currentListener != null) currentListener.onAuthenticationRequired(reason);
+          });
+        }
+      }
+
+      @Override
       public void onClosed() {
         updateState(State.CLOSED);
       }
@@ -218,6 +241,10 @@ public final class TerminalSessionRuntime {
 
   public void removeListener(@NonNull Listener listener) {
     listeners.remove(listener);
+  }
+
+  public void setAuthenticationListener(@Nullable AuthenticationListener listener) {
+    authenticationListener = listener;
   }
 
   public void sendTextInput(@NonNull String text) {

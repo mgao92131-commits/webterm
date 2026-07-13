@@ -125,6 +125,36 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   @Test
+  public void rejectedHistoryRequest_failsAndLeavesNoPendingRequest() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.historyRequestAccepted = false;
+
+    assertFalse("底层发送失败必须传递给调用方", runtime.requestHistoryPage(100, 250));
+
+    // 发送失败的请求不得登记为 pending；同一 request id 的迟到/伪造响应
+    // 也不能被误当成有效分页结果应用。
+    connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
+    assertEquals(0, runtime.model().firstAvailableHistoryId());
+  }
+
+  @Test
+  public void authenticationRequired_notifiesOwnerWithoutClosingRuntime() {
+    List<String> reasons = new ArrayList<>();
+    runtime.setAuthenticationListener(reasons::add);
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertTrue(runtime.requestHistoryPage(100, 250));
+    String expiredRequestId = connection.historyRequestId;
+
+    connection.listener.onAuthenticationRequired("cookie expired");
+
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+    assertEquals(Arrays.asList("cookie expired"), reasons);
+    connection.listener.onScreenMessage(historyPage(expiredRequestId, 42).toByteArray());
+    assertEquals("认证失效必须清除旧 channel 的 history pending", 0,
+        runtime.model().firstAvailableHistoryId());
+  }
+
+  @Test
   public void pendingHistoryRequest_isClearedBySnapshotAndReconnect() {
     connection.listener.onScreenMessage(snapshot(1).toByteArray());
     assertTrue(runtime.requestHistoryPage(100, 250));
@@ -371,6 +401,7 @@ public final class TerminalSessionRuntimeResizeTest {
     int reconnectRequests;
     String historyRequestId = "";
     String leaseId = "";
+    boolean historyRequestAccepted = true;
     Listener listener;
 
     @Override
@@ -409,7 +440,7 @@ public final class TerminalSessionRuntimeResizeTest {
     @Override
     public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
       historyRequestId = requestId;
-      return true;
+      return historyRequestAccepted;
     }
 
     @Override
