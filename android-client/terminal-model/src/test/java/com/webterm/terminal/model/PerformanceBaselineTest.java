@@ -102,7 +102,7 @@ public final class PerformanceBaselineTest {
         // 正确性：稳态历史行数固定、revision 连续推进、snapshot 历史完整。
         assertEquals("steady-state history size", history, model.historySize());
         assertEquals(1L + WARMUP + ITERATIONS, model.screenRevision);
-        assertEquals(history, model.renderSnapshot().historyLines.size());
+        assertEquals(history, model.renderSnapshot().history.size());
 
         report("apply-patch/tail-append", cols, rows, history, content, ITERATIONS, times,
             allocPerOp, gcDelta);
@@ -158,7 +158,7 @@ public final class PerformanceBaselineTest {
         // 正确性：目标行内容已更新、revision 推进、历史未被触碰。
         assertEquals(1L + WARMUP + ITERATIONS, model.screenRevision);
         assertEquals(history, model.historySize());
-        TerminalLine[] screen = model.screen();
+        TerminalLine[] screen = model.renderSnapshot().screen;
         assertNotNull(screen);
         assertEquals(lineB.at(0).text, screen[row].at(0).text);
 
@@ -202,13 +202,13 @@ public final class PerformanceBaselineTest {
         long[] gcDelta = gcDelta(gcBefore, gcSnapshot());
 
         RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
-        assertEquals(history, snapshot.historyLines.size());
+        assertEquals(history, snapshot.history.size());
         assertNotNull(snapshot.screen);
         assertEquals(rows, snapshot.screen.length);
         if (!historyChanged) {
-          // 复用语义：history 未变化时相邻两帧必须共享同一个列表实例。
+          // 复用语义：history 未变化时相邻两帧必须共享同一个 snapshot 实例。
           publish.invoke(model, false, false, false);
-          assertSame(snapshot.historyLines, model.renderSnapshot().historyLines);
+          assertSame(snapshot.history, model.renderSnapshot().history);
         }
 
         report(historyChanged ? "publish/history-copy" : "publish/history-reuse",

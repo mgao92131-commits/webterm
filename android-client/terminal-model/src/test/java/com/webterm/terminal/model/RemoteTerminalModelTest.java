@@ -15,6 +15,7 @@ public class RemoteTerminalModelTest {
     ScreenSnapshot snapshot = sampleSnapshot(2, 4, 1, "ab");
 
     ModelChange change = model.applySnapshot(snapshot);
+    RemoteTerminalModel.RenderSnapshot render = model.renderSnapshot();
 
     assertTrue(change.fullInvalidate);
     assertTrue(change.geometryChanged);
@@ -22,12 +23,12 @@ public class RemoteTerminalModelTest {
     assertEquals("i1", model.instanceId);
     assertEquals(2, model.rows);
     assertEquals(4, model.columns);
-    assertEquals(2, model.screen().length);
-    assertEquals("a", model.screen()[0].at(0).text);
-    assertEquals("b", model.screen()[0].at(1).text);
-    assertEquals(1, model.historyCache().size());
-    assertEquals(100L, (long) model.historyCache().firstKey());
-    assertEquals(4, model.historyCache().firstEntry().getValue().length());
+    assertEquals(2, render.screen.length);
+    assertEquals("a", render.screen[0].at(0).text);
+    assertEquals("b", render.screen[0].at(1).text);
+    assertEquals(1, render.history.size());
+    assertEquals(100L, render.history.firstLineId());
+    assertEquals(4, render.history.lineAt(0).length());
   }
 
   @Test
@@ -52,8 +53,8 @@ public class RemoteTerminalModelTest {
 
     assertFalse(change.fullInvalidate);
     assertEquals(2, model.screenRevision);
-    assertEquals("c", model.screen()[0].at(0).text);
-    assertEquals("d", model.screen()[0].at(1).text);
+    assertEquals("c", model.renderSnapshot().screen[0].at(0).text);
+    assertEquals("d", model.renderSnapshot().screen[0].at(1).text);
     assertTrue(change.changedScreenRows.contains(0));
   }
 
@@ -78,7 +79,7 @@ public class RemoteTerminalModelTest {
     assertTrue(change.historyChanged);
     assertEquals(1, change.historyPrependedLines);
     assertEquals("prepend is not a tail append", 0, change.tailAppendedLines);
-    assertEquals(2, model.historyCache().size());
+    assertEquals(2, model.renderSnapshot().history.size());
     assertEquals(98L, model.firstAvailableHistoryId());
   }
 
@@ -111,8 +112,9 @@ public class RemoteTerminalModelTest {
     }
     model.prependHistoryPage(new HistoryPage("r1", 1, 1, 1, false, lines));
 
-    assertTrue("byte budget should trim despite generous line limit", model.historyCache().size() < 6);
-    assertTrue(model.historyBytes() <= 300 || model.historyCache().size() == 1);
+    int historySize = model.renderSnapshot().history.size();
+    assertTrue("byte budget should trim despite generous line limit", historySize < 6);
+    assertTrue(model.historyBytes() <= 300 || historySize == 1);
   }
 
   @Test
@@ -121,7 +123,7 @@ public class RemoteTerminalModelTest {
     model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
     model.trimHistory(1, 101);
 
-    assertTrue(model.historyCache().isEmpty());
+    assertTrue(model.renderSnapshot().history.isEmpty());
     assertEquals(101L, model.firstAvailableHistoryId());
   }
 

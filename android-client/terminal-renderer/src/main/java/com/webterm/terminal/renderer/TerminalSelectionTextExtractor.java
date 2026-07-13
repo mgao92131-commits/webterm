@@ -1,16 +1,15 @@
 package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
-
-import java.util.List;
 
 /**
  * 把 {@link TerminalSelection} 转换为可复制到剪贴板的纯文本。
  *
  * <p>此类不依赖 Android 视图系统，因此可以单元测试。它接收已排序的历史行
- * 列表和活动屏幕行数组，输出选择范围内的字符文本（跳过宽字符 spacer）。
+ * 快照和活动屏幕行数组，输出选择范围内的字符文本（跳过宽字符 spacer）。
  */
 final class TerminalSelectionTextExtractor {
 
@@ -20,10 +19,10 @@ final class TerminalSelectionTextExtractor {
    * 提取选择范围内的文本。
    *
    * @param selection 已归一化的选择范围（start <= end）
-   * @param history   按 {@link TerminalLine#id} 升序排列的历史行；可能为空
+   * @param history   按 {@link TerminalLine#id} 升序排列的历史行快照；可能为空
    * @param screen    活动屏幕行数组；可能为 null
    */
-  static String extract(TerminalSelection selection, List<TerminalLine> history, TerminalLine[] screen) {
+  static String extract(TerminalSelection selection, TerminalHistorySnapshot history, TerminalLine[] screen) {
     StringBuilder sb = new StringBuilder();
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
@@ -46,9 +45,16 @@ final class TerminalSelectionTextExtractor {
   }
 
   private static void appendHistoryRange(StringBuilder sb, long startLineId, long endLineId,
-                                         int startCol, int endCol, List<TerminalLine> history) {
+                                         int startCol, int endCol, TerminalHistorySnapshot history) {
+    if (history == null || history.isEmpty()) return;
+    int startIndex = history.findLineIndex(startLineId);
+    if (startIndex < 0) startIndex = 0;
+    int endIndex = endCol >= 0 ? history.findLineIndex(endLineId) : history.size() - 1;
+    if (endIndex < 0) endIndex = history.size() - 1;
+
     boolean first = true;
-    for (TerminalLine line : history) {
+    for (int i = startIndex; i <= endIndex && i < history.size(); i++) {
+      TerminalLine line = history.lineAt(i);
       long lineId = line.id;
       if (lineId < startLineId) continue;
       if (lineId > endLineId) break;

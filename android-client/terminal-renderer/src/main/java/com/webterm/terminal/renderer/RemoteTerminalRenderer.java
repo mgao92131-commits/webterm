@@ -12,6 +12,7 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
+import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalSelection;
@@ -97,8 +98,8 @@ public final class RemoteTerminalRenderer {
 
     // Full-screen TUIs run on the alternate buffer. Its main-buffer scrollback
     // is not part of the current canvas and must never be composited underneath.
-    List<TerminalLine> history = model.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
-        ? java.util.Collections.emptyList() : model.historyLines;
+    TerminalHistorySnapshot history = model.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : model.history;
     int screenRows = screen.length;
     int historyRows = history.size();
     float scrollOffset = viewport.followTail ? 0 : viewport.scrollOffsetPixels;
@@ -128,7 +129,7 @@ public final class RemoteTerminalRenderer {
     int lastHistoryRow = Math.min(historyRows,
         (int) Math.ceil((canvas.getHeight() - historyTopY) / lineHeight) + 1);
     for (int historyIndex = firstHistoryRow; historyIndex < lastHistoryRow; historyIndex++) {
-      TerminalLine line = history.get(historyIndex);
+      TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
       drawLine(canvas, model.columns, palette, styles, line, y, line.id, -1,
           normalizedSelection, cursor, false, canvasBackground);

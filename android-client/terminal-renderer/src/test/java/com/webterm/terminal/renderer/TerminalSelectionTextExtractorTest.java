@@ -1,6 +1,8 @@
 package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.TerminalHistory;
+import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 
@@ -105,6 +107,14 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {
-    return TerminalSelectionTextExtractor.extract(sel, history, screen);
+    return TerminalSelectionTextExtractor.extract(sel, snapshot(history), screen);
+  }
+
+  private static TerminalHistorySnapshot snapshot(List<TerminalLine> lines) {
+    TerminalHistory h = new TerminalHistory(line -> 100); // estimator not used in tests
+    for (TerminalLine line : lines) {
+      h.append(line);
+    }
+    return h.snapshot();
   }
 }

@@ -87,7 +87,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
         RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
         assertNotNull(snapshot.screen);
         assertEquals(rows, snapshot.screen.length);
-        assertEquals(history, snapshot.historyLines.size());
+        assertEquals(history, snapshot.history.size());
 
         for (boolean scrolled : new boolean[]{false, true}) {
           TerminalViewportState viewport = new TerminalViewportState();
@@ -117,7 +117,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
           long allocPerOp = perOp(allocatedBytes() - allocBefore, ITERATIONS);
 
           // 正确性：渲染完成后 snapshot 与视口状态未被修改。
-          assertEquals(history, snapshot.historyLines.size());
+          assertEquals(history, snapshot.history.size());
           assertEquals(scrolled ? (int) (history * LINE_HEIGHT) : 0, viewport.scrollOffsetPixels);
 
           report(cols, rows, history, content, scrolled ? "scrolled" : "follow-tail", times,

@@ -75,7 +75,7 @@ public final class ScreenFixtureTest {
 
   private static String extractNonEmptyScreenText(RemoteTerminalModel model) {
     StringBuilder sb = new StringBuilder();
-    TerminalLine[] screen = model.screen();
+    TerminalLine[] screen = model.renderSnapshot().screen;
     boolean first = true;
     for (TerminalLine line : screen) {
       String rowText = lineText(line);

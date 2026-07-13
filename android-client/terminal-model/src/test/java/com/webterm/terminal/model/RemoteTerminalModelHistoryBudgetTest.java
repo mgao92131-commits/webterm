@@ -58,9 +58,9 @@ public final class RemoteTerminalModelHistoryBudgetTest {
 
     assertEquals("evict down to the soft line target", 10, model.historySize());
     assertEquals("the whole prepended page survives", 196L, model.firstCachedHistoryId());
-    assertTrue("the visible anchor survives", model.historyCache().containsKey(201L));
+    assertTrue("the visible anchor survives", containsHistoryId(model, 201L));
     assertFalse("the newest, screen-side history is evicted instead",
-        model.historyCache().containsKey(220L));
+        containsHistoryId(model, 220L));
     assertEquals(205L, model.lastCachedHistoryId());
   }
 
@@ -80,9 +80,9 @@ public final class RemoteTerminalModelHistoryBudgetTest {
 
     assertTrue("hard byte budget respected after eviction", model.historyBytes() <= 8_000);
     assertEquals("the whole prepended page survives", 198L, model.firstCachedHistoryId());
-    assertTrue("the visible anchor survives", model.historyCache().containsKey(anchor));
+    assertTrue("the visible anchor survives", containsHistoryId(model, anchor));
     assertFalse("the newest, screen-side history is evicted instead",
-        model.historyCache().containsKey(208L));
+        containsHistoryId(model, 208L));
   }
 
   @Test
@@ -138,7 +138,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
       assertTrue("round " + p + ": beforeId must strictly advance toward older history",
           first < previousFirst);
       assertTrue("round " + p + ": the visible anchor must survive eviction",
-          model.historyCache().containsKey(previousFirst));
+          containsHistoryId(model, previousFirst));
       assertTrue("round " + p + ": hard line limit respected", model.historySize() <= 1000);
       previousFirst = first;
     }
@@ -165,9 +165,9 @@ public final class RemoteTerminalModelHistoryBudgetTest {
       assertTrue("round " + p + ": beforeId must strictly advance toward older history",
           first < previousFirst);
       assertTrue("round " + p + ": the visible anchor must survive eviction",
-          model.historyCache().containsKey(previousFirst));
+          containsHistoryId(model, previousFirst));
       assertTrue("round " + p + ": the just-prepended page must survive eviction",
-          model.historyCache().containsKey(beforeId - 1));
+          containsHistoryId(model, beforeId - 1));
       assertTrue("round " + p + ": hard byte budget respected",
           model.historyBytes() <= budget.hardBytes);
       previousFirst = first;
@@ -261,6 +261,10 @@ public final class RemoteTerminalModelHistoryBudgetTest {
       System.runFinalization();
     }
     return rt.totalMemory() - rt.freeMemory();
+  }
+
+  private static boolean containsHistoryId(RemoteTerminalModel model, long lineId) {
+    return model.renderSnapshot().history.findLineIndex(lineId) >= 0;
   }
 
   // ---- fixtures ----

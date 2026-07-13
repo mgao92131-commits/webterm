@@ -6,9 +6,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Set;
-import java.util.TreeMap;
 
 /**
  * Android 远程终端模型。只维护投影和缓存，可由 Go 权威快照重建。
@@ -271,17 +269,6 @@ public final class RemoteTerminalModel {
     return renderSnapshot;
   }
 
-  public synchronized TerminalLine[] screen() {
-    return screen != null ? screen.clone() : null;
-  }
-
-  /**
-   * 兼容过渡方法：按 id 升序导出历史副本。Renderer/View 迁移完成后删除。
-   */
-  public synchronized NavigableMap<Long, TerminalLine> historyCache() {
-    return new TreeMap<>(history.asMap());
-  }
-
   /** 历史行数。不需要拷贝全部历史。 */
   public synchronized int historySize() {
     return history.size();
@@ -480,9 +467,6 @@ public final class RemoteTerminalModel {
     TerminalHistorySnapshot historySnapshot = historyChanged
         ? history.snapshot()
         : previous.history;
-    List<TerminalLine> historyLines = historyChanged
-        ? toLineList(historySnapshot)
-        : previous.historyLines;
     Map<Integer, TerminalStyle> stylesCopy = stylesChanged
         ? Collections.unmodifiableMap(new HashMap<>(styles))
         : previous.styles;
@@ -490,18 +474,9 @@ public final class RemoteTerminalModel {
         ? Collections.unmodifiableMap(new HashMap<>(links))
         : previous.links;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
-        activeBuffer, screenCopy, historySnapshot, historyLines, cursor, modes, palette,
+        activeBuffer, screenCopy, historySnapshot, cursor, modes, palette,
         stylesCopy, linksCopy, title, workingDirectory, firstAvailableHistoryId,
         hasMoreHistoryBefore);
-  }
-
-  private static List<TerminalLine> toLineList(TerminalHistorySnapshot snapshot) {
-    if (snapshot.isEmpty()) return Collections.emptyList();
-    List<TerminalLine> list = new ArrayList<>(snapshot.size());
-    for (int i = 0; i < snapshot.size(); i++) {
-      list.add(snapshot.lineAt(i));
-    }
-    return Collections.unmodifiableList(list);
   }
 
   /**
@@ -519,9 +494,6 @@ public final class RemoteTerminalModel {
     public final TerminalLine[] screen;
     /** Segmented immutable history snapshot for indexed rendering. */
     public final TerminalHistorySnapshot history;
-    /** @deprecated Use {@link #history} after Renderer/View migration. */
-    @Deprecated
-    public final List<TerminalLine> historyLines;
     public final TerminalCursor cursor;
     public final TerminalModes modes;
     public final TerminalPalette palette;
@@ -535,7 +507,6 @@ public final class RemoteTerminalModel {
     private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision, int rows,
                            int columns, ScreenSnapshot.BufferKind activeBuffer,
                            TerminalLine[] screen, TerminalHistorySnapshot history,
-                           List<TerminalLine> historyLines,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                            Map<Integer, TerminalStyle> styles, Map<Integer, Hyperlink> links,
                            String title, String workingDirectory, long firstAvailableHistoryId,
@@ -548,7 +519,6 @@ public final class RemoteTerminalModel {
       this.activeBuffer = activeBuffer;
       this.screen = screen;
       this.history = history;
-      this.historyLines = historyLines;
       this.cursor = cursor;
       this.modes = modes;
       this.palette = palette;
@@ -562,7 +532,7 @@ public final class RemoteTerminalModel {
 
     private static RenderSnapshot empty() {
       return new RenderSnapshot(null, 0, 0, 0, 0, ScreenSnapshot.BufferKind.MAIN, null,
-          TerminalHistorySnapshot.empty(), Collections.emptyList(), TerminalCursor.hidden(),
+          TerminalHistorySnapshot.empty(), TerminalCursor.hidden(),
           TerminalModes.defaults(), TerminalPalette.defaults(),
           Collections.emptyMap(), Collections.emptyMap(), "", "", 0, false);
     }
