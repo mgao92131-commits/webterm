@@ -19,15 +19,17 @@ level="${1:-}"
 default_msg="${2:-}"
 source="${3:-}"
 
+# 注意：helper 由 agent hook 调用，绝不能 exit 2——Kimi/Claude 会把 exit 2
+# 解释为阻止工具调用或阻止本轮结束（死循环）。参数错误是非阻塞错误，exit 1 跳过通知。
 if [ -z "$level" ] || [ -z "$default_msg" ] || [ -z "$source" ]; then
   echo "Usage: $0 <importance> <default-message> <source>" >&2
   echo "Example: echo '{\"prompt\":\"hi\"}' | $0 quiet \"Running\" claude" >&2
-  exit 2
+  exit 1
 fi
 
 if [ "$level" != "alert" ] && [ "$level" != "normal" ] && [ "$level" != "quiet" ]; then
   echo "Invalid importance '$level' (expected alert|normal|quiet)." >&2
-  exit 2
+  exit 1
 fi
 
 # 读取 stdin 中的 JSON payload

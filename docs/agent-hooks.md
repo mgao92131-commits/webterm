@@ -36,8 +36,12 @@ scripts/install-agent-hook-examples.sh
 | Claude/Kimi `StopFailure` | `alert` | `Failed` |
 | Kimi `Notification`（matcher `task.completed`，后台任务完成） | `normal` | `Done` |
 | Claude/Kimi `SessionEnd` | `quiet` | `Session ended` |
+| agy（Antigravity）`PreInvocation` | `quiet` | `Running` |
+| agy（Antigravity）`Stop` | `normal` | `Done` |
 
 不要把 `PreToolUse`、`PostToolUse` 或普通 Agent `Notification` 映射为通知；它们会产生高频噪声。每个 Agent 只能保留一个完成 Hook，通常就是 `Stop`。
+
+agy（Antigravity）的配置位置与其他 Agent 不同：全局为 `~/.gemini/config/hooks.json`，工作区级为 `.agents/hooks.json`；文件顶层 key 是 hook 名字（安装器使用 `webterm-notify`），`PreInvocation`/`Stop` 为扁平 handler 列表（只有 `PreToolUse`/`PostToolUse` 需要 `matcher` 分组）。agy 没有审批请求或会话结束的等价事件；`Stop` 的 stdin 含 `terminationReason`/`error` 字段，目前统一按 `normal` 处理。
 
 ## 通知内容
 

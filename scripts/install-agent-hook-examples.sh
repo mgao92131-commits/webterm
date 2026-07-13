@@ -23,6 +23,11 @@ CODEX_DIR="$HOME_DIR/.codex"
 CODEX_HOOKS="$CODEX_DIR/hooks.json"
 CODEX_BAK="$CODEX_HOOKS.webterm.bak"
 
+# agy（Antigravity CLI）的全局定制化根目录是 ~/.gemini/config/
+AGY_DIR="$HOME_DIR/.gemini/config"
+AGY_HOOKS="$AGY_DIR/hooks.json"
+AGY_BAK="$AGY_HOOKS.webterm.bak"
+
 backup_if_exists() {
   local path="$1"
   local bak="$2"
@@ -224,6 +229,51 @@ PY
   echo "  -> $CODEX_HOOKS"
 }
 
+install_agy() {
+  echo "安装 agy (Antigravity) hook 配置..."
+  mkdir -p "$AGY_DIR"
+  backup_if_exists "$AGY_HOOKS" "$AGY_BAK"
+  migrate_helper_path "$AGY_HOOKS"
+
+  # agy 的 hooks.json 顶层 key 是 hook 名字；PreInvocation/Stop 为扁平
+  # handler 列表（不需要 matcher 分组）。agy 没有 PermissionRequest /
+  # SessionEnd 等价事件，Stop 的 terminationReason 统一按 normal 处理。
+  local new_hooks
+  new_hooks='{
+  "webterm-notify": {
+    "PreInvocation": [
+      {"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" agy", "timeout": 5}
+    ],
+    "Stop": [
+      {"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" agy", "timeout": 5}
+    ]
+  }
+}'
+  new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
+
+  if [ -f "$AGY_HOOKS" ]; then
+    if ! python3 - "$AGY_HOOKS" "$new_hooks" <<'PY'
+import sys, json
+path, new_json = sys.argv[1], sys.argv[2]
+with open(path, 'r') as f:
+    existing = json.load(f)
+for name in [k for k, v in existing.items() if 'webterm-notify-helper' in json.dumps(v)]:
+    del existing[name]
+existing.update(json.loads(new_json))
+with open(path, 'w') as f:
+    json.dump(existing, f, indent=2)
+    f.write('\n')
+PY
+    then
+      echo "警告: 合并 $AGY_HOOKS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
+  else
+    echo "$new_hooks" > "$AGY_HOOKS"
+  fi
+  chmod 600 "$AGY_HOOKS"
+  echo "  -> $AGY_HOOKS"
+}
+
 # main
 install_helper
 
@@ -237,6 +287,7 @@ fi
 install_claude
 install_kimi
 install_codex
+install_agy
 
 echo ""
 echo "安装完成。请确保 ~/.webterm/bin 在你的 PATH 中，或在 shell 配置文件里 export WEBTERM_BIN=/path/to/webterm。"
