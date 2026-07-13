@@ -2,17 +2,22 @@ package headlessterm
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 )
 
 // testNotificationProvider is a test implementation of NotificationProvider
 type testNotificationProvider struct {
+	mu          sync.Mutex
 	payloads    []*NotificationPayload
 	queryReply  string
 	notifyCount int
 }
 
 func (p *testNotificationProvider) Notify(payload *NotificationPayload) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.notifyCount++
 	p.payloads = append(p.payloads, payload)
 
@@ -24,6 +29,9 @@ func (p *testNotificationProvider) Notify(payload *NotificationPayload) string {
 }
 
 func (p *testNotificationProvider) LastPayload() *NotificationPayload {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if len(p.payloads) == 0 {
 		return nil
 	}
@@ -31,6 +39,9 @@ func (p *testNotificationProvider) LastPayload() *NotificationPayload {
 }
 
 func (p *testNotificationProvider) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.payloads = nil
 	p.notifyCount = 0
 }

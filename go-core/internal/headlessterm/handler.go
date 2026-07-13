@@ -570,12 +570,11 @@ func (t *Terminal) eraseCharsInternal(n int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	for i := 0; i < n && t.cursor.Col+i < t.cols; i++ {
-		cell := t.activeBuffer.Cell(t.cursor.Row, t.cursor.Col+i)
-		if cell != nil {
-			cell.Reset()
-		}
+	end := t.cursor.Col + n
+	if end > t.cols {
+		end = t.cols
 	}
+	t.activeBuffer.ClearRowRange(t.cursor.Row, t.cursor.Col, end)
 }
 
 // Goto moves the cursor to (row, col), adjusting for origin mode if enabled.
@@ -1466,11 +1465,16 @@ func (t *Terminal) setModeLocked(mode ansicode.TerminalMode, set bool) {
 			t.saveCursorPositionLocked()
 			t.activeBuffer = t.alternateBuffer
 			t.activeBuffer.ClearAll()
+			// Buffer switches require a full re-export of the newly active buffer.
+			t.activeBuffer.MarkAllDirty()
 			// Clear image placements when switching to alternate screen
 			t.images.ClearPlacements()
 		} else {
 			t.activeBuffer = t.primaryBuffer
 			t.restoreCursorPositionLocked()
+			// The primary buffer kept its content while inactive; its dirty
+			// state may have been consumed, so force a full re-export.
+			t.activeBuffer.MarkAllDirty()
 			// Clear image placements when switching back to primary screen
 			t.images.ClearPlacements()
 		}
@@ -1753,6 +1757,7 @@ func (t *Terminal) substituteInternal() {
 	cell := t.activeBuffer.Cell(t.cursor.Row, t.cursor.Col)
 	if cell != nil {
 		cell.Char = "?"
+		t.activeBuffer.MarkDirty(t.cursor.Row, t.cursor.Col)
 	}
 }
 
@@ -1941,6 +1946,12 @@ func (t *Terminal) WorkingDirectoryPath() string {
 	uri := t.workingDir
 	t.mu.RUnlock()
 
+	return workingDirPathFromURI(uri)
+}
+
+// workingDirPathFromURI extracts the path from an OSC 7 file:// URI.
+// It takes no lock; callers must read the URI under the terminal lock.
+func workingDirPathFromURI(uri string) string {
 	if uri == "" {
 		return ""
 	}
@@ -2151,7 +2162,7 @@ func (t *Terminal) assignImageToCells(imageID, placementID uint32, p *ImagePlace
 					ScaleY:      scaleY,
 					ZIndex:      p.ZIndex,
 				}
-				cell.MarkDirty()
+				t.activeBuffer.MarkDirty(cellRow, cellCol)
 			}
 		}
 	}

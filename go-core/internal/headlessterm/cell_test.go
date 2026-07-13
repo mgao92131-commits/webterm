@@ -59,24 +59,6 @@ func TestCellFlags(t *testing.T) {
 	}
 }
 
-func TestCellDirty(t *testing.T) {
-	cell := NewCell()
-
-	if cell.IsDirty() {
-		t.Error("expected cell not dirty initially")
-	}
-
-	cell.MarkDirty()
-	if !cell.IsDirty() {
-		t.Error("expected cell to be dirty")
-	}
-
-	cell.ClearDirty()
-	if cell.IsDirty() {
-		t.Error("expected cell not dirty after clear")
-	}
-}
-
 func TestCellWide(t *testing.T) {
 	cell := NewCell()
 

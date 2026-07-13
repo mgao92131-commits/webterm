@@ -167,12 +167,12 @@ Interfaces for external events (all optional, default to no-ops):
 
 ### Dirty tracking
 
-Cells track modification state:
-- `HasDirty()`: True if any cell modified since last `ClearDirty()`
-- `DirtyCells()`: List of modified positions
-- `ClearDirty()`: Reset tracking
+Dirty tracking is row-level:
+- `ReadProjection()`: Atomic snapshot of metadata plus copies of changed rows (`Full` = whole screen)
+- `ConsumeProjectionDirty(proj)`: Clear dirty state after the projection has been merged into your cache
+- `Buffer.TakeDirty()`: Buffer-level read-and-clear of the dirty state
 
-Useful for incremental rendering (only redraw changed cells).
+Useful for incremental rendering (only redraw changed rows).
 
 ### Desktop Notifications (OSC 99)
 

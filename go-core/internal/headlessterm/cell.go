@@ -21,7 +21,6 @@ const (
 	CellFlagStrike
 	CellFlagWideChar
 	CellFlagWideCharSpacer
-	CellFlagDirty
 )
 
 // Cell stores the character, colors, and formatting attributes for one grid position.
@@ -76,21 +75,6 @@ func (c *Cell) SetFlag(flag CellFlags) {
 // ClearFlag disables the specified flag without affecting others.
 func (c *Cell) ClearFlag(flag CellFlags) {
 	c.Flags &^= flag
-}
-
-// IsDirty returns true if the cell was modified since the last ClearDirty call.
-func (c *Cell) IsDirty() bool {
-	return c.HasFlag(CellFlagDirty)
-}
-
-// MarkDirty marks the cell as modified for dirty tracking.
-func (c *Cell) MarkDirty() {
-	c.SetFlag(CellFlagDirty)
-}
-
-// ClearDirty resets the dirty tracking flag.
-func (c *Cell) ClearDirty() {
-	c.ClearFlag(CellFlagDirty)
 }
 
 // IsWide returns true if this cell contains a wide character (CJK, emoji, etc.) that occupies 2 columns.

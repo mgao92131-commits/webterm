@@ -3,6 +3,7 @@ package headlessterm
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/danielgatis/go-ansicode"
@@ -148,27 +149,34 @@ func TestTerminalString(t *testing.T) {
 func TestTerminalDirtyTracking(t *testing.T) {
 	term := New(WithSize(24, 80))
 
-	// Initial state should have dirty cells after creation
-	term.ClearDirty()
-
-	if term.HasDirty() {
-		t.Error("expected no dirty cells after ClearDirty")
+	// Initial projection is a full snapshot (new buffers are fully dirty).
+	initial := term.ReadProjection()
+	if !initial.Full {
+		t.Error("expected full initial projection")
 	}
+	if len(initial.DirtyRows) != 24 {
+		t.Errorf("expected 24 rows in full projection, got %d", len(initial.DirtyRows))
+	}
+	term.ConsumeProjectionDirty(initial)
 
+	// A single-cell write marks exactly the cursor row.
 	term.WriteString("A")
 
-	if !term.HasDirty() {
-		t.Error("expected dirty cells after write")
+	proj := term.ReadProjection()
+	if proj.Full {
+		t.Error("expected incremental projection after single-cell write")
+	}
+	if len(proj.DirtyRows) != 1 {
+		t.Fatalf("expected 1 dirty row, got %d", len(proj.DirtyRows))
+	}
+	if proj.DirtyRows[0].Index != 0 {
+		t.Errorf("expected dirty row 0, got row %d", proj.DirtyRows[0].Index)
 	}
 
-	dirty := term.DirtyCells()
-	if len(dirty) == 0 {
-		t.Error("expected at least one dirty cell")
-	}
-
-	term.ClearDirty()
-	if term.HasDirty() {
-		t.Error("expected no dirty cells after second ClearDirty")
+	term.ConsumeProjectionDirty(proj)
+	clean := term.ReadProjection()
+	if clean.Full || len(clean.DirtyRows) != 0 {
+		t.Error("expected no dirty rows after ConsumeProjectionDirty")
 	}
 }
 
@@ -913,8 +921,10 @@ func TestResizeCursorBounds(t *testing.T) {
 func TestWriteResponseRaceCondition(t *testing.T) {
 	term := New(WithSize(24, 80))
 
-	var buf bytes.Buffer
-	term.SetPTYWriter(&buf)
+	// The writer itself must be concurrency-safe: bytes.Buffer is not, and
+	// writeResponse deliberately calls it outside the terminal lock.
+	buf := &lockedBuffer{}
+	term.SetPTYWriter(buf)
 
 	// Concurrent writes to response provider
 	done := make(chan bool, 10)
@@ -935,6 +945,24 @@ func TestWriteResponseRaceCondition(t *testing.T) {
 	if buf.Len() == 0 {
 		t.Error("expected responses to be written")
 	}
+}
+
+// lockedBuffer is a bytes.Buffer guarded by a mutex for concurrent tests.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
 }
 
 // TestCursorBoundsAfterGrowCols tests that cursor stays within bounds after auto-resize

@@ -215,24 +215,41 @@ func TestBufferResize(t *testing.T) {
 func TestBufferDirtyTracking(t *testing.T) {
 	b := NewBuffer(24, 80)
 
-	b.ClearAllDirty()
+	// New buffers start fully dirty; take and discard the initial state.
+	b.TakeDirty()
 
-	if b.HasDirty() {
-		t.Error("expected no dirty cells")
+	rows, all := b.TakeDirty()
+	if all {
+		t.Error("expected dirtyAll=false on a clean buffer")
+	}
+	for i, d := range rows {
+		if d {
+			t.Errorf("expected row %d clean", i)
+		}
 	}
 
-	b.MarkDirty(0, 0)
+	b.MarkDirty(5, 3)
 
-	if !b.HasDirty() {
-		t.Error("expected dirty cells")
+	rows, all = b.TakeDirty()
+	if all {
+		t.Error("expected dirtyAll=false after a single row mark")
+	}
+	if len(rows) != 24 {
+		t.Fatalf("expected 24 dirty rows entries, got %d", len(rows))
+	}
+	if !rows[5] {
+		t.Error("expected row 5 dirty")
+	}
+	for i, d := range rows {
+		if i != 5 && d {
+			t.Errorf("expected only row 5 dirty, row %d also dirty", i)
+		}
 	}
 
-	dirty := b.DirtyCells()
-	if len(dirty) != 1 {
-		t.Errorf("expected 1 dirty cell, got %d", len(dirty))
-	}
-	if dirty[0].Row != 0 || dirty[0].Col != 0 {
-		t.Error("expected dirty cell at (0,0)")
+	// TakeDirty clears the state.
+	_, all = b.TakeDirty()
+	if all {
+		t.Error("expected dirty state cleared after TakeDirty")
 	}
 }
 

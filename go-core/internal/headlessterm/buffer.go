@@ -4,6 +4,10 @@ import "strings"
 
 // Buffer stores a 2D grid of cells and tracks line wrapping state.
 // Supports optional scrollback storage for lines scrolled off the top.
+//
+// Dirty tracking is row-level: every content-changing method marks either
+// the affected row (dirtyRows) or the whole buffer (dirtyAll). Consumers
+// read and clear the state with TakeDirty.
 type Buffer struct {
 	rows       int
 	cols       int
@@ -11,7 +15,8 @@ type Buffer struct {
 	wrapped    []bool // tracks if each line was wrapped (vs explicit newline)
 	tabStop    []bool
 	scrollback ScrollbackProvider
-	hasDirty   bool
+	dirtyRows  []bool // per-row dirty flags, len == rows
+	dirtyAll   bool   // whole-buffer dirty (scroll, resize, clear, buffer switch)
 }
 
 // NewBuffer creates a buffer with the given dimensions and no scrollback.
@@ -20,7 +25,8 @@ func NewBuffer(rows, cols int) *Buffer {
 }
 
 // NewBufferWithStorage creates a buffer with custom scrollback storage.
-// Tab stops are initialized every 8 columns.
+// Tab stops are initialized every 8 columns. A new buffer starts fully
+// dirty (dirtyAll) so the first projection is a complete snapshot.
 func NewBufferWithStorage(rows, cols int, storage ScrollbackProvider) *Buffer {
 	b := &Buffer{
 		rows:       rows,
@@ -29,6 +35,8 @@ func NewBufferWithStorage(rows, cols int, storage ScrollbackProvider) *Buffer {
 		wrapped:    make([]bool, rows),
 		tabStop:    make([]bool, cols),
 		scrollback: storage,
+		dirtyRows:  make([]bool, rows),
+		dirtyAll:   true,
 	}
 
 	for i := range b.cells {
@@ -58,6 +66,10 @@ func (b *Buffer) Cols() int {
 
 // Cell returns a pointer to the cell at (row, col).
 // Returns nil if coordinates are out of bounds.
+//
+// The pointer aliases internal mutable state: callers must treat it as
+// read-only. Any write through it bypasses dirty tracking and will not be
+// exported. Use SetCell or MarkDirty to modify content.
 func (b *Buffer) Cell(row, col int) *Cell {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols {
 		return nil
@@ -65,68 +77,77 @@ func (b *Buffer) Cell(row, col int) *Cell {
 	return &b.cells[row][col]
 }
 
-// SetCell replaces the cell at (row, col) and marks it dirty.
+// SetCell replaces the cell at (row, col) and marks the row dirty.
 // Does nothing if coordinates are out of bounds.
 func (b *Buffer) SetCell(row, col int, cell Cell) {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols {
 		return
 	}
-	cell.MarkDirty()
 	b.cells[row][col] = cell
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
-// MarkDirty marks the cell at (row, col) as modified.
-// Does nothing if coordinates are out of bounds.
+// MarkDirty marks the row containing (row, col) as modified.
+// It is the Buffer-level dirty primitive for callers that wrote cell content
+// through a Cell pointer; the col argument only participates in the bounds
+// check. Does nothing if coordinates are out of bounds.
 func (b *Buffer) MarkDirty(row, col int) {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols {
 		return
 	}
-	b.cells[row][col].MarkDirty()
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
-// HasDirty returns true if any cell has been modified since the last ClearAllDirty call.
-func (b *Buffer) HasDirty() bool {
-	return b.hasDirty
+// MarkAllDirty marks the entire buffer dirty, forcing a full re-export.
+// Used for buffer switches and other wholesale state changes.
+func (b *Buffer) MarkAllDirty() {
+	b.dirtyAll = true
 }
 
-// DirtyCells returns positions of all modified cells.
-func (b *Buffer) DirtyCells() []Position {
-	var positions []Position
-	for row := range b.cells {
-		for col := range b.cells[row] {
-			if b.cells[row][col].IsDirty() {
-				positions = append(positions, Position{Row: row, Col: col})
-			}
-		}
+// dirtyState returns a copy of the current row-level dirty state without
+// clearing it. rows has len == Rows(); when all is true every row must be
+// considered dirty regardless of the rows slice.
+func (b *Buffer) dirtyState() (rows []bool, all bool) {
+	rows = make([]bool, len(b.dirtyRows))
+	copy(rows, b.dirtyRows)
+	return rows, b.dirtyAll
+}
+
+// TakeDirty returns a copy of the current dirty state and clears it
+// (dirtyAll=false, all dirtyRows=false).
+//
+// The caller must merge the returned state into its own cache before any
+// subsequent write reaches the buffer: consumers are serialized by the
+// single-goroutine actor, so no write can interleave between TakeDirty and
+// the merge. A write that does interleave would be cleared without ever
+// being observed.
+func (b *Buffer) TakeDirty() (rows []bool, all bool) {
+	rows, all = b.dirtyState()
+	b.clearDirty()
+	return rows, all
+}
+
+// clearDirty resets all dirty state.
+func (b *Buffer) clearDirty() {
+	b.dirtyAll = false
+	for i := range b.dirtyRows {
+		b.dirtyRows[i] = false
 	}
-	return positions
 }
 
-// ClearAllDirty resets the dirty state of all cells.
-func (b *Buffer) ClearAllDirty() {
-	for row := range b.cells {
-		for col := range b.cells[row] {
-			b.cells[row][col].ClearDirty()
-		}
-	}
-	b.hasDirty = false
-}
-
-// ClearRow resets all cells in the row to default state and marks them dirty.
+// ClearRow resets all cells in the row to default state and marks the row dirty.
 func (b *Buffer) ClearRow(row int) {
 	if row < 0 || row >= b.rows {
 		return
 	}
 	for col := range b.cells[row] {
 		b.cells[row][col].Reset()
-		b.cells[row][col].MarkDirty()
 	}
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
-// ClearRowRange resets cells in the row from startCol (inclusive) to endCol (exclusive).
+// ClearRowRange resets cells in the row from startCol (inclusive) to endCol (exclusive)
+// and marks the row dirty.
 func (b *Buffer) ClearRowRange(row, startCol, endCol int) {
 	if row < 0 || row >= b.rows {
 		return
@@ -139,21 +160,23 @@ func (b *Buffer) ClearRowRange(row, startCol, endCol int) {
 	}
 	for col := startCol; col < endCol; col++ {
 		b.cells[row][col].Reset()
-		b.cells[row][col].MarkDirty()
 	}
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
-// ClearAll resets all cells in the buffer to default state.
+// ClearAll resets all cells in the buffer to default state
+// and marks the whole buffer dirty.
 func (b *Buffer) ClearAll() {
 	for row := range b.cells {
 		b.ClearRow(row)
 	}
+	b.dirtyAll = true
 }
 
 // ScrollUp shifts lines up by n positions within [top, bottom).
 // Lines scrolled off the top are pushed to scrollback if enabled and top==0.
-// Bottom lines are cleared and marked dirty.
+// Bottom lines are cleared. Row contents move between indices, so the whole
+// buffer is marked dirty rather than translating dirty row indices.
 func (b *Buffer) ScrollUp(top, bottom, n int) {
 	if n <= 0 || top >= bottom {
 		return
@@ -180,9 +203,6 @@ func (b *Buffer) ScrollUp(top, bottom, n int) {
 	for row := top; row < bottom-n; row++ {
 		b.cells[row] = b.cells[row+n]
 		b.wrapped[row] = b.wrapped[row+n]
-		for col := range b.cells[row] {
-			b.cells[row][col].MarkDirty()
-		}
 	}
 
 	// Clear the bottom lines
@@ -191,14 +211,13 @@ func (b *Buffer) ScrollUp(top, bottom, n int) {
 		b.wrapped[row] = false
 		for col := range b.cells[row] {
 			b.cells[row][col] = NewCell()
-			b.cells[row][col].MarkDirty()
 		}
 	}
-	b.hasDirty = true
+	b.dirtyAll = true
 }
 
 // ScrollDown shifts lines down by n positions within [top, bottom).
-// Top lines are cleared and marked dirty.
+// Top lines are cleared. Like ScrollUp, marks the whole buffer dirty.
 func (b *Buffer) ScrollDown(top, bottom, n int) {
 	if n <= 0 || top >= bottom {
 		return
@@ -218,9 +237,6 @@ func (b *Buffer) ScrollDown(top, bottom, n int) {
 	for row := bottom - 1; row >= top+n; row-- {
 		b.cells[row] = b.cells[row-n]
 		b.wrapped[row] = b.wrapped[row-n]
-		for col := 0; col < b.cols; col++ {
-			b.cells[row][col].MarkDirty()
-		}
 	}
 
 	// Clear the top lines
@@ -229,10 +245,9 @@ func (b *Buffer) ScrollDown(top, bottom, n int) {
 		b.wrapped[row] = false
 		for col := 0; col < b.cols; col++ {
 			b.cells[row][col] = NewCell()
-			b.cells[row][col].MarkDirty()
 		}
 	}
-	b.hasDirty = true
+	b.dirtyAll = true
 }
 
 // InsertLines inserts n blank lines at row, shifting existing lines down.
@@ -253,7 +268,8 @@ func (b *Buffer) DeleteLines(row, n, bottom int) {
 	b.ScrollUp(row, bottom, n)
 }
 
-// InsertBlanks inserts n blank cells at (row, col), shifting existing characters right.
+// InsertBlanks inserts n blank cells at (row, col), shifting existing characters right,
+// and marks the row dirty.
 func (b *Buffer) InsertBlanks(row, col, n int) {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols || n <= 0 {
 		return
@@ -262,18 +278,17 @@ func (b *Buffer) InsertBlanks(row, col, n int) {
 	// Shift characters to the right
 	for c := b.cols - 1; c >= col+n; c-- {
 		b.cells[row][c] = b.cells[row][c-n]
-		b.cells[row][c].MarkDirty()
 	}
 
 	// Clear the inserted positions
 	for c := col; c < col+n && c < b.cols; c++ {
 		b.cells[row][c].Reset()
-		b.cells[row][c].MarkDirty()
 	}
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
-// DeleteChars removes n characters at (row, col), shifting remaining characters left.
+// DeleteChars removes n characters at (row, col), shifting remaining characters left,
+// and marks the row dirty.
 func (b *Buffer) DeleteChars(row, col, n int) {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols || n <= 0 {
 		return
@@ -282,23 +297,22 @@ func (b *Buffer) DeleteChars(row, col, n int) {
 	// Shift characters to the left
 	for c := col; c < b.cols-n; c++ {
 		b.cells[row][c] = b.cells[row][c+n]
-		b.cells[row][c].MarkDirty()
 	}
 
 	// Clear the end of the line
 	for c := b.cols - n; c < b.cols; c++ {
 		if c >= 0 {
 			b.cells[row][c].Reset()
-			b.cells[row][c].MarkDirty()
 		}
 	}
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
 // Resize changes buffer dimensions, preserving existing cells where possible.
 // Content is kept at the top-left corner. When shrinking, bottom/right content is lost.
 // When growing, new empty cells are added at the bottom/right.
 // Tab stops are extended if columns increase.
+// The whole buffer is marked dirty and the dirty-row slice is rebuilt.
 func (b *Buffer) Resize(rows, cols int) {
 	if rows <= 0 || cols <= 0 {
 		return
@@ -313,7 +327,6 @@ func (b *Buffer) Resize(rows, cols int) {
 			} else {
 				newCells[i][j] = NewCell()
 			}
-			newCells[i][j].MarkDirty()
 		}
 	}
 
@@ -325,7 +338,8 @@ func (b *Buffer) Resize(rows, cols int) {
 	b.wrapped = newWrapped
 	b.rows = rows
 	b.cols = cols
-	b.hasDirty = true
+	b.dirtyRows = make([]bool, rows)
+	b.dirtyAll = true
 
 	// Resize tab stops
 	newTabStop := make([]bool, cols)
@@ -343,7 +357,7 @@ func (b *Buffer) SetTabStop(col int) {
 	}
 }
 
-// ClearTabStop disables the tab stop at the specified column.
+// ClearTabStop disables a tab stop at the specified column.
 func (b *Buffer) ClearTabStop(col int) {
 	if col >= 0 && col < b.cols {
 		b.tabStop[col] = false
@@ -379,16 +393,16 @@ func (b *Buffer) PrevTabStop(col int) int {
 	return 0
 }
 
-// FillWithE fills all cells with 'E' (used by DECALN alignment test pattern).
+// FillWithE fills all cells with 'E' (used by DECALN alignment test pattern)
+// and marks the whole buffer dirty.
 func (b *Buffer) FillWithE() {
 	for row := range b.cells {
 		for col := range b.cells[row] {
 			b.cells[row][col].Reset()
 			b.cells[row][col].Char = "E"
-			b.cells[row][col].MarkDirty()
 		}
 	}
-	b.hasDirty = true
+	b.dirtyAll = true
 }
 
 // ScrollbackLen returns the number of lines stored in scrollback.
@@ -481,7 +495,8 @@ func (b *Buffer) LineContent(row int) string {
 // --- Auto Resize ---
 
 // GrowRows appends n new rows to the bottom of the buffer.
-// New cells are initialized to default state and marked dirty.
+// New cells are initialized to default state. The row count changes, so the
+// whole buffer is marked dirty and the dirty-row slice is extended.
 func (b *Buffer) GrowRows(n int) {
 	if n <= 0 {
 		return
@@ -490,28 +505,31 @@ func (b *Buffer) GrowRows(n int) {
 	newRows := b.rows + n
 	newCells := make([][]Cell, newRows)
 	newWrapped := make([]bool, newRows)
+	newDirtyRows := make([]bool, newRows)
 
 	// Copy existing rows
 	copy(newCells, b.cells)
 	copy(newWrapped, b.wrapped)
+	copy(newDirtyRows, b.dirtyRows)
 
 	// Initialize new rows
 	for i := b.rows; i < newRows; i++ {
 		newCells[i] = make([]Cell, b.cols)
 		for j := range newCells[i] {
 			newCells[i][j] = NewCell()
-			newCells[i][j].MarkDirty()
 		}
 	}
 
 	b.cells = newCells
 	b.wrapped = newWrapped
+	b.dirtyRows = newDirtyRows
 	b.rows = newRows
-	b.hasDirty = true
+	b.dirtyAll = true
 }
 
-// GrowCols expands a single row to at least minCols columns.
-// Does nothing if the row is already wider. Tab stops are extended if needed.
+// GrowCols expands a single row to at least minCols columns and marks the
+// row dirty. Does nothing if the row is already wider. Tab stops are
+// extended if needed.
 func (b *Buffer) GrowCols(row, minCols int) {
 	if row < 0 || row >= b.rows {
 		return
@@ -525,7 +543,6 @@ func (b *Buffer) GrowCols(row, minCols int) {
 	copy(newCells, b.cells[row])
 	for j := len(b.cells[row]); j < minCols; j++ {
 		newCells[j] = NewCell()
-		newCells[j].MarkDirty()
 	}
 	b.cells[row] = newCells
 
@@ -541,7 +558,7 @@ func (b *Buffer) GrowCols(row, minCols int) {
 		b.tabStop = newTabStop
 	}
 
-	b.hasDirty = true
+	b.dirtyRows[row] = true
 }
 
 // --- Wrapped Line Tracking ---
@@ -554,12 +571,14 @@ func (b *Buffer) IsWrapped(row int) bool {
 	return b.wrapped[row]
 }
 
-// SetWrapped sets whether the line was wrapped or ended with an explicit newline.
+// SetWrapped sets whether the line was wrapped or ended with an explicit newline
+// and marks the row dirty: the wrapped flag is part of the exported line state.
 func (b *Buffer) SetWrapped(row int, wrapped bool) {
 	if row < 0 || row >= b.rows {
 		return
 	}
 	b.wrapped[row] = wrapped
+	b.dirtyRows[row] = true
 }
 
 // Position identifies a cell location in the terminal grid (0-based).

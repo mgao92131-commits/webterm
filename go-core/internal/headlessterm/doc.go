@@ -151,16 +151,20 @@
 //
 // See [TerminalMode] for all available modes.
 //
-// # Dirty Tracking
+// # Dirty Tracking and Projection
 //
-// Track which cells changed for efficient rendering:
+// Dirty tracking is row-level. ReadProjection returns an atomic snapshot of
+// terminal metadata plus copies of only the rows that changed since the last
+// ConsumeProjectionDirty call (or all rows when Full is true):
 //
-//	if term.HasDirty() {
-//	    for _, pos := range term.DirtyCells() {
-//	        // Redraw cell at pos.Row, pos.Col
-//	    }
-//	    term.ClearDirty()
+//	proj := term.ReadProjection()
+//	for _, row := range proj.DirtyRows {
+//	    // Merge row.Index, row.Cells, row.Wrapped into your own cache
 //	}
+//	// After the merge succeeded:
+//	term.ConsumeProjectionDirty(proj)
+//
+// Buffer.TakeDirty offers the same read-and-clear semantics at buffer level.
 //
 // # Selection
 //

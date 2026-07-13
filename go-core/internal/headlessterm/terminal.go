@@ -190,6 +190,11 @@ type Terminal struct {
 
 	// User variables (OSC 1337 SetUserVar)
 	userVars map[string]string
+
+	// Cursor baseline from the last consumed projection (row/col/style/
+	// visibility). ReadProjection compares against it to mark both the old
+	// and new cursor rows dirty; ConsumeProjectionDirty updates it.
+	lastCursor ProjectionCursor
 }
 
 // Option configures a Terminal during construction.
@@ -980,29 +985,6 @@ func (t *Terminal) ScrollbackProvider() ScrollbackProvider {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.primaryBuffer.ScrollbackProvider()
-}
-
-// --- Dirty Tracking Methods ---
-
-// HasDirty returns true if any cell in the active buffer was modified since the last ClearDirty call.
-func (t *Terminal) HasDirty() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.activeBuffer.HasDirty()
-}
-
-// DirtyCells returns positions of all cells modified since the last ClearDirty call.
-func (t *Terminal) DirtyCells() []Position {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.activeBuffer.DirtyCells()
-}
-
-// ClearDirty marks all cells as clean, resetting the dirty tracking state.
-func (t *Terminal) ClearDirty() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.activeBuffer.ClearAllDirty()
 }
 
 // --- Selection Methods ---

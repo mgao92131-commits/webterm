@@ -138,7 +138,7 @@ func staleSoftCursor(cell headlessterm.Cell, row, col, cursorRow, cursorCol int)
 	if cell.Char != " " || !cell.HasFlag(headlessterm.CellFlagReverse) || cell.Hyperlink != nil || cell.Image != nil {
 		return false
 	}
-	const nonCursorFlags = ^(headlessterm.CellFlagReverse | headlessterm.CellFlagDirty)
+	const nonCursorFlags = ^headlessterm.CellFlagReverse
 	return cell.Flags&nonCursorFlags == 0
 }
 
