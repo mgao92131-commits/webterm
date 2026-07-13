@@ -41,3 +41,8 @@ dependencies {
     testImplementation("org.json:json:20240303")
     testImplementation("org.mockito:mockito-core:5.12.0")
 }
+
+// 性能基线测试（TerminalSessionRuntimeMailboxBaselineTest）通过 stdout 打印结构化报告。
+tasks.withType<Test>().configureEach {
+    testLogging.showStandardStreams = true
+}
