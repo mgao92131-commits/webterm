@@ -14,7 +14,6 @@ import okhttp3.OkHttpClient;
 
 public final class RelayMuxSessionManager {
     private static final String TAG = "RelayMuxSessionManager";
-    private static final String BINARY_SUBPROTOCOL = "webterm.binary.v1";
     private static final String SCREEN_SUBPROTOCOL = "webterm.screen.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
 
@@ -48,7 +47,6 @@ public final class RelayMuxSessionManager {
         final String path;
         final String[] protocols;
         ChannelListener listener;
-        long lastSeq;
         State state = State.CONNECTING;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
@@ -56,14 +54,6 @@ public final class RelayMuxSessionManager {
             this.path = path;
             this.protocols = protocols;
             this.listener = listener;
-        }
-
-        void updateLastSeq(long seq) {
-            if (seq > lastSeq) lastSeq = seq;
-        }
-
-        void resetLastSeq() {
-            lastSeq = 0;
         }
     }
 
@@ -206,35 +196,12 @@ public final class RelayMuxSessionManager {
         reconnectTransport(reason, true);
     }
 
-    public boolean hasTerminalChannel(String localSessionId) {
-        return channels.containsKey(terminalChannelId(localSessionId));
-    }
-
-    public long getChannelLastSeq(String channelId) {
-        Channel ch = channels.get(channelId);
-        return ch == null ? 0 : ch.lastSeq;
-    }
-
-    public void updateChannelLastSeq(String channelId, long seq) {
-        Channel ch = channels.get(channelId);
-        if (ch != null) ch.updateLastSeq(seq);
-    }
-
-    public void resetChannelLastSeq(String channelId) {
-        Channel ch = channels.get(channelId);
-        if (ch != null) ch.resetLastSeq();
-    }
-
-    public String openTerminalChannel(String localSessionId, ChannelListener listener) {
-        return openProtocolChannel(localSessionId, BINARY_SUBPROTOCOL, listener);
-    }
-
     public String openScreenChannel(String localSessionId, ChannelListener listener) {
         return openProtocolChannel(localSessionId, SCREEN_SUBPROTOCOL, listener);
     }
 
     private String openProtocolChannel(String localSessionId, String subprotocol, ChannelListener listener) {
-        String channelId = terminalChannelId(localSessionId) + ":" + subprotocol;
+        String channelId = terminalChannelId(localSessionId, subprotocol);
         Channel existing = channels.get(channelId);
         if (existing != null) {
             boolean wasDetached = existing.listener == NO_OP_LISTENER;
@@ -309,8 +276,8 @@ public final class RelayMuxSessionManager {
         muxSession.stop();
     }
 
-    public static String terminalChannelId(String localSessionId) {
-        return "term:" + localSessionId;
+    private static String terminalChannelId(String localSessionId, String subprotocol) {
+        return "term:" + localSessionId + ":" + subprotocol;
     }
 
     public static String localSessionId(String sessionId, String deviceId) {
