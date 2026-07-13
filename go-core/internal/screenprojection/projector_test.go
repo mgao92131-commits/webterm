@@ -1,6 +1,8 @@
 package screenprojection
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"webterm/go-core/internal/terminalengine"
@@ -150,5 +152,107 @@ func TestProjector_LayoutEpochChangeIsSnapshot(t *testing.T) {
 	frame := p.FrameForClient("c1", 1, 2)
 	if frame.BaseRevision != 0 {
 		t.Fatalf("expected snapshot after epoch change, got patch base=%d", frame.BaseRevision)
+	}
+}
+
+// A dictionary rotation invalidates every client's style/link baseline, but
+// the rotation frame only carries the single-frame ForceSnapshot hint. A
+// single-slot mailbox can overwrite that frame with a later ordinary state,
+// so the durable DictionaryGeneration on every state must force a snapshot.
+func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(100, nil)
+	engine := terminalengine.NewEngine(3, 24, sb)
+	p := NewProjector(engine, sb, "s1", "i1")
+	var deriver FrameDeriver
+
+	if err := engine.Write([]byte("start")); err != nil {
+		t.Fatal(err)
+	}
+	first := deriver.FrameForState(p.ExportState(0, 1))
+	if first.BaseRevision != 0 {
+		t.Fatalf("first frame must be snapshot, got base=%d", first.BaseRevision)
+	}
+	if first.DictionaryGeneration != 0 {
+		t.Fatalf("initial dictionary generation=%d, want 0", first.DictionaryGeneration)
+	}
+
+	// Rewrite one row with fresh RGB colors per export. The dictionary only
+	// grows, so after >4096 lookups the exporter rotates. The visible window
+	// stays tiny (one 12-cell row), keeping the post-rotation re-export well
+	// under the 4096-entry protocol limit.
+	seq := uint64(2)
+	styleCounter := 0
+	repaint := func() {
+		var buf strings.Builder
+		buf.WriteByte('\r')
+		for c := 0; c < 12; c++ {
+			styleCounter++
+			fmt.Fprintf(&buf, "\x1b[38;2;%d;%d;%dmX", styleCounter&0xFF, (styleCounter>>8)&0xFF, (styleCounter>>16)&0xFF)
+		}
+		if err := engine.Write([]byte(buf.String())); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var rotated terminalengine.ScreenFrame
+	for i := 0; i < 2000; i++ {
+		repaint()
+		state := p.ExportState(0, seq)
+		seq++
+		if state.ForceSnapshot {
+			rotated = state
+			break
+		}
+		// Keep the deriver baseline current with every delivered state; a
+		// single changed row must stay on the patch path before rotation.
+		if frame := deriver.FrameForState(state); frame.BaseRevision == 0 {
+			t.Fatalf("pre-rotation frame seq=%d unexpectedly became snapshot", state.Seq)
+		}
+	}
+	if !rotated.ForceSnapshot {
+		t.Fatalf("dictionary never rotated after %d styles", styleCounter)
+	}
+	if rotated.DictionaryGeneration == first.DictionaryGeneration {
+		t.Fatal("dictionary rotation did not advance the generation")
+	}
+
+	// Simulate the single-slot mailbox dropping the rotation frame: never
+	// deliver `rotated` to the deriver, then submit the next ordinary state.
+	repaint()
+	next := p.ExportState(0, seq)
+	seq++
+	if next.DictionaryGeneration != rotated.DictionaryGeneration {
+		t.Fatalf("ordinary state generation=%d, want rotated generation %d",
+			next.DictionaryGeneration, rotated.DictionaryGeneration)
+	}
+	frame := deriver.FrameForState(next)
+	if frame.BaseRevision != 0 {
+		t.Fatalf("frame after dropped rotation must be snapshot, got patch base=%d rev=%d",
+			frame.BaseRevision, frame.Seq)
+	}
+
+	// Within the same generation, later changes may be patches again.
+	repaint()
+	later := p.ExportState(0, seq)
+	patch := deriver.FrameForState(later)
+	if patch.BaseRevision == 0 {
+		t.Fatal("same-generation frame after the snapshot should be a patch")
+	}
+	if patch.BaseRevision != frame.Seq {
+		t.Fatalf("patch base=%d, want last delivered revision %d", patch.BaseRevision, frame.Seq)
+	}
+}
+
+func TestProjector_LayoutEpochChangeAdvancesDictionaryGeneration(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(100, nil)
+	engine := terminalengine.NewEngine(3, 12, sb)
+	p := NewProjector(engine, sb, "s1", "i1")
+
+	before := p.ExportState(0, 1)
+	engine.Resize(4, 12)
+	after := p.ExportState(1, 2)
+	if after.DictionaryGeneration != before.DictionaryGeneration+1 {
+		t.Fatalf("epoch change generation=%d, want %d",
+			after.DictionaryGeneration, before.DictionaryGeneration+1)
 	}
 }

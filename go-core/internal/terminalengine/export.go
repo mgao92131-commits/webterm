@@ -167,6 +167,13 @@ type ScreenFrame struct {
 	// it tells a per-client sender that a style/link dictionary rotation made
 	// its old baseline invalid even though terminal geometry did not change.
 	ForceSnapshot bool
+	// DictionaryGeneration is process-local projection metadata. It is never
+	// encoded; unlike ForceSnapshot (a single-frame hint a mailbox can drop),
+	// it travels on every state after a style/link dictionary rebuild, so a
+	// FrameDeriver whose baseline predates the rebuild must emit a full
+	// snapshot instead of a patch referencing dictionary IDs the client never
+	// received.
+	DictionaryGeneration uint64
 }
 
 // PromotedRow 表示活动行滚入历史时的 ID 映射。

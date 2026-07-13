@@ -15,6 +15,12 @@ type Projector struct {
 	instanceID  string
 	exporter    *exporter
 	exportEpoch uint64
+	// dictGeneration increments every time the style/link exporter is rebuilt
+	// (layout epoch change or >4096 dictionary rotation). It is stamped onto
+	// every exported state so per-client FrameDerivers can detect a baseline
+	// from a stale dictionary even when the ForceSnapshot frame was coalesced
+	// away by a single-slot mailbox.
+	dictGeneration uint64
 
 	clients map[string]*clientBaseline
 }
@@ -105,18 +111,21 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 	if p.exportEpoch != epoch {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.exportEpoch = epoch
+		p.dictGeneration++
 	}
 	frame := p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
 	// 字典只增不改；大量瞬时 RGB/OSC8 若使历史字典膨胀，则以权威 snapshot
 	// 旋转字典并清空所有客户端基线。当前可见状态仍超过上限时由协议校验拒绝。
 	if len(frame.Styles) > 4096 || len(frame.Links) > 4096 {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
+		p.dictGeneration++
 		frame = p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
 		for id := range p.clients {
 			p.clients[id] = &clientBaseline{}
 		}
 		frame.ForceSnapshot = true
 	}
+	frame.DictionaryGeneration = p.dictGeneration
 	return frame
 }
 
@@ -131,8 +140,10 @@ func (p *Projector) frameForClientLocked(clientID string, state terminalengine.S
 }
 
 func frameForBaseline(baseline *clientBaseline, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	// 第一帧、字典轮转、instance/layout epoch 或备用屏变化，发送完整 snapshot。
-	if state.ForceSnapshot || baseline.frame.Seq == 0 || baseline.frame.InstanceID != state.InstanceID || baseline.frame.Epoch != state.Epoch || baseline.frame.ActiveBuffer != state.ActiveBuffer {
+	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
+	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
+	// epoch 或备用屏变化，发送完整 snapshot。
+	if state.ForceSnapshot || baseline.frame.Seq == 0 || baseline.frame.InstanceID != state.InstanceID || baseline.frame.Epoch != state.Epoch || baseline.frame.ActiveBuffer != state.ActiveBuffer || baseline.frame.DictionaryGeneration != state.DictionaryGeneration {
 		baseline.frame = state
 		return state
 	}

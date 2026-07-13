@@ -167,6 +167,32 @@ func (client *Client) readLoop(ctx context.Context) {
 	}
 }
 
+// Envelope ordering contract (pinned by client_envelope_order_test.go).
+//
+// All outbound envelopes are produced by the single terminal actor goroutine,
+// but the writer consumes them through two entries: the buffered send channel
+// (control messages: effect/history trim/history page/info/exit/pong) and the
+// single-slot screen mailbox woken by screenWake. The relative write order
+// between the two streams is therefore NOT the production order, and that is
+// intentional: every message is protocol-independent because it carries the
+// anchors a client needs to judge applicability on its own —
+//   - snapshot/patch: instance id + layout epoch + baseRevision chain
+//     (a gap triggers client resync, see Android RemoteTerminalModel.applyPatch);
+//   - history page:   request id + layout epoch (late pages are dropped);
+//   - history trim:   layout epoch + monotonic firstAvailable watermark;
+//   - effect:         instance id; fire-and-forget UI signal;
+//   - exit:           terminal state; clients drop anything after it.
+//
+// The writer only guarantees two invariants:
+//  1. control messages keep channel FIFO and are never dropped by screen load
+//     (mailbox coalescing applies to screen states only);
+//  2. screen frames form a self-consistent chain: the FrameDeriver diffs
+//     against the last state actually written, so every patch baseRevision
+//     equals the previously written screen revision.
+// Do not "fix" the dual entry by priority-draining one channel before select:
+// that reorders control messages relative to their production order without
+// expressing any real event ordering, and the contract above makes it
+// unnecessary.
 func (client *Client) writeLoop(ctx context.Context) {
 	for {
 		select {
