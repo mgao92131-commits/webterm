@@ -32,8 +32,14 @@ public final class SessionCommandController {
 
             @Override
             public void onError(String message) {
+                activity.runOnUiThread(() ->
+                    Toast.makeText(activity, "创建失败: " + message, Toast.LENGTH_LONG).show());
+            }
+
+            @Override
+            public void onError(int code, String message) {
                 activity.runOnUiThread(() -> {
-                    if (message.contains("401")) {
+                    if (code == 401) {
                         if (server.getCookie() != null && !server.getCookie().isEmpty()) {
                             api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
                                 @Override

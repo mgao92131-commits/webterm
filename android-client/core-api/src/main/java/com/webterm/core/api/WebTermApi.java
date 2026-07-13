@@ -52,14 +52,14 @@ public final class WebTermApi {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Login failed: " + e.getMessage());
+                callback.onError(0, "Login failed: " + e.getMessage());
             }
 
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
                     if (!response.isSuccessful()) {
-                        callback.onError("Login failed: " + response.code() + " " + response.body().string());
+                        callback.onError(response.code(), "Login failed: " + response.code() + " " + response.body().string());
                         return;
                     }
                     String text = response.body().string();
@@ -137,14 +137,14 @@ public final class WebTermApi {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Refresh failed: " + e.getMessage());
+                callback.onError(0, "Refresh failed: " + e.getMessage());
             }
 
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
                     if (!response.isSuccessful()) {
-                        callback.onError("Refresh failed: " + response.code() + " " + response.body().string());
+                        callback.onError(response.code(), "Refresh failed: " + response.code() + " " + response.body().string());
                         return;
                     }
                     String newCookie = parseAndMergeCookies(cookie, response);
@@ -302,7 +302,7 @@ public final class WebTermApi {
         http.newCall(builder.build()).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Session failed: " + e.getMessage());
+                callback.onError(0, "Session failed: " + e.getMessage());
             }
 
             @Override
@@ -310,7 +310,7 @@ public final class WebTermApi {
                 try (response) {
                     String text = response.body().string();
                     if (!response.isSuccessful()) {
-                        callback.onError("Session failed: " + response.code() + " " + text);
+                        callback.onError(response.code(), "Session failed: " + response.code() + " " + text);
                         return;
                     }
                     try {
@@ -337,7 +337,7 @@ public final class WebTermApi {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Session failed: " + e.getMessage());
+                callback.onError(0, "Session failed: " + e.getMessage());
             }
 
             @Override
@@ -345,7 +345,7 @@ public final class WebTermApi {
                 try (response) {
                     String text = response.body().string();
                     if (!response.isSuccessful()) {
-                        callback.onError("Session failed: " + response.code() + " " + text);
+                        callback.onError(response.code(), "Session failed: " + response.code() + " " + text);
                         return;
                     }
                     try {
@@ -646,6 +646,13 @@ public final class WebTermApi {
     public interface LoginCallback {
         void onReady(String baseUrl, String cookie);
         void onError(String message);
+        /**
+         * 带 HTTP 状态码的错误回调：code 为响应状态码，0 表示网络错误。
+         * 默认转发到 onError(message)，旧实现无需改动。
+         */
+        default void onError(int code, String message) {
+            onError(message);
+        }
     }
 
     public interface ExtendedLoginCallback extends LoginCallback {
@@ -655,6 +662,13 @@ public final class WebTermApi {
     public interface SessionCreateCallback {
         void onReady(String sessionId);
         void onError(String message);
+        /**
+         * 带 HTTP 状态码的错误回调：code 为响应状态码，0 表示网络错误。
+         * 默认转发到 onError(message)，旧实现无需改动。
+         */
+        default void onError(int code, String message) {
+            onError(message);
+        }
     }
 
     public interface SessionsCallback {

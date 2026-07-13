@@ -50,7 +50,7 @@ public class MuxSessionControlTest {
         AtomicReference<String> msgRef = new AtomicReference<>();
         MuxSession session = new MuxSession(transport, synchronousHandler(), new MuxSession.Listener() {
             @Override public void onMuxConnected() {}
-            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
             @Override public void onTunnelConnected(String tunnelId) {}
             @Override public void onTunnelError(String tunnelId, int code, String message) {
                 codeRef.set(code);
@@ -72,7 +72,7 @@ public class MuxSessionControlTest {
         AtomicReference<String> reasonRef = new AtomicReference<>();
         MuxSession session = new MuxSession(transport, synchronousHandler(), new MuxSession.Listener() {
             @Override public void onMuxConnected() {}
-            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
             @Override public void onTunnelConnected(String tunnelId) {}
             @Override public void onTunnelError(String tunnelId, int code, String message) {}
             @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}
@@ -94,7 +94,7 @@ public class MuxSessionControlTest {
         AtomicReference<String> reasonRef = new AtomicReference<>();
         MuxSession session = new MuxSession(transport, synchronousHandler(), new MuxSession.Listener() {
             @Override public void onMuxConnected() {}
-            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
             @Override public void onTunnelConnected(String tunnelId) {}
             @Override public void onTunnelError(String tunnelId, int code, String message) {}
             @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}
@@ -116,7 +116,7 @@ public class MuxSessionControlTest {
         AtomicReference<String> msgRef = new AtomicReference<>();
         MuxSession session = new MuxSession(transport, synchronousHandler(), new MuxSession.Listener() {
             @Override public void onMuxConnected() {}
-            @Override public void onMuxDisconnected(String reason) {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
             @Override public void onTunnelConnected(String tunnelId) {}
             @Override public void onTunnelError(String tunnelId, int code, String message) {
                 codeRef.set(code);
@@ -139,7 +139,7 @@ public class MuxSessionControlTest {
         AtomicInteger reconnectAttempts = new AtomicInteger();
         MuxSession session = new MuxSession(transport, capturing.handler, new MuxSession.Listener() {
             @Override public void onMuxConnected() {}
-            @Override public void onMuxDisconnected(String reason) { disconnectReason.set(reason); }
+            @Override public void onMuxDisconnected(int code, String reason) { disconnectReason.set(reason); }
             @Override public void onTunnelConnected(String tunnelId) {}
             @Override public void onTunnelError(String tunnelId, int code, String message) {}
             @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}

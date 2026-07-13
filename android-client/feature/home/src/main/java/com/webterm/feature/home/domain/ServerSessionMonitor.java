@@ -3,6 +3,7 @@ package com.webterm.feature.home.domain;
 import android.util.Log;
 
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 
@@ -60,21 +61,16 @@ public final class ServerSessionMonitor {
                 listener.onMonitorConnected();
             }
 
-            @Override public void onError(String channelId, int code, String message) {
-                if (!managerId.equals(channelId)) return;
-                connected = false;
-                channelOpened = false;
-                listener.onMonitorError(message);
-                onMuxDisconnected(message);
-            }
-
             @Override public void onData(String channelId, byte[] payload, boolean binary) {
                 if (!managerId.equals(channelId) || binary) return;
                 dispatchMessage(new String(payload, StandardCharsets.UTF_8), listener, server.getDeviceId());
             }
 
-            @Override public void onMuxDisconnected(String reason) {
-                ServerSessionMonitor.this.onMuxDisconnected(reason);
+            @Override public void onFailure(String channelId, ChannelFailure failure) {
+                if (!managerId.equals(channelId)) return;
+                connected = false;
+                listener.onMonitorError(failure.message);
+                onMuxDisconnected(failure.message);
             }
         });
         channelOpened = true;

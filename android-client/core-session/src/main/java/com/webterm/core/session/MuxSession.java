@@ -23,7 +23,8 @@ public final class MuxSession {
 
     interface Listener {
         void onMuxConnected();
-        void onMuxDisconnected(String reason);
+        /** code 为 WebSocket close code；传输错误/超时为 0。 */
+        void onMuxDisconnected(int code, String reason);
         void onTunnelConnected(String tunnelId);
         void onTunnelError(String tunnelId, int code, String message);
         void onTunnelData(String tunnelId, byte[] payload, boolean binary);
@@ -161,7 +162,7 @@ public final class MuxSession {
                     connected = false;
                     connecting = false;
                     Log.e(TAG, "mux failure: " + message);
-                    listener.onMuxDisconnected(message);
+                    listener.onMuxDisconnected(0, message);
                     scheduleReconnect();
                 });
             }
@@ -173,7 +174,7 @@ public final class MuxSession {
                     mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
-                    listener.onMuxDisconnected(reason + " (" + code + ")");
+                    listener.onMuxDisconnected(code, reason);
                     scheduleReconnect();
                 });
             }
@@ -187,7 +188,7 @@ public final class MuxSession {
         if (transport != null) {
             transport.close();
         }
-        listener.onMuxDisconnected("connect timeout");
+        listener.onMuxDisconnected(0, "connect timeout");
         scheduleReconnect();
     }
 

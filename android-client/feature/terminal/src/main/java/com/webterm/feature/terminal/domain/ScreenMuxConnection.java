@@ -5,6 +5,7 @@ import android.os.Handler;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.terminal.protocol.ScreenMessageBuilder;
@@ -184,28 +185,30 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
       }
 
       @Override
-      public void onError(String channelId, int code, String message) {
-        if (listener != null) listener.onDisconnected("channel error " + code + ": " + message);
-      }
-
-      @Override
       public void onData(String channelId, byte[] payload, boolean binary) {
         if (listener != null) listener.onScreenMessage(payload);
       }
 
       @Override
-      public void onMuxDisconnected(String reason) {
-        if (listener != null) listener.onDisconnected(reason);
-      }
-
-      @Override
-      public void onClosed(String channelId, int code, String reason) {
-        if (listener != null) listener.onDisconnected(reason);
-      }
-
-      @Override
-      public void onChannelGone(String channelId, int code, String reason) {
-        if (listener != null) listener.onClosed();
+      public void onFailure(String channelId, ChannelFailure failure) {
+        switch (failure.kind) {
+          case CHANNEL_NOT_FOUND:
+          case AUTH_REQUIRED:
+          case REMOTE_CLOSED:
+            // channel 已被 mux 移除：会话不存在、鉴权失败或服务端正常关闭。
+            // 终端会话已结束，不重开（与 §5.2 REMOTE_CLOSED 矩阵一致）。
+            if (listener != null) listener.onClosed();
+            break;
+          case CLIENT_CLOSED:
+            // 本地主动关闭：不自动恢复，也不需要通知（close() 已清理状态）。
+            break;
+          case MUX_TEMPORARY:
+          case SERVER_TEMPORARY:
+          default:
+            // 可恢复：mux 自身重连/重开 channel，仅通知上层展示断线状态。
+            if (listener != null) listener.onDisconnected(failure.message);
+            break;
+        }
       }
 
       @Override

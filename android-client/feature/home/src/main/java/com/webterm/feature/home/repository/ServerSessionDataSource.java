@@ -1,6 +1,7 @@
 package com.webterm.feature.home.repository;
 
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.feature.home.domain.ServerSessionMonitor;
@@ -31,7 +32,7 @@ public final class ServerSessionDataSource {
     public interface Listener {
         void onConnected();
         void onConnecting();
-        void onDisconnected(String reason);
+        void onDisconnected(ChannelFailure failure);
         void onSessions(JSONArray sessions);
         void onSession(JSONObject session);
         void onSessionClosed(String sessionId);
@@ -48,32 +49,15 @@ public final class ServerSessionDataSource {
             }
 
             @Override
-            public void onError(String id, int code, String message) {
-                if (!channelId.equals(id)) return;
-                listener.onDisconnected(message);
-            }
-
-            @Override
             public void onData(String id, byte[] payload, boolean binary) {
                 if (!channelId.equals(id) || binary) return;
                 dispatch(new String(payload, StandardCharsets.UTF_8), listener, server.getDeviceId());
             }
 
             @Override
-            public void onMuxDisconnected(String reason) {
-                listener.onDisconnected(reason);
-            }
-
-            @Override
-            public void onChannelGone(String id, int code, String reason) {
+            public void onFailure(String id, ChannelFailure failure) {
                 if (!channelId.equals(id)) return;
-                listener.onDisconnected("channel gone: " + reason + " (" + code + ")");
-            }
-
-            @Override
-            public void onClosed(String id, int code, String reason) {
-                if (!channelId.equals(id)) return;
-                listener.onDisconnected("channel closed: " + reason + " (" + code + ")");
+                listener.onDisconnected(failure);
             }
 
             @Override
@@ -132,7 +116,7 @@ public final class ServerSessionDataSource {
 
             @Override
             public void onMonitorError(String errorMsg) {
-                listener.onDisconnected(errorMsg);
+                listener.onDisconnected(ChannelFailure.muxTemporary(0, errorMsg));
             }
         }, relayDeviceId);
     }

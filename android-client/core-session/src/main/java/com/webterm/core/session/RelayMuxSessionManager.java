@@ -19,15 +19,13 @@ public final class RelayMuxSessionManager {
 
     public interface ChannelListener {
         void onConnected(String channelId);
-        void onError(String channelId, int code, String message);
         void onData(String channelId, byte[] payload, boolean binary);
-        void onMuxDisconnected(String reason);
 
-        /** channel 被服务端主动关闭时触发（如 send buffer 满）。 */
-        default void onClosed(String channelId, int code, String reason) {}
-
-        /** channel 永久关闭（如会话不存在、鉴权失败），不应再重连。 */
-        default void onChannelGone(String channelId, int code, String reason) {}
+        /**
+         * channel 或 mux 失败时触发，携带结构化失败信息。
+         * 恢复策略由上层按 failure.kind 决定，不再解析 message 文本。
+         */
+        void onFailure(String channelId, ChannelFailure failure);
 
         /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
@@ -35,9 +33,8 @@ public final class RelayMuxSessionManager {
 
     private static final ChannelListener NO_OP_LISTENER = new ChannelListener() {
         @Override public void onConnected(String channelId) {}
-        @Override public void onError(String channelId, int code, String message) {}
         @Override public void onData(String channelId, byte[] payload, boolean binary) {}
-        @Override public void onMuxDisconnected(String reason) {}
+        @Override public void onFailure(String channelId, ChannelFailure failure) {}
     };
 
     private static final class Channel {
@@ -92,11 +89,12 @@ public final class RelayMuxSessionManager {
                 reopenChannels();
             }
 
-            @Override public void onMuxDisconnected(String reason) {
+            @Override public void onMuxDisconnected(int code, String reason) {
                 if (generation != muxGeneration) return;
+                ChannelFailure failure = ChannelFailure.muxTemporary(code, reason);
                 for (Channel channel : snapshotChannels()) {
                     channel.state = Channel.State.CONNECTING;
-                    channel.listener.onMuxDisconnected(reason);
+                    channel.listener.onFailure(channel.id, failure);
                 }
             }
 
@@ -120,18 +118,21 @@ public final class RelayMuxSessionManager {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
                 if (channel == null) return;
-                if (code == 404 || code == 401) {
+                if (code == 404) {
                     channels.remove(tunnelId);
-                    channel.listener.onChannelGone(tunnelId, code, message);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.channelNotFound(code, message));
+                } else if (code == 401) {
+                    channels.remove(tunnelId);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.authRequired(code, message));
                 } else if (code >= 500 && code < 600) {
                     // recoverable server-side error: reopen the channel
                     channel.state = Channel.State.CONNECTING;
-                    channel.listener.onClosed(tunnelId, code, message);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.serverTemporary(code, message));
                     if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
                         muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
                     }
                 } else {
-                    channel.listener.onError(tunnelId, code, message);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.muxTemporary(code, message));
                 }
             }
 
@@ -145,13 +146,22 @@ public final class RelayMuxSessionManager {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
                 if (channel == null) return;
-                if (code == 1000 || code == 404 || code == 401) {
+                if (code == 404) {
                     channels.remove(tunnelId);
-                    channel.listener.onChannelGone(tunnelId, code, reason);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.channelNotFound(code, reason));
+                } else if (code == 401) {
+                    channels.remove(tunnelId);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.authRequired(code, reason));
+                } else if (code == 1000) {
+                    channels.remove(tunnelId);
+                    channel.listener.onFailure(tunnelId, ChannelFailure.remoteClosed(code, reason));
                 } else {
                     // recoverable: network/backpressure; keep channel alive and reopen after reconnect
                     channel.state = Channel.State.CONNECTING;
-                    channel.listener.onClosed(tunnelId, code, reason);
+                    ChannelFailure failure = code >= 500 && code < 600
+                        ? ChannelFailure.serverTemporary(code, reason)
+                        : ChannelFailure.muxTemporary(code, reason);
+                    channel.listener.onFailure(tunnelId, failure);
                     if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
                         muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
                     }

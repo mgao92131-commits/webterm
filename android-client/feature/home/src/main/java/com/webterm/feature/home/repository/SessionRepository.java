@@ -9,6 +9,7 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.api.SessionIds;
+import com.webterm.core.session.ChannelFailure;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -140,6 +141,8 @@ public final class SessionRepository {
         final AtomicLong hydrateGeneration = new AtomicLong(0);
         int observerCount = 0;
         boolean wsStarted = false;
+        /** AUTH_REQUIRED 恢复中：HTTP 链上的网络错误按临时错误退避重试。 */
+        boolean authRecovery = false;
         long fallbackDelayMs = FALLBACK_INITIAL_DELAY_MS;
         final Runnable fallbackRunnable = this::runFallbackRefresh;
 
@@ -270,18 +273,44 @@ public final class SessionRepository {
         }
 
         @Override
-        public void onDisconnected(String reason) {
-            if (reason != null && (reason.contains("401") || reason.contains("Unauthorized"))) {
-                if (wsStarted) {
-                    wsStarted = false;
-                    wsSource.stop(server);
-                }
-                cancelFallback();
-                updateState(SessionListResult.State.AUTH_REQUIRED);
-                loadHttp(server);
-            } else {
-                updateState(SessionListResult.State.DISCONNECTED);
-                scheduleFallback();
+        public void onDisconnected(ChannelFailure failure) {
+            switch (failure.kind) {
+                case AUTH_REQUIRED:
+                    // 鉴权失败：关闭失效 channel，进入 AUTH_REQUIRED 并允许一次
+                    // refresh；凭据被服务明确拒绝时保持该状态等待用户更新凭据。
+                    stopWebSocket();
+                    cancelFallback();
+                    authRecovery = true;
+                    updateState(SessionListResult.State.AUTH_REQUIRED);
+                    loadHttp(server);
+                    break;
+                case CHANNEL_NOT_FOUND:
+                case REMOTE_CLOSED:
+                    // channel 已被 mux 移除：同步 wsStarted 并释放；HTTP 确认 ONLINE
+                    // 且 observer 仍活跃时由 applyHttpResult 重建 channel。
+                    stopWebSocket();
+                    updateState(SessionListResult.State.DISCONNECTED);
+                    loadHttp(server);
+                    scheduleFallback();
+                    break;
+                case CLIENT_CLOSED:
+                    // 本地主动关闭：不自动恢复。
+                    break;
+                case MUX_TEMPORARY:
+                case SERVER_TEMPORARY:
+                default:
+                    // 保留 channel 与 wsStarted，依赖 mux 自身重连；
+                    // HTTP fallback 仅作会话列表补偿。
+                    updateState(SessionListResult.State.DISCONNECTED);
+                    scheduleFallback();
+                    break;
+            }
+        }
+
+        private void stopWebSocket() {
+            if (wsStarted) {
+                wsStarted = false;
+                wsSource.stop(server);
             }
         }
 
@@ -323,7 +352,9 @@ public final class SessionRepository {
         // ── Fallback ─────────────────────────────────────────────────
 
         private void scheduleFallback() {
-            cancelFallback();
+            // 只移除待发任务，不重置 fallbackDelayMs：
+            // runFallbackRefresh 翻倍后的退避必须保留到下一次调度。
+            mainHandler.removeCallbacks(fallbackRunnable);
             if (observerCount <= 0) return;
             mainHandler.postDelayed(fallbackRunnable, fallbackDelayMs);
         }
@@ -420,6 +451,7 @@ public final class SessionRepository {
                 state = SessionListResult.State.CONNECTED;
                 JSONArray onlineSessions = result.sessions != null ? result.sessions : new JSONArray();
                 if (sub != null) {
+                    sub.authRecovery = false;
                     sub.hydrateAndEmit(onlineSessions, state, null);
                     if (sub.observerCount > 0 && !sub.wsStarted) {
                         sub.startObserving();
@@ -437,6 +469,8 @@ public final class SessionRepository {
                 state = SessionListResult.State.DISCONNECTED;
                 break;
             case AUTH_REQUIRED:
+                // 凭据被服务明确拒绝：退出恢复流程，保持 AUTH_REQUIRED 等待用户。
+                if (sub != null) sub.authRecovery = false;
                 state = SessionListResult.State.AUTH_REQUIRED;
                 errorMessage = result.message;
                 break;
@@ -465,6 +499,11 @@ public final class SessionRepository {
         ));
         if (sub != null) {
             sub.liveData.setValue(new SessionListResult(sessions, state, errorMessage, false));
+            if (sub.authRecovery && sub.observerCount > 0) {
+                // AUTH_REQUIRED 恢复期间的网络错误：按临时错误处理，
+                // 使用现有 3s~60s 退避重试，不形成热循环。
+                sub.scheduleFallback();
+            }
         }
     }
 
@@ -508,14 +547,26 @@ public final class SessionRepository {
 
             @Override
             public void onError(String refreshError) {
-                loginAndFetch(server, callback);
+                offlineFallback(server, "刷新失败: " + refreshError, callback);
+            }
+
+            @Override
+            public void onError(int code, String refreshError) {
+                if (code == 401 || code == 403) {
+                    // 服务明确拒绝凭据：保持 AUTH_REQUIRED 等待用户更新凭据，
+                    // 不用同一密码自动循环登录。
+                    callback.onResult(Result.authRequired("刷新失败: " + refreshError));
+                    return;
+                }
+                // 网络错误等临时失败：交给 authRecovery 退避重试。
+                offlineFallback(server, "刷新失败: " + refreshError, callback);
             }
         });
     }
 
     private void loginAndFetch(ServerConfig server, Callback callback) {
         if (server.getPassword() == null || server.getPassword().isEmpty()) {
-            offlineFallback(server, "登录失败: 密码为空", callback);
+            callback.onResult(Result.authRequired("登录失败: 密码为空"));
             return;
         }
         api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
@@ -528,6 +579,16 @@ public final class SessionRepository {
 
             @Override
             public void onError(String message) {
+                offlineFallback(server, "登录失败: " + message, callback);
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                if (code == 401 || code == 403) {
+                    // 服务明确拒绝凭据：保持 AUTH_REQUIRED 等待用户更新凭据。
+                    callback.onResult(Result.authRequired("登录失败: " + message));
+                    return;
+                }
                 offlineFallback(server, "登录失败: " + message, callback);
             }
         });
