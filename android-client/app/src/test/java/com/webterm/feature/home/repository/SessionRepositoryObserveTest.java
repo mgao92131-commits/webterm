@@ -3,7 +3,6 @@ package com.webterm.feature.home.repository;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -13,6 +12,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.os.Handler;
 
@@ -21,8 +21,10 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.Observer;
 
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.session.ChannelFailure;
 import com.webterm.feature.home.repository.SessionRepository.Api;
 
@@ -225,103 +227,44 @@ public class SessionRepositoryObserveTest {
     }
 
     @Test
-    public void observeSessions_whenAuthRequired_refreshSuccessUpdatesCookieAndRebuildsMux() {
-        ServerConfig server = server("expired_cookie");
-        RecordingObserver observer = new RecordingObserver();
-
+    public void productionAuthRecovery_refreshRejected_logsInPersistsAndRebuildsMux() {
+        ServerConfig server = new ServerConfig(
+            "srv", "Mac", "http://mac.test", "expired_cookie", "user", "password");
+        WebTermApi webApi = mock(WebTermApi.class);
+        ServerConfigManager configs = mock(ServerConfigManager.class);
+        when(configs.credentialOwner(any(ServerConfig.class))).thenReturn(server);
+        when(configs.updateCookie(any(ServerConfig.class), anyString())).thenAnswer(invocation -> {
+            server.setCookie(invocation.getArgument(1));
+            return server;
+        });
+        AuthSessionCoordinator auth = new AuthSessionCoordinator(webApi, configs);
+        repository = new SessionRepository(
+            api, ignored -> Collections.emptyList(), executor, wsSource, sessionCache,
+            terminalCache, mainHandler, auth);
         AtomicInteger fetchCalls = new AtomicInteger();
         doAnswer(invocation -> {
             WebTermApi.SessionsCallback callback = invocation.getArgument(1);
-            if (fetchCalls.incrementAndGet() == 1) {
-                callback.onError(401, "expired");
-            } else {
-                callback.onReady(sessions("[{\"id\":\"s1\"}]"));
-            }
+            if (fetchCalls.incrementAndGet() == 1) callback.onError(401, "expired");
+            else callback.onReady(sessions("[{\"id\":\"s1\"}]"));
             return null;
         }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
-        doAnswer(invocation -> {
-            WebTermApi.LoginCallback callback = invocation.getArgument(2);
-            callback.onReady("http://mac.test", "fresh_cookie");
-            return null;
-        }).when(api).refresh(anyString(), anyString(), any(WebTermApi.LoginCallback.class));
-
-        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
-        liveData.observeForever(observer);
+        RecordingObserver observer = new RecordingObserver();
+        repository.observeSessions(server).observeForever(observer);
 
         wsListener.get().onDisconnected(ChannelFailure.authRequired(401, "unauthorized"));
+        org.mockito.ArgumentCaptor<WebTermApi.LoginCallback> refresh =
+            org.mockito.ArgumentCaptor.forClass(WebTermApi.LoginCallback.class);
+        verify(webApi).refresh(anyString(), anyString(), refresh.capture());
+        refresh.getValue().onError(401, "refresh rejected");
+        org.mockito.ArgumentCaptor<WebTermApi.LoginCallback> login =
+            org.mockito.ArgumentCaptor.forClass(WebTermApi.LoginCallback.class);
+        verify(webApi).login(anyString(), anyString(), anyString(), anyString(), login.capture());
+        login.getValue().onReady("http://mac.test", "fresh_cookie");
 
-        // refresh 成功：cookie 更新、mux 重建、恢复 ONLINE
         assertEquals("fresh_cookie", server.getCookie());
-        assertEquals(2, fetchCalls.get());
         assertEquals(SessionRepository.SessionListResult.State.CONNECTED, observer.latest().state);
+        verify(configs).updateCookie(server, "fresh_cookie");
         verify(wsSource, times(2)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
-    }
-
-    @Test
-    public void observeSessions_whenCredentialsRejected_staysAuthRequired() {
-        ServerConfig server = server("expired_cookie");
-        RecordingObserver observer = new RecordingObserver();
-
-        doAnswer(invocation -> {
-            WebTermApi.SessionsCallback callback = invocation.getArgument(1);
-            callback.onError(401, "expired");
-            return null;
-        }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
-        doAnswer(invocation -> {
-            WebTermApi.LoginCallback callback = invocation.getArgument(2);
-            callback.onError(401, "denied");
-            return null;
-        }).when(api).refresh(anyString(), anyString(), any(WebTermApi.LoginCallback.class));
-
-        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
-        liveData.observeForever(observer);
-
-        wsListener.get().onDisconnected(ChannelFailure.authRequired(401, "unauthorized"));
-
-        // 凭据被服务明确拒绝：始终保持 AUTH_REQUIRED，不变成普通 ERROR
-        assertEquals(SessionRepository.SessionListResult.State.AUTH_REQUIRED, observer.latest().state);
-        assertFalse("must never degrade to plain ERROR",
-            observer.hasState(SessionRepository.SessionListResult.State.ERROR));
-        // 不用同一密码自动循环登录
-        verify(api, never()).login(anyString(), anyString(), anyString(), anyString(),
-            any(WebTermApi.LoginCallback.class));
-        // 不重建 channel、不安排退避重试
-        verify(wsSource, times(1)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
-        assertNull(delayedRunnable);
-    }
-
-    @Test
-    public void observeSessions_whenRefreshFailsWithNetworkError_retriesWithBackoff() {
-        ServerConfig server = server("expired_cookie");
-        RecordingObserver observer = new RecordingObserver();
-
-        doAnswer(invocation -> {
-            WebTermApi.SessionsCallback callback = invocation.getArgument(1);
-            callback.onError(401, "expired");
-            return null;
-        }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
-        doAnswer(invocation -> {
-            WebTermApi.LoginCallback callback = invocation.getArgument(2);
-            callback.onError(0, "network down");
-            return null;
-        }).when(api).refresh(anyString(), anyString(), any(WebTermApi.LoginCallback.class));
-
-        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
-        liveData.observeForever(observer);
-
-        wsListener.get().onDisconnected(ChannelFailure.authRequired(401, "unauthorized"));
-
-        // 网络错误：安排 3s 起步的退避重试，不同步热循环
-        verify(api, times(1)).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
-        assertNotNull(delayedRunnable);
-        assertEquals(3000L, delayedMs);
-
-        Runnable firstRetry = delayedRunnable;
-        firstRetry.run();
-
-        // 重试后再次失败：退避翻倍到 6s，仍不热循环
-        verify(api, times(2)).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
-        assertEquals(6000L, delayedMs);
     }
 
     @Test

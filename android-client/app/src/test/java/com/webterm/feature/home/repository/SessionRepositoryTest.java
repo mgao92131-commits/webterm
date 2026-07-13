@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import android.os.Handler;
 
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.feature.home.repository.SessionRepository;
@@ -38,18 +39,17 @@ public class SessionRepositoryTest {
     }
 
     @Test
-    public void loadSessionsRefreshesCookieAfterUnauthorizedAndRetries() throws Exception {
+    public void loadSessionsDelegatesUnauthorizedToCoordinatorAndRetriesOnce() throws Exception {
         FakeApi api = new FakeApi();
         api.fetchSteps.add(callback -> callback.onError(401, "expired"));
         api.fetchSteps.add(callback -> callback.onReady(sessions("[{\"id\":\"s2\"}]")));
-        api.refreshCookie = "fresh";
+        AuthSessionCoordinator auth = successfulAuth("fresh");
         RecordingCallback callback = new RecordingCallback();
         ServerConfig server = server("old", "pw");
 
-        repository(api, Collections.emptyList()).loadSessions(server, callback);
+        repository(api, Collections.emptyList(), auth).loadSessions(server, callback);
 
         assertEquals(2, api.fetchCalls);
-        assertEquals(1, api.refreshCalls);
         assertEquals("fresh", server.getCookie());
         assertEquals(1, callback.authenticatedCount);
         assertEquals(SessionRepository.Result.Kind.ONLINE, callback.result.kind);
@@ -57,16 +57,15 @@ public class SessionRepositoryTest {
     }
 
     @Test
-    public void loadSessionsLogsInWhenCookieMissing() throws Exception {
+    public void loadSessionsRecoversCredentialsWhenCookieMissing() throws Exception {
         FakeApi api = new FakeApi();
-        api.loginCookie = "login-cookie";
         api.fetchSteps.add(callback -> callback.onReady(sessions("[{\"id\":\"s3\"}]")));
         RecordingCallback callback = new RecordingCallback();
         ServerConfig server = server("", "pw");
 
-        repository(api, Collections.emptyList()).loadSessions(server, callback);
+        repository(api, Collections.emptyList(), successfulAuth("login-cookie"))
+            .loadSessions(server, callback);
 
-        assertEquals(1, api.loginCalls);
         assertEquals(1, api.fetchCalls);
         assertEquals("login-cookie", server.getCookie());
         assertEquals(SessionRepository.Result.Kind.ONLINE, callback.result.kind);
@@ -90,13 +89,18 @@ public class SessionRepositoryTest {
     public void loadSessionsReturnsAuthRequiredWithoutCredentials() {
         RecordingCallback callback = new RecordingCallback();
 
-        repository(new FakeApi(), Collections.emptyList()).loadSessions(server("", ""), callback);
+        repository(new FakeApi(), Collections.emptyList(), null).loadSessions(server("", ""), callback);
 
         assertEquals(SessionRepository.Result.Kind.AUTH_REQUIRED, callback.result.kind);
         assertEquals("需要登录", callback.result.message);
     }
 
     private static SessionRepository repository(FakeApi api, List<TerminalDiskCache.Metadata> cached) {
+        return repository(api, cached, null);
+    }
+
+    private static SessionRepository repository(FakeApi api, List<TerminalDiskCache.Metadata> cached,
+                                                AuthSessionCoordinator auth) {
         return new SessionRepository(
             api,
             server -> cached,
@@ -104,8 +108,21 @@ public class SessionRepositoryTest {
             null,
             null,
             null,
-            fakeHandler()
+            fakeHandler(),
+            auth
         );
+    }
+
+    private static AuthSessionCoordinator successfulAuth(String cookie) {
+        AuthSessionCoordinator auth = mock(AuthSessionCoordinator.class);
+        doAnswer(invocation -> {
+            ServerConfig server = invocation.getArgument(0);
+            AuthSessionCoordinator.Callback callback = invocation.getArgument(1);
+            server.setCookie(cookie);
+            callback.onAuthenticated(server, cookie);
+            return null;
+        }).when(auth).recover(any(ServerConfig.class), any(AuthSessionCoordinator.Callback.class));
+        return auth;
     }
 
     private static Handler fakeHandler() {
@@ -151,27 +168,11 @@ public class SessionRepositoryTest {
     private static final class FakeApi implements SessionRepository.Api {
         final List<FetchStep> fetchSteps = new ArrayList<>();
         int fetchCalls;
-        int refreshCalls;
-        int loginCalls;
-        String refreshCookie = "refreshed";
-        String loginCookie = "logged-in";
 
         @Override
         public void fetchSessions(ServerConfig server, WebTermApi.SessionsCallback callback) {
             fetchCalls++;
             fetchSteps.remove(0).run(callback);
-        }
-
-        @Override
-        public void refresh(String baseUrl, String cookie, WebTermApi.LoginCallback callback) {
-            refreshCalls++;
-            callback.onReady(baseUrl, refreshCookie);
-        }
-
-        @Override
-        public void login(String baseUrl, String cookie, String username, String password, WebTermApi.LoginCallback callback) {
-            loginCalls++;
-            callback.onReady(baseUrl, loginCookie);
         }
     }
 

@@ -7,6 +7,10 @@ public interface MuxTransport {
         void onBinary(byte[] data);
         void onClosed(int code, String reason);
         void onError(String message);
+        /** HTTP handshake status when available; 0 denotes a transport error. */
+        default void onError(int code, String message) {
+            onError(message);
+        }
     }
 
     void start(Listener listener);

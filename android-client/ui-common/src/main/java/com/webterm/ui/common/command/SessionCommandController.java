@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.widget.Toast;
 
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.api.SessionIds;
 import com.webterm.ui.common.dialog.RenameSessionDialogHelper;
@@ -12,15 +13,22 @@ import com.webterm.ui.common.dialog.RenameSessionDialogHelper;
 public final class SessionCommandController {
     private final Activity activity;
     private final WebTermApi api;
+    private final AuthSessionCoordinator authCoordinator;
     private final Listener listener;
 
-    public SessionCommandController(Activity activity, WebTermApi api, Listener listener) {
+    public SessionCommandController(Activity activity, WebTermApi api,
+                                    AuthSessionCoordinator authCoordinator, Listener listener) {
         this.activity = activity;
         this.api = api;
+        this.authCoordinator = authCoordinator;
         this.listener = listener;
     }
 
     public void createSessionOnServer(ServerConfig server) {
+        createSessionOnServer(server, true);
+    }
+
+    private void createSessionOnServer(ServerConfig server, boolean authRetryAllowed) {
         api.createSession(server, new WebTermApi.SessionCreateCallback() {
             @Override
             public void onReady(String sessionId) {
@@ -39,24 +47,21 @@ public final class SessionCommandController {
             @Override
             public void onError(int code, String message) {
                 activity.runOnUiThread(() -> {
-                    if (code == 401) {
-                        if (server.getCookie() != null && !server.getCookie().isEmpty()) {
-                            api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
-                                @Override
-                                public void onReady(String baseUrl, String cookie) {
+                    if ((code == 401 || code == 403) && authRetryAllowed) {
+                        authCoordinator.recover(server, new AuthSessionCoordinator.Callback() {
+                            @Override public void onAuthenticated(ServerConfig canonical, String cookie) {
+                                activity.runOnUiThread(() -> {
                                     server.setCookie(cookie);
-                                    listener.onAuthenticated(server);
-                                    createSessionOnServer(server);
-                                }
+                                    listener.onAuthenticated(canonical);
+                                    createSessionOnServer(server, false);
+                                });
+                            }
 
-                                @Override
-                                public void onError(String refreshError) {
-                                    silentLoginAndCreate(server);
-                                }
-                            });
-                        } else {
-                            silentLoginAndCreate(server);
-                        }
+                            @Override public void onFailure(AuthSessionCoordinator.Failure failure) {
+                                activity.runOnUiThread(() -> Toast.makeText(activity,
+                                    "认证恢复失败: " + failure.message, Toast.LENGTH_LONG).show());
+                            }
+                        });
                     } else {
                         Toast.makeText(activity, "创建失败: " + message, Toast.LENGTH_LONG).show();
                     }
@@ -129,30 +134,6 @@ public final class SessionCommandController {
             @Override
             public void onError(String message) {
                 activity.runOnUiThread(() -> Toast.makeText(activity, message, Toast.LENGTH_SHORT).show());
-            }
-        });
-    }
-
-    private void silentLoginAndCreate(ServerConfig server) {
-        if (server.getPassword() == null || server.getPassword().isEmpty()) {
-            activity.runOnUiThread(() -> {
-                Toast.makeText(activity, "静默登录失败，无法创建会话: 密码为空", Toast.LENGTH_LONG).show();
-            });
-            return;
-        }
-        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String baseUrl, String cookie) {
-                server.setCookie(cookie);
-                listener.onAuthenticated(server);
-                createSessionOnServer(server);
-            }
-
-            @Override
-            public void onError(String message) {
-                activity.runOnUiThread(() -> {
-                    Toast.makeText(activity, "静默登录失败，无法创建会话: " + message, Toast.LENGTH_LONG).show();
-                });
             }
         });
     }

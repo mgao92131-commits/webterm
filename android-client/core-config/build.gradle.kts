@@ -13,4 +13,6 @@ android {
 dependencies {
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
+    testImplementation(libs.junit)
+    testImplementation("org.mockito:mockito-core:5.12.0")
 }

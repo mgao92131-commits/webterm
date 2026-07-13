@@ -16,4 +16,6 @@ dependencies {
     implementation(project(":transport-api"))
     implementation(project(":core-config"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation(libs.junit)
+    testImplementation("org.mockito:mockito-core:5.12.0")
 }

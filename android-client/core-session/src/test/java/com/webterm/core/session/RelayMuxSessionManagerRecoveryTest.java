@@ -358,6 +358,22 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
+    public void muxHandshake401IsReportedAsAuthenticationRequired() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "old", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener listener = new SimpleListener();
+
+        manager.openScreenChannel("s1", listener);
+        transport.simulateFailure(401, "Unauthorized");
+
+        assertEquals(ChannelFailure.Kind.AUTH_REQUIRED, listener.failure.get().kind);
+        assertEquals(401, listener.failure.get().code);
+        assertEquals("stale authenticated transport must stop retrying", 1, transport.closeCount);
+    }
+
+    @Test
     public void wsError500ReopensChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(
@@ -495,6 +511,11 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         public void simulateText(String text) {
             if (listener != null) listener.onText(text);
+        }
+
+        public void simulateFailure(int code, String reason) {
+            open = false;
+            if (listener != null) listener.onError(code, reason);
         }
 
         @Override public void close() { closeCount++; }

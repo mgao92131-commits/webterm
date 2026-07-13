@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.io.IOException;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -66,5 +67,32 @@ public class WebSocketMuxTransportTest {
 
         assertEquals(1001, codeRef.get());
         assertEquals("backpressure", reasonRef.get());
+    }
+
+    @Test
+    public void handshakeFailureForwardsHttpStatusCode() {
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        AtomicInteger codeRef = new AtomicInteger(-1);
+        MuxTransport.Listener listener = new MuxTransport.Listener() {
+            @Override public void onOpen() {}
+            @Override public void onText(String text) {}
+            @Override public void onBinary(byte[] data) {}
+            @Override public void onClosed(int code, String reason) {}
+            @Override public void onError(String message) {}
+            @Override public void onError(int code, String message) { codeRef.set(code); }
+        };
+        transport.start(listener);
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        Response response = new Response.Builder()
+            .request(new Request.Builder().url("http://example.com/ws").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(401)
+            .message("Unauthorized")
+            .build();
+
+        captor.getValue().onFailure(socket, new IOException("handshake failed"), response);
+
+        assertEquals(401, codeRef.get());
     }
 }

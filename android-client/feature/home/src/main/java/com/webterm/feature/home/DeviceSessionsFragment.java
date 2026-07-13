@@ -15,19 +15,25 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.config.ServerConfigManager;
 import com.webterm.ui.common.WindowInsetsController;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 
-import org.json.JSONException;
-import org.json.JSONObject;
+import javax.inject.Inject;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
 @AndroidEntryPoint
 public final class DeviceSessionsFragment extends Fragment implements SessionRowActions {
-    public static final String ARG_SERVER_JSON = "serverJson";
+    private static final String ARG_SERVER_ID = "serverId";
+    private static final String ARG_SERVER_NAME = "serverName";
+    private static final String ARG_SERVER_URL = "serverUrl";
+    private static final String ARG_RELAY_DEVICE = "relayDevice";
+    private static final String ARG_DEVICE_ID = "deviceId";
+
+    @Inject ServerConfigManager serverConfigs;
 
     private DeviceSessionsViewModel mViewModel;
     private HomeHost mHost;
@@ -38,10 +44,11 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
     public static Bundle args(ServerConfig server) {
         Bundle args = new Bundle();
         if (server != null) {
-            try {
-                args.putString(ARG_SERVER_JSON, server.toJSON().toString());
-            } catch (JSONException ignored) {
-            }
+            args.putString(ARG_SERVER_ID, server.getId());
+            args.putString(ARG_SERVER_NAME, server.getName());
+            args.putString(ARG_SERVER_URL, server.getUrl());
+            args.putBoolean(ARG_RELAY_DEVICE, server.isRelayDevice());
+            args.putString(ARG_DEVICE_ID, server.getDeviceId());
         }
         return args;
     }
@@ -286,13 +293,25 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
         new ItemTouchHelper(swipeCallback).attachToRecyclerView(recyclerView);
     }
 
-    private static ServerConfig readServer(Bundle args) {
-        String serverJson = args.getString(ARG_SERVER_JSON);
-        if (serverJson == null || serverJson.isEmpty()) return null;
-        try {
-            return ServerConfig.fromJSON(new JSONObject(serverJson));
-        } catch (JSONException e) {
-            return null;
-        }
+    private ServerConfig readServer(Bundle args) {
+        String id = value(args, ARG_SERVER_ID);
+        String name = value(args, ARG_SERVER_NAME);
+        String url = value(args, ARG_SERVER_URL);
+        boolean relayDevice = args.getBoolean(ARG_RELAY_DEVICE, false);
+        String deviceId = value(args, ARG_DEVICE_ID);
+        if (id.isEmpty() || url.isEmpty()) return null;
+        ServerConfig route = new ServerConfig(
+            id, name, url, "", "", "", false, relayDevice, deviceId);
+        ServerConfig owner = serverConfigs.credentialOwner(route);
+        if (!relayDevice) return owner != null ? owner : route;
+        if (owner == null) return route;
+        return new ServerConfig(
+            id, name, url, owner.getCookie(), owner.getUsername(), owner.getPassword(),
+            false, true, deviceId);
+    }
+
+    private static String value(Bundle args, String key) {
+        String value = args.getString(key);
+        return value == null ? "" : value;
     }
 }

@@ -156,13 +156,18 @@ public final class MuxSession {
 
             @Override
             public void onError(String message) {
+                onError(0, message);
+            }
+
+            @Override
+            public void onError(int code, String message) {
                 mainHandler.post(() -> {
                     if (!enabled) return;
                     mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
                     Log.e(TAG, "mux failure: " + message);
-                    listener.onMuxDisconnected(0, message);
+                    listener.onMuxDisconnected(code, message);
                     scheduleReconnect();
                 });
             }

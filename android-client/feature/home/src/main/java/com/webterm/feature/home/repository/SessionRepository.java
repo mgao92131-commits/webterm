@@ -3,6 +3,7 @@ package com.webterm.feature.home.repository;
 import android.os.Handler;
 
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.CachedSessionMapper;
 import com.webterm.core.cache.TerminalCacheCoordinator;
@@ -47,12 +48,14 @@ public final class SessionRepository {
     private final SessionListCache sessionCache;
     private final TerminalCacheCoordinator terminalCache;
     private final Handler mainHandler;
+    private final AuthSessionCoordinator authCoordinator;
 
     private final Map<String, ServerSubscription> subscriptions = new HashMap<>();
     private final MutableLiveData<ServerConfig> authEvents = new MutableLiveData<>();
 
     @Inject
     public SessionRepository(WebTermApi api,
+                             AuthSessionCoordinator authCoordinator,
                              TerminalCacheCoordinator terminalCache,
                              Executor executor,
                              ServerSessionDataSource wsSource,
@@ -64,7 +67,8 @@ public final class SessionRepository {
             wsSource,
             sessionCache,
             terminalCache,
-            mainHandler);
+            mainHandler,
+            authCoordinator);
     }
 
     SessionRepository(Api api,
@@ -74,6 +78,17 @@ public final class SessionRepository {
                       SessionListCache sessionCache,
                       TerminalCacheCoordinator terminalCache,
                       Handler mainHandler) {
+        this(api, cache, executor, wsSource, sessionCache, terminalCache, mainHandler, null);
+    }
+
+    SessionRepository(Api api,
+                      Cache cache,
+                      Executor executor,
+                      ServerSessionDataSource wsSource,
+                      SessionListCache sessionCache,
+                      TerminalCacheCoordinator terminalCache,
+                      Handler mainHandler,
+                      AuthSessionCoordinator authCoordinator) {
         this.api = api;
         this.cache = cache;
         this.executor = executor;
@@ -81,6 +96,7 @@ public final class SessionRepository {
         this.sessionCache = sessionCache;
         this.terminalCache = terminalCache;
         this.mainHandler = mainHandler;
+        this.authCoordinator = authCoordinator;
     }
 
     /**
@@ -116,8 +132,8 @@ public final class SessionRepository {
             fetchSessions(server, callback);
             return;
         }
-        if (server.getPassword() != null && !server.getPassword().isEmpty()) {
-            loginAndFetch(server, callback);
+        if (authCoordinator != null) {
+            recoverAndFetch(server, callback);
             return;
         }
         callback.onResult(Result.authRequired("需要登录"));
@@ -276,8 +292,8 @@ public final class SessionRepository {
         public void onDisconnected(ChannelFailure failure) {
             switch (failure.kind) {
                 case AUTH_REQUIRED:
-                    // 鉴权失败：关闭失效 channel，进入 AUTH_REQUIRED 并允许一次
-                    // refresh；凭据被服务明确拒绝时保持该状态等待用户更新凭据。
+                    // 鉴权失败：关闭失效 channel，进入 AUTH_REQUIRED，并交给统一
+                    // 协调器执行一次 refresh/login；明确失败后等待用户更新凭据。
                     stopWebSocket();
                     cancelFallback();
                     authRecovery = true;
@@ -508,6 +524,10 @@ public final class SessionRepository {
     }
 
     private void fetchSessions(ServerConfig server, Callback callback) {
+        fetchSessions(server, callback, true);
+    }
+
+    private void fetchSessions(ServerConfig server, Callback callback, boolean authRetryAllowed) {
         api.fetchSessions(server, new WebTermApi.SessionsCallback() {
             @Override
             public void onReady(JSONArray sessions) {
@@ -516,15 +536,13 @@ public final class SessionRepository {
 
             @Override
             public void onError(int code, String message) {
-                if (code == 401) {
-                    if (server.getCookie() != null && !server.getCookie().isEmpty()) {
-                        refreshAndFetch(server, callback);
+                if (code == 401 || code == 403) {
+                    if (authCoordinator != null && authRetryAllowed) {
+                        recoverAndFetch(server, callback);
                         return;
                     }
-                    if (server.getPassword() != null && !server.getPassword().isEmpty()) {
-                        loginAndFetch(server, callback);
-                        return;
-                    }
+                    callback.onResult(Result.authRequired(message));
+                    return;
                 }
                 offlineFallback(server, code > 0 ? "HTTP " + code : message, callback);
             }
@@ -536,60 +554,20 @@ public final class SessionRepository {
         });
     }
 
-    private void refreshAndFetch(ServerConfig server, Callback callback) {
-        api.refresh(server.getUrl(), server.getCookie(), new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String baseUrl, String cookie) {
+    private void recoverAndFetch(ServerConfig server, Callback callback) {
+        authCoordinator.recover(server, new AuthSessionCoordinator.Callback() {
+            @Override public void onAuthenticated(ServerConfig canonical, String cookie) {
                 server.setCookie(cookie);
-                callback.onAuthenticated(server);
-                fetchSessions(server, callback);
+                callback.onAuthenticated(canonical);
+                fetchSessions(server, callback, false);
             }
 
-            @Override
-            public void onError(String refreshError) {
-                offlineFallback(server, "刷新失败: " + refreshError, callback);
-            }
-
-            @Override
-            public void onError(int code, String refreshError) {
-                if (code == 401 || code == 403) {
-                    // 服务明确拒绝凭据：保持 AUTH_REQUIRED 等待用户更新凭据，
-                    // 不用同一密码自动循环登录。
-                    callback.onResult(Result.authRequired("刷新失败: " + refreshError));
-                    return;
+            @Override public void onFailure(AuthSessionCoordinator.Failure failure) {
+                if (failure.isAuthenticationRequired()) {
+                    callback.onResult(Result.authRequired(failure.message));
+                } else {
+                    offlineFallback(server, failure.message, callback);
                 }
-                // 网络错误等临时失败：交给 authRecovery 退避重试。
-                offlineFallback(server, "刷新失败: " + refreshError, callback);
-            }
-        });
-    }
-
-    private void loginAndFetch(ServerConfig server, Callback callback) {
-        if (server.getPassword() == null || server.getPassword().isEmpty()) {
-            callback.onResult(Result.authRequired("登录失败: 密码为空"));
-            return;
-        }
-        api.login(server.getUrl(), server.getCookie(), server.getUsername(), server.getPassword(), new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String baseUrl, String cookie) {
-                server.setCookie(cookie);
-                callback.onAuthenticated(server);
-                fetchSessions(server, callback);
-            }
-
-            @Override
-            public void onError(String message) {
-                offlineFallback(server, "登录失败: " + message, callback);
-            }
-
-            @Override
-            public void onError(int code, String message) {
-                if (code == 401 || code == 403) {
-                    // 服务明确拒绝凭据：保持 AUTH_REQUIRED 等待用户更新凭据。
-                    callback.onResult(Result.authRequired("登录失败: " + message));
-                    return;
-                }
-                offlineFallback(server, "登录失败: " + message, callback);
             }
         });
     }
@@ -799,8 +777,6 @@ public final class SessionRepository {
 
     interface Api {
         void fetchSessions(ServerConfig server, WebTermApi.SessionsCallback callback);
-        void refresh(String baseUrl, String cookie, WebTermApi.LoginCallback callback);
-        void login(String baseUrl, String cookie, String username, String password, WebTermApi.LoginCallback callback);
     }
 
     interface Cache {
@@ -859,15 +835,6 @@ public final class SessionRepository {
             api.fetchSessions(server, callback);
         }
 
-        @Override
-        public void refresh(String baseUrl, String cookie, WebTermApi.LoginCallback callback) {
-            api.refresh(baseUrl, cookie, callback);
-        }
-
-        @Override
-        public void login(String baseUrl, String cookie, String username, String password, WebTermApi.LoginCallback callback) {
-            api.login(baseUrl, cookie, username, password, callback);
-        }
     }
 
     private static final class TerminalCacheAdapter implements Cache {

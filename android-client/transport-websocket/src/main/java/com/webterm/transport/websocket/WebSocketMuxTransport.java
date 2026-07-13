@@ -72,7 +72,9 @@ public final class WebSocketMuxTransport implements MuxTransport {
                 if (!enabled) return;
                 connected = false;
                 WebSocketMuxTransport.this.webSocket = null;
-                listener.onError(t.getMessage());
+                int code = response != null ? response.code() : 0;
+                if (response != null && response.body() != null) response.close();
+                listener.onError(code, t.getMessage());
             }
 
             @Override

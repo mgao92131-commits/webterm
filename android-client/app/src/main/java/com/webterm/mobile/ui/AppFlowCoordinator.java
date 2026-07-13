@@ -23,6 +23,7 @@ import org.json.JSONObject;
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
@@ -64,6 +65,7 @@ public final class AppFlowCoordinator implements
     public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
 
     private final WebTermApi api;
+    private final AuthSessionCoordinator authCoordinator;
     private final RelayMuxSessionRegistry relayMuxRegistry;
     private final TerminalCacheCoordinator terminalCache;
     private final ServerConfigStore configStore;
@@ -102,6 +104,7 @@ public final class AppFlowCoordinator implements
     @Inject
     public AppFlowCoordinator(
         WebTermApi api,
+        AuthSessionCoordinator authCoordinator,
         RelayMuxSessionRegistry relayMuxRegistry,
         TerminalCacheCoordinator terminalCache,
         ServerConfigStore configStore,
@@ -112,6 +115,7 @@ public final class AppFlowCoordinator implements
         RelayService relayService
     ) {
         this.api = api;
+        this.authCoordinator = authCoordinator;
         this.relayMuxRegistry = relayMuxRegistry;
         this.terminalCache = terminalCache;
         this.configStore = configStore;
@@ -143,7 +147,7 @@ public final class AppFlowCoordinator implements
         });
         mRelayService.setHost(this);
         mRelayUiState = new RelayUiState(mRelayService, this);
-        mSessionCommands = new SessionCommandController(mActivity, api, new SessionCommandController.Listener() {
+        mSessionCommands = new SessionCommandController(mActivity, api, authCoordinator, new SessionCommandController.Listener() {
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
@@ -527,21 +531,14 @@ public final class AppFlowCoordinator implements
         if (isRemoteTerminalActive()) {
             ServerConfig server = findServerForRemoteTerminal();
             if (server != null) {
-                String currentCookie = server.getCookie() != null ? server.getCookie() : remoteTerminalIntegration.cookie();
-                if (currentCookie == null || currentCookie.isEmpty()) {
-                    remoteTerminalIntegration.reconnectFresh(currentCookie);
-                    return;
-                }
-                api.refresh(server.getUrl(), currentCookie, new WebTermApi.LoginCallback() {
-                    @Override public void onReady(String baseUrl, String cookie) {
-                        mActivity.runOnUiThread(() -> {
-                            server.setCookie(cookie);
-                            saveServers();
-                            remoteTerminalIntegration.reconnectFresh(cookie);
-                        });
+                authCoordinator.recover(server, new AuthSessionCoordinator.Callback() {
+                    @Override public void onAuthenticated(ServerConfig canonical, String cookie) {
+                        mActivity.runOnUiThread(() -> remoteTerminalIntegration.reconnectFresh(cookie));
                     }
-                    @Override public void onError(String message) {
-                        mActivity.runOnUiThread(() -> remoteTerminalIntegration.reconnectFresh(remoteTerminalIntegration.cookie()));
+
+                    @Override public void onFailure(AuthSessionCoordinator.Failure failure) {
+                        mActivity.runOnUiThread(() -> Toast.makeText(mActivity,
+                            "连接恢复失败，请稍后重试", Toast.LENGTH_SHORT).show());
                     }
                 });
             } else {
@@ -553,8 +550,8 @@ public final class AppFlowCoordinator implements
     }
 
     /**
-     * 活动终端收到 401 时只刷新一次 cookie。401 不代表 PTY 已结束；刷新成功后
-     * 重建 screen channel，明确失败则停留在可重试状态，绝不拿旧 cookie 自动循环。
+     * 活动终端收到 401 时加入进程级单飞认证恢复。401 不代表 PTY 已结束；
+     * refresh/login 成功并持久化凭据后重建 screen channel，失败则停留在可重试状态。
      */
     private void recoverTerminalAuthentication(String reason) {
         if (terminalAuthRecoveryInFlight || !isRemoteTerminalActive()) return;
@@ -563,34 +560,19 @@ public final class AppFlowCoordinator implements
             Toast.makeText(mActivity, "终端认证已失效，请返回设备列表重新登录", Toast.LENGTH_SHORT).show();
             return;
         }
-        String cookie = server.getCookie() != null ? server.getCookie() : remoteTerminalIntegration.cookie();
-        if (cookie == null || cookie.isEmpty()) {
-            Toast.makeText(mActivity, "终端认证已失效，请重新登录", Toast.LENGTH_SHORT).show();
-            return;
-        }
         terminalAuthRecoveryInFlight = true;
         int recoveryGeneration = terminalAuthRecoveryGeneration;
-        api.refresh(server.getUrl(), cookie, new WebTermApi.LoginCallback() {
-            @Override public void onReady(String baseUrl, String refreshedCookie) {
+        authCoordinator.recover(server, new AuthSessionCoordinator.Callback() {
+            @Override public void onAuthenticated(ServerConfig canonical, String refreshedCookie) {
                 mActivity.runOnUiThread(() -> {
                     if (recoveryGeneration != terminalAuthRecoveryGeneration) return;
                     terminalAuthRecoveryInFlight = false;
                     if (!isRemoteTerminalActive()) return;
-                    server.setCookie(refreshedCookie);
-                    saveServers();
                     remoteTerminalIntegration.reconnectFresh(refreshedCookie);
                 });
             }
 
-            @Override public void onError(String message) {
-                onFailure(message);
-            }
-
-            @Override public void onError(int code, String message) {
-                onFailure(message);
-            }
-
-            private void onFailure(String message) {
+            @Override public void onFailure(AuthSessionCoordinator.Failure failure) {
                 mActivity.runOnUiThread(() -> {
                     if (recoveryGeneration != terminalAuthRecoveryGeneration) return;
                     terminalAuthRecoveryInFlight = false;

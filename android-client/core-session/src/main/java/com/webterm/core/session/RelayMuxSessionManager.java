@@ -91,10 +91,18 @@ public final class RelayMuxSessionManager {
 
             @Override public void onMuxDisconnected(int code, String reason) {
                 if (generation != muxGeneration) return;
-                ChannelFailure failure = ChannelFailure.muxTemporary(code, reason);
+                ChannelFailure failure = code == 401 || code == 403
+                    ? ChannelFailure.authRequired(code, reason)
+                    : ChannelFailure.muxTemporary(code, reason);
                 for (Channel channel : snapshotChannels()) {
                     channel.state = Channel.State.CONNECTING;
                     channel.listener.onFailure(channel.id, failure);
+                }
+                // Authentication cannot recover through transport backoff with the
+                // same rejected cookie. Pause here; updateCookie() replaces and
+                // restarts the physical mux while preserving logical channels.
+                if (failure.kind == ChannelFailure.Kind.AUTH_REQUIRED) {
+                    muxSession.stop();
                 }
             }
 
