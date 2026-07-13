@@ -82,7 +82,7 @@ public final class RemoteTerminalIntegration {
     this.activeFragment = fragment;
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
 
-    runtime = registry.getOrCreate(args.sessionId);
+    runtime = registry.getOrCreate(args.sessionId, TerminalHistoryBudgets.forDevice(activity));
 
     // The relay mux may already be live when a terminal page is reopened. Install
     // the runtime listener before connect(), otherwise its synchronous HELLO /

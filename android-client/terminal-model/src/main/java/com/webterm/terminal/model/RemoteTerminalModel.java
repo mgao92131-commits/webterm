@@ -15,11 +15,9 @@ import java.util.TreeMap;
  * Android 远程终端模型。只维护投影和缓存，可由 Go 权威快照重建。
  */
 public final class RemoteTerminalModel {
-  // 与 Go TrackedScrollback 的 10k 上限对齐；避免“刚按需加载旧页就被本地淘汰”。
-  private static final int DEFAULT_SOFT_HISTORY_LIMIT = 7500;
-  private static final int DEFAULT_HARD_HISTORY_LIMIT = 10000;
-  private static final long DEFAULT_SOFT_HISTORY_BYTES = 6L << 20;
-  private static final long DEFAULT_HARD_HISTORY_BYTES = 8L << 20;
+  // 历史容量是双上限：行数是安全上限，字节是近似内存预算（estimateHistoryLineBytes），
+  // 先达到者触发驱逐。保留行数随列宽和内容变化（80 列文本行约 5–6KB 估算），
+  // 产品和注释都不承诺固定保留行数。默认值可由 HistoryBudget 按设备内存分档覆盖。
 
   public String instanceId;
   public long layoutEpoch;
@@ -54,20 +52,25 @@ public final class RemoteTerminalModel {
   private volatile RenderSnapshot renderSnapshot = RenderSnapshot.empty();
 
   public RemoteTerminalModel() {
-    this(DEFAULT_SOFT_HISTORY_LIMIT, DEFAULT_HARD_HISTORY_LIMIT);
+    this(HistoryBudget.defaults());
   }
 
   public RemoteTerminalModel(int softHistoryLimit, int hardHistoryLimit) {
-    this(softHistoryLimit, hardHistoryLimit, DEFAULT_SOFT_HISTORY_BYTES,
-        DEFAULT_HARD_HISTORY_BYTES);
+    this(softHistoryLimit, hardHistoryLimit, HistoryBudget.DEFAULT_SOFT_BYTES,
+        HistoryBudget.DEFAULT_HARD_BYTES);
   }
 
   public RemoteTerminalModel(int softHistoryLimit, int hardHistoryLimit,
                              long softHistoryByteLimit, long hardHistoryByteLimit) {
-    this.softHistoryLimit = softHistoryLimit;
-    this.hardHistoryLimit = hardHistoryLimit;
-    this.softHistoryByteLimit = Math.max(0, softHistoryByteLimit);
-    this.hardHistoryByteLimit = Math.max(this.softHistoryByteLimit, hardHistoryByteLimit);
+    this(new HistoryBudget(softHistoryLimit, hardHistoryLimit,
+        softHistoryByteLimit, hardHistoryByteLimit));
+  }
+
+  public RemoteTerminalModel(HistoryBudget budget) {
+    this.softHistoryLimit = budget.softLines;
+    this.hardHistoryLimit = budget.hardLines;
+    this.softHistoryByteLimit = budget.softBytes;
+    this.hardHistoryByteLimit = budget.hardBytes;
     this.activeBuffer = ScreenSnapshot.BufferKind.MAIN;
   }
 
@@ -207,6 +210,9 @@ public final class RemoteTerminalModel {
       return ModelChange.none();
     }
     int historySizeBefore = historyCache.size();
+    // 可见锚点：prepend 前缓存中最旧的行。用户向上翻页时视口钉在已缓存内容上，
+    // 该行即翻页前可见窗口的顶部边界；驱逐必须保护它和刚加载的新页。
+    long anchorId = historyCache.isEmpty() ? -1 : historyCache.firstKey();
     for (TerminalLine line : page.lines) {
       if (line.id != 0 && !historyCache.containsKey(line.id)) {
         putHistoryLine(line);
@@ -216,7 +222,11 @@ public final class RemoteTerminalModel {
     links.putAll(page.links);
     this.firstAvailableHistoryId = page.firstAvailableLineId;
     this.hasMoreHistoryBefore = page.hasMoreBefore;
-    evictHistoryIfNeeded();
+    if (anchorId < 0 && !historyCache.isEmpty()) {
+      // prepend 前缓存为空：可见锚点是实时屏幕，保护新页中靠近屏幕的一侧。
+      anchorId = historyCache.lastKey();
+    }
+    evictHistoryAfterPrepend(anchorId);
     // The new rows are physically inserted above all cached rows. In the
     // bottom-anchored renderer geometry historyRows and every old row's index
     // grow by the same amount, so old lines keep their screen Y with zero
@@ -275,6 +285,16 @@ public final class RemoteTerminalModel {
   /** 历史行数。比 {@link #historyCache()} 轻量，不需要拷贝整棵 TreeMap。 */
   public synchronized int historySize() {
     return historyCache.size();
+  }
+
+  /** 本地缓存最旧行 id；缓存为空时返回 -1。分页请求用它作 beforeId，避免全量 TreeMap 拷贝。 */
+  public synchronized long firstCachedHistoryId() {
+    return historyCache.isEmpty() ? -1 : historyCache.firstKey();
+  }
+
+  /** 本地缓存最新行 id；缓存为空时返回 -1。 */
+  public synchronized long lastCachedHistoryId() {
+    return historyCache.isEmpty() ? -1 : historyCache.lastKey();
   }
 
   /** Approximate bytes retained by the Android-side history cache. */
@@ -352,16 +372,15 @@ public final class RemoteTerminalModel {
     return previous == null;
   }
 
+  /**
+   * 实时路径（snapshot 替换 / tail append）的驱逐：超 hard 上限后从最旧端驱逐到 soft 目标。
+   * 实时输出只关心新内容，丢弃最旧历史对用户不可见。
+   */
   private void evictHistoryIfNeeded() {
-    boolean overLines = historyCache.size() > hardHistoryLimit;
-    boolean overBytes = hardHistoryByteLimit > 0 && historyBytes > hardHistoryByteLimit;
-    if (!overLines && !overBytes) {
+    if (!overHardLimits()) {
       return;
     }
-    int targetLines = Math.max(softHistoryLimit, hardHistoryLimit / 2);
-    long targetBytes = softHistoryByteLimit > 0 ? softHistoryByteLimit : Long.MAX_VALUE;
-    while (historyCache.size() > 1
-        && (historyCache.size() > targetLines || historyBytes > targetBytes)) {
+    while (historyCache.size() > 1 && overSoftTargets()) {
       java.util.Map.Entry<Long, TerminalLine> removed = historyCache.pollFirstEntry();
       if (removed != null) {
         historyBytes -= estimateHistoryLineBytes(removed.getValue());
@@ -369,12 +388,66 @@ public final class RemoteTerminalModel {
     }
   }
 
+  /**
+   * 历史分页后的驱逐：保护刚 prepend 的页和可见锚点，必要时从较新的历史端
+   * （靠近屏幕一侧）驱逐，绝不把刚加载的页立即删掉导致重复请求同一页。
+   *
+   * anchorId 为 prepend 前缓存的最旧行 id（缓存为空时取新页最新行，代表实时屏幕一侧）。
+   * 新页所有行 id 都小于 anchorId，因此「id <= anchorId」天然覆盖新页、锚点和全部
+   * 更旧历史。驱逐顺序：
+   *   1. 从较新端驱逐所有 id > anchorId 的行——用户翻旧页时这些靠近屏幕的行不在
+   *      视口内；缓存始终保持连续 id 区间，不产生空洞。
+   *   2. 预算连「锚点 + 新页」都装不下时，退化为丢弃新页最旧部分，保留靠近锚点
+   *      （当前可见）的行；锚点本身永不驱逐，宁可暂时超预算。
+   */
+  private void evictHistoryAfterPrepend(long anchorId) {
+    if (!overHardLimits()) {
+      return;
+    }
+    while (historyCache.size() > 1 && overSoftTargets()) {
+      java.util.Map.Entry<Long, TerminalLine> newest = historyCache.lastEntry();
+      if (newest != null && newest.getKey() > anchorId) {
+        historyBytes -= estimateHistoryLineBytes(newest.getValue());
+        historyCache.pollLastEntry();
+        continue;
+      }
+      if (!historyCache.isEmpty() && historyCache.firstKey() < anchorId) {
+        historyBytes -= estimateHistoryLineBytes(historyCache.firstEntry().getValue());
+        historyCache.pollFirstEntry();
+        continue;
+      }
+      break;
+    }
+  }
+
+  private boolean overHardLimits() {
+    return historyCache.size() > hardHistoryLimit
+        || (hardHistoryByteLimit > 0 && historyBytes > hardHistoryByteLimit);
+  }
+
+  private boolean overSoftTargets() {
+    int targetLines = Math.max(softHistoryLimit, hardHistoryLimit / 2);
+    long targetBytes = softHistoryByteLimit > 0 ? softHistoryByteLimit : Long.MAX_VALUE;
+    return historyCache.size() > targetLines || historyBytes > targetBytes;
+  }
+
+  /**
+   * 单行近似字节（JVM 口径，HotSpot 17 + compressed oops）：
+   *   - 112B 基线 = TerminalLine 对象（32B）+ cells 数组头（16B）+ TreeMap.Entry（40B）
+   *     + Long key（24B）；
+   *   - 每 cell 4B 数组槽 + 64B 对象开销（TerminalCell 32B + String 24B + 对齐）；
+   *   - 文本按 UTF-16 2B/char 计（LATIN1 字符串实际约 1B/char，略有高估）。
+   * representative 样本实测（80/200 列 ASCII/宽字符/多样式，见
+   * RemoteTerminalModelHistoryBudgetTest）：估算约为实测保留量的 0.8–1.5 倍，
+   * 文本密集型行不明显低估；空白填充行高估，可接受。
+   * 对象布局与 Go 侧不同，两侧各自校准，不要求数值一致。
+   */
   private static long estimateHistoryLineBytes(TerminalLine line) {
     if (line == null) return 0;
-    long bytes = 64;
+    long bytes = 112 + line.cells.length * 4L;
     for (TerminalCell cell : line.cells) {
       if (cell == null) continue;
-      bytes += 40;
+      bytes += 64;
       if (cell.text != null) bytes += cell.text.length() * 2L;
     }
     return bytes;

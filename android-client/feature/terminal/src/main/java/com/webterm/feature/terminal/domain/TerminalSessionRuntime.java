@@ -6,6 +6,7 @@ import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenSnapshot;
@@ -114,13 +115,22 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
-    this(sessionId, new RemoteTerminalModel(), Executors.newSingleThreadExecutor(r -> {
+    this(sessionId, HistoryBudget.defaults());
+  }
+
+  public TerminalSessionRuntime(@NonNull String sessionId, @NonNull HistoryBudget historyBudget) {
+    this(sessionId, new RemoteTerminalModel(historyBudget), defaultModelExecutor(sessionId),
+        command -> new Handler(Looper.getMainLooper()).post(command));
+  }
+
+  private static Executor defaultModelExecutor(String sessionId) {
+    return Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "TerminalModel-" + sessionId);
       t.setUncaughtExceptionHandler((thread, ex) -> {
         // TODO: 上报非致命错误
       });
       return t;
-    }), command -> new Handler(Looper.getMainLooper()).post(command));
+    });
   }
 
   public TerminalSessionRuntime(@NonNull String sessionId,

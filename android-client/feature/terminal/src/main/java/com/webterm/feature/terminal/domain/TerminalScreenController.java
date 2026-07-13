@@ -53,6 +53,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private EffectListener effectListener;
   private View view;
   private boolean renderScheduled;
+  /** 上一次成功排队的历史分页边界；用于保证 beforeId 严格向旧方向推进。 */
+  private long lastRequestedHistoryBeforeId = -1;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
     this.runtime = runtime;
@@ -130,12 +132,15 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   public void requestOlderHistoryPage() {
     if (viewport.loadingOlderHistory) return;
     RemoteTerminalModel model = runtime.model();
-    if (model.historyCache().isEmpty() && !model.hasMoreHistoryBefore()) return;
-    long firstCachedId = model.historyCache().isEmpty()
-        ? Long.MAX_VALUE
-        : model.historyCache().firstKey();
-    if (firstCachedId <= model.firstAvailableHistoryId()) return;
-    long beforeLineId = firstCachedId;
+    long firstCachedId = model.firstCachedHistoryId();
+    if (firstCachedId < 0 && !model.hasMoreHistoryBefore()) return;
+    long beforeLineId = firstCachedId < 0 ? Long.MAX_VALUE : firstCachedId;
+    if (firstCachedId >= 0 && firstCachedId <= model.firstAvailableHistoryId()) return;
+    // 同一边界只请求一次：若上一页未能推进本地窗口（例如被预算驱逐或返回空页），
+    // 重复请求同一页只会形成热循环。模型侧驱逐保证新页存活，正常路径下
+    // firstCachedId 每次分页后严格变小。
+    if (beforeLineId == lastRequestedHistoryBeforeId) return;
+    lastRequestedHistoryBeforeId = beforeLineId;
     viewport.loadingOlderHistory = true;
     runtime.requestHistoryPage(beforeLineId, 250);
   }
@@ -155,6 +160,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // reset it when the authoritative terminal geometry changes.
     if (change.geometryChanged) {
       viewport.resetForSnapshot();
+      lastRequestedHistoryBeforeId = -1;
     }
     // Only tail appends (live output scrolling into history below the visible
     // window) compensate the offset to pin the current content. A prepended
