@@ -127,6 +127,94 @@ public final class NotificationController {
         renderer.cancel(transferNotificationId(connectionKey, transferId));
     }
 
+    /** 上传中进度：与接收同一 TRANSFER 渠道，但通知 id 含方向（upload* 系列），
+     * 即使 connectionKey + id 相同也不与接收通知碰撞。低优先级 ongoing，带取消动作。 */
+    public void postUploadProgress(String connectionKey, String sessionId, String fileName, long bytes, long total) {
+        if (renderer == null) return;
+        int percent = (total > 0) ? (int) Math.min(100L, bytes * 100L / total) : -1;
+        String title = "正在上传 " + safeName(fileName);
+        String text = (total > 0) ? percent + "% - " + formatBytes(bytes) + " / " + formatBytes(total) : formatBytes(bytes);
+        NotificationCommand cmd = new NotificationCommand(
+            uploadNotificationId(connectionKey, sessionId),
+            NotificationChannels.TRANSFER,
+            connectionKey,
+            title,
+            text,
+            NotificationCommand.PRIORITY_LOW,
+            /* ongoing */ true,
+            /* autoCancel */ false,
+            /* onlyAlertOnce */ true,
+            connectionKey,
+            sessionId,
+            percent,
+            sessionId,
+            NotificationCommand.DIRECTION_UPLOAD,
+            connectionKey);
+        renderer.show(cmd);
+    }
+
+    /** 上传成功：替换同 id 的进度通知，点按可消失。relativePath 例如 WebTermUploads/demo.zip。 */
+    public void postUploadSucceeded(String connectionKey, String sessionId, String fileName, String relativePath) {
+        if (renderer == null) return;
+        NotificationCommand cmd = new NotificationCommand(
+            uploadNotificationId(connectionKey, sessionId),
+            NotificationChannels.TRANSFER,
+            connectionKey,
+            "上传完成 " + safeName(fileName),
+            relativePath == null || relativePath.isEmpty() ? "" : relativePath,
+            NotificationCommand.PRIORITY_DEFAULT,
+            /* ongoing */ false,
+            /* autoCancel */ true,
+            /* onlyAlertOnce */ true,
+            connectionKey, sessionId, -1, null);
+        renderer.show(cmd);
+    }
+
+    /** 上传失败：高优先级、点按可消失。error 为服务端中文文案或本地兜底文案，可直接展示。 */
+    public void postUploadFailed(String connectionKey, String sessionId, String fileName, String error) {
+        if (renderer == null) return;
+        NotificationCommand cmd = new NotificationCommand(
+            uploadNotificationId(connectionKey, sessionId),
+            NotificationChannels.TRANSFER,
+            connectionKey,
+            "上传失败 " + safeName(fileName),
+            error == null || error.isEmpty() ? "上传失败" : error,
+            NotificationCommand.PRIORITY_HIGH,
+            /* ongoing */ false,
+            /* autoCancel */ true,
+            /* onlyAlertOnce */ true,
+            connectionKey, sessionId, -1, null);
+        renderer.show(cmd);
+    }
+
+    /** 上传取消：替换进度通知为已取消状态。 */
+    public void postUploadCancelled(String connectionKey, String sessionId, String fileName) {
+        if (renderer == null) return;
+        NotificationCommand cmd = new NotificationCommand(
+            uploadNotificationId(connectionKey, sessionId),
+            NotificationChannels.TRANSFER,
+            connectionKey,
+            "已取消上传 " + safeName(fileName),
+            "",
+            NotificationCommand.PRIORITY_DEFAULT,
+            /* ongoing */ false,
+            /* autoCancel */ true,
+            /* onlyAlertOnce */ true,
+            connectionKey, sessionId, -1, null);
+        renderer.show(cmd);
+    }
+
+    public void cancelUpload(String connectionKey, String sessionId) {
+        if (renderer == null) return;
+        renderer.cancel(uploadNotificationId(connectionKey, sessionId));
+    }
+
+    /** 上传通知 id：在 connectionKey+sessionId 基础上加方向前缀，与接收通知 id 不碰撞。 */
+    static int uploadNotificationId(String connectionKey, String sessionId) {
+        int hash = ("upload\n" + connectionKey + "\n" + sessionId).hashCode() & 0x7fffffff;
+        return TRANSFER_ID_BASE + (hash % TRANSFER_ID_RANGE);
+    }
+
     static int transferNotificationId(String connectionKey, String transferId) {
         int hash = (connectionKey + "\n" + transferId).hashCode() & 0x7fffffff;
         return TRANSFER_ID_BASE + (hash % TRANSFER_ID_RANGE);

@@ -36,6 +36,7 @@ public final class TerminalScreenBuilder {
         TerminalViewClient terminalViewClient,
         Runnable onBack,
         Runnable onRetry,
+        Runnable onUploadFile,
         Runnable onCtrl,
         TextSender textSender
     ) {
@@ -117,6 +118,17 @@ public final class TerminalScreenBuilder {
 
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE), UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE));
         buttonGroup.addView(retryButton, btnLp);
+
+        // 「更多」溢出菜单：目前仅「上传文件」（ACTION_OPEN_DOCUMENT 由 Fragment 发起）。
+        ImageButton moreButton = new ImageButton(activity);
+        moreButton.setImageResource(com.webterm.ui.common.R.drawable.ic_more_vert);
+        moreButton.setColorFilter(DesignTokens.TEXT_PRIMARY);
+        moreButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
+        moreButton.setPadding(0, 0, 0, 0);
+        moreButton.setContentDescription("更多");
+        moreButton.setOnClickListener((v) -> showMoreMenu(activity, v, onUploadFile));
+        buttonGroup.addView(moreButton, btnLp);
+
         topBar.addView(buttonGroup, new LinearLayout.LayoutParams(-2, -2));
         content.addView(topbarWrapper, new LinearLayout.LayoutParams(-1, -2));
 
@@ -209,6 +221,17 @@ public final class TerminalScreenBuilder {
 
     private static Drawable iconButtonBackground(Activity activity, int radius) {
         return UIUtils.iconButtonBackground(activity, radius);
+    }
+
+    /** 顶栏「更多」溢出菜单；菜单项点击只回调，不直接向 PTY 写文本。 */
+    private static void showMoreMenu(Activity activity, View anchor, Runnable onUploadFile) {
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(activity, anchor);
+        menu.getMenu().add("上传文件");
+        menu.setOnMenuItemClickListener((item) -> {
+            onUploadFile.run();
+            return true;
+        });
+        menu.show();
     }
 
     private static View createQuickBar(Activity activity, TerminalView terminalView, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {

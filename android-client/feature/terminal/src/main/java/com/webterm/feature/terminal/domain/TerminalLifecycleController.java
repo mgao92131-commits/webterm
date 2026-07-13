@@ -158,6 +158,7 @@ public final class TerminalLifecycleController {
             new WebTermTerminalViewClient(viewClientHost),
             onBack,
             host::requestTerminalReconnect,
+            host::requestFileUpload,
             () -> setCtrlKey(!ctrlDown),
             this::write
         );
@@ -485,5 +486,8 @@ public final class TerminalLifecycleController {
         void setContentRoot(View root);
         void updateKeyboardAvoidance();
         void requestTerminalReconnect();
+
+        /** 顶栏「更多 → 上传文件」：转发给终端页 Fragment 发起 ACTION_OPEN_DOCUMENT。 */
+        void requestFileUpload();
     }
 }

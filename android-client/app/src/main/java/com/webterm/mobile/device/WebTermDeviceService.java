@@ -10,12 +10,19 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import android.os.Handler;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
-import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.api.DeviceConnectionKeys;
 import com.webterm.core.agentnotify.AgentAlertSink;
 import com.webterm.core.agentnotify.AgentNotificationController;
 import com.webterm.core.agentnotify.AgentProtocol;
@@ -30,6 +37,10 @@ import com.webterm.core.filesend.FileReceiveController;
 import com.webterm.core.filesend.FileSendProtocol;
 import com.webterm.core.filesend.OkHttpFileDownloader;
 import com.webterm.core.filesend.TransferNotificationSink;
+import com.webterm.core.fileupload.FileUploadController;
+import com.webterm.core.fileupload.UploadNotificationSink;
+import com.webterm.core.fileupload.UploadRequestExecutor;
+import com.webterm.core.notifications.NotificationCommand;
 import com.webterm.core.notifications.NotificationController;
 import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.core.notifications.ConnectionStatusText;
@@ -60,9 +71,15 @@ public final class WebTermDeviceService extends Service {
     private static final int NOTIFICATION_ID = 1001;
 
     /** 通知 “取消传输” action：renderer 通过 PendingIntent.getService 回投，本服务在
-     * onStartCommand 中消费并调用 FileReceiveController.cancel。 */
+     * onStartCommand 中按方向分发：接收 -> FileReceiveController.cancel，
+     * 上传 -> FileUploadController.cancel（避免同 id 误取消）。 */
     public static final String ACTION_CANCEL_TRANSFER = "webterm.action.CANCEL_TRANSFER";
     public static final String EXTRA_TRANSFER_ID = "webterm.extra.transfer_id";
+    /** 取消动作方向：NotificationCommand.DIRECTION_RECEIVE / DIRECTION_UPLOAD；
+     * 缺省（旧版通知）按接收处理。 */
+    public static final String EXTRA_TRANSFER_DIRECTION = "webterm.extra.transfer_direction";
+    /** 取消动作所属 connectionKey：上传方向必需（任务键 = connectionKey + sessionId）。 */
+    public static final String EXTRA_CONNECTION_KEY = "webterm.extra.connection_key";
 
     /** 前台通知「全部停止」action：释放所有设备在线租约并退出前台。 */
     public static final String ACTION_STOP_ALL = "webterm.action.STOP_ALL_DEVICES";
@@ -83,8 +100,22 @@ public final class WebTermDeviceService extends Service {
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
     private final Set<String> relayConnectionKeys = ConcurrentHashMap.newKeySet();
     private FileReceiveController controller;
+    private FileUploadController uploadController;
     private AgentNotificationController agentController;
     private NotificationController notifications;
+    private PowerManager.WakeLock wakeLock;
+    private ConnectivityManager.NetworkCallback networkCallback;
+
+    /** 当前存活的服务实例：本服务为未绑定的 started service，终端页/AppFlowCoordinator
+     * 通过 uploadController() 访问上传控制器（页面重建后从 controller 重新订阅任务状态）。 */
+    private static WebTermDeviceService activeInstance;
+
+    /** 上传控制器访问入口；服务未启动（或被回收）时返回 null。 */
+    @Nullable
+    public static FileUploadController uploadController() {
+        WebTermDeviceService instance = activeInstance;
+        return instance == null ? null : instance.uploadController;
+    }
 
     public static void start(Context context) {
         if (!connectionsEnabled(context)) return;
@@ -121,6 +152,31 @@ public final class WebTermDeviceService extends Service {
         controller = new FileReceiveController(receiveDir, lookup, downloader, ioExecutor);
         controller.setFilePublisher(new SafFilePublisher(this, configStore));
 
+        // 上传控制器：与接收同一套 baseUrl/cookie 解析；流来源用 ContentResolver 按 Uri 打开。
+        UploadRequestExecutor uploadExecutor = new UploadRequestExecutor(http,
+            new UploadRequestExecutor.EndpointResolver() {
+                @Override public String baseUrl(String connectionKey) {
+                    ServerConfig c = configs.get(connectionKey);
+                    return c == null ? null : c.getUrl();
+                }
+                @Override public String cookie(String connectionKey) {
+                    ServerConfig c = configs.get(connectionKey);
+                    return c == null ? null : c.getCookie();
+                }
+                @Override public String deviceId(String connectionKey) {
+                    ServerConfig c = configs.get(connectionKey);
+                    if (c == null || !c.isRelayDevice()) return null;
+                    return c.getDeviceId();
+                }
+            },
+            uri -> {
+                java.io.InputStream in = getContentResolver().openInputStream(android.net.Uri.parse(uri));
+                if (in == null) throw new java.io.IOException("无法打开待上传文件");
+                return in;
+            });
+        uploadController = new FileUploadController(uploadExecutor, ioExecutor);
+        activeInstance = this;
+
         DedupeStore dedupe = new DedupeStore(
             new File(getFilesDir(), "agent-notif-dedup.json"),
             DedupeStore.DEFAULT_TTL_MILLIS,
@@ -141,6 +197,20 @@ public final class WebTermDeviceService extends Service {
                 notifications.postTransferCancelled(connectionKey, transferId, fileName);
             }
         });
+        uploadController.setNotificationSink(new UploadNotificationSink() {
+            @Override public void onProgress(String connectionKey, String sessionId, String fileName, long bytes, long total) {
+                notifications.postUploadProgress(connectionKey, sessionId, fileName, bytes, total);
+            }
+            @Override public void onSucceeded(String connectionKey, String sessionId, String fileName, String relativePath) {
+                notifications.postUploadSucceeded(connectionKey, sessionId, fileName, relativePath);
+            }
+            @Override public void onFailed(String connectionKey, String sessionId, String fileName, String error) {
+                notifications.postUploadFailed(connectionKey, sessionId, fileName, error);
+            }
+            @Override public void onCancelled(String connectionKey, String sessionId, String fileName) {
+                notifications.postUploadCancelled(connectionKey, sessionId, fileName);
+            }
+        });
         AgentAlertSink sink = (connectionKey, sessionId, eventId, importance, title, message) -> {
             if (!terminalFocus.isVisible(connectionKey, sessionId)) {
                 notifications.postAgent(connectionKey, sessionId, importance, title, message);
@@ -148,14 +218,61 @@ public final class WebTermDeviceService extends Service {
         };
         agentController = new AgentNotificationController(lookup, sink, dedupe);
         relayService.setDeviceListener(this::syncRelayDevices);
+
+        // 申请 WakeLock 保证 CPU 在后台不休眠以维持 15s WebSocket 心跳
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WebTerm:DeviceServiceWakeLock");
+            try {
+                wakeLock.acquire();
+                Log.i("WebTermDeviceService", "Acquired WakeLock");
+            } catch (SecurityException e) {
+                Log.e("WebTermDeviceService", "Failed to acquire wake lock", e);
+            }
+        }
+
+        // 注册网络监听，断网恢复时秒级主动重连
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) {
+            networkCallback = new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(Network network) {
+                    new Handler(getMainLooper()).post(() -> {
+                        Log.i("WebTermDeviceService", "Network became available, refreshing connections...");
+                        for (RelayMuxSessionManager manager : managers.values()) {
+                            manager.forceReconnect("network-available");
+                        }
+                        refreshConnections();
+                    });
+                }
+            };
+            try {
+                NetworkRequest request = new NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build();
+                cm.registerNetworkCallback(request, networkCallback);
+            } catch (Exception e) {
+                Log.e("WebTermDeviceService", "Failed to register network callback", e);
+            }
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_CANCEL_TRANSFER.equals(intent.getAction())) {
             String transferId = intent.getStringExtra(EXTRA_TRANSFER_ID);
+            String direction = intent.getStringExtra(EXTRA_TRANSFER_DIRECTION);
             if (transferId != null && !transferId.isEmpty()) {
-                controller.cancel(transferId);
+                if (NotificationCommand.DIRECTION_UPLOAD.equals(direction)) {
+                    // 上传方向：transferId 承载 sessionId，任务键 = connectionKey + sessionId。
+                    String connectionKey = intent.getStringExtra(EXTRA_CONNECTION_KEY);
+                    if (connectionKey != null && !connectionKey.isEmpty()) {
+                        uploadController.cancel(connectionKey, transferId);
+                    }
+                } else {
+                    // 缺省方向按接收处理（兼容旧版通知的 PendingIntent）。
+                    controller.cancel(transferId);
+                }
             }
             return START_STICKY;
         }
@@ -179,6 +296,7 @@ public final class WebTermDeviceService extends Service {
 
     @Override
     public void onDestroy() {
+        activeInstance = null;
         // 共享连接不归本服务独占，仅解绑设备级监听，避免影响终端会话。
         for (RelayMuxSessionManager manager : managers.values()) {
             manager.setControlListener(null);
@@ -187,6 +305,29 @@ public final class WebTermDeviceService extends Service {
         configs.clear();
         relayConnectionKeys.clear();
         relayService.setDeviceListener(null);
+
+        // 释放 WakeLock
+        if (wakeLock != null) {
+            try {
+                if (wakeLock.isHeld()) {
+                    wakeLock.release();
+                    Log.i("WebTermDeviceService", "Released WakeLock");
+                }
+            } catch (Exception ignored) {}
+            wakeLock = null;
+        }
+
+        // 注销网络监听
+        if (networkCallback != null) {
+            try {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (cm != null) {
+                    cm.unregisterNetworkCallback(networkCallback);
+                }
+            } catch (Exception ignored) {}
+            networkCallback = null;
+        }
+
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
@@ -237,7 +378,7 @@ public final class WebTermDeviceService extends Service {
             return null;
         }
         if ((deviceId == null || deviceId.isEmpty()) && !config.isRelayDevice()) {
-            deviceId = "direct";
+            deviceId = DeviceConnectionKeys.DIRECT_DEVICE_ID;
         }
         if (deviceId == null || deviceId.isEmpty()) {
             return null;
@@ -289,8 +430,9 @@ public final class WebTermDeviceService extends Service {
     }
 
     private static String connectionKey(String baseUrl, String deviceId) {
-        // 必须与 RelayMuxSessionRegistry.key() 保持一致：cookie 不参与设备身份。
-        return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + deviceId;
+        // deviceId 已在 connectDevice 中按 DeviceConnectionKeys 规则归一（直连为 "direct"）；
+        // cookie 不参与设备身份，必须与 RelayMuxSessionRegistry.key() 保持一致。
+        return DeviceConnectionKeys.relay(baseUrl, deviceId);
     }
 
     private File resolveStagingDir() {

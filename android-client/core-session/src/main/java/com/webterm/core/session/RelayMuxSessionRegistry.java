@@ -2,7 +2,7 @@ package com.webterm.core.session;
 
 import android.os.Handler;
 
-import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.api.DeviceConnectionKeys;
 import com.webterm.transport.api.ReconnectTrigger;
 import com.webterm.transport.api.TransportFactory;
 
@@ -66,6 +66,7 @@ public final class RelayMuxSessionRegistry implements ReconnectTrigger {
     private static String key(String baseUrl, String deviceId) {
         // Cookie is a rotating auth token, not part of device identity.
         // A device should share one manager regardless of cookie refreshes.
-        return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (deviceId == null ? "" : deviceId);
+        // 统一由 DeviceConnectionKeys 拼接（deviceId 段由调用方按规则归一）。
+        return DeviceConnectionKeys.relay(baseUrl, deviceId);
     }
 }

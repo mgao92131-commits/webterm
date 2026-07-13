@@ -87,6 +87,10 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
         Intent intent = new Intent(context, WebTermDeviceService.class);
         intent.setAction(WebTermDeviceService.ACTION_CANCEL_TRANSFER);
         intent.putExtra(WebTermDeviceService.EXTRA_TRANSFER_ID, command.cancelTransferId);
+        // 方向 + connectionKey 用于服务端点分发：上传路由到 FileUploadController，
+        // 接收路由到 FileReceiveController，互不误取消。
+        intent.putExtra(WebTermDeviceService.EXTRA_TRANSFER_DIRECTION, command.cancelDirection);
+        intent.putExtra(WebTermDeviceService.EXTRA_CONNECTION_KEY, command.cancelConnectionKey);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             flags |= PendingIntent.FLAG_IMMUTABLE;
@@ -101,7 +105,7 @@ public final class AndroidNotificationRenderer implements NotificationRenderer {
         createIfAbsent(nm, NotificationChannels.DEVICE, "WebTerm 设备连接", NotificationManager.IMPORTANCE_LOW,
             "保持与 PC 的长期连接");
         createIfAbsent(nm, NotificationChannels.TRANSFER, "文件传输", NotificationManager.IMPORTANCE_DEFAULT,
-            "文件接收进度与结果");
+            "文件上传/接收进度与结果");
         createIfAbsent(nm, NotificationChannels.AGENT_ALERT, "Agent 紧急提醒", NotificationManager.IMPORTANCE_HIGH,
             "Agent 出错或等待用户处理时提醒");
         createIfAbsent(nm, NotificationChannels.AGENT_NORMAL, "Agent 任务提醒", NotificationManager.IMPORTANCE_DEFAULT,

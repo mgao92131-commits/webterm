@@ -78,10 +78,6 @@ public final class MuxSession {
         return connected;
     }
 
-    boolean isP2PTransport() {
-        return transport.isP2P();
-    }
-
     boolean sendWsConnect(String tunnelId, String path, String[] protocols) {
         if (!connected) return false;
         JSONObject msg = new JSONObject();

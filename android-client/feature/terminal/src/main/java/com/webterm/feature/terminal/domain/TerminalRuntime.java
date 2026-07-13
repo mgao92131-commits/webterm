@@ -266,6 +266,9 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
         void setContentRoot(View root);
         void updateKeyboardAvoidance();
         void requestTerminalReconnect();
+
+        /** 顶栏「更多 → 上传文件」：转发给终端页 Fragment 发起 ACTION_OPEN_DOCUMENT。 */
+        void requestFileUpload();
     }
 
     private final class DelegatingViewHost implements TerminalLifecycleController.Host {
@@ -289,6 +292,9 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
         }
         @Override public void requestTerminalReconnect() {
             if (currentViewHost != null) currentViewHost.requestTerminalReconnect();
+        }
+        @Override public void requestFileUpload() {
+            if (currentViewHost != null) currentViewHost.requestFileUpload();
         }
     }
 

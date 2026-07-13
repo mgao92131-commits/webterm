@@ -4,12 +4,15 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Typeface;
+import android.content.Context;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -23,6 +26,7 @@ import org.json.JSONObject;
 import com.termux.terminal.TerminalSession;
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
+import com.webterm.core.api.DeviceConnectionKeys;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.TerminalCacheCoordinator;
@@ -40,6 +44,7 @@ import com.webterm.feature.terminal.domain.TerminalRuntimeRegistry;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
+import com.webterm.mobile.device.NotificationTerminalResolver;
 import com.webterm.mobile.download.FileDownloadHelper;
 import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
@@ -64,6 +69,8 @@ import dagger.hilt.android.scopes.ActivityScoped;
 @ActivityScoped
 public final class AppFlowCoordinator implements
     ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host {
+
+    private static final String TAG = "AppFlowCoordinator";
 
     public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
 
@@ -93,6 +100,14 @@ public final class AppFlowCoordinator implements
 
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
     private ServerConfig mSelectedServer;
+
+    // 通知点击跳转：可重试的挂起任务。App 在后台或 Relay 设备列表未就绪时保留，
+    // 由 onResume / onRelayDevicesChanged 驱动 drain 重试；新通知替换旧任务。
+    private PendingTerminalOpen pendingTerminalOpen;
+    private boolean activityResumed;
+    // 当前终端页对应的连接标识，用于通知跳转时的“已在同一终端”判定。
+    private String mCurrentTerminalConnectionKey = "";
+    private String mCurrentTerminalSessionId = "";
 
     private int mImeOverlap;
     private RelayUiState mRelayUiState;
@@ -181,6 +196,9 @@ public final class AppFlowCoordinator implements
 
     public void onResume() {
         mInForeground = true;
+        activityResumed = true;
+        // 从后台回到前台（或冷启动完成）时重试挂起的通知跳转。
+        mainHandler.post(this::drainPendingTerminalOpen);
 
         mHomeFragment = findHomeFragment();
 
@@ -209,6 +227,7 @@ public final class AppFlowCoordinator implements
     public void onPause() {
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
+        activityResumed = false;
         terminalFocus.clear();
         if (!hasTerminalSession()) {
             mRelayService.stop();
@@ -270,10 +289,11 @@ public final class AppFlowCoordinator implements
 
     // ── Navigation methods ─────────────────────────────────────────
 
-    public void navigateToTerminal(String baseUrl, String cookie, String sessionId,
-                                   String termTitle, String sessionName,
-                                   String createdAt, String instanceId,
-                                   boolean relayDevice, String relayDeviceId, String cwd) {
+    /** 导航到终端页；生命周期允许、参数齐全且 navigate 未抛异常才返回 true。 */
+    public boolean navigateToTerminal(String baseUrl, String cookie, String sessionId,
+                                      String termTitle, String sessionName,
+                                      String createdAt, String instanceId,
+                                      boolean relayDevice, String relayDeviceId, String cwd) {
         Bundle args = new Bundle();
         args.putString("baseUrl", baseUrl);
         args.putString("cookie", cookie);
@@ -285,8 +305,15 @@ public final class AppFlowCoordinator implements
         args.putBoolean("relayDevice", relayDevice);
         args.putString("relayDeviceId", relayDeviceId != null ? relayDeviceId : "");
         args.putString("cwd", cwd != null ? cwd : "");
-        if (mNavController != null) {
+        if (mNavController == null) return false;
+        // state 已保存（App 在后台）时 navigate 会抛 IllegalStateException，提前拦截。
+        if (mActivity == null || mActivity.getSupportFragmentManager().isStateSaved()) return false;
+        try {
             mNavController.navigate(R.id.terminalFragment, args);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "navigateToTerminal failed: sessionId=" + sessionId, e);
+            return false;
         }
     }
 
@@ -490,9 +517,15 @@ public final class AppFlowCoordinator implements
     }
     void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
-        terminalFocus.setVisible(WebTermUrls.normalizeBaseUrl(baseUrl) + "\n" + (relayDeviceId == null ? "" : relayDeviceId), sessionId);
-        navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
-            relayDevice, relayDeviceId, cwd);
+        // connectionKey 必须与 WebTermDeviceService 生产侧一致（直连映射 "direct"），
+        // 否则 Agent 告警的“终端可见则免打扰”判定永远失效。
+        String connectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDevice, relayDeviceId);
+        if (navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            relayDevice, relayDeviceId, cwd)) {
+            terminalFocus.setVisible(connectionKey, sessionId);
+            mCurrentTerminalConnectionKey = connectionKey;
+            mCurrentTerminalSessionId = sessionId == null ? "" : sessionId;
+        }
     }
 
     // ── TerminalHost ─────────────────────────────────────────────────
@@ -546,6 +579,9 @@ public final class AppFlowCoordinator implements
             @Override public void requestTerminalReconnect() {
                 AppFlowCoordinator.this.requestTerminalFreshReconnect();
             }
+            @Override public void requestFileUpload() {
+                fragment.requestFileUpload();
+            }
         };
 
         mTerminalRuntime.attach(args, fragmentHost, this::showSessionListOrDeviceHome);
@@ -572,18 +608,92 @@ public final class AppFlowCoordinator implements
         showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
     }
 
-    /** 处理 Agent 通知点击：connectionKey 由设备服务生成，定位后复用既有终端导航。 */
-    public void openTerminalFromNotification(String connectionKey, String sessionId) {
-        if (connectionKey == null || connectionKey.isEmpty() || sessionId == null || sessionId.isEmpty() || mActivity == null) {
+    /** 处理 Agent 通知点击：只登记/替换挂起任务，实际导航由 drainPendingTerminalOpen
+     * 在生命周期允许时执行（App 在后台时 onNewIntent 的 navigate 会被静默丢弃）。 */
+    public void requestOpenTerminalFromNotification(String connectionKey, String sessionId) {
+        if (connectionKey == null || connectionKey.isEmpty() || sessionId == null || sessionId.isEmpty()) {
+            Log.w(TAG, "通知跳转参数无效: connectionKey=" + connectionKey + ", sessionId=" + sessionId);
+            clearNotificationOpenRequest(new PendingTerminalOpen(connectionKey, sessionId));
             return;
         }
-        for (ServerConfig server : serverConfigs.servers()) {
-            String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
-            String key = WebTermUrls.normalizeBaseUrl(server.getUrl()) + "\n" + deviceId;
-            if (connectionKey.equals(key)) {
-                openSession(mActivity, server, sessionId, "Terminal", "", "", "", "");
-                return;
-            }
+        pendingTerminalOpen = new PendingTerminalOpen(connectionKey, sessionId);
+        if (activityResumed) {
+            mainHandler.post(this::drainPendingTerminalOpen);
+        }
+    }
+
+    /** 尝试消费挂起的通知跳转；条件不满足或需等待 Relay 设备列表时保留任务。 */
+    private void drainPendingTerminalOpen() {
+        PendingTerminalOpen pending = pendingTerminalOpen;
+        if (pending == null) return;
+        if (!activityResumed || mActivity == null
+            || mActivity.getSupportFragmentManager().isStateSaved()
+            || mNavController == null) {
+            return;
+        }
+        NotificationTerminalResolver.Result result = NotificationTerminalResolver.resolve(
+            pending.connectionKey, serverConfigs.servers(), mRelayService.devices(),
+            mRelayService.areDevicesLoaded());
+        switch (result.status) {
+            case RESOLVED:
+                if (openResolvedTerminal(result.server, pending.sessionId, pending.connectionKey)) {
+                    pendingTerminalOpen = null;
+                    clearNotificationOpenRequest(pending);
+                }
+                break;
+            case WAITING_FOR_RELAY_DEVICES:
+                // 每条通知最多主动触发一次刷新；成功/失败回调负责结束等待。
+                if (!pending.relayRefreshRequested) {
+                    pending.relayRefreshRequested = true;
+                    mRelayService.refresh();
+                }
+                break;
+            case NOT_FOUND:
+                Log.w(TAG, "通知跳转找不到目标设备: connectionKey=" + pending.connectionKey
+                    + ", sessionId=" + pending.sessionId);
+                Toast.makeText(mActivity, "无法找到通知对应的设备", Toast.LENGTH_SHORT).show();
+                pendingTerminalOpen = null;
+                clearNotificationOpenRequest(pending);
+                break;
+        }
+    }
+
+    /** 导航到解析出的设备终端；已在同一终端页时直接算成功。 */
+    private boolean openResolvedTerminal(ServerConfig server, String sessionId, String connectionKey) {
+        if (server == null) return false;
+        if (mScreenMode == ScreenMode.TERMINAL
+            && connectionKey.equals(mCurrentTerminalConnectionKey)
+            && sessionId.equals(mCurrentTerminalSessionId)) {
+            return true;
+        }
+        boolean switchingTerminal = currentDestinationId() == R.id.terminalFragment;
+        if (!navigateToTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", "", "", "",
+            server.isRelayDevice(), server.getDeviceId(), "")) {
+            return false;
+        }
+        // 只有导航调用成功后才提交当前终端身份；失败时保留旧状态供下一次重试。
+        if (switchingTerminal) detachCurrentTerminalView();
+        mSelectedServer = server;
+        terminalFocus.setVisible(connectionKey, sessionId);
+        mCurrentTerminalConnectionKey = connectionKey;
+        mCurrentTerminalSessionId = sessionId;
+        return true;
+    }
+
+    private void clearNotificationOpenRequest(PendingTerminalOpen pending) {
+        if (mActivity instanceof NotificationOpenHost) {
+            ((NotificationOpenHost) mActivity).clearNotificationOpenRequest(pending.connectionKey, pending.sessionId);
+        }
+    }
+
+    private static final class PendingTerminalOpen {
+        final String connectionKey;
+        final String sessionId;
+        boolean relayRefreshRequested;
+
+        PendingTerminalOpen(String connectionKey, String sessionId) {
+            this.connectionKey = connectionKey;
+            this.sessionId = sessionId;
         }
     }
 
@@ -863,6 +973,20 @@ public final class AppFlowCoordinator implements
         if (mHomeFragment != null) {
             mHomeFragment.refreshDevices();
         }
+        // Relay 设备列表就绪，重试可能处于 WAITING_FOR_RELAY_DEVICES 的通知跳转。
+        mainHandler.post(this::drainPendingTerminalOpen);
+    }
+    @Override
+    public void onRelayDevicesLoadFailed(String message) {
+        PendingTerminalOpen pending = pendingTerminalOpen;
+        if (pending == null || !pending.relayRefreshRequested) return;
+        // Activity 已离开前台时保留 Intent/pending；重建后的 Activity 会重新提交并重试。
+        if (!activityResumed || mActivity == null) return;
+        Log.w(TAG, "通知跳转获取 Relay 设备失败: " + message);
+        Toast.makeText(mActivity, message == null || message.isEmpty()
+            ? "无法获取中转设备列表" : message, Toast.LENGTH_SHORT).show();
+        pendingTerminalOpen = null;
+        clearNotificationOpenRequest(pending);
     }
     @Override
     public void onRelayAuthDone() {
@@ -929,6 +1053,31 @@ public final class AppFlowCoordinator implements
             intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
         }
         mActivity.startActivityForResult(intent, REQUEST_CODE_DOWNLOAD_DIR);
+    }
+
+    @Override
+    public boolean isBatteryOptimizationIgnored() {
+        if (mActivity == null) return true;
+        PowerManager pm = (PowerManager) mActivity.getSystemService(Context.POWER_SERVICE);
+        if (pm == null) return true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return pm.isIgnoringBatteryOptimizations(mActivity.getPackageName());
+        }
+        return true;
+    }
+
+    @Override
+    public void requestIgnoreBatteryOptimization() {
+        if (mActivity == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + mActivity.getPackageName()));
+                mActivity.startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(mActivity, "打开设置失败，请手动在系统设置中允许后台运行", Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     public void onDownloadDirPickerResult(int resultCode, Intent data) {

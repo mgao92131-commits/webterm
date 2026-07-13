@@ -13,7 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel;
 
 /**
  * ViewModel for the settings screen.
- * Holds font/P2P settings state.
+ * Holds font settings state.
  */
 @HiltViewModel
 public final class SettingsViewModel extends ViewModel {

@@ -233,7 +233,6 @@ public class MuxSessionControlTest {
 
         @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return true; }
-        @Override public boolean isP2P() { return false; }
         @Override public boolean sendText(String text) { lastSentText = text; return true; }
         @Override public boolean sendBinary(byte[] data) { return true; }
     }

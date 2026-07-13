@@ -27,7 +27,7 @@ import dagger.hilt.android.AndroidEntryPoint;
 import javax.inject.Inject;
 
 @AndroidEntryPoint
-public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions {
+public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions, NotificationOpenHost {
 
     @Inject AppFlowCoordinator coordinator;
 
@@ -68,8 +68,23 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         if (intent == null || !intent.getBooleanExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL, false)) return;
         String connectionKey = intent.getStringExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY);
         String sessionId = intent.getStringExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID);
-        coordinator.openTerminalFromNotification(connectionKey, sessionId);
+        // 只提交请求，不在此 removeExtra：App 在后台时无法立即导航，
+        // extra 需保留到 coordinator 到达终态后回调 clearNotificationOpenRequest 清理。
+        coordinator.requestOpenTerminalFromNotification(connectionKey, sessionId);
+    }
+
+    // ── NotificationOpenHost ──────────────────────────────────────
+
+    @Override
+    public void clearNotificationOpenRequest(String connectionKey, String sessionId) {
+        Intent intent = getIntent();
+        if (intent == null || !intent.getBooleanExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL, false)) return;
+        // 仅当当前 Intent 仍是同一条通知时才清理，避免旧任务清掉新通知的 extra。
+        if (!android.text.TextUtils.equals(connectionKey, intent.getStringExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY))) return;
+        if (!android.text.TextUtils.equals(sessionId, intent.getStringExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID))) return;
         intent.removeExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL);
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY);
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID);
     }
 
     @Override protected void onResume() { super.onResume(); coordinator.onResume(); }
@@ -112,6 +127,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     @Override public void startTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment) { coordinator.startTerminalInFragment(this, args, fragment); }
     @Override public void detachTerminalFragment(TerminalFragment fragment) { coordinator.detachTerminalFragment(fragment); }
+    @Override public com.webterm.core.fileupload.FileUploadController uploadController() { return com.webterm.mobile.device.WebTermDeviceService.uploadController(); }
 
     // ── RelayHost ─────────────────────────────────────────────────
 

@@ -619,15 +619,9 @@ public class RelayMuxSessionManagerRecoveryTest {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
-        private final boolean p2p;
         private int closeCount;
 
         FakeMuxTransport() {
-            this(false);
-        }
-
-        FakeMuxTransport(boolean p2p) {
-            this.p2p = p2p;
         }
 
         @Override public void start(Listener listener) {
@@ -650,7 +644,6 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return open; }
-        @Override public boolean isP2P() { return p2p; }
 
         @Override public boolean sendText(String text) {
             sentTexts.add(text);

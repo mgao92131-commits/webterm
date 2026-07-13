@@ -7,6 +7,7 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
 import com.webterm.core.api.WebTermApi;
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
@@ -55,6 +56,8 @@ public final class RelayService {
     private boolean refreshInFlight;
     private String refreshCookieInFlight = "";
     private boolean loginInFlight;
+    /** 当前 Relay Master 的在线设备列表是否至少成功加载过一次。 */
+    private boolean devicesLoaded;
 
     // ── LiveData for UI observation ──────────────────────────────
 
@@ -86,12 +89,19 @@ public final class RelayService {
     // ── Public API ───────────────────────────────────────────────
 
     public void loadMasterFromServers(List<ServerConfig> servers) {
-        relayMasterConfig = null;
+        String previousUrl = relayMasterConfig == null ? "" : WebTermUrls.normalizeBaseUrl(relayMasterConfig.getUrl());
+        ServerConfig nextMaster = null;
         for (ServerConfig s : servers) {
             if (s.isRelayMaster()) {
-                relayMasterConfig = s;
+                nextMaster = s;
                 break;
             }
+        }
+        String nextUrl = nextMaster == null ? "" : WebTermUrls.normalizeBaseUrl(nextMaster.getUrl());
+        relayMasterConfig = nextMaster;
+        if (!previousUrl.equals(nextUrl)) {
+            devicesLoaded = false;
+            relayDevices.clear();
         }
     }
 
@@ -101,6 +111,10 @@ public final class RelayService {
 
     public List<ServerConfig> devices() {
         return relayDevices;
+    }
+
+    public boolean areDevicesLoaded() {
+        return devicesLoaded;
     }
 
     public boolean hasMaster() {
@@ -137,6 +151,7 @@ public final class RelayService {
 
     public void destroy() {
         stop();
+        devicesLoaded = false;
         relayDevices.clear();
         notifyDeviceListener();
         relayMasterConfig = null;
@@ -158,6 +173,7 @@ public final class RelayService {
                     httpAuthFailures = 0;
                     relayDevices.clear();
                     relayDevices.addAll(toOnlineDeviceConfigs(relayMasterConfig, devices));
+                    devicesLoaded = true;
                     updateState(RelayState.CONNECTED);
                     if (host != null) host.onRelayDevicesChanged();
                     notifyDeviceListener();
@@ -179,6 +195,7 @@ public final class RelayService {
                         refreshSavedCookieOrFail();
                     } else {
                         updateState(RelayState.CONNECT_FAILED);
+                        notifyDevicesLoadFailed(message);
                     }
                 });
             }
@@ -188,6 +205,8 @@ public final class RelayService {
                 mainHandler.post(() -> {
                     if (!devicesFetchInFlight) return;
                     devicesFetchInFlight = false;
+                    updateState(RelayState.CONNECT_FAILED);
+                    notifyDevicesLoadFailed(message);
                 });
             }
         });
@@ -196,6 +215,7 @@ public final class RelayService {
     private void refreshSavedCookieOrFail() {
         if (relayMasterConfig == null) {
             updateState(RelayState.AUTH_FAILED);
+            notifyDevicesLoadFailed("中转服务未配置");
             return;
         }
         if (relayMasterConfig.getCookie() == null || relayMasterConfig.getCookie().isEmpty()) {
@@ -215,6 +235,7 @@ public final class RelayService {
                     refreshCookieInFlight = "";
                     if (relayMasterConfig == null || cookie == null || cookie.isEmpty()) {
                         updateState(RelayState.AUTH_FAILED);
+                        notifyDevicesLoadFailed("中转服务登录已失效");
                         return;
                     }
                     relayMasterConfig.setCookie(cookie);
@@ -246,6 +267,7 @@ public final class RelayService {
             || relayMasterConfig.getUsername() == null || relayMasterConfig.getUsername().isEmpty()
             || relayMasterConfig.getPassword() == null || relayMasterConfig.getPassword().isEmpty()) {
             updateState(RelayState.AUTH_FAILED);
+            notifyDevicesLoadFailed("中转服务登录失败");
             return;
         }
         if (loginInFlight) return;
@@ -270,6 +292,7 @@ public final class RelayService {
                     loginInFlight = false;
                     Log.w(TAG, "relay password login failed: " + message);
                     updateState(RelayState.AUTH_FAILED);
+                    notifyDevicesLoadFailed(message);
                 }
             });
     }
@@ -398,6 +421,7 @@ public final class RelayService {
             }
         }
         relayMasterConfig = null;
+        devicesLoaded = false;
         httpAuthFailures = 0;
         devicesFetchInFlight = false;
         if (host != null) host.saveServers();
@@ -435,6 +459,13 @@ public final class RelayService {
     private void notifyDeviceListener() {
         if (deviceListener != null) {
             deviceListener.onRelayDevicesChanged(new ArrayList<>(relayDevices));
+        }
+    }
+
+    private void notifyDevicesLoadFailed(String message) {
+        if (host != null) {
+            host.onRelayDevicesLoadFailed(message == null || message.isEmpty()
+                ? "无法获取中转设备列表" : message);
         }
     }
 
@@ -480,6 +511,7 @@ public final class RelayService {
     public interface Host {
         android.app.Activity activity();
         void onRelayDevicesChanged();
+        default void onRelayDevicesLoadFailed(String message) {}
         void onRelayAuthDone();
         void saveServers();
         ServerConfigManager serverConfigs();
