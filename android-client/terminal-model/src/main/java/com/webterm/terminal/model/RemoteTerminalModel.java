@@ -134,7 +134,7 @@ public final class RemoteTerminalModel {
     }
 
     Set<Integer> changedRows = new HashSet<>();
-    int appendedHistoryLines = 0;
+    int tailAppendedLines = 0;
 
     for (TerminalLine line : patch.screenRows) {
       int row = findRow(line.id);
@@ -146,7 +146,7 @@ public final class RemoteTerminalModel {
 
     for (TerminalLine line : patch.historyAppend) {
       if (line.id != 0) {
-        if (putHistoryLine(line)) appendedHistoryLines++;
+        if (putHistoryLine(line)) tailAppendedLines++;
       }
     }
 
@@ -155,7 +155,7 @@ public final class RemoteTerminalModel {
         TerminalLine promotedLine = screen[promoted.screenRow];
         if (promotedLine != null && promoted.historyLineId != 0) {
           if (putHistoryLine(promotedLine.withId(promoted.historyLineId))) {
-            appendedHistoryLines++;
+            tailAppendedLines++;
           }
         }
       }
@@ -197,7 +197,8 @@ public final class RemoteTerminalModel {
         patch.cursor != null,
         patch.modes != null,
         patch.title != null,
-        appendedHistoryLines
+        tailAppendedLines,
+        0
     );
   }
 
@@ -216,12 +217,14 @@ public final class RemoteTerminalModel {
     this.firstAvailableHistoryId = page.firstAvailableLineId;
     this.hasMoreHistoryBefore = page.hasMoreBefore;
     evictHistoryIfNeeded();
-    // The new rows are physically inserted above all cached rows. Reporting
-    // their net count lets the viewport add the same pixel height and keep the
-    // currently visible line stationary while a page arrives at the top.
+    // The new rows are physically inserted above all cached rows. In the
+    // bottom-anchored renderer geometry historyRows and every old row's index
+    // grow by the same amount, so old lines keep their screen Y with zero
+    // viewport offset compensation. This count is reported separately from
+    // tail appends and must never drive offset adjustments.
     int insertedHistoryLines = Math.max(0, historyCache.size() - historySizeBefore);
     publishRenderSnapshot(true, !page.styles.isEmpty(), !page.links.isEmpty());
-    return new ModelChange(false, null, true, false, false, false, insertedHistoryLines);
+    return new ModelChange(false, null, true, false, false, false, 0, insertedHistoryLines);
   }
 
   public synchronized ModelChange trimHistory(long trimLayoutEpoch, long firstAvailableLineId) {

@@ -76,9 +76,28 @@ public class RemoteTerminalModelTest {
     ModelChange change = model.prependHistoryPage(page);
 
     assertTrue(change.historyChanged);
-    assertEquals(1, change.appendedHistoryLines);
+    assertEquals(1, change.historyPrependedLines);
+    assertEquals("prepend is not a tail append", 0, change.tailAppendedLines);
     assertEquals(2, model.historyCache().size());
     assertEquals(98L, model.firstAvailableHistoryId());
+  }
+
+  @Test
+  public void applyPatch_historyAppendReportsOnlyTailAppends() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+
+    List<TerminalLine> appended = new ArrayList<>();
+    appended.add(line(101, "t1"));
+    appended.add(line(102, "t2"));
+    ScreenPatch patch = new ScreenPatch(
+        "i1", 1, 1, 2, appended, Collections.emptyList(),
+        null, null, null, Collections.emptyMap(), Collections.emptyMap(),
+        null, null, Collections.emptyList());
+    ModelChange change = model.applyPatch(patch);
+
+    assertEquals(2, change.tailAppendedLines);
+    assertEquals("tail append is not a history prepend", 0, change.historyPrependedLines);
   }
 
   @Test

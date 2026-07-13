@@ -46,6 +46,16 @@ public final class RemoteTerminalView extends View {
 
   private static final String INPUT_TRACE_TAG = "WebTermInputTrace";
 
+  /**
+   * 终端输入类型：禁止 IME 自动改正、自动大写与联想词。VISIBLE_PASSWORD 变体让
+   * 输入法按"明文但不学习"处理，避免把命令和密码写进个人词典或预测栏。
+   * Android 没有 NO_CAPITALIZATION 常量；不设置任何 TYPE_TEXT_FLAG_CAP_* 位即
+   * 禁用自动大写，VISIBLE_PASSWORD 进一步保证 IME 不按句子规则大写。
+   */
+  static final int TERMINAL_INPUT_TYPE = android.text.InputType.TYPE_CLASS_TEXT
+      | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+      | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+
   public interface Host {
     void onTextInput(@NonNull String text);
     void onPasteInput(@NonNull String text);
@@ -128,9 +138,18 @@ public final class RemoteTerminalView extends View {
     invalidate();
   }
 
+  /**
+   * Tail-appended history grows content above the live screen; when the user is
+   * not following the tail the offset grows by the same pixel height so the
+   * visible lines stay pinned. Routed through {@link TerminalViewportState#scrollBy}
+   * so the stored offset stays clamped to the rendered hard top instead of
+   * accumulating invisible overscroll. History prepends never call this: their
+   * rows land above the cached rows and old lines keep their Y without any
+   * offset change.
+   */
   public void preserveViewportForAppendedLines(int lineCount) {
     if (lineCount > 0 && !viewport.followTail) {
-      viewport.scrollOffsetPixels += Math.round(lineCount * lineHeight());
+      viewport.scrollBy(Math.round(lineCount * lineHeight()), maxScrollOffsetPixels());
     }
   }
 
@@ -177,7 +196,7 @@ public final class RemoteTerminalView extends View {
 
   @Override
   public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-    outAttrs.inputType = android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+    outAttrs.inputType = TERMINAL_INPUT_TYPE;
     outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
     return new RemoteTerminalInputConnection(this, host);
   }
@@ -892,6 +911,12 @@ public final class RemoteTerminalView extends View {
     }
   }
 
+  /**
+   * IME 状态机。composing 文本最多发送一次：setComposingText 只更新本地
+   * Editable；commitText 发送一次并清空；finishComposingText 只在本地仍留有
+   * 未发送 composing 文本时补发一次。删除未发送的 composing 文本只改本地，
+   * 不会向远端 PTY 发送 DEL。
+   */
   private static final class RemoteTerminalInputConnection extends BaseInputConnection {
 
     private final Host host;
@@ -902,45 +927,118 @@ public final class RemoteTerminalView extends View {
     }
 
     @Override
+    public boolean setComposingText(CharSequence text, int newCursorPosition) {
+      // Composing updates stay local; nothing is sent until commit/finish.
+      return super.setComposingText(text, newCursorPosition);
+    }
+
+    @Override
     public boolean commitText(CharSequence text, int newCursorPosition) {
-      super.commitText(text, newCursorPosition);
+      boolean result = super.commitText(text, newCursorPosition);
       sendTextToTerminal();
-      return true;
+      return result;
     }
 
     @Override
     public boolean finishComposingText() {
-      super.finishComposingText();
-      sendTextToTerminal();
-      return true;
+      // If the editable still holds un-sent composing text, flush it once.
+      // After commitText the buffer was already sent and cleared, so an empty
+      // editable (or no composing span) must not send a duplicate.
+      boolean hasPendingComposing = hasComposingText();
+      boolean result = super.finishComposingText();
+      if (hasPendingComposing) {
+        sendTextToTerminal();
+      }
+      return result;
     }
 
     @Override
     public boolean deleteSurroundingText(int leftLength, int rightLength) {
       traceInput("ime-delete", "left=" + leftLength + " right=" + rightLength);
+      if (hasComposingText()) {
+        // Deleting un-sent composing text is a local edit; the remote PTY has
+        // never seen these characters and must receive zero DEL keys. This is
+        // done inside the composing span directly: the framework's
+        // BaseInputConnection.deleteSurroundingText expands the deletion anchor
+        // to the composing span START, which makes it a no-op when the scratch
+        // buffer holds only composing text.
+        return deleteWithinComposing(leftLength, rightLength);
+      }
       if (host != null) {
-        KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
         for (int i = 0; i < leftLength; i++) {
-          host.onKeyEvent(deleteKey);
+          // Fresh DOWN/UP objects per key: sharing one KeyEvent instance lets
+          // receivers mutate a recycled event and lose the action pairing.
+          host.onKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
+          host.onKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL));
         }
       }
       return super.deleteSurroundingText(leftLength, rightLength);
+    }
+
+    /**
+     * Deletes inside the un-sent composing span: {@code leftLength} chars from
+     * its tail, then {@code rightLength} chars forward from its (new) end.
+     * Fully deleting the span removes it, after which DEL keys go remote again.
+     */
+    private boolean deleteWithinComposing(int leftLength, int rightLength) {
+      android.text.Editable content = getEditable();
+      if (content == null) return false;
+      int start = BaseInputConnection.getComposingSpanStart(content);
+      int end = BaseInputConnection.getComposingSpanEnd(content);
+      if (start < 0 || end <= start) return false;
+      int deleteBefore = Math.min(Math.max(leftLength, 0), end - start);
+      if (deleteBefore > 0) {
+        content.delete(end - deleteBefore, end);
+      }
+      int newEnd = end - deleteBefore;
+      int deleteAfter = Math.min(Math.max(rightLength, 0),
+          Math.max(0, content.length() - newEnd));
+      if (deleteAfter > 0) {
+        content.delete(newEnd, newEnd + deleteAfter);
+      }
+      return true;
     }
 
     private void sendTextToTerminal() {
       android.text.Editable content = getEditable();
       if (host != null && content != null && content.length() > 0) {
         String text = content.toString();
-        traceInput("ime-send", "len=" + text.length() + " text=" + text);
+        traceInput("ime-send", "len=" + text.length() + " hash=" + shortHash(text));
         host.onTextInput(text);
         content.clear();
       }
+    }
+
+    /** True when the local editable holds a non-empty, un-sent composing span. */
+    private boolean hasComposingText() {
+      android.text.Editable content = getEditable();
+      if (content == null) return false;
+      int start = BaseInputConnection.getComposingSpanStart(content);
+      int end = BaseInputConnection.getComposingSpanEnd(content);
+      return start >= 0 && end > start;
     }
 
     @Override
     public boolean sendKeyEvent(KeyEvent event) {
       if (event != null && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
         return super.sendKeyEvent(event);
+      }
+      if (event != null && event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
+        // While composing, backspace edits the local un-sent text only. Do NOT
+        // delegate to super.sendKeyEvent: on modern Android that re-dispatches
+        // the key through the IMM back into this View, looping the DEL to the
+        // remote PTY for a character it never received.
+        if (hasComposingText()) {
+          if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            deleteWithinComposing(1, 0);
+          }
+          return true;
+        }
+        traceInput("ime-key", eventSummary(event));
+        if (host != null) {
+          host.onKeyEvent(event);
+        }
+        return true;
       }
       // IMEs commonly emit both commitText() and a synthetic Unicode KeyEvent
       // for the same composing result. Text belongs exclusively to
@@ -972,15 +1070,33 @@ public final class RemoteTerminalView extends View {
     }
   }
 
+  /**
+   * 输入 trace 只记录阶段与长度/keyCode/action/deviceId 等元数据，绝不记录
+   * text、unicodeChar 或剪贴板内容。需要关联同一输入事件时使用不可逆短 hash。
+   */
   private static void traceInput(String stage, String detail) {
     if (Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) {
       Log.d(INPUT_TRACE_TAG, stage + " " + detail);
     }
   }
 
+  private static String shortHash(String text) {
+    try {
+      java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+      byte[] hash = digest.digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < 4; i++) {
+        sb.append(String.format(java.util.Locale.US, "%02x", hash[i]));
+      }
+      return sb.toString();
+    } catch (java.security.NoSuchAlgorithmException e) {
+      return "unavailable";
+    }
+  }
+
   private static String eventSummary(KeyEvent event) {
     if (event == null) return "null";
     return "action=" + event.getAction() + " keyCode=" + event.getKeyCode()
-        + " unicode=" + event.getUnicodeChar() + " device=" + event.getDeviceId();
+        + " device=" + event.getDeviceId();
   }
 }

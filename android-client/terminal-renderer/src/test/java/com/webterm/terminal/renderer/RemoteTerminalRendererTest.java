@@ -60,4 +60,34 @@ public final class RemoteTerminalRendererTest {
     assertFalse(RemoteTerminalView.shouldRequestOlderHistory(80, 600, 600, true));
     assertTrue(RemoteTerminalView.shouldRequestOlderHistory(80, 600, 600, false));
   }
+
+  @Test public void prependingHistoryKeepsExistingLinesAtSameScreenY() {
+    // In the bottom-anchored geometry a prepended page grows historyRows and
+    // every old row's index by the same amount. With the viewport offset
+    // untouched, an existing history line must keep its exact screen Y.
+    float topInset = 4f;
+    float lineHeight = 20f;
+    float offset = 300f; // below the 100-row hard top, so no clamping applies
+    int lineIndex = 17;
+    float before = RemoteTerminalRenderer.contentTopY(680, 100, 33, lineHeight, topInset, offset)
+        + lineIndex * lineHeight;
+    float after = RemoteTerminalRenderer.contentTopY(680, 350, 33, lineHeight, topInset, offset)
+        + (lineIndex + 250) * lineHeight;
+    assertEquals(before, after, 0.001f);
+  }
+
+  @Test public void inputTypeDisablesImeTextMutation() {
+    int type = RemoteTerminalView.TERMINAL_INPUT_TYPE;
+    assertEquals(android.text.InputType.TYPE_CLASS_TEXT,
+        type & android.text.InputType.TYPE_MASK_CLASS);
+    assertEquals(android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+        type & android.text.InputType.TYPE_MASK_VARIATION);
+    assertTrue((type & android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0);
+    // No-capitalization is expressed by the absence of every CAP_* flag bit.
+    int capFlags = android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        | android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
+        | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES;
+    assertEquals(0, type & capFlags);
+    assertEquals(0, type & android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
+  }
 }

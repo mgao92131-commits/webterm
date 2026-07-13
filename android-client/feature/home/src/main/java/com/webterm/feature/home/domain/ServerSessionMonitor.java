@@ -96,11 +96,10 @@ public final class ServerSessionMonitor {
             } else if ("session".equals(type)) {
                 JSONObject sessionData = msg.optJSONObject("data");
                 if (sessionData != null) {
-                    JSONObject n = sessionData.optJSONObject("notification");
-                    Log.i(TAG, "TitleTrace manager message type=session id=" + sessionData.optString("id")
-                        + " termTitle=" + sessionData.optString("termTitle")
-                        + " notification=" + (n != null ? n.optString("message", "") : "null")
-                        + " lastCommand=" + sessionData.optString("lastCommand"));
+                    // Privacy: never log termTitle/notification/lastCommand — they
+                    // contain user command lines and may carry secrets.
+                    Log.i(TAG, "TitleTrace manager message type=session id="
+                        + sessionData.optString("id"));
                     listener.onMonitorSession(sessionData);
                 }
             } else if ("session-closed".equals(type)) {
@@ -157,10 +156,9 @@ public final class ServerSessionMonitor {
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject session = sessions.optJSONObject(i);
             if (session == null) continue;
+            // Privacy: log ids only; termTitle can embed the running command line.
             builder.append(" [")
                 .append(session.optString("id"))
-                .append(" title=")
-                .append(session.optString("termTitle"))
                 .append("]");
         }
         Log.i(TAG, builder.toString());

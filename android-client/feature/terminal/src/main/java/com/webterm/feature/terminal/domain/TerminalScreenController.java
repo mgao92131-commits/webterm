@@ -24,6 +24,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     void onCursorChanged();
     void onTitleChanged(@Nullable String title);
     void requestInvalidate();
+    /** Only invoked for tail appends while the user is not following the tail. */
     default void onHistoryAppended(int lineCount) {}
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
   }
@@ -115,6 +116,11 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
   }
 
+  @androidx.annotation.VisibleForTesting
+  TerminalViewportState viewport() {
+    return viewport;
+  }
+
   public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
     if (deltaPixels == 0) return;
     viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
@@ -150,10 +156,14 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     if (change.geometryChanged) {
       viewport.resetForSnapshot();
     }
-    if (!viewport.followTail && change.historyChanged) {
-      if (change.appendedHistoryLines > 0 && view != null) {
-        view.onHistoryAppended(change.appendedHistoryLines);
-      }
+    // Only tail appends (live output scrolling into history below the visible
+    // window) compensate the offset to pin the current content. A prepended
+    // history page lands above the cached rows; in the bottom-anchored geometry
+    // it shifts historyRows and old row indices together, so old lines keep
+    // their screen Y and the offset must stay untouched — otherwise a returned
+    // page would undo the user's reverse swipes.
+    if (!viewport.followTail && change.tailAppendedLines > 0 && view != null) {
+      view.onHistoryAppended(change.tailAppendedLines);
     }
     if (change.historyChanged) viewport.loadingOlderHistory = false;
     requestRender();

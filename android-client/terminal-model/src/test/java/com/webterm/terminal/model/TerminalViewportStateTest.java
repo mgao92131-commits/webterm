@@ -48,4 +48,22 @@ public final class TerminalViewportStateTest {
     assertEquals(0, viewport.scrollOffsetPixels);
     assertTrue(viewport.followTail);
   }
+
+  @Test
+  public void tailAppendCompensationPinsViewportButNeverExceedsHardTop() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(500, 1_000);
+    assertFalse(viewport.followTail);
+
+    // Live output appended below the visible window pins the same lines by
+    // growing the offset, but never past the rendered hard top — an unclamped
+    // += would retain invisible overscroll the next reverse gesture must eat.
+    viewport.scrollBy(360, 1_000);
+    assertEquals(860, viewport.scrollOffsetPixels);
+    assertFalse(viewport.followTail);
+
+    viewport.scrollBy(9_999, 1_000);
+    assertEquals(1_000, viewport.scrollOffsetPixels);
+    assertFalse(viewport.followTail);
+  }
 }
