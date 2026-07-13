@@ -283,3 +283,140 @@ func BenchmarkHistoryLineMemory(b *testing.B) {
 		})
 	}
 }
+
+// pushBlankLines 向 scrollback 推入 n 行空白行（ID 从 1 起连续分配）。
+func pushBlankLines(sb *TrackedScrollback, n int) {
+	for i := 0; i < n; i++ {
+		sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
+	}
+}
+
+func windowIDs(w ScrollbackWindow) []uint64 {
+	ids := make([]uint64, len(w.Lines))
+	for i, hl := range w.Lines {
+		ids[i] = hl.ID
+	}
+	return ids
+}
+
+func TestTrackedScrollback_LinesAfter(t *testing.T) {
+	sb := NewTrackedScrollback(10000, nil)
+	pushBlankLines(sb, 10)
+
+	w := sb.LinesAfter(3, 100)
+	if w.FirstID != 1 || w.LastID != 10 {
+		t.Fatalf("bounds FirstID=%d LastID=%d, want 1/10", w.FirstID, w.LastID)
+	}
+	if got := windowIDs(w); len(got) != 7 || got[0] != 4 || got[6] != 10 {
+		t.Fatalf("LinesAfter(3) ids=%v, want 4..10", got)
+	}
+
+	// limit 保留最新段。
+	w = sb.LinesAfter(3, 2)
+	if got := windowIDs(w); len(got) != 2 || got[0] != 9 || got[1] != 10 {
+		t.Fatalf("LinesAfter(3, 2) ids=%v, want [9 10]", got)
+	}
+
+	// lastLineID 已是最新：只返回边界。
+	w = sb.LinesAfter(10, 100)
+	if len(w.Lines) != 0 || w.LastID != 10 {
+		t.Fatalf("LinesAfter(10) lines=%v lastID=%d, want none/10", windowIDs(w), w.LastID)
+	}
+
+	// lastLineID=0：从头开始，受 limit 约束取最新段。
+	w = sb.LinesAfter(0, 4)
+	if got := windowIDs(w); len(got) != 4 || got[0] != 7 {
+		t.Fatalf("LinesAfter(0, 4) ids=%v, want 7..10", got)
+	}
+
+	// 空历史：Lines 为 nil，LastID = FirstID-1。
+	empty := NewTrackedScrollback(10000, nil)
+	w = empty.LinesAfter(0, 10)
+	if w.Lines != nil || w.FirstID != 1 || w.LastID != 0 {
+		t.Fatalf("empty LinesAfter: %+v", w)
+	}
+
+	// limit<=0：只返回边界。
+	w = sb.LinesAfter(3, 0)
+	if w.Lines != nil || w.LastID != 10 {
+		t.Fatalf("LinesAfter limit=0: lines=%v lastID=%d", windowIDs(w), w.LastID)
+	}
+}
+
+func TestTrackedScrollback_Window(t *testing.T) {
+	sb := NewTrackedScrollback(10000, nil)
+	pushBlankLines(sb, 10)
+
+	w := sb.Window(3)
+	if got := windowIDs(w); len(got) != 3 || got[0] != 8 || got[2] != 10 {
+		t.Fatalf("Window(3) ids=%v, want 8..10", got)
+	}
+	if w.FirstID != 1 || w.LastID != 10 {
+		t.Fatalf("Window bounds FirstID=%d LastID=%d, want 1/10", w.FirstID, w.LastID)
+	}
+
+	w = sb.Window(100)
+	if len(w.Lines) != 10 {
+		t.Fatalf("Window(100) returned %d lines, want 10", len(w.Lines))
+	}
+
+	w = sb.Window(0)
+	if w.Lines != nil {
+		t.Fatalf("Window(0) lines=%v, want nil", windowIDs(w))
+	}
+
+	empty := NewTrackedScrollback(10000, nil)
+	w = empty.Window(300)
+	if w.Lines != nil || w.FirstID != 1 || w.LastID != 0 {
+		t.Fatalf("empty Window: %+v", w)
+	}
+}
+
+func TestTrackedScrollback_LinesAfterExposesTrimDiscontinuity(t *testing.T) {
+	sb := NewTrackedScrollback(3, nil)
+	pushBlankLines(sb, 5) // 行数上限 3：firstID 推进到 3
+
+	// baseline 的最后行（1）已被驱逐：FirstID=3 > 1+1，调用方据此判定不连续。
+	w := sb.LinesAfter(1, 10)
+	if w.FirstID != 3 || w.LastID != 5 {
+		t.Fatalf("bounds FirstID=%d LastID=%d, want 3/5", w.FirstID, w.LastID)
+	}
+	if w.FirstID <= 1+1 {
+		t.Fatal("expected discontinuity signal: FirstID > lastLineID+1")
+	}
+	if got := windowIDs(w); len(got) != 3 || got[0] != 3 {
+		t.Fatalf("ids=%v, want 3..5", got)
+	}
+
+	// 恰好连续：FirstID == lastLineID+1。
+	w = sb.LinesAfter(2, 10)
+	if w.FirstID != 3 || len(w.Lines) != 3 {
+		t.Fatalf("LinesAfter(2): %+v", w)
+	}
+
+	// 窗口中间：返回 lastLineID 之后的行。
+	w = sb.LinesAfter(4, 10)
+	if got := windowIDs(w); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("LinesAfter(4) ids=%v, want [5]", got)
+	}
+}
+
+func TestTrackedScrollback_LinesAfterPopLowersLastID(t *testing.T) {
+	sb := NewTrackedScrollback(10000, nil)
+	pushBlankLines(sb, 3)
+	sb.Pop()
+
+	// Pop 移除了 ID 3：LastID 回落到 2，调用方据此判定缓存失效。
+	w := sb.LinesAfter(3, 10)
+	if w.LastID != 2 || w.Lines != nil {
+		t.Fatalf("after Pop: lastID=%d lines=%v, want 2/nil", w.LastID, windowIDs(w))
+	}
+	if w.LastID >= 3 {
+		t.Fatal("expected LastID < cached lastID after Pop")
+	}
+
+	w = sb.Window(10)
+	if got := windowIDs(w); len(got) != 2 || got[1] != 2 {
+		t.Fatalf("Window after Pop ids=%v, want [1 2]", got)
+	}
+}

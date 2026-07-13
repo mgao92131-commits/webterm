@@ -19,6 +19,15 @@ type ScrollbackTrimEvent struct {
 	FirstAvailableID uint64
 }
 
+// ScrollbackWindow 是 TrackedScrollback 一次原子读到的连续行窗口及其边界。
+// Lines 中 HistoryLine 的 Cells 与 scrollback 内部共享且不可变（Push 时已
+// 拷贝，推出后不再修改）；切片本身是新分配的副本，可安全在锁外使用。
+type ScrollbackWindow struct {
+	FirstID uint64        // 当前最老可用行 ID
+	LastID  uint64        // 当前最新行 ID；历史为空时为 FirstID-1
+	Lines   []HistoryLine // 窗口内的行，按 ID 升序
+}
+
 // TrackedScrollback 是 headless-term 的唯一 scrollback provider。
 // 它在同一 layout epoch 内为每一行分配单调递增的 ID，并在 trim 时通知调用方。
 type TrackedScrollback struct {
@@ -184,6 +193,55 @@ func (t *TrackedScrollback) PageBefore(beforeID uint64, limit int) []HistoryLine
 	result := make([]HistoryLine, end-start)
 	copy(result, t.lines[start:end])
 	return result
+}
+
+// LinesAfter 一次 RLock 返回 ID 严格大于 lastLineID 的最新至多 limit 行
+// （不含 lastLineID）及当前窗口边界。行超过 limit 时保留最新段。
+// 调用方用返回的 FirstID 判断连续性：FirstID > lastLineID+1 表示
+// lastLineID 之后的部分行已被驱逐。limit<=0 时只返回边界。
+func (t *TrackedScrollback) LinesAfter(lastLineID uint64, limit int) ScrollbackWindow {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	w := ScrollbackWindow{FirstID: t.firstID, LastID: t.lastIDLocked()}
+	if limit <= 0 || len(t.lines) == 0 || lastLineID >= w.LastID {
+		return w
+	}
+	start := 0
+	if lastLineID >= t.firstID {
+		start = int(lastLineID - t.firstID + 1)
+	}
+	if len(t.lines)-start > limit {
+		start = len(t.lines) - limit
+	}
+	w.Lines = make([]HistoryLine, len(t.lines)-start)
+	copy(w.Lines, t.lines[start:])
+	return w
+}
+
+// Window 一次 RLock 返回最新至多 limit 行的尾部窗口及当前边界，用于
+// 全量/重建路径。limit<=0 时只返回边界。
+func (t *TrackedScrollback) Window(limit int) ScrollbackWindow {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	w := ScrollbackWindow{FirstID: t.firstID, LastID: t.lastIDLocked()}
+	if limit <= 0 || len(t.lines) == 0 {
+		return w
+	}
+	start := 0
+	if len(t.lines) > limit {
+		start = len(t.lines) - limit
+	}
+	w.Lines = make([]HistoryLine, len(t.lines)-start)
+	copy(w.Lines, t.lines[start:])
+	return w
+}
+
+// lastIDLocked 返回当前最新行 ID；历史为空时为 firstID-1。
+func (t *TrackedScrollback) lastIDLocked() uint64 {
+	if len(t.lines) > 0 {
+		return t.lines[len(t.lines)-1].ID
+	}
+	return t.firstID - 1
 }
 
 // FirstID 返回最老可用行 ID。

@@ -20,6 +20,13 @@ type projectedState struct {
 	modes        terminalengine.Modes
 	title        string
 	workingDir   string
+	// 历史窗口缓存（阶段 2c）：已导出的尾部窗口行（Line 不可变，跨帧零拷贝
+	// 复用）与缓存窗口最后一行的 ID。historyValid=false 表示缓存不反映当前
+	// scrollback（首次导出、epoch/字典轮转、备用屏期间），下次主屏导出经
+	// exportHistoryWindow 全量重建。
+	historyValid  bool
+	historyLines  []terminalengine.Line
+	historyLastID uint64 // 缓存窗口最后一行的 ID；窗口为空时为 FirstAvailable-1
 }
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
@@ -165,8 +172,8 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 	return p.assembleFrame(epoch, seq)
 }
 
-// assembleFrame 从全屏缓存组装完整 State。历史窗口维持每次全量导出尾部
-// 窗口（阶段 2c 才做历史增量）；备用屏绝不混入主屏 scrollback。
+// assembleFrame 从全屏缓存组装完整 State。历史窗口走增量缓存（syncHistoryWindow）；
+// 备用屏绝不混入主屏 scrollback。
 func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame {
 	s := &p.projected
 	// State 被所有客户端及其 baseline 共享，必须不可变；缓存切片会在后续
@@ -179,7 +186,11 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
 	if s.activeBuffer == terminalengine.BufferMain {
-		history = p.exporter.exportHistoryWindow(p.scrollback)
+		history = p.syncHistoryWindow()
+	} else {
+		// 备用屏期间历史缓存失效，切回主屏时全量重建。
+		s.historyValid = false
+		s.historyLines = nil
 	}
 
 	return terminalengine.ScreenFrame{
@@ -206,6 +217,64 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	}
 }
 
+// syncHistoryWindow 增量维护历史窗口缓存并返回当前完整窗口（持 p.mu 调用）。
+// scrollback 行一旦推出即不可变（Push 时已拷贝），因此缓存的 Line 可跨帧
+// 复用，每帧只导出缓存 lastID 之后的新行。产出的窗口与 exportHistoryWindow
+// 全量路径内容完全相等。屏幕全量重建（Full 投影）不影响 LineID 连续性，
+// 历史缓存跨 Full 帧保持有效——否则持续 scroll 场景（每帧 Full）无法受益。
+func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
+	s := &p.projected
+	if !s.historyValid {
+		return p.rebuildHistoryWindow()
+	}
+	delta := p.scrollback.LinesAfter(s.historyLastID, snapshotTailLines)
+	if delta.LastID < s.historyLastID {
+		// Pop（resize 放大从 scrollback 拉回行）/Clear/ResetForReflow 使缓存的
+		// 较新行不再存在，增量无法修复，全量重建。
+		return p.rebuildHistoryWindow()
+	}
+	if delta.FirstID > s.historyLastID+1 {
+		// 缓存最后一行与新窗口之间出现缺口（中间行已被驱逐）：新窗口恰好
+		// 是 delta——LinesAfter 已按窗口上限取最新一段。
+		s.historyLines = exportHistoryLines(p.exporter, delta.Lines)
+	} else {
+		// 连续：追加新行（新切片，不改动缓存旧切片，历史帧共享不受影响），
+		// 再从旧端裁掉被 scrollback 驱逐的行并裁到窗口上限。
+		lines := s.historyLines
+		if len(delta.Lines) > 0 {
+			merged := make([]terminalengine.Line, 0, len(lines)+len(delta.Lines))
+			merged = append(merged, lines...)
+			merged = append(merged, exportHistoryLines(p.exporter, delta.Lines)...)
+			lines = merged
+		}
+		start := 0
+		for start < len(lines) && lines[start].ID < delta.FirstID {
+			start++
+		}
+		if len(lines)-start > snapshotTailLines {
+			start = len(lines) - snapshotTailLines
+		}
+		s.historyLines = lines[start:]
+	}
+	if n := len(s.historyLines); n > 0 {
+		s.historyLastID = s.historyLines[n-1].ID
+	} else {
+		s.historyLastID = delta.LastID
+	}
+	return historyWindowFromLines(s.historyLines, delta.FirstID)
+}
+
+// rebuildHistoryWindow 全量重建历史窗口缓存（首次导出、epoch/字典轮转、
+// 备用屏返回、Pop/Clear/reflow 之后）。
+func (p *Projector) rebuildHistoryWindow() terminalengine.HistoryWindow {
+	s := &p.projected
+	w := p.exporter.exportHistoryWindow(p.scrollback)
+	s.historyLines = w.Lines
+	s.historyLastID = w.LastIncludedLineID
+	s.historyValid = true
+	return w
+}
+
 func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
 	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
@@ -223,13 +292,20 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
 // 如果变化行数超过活动屏幕的 60%，直接返回 snapshot。
+//
+// 历史窗口是 epoch 内连续 LineID 的尾部窗口，且历史行推出后不可变，因此
+// history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
 func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	// 单次输出跨过了客户端持有窗口时，patch 无法表达中间历史行；改发完整窗口。
+	// history append 是 baseline 最后一行之后的连续新增段。baseline 已被 trim
+	// 或中间行越出新窗口（追加量超过窗口容量）时 patch 无法表达缺失行，
+	// 退回完整 snapshot。
+	var historyAppend []terminalengine.Line
 	if new.History.LastIncludedLineID > old.History.LastIncludedLineID {
 		appended := new.History.LastIncludedLineID - old.History.LastIncludedLineID
 		if appended > uint64(len(new.History.Lines)) {
 			return new
 		}
+		historyAppend = new.History.Lines[len(new.History.Lines)-int(appended):]
 	}
 	changedRows := make(map[int]terminalengine.Line)
 	for r := 0; r < len(new.Screen); r++ {
@@ -248,18 +324,6 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	for r := 0; r < len(new.Screen); r++ {
 		if line, ok := changedRows[r]; ok {
 			screenRows = append(screenRows, line)
-		}
-	}
-
-	// history append：新帧历史包含但旧帧不包含的行。
-	var historyAppend []terminalengine.Line
-	oldHistoryIDs := make(map[uint64]bool)
-	for _, line := range old.History.Lines {
-		oldHistoryIDs[line.ID] = true
-	}
-	for _, line := range new.History.Lines {
-		if !oldHistoryIDs[line.ID] {
-			historyAppend = append(historyAppend, line)
 		}
 	}
 

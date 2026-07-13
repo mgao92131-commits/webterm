@@ -55,12 +55,7 @@ func (v *HistoryView) pageWithExporter(beforeID uint64, limit int, exp *exporter
 
 	exported := make([]terminalengine.Line, len(lines))
 	for i, hl := range lines {
-		exported[i] = terminalengine.Line{
-			ID:      hl.ID,
-			Row:     -1,
-			Wrapped: hl.Wrapped,
-			Runs:    exp.exportHistoryCells(hl.Cells),
-		}
+		exported[i] = exp.exportHistoryLine(hl)
 	}
 
 	return terminalengine.HistoryWindow{

@@ -209,15 +209,54 @@ func cellsSameStyle(a, b terminalengine.Cell) bool {
 	return a.StyleID == b.StyleID && a.LinkID == b.LinkID
 }
 
+// snapshotTailLines 是快照附带的历史窗口行数上限。
+const snapshotTailLines = 300
+
+// exportHistoryWindow 全量导出尾部历史窗口，用于独立快照与历史缓存重建路径。
 func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrollback) terminalengine.HistoryWindow {
 	if scrollback == nil {
 		return terminalengine.HistoryWindow{}
 	}
 
-	const snapshotTailLines = 300
-	total := scrollback.Len()
-	firstAvailable := scrollback.FirstID()
-	if total == 0 {
+	w := scrollback.Window(snapshotTailLines)
+	if len(w.Lines) == 0 {
+		return terminalengine.HistoryWindow{
+			FirstAvailableLineID: w.FirstID,
+			FirstIncludedLineID:  w.FirstID,
+			LastIncludedLineID:   w.FirstID - 1,
+			HasMoreBefore:        false,
+			Lines:                nil,
+		}
+	}
+
+	lines := exportHistoryLines(exp, w.Lines)
+	return historyWindowFromLines(lines, w.FirstID)
+}
+
+// exportHistoryLines 把不可变历史行批量转换为导出 Line。
+func exportHistoryLines(exp *exporter, lines []terminalengine.HistoryLine) []terminalengine.Line {
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]terminalengine.Line, len(lines))
+	for i, hl := range lines {
+		out[i] = exp.exportHistoryLine(hl)
+	}
+	return out
+}
+
+func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalengine.Line {
+	return terminalengine.Line{
+		ID:      hl.ID,
+		Row:     -1,
+		Wrapped: hl.Wrapped,
+		Runs:    exp.exportHistoryCells(hl.Cells),
+	}
+}
+
+// historyWindowFromLines 由连续 ID 的导出窗口行与 firstAvailable 组装窗口边界。
+func historyWindowFromLines(lines []terminalengine.Line, firstAvailable uint64) terminalengine.HistoryWindow {
+	if len(lines) == 0 {
 		return terminalengine.HistoryWindow{
 			FirstAvailableLineID: firstAvailable,
 			FirstIncludedLineID:  firstAvailable,
@@ -226,31 +265,11 @@ func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrol
 			Lines:                nil,
 		}
 	}
-
-	startIdx := 0
-	if total > snapshotTailLines {
-		startIdx = total - snapshotTailLines
-	}
-
-	lines := make([]terminalengine.Line, 0, total-startIdx)
-	for i := startIdx; i < total; i++ {
-		hl, ok := scrollback.LineByID(firstAvailable + uint64(i))
-		if !ok {
-			continue
-		}
-		lines = append(lines, terminalengine.Line{
-			ID:      hl.ID,
-			Row:     -1,
-			Wrapped: hl.Wrapped,
-			Runs:    exp.exportHistoryCells(hl.Cells),
-		})
-	}
-
 	return terminalengine.HistoryWindow{
 		FirstAvailableLineID: firstAvailable,
-		FirstIncludedLineID:  firstAvailable + uint64(startIdx),
-		LastIncludedLineID:   firstAvailable + uint64(total) - 1,
-		HasMoreBefore:        startIdx > 0,
+		FirstIncludedLineID:  lines[0].ID,
+		LastIncludedLineID:   lines[len(lines)-1].ID,
+		HasMoreBefore:        lines[0].ID > firstAvailable,
 		Lines:                lines,
 	}
 }
