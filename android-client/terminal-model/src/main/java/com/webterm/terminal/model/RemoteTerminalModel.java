@@ -463,9 +463,6 @@ public final class RemoteTerminalModel {
                                      boolean linksChanged) {
     RenderSnapshot previous = renderSnapshot;
     TerminalLine[] screenCopy = screen != null ? screen.clone() : null;
-    NavigableMap<Long, TerminalLine> historyCopy = historyChanged
-        ? Collections.unmodifiableNavigableMap(new TreeMap<>(historyCache))
-        : previous.history;
     List<TerminalLine> historyLines = historyChanged
         ? Collections.unmodifiableList(new ArrayList<>(historyCache.values()))
         : previous.historyLines;
@@ -476,7 +473,7 @@ public final class RemoteTerminalModel {
         ? Collections.unmodifiableMap(new HashMap<>(links))
         : previous.links;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
-        activeBuffer, screenCopy, historyCopy, historyLines, cursor, modes, palette, stylesCopy, linksCopy,
+        activeBuffer, screenCopy, historyLines, cursor, modes, palette, stylesCopy, linksCopy,
         title, workingDirectory, firstAvailableHistoryId, hasMoreHistoryBefore);
   }
 
@@ -493,7 +490,6 @@ public final class RemoteTerminalModel {
     public final int columns;
     public final ScreenSnapshot.BufferKind activeBuffer;
     public final TerminalLine[] screen;
-    public final NavigableMap<Long, TerminalLine> history;
     /** Ordered oldest-to-newest history for indexed rendering. */
     public final List<TerminalLine> historyLines;
     public final TerminalCursor cursor;
@@ -508,8 +504,7 @@ public final class RemoteTerminalModel {
 
     private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision, int rows,
                            int columns, ScreenSnapshot.BufferKind activeBuffer,
-                           TerminalLine[] screen, NavigableMap<Long, TerminalLine> history,
-                           List<TerminalLine> historyLines,
+                           TerminalLine[] screen, List<TerminalLine> historyLines,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                            Map<Integer, TerminalStyle> styles, Map<Integer, Hyperlink> links,
                            String title, String workingDirectory, long firstAvailableHistoryId,
@@ -521,7 +516,6 @@ public final class RemoteTerminalModel {
       this.columns = columns;
       this.activeBuffer = activeBuffer;
       this.screen = screen;
-      this.history = history;
       this.historyLines = historyLines;
       this.cursor = cursor;
       this.modes = modes;
@@ -536,7 +530,7 @@ public final class RemoteTerminalModel {
 
     private static RenderSnapshot empty() {
       return new RenderSnapshot(null, 0, 0, 0, 0, ScreenSnapshot.BufferKind.MAIN, null,
-          Collections.emptyNavigableMap(), Collections.emptyList(), TerminalCursor.hidden(), TerminalModes.defaults(),
+          Collections.emptyList(), TerminalCursor.hidden(), TerminalModes.defaults(),
           TerminalPalette.defaults(), Collections.emptyMap(), Collections.emptyMap(), "", "", 0,
           false);
     }

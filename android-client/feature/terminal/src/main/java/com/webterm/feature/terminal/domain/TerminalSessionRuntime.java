@@ -64,7 +64,8 @@ public final class TerminalSessionRuntime {
                         boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
     void sendFocusInput(boolean focused);
     void requestResize(int cols, int rows);
-    void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit);
+    /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
+    boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit);
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
@@ -275,13 +276,17 @@ public final class TerminalSessionRuntime {
     }
   }
 
-  public void requestHistoryPage(long beforeLineId, int limit) {
-    String requestId = "h-" + nextHistoryRequestId.incrementAndGet();
-    pendingHistoryRequestId = requestId;
+  /**
+   * 只有连接可用且请求成功排队后才记录 pending 请求 id 并返回 true；
+   * 否则返回 false，调用方必须清除 loading 状态并允许之后重试。
+   */
+  public boolean requestHistoryPage(long beforeLineId, int limit) {
     ScreenConnection c = connection;
-    if (c != null) {
-      c.requestHistoryPage(requestId, beforeLineId, limit);
-    }
+    if (c == null) return false;
+    String requestId = "h-" + nextHistoryRequestId.incrementAndGet();
+    if (!c.requestHistoryPage(requestId, beforeLineId, limit)) return false;
+    pendingHistoryRequestId = requestId;
+    return true;
   }
 
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {

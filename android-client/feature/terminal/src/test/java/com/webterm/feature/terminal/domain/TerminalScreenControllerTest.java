@@ -82,6 +82,46 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
+  public void failedHistoryRequest_keepsLoadingClearAndAllowsRetry() {
+    connection.listener.onScreenMessage(snapshotWithHistory(100, 5, 1, true).toByteArray());
+
+    // 通道不可用时请求失败：不得发出请求、不得留下 loading 状态。
+    connection.acceptHistoryRequests = false;
+    controller.requestOlderHistoryPage();
+    assertTrue("failed request must not reach the connection",
+        connection.historyBeforeIds.isEmpty());
+    assertFalse("failed request must not leave the loading flag stuck",
+        controller.viewport().loadingOlderHistory);
+
+    // 失败不记录边界：通道恢复后允许重试同一边界。
+    connection.acceptHistoryRequests = true;
+    controller.requestOlderHistoryPage();
+    assertEquals("the same edge must be retryable after a failed request",
+        Collections.singletonList(100L), connection.historyBeforeIds);
+    assertTrue(controller.viewport().loadingOlderHistory);
+  }
+
+  @Test
+  public void onPause_cancelsPendingRender_andOnResume_requestsFreshRender() {
+    assertTrue("attach schedules the first render", controller.renderScheduled());
+
+    controller.lifecycleObserver().onStateChanged(
+        mock(LifecycleOwner.class), Lifecycle.Event.ON_PAUSE);
+    assertFalse("ON_PAUSE must cancel the queued render and reset the flag",
+        controller.renderScheduled());
+
+    // 暂停期间 listener 已移除：模型变更不再触达 controller，不能重新排队渲染。
+    connection.listener.onScreenMessage(snapshotWithHistory(100, 5, 1, true).toByteArray());
+    assertFalse("a paused controller must not schedule renders",
+        controller.renderScheduled());
+
+    controller.lifecycleObserver().onStateChanged(
+        mock(LifecycleOwner.class), Lifecycle.Event.ON_RESUME);
+    assertTrue("ON_RESUME must request a fresh snapshot render",
+        controller.renderScheduled());
+  }
+
+  @Test
   public void consecutiveHistoryPagesReachHardTopWithoutRepeatingRequest() {
     // History line ids are positive; id 0 is reserved for screen rows. The
     // server's hard top is firstAvailableLineId == 1.
@@ -174,6 +214,7 @@ public final class TerminalScreenControllerTest {
   private static final class FakeScreenConnection implements TerminalSessionRuntime.ScreenConnection {
     final List<Long> historyBeforeIds = new ArrayList<>();
     String lastHistoryRequestId = "";
+    boolean acceptHistoryRequests = true;
     Listener listener;
 
     @Override
@@ -206,9 +247,11 @@ public final class TerminalScreenControllerTest {
     public void requestResize(int cols, int rows) {}
 
     @Override
-    public void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+      if (!acceptHistoryRequests) return false;
       lastHistoryRequestId = requestId;
       historyBeforeIds.add(beforeLineId);
+      return true;
     }
 
     @Override

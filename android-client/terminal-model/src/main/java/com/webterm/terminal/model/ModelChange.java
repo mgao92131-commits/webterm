@@ -58,10 +58,6 @@ public final class ModelChange {
     this.geometryChanged = geometryChanged;
   }
 
-  public static ModelChange full() {
-    return full(true);
-  }
-
   public static ModelChange full(boolean geometryChanged) {
     return new ModelChange(true, null, true, true, true, true, 0, 0, geometryChanged);
   }

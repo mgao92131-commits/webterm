@@ -558,7 +558,6 @@ func (r *Runtime) handleClientDetach(clientID string) {
 		r.leaseManager.Release(client.LayoutLeaseID)
 	}
 	delete(r.clients, clientID)
-	r.projector.UnregisterClient(clientID)
 }
 
 func (r *Runtime) handleAcquireLayout(e acquireLayoutEvent) {
@@ -606,7 +605,6 @@ func (r *Runtime) handleClientResync(clientID string) {
 	if client == nil {
 		return
 	}
-	r.projector.UnregisterClient(clientID)
 	if client.ResetProjection != nil {
 		client.ResetProjection()
 	}

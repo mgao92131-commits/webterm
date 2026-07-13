@@ -21,12 +21,6 @@ type Projector struct {
 	// from a stale dictionary even when the ForceSnapshot frame was coalesced
 	// away by a single-slot mailbox.
 	dictGeneration uint64
-
-	clients map[string]*clientBaseline
-}
-
-type clientBaseline struct {
-	frame terminalengine.ScreenFrame
 }
 
 // FrameDeriver owns one transport client's last successfully scheduled
@@ -34,11 +28,11 @@ type clientBaseline struct {
 // about to write, so a slow client can collapse many intermediate states
 // without creating a BaseRevision gap.
 type FrameDeriver struct {
-	baseline clientBaseline
+	baseline terminalengine.ScreenFrame
 }
 
 func (d *FrameDeriver) Reset() {
-	d.baseline = clientBaseline{}
+	d.baseline = terminalengine.ScreenFrame{}
 }
 
 func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
@@ -53,22 +47,7 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 		sessionID:  sessionID,
 		instanceID: instanceID,
 		exporter:   newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG}),
-		clients:    make(map[string]*clientBaseline),
 	}
-}
-
-// RegisterClient 注册一个新 client。
-func (p *Projector) RegisterClient(clientID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.clients[clientID] = &clientBaseline{}
-}
-
-// UnregisterClient 移除 client。
-func (p *Projector) UnregisterClient(clientID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.clients, clientID)
 }
 
 // HistoryPage 使用与实时投影相同的字典导出历史页，保证 style/link ID 稳定。
@@ -89,24 +68,6 @@ func (p *Projector) ExportState(epoch, seq uint64) terminalengine.ScreenFrame {
 	return p.exportStateLocked(epoch, seq)
 }
 
-// FrameForClient 为指定 client 生成 snapshot 或 patch。
-// 如果 client 没有基线或 instance/layout epoch 变化，返回 snapshot。
-func (p *Projector) FrameForClient(clientID string, epoch, seq uint64) terminalengine.ScreenFrame {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.frameForClientLocked(clientID, p.exportStateLocked(epoch, seq))
-}
-
-// FrameForClientState derives a client frame from a state previously returned
-// by ExportState. The supplied state must belong to this projector and the
-// current actor revision; it is intentionally a value so clients cannot alter
-// the shared export.
-func (p *Projector) FrameForClientState(clientID string, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.frameForClientLocked(clientID, state)
-}
-
 func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFrame {
 	if p.exportEpoch != epoch {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
@@ -115,42 +76,29 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 	}
 	frame := p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
 	// 字典只增不改；大量瞬时 RGB/OSC8 若使历史字典膨胀，则以权威 snapshot
-	// 旋转字典并清空所有客户端基线。当前可见状态仍超过上限时由协议校验拒绝。
+	// 旋转字典。当前可见状态仍超过上限时由协议校验拒绝。
 	if len(frame.Styles) > 4096 || len(frame.Links) > 4096 {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.dictGeneration++
 		frame = p.exporter.exportSnapshot(p.engine, p.scrollback, p.sessionID, p.instanceID, epoch, seq)
-		for id := range p.clients {
-			p.clients[id] = &clientBaseline{}
-		}
 		frame.ForceSnapshot = true
 	}
 	frame.DictionaryGeneration = p.dictGeneration
 	return frame
 }
 
-func (p *Projector) frameForClientLocked(clientID string, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	baseline, ok := p.clients[clientID]
-	if !ok {
-		baseline = &clientBaseline{}
-		p.clients[clientID] = baseline
-	}
-
-	return frameForBaseline(baseline, state)
-}
-
-func frameForBaseline(baseline *clientBaseline, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
 	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
 	// epoch 或备用屏变化，发送完整 snapshot。
-	if state.ForceSnapshot || baseline.frame.Seq == 0 || baseline.frame.InstanceID != state.InstanceID || baseline.frame.Epoch != state.Epoch || baseline.frame.ActiveBuffer != state.ActiveBuffer || baseline.frame.DictionaryGeneration != state.DictionaryGeneration {
-		baseline.frame = state
+	if state.ForceSnapshot || baseline.Seq == 0 || baseline.InstanceID != state.InstanceID || baseline.Epoch != state.Epoch || baseline.ActiveBuffer != state.ActiveBuffer || baseline.DictionaryGeneration != state.DictionaryGeneration {
+		*baseline = state
 		return state
 	}
 
 	// 否则生成 patch（整行替换）。
-	patch := diffToPatch(baseline.frame, state)
-	baseline.frame = state
+	patch := diffToPatch(*baseline, state)
+	*baseline = state
 	return patch
 }
 

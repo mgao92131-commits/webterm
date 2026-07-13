@@ -146,9 +146,10 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
   }
 
   @Override
-  public void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+  public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    if (relayMuxSession == null || relayChannelId == null) return false;
     relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.historyRequest(requestId, beforeLineId, limit), true);
+    return true;
   }
 
   @Override

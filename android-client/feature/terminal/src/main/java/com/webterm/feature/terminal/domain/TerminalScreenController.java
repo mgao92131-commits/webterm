@@ -64,6 +64,11 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
         requestRender();
       } else if (event == Lifecycle.Event.ON_PAUSE) {
         runtime.removeListener(this);
+        // 与 detach 一致地取消排队中的渲染：暂停期间不再需要绘制，
+        // resume 时由 requestRender 统一请求一次最新快照。不置 view=null、
+        // 不移除 observer，attach/detach 才负责完整解绑。
+        mainHandler.removeCallbacks(renderRunnable);
+        renderScheduled = false;
       }
     };
   }
@@ -123,6 +128,16 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     return viewport;
   }
 
+  @androidx.annotation.VisibleForTesting
+  boolean renderScheduled() {
+    return renderScheduled;
+  }
+
+  @androidx.annotation.VisibleForTesting
+  LifecycleEventObserver lifecycleObserver() {
+    return lifecycleObserver;
+  }
+
   public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
     if (deltaPixels == 0) return;
     viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
@@ -140,9 +155,11 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // 重复请求同一页只会形成热循环。模型侧驱逐保证新页存活，正常路径下
     // firstCachedId 每次分页后严格变小。
     if (beforeLineId == lastRequestedHistoryBeforeId) return;
+    // 请求失败（无连接或通道不可用）：不记录边界、不置 loading，
+    // loadingOlderHistory 保持 false，允许之后重试同一边界。
+    if (!runtime.requestHistoryPage(beforeLineId, 250)) return;
     lastRequestedHistoryBeforeId = beforeLineId;
     viewport.loadingOlderHistory = true;
-    runtime.requestHistoryPage(beforeLineId, 250);
   }
 
   private void sendResizeNow() {

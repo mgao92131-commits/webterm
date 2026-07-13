@@ -17,9 +17,10 @@ func BenchmarkProjectorExportOnceFanout(b *testing.B) {
 			scrollback := terminalengine.NewTrackedScrollback(10000, nil)
 			engine := terminalengine.NewEngine(30, 100, scrollback)
 			projector := NewProjector(engine, scrollback, "benchmark", "instance")
+			derivers := make([]FrameDeriver, viewers)
+			state := projector.ExportState(0, 1)
 			for i := 0; i < viewers; i++ {
-				state := projector.ExportState(0, 1)
-				projector.FrameForClientState(fmt.Sprintf("c%d", i), state)
+				derivers[i].FrameForState(state)
 			}
 
 			b.ReportAllocs()
@@ -30,7 +31,7 @@ func BenchmarkProjectorExportOnceFanout(b *testing.B) {
 				}
 				state := projector.ExportState(0, uint64(i+2))
 				for viewer := 0; viewer < viewers; viewer++ {
-					projector.FrameForClientState(fmt.Sprintf("c%d", viewer), state)
+					derivers[viewer].FrameForState(state)
 				}
 			}
 		})

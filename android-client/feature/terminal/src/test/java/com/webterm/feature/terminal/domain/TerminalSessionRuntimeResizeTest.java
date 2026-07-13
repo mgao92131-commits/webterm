@@ -100,13 +100,45 @@ public final class TerminalSessionRuntimeResizeTest {
   @Test
   public void historyPage_isAppliedOnlyForTheOutstandingRequest() {
     connection.listener.onScreenMessage(snapshot(1).toByteArray());
-    runtime.requestHistoryPage(100, 250);
+    assertTrue(runtime.requestHistoryPage(100, 250));
 
     connection.listener.onScreenMessage(historyPage("stale", 42).toByteArray());
     assertEquals(0, runtime.model().firstAvailableHistoryId());
 
     connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
     assertEquals(42, runtime.model().firstAvailableHistoryId());
+  }
+
+  @Test
+  public void requestHistoryPageWithoutConnection_failsAndLeavesNoPendingRequest() {
+    TerminalSessionRuntime disconnected = new TerminalSessionRuntime("s2",
+        new RemoteTerminalModel(), Runnable::run, Runnable::run, scheduler);
+    assertFalse("无连接时必须返回失败", disconnected.requestHistoryPage(100, 250));
+
+    // 失败的请求不得留下 pending id：之后到达的 HISTORY_PAGE 必须被丢弃，
+    // 而不是被错误地 prepend 进新的视口。
+    FakeScreenConnection lateConnection = new FakeScreenConnection();
+    disconnected.attachConnection(lateConnection);
+    lateConnection.listener.onScreenMessage(snapshot(1).toByteArray());
+    lateConnection.listener.onScreenMessage(historyPage("h-1", 42).toByteArray());
+    assertEquals(0, disconnected.model().firstAvailableHistoryId());
+  }
+
+  @Test
+  public void pendingHistoryRequest_isClearedBySnapshotAndReconnect() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertTrue(runtime.requestHistoryPage(100, 250));
+
+    // 权威 snapshot 替换本地投影：旧请求 id 的迟到响应必须被丢弃。
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
+    assertEquals(0, runtime.model().firstAvailableHistoryId());
+
+    // 断线同样清理 pending history，重连后不会被迟到响应污染。
+    assertTrue(runtime.requestHistoryPage(100, 250));
+    connection.listener.onDisconnected("relay lost");
+    connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
+    assertEquals(0, runtime.model().firstAvailableHistoryId());
   }
 
   @Test
@@ -375,8 +407,9 @@ public final class TerminalSessionRuntimeResizeTest {
     }
 
     @Override
-    public void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
       historyRequestId = requestId;
+      return true;
     }
 
     @Override
