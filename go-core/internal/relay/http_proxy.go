@@ -1,8 +1,10 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +30,8 @@ type HTTPProxy struct {
 }
 
 // httpStream 是一条 HTTP 代理流的请求体通道与对端关闭信号。
+// ch 容量固定（8 帧），队列满时 DeliverChunk 阻塞等待消费，与上传路径的
+// io.Pipe 共同形成背压，内存占用不随文件大小增长。
 // done 在 gateway 发来 StreamClose/StreamError（Android 端断开）时被关闭，
 // 用于及时中止上游文件流读取，避免在对端已走后仍读完整个文件。
 type httpStream struct {
@@ -60,10 +64,13 @@ func (p *HTTPProxy) HandleHTTPHeaders(ctx context.Context, conn *websocket.Conn,
 	p.mu.Lock()
 	p.streams[frame.StreamID] = hs
 	p.mu.Unlock()
-	go p.processStream(ctx, conn, frame, hs.ch, hs.done)
+	go p.processStream(ctx, conn, frame, hs)
 }
 
 // DeliverChunk 将 HTTPChunk 帧投递到对应 stream。
+// 队列满时阻塞等待消费（背压），而不是丢弃帧或关闭 stream：
+// 上传大文件时网关侧会持续发 64 KiB 分块，阻塞 relay 读循环是唯一
+// 不丢数据且内存有界的流控方式；对端关闭（done）时立即解除阻塞。
 func (p *HTTPProxy) DeliverChunk(frame relaycore.Frame) {
 	p.mu.Lock()
 	hs := p.streams[frame.StreamID]
@@ -73,11 +80,7 @@ func (p *HTTPProxy) DeliverChunk(frame relaycore.Frame) {
 	}
 	select {
 	case hs.ch <- frame:
-	default:
-		close(hs.ch)
-		p.mu.Lock()
-		delete(p.streams, frame.StreamID)
-		p.mu.Unlock()
+	case <-hs.done:
 	}
 }
 
@@ -92,11 +95,13 @@ func (p *HTTPProxy) CloseStream(streamID string) {
 	}
 }
 
-func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, first relaycore.Frame, ch <-chan relaycore.Frame, done <-chan struct{}) {
+func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, first relaycore.Frame, hs *httpStream) {
 	defer func() {
 		p.mu.Lock()
 		delete(p.streams, first.StreamID)
 		p.mu.Unlock()
+		// 解除可能仍阻塞在 DeliverChunk 的发送方。
+		hs.signalClosed()
 	}()
 
 	var meta relaycore.HTTPRequestMeta
@@ -104,14 +109,21 @@ func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, fir
 		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, first.StreamID, 0, []byte("invalid http metadata")))
 		return
 	}
+
+	// 上传请求 body 可能高达 100 MiB，走 io.Pipe 流式转发，禁止累积。
+	if isUploadRequest(meta) {
+		p.respondUpload(ctx, conn, first.StreamID, meta, hs)
+		return
+	}
+
 	body := make([]byte, 0)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-done:
+		case <-hs.done:
 			return
-		case frame, ok := <-ch:
+		case frame, ok := <-hs.ch:
 			if !ok {
 				return
 			}
@@ -124,11 +136,95 @@ func (p *HTTPProxy) processStream(ctx context.Context, conn *websocket.Conn, fir
 			}
 			body = append(body, frame.Payload...)
 			if frame.Flags.Has(relaycore.FrameFlagFin) {
-				p.respond(ctx, conn, first.StreamID, meta, body, done)
+				p.respond(ctx, conn, first.StreamID, meta, body, hs.done)
 				return
 			}
 		}
 	}
+}
+
+// respondUpload 处理上传请求（POST /api/sessions/{id}/upload）：
+// 创建 io.Pipe，pump goroutine 把后续 HTTPChunk 写入 PipeWriter，
+// 路由层（fileupload.Service）从 PipeReader 流式读取；FIN 关闭写端；
+// StreamClose、Relay 断开、context 取消时 CloseWithError，
+// 使路由层立即中止并清理临时文件。全程无 body 累积。
+func (p *HTTPProxy) respondUpload(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, hs *httpStream) {
+	path := meta.Path
+	if meta.Query != "" {
+		path += "?" + meta.Query
+	}
+
+	pr, pw := io.Pipe()
+	go pumpChunksToPipe(ctx, hs, pw)
+	defer func() {
+		// 路由层返回后（成功或业务错误）关闭读端，确保 pump 不会卡死在写端。
+		_ = pr.CloseWithError(errors.New("upload handler finished"))
+	}()
+
+	result, err := p.router.RouteHTTPv2(meta.Method, path, metaHeaderToHTTP(meta.Headers), pr)
+	if err != nil {
+		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
+		return
+	}
+	p.writeResult(ctx, conn, streamID, result, hs.done)
+}
+
+// pumpChunksToPipe 把 HTTPChunk 帧写入 pipe 写端。
+// 路由层提前结束（如 session 不存在、文件名非法）时读端被关闭，
+// 此后继续排空队列并丢弃剩余 body，避免 DeliverChunk 阻塞 relay 读循环。
+func pumpChunksToPipe(ctx context.Context, hs *httpStream, pw *io.PipeWriter) {
+	broken := false
+	for {
+		select {
+		case <-ctx.Done():
+			if !broken {
+				_ = pw.CloseWithError(ctx.Err())
+			}
+			return
+		case <-hs.done:
+			if !broken {
+				_ = pw.CloseWithError(relaycore.ErrConnectionClosed)
+			}
+			return
+		case frame, ok := <-hs.ch:
+			if !ok {
+				if !broken {
+					_ = pw.CloseWithError(relaycore.ErrConnectionClosed)
+				}
+				return
+			}
+			if frame.Type != relaycore.FrameTypeHTTPChunk {
+				continue
+			}
+			if broken {
+				// 读端已废弃：只排空队列，等 FIN 或关闭信号退出。
+				if frame.Flags.Has(relaycore.FrameFlagFin) {
+					return
+				}
+				continue
+			}
+			if len(frame.Payload) > 0 {
+				if _, err := pw.Write(frame.Payload); err != nil {
+					broken = true
+				}
+			}
+			if frame.Flags.Has(relaycore.FrameFlagFin) {
+				if !broken {
+					_ = pw.Close()
+				}
+				return
+			}
+		}
+	}
+}
+
+// isUploadRequest 判断是否为终端文件上传路由（POST /api/sessions/{id}/upload）。
+// 上传是唯一需要流式请求 body 的路由，其余请求维持既有的小 body 累积逻辑。
+// 判定与 relaygateway.isUploadRoute 保持一致。
+func isUploadRequest(meta relaycore.HTTPRequestMeta) bool {
+	return meta.Method == http.MethodPost &&
+		strings.HasPrefix(meta.Path, "/api/sessions/") &&
+		strings.HasSuffix(meta.Path, "/upload")
 }
 
 func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
@@ -139,7 +235,7 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 
 	// 文件发送等流式接口走 RouteHTTPv2
 	if strings.HasPrefix(meta.Path, "/api/file-send/") {
-		p.respondStream(ctx, conn, streamID, meta, body, done)
+		p.respondStream(ctx, conn, streamID, meta, bytes.NewReader(body), done)
 		return
 	}
 
@@ -162,23 +258,24 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 	p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, payload))
 }
 
-func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
+func (p *HTTPProxy) respondStream(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body io.Reader, done <-chan struct{}) {
 	path := meta.Path
 	if meta.Query != "" {
 		path += "?" + meta.Query
 	}
 
-	var bodyReader io.Reader
-	if len(body) > 0 {
-		bodyReader = strings.NewReader(string(body))
-	}
-
-	result, err := p.router.RouteHTTPv2(meta.Method, path, metaHeaderToHTTP(meta.Headers), bodyReader)
+	result, err := p.router.RouteHTTPv2(meta.Method, path, metaHeaderToHTTP(meta.Headers), body)
 	if err != nil {
 		p.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, streamID, 0, []byte(err.Error())))
 		return
 	}
+	p.writeResult(ctx, conn, streamID, result, done)
+}
 
+// writeResult 把路由结果写回 relay：HTTPHeaders 元数据帧 + HTTPChunk 数据帧。
+// 业务错误（如 403 UPLOAD_DIRECTORY_NOT_WRITABLE）在路由层已映射为
+// HTTPResult.StatusCode，这里按正常 HTTP 响应帧返回，不转成 StreamError。
+func (p *HTTPProxy) writeResult(ctx context.Context, conn *websocket.Conn, streamID string, result *application.HTTPResult, done <-chan struct{}) {
 	headers := map[string]string{}
 	if result.Header != nil {
 		for key, values := range result.Header {

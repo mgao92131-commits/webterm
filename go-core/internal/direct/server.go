@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -221,6 +222,13 @@ func (direct *Server) routeAPI(w http.ResponseWriter, r *http.Request, path stri
 		return
 	}
 
+	// 上传必须在通用 /api/sessions/{id} 路由之前精确识别：
+	// body 是原始文件流，不能落入 readRequestBody() 的 1 MiB JSON 路径。
+	if r.Method == http.MethodPost && strings.HasPrefix(path, "/api/sessions/") && strings.HasSuffix(path, "/upload") {
+		direct.routeUpload(w, r)
+		return
+	}
+
 	if strings.HasPrefix(path, "/api/sessions/") {
 		id := strings.TrimPrefix(path, "/api/sessions/")
 		direct.routeSession(w, r, id)
@@ -255,7 +263,27 @@ func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeHTTPResult(w, result)
+}
 
+// routeUpload 处理 POST /api/sessions/{id}/upload：r.Body 直接透传给 RouteHTTPv2，
+// 不做任何大小截断；Content-Length 显式转发到 header（net/http 不会把它放进 Header map）。
+func (direct *Server) routeUpload(w http.ResponseWriter, r *http.Request) {
+	router := direct.sessionRouter()
+	header := r.Header.Clone()
+	if r.ContentLength >= 0 {
+		header.Set("Content-Length", strconv.FormatInt(r.ContentLength, 10))
+	}
+	result, err := router.RouteHTTPv2(r.Method, r.URL.Path, header, r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeHTTPResult(w, result)
+}
+
+// writeHTTPResult 把 RouteHTTPv2 的流式结果写回客户端（filesend 下载与上传响应共用）。
+func writeHTTPResult(w http.ResponseWriter, result *application.HTTPResult) {
 	for key, values := range result.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
@@ -275,6 +303,7 @@ func (direct *Server) routeFS(w http.ResponseWriter, r *http.Request) {
 func (direct *Server) sessionRouter() *application.SessionRouter {
 	router := application.NewSessionRouter(direct.app.Sessions(), direct.app.Logs())
 	router.SetFileSendService(direct.app.FileSendService())
+	router.SetFileUploadService(direct.app.FileUploadService())
 	router.SetAgentNotificationDispatcher(direct.app.AgentNotificationDispatcher())
 	return router
 }

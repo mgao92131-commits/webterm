@@ -2,16 +2,19 @@ package application
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
-	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/agentnotify"
+	"webterm/go-core/internal/filesend"
+	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -47,11 +50,12 @@ type MuxVirtualSocket interface {
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager   *session.Manager
-	muxServe  MuxServeFunc // 可选：用于 mux 子协议包装
-	onControl func(ctx context.Context, msg map[string]any)
-	fileSend  *filesend.Service
-	logger    *logs.Logger
+	manager    *session.Manager
+	muxServe   MuxServeFunc // 可选：用于 mux 子协议包装
+	onControl  func(ctx context.Context, msg map[string]any)
+	fileSend   *filesend.Service
+	fileUpload *fileupload.Service
+	logger     *logs.Logger
 }
 
 func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
@@ -87,6 +91,12 @@ func (r *SessionRouter) SetFileSendService(svc *filesend.Service) {
 			prev(ctx, msg)
 		}
 	}
+}
+
+// SetFileUploadService 注入 FileUploadService，供 POST /api/sessions/{id}/upload 路由调用。
+// 与 filesend 不同，上传不参与 mux 控制消息链，只消费流式 HTTP 请求 body。
+func (r *SessionRouter) SetFileUploadService(svc *fileupload.Service) {
+	r.fileUpload = svc
 }
 
 // SetAgentNotificationDispatcher 注入 AgentNotificationDispatcher 并链接到控制链前端：
@@ -230,6 +240,15 @@ type HTTPResult struct {
 func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.Header, body io.Reader) (*HTTPResult, error) {
 	path := cleanPath(rawPath)
 
+	// POST /api/sessions/{sessionId}/upload：流式上传，body 直接透传给 fileupload.Service，
+	// 禁止 io.ReadAll；业务错误按 5.2 表返回正常 JSON 响应，不能转成 StreamError。
+	if method == http.MethodPost && strings.HasPrefix(path, "/api/sessions/") {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(path, "/api/sessions/"), "/upload"); ok {
+			id, _ = url.PathUnescape(id)
+			return r.routeUpload(header, body, id), nil
+		}
+	}
+
 	if strings.HasPrefix(path, "/api/file-send/") {
 		if r.fileSend == nil {
 			return &HTTPResult{
@@ -258,6 +277,106 @@ func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.H
 		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 		Data:       data,
 	}, nil
+}
+
+// routeUpload 处理 POST /api/sessions/{sessionId}/upload。
+// DeclaredSize 取值优先级：X-File-Size > Content-Length > -1（未知）；
+// 最终大小判据以实际 body 字节数为准（由 fileupload.Service 在落盘后校验）。
+func (r *SessionRouter) routeUpload(header http.Header, body io.Reader, sessionID string) *HTTPResult {
+	if r.fileUpload == nil {
+		return uploadErrorResult(http.StatusServiceUnavailable, fileupload.CodeInternalError, "上传服务不可用")
+	}
+	// Android 端 OkHttp 拒绝非 ASCII header 值，统一改用 X-File-Name-B64
+	//（文件名字节数组的 URL-safe Base64，带填充）；直连 curl 等场景仍兼容原始 X-File-Name。
+	fileName := header.Get("X-File-Name")
+	if fileName == "" {
+		if encoded := header.Get("X-File-Name-B64"); encoded != "" {
+			decoded, err := base64.URLEncoding.DecodeString(encoded)
+			if err != nil {
+				return uploadErrorResult(http.StatusBadRequest, fileupload.CodeInvalidFileName, "X-File-Name-B64 解码失败")
+			}
+			fileName = string(decoded)
+		}
+	}
+	if fileName == "" {
+		return uploadErrorResult(http.StatusBadRequest, fileupload.CodeInvalidFileName, "缺少 X-File-Name")
+	}
+	declaredSize := int64(-1)
+	if sizeHeader := header.Get("X-File-Size"); sizeHeader != "" {
+		size, err := strconv.ParseInt(sizeHeader, 10, 64)
+		if err != nil || size < 0 {
+			return uploadErrorResult(http.StatusBadRequest, fileupload.CodeSizeMismatch, "X-File-Size 非法")
+		}
+		declaredSize = size
+	} else if contentLength := header.Get("Content-Length"); contentLength != "" {
+		// 注意：net/http 服务端请求中 Content-Length 不在 Header map 里，
+		// 调用方（direct server / relay gateway）需要显式转发 r.ContentLength。
+		if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil && size >= 0 {
+			declaredSize = size
+		}
+	}
+	if body == nil {
+		body = http.NoBody
+	}
+	result, err := r.fileUpload.Upload(context.Background(), fileupload.Request{
+		SessionID:    sessionID,
+		FileName:     fileName,
+		DeclaredSize: declaredSize,
+		Body:         body,
+	})
+	if err != nil {
+		code := fileupload.CodeOf(err)
+		message := "上传失败"
+		var uploadErr *fileupload.Error
+		if errors.As(err, &uploadErr) {
+			message = uploadErr.Message
+		}
+		return uploadErrorResult(uploadHTTPStatus(code), code, message)
+	}
+	data, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return uploadErrorResult(http.StatusInternalServerError, fileupload.CodeInternalError, "序列化上传结果失败")
+	}
+	return &HTTPResult{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Data:       data,
+	}
+}
+
+// uploadHTTPStatus 按计划 5.2 表把上传业务错误码映射为 HTTP 状态码。
+// UPLOAD_CONFLICT 不在表中：同 session 已有活跃上传，按资源冲突返回 409。
+func uploadHTTPStatus(code fileupload.Code) int {
+	switch code {
+	case fileupload.CodeSessionNotFound:
+		return http.StatusNotFound
+	case fileupload.CodeSessionCWDUnavailable, fileupload.CodeUploadDirectoryInvalid, fileupload.CodeUploadConflict:
+		return http.StatusConflict
+	case fileupload.CodeUploadDirectoryNotWritable:
+		return http.StatusForbidden
+	case fileupload.CodeInvalidFileName, fileupload.CodeSizeMismatch, fileupload.CodeTransferInterrupted:
+		return http.StatusBadRequest
+	case fileupload.CodeFileTooLarge:
+		return http.StatusRequestEntityTooLarge
+	case fileupload.CodeInsufficientDiskSpace:
+		return http.StatusInsufficientStorage
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// uploadErrorResult 构造 {"code":"...","message":"..."} 形状的业务错误响应。
+func uploadErrorResult(status int, code fileupload.Code, message string) *HTTPResult {
+	data, err := json.Marshal(map[string]string{"code": string(code), "message": message})
+	if err != nil {
+		data = []byte(`{"code":"INTERNAL_ERROR","message":"上传失败"}`)
+		status = http.StatusInternalServerError
+	}
+	return &HTTPResult{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Data:       data,
+	}
 }
 
 // --- helpers ---

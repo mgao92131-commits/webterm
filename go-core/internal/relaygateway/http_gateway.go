@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +16,18 @@ import (
 	"webterm/go-core/internal/relaystore"
 )
 
-const httpGatewayMaxBodyBytes = 1 << 20 // 1 MiB
+const (
+	// httpGatewayMaxBodyBytes 是非上传路由的请求体上限：Content-Length 超过即快速拒绝，
+	// 不创建 stream。上传路由不受此限，由 Agent 侧 MaxUploadSize 最终执行。
+	httpGatewayMaxBodyBytes = 1 << 20 // 1 MiB
+
+	// httpGatewayChunkSize 是请求 body 流式转发的分块大小（64 KiB）。
+	// 固定缓冲循环读取，内存占用与文件大小无关。
+	httpGatewayChunkSize = 64 * 1024
+)
+
+// errRequestBodyRead 标记读取客户端 body 失败（区别于发送给 agent 失败）。
+var errRequestBodyRead = errors.New("read request body failed")
 
 type HTTPGateway struct {
 	store    relaystore.GatewayStore
@@ -43,14 +56,11 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target agent unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, httpGatewayMaxBodyBytes))
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "read request body failed", http.StatusBadRequest)
+	// 上传是唯一允许大 body 的流式路由；其余请求保持 1 MiB 快速拒绝，
+	// 避免明显超限的 body 占用 relay 带宽（chunked body 由 Agent 侧 1 MiB 上限兜底）。
+	streaming := isUploadRoute(r.Method, r.URL.Path)
+	if !streaming && r.ContentLength > httpGatewayMaxBodyBytes {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	route := relaycore.StreamRoute{
@@ -58,9 +68,9 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Path:   r.URL.Path,
 		Query:  r.URL.RawQuery,
 	}
-	// 文件发送等流式响应不设总超时
+	// 文件发送与文件上传等长流不设总超时，避免慢速大文件被 30s 误杀
 	timeout := gateway.timeout
-	if strings.HasPrefix(r.URL.Path, "/api/file-send/") {
+	if strings.HasPrefix(r.URL.Path, "/api/file-send/") || streaming {
 		timeout = 0
 	}
 	handle := gateway.streams.CreateStream(relaycore.StreamKindHTTP, route, user.ID, presence.DeviceID, presence.AgentConnectionID, timeout)
@@ -68,11 +78,17 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer handle.Close("http request finished")
 	gateway.streams.Open(handle.ID)
 
+	// Content-Length 必须显式从 r.ContentLength 转发：Go 不会把它放进 r.Header，
+	// Agent 侧上传大小校验依赖该值（计划 5.1）。
+	headers := singleValueHeaders(r.Header)
+	if r.ContentLength > 0 {
+		headers["Content-Length"] = strconv.FormatInt(r.ContentLength, 10)
+	}
 	meta := relaycore.HTTPRequestMeta{
 		Method:  r.Method,
 		Path:    r.URL.Path,
 		Query:   r.URL.RawQuery,
-		Headers: singleValueHeaders(r.Header),
+		Headers: headers,
 	}
 	metaPayload, err := json.Marshal(meta)
 	if err != nil {
@@ -85,13 +101,101 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "send request metadata failed", http.StatusBadGateway)
 		return
 	}
-	bodyFrame := relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, handle.ID, relaycore.FrameFlagFin, body)
-	gateway.streams.RecordClientFrame(bodyFrame)
-	if err := sender.SendFrame(r.Context(), bodyFrame); err != nil {
+	// Agent 可在读取完整 body 前发现 session、文件名或目录错误。请求体发送与响应
+	// 必须并发：一旦先收到终态响应，立即关闭 Android body，避免无效上传仍把整文件
+	// 穿过 Relay；同时以 StreamClose 中止 Agent 侧 io.Pipe。
+	responseCtx, cancelResponse := context.WithCancel(r.Context())
+	defer cancelResponse()
+	bodyDone := make(chan error, 1)
+	go func() {
+		bodyDone <- gateway.streamRequestBody(r, sender, handle.ID)
+	}()
+	responseDone := make(chan struct{})
+	go func() {
+		gateway.writeResponse(w, responseCtx, handle, timeout)
+		close(responseDone)
+	}()
+
+	select {
+	case err := <-bodyDone:
+		if err == nil {
+			// 正常 FIN 已发出，继续等待 Agent 的最终响应。
+			<-responseDone
+			return
+		}
+		// 请求未完整发出：通知 Agent 中止该 stream（其 io.Pipe 读端可能仍在等待 FIN），
+		// 使 fileupload.Service 立即中止并清理临时文件。
+		_ = sender.SendFrame(context.Background(), relaycore.NewFrame(relaycore.FrameTypeStreamClose, handle.ID, 0, nil))
+		cancelResponse()
+		<-responseDone
+		if errors.Is(err, errRequestBodyRead) {
+			http.Error(w, "read request body failed", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "send request body failed", http.StatusBadGateway)
 		return
+	case <-responseDone:
+		// 已写出 Agent 的终态响应。若 body 尚未结束，关闭客户端流并通知 Agent，
+		// 然后等待发送 goroutine 退出，避免遗留读取 goroutine。
+		select {
+		case <-bodyDone:
+			return
+		default:
+			_ = r.Body.Close()
+			_ = sender.SendFrame(context.Background(), relaycore.NewFrame(relaycore.FrameTypeStreamClose, handle.ID, 0, nil))
+			<-bodyDone
+			return
+		}
 	}
-	gateway.writeResponse(w, r.Context(), handle, timeout)
+}
+
+// streamRequestBody 以固定 64 KiB 缓冲流式转发请求 body：
+// 每读一块发一个 HTTPChunk，结束时发空 FIN chunk 标记 body 结束。
+// 禁止 io.ReadAll / append 累积——内存占用与文件大小无关。
+func (gateway *HTTPGateway) streamRequestBody(r *http.Request, sender relayrouter.AgentSender, streamID string) error {
+	buf := make([]byte, httpGatewayChunkSize)
+	for {
+		n, readErr := r.Body.Read(buf)
+		if n > 0 {
+			chunk := relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, 0, buf[:n])
+			gateway.streams.RecordClientFrame(chunk)
+			if err := sendFrameWithBackpressure(r.Context(), sender, chunk); err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			fin := relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, streamID, relaycore.FrameFlagFin, nil)
+			gateway.streams.RecordClientFrame(fin)
+			return sendFrameWithBackpressure(r.Context(), sender, fin)
+		}
+		if readErr != nil {
+			return fmt.Errorf("%w: %v", errRequestBodyRead, readErr)
+		}
+	}
+}
+
+// sendFrameWithBackpressure 发送帧；agent 发送队列满（ErrBackpressure）时等待重试，
+// 与 Agent 侧固定队列 + io.Pipe 共同形成自然背压，而不是把慢速上传直接打成 502。
+func sendFrameWithBackpressure(ctx context.Context, sender relayrouter.AgentSender, frame relaycore.Frame) error {
+	for {
+		err := sender.SendFrame(ctx, frame)
+		if !errors.Is(err, relaycore.ErrBackpressure) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// isUploadRoute 判断是否为终端文件上传路由（POST /api/sessions/{id}/upload）。
+// 判定与 relay 包 HTTPProxy.isUploadRequest 保持一致。
+func isUploadRoute(method, path string) bool {
+	return method == http.MethodPost &&
+		strings.HasPrefix(path, "/api/sessions/") &&
+		strings.HasSuffix(path, "/upload")
 }
 
 func (gateway *HTTPGateway) writeResponse(w http.ResponseWriter, ctx context.Context, handle relayrouter.StreamHandle, streamTimeout time.Duration) {

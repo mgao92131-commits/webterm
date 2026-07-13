@@ -1,800 +1,390 @@
-# Android 终端页面文件上传实现方案（P2P-first + HTTP fallback）
+# Android 终端文件上传实施方案（Relay-only，与 FileSend/通知系统集成）
 
-## 1. 需求目标
+## 1. 状态、目标与边界
 
-在 Android 端 WebTerm 终端页面提供“上传文件”功能：
+本文取代此前的 P2P-first 上传草案。当前项目已移除 P2P/WebRTC/DataChannel 传输模块；Android 远程访问统一经 Relay，直连场景仍直接请求 Agent HTTP 服务。上传不再存在 P2P 分支、P2P fallback 或第二套文件二进制协议。
 
-- 用户点击上传按钮后，从手机本地选择单个文件。
-- 文件上传到当前终端会话所在目录下的固定文件夹 `WebTermUploads`。
-- 最终路径：`{liveCwd}/WebTermUploads/{filename}`。
-- 优先通过 P2P DataChannel 传输，P2P 不可用时自动回落到 HTTP。
-- 不直接散放到当前目录，避免误覆盖。
-
-示例：
+目标是在 Android 终端页提供“上传文件”：用户选择一个本地文件后，Agent 将它保存到上传开始时该 session 的：
 
 ```text
-当前目录：/Users/gao/project
-上传文件：demo.zip
-保存路径：/Users/gao/project/WebTermUploads/demo.zip
+{snapshotLiveCwd}/WebTermUploads/{fileName}
 ```
 
-## 2. 现状摘要
+例如：
 
-### 2.1 Android 端
+```text
+liveCwd: /Users/gao/project
+文件:    demo.zip
+结果:    /Users/gao/project/WebTermUploads/demo.zip
+```
 
-| 能力 | 状态 | 关键文件 |
+第一版支持：
+
+- Android 选择单个文件，流式上传、进度和取消。
+- 直连和 Relay 共用同一个 Agent 落盘服务。
+- 自动创建 `WebTermUploads`，自动避免重名，不覆盖已有文件。
+- session CWD 在 Agent 接收请求时固定。
+- 传输取消、网络断开、Relay 断开或写入失败时清理临时文件。
+- 使用现有 Android 传输通知通道显示后台/离开终端页后的任务状态。
+
+第一版不支持：
+
+- 多文件、文件夹、远端目录浏览与自定义保存目录。
+- 覆盖、删除、移动、下载管理、断点续传和后台恢复。
+- P2P、WebRTC、DataChannel 或任何“优先 P2P、失败回退 HTTP”逻辑。
+- 用 Agent Hook 通知协议驱动上传状态。
+
+## 2. 当前架构基线
+
+### 2.1 已经存在、必须复用的能力
+
+| 能力 | 当前模块 | 上传中的用途 |
 |---|---|---|
-| 终端页面 | 已存在，纯代码构建 UI | `TerminalScreenBuilder.java` |
-| 上传入口 | 无 | 需新增 |
-| 文件选择器 | 无 | 需新增 `ActivityResultContracts.OpenDocument` |
-| P2P DataChannel | 已存在，仅用于终端 mux | `P2PConnectionManager.java` |
-| HTTP 客户端 | 已存在 | `WebTermApi.java` |
-| 会话状态 | 保存 sessionId/cwd/baseUrl/cookie/relayDeviceId | `TerminalRuntimeState.java` |
-| CWD 实时更新 | 部分存在：`AppFlowCoordinator.onSessionCwdChanged` | `AppFlowCoordinator.java` |
+| Agent 到 Android 文件发送 | `go-core/internal/filesend` | 复用独立服务、任务状态、流中止和流式 HTTP 的架构模式，但不混用业务任务。 |
+| Android 文件接收 | `core-session/filesend/FileReceiveController` | 为反向的 `FileUploadController` 提供任务、进度、取消和通知接入范式。 |
+| Android 传输通知 | `NotificationController`、`NotificationChannels.TRANSFER` | 扩展为“上传/接收”双向传输文案和取消动作。 |
+| Android 设备服务 | `WebTermDeviceService` | 是连接、文件接收、通知与后台存活的既有拥有者；上传任务也应由它的传输层拥有。 |
+| Agent 通知 | `agentnotify.Dispatcher`、`AgentNotificationController` | 保持用于 Agent 事件去重/确认，不承担上传进度或成功语义。 |
+| Relay HTTP frames | `HTTPHeaders`、`HTTPChunk`、`FIN` | 作为 Android 到 Agent 的唯一远程文件流承载。 |
+| 会话 CWD | `TerminalSession` | 提供上传路径的 Agent 侧快照来源。 |
 
-### 2.2 go-core 端
+### 2.2 不再成立的旧假设
 
-| 能力 | 状态 | 关键文件 |
-|---|---|---|
-| 会话 CWD | `TerminalSession.Info()` 优先返回 `liveCwd` | `go-core/internal/session/terminal.go` |
-| P2P 处理 | 已存在，但 Agent 只接受 `"tunnel"` DataChannel | `go-core/internal/relay/client_v2_p2p.go` |
-| 文件 API | 无 | 需新增 |
-| 直连模式 | 完整 HTTP 服务 | `go-core/internal/direct/server.go` |
-| 中转 HTTP 代理 | 已支持，请求体硬限制 1 MiB | `internal/relay/http_proxy.go`、`internal/relaygateway/http_gateway.go` |
+以下内容必须从实现和测试计划中彻底排除：
+
+- `P2PConnectionManager`、`client_v2_p2p.go`、PeerConnection、ICE、DataChannel。
+- `file` DataChannel、`upload.start`/`upload.ack` 二进制分片协议。
+- 根据 P2P 是否可用选择传输通道。
+- Android 端的 P2P 缓冲量背压控制。
+
+本次源码核查还发现少量失效 API 表面：Android `WebTermApi` 仍保留 `/api/p2p/offer`、`/api/p2p/ice` 方法，`MuxTransport` 仍有 P2P 注释。这些不是上传运行时依赖，但应作为本计划第 0 步删除或改写；否则未来实现者可能误把死接口接回上传。历史文档、部署环境变量和前端注释中的 P2P 也应另列清理项。
 
 ## 3. 设计原则
 
-1. **固定上传目录**：所有上传文件进入 `liveCwd/WebTermUploads`，不散落。
-2. **服务端决定路径**：客户端只传 `sessionId` 和 `filename`，目标目录由 Agent 根据会话 CWD 计算。
-3. **P2P-first**：在可用时优先通过专用 DataChannel 传输文件，不经过 relay 服务器。
-4. **HTTP fallback**：P2P 未连接、建立失败或传输中断时，自动切换到 HTTP 分片上传。
-5. **不重名覆盖**：第一版默认自动重命名。
-6. **不污染 PTY**：上传进度/结果通过弹窗显示，不写入终端输出流。
-7. **直连模式走 HTTP**：直连场景没有 relay，直接通过 HTTP 上传。
-8. **第一版失败即提示**：无法获取 CWD 或无写权限时直接返回错误，不静默兜底。
-9. **任务隔离**：每次上传有唯一 `uploadId`，取消/重试不会污染新任务。
-10. **背压控制**：P2P 发送端必须根据 DataChannel 积压动态调节发送速率，防止 OOM 和断连。
+1. **Relay-only 远程路径**：远程 Android 仅走 Relay HTTP tunnel；直连仅是同一 HTTP 接口的直达路径。
+2. **Agent 决定路径**：Android 永远不提交远端绝对目录。
+3. **上传与文件发送职责分离**：`filesend` 是 Agent -> Android；上传是 Android -> Agent。二者平行，不能把 UploadTask 塞进 `filesend.Service` 或 `TerminalSession`。
+4. **流式、固定内存**：任何一端都不得按文件大小累积 body。
+5. **HTTP EOF 不等于成功**：只有 Agent 完成大小校验、关闭临时文件并无覆盖发布最终文件后，响应 2xx 才表示成功。
+6. **任务由服务拥有、UI 只渲染**：终端 Fragment 负责文件选择和页面浮层；上传任务、Call、通知和取消由 Android 设备服务的传输层拥有。
+7. **通知职责清晰**：传输进度使用 `TRANSFER` 通道；Agent Hook 告警继续使用 Agent 通知通道，两者绝不互相伪装。
 
-## 4. 传输策略
+## 4. 总体架构
 
 ```text
-上传入口
-  → 判断当前连接模式
-    ├─ 直连模式 ──→ HTTP 直连分片上传
-    └─ 中转模式
-         ├─ P2P 已连接 ──→ file DataChannel 上传
-         └─ P2P 不可用 ──→ HTTP 经 relay 分片上传
+TerminalFragment
+  -> ACTION_OPEN_DOCUMENT
+  -> 持久化 Uri 读取权限（可用时）
+  -> WebTermDeviceService / FileUploadController
+  -> StreamingUploadRequestBody（64 KiB）
+  -> POST /api/sessions/{sessionId}/upload
+       |
+       +-- 直连：Direct Server -> StreamHTTP Router -> FileUploadService
+       |
+       +-- Relay：HTTPGateway -> HTTPHeaders + HTTPChunk x N + FIN
+                       -> Agent HTTPProxy / io.Pipe
+                       -> StreamHTTP Router -> FileUploadService
 ```
 
-说明：
-- 直连模式下，手机直接访问 Agent HTTP 服务，无需 P2P。
-- 中转模式下，优先尝试 P2P 文件通道，省 relay 带宽；不可用则回落 HTTP 分片上传。
-- HTTP fallback 采用分片机制，每个分片 ≤ 1 MiB，天然适配现有网关限制。
+Agent 侧建议新增 `go-core/internal/fileupload`，与 `filesend` 同级：
 
-## 5. P2P DataChannel 文件传输协议
-
-### 5.1 新增 DataChannel：标签 `"file"`
-
-Android 端在已有的 PeerConnection 上创建第二个 DataChannel：
-
-```java
-DataChannel.Init init = new DataChannel.Init();
-init.ordered = true;        // 保证按序到达
-DataChannel fileChannel = peerConnection.createDataChannel("file", init);
+```text
+go-core/internal/filesend     # Agent -> Android，保持现有职责
+go-core/internal/fileupload   # Android -> Agent，本计划新增
 ```
 
-Agent 端修改 `OnDataChannel` 处理逻辑，接受 `"file"` 标签：
+不要把上传做成 filesend 的一个方向开关。两者虽然同属文件传输，但身份验证、发起者、保存位置、完成判据和控制面不同；强行合并会破坏近期 filesend 与 terminal session 的解耦成果。
 
-```go
-pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-    switch dc.Label() {
-    case "tunnel", "":
-        // 现有 mux 终端通道
-        startMuxOverDataChannel(dc)
-    case "file":
-        // 新增文件传输通道
-        startFileTransferHandler(dc)
-    default:
-        _ = dc.Close()
-    }
-})
+## 5. API 契约
+
+### 5.1 请求
+
+```http
+POST /api/sessions/{sessionId}/upload HTTP/1.1
+Content-Type: application/octet-stream
+X-File-Name: demo.zip
+X-File-Size: 12345678
+X-Device-Id: relay-device-id
+Cookie: webterm_token=...
 ```
 
-### 5.2 任务标识 uploadId
+- `X-File-Name` 必填。
+- `X-File-Size` 可选；Android 无法取得大小时省略。
+- HTTP `Content-Length` 存在时同样校验；Relay 元数据必须显式转发 `r.ContentLength`，不能只从 header map 读取。
+- body 是原始文件流，不使用 multipart，不拆为 start/chunk/complete 多次 HTTP 调用。
+- `x-device-id` 仅由 Relay 用于找目标 Agent；Agent 不信任它来决定 session 或保存路径。
 
-每次上传由 Android 端生成唯一 `uploadId`（UUID 字符串，例如 `u_xxx`），并在整个传输过程中保持一致：
-
-- 控制消息（`upload.start`、`upload.cancel`）携带 `uploadId`。
-- 每个二进制分片头也携带 `uploadId`。
-- Agent 只处理与当前活跃任务 `uploadId` 匹配的分片；不匹配的 chunk 直接丢弃。
-- 同一 `"file"` DataChannel 同一时刻只允许一个活跃上传任务；收到新的 `upload.start` 时若已有任务未完成，返回 `upload.error: 已有上传任务进行中`。
-
-### 5.3 协议消息格式
-
-所有控制消息用 UTF-8 JSON text frame；文件内容用 binary frame。
-
-#### 5.3.1 上传开始（Android → Agent）
+### 5.2 成功与失败响应
 
 ```json
 {
-  "type": "upload.start",
-  "uploadId": "u_abc123",
-  "sessionId": "s1",
-  "filename": "demo.zip",
+  "fileName": "demo (1).zip",
+  "relativePath": "WebTermUploads/demo (1).zip",
+  "absolutePath": "/Users/gao/project/WebTermUploads/demo (1).zip",
   "size": 12345678
 }
 ```
 
-Agent 收到后校验参数并创建临时文件，返回确认：
-
 ```json
 {
-  "type": "upload.ack",
-  "uploadId": "u_abc123"
+  "code": "UPLOAD_DIRECTORY_NOT_WRITABLE",
+  "message": "当前终端目录没有写入权限"
 }
 ```
 
-#### 5.3.2 文件分片（Android → Agent）
+| 情况 | HTTP | code |
+|---|---:|---|
+| session 不存在 | 404 | `SESSION_NOT_FOUND` |
+| session 关闭、CWD 无效 | 409 | `SESSION_CWD_UNAVAILABLE` |
+| 上传目录是文件/链接或无效 | 409 | `UPLOAD_DIRECTORY_INVALID` |
+| 无写入权限 | 403 | `UPLOAD_DIRECTORY_NOT_WRITABLE` |
+| 文件名、声明大小非法 | 400 | `INVALID_FILE_NAME` / `SIZE_MISMATCH` |
+| 超过上限 | 413 | `FILE_TOO_LARGE` |
+| 磁盘空间不足 | 507 | `INSUFFICIENT_DISK_SPACE` |
+| 中断或取消 | 400/连接关闭 | `TRANSFER_INTERRUPTED` |
+| 内部错误 | 500 | `INTERNAL_ERROR` |
 
-每个分片是一个 binary frame，格式：
+业务错误必须按正常 HTTP response 返回；不能统一转为 Relay `StreamError`，否则 Android 只能看到无意义的 502。
 
-```
-[2 bytes: uploadId 长度大端] [uploadId 字节] [8 bytes: seq 大端] [N bytes: payload]
-```
+## 6. Agent FileUploadService
 
-- `uploadId` 长度用 2 字节大端无符号整数表示，最大支持 65535 字节。
-- `seq` 从 0 开始递增。
-- 推荐分片大小：64 KiB。
-- 这样设计既避免固定长度限制，也便于 Agent 解析和校验。
+新增文件：
 
-#### 5.3.3 分片确认（Agent → Android）
-
-```json
-{
-  "type": "upload.progress",
-  "uploadId": "u_abc123",
-  "received": 4194304,
-  "total": 12345678,
-  "percent": 34
-}
-```
-
-#### 5.3.4 上传完成（Agent → Android）
-
-```json
-{
-  "type": "upload.done",
-  "uploadId": "u_abc123",
-  "path": "/Users/gao/project/WebTermUploads/demo.zip",
-  "size": 12345678,
-  "renamed": false
-}
+```text
+go-core/internal/fileupload/service.go
+go-core/internal/fileupload/task.go
+go-core/internal/fileupload/errors.go
+go-core/internal/fileupload/service_test.go
 ```
 
-#### 5.3.5 重命名完成
-
-```json
-{
-  "type": "upload.done",
-  "uploadId": "u_abc123",
-  "path": "/Users/gao/project/WebTermUploads/demo (1).zip",
-  "size": 12345678,
-  "renamed": true,
-  "originalName": "demo.zip"
-}
-```
-
-#### 5.3.6 错误（Agent → Android）
-
-```json
-{
-  "type": "upload.error",
-  "uploadId": "u_abc123",
-  "error": "当前目录无写入权限"
-}
-```
-
-#### 5.3.7 取消（Android → Agent）
-
-```json
-{
-  "type": "upload.cancel",
-  "uploadId": "u_abc123"
-}
-```
-
-Agent 收到后删除对应临时文件并清理任务状态。
-
-## 6. 后端实现
-
-### 6.1 新增 `internal/upload` 包
+建议职责：
 
 ```go
-package upload
-
 type Service struct {
-    manager       *session.Manager
-    maxUploadSize int64
-    tempDir       string
+    Sessions            *session.Manager
+    UploadDirectoryName string
+    MaxUploadSize       int64
 }
 
-type Result struct {
-    Path         string `json:"path"`
-    Size         int64  `json:"size"`
-    Renamed      bool   `json:"renamed"`
-    OriginalName string `json:"originalName,omitempty"`
+type Request struct {
+    SessionID    string
+    FileName     string
+    DeclaredSize int64 // -1 表示未知
+    Body         io.Reader
 }
 
-// StartUpload 创建上传任务，返回 uploadId 和临时文件路径。
-func (s *Service) StartUpload(sessionID string, filename string) (*UploadTask, error)
-
-// WriteChunk 将分片写入临时文件。
-func (s *Service) WriteChunk(task *UploadTask, chunkIndex int64, data []byte) error
-
-// CompleteUpload 合并/移动到最终路径。
-func (s *Service) CompleteUpload(task *UploadTask) (*Result, error)
-
-// CancelUpload 取消并清理临时文件。
-func (s *Service) CancelUpload(task *UploadTask)
-
-type UploadTask struct {
-    UploadID string
-    SessionID string
-    Filename string
-    Size int64
-    TempPath string
-    TargetDir string
-}
+func (s *Service) Upload(ctx context.Context, req Request) (*Result, error)
 ```
 
-核心逻辑：
+服务应仿照 filesend 的独立任务生命周期：由 `app.App` 创建和拥有；路由层注入；任务可绑定当前输入流并在取消时立即中止。但上传不需要 filesend 的 transfer token/offer/Android ack：HTTP 响应成功就是 Agent 落盘成功的权威结论。
 
-1. 通过 `manager.Get(sessionID)` 获取会话。
-2. 读取 `Info().CWD` 作为 `liveCwd`。
-3. 校验 CWD 不是系统敏感目录（按操作系统动态过滤，见 6.5 节）。
-4. 预校验目标目录写权限（见 6.5 节）。
-5. 计算 `targetDir = filepath.Join(liveCwd, "WebTermUploads")`。
-6. `os.MkdirAll(targetDir, 0755)`。
-7. 清洗文件名：`filepath.Base(filename)`，拒绝空/`..`/`.`。
-8. 使用 `os.O_EXCL` 原子创建唯一文件名，处理重名。
-9. 流式写入文件。
-10. 异常或取消时清理临时文件。
+### 6.1 CWD 快照
 
-### 6.2 文件通道处理器
+```text
+读取 session
+-> 校验未关闭
+-> SnapshotUploadCWD()
+-> targetDir = snapshotCwd / WebTermUploads
+-> 后续不再读取 session CWD
+```
 
-在 `go-core/internal/relay/client_v2_p2p.go` 中新增 `startFileTransferHandler`：
+当前 `Info().CWD` 会在没有实时更新时回退到初始目录。实现时应新增上传专用快照方法，并让 shell prompt hook 上报 `"$PWD"`：
+
+- Agent 启动 session 的已验证 CWD 是初始基准。
+- shell `cd` 后返回提示符应上报新 CWD。
+- OSC 7 可作为补充更新来源。
+- session 不存在、关闭或无有效路径时失败，不回退 Home。
+
+### 6.2 安全与落盘
+
+- `liveCwd` 必须是存在目录。
+- `WebTermUploads` 不存在时创建；同名普通文件或符号链接时失败。
+- 文件名禁止空、`/`、`\\`、NUL、控制字符、`.`、`..`、包含 `..` 的路径形式，并限制 UTF-8 字节数；Windows 上拒绝保留名。
+- 不把 `../../a.txt` 静默改为 `a.txt`，而是拒绝。
+- 同名按 `demo (1).zip`、`demo (2).zip` 递增。
+- 写入隐藏临时文件；实际字节数校验后再无覆盖发布最终文件。
+- 不可直接依赖可能覆盖已有目标的 `os.Rename(temp, final)`；使用无替换发布策略，例如同目录硬链接发布完整文件后删除临时名，或平台 no-replace rename。
+- 上传中断、取消、EOF 提前、大小不符、磁盘错误和 context 取消均删除临时文件。
+- 同一个 session 第一版仅允许一个活跃上传。
+
+`Lstat` 拒绝链接足以作为第一版常规保护；若以后需抵抗同机恶意替换目录，应改为目录句柄/无跟随打开，消除检查与创建间的竞态。
+
+## 7. HTTP 路由与 Relay 流
+
+### 7.1 抽象升级
+
+当前 `SessionRouter.RouteHTTP` 面向小型 `[]byte` CRUD，`RouteHTTPv2` 已为 filesend 提供流式**响应**。上传需要把它升级为通用的双向 `StreamHTTP` 路由：
+
+```text
+method + path + headers + request Body(io.Reader)
+-> HTTP result(status + headers + response body/data)
+```
+
+filesend 的 `/api/file-send/{transferId}` 保持流式响应行为；新增上传路由消费流式请求 body。这样不会回退或复制 filesend 已验证的路由能力。
+
+修改范围：
+
+```text
+go-core/internal/application/session_router.go
+go-core/internal/direct/server.go
+go-core/internal/relay/http_proxy.go
+go-core/internal/relay/client_v2.go
+go-core/internal/relaygateway/http_gateway.go
+go-core/internal/relayapp/app.go
+go-core/internal/app/app.go
+```
+
+直连 Server 必须在通用 `/api/sessions/{id}` 路由前识别精确的 `/api/sessions/{id}/upload`，不能让它落入现有 `readRequestBody()` 的 1 MiB JSON 路径。
+
+### 7.2 Relay 请求流
+
+Gateway 将上传请求处理为：
+
+```text
+HTTPHeaders
+-> 读取 Android body 64 KiB
+-> HTTPChunk
+-> 重复
+-> 空 FIN chunk
+-> 等待 Agent HTTP response
+```
+
+Agent HTTPProxy：
+
+```text
+收到 HTTPHeaders
+-> 创建 io.Pipe
+-> 启动 StreamHTTP Router/FileUploadService 读取 PipeReader
+-> 每个 HTTPChunk 直接写 PipeWriter
+-> FIN 关闭 writer
+-> StreamClose、Relay 断开、context 取消时 CloseWithError
+```
+
+禁止两端继续使用：
 
 ```go
-func startFileTransferHandler(dc *webrtc.DataChannel) {
-    var cancel context.CancelFunc
-    var once sync.Once
-    var currentTask *upload.UploadTask
-    var ctx context.Context
-
-    dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-        // 1. 处理 upload.start / upload.cancel JSON 控制消息
-        // 2. 处理 binary chunk：校验 uploadId、seq，写入临时文件
-    })
-
-    dc.OnClose(func() {
-        once.Do(func() {
-            if cancel != nil {
-                cancel()
-            }
-            if currentTask != nil {
-                uploadService.CancelUpload(currentTask)
-            }
-        })
-    })
-}
+io.ReadAll(request.Body)
+body = append(body, chunk...)
 ```
 
-要求：
-- 收到 `upload.start` 后创建 `UploadTask` 并返回 `upload.ack`。
-- 同一通道已有活跃任务时拒绝新的 `upload.start`。
-- 每个 binary chunk 校验 `uploadId`，不匹配则丢弃。
-- 收到 `upload.cancel` 或 `OnClose` 时调用 `uploadService.CancelUpload` 删除临时文件。
-- 传输超时（例如 10 分钟无新 chunk）自动取消并清理。
+Relay 上传路径须沿用 filesend 已验证的长流原则：不设置会误杀慢速大文件的短总超时；连接/取消关闭上游 stream；固定队列与 pipe 形成背压，不能随文件尺寸增长缓存。
 
-### 6.3 HTTP 分片上传 API
+### 7.3 部署与限制
 
-#### 6.3.1 直连模式
+新增 Agent 配置：
 
-`go-core/internal/direct/server.go` 增加：
-
-```
-POST /api/upload/session-file-start?sessionId=s1&filename=demo.zip&size=12345678
-→ 返回 { "uploadId": "u_xxx" }
-
-POST /api/upload/session-file-chunk?uploadId=u_xxx&chunkIndex=0
-Body: <1 MiB 二进制数据
-→ 返回 { "received": 1048576, "total": 12345678 }
-
-POST /api/upload/session-file-complete?uploadId=u_xxx
-→ 返回 { "path": "...", "size": ..., "renamed": ... }
-
-POST /api/upload/session-file-cancel?uploadId=u_xxx
-→ 清理临时文件
+```text
+WEBTERM_MAX_UPLOAD_BYTES=104857600
 ```
 
-#### 6.3.2 中转模式 HTTP fallback
+默认 100 MiB，Agent 是最终限制执行者。
 
-作为 fallback，复用同样的 API：
+Nginx `/api/` 路径需要：
 
-```
-POST /api/upload/session-file-start?sessionId=s1&filename=demo.zip&size=12345678
-Cookie: webterm_token=...
-x-device-id: <deviceId>
-```
-
-```
-POST /api/upload/session-file-chunk?uploadId=u_xxx&chunkIndex=0
-Cookie: webterm_token=...
-x-device-id: <deviceId>
-Content-Type: application/octet-stream
-Body: <1 MiB 二进制数据
+```nginx
+client_max_body_size 100m;
+proxy_request_buffering off;
+proxy_read_timeout 15m;
+proxy_send_timeout 15m;
 ```
 
-```
-POST /api/upload/session-file-complete?uploadId=u_xxx
-Cookie: webterm_token=...
-x-device-id: <deviceId>
-```
+## 8. Android 上传任务与通知
 
-每个 chunk 都在 1 MiB 以内，**不需要改造 `HTTPProxy`/`HTTPGateway` 的流式转发能力**，直接复用现有请求体限制即可。
+### 8.1 所有权
 
-### 6.4 临时文件清理
+新增与 `FileReceiveController` 对称的纯业务控制器：
 
-Agent 必须在以下场景清理临时文件：
-
-- 收到 `upload.cancel` 控制帧。
-- DataChannel `OnClose` 触发。
-- 上传超时。
-- 写入过程中发生 io error。
-- 合并成功后（临时文件已移动到最终路径）。
-
-兜底机制：
-- 临时文件统一存放在 `filepath.Join(os.TempDir(), "webterm-uploads")`。
-- Agent 启动时扫描并删除超过 24 小时的残留文件。
-
-### 6.5 跨平台敏感目录过滤与写权限预校验
-
-#### 6.5.1 敏感目录过滤
-
-按 `runtime.GOOS` 动态适配：
-
-```go
-func isSensitivePath(path string) bool {
-    clean := filepath.Clean(path)
-    switch runtime.GOOS {
-    case "windows":
-        lower := strings.ToLower(clean)
-        sensitive := []string{
-            `c:\windows`, `c:\program files`, `c:\program files (x86)`,
-            `c:\programdata`, `c:\users\public`,
-        }
-        for _, p := range sensitive {
-            if strings.HasPrefix(lower, p) {
-                return true
-            }
-        }
-    case "darwin":
-        sensitive := []string{"/System", "/Library", "/Applications", "/bin", "/sbin", "/usr", "/dev", "/etc", "/proc", "/sys"}
-        for _, p := range sensitive {
-            if strings.HasPrefix(clean, p) {
-                return true
-            }
-        }
-    default: // linux / freebsd
-        sensitive := []string{"/proc", "/sys", "/dev", "/etc", "/bin", "/sbin", "/usr", "/boot", "/lib", "/lib64"}
-        for _, p := range sensitive {
-            if strings.HasPrefix(clean, p) {
-                return true
-            }
-        }
-    }
-    return false
-}
+```text
+android-client/core-session/.../fileupload/FileUploadController.java
+android-client/core-session/.../fileupload/UploadTask.java
+android-client/core-session/.../fileupload/StreamingUploadRequestBody.java
+android-client/core-session/.../fileupload/UploadRequestExecutor.java
 ```
 
-#### 6.5.2 写权限预校验
+`WebTermDeviceService` 创建并拥有 controller，提供给 `AppFlowCoordinator`/终端页调用。Fragment 不持有 OkHttp Call 或 InputStream；它只：
 
-在创建 `WebTermUploads` 目录后、接收任何 chunk 前，先尝试写测试文件：
-
-```go
-func checkWritable(dir string) error {
-    testPath := filepath.Join(dir, ".webterm_write_test")
-    f, err := os.OpenFile(testPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
-    if err != nil {
-        return err
-    }
-    _ = f.Close()
-    _ = os.Remove(testPath)
-    return nil
-}
+```text
+点击菜单 -> ACTION_OPEN_DOCUMENT -> 提交 Uri + connectionKey + sessionId
 ```
 
-如果失败，立即向客户端返回 `upload.error: 当前目录无写入权限`，避免用户传完大文件才报错。
+使用 `ACTION_OPEN_DOCUMENT` 后应在可用时调用 `takePersistableUriPermission`；controller 只保存 Uri 和任务元数据，需要读取时重新打开 InputStream。这样终端页重建或在应用内切换时任务仍由服务持续管理，但第一版不承诺进程被杀后的恢复或断点续传。
 
-## 7. Android 实现
+### 8.2 流与状态
 
-### 7.1 顶栏入口改为“更多选项”菜单
+`StreamingUploadRequestBody` 从 `ContentResolver.openInputStream(uri)` 以 64 KiB 读入 Okio sink：
 
-不在 `TerminalScreenBuilder.build()` 的右侧 `buttonGroup` 直接塞入上传按钮，而是新增一个“更多”按钮：
+- 禁止完整读取到 `byte[]`。
+- 大小可知时本地提示超限并显示百分比；未知大小显示已上传字节数。
+- 进度最多每约 100 ms 推送一次，避免 UI/通知抖动。
+- 取消调用 `Call.cancel()`；服务端 pipe/context 随后清理临时文件。
 
-```java
-ImageButton moreButton = new ImageButton(activity);
-moreButton.setImageResource(R.drawable.ic_more_vert);
-moreButton.setOnClickListener(v -> showOverflowMenu(activity, moreButton));
-buttonGroup.addView(moreButton, 0, btnLp);
+状态：
+
+```text
+IDLE -> SELECTING_FILE -> PREPARING -> UPLOADING
+                                  -> SUCCESS | FAILED | CANCELLED
 ```
 
-点击后弹出 `PopupMenu`：
+任务键必须包含 `connectionKey + sessionId`，避免不同设备同名 session 相互覆盖。每个 session 最多一个活跃任务。
 
-```java
-private void showOverflowMenu(Activity activity, View anchor) {
-    PopupMenu menu = new PopupMenu(activity, anchor);
-    menu.getMenu().add("上传文件").setOnMenuItemClickListener(item -> {
-        onUpload.run();
-        return true;
-    });
-    menu.getMenu().add("下载保存位置").setOnMenuItemClickListener(item -> {
-        onDownloadSettings.run();
-        return true;
-    });
-    menu.show();
-}
+### 8.3 UI 与通知
+
+终端顶栏添加“更多”菜单中的“上传文件”。`TerminalFragment` 是 Activity Result API 的注册者；页面浮层显示：
+
+```text
+正在上传 demo.zip：42%
+上传完成：WebTermUploads/demo.zip
+上传失败：当前终端目录没有写入权限
 ```
 
-`build()` 新增参数 `Runnable onUpload` 和 `Runnable onDownloadSettings`。
+不向 PTY 写文本。
 
-这样做的好处：
-- 顶栏不再拥挤，适配小屏手机。
-- 后续新增功能（清屏、复制、设置等）都可以收进菜单。
+现有 `NotificationController` 的 transfer API 目前文案是“正在接收/已保存”。在引入上传前，应先将它泛化为带 direction 的传输通知，或新增明确的：
 
-### 7.2 点击回调链路
-
-上传按钮点击需要从 `TerminalScreenBuilder` 逐层回调到 `TerminalFragment`：
-
-```
-TerminalScreenBuilder.uploadButton.onClick
-  → TerminalLifecycleController.triggerUpload()
-  → TerminalRuntime.uploadTrigger.onUpload()
-  → TerminalFragment.filePicker.launch(...)
+```text
+postUploadProgress
+postUploadSucceeded
+postUploadFailed
+postUploadCancelled
 ```
 
-实现：
+所有上传通知继续使用 `NotificationChannels.TRANSFER`，但通知 id 必须包含方向，避免和同一 `connectionKey + transferId` 的接收任务碰撞。上传中的通知为低优先级 ongoing；成功/取消替换它；失败为高优先级。通知取消动作必须通过 direction + task id 路由到 UploadTask，不能误取消接收任务。
 
-```java
-// TerminalRuntime
-public interface UploadTrigger {
-    void onUpload();
-}
-private UploadTrigger uploadTrigger;
-public void setUploadTrigger(UploadTrigger trigger) { this.uploadTrigger = trigger; }
-public void triggerUpload() { if (uploadTrigger != null) uploadTrigger.onUpload(); }
-```
+`agent_notification` 只继续处理 Agent Hook 提醒、去重与 ack；上传成功/失败不得伪造为 Agent alert。
 
-```java
-// TerminalFragment
-public void setRuntime(TerminalRuntime runtime) {
-    mRuntime = runtime;
-    mRuntime.setUploadTrigger(() -> filePicker.launch(new String[]{"*/*"}));
-}
-```
+## 9. 测试
 
-### 7.3 系统文件选择器
+### 9.1 Go
 
-在 `TerminalFragment` 注册：
+- `fileupload.Service`：正常上传、目录创建、重名、并发同名、非法文件名、链接目录、无权限、超限、大小不符、提前 EOF、磁盘不足和临时文件清理。
+- CWD 快照：session 不存在/关闭、目录变化后仍固定初始上传目标。
+- 直连：单请求上传、超过 1 MiB、取消和标准 JSON 错误。
+- Relay：`HTTPHeaders -> HTTPChunk x N -> FIN`、64 KiB 帧、`io.Pipe` 背压、断线清理、长流不被短超时误杀、业务错误不变成 502。
+- 回归：现有 filesend HTTP 流、取消中止、token、Agent notification ack 与 mux control 测试必须保持通过。
 
-```java
-private final ActivityResultLauncher<String[]> filePicker = registerForActivityResult(
-    new ActivityResultContracts.OpenDocument(),
-    result -> {
-        if (result != null) viewModel.onFileSelected(result);
-    }
-);
-```
+### 9.2 Android
 
-### 7.4 上传执行与传输选择
+- 文件选择成功/取消、持久 Uri 权限失败降级。
+- 已知/未知大小、64 KiB 流式 body、进度节流、大小预检。
+- 上传取消、连接断开、服务/页面重建后的状态重新订阅。
+- 同设备/不同设备的同 session id 任务隔离。
+- 上传通知与接收通知并存、方向文案正确、取消动作正确路由。
+- Agent alert 与上传通知彼此独立；终端当前可见时仍不影响 Agent focus suppression 逻辑。
 
-```java
-public void uploadFile(Uri uri) {
-    String sessionId = runtimeState.sessionId();
-    String baseUrl = runtimeState.baseUrl();
-    String cookie = runtimeState.cookie();
-    String deviceId = runtimeState.relayDeviceId();
-    boolean isRelay = !TextUtils.isEmpty(deviceId);
+### 9.3 验收
 
-    executeOnBackground(() -> {
-        try {
-            String fileName = getFileNameFromUri(uri);
-            long size = getFileSizeFromUri(uri);
-            InputStream stream = new BufferedInputStream(contentResolver.openInputStream(uri));
-
-            if (isRelay && p2pConnectionManager.isP2PActive(deviceId)) {
-                // 优先走 P2P 文件通道
-                fileTransferClient.uploadFile(deviceId, sessionId, fileName, stream, size, callback);
-            } else {
-                // 直连或 P2P 不可用，走 HTTP 分片上传
-                httpFileUploader.uploadSessionFile(
-                    baseUrl, cookie, deviceId, sessionId, fileName,
-                    stream, size, callback
-                );
-            }
-        } catch (Exception e) {
-            notifyError(e);
-        }
-    });
-}
-```
-
-### 7.5 P2P 文件通道客户端
-
-新增 `FileTransferClient`：
-
-```java
-public class FileTransferClient {
-    private final P2PConnectionManager p2pManager;
-    private static final long BACKPRESSURE_HIGH = 1024 * 1024;   // 1 MB
-    private static final long BACKPRESSURE_LOW  = 256 * 1024;    // 256 KB
-
-    public void uploadFile(
-        String deviceId,
-        String sessionId,
-        String fileName,
-        InputStream stream,
-        long size,
-        UploadCallback callback
-    ) {
-        DataChannel fileChannel = p2pManager.getFileDataChannel(deviceId);
-        if (fileChannel == null || !isOpen(fileChannel)) {
-            callback.onError("P2P 文件通道不可用");
-            return;
-        }
-
-        String uploadId = generateUploadId();
-
-        // 发送 metadata
-        sendJson(fileChannel, Map.of(
-            "type", "upload.start",
-            "uploadId", uploadId,
-            "sessionId", sessionId,
-            "filename", fileName,
-            "size", size
-        ));
-
-        // 等待 upload.ack（可加 5 秒超时）
-        // ...
-
-        // 循环读取并发送分片，带背压控制
-        byte[] buffer = new byte[64 * 1024];
-        long seq = 0;
-        int read;
-        Object backpressureLock = new Object();
-
-        DataChannel.Observer originalObserver = fileChannel.observer();
-        fileChannel.registerObserver(new DataChannel.Observer() {
-            @Override public void onBufferedAmountChange(long previousAmount) {
-                if (originalObserver != null) originalObserver.onBufferedAmountChange(previousAmount);
-                synchronized (backpressureLock) {
-                    if (fileChannel.bufferedAmount() <= BACKPRESSURE_LOW) {
-                        backpressureLock.notifyAll();
-                    }
-                }
-            }
-            @Override public void onStateChange() {
-                if (originalObserver != null) originalObserver.onStateChange();
-            }
-            @Override public void onMessage(DataChannel.Buffer buffer) {
-                if (originalObserver != null) originalObserver.onMessage(buffer);
-            }
-        });
-
-        while ((read = stream.read(buffer)) != -1) {
-            synchronized (backpressureLock) {
-                while (fileChannel.bufferedAmount() > BACKPRESSURE_HIGH) {
-                    backpressureLock.wait();
-                }
-            }
-            sendChunk(fileChannel, uploadId, seq++, buffer, read);
-        }
-
-        // 等待 Agent 返回 upload.done / upload.error
-    }
-}
-```
-
-注意：
-- `sendChunk` 需要在 binary frame 前拼接 `[2 bytes uploadId length][uploadId bytes][8 bytes seq][payload]`。
-- 背压控制是必须的，不能省略。
-- 实际实现中需要在 DataChannel 创建时就包装好 Observer，或者在 P2PConnectionManager 层统一封装带背压的文件发送接口。
-
-### 7.6 扩展 P2PConnectionManager
-
-在 `P2PConnectionManager` 中新增文件 DataChannel 管理：
-
-```java
-private DataChannel fileDataChannel;
-
-public synchronized DataChannel getFileDataChannel(String deviceId) {
-    if (!isP2PActive(deviceId)) return null;
-    if (fileDataChannel == null || !isOpen(fileDataChannel)) {
-        DataChannel.Init init = new DataChannel.Init();
-        init.ordered = true;
-        fileDataChannel = peerConnection.createDataChannel("file", init);
-    }
-    return fileDataChannel;
-}
-```
-
-注意：在 `disconnect()` 时也要关闭 `fileDataChannel`。
-
-### 7.7 HTTP fallback 分片上传
-
-新增 `HttpFileUploader`，封装分片上传逻辑：
-
-```java
-public class HttpFileUploader {
-    private static final long CHUNK_SIZE = 1024 * 1024; // 1 MB
-
-    public void uploadSessionFile(
-        String baseUrl,
-        String cookie,
-        String deviceId,
-        String sessionId,
-        String fileName,
-        InputStream stream,
-        long size,
-        UploadCallback callback
-    ) {
-        // 1. 申请 uploadId
-        String uploadId = webTermApi.startUploadSessionFile(
-            baseUrl, cookie, deviceId, sessionId, fileName, size
-        );
-
-        // 2. 循环读取并上传 chunk
-        byte[] buffer = new byte[(int) CHUNK_SIZE];
-        long chunkIndex = 0;
-        int read;
-        while ((read = stream.read(buffer)) != -1) {
-            byte[] chunk = Arrays.copyOf(buffer, read);
-            webTermApi.uploadSessionFileChunk(
-                baseUrl, cookie, deviceId, uploadId, chunkIndex, chunk,
-                (sent, total) -> callback.onProgress(sent, total)
-            );
-            chunkIndex++;
-        }
-
-        // 3. 发送 complete
-        webTermApi.completeUploadSessionFile(baseUrl, cookie, deviceId, uploadId, callback);
-    }
-}
-```
-
-对应的 `WebTermApi` 方法：
-
-```java
-public String startUploadSessionFile(ServerConfig server, String sessionId, String fileName, long size)
-public void uploadSessionFileChunk(ServerConfig server, String uploadId, long chunkIndex, byte[] chunk, ProgressCallback cb)
-public void completeUploadSessionFile(ServerConfig server, String uploadId, UploadCallback callback)
-public void cancelUploadSessionFile(ServerConfig server, String uploadId)
-```
-
-### 7.8 上传进度弹窗
-
-第一版使用阻塞式弹窗：
-
-- 弹窗标题：`正在上传 demo.zip`
-- 弹窗内容：进度条 + 百分比
-- 弹窗底部：`取消` 按钮
-- 上传完成或失败后自动关闭，并显示 Toast：
-  - 成功：`已上传 demo.zip 到 WebTermUploads/demo.zip`
-  - 失败：`上传失败：当前目录无写入权限`
-- 用户点击取消时：
-  - P2P：发送 `upload.cancel` 控制帧。
-  - HTTP：取消 OkHttp Call，并调用 cancel API。
-- 关闭弹窗。
-
-弹窗不写入 PTY 输出流。
-
-### 7.9 补齐 CWD 实时更新
-
-先验证 `AppFlowCoordinator.onSessionCwdChanged()` 是否可靠覆盖 liveCwd 变化。如未覆盖，再补充 `TerminalLifecycleController.onInfo()`：
-
-```java
-public void onInfo(JSONObject info) {
-    // ...
-    String cwd = info.optString("cwd", "").trim();
-    if (!cwd.isEmpty()) {
-        terminalState.setCwd(cwd);
-    }
-}
-```
-
-## 8. 文件重名与并发安全策略
-
-服务端默认自动重命名，不覆盖，采用 `os.O_EXCL` 原子操作规避 TOCTOU 竞态条件。
-
-```go
-func createUniqueFile(dir, filename string) (*os.File, string, error) {
-    dot := strings.LastIndex(filename, ".")
-    base := filename
-    ext := ""
-    if dot > 0 {
-        base = filename[:dot]
-        ext = filename[dot:]
-    }
-
-    flag := os.O_CREATE | os.O_WRONLY | os.O_EXCL
-    for i := 0; i < 100; i++ {
-        candidate := filename
-        if i > 0 {
-            candidate = fmt.Sprintf("%s (%d)%s", base, i, ext)
-        }
-        targetPath := filepath.Join(dir, candidate)
-        f, err := os.OpenFile(targetPath, flag, 0644)
-        if err == nil {
-            return f, targetPath, nil
-        }
-        if !os.IsExist(err) {
-            return nil, "", err
-        }
-    }
-    return nil, "", errors.New("failed to generate unique filename")
-}
-```
-
-## 9. 失败场景与提示
-
-| 场景 | 处理方式 | 提示文案 |
-|---|---|---|
-| P2P 未连接 | 自动回落 HTTP 分片 | 用户无感知 |
-| P2P 传输中断 | 自动回落 HTTP 分片 | 用户无感知 |
-| HTTP 也失败 | 提示失败 | `上传失败：网络错误` |
-| 无法获取当前终端目录 | 提示失败 | `上传失败：无法获取当前终端目录` |
-| 当前目录是系统敏感目录 | 提示失败 | `上传失败：当前目录不允许上传` |
-| 当前目录无写入权限 | 提示失败 | `上传失败：当前目录无写入权限` |
-| 文件名不合法 | 提示失败 | `上传失败：文件名不合法` |
-| 文件超过限制 | 提示失败 | `上传失败：文件过大` |
-| 用户取消 | 关闭弹窗，不提示错误 | 无 |
-| 服务端未知错误 | 提示失败 | `上传失败：服务器错误` |
-| 已有上传任务进行中 | 提示失败 | `上传失败：已有上传任务进行中` |
+直连与 Relay 各验证 10 MiB、50 MiB、100 MiB；测试压缩包、图片、无扩展名文件、重名、目录切换、无权限、网络/Relay 断开、用户取消、终端页切换，以及 macOS/Linux/Windows Agent。
 
 ## 10. 实施顺序
 
-1. 后端新增 `internal/upload` 包，实现 `StartUpload` / `WriteChunk` / `CompleteUpload` / `CancelUpload`。
-2. Agent 端修改 `OnDataChannel`，支持 `"file"` 标签和 `uploadId` 校验。
-3. Agent 端实现文件通道 handler、分片接收、背压确认、临时文件清理。
-4. 直连模式 HTTP 分片上传路由：`session-file-start/chunk/complete/cancel`。
-5. 中转模式 HTTP fallback 复用同样的分片 API（无需改造网关流式转发）。
-6. Android 端扩展 `P2PConnectionManager`，支持创建/管理 `"file"` DataChannel。
-7. Android 端新增 `FileTransferClient`，实现 uploadId、背压控制、分片发送。
-8. Android 端新增 `HttpFileUploader`，实现 HTTP 分片上传。
-9. Android 顶栏改为“更多选项”菜单，添加入口按钮与图标。
-10. Android 建立上传点击回调链路。
-11. Android 注册文件选择器并解析 URI。
-12. Android `WebTermApi` 新增 HTTP 分片上传方法。
-13. Android 实现上传进度弹窗（含取消）。
-14. 验证并补齐 CWD 实时更新。
+0. 删除/改写 Android `WebTermApi` 的 P2P offer/ice 死接口、`MuxTransport` P2P 注释及其他确认无运行时用途的残留配置；上传代码不引用任何 P2P 名称。
+1. 确定 `fileupload` 与 `filesend` 平行的边界。
+2. 新建 Agent `fileupload.Service`、CWD 快照和文件系统单元测试。
+3. 将 SessionRouter/Direct Server 升级为通用流式 HTTP 请求入口，同时保持 filesend 回归通过。
+4. 改造 Relay Gateway/Agent HTTPProxy 的上传请求流、取消和背压。
+5. 增加上传大小配置和 Nginx 流式代理配置。
+6. 新建 Android `FileUploadController`，由 `WebTermDeviceService` 拥有；接入文件选择与流式 OkHttp body。
+7. 泛化 transfer 通知为上传/接收双向语义，补通知取消路由。
+8. 完成直连、Relay、大文件、弱网、通知并存和跨平台验证。
 
-## 11. 风险与后续工作
-
-| 风险 | 影响 | 缓解措施 |
-|---|---|---|
-| P2P 文件通道需要改 Agent 和 Android 两端 | 高 | 分阶段：先 HTTP 分片上传跑通，再加 P2P |
-| DataChannel 背压控制实现复杂 | 中 | 必须实现，参考 7.5 节代码结构 |
-| uploadId / 任务并发保护缺失会导致文件损坏 | 高 | 协议层强制 uploadId，同一通道串行任务 |
-| 临时文件清理遗漏会污染磁盘 | 中 | 取消/关闭/超时/异常都清理，启动时兜底扫描 |
-| 中转 HTTP 流式改造工作量大 | 高 | **改为分片上传，不复用流式改造** |
-| P2P 连接可能不稳定 | 中 | 设计自动回落 HTTP 分片 |
-| 弹窗阻塞终端界面 | 中 | 第一版接受，后续可改为非阻塞任务浮层 |
-| cwd 不准确 | 中 | 先验证现有机制，再决定是否补 `onInfo` |
-
-### 后续可扩展
-
-- 批量上传
-- 文件夹上传
-- 上传断点续传（分片机制已为断点续传打下基础）
-- 非阻塞上传任务浮层
-- P2P 多文件并发通道
+完成条件：Android 选取单个文件后，文件仅保存到 Agent 在上传开始时固定的 `liveCwd/WebTermUploads`；Relay 和直连走同一 Agent 文件上传服务；传输不随文件大小线性占用内存；取消或失败不留下完整名残缺文件；用户能在终端页及传输通知中看到方向正确的进度和结果。

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/agentnotify"
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
