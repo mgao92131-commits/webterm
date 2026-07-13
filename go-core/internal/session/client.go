@@ -36,6 +36,7 @@ type Client struct {
 	screenClientID string
 	screenAttached atomic.Bool
 	writerStarted  atomic.Bool
+	screenHandler  *screenprotocol.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -56,7 +57,7 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger
 	if len(logger) > 0 {
 		log = logger[0]
 	}
-	return &Client{
+	client := &Client{
 		socket:         socket,
 		session:        terminal,
 		mode:           mode,
@@ -67,6 +68,65 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger
 		screenClientID: randomID(),
 		screenWake:     make(chan struct{}, 1),
 	}
+	if terminal != nil && mode == ClientModeScreen {
+		client.screenHandler = client.newScreenHandler()
+	}
+	return client
+}
+
+func (client *Client) newScreenHandler() *screenprotocol.Handler {
+	if client.session == nil {
+		return nil
+	}
+	rt := client.session.ScreenRuntime()
+	return screenprotocol.NewHandler(
+		screenprotocol.WithHelloCallback(func(hello *pb.Hello) {
+			client.handleScreenHello(hello)
+		}),
+		screenprotocol.WithInputCallback(func(input *pb.TerminalInput) {
+			if rt != nil {
+				rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
+			}
+		}),
+		screenprotocol.WithResizeCallback(func(resize *pb.Resize) {
+			if rt != nil {
+				rt.Resize(client.screenClientID, resize.LeaseId, int(resize.Cols), int(resize.Rows))
+			}
+		}),
+		screenprotocol.WithHistoryRequestCallback(func(req *pb.HistoryRequest) {
+			if rt != nil {
+				rt.RequestHistory(client.screenClientID, req.RequestId, req.BeforeLineId, int(req.Limit))
+			}
+		}),
+		screenprotocol.WithResyncCallback(func(req *pb.ResyncRequest) {
+			if rt != nil {
+				rt.Resync(client.screenClientID)
+			}
+		}),
+		screenprotocol.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
+			if rt == nil {
+				return
+			}
+			leaseID, granted := rt.AcquireLayout(client.screenClientID, req.Interactive)
+			client.sendLayoutLease(leaseID, granted)
+		}),
+		screenprotocol.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
+			if rt != nil {
+				rt.ReleaseLayout(client.screenClientID, req.LeaseId)
+			}
+		}),
+		screenprotocol.WithClipboardResponseCallback(func(resp *pb.ClipboardResponse) {
+			if rt != nil {
+				rt.ClipboardResponse(client.screenClientID, resp.RequestId, resp.Allowed && !resp.Timeout, resp.Data)
+			}
+		}),
+		screenprotocol.WithPingCallback(func(screenRevision uint64) {
+			payload, err := screenprotocol.EncodePong(screenRevision)
+			if err == nil {
+				client.enqueueBinary(payload)
+			}
+		}),
+	)
 }
 
 func (client *Client) Run(ctx context.Context) {
@@ -189,6 +249,7 @@ func (client *Client) readLoop(ctx context.Context) {
 //  2. screen frames form a self-consistent chain: the FrameDeriver diffs
 //     against the last state actually written, so every patch baseRevision
 //     equals the previously written screen revision.
+//
 // Do not "fix" the dual entry by priority-draining one channel before select:
 // that reorders control messages relative to their production order without
 // expressing any real event ordering, and the contract above makes it
@@ -249,44 +310,13 @@ func (client *Client) writeMessage(ctx context.Context, message outboundMessage)
 }
 
 func (client *Client) handleScreenBinary(frame []byte) {
-	rt := client.session.ScreenRuntime()
-	if rt == nil {
-		return
+	if client.screenHandler == nil {
+		client.screenHandler = client.newScreenHandler()
+		if client.screenHandler == nil {
+			return
+		}
 	}
-	handler := screenprotocol.NewHandler(
-		screenprotocol.WithHelloCallback(func(hello *pb.Hello) {
-			client.handleScreenHello(hello)
-		}),
-		screenprotocol.WithInputCallback(func(input *pb.TerminalInput) {
-			rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
-		}),
-		screenprotocol.WithResizeCallback(func(resize *pb.Resize) {
-			rt.Resize(client.screenClientID, resize.LeaseId, int(resize.Cols), int(resize.Rows))
-		}),
-		screenprotocol.WithHistoryRequestCallback(func(req *pb.HistoryRequest) {
-			rt.RequestHistory(client.screenClientID, req.RequestId, req.BeforeLineId, int(req.Limit))
-		}),
-		screenprotocol.WithResyncCallback(func(req *pb.ResyncRequest) {
-			rt.Resync(client.screenClientID)
-		}),
-		screenprotocol.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
-			leaseID, granted := rt.AcquireLayout(client.screenClientID, req.Interactive)
-			client.sendLayoutLease(leaseID, granted)
-		}),
-		screenprotocol.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
-			rt.ReleaseLayout(client.screenClientID, req.LeaseId)
-		}),
-		screenprotocol.WithClipboardResponseCallback(func(resp *pb.ClipboardResponse) {
-			rt.ClipboardResponse(client.screenClientID, resp.RequestId, resp.Allowed && !resp.Timeout, resp.Data)
-		}),
-		screenprotocol.WithPingCallback(func(screenRevision uint64) {
-			payload, err := screenprotocol.EncodePong(screenRevision)
-			if err == nil {
-				client.enqueueBinary(payload)
-			}
-		}),
-	)
-	if err := handler.HandleMessage(frame); err != nil {
+	if err := client.screenHandler.HandleMessage(frame); err != nil {
 		if client.logger != nil {
 			client.logger.Add("warn", "session", fmt.Sprintf("screen protocol handler: %v", err))
 		}

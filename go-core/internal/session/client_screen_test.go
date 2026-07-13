@@ -56,6 +56,21 @@ func TestScreenClientSendsSnapshotOnHello(t *testing.T) {
 	}
 }
 
+func TestScreenClientReusesProtocolHandler(t *testing.T) {
+	terminal, _ := newScreenTestTerminal(t)
+	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+
+	handler := client.screenHandler
+	if handler == nil {
+		t.Fatal("expected screen handler to be initialized once with the client")
+	}
+	client.handleScreenBinary([]byte("not-a-protobuf-envelope"))
+	client.handleScreenBinary([]byte("still-not-a-protobuf-envelope"))
+	if client.screenHandler != handler {
+		t.Fatal("screen protocol handler was recreated for an inbound message")
+	}
+}
+
 // screen 协议的 resize 必须同时落到 PTY winsize 上，
 // 否则 shell/TUI 程序（stty、vim、htop）看到的尺寸会停留在会话创建时的默认值。
 func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {

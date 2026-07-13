@@ -225,6 +225,35 @@ func BenchmarkExportSplitBaseline(b *testing.B) {
 	}
 }
 
+// BenchmarkProjectorSingleDirtyRow isolates the steady-state row-level dirty path. The historical
+// "cursor" scenario clears and sparsely redraws the whole screen, so it cannot validate the
+// single-row allocation target.
+func BenchmarkProjectorSingleDirtyRow(b *testing.B) {
+	for _, sz := range projBaselineSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			scrollback := terminalengine.NewTrackedScrollback(projBaselineScrollbackLines, nil)
+			engine := terminalengine.NewEngine(sz.rows, sz.cols, scrollback)
+			projector := NewProjector(engine, scrollback, "baseline", "instance")
+			if err := engine.Write(genProjASCIIChunk(sz.cols, sz.rows)); err != nil {
+				b.Fatal(err)
+			}
+			baselineFrameSink = projector.ExportState(0, 1)
+			payload := []byte(fmt.Sprintf("\x1b[%d;%dHX", sz.rows/2+1, sz.cols/2+1))
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				if err := engine.Write(payload); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				baselineFrameSink = projector.ExportState(0, uint64(i+2))
+			}
+		})
+	}
+}
+
 // BenchmarkFrameDeriverDiffBaseline 单独测量每客户端 FrameForState diff
 // （linesEqual 全屏逐行比较 + history append 计算），不含 Write 与导出。
 // clients 维度模拟 1/2/4 个 screen client 各自的基线推导。
