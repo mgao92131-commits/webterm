@@ -4,7 +4,6 @@ import com.webterm.core.cache.CachedTerminal;
 import com.webterm.core.cache.TerminalDiskCache;
 public final class TerminalLaunchState {
     final String headerTitle;
-    final String headerSubtitle;
     final String createdAt;
     final String instanceId;
     final String cwd;
@@ -14,7 +13,6 @@ public final class TerminalLaunchState {
 
     private TerminalLaunchState(
         String headerTitle,
-        String headerSubtitle,
         String createdAt,
         String instanceId,
         String cwd,
@@ -23,7 +21,6 @@ public final class TerminalLaunchState {
         int rows
     ) {
         this.headerTitle = headerTitle;
-        this.headerSubtitle = headerSubtitle;
         this.createdAt = createdAt;
         this.instanceId = instanceId;
         this.cwd = cwd;
@@ -35,7 +32,6 @@ public final class TerminalLaunchState {
     static TerminalLaunchState resolve(
         String sessionId,
         String requestedTitle,
-        String requestedName,
         String requestedCwd,
         String normalizedCreatedAt,
         String normalizedInstanceId,
@@ -45,7 +41,6 @@ public final class TerminalLaunchState {
         TerminalDiskCache.Metadata diskMetadata = diskRestore == null ? null : diskRestore.metadata;
         TerminalLaunchState state = new TerminalLaunchState(
             firstNonBlank(cached == null ? null : cached.termTitle, diskMetadata == null ? null : diskMetadata.termTitle, requestedTitle, "Terminal"),
-            firstNonBlank(cached == null ? null : cached.sessionName, diskMetadata == null ? null : diskMetadata.sessionName, requestedName, sessionId),
             firstNonBlank(cached == null ? null : cached.createdAt, diskMetadata == null ? null : diskMetadata.createdAt, normalizedCreatedAt, ""),
             firstNonBlank(cached == null ? null : cached.instanceId, diskMetadata == null ? null : diskMetadata.instanceId, normalizedInstanceId, ""),
             firstNonBlank(requestedCwd, cached == null ? null : cached.cwd, diskMetadata == null ? null : diskMetadata.cwd, ""),

@@ -16,7 +16,6 @@ public class CachedSessionMapperCwdTest {
         TerminalDiskCache.Metadata meta = new TerminalDiskCache.Metadata();
         meta.sessionId = "s1";
         meta.instanceId = "inst1";
-        meta.sessionName = "work";
         meta.termTitle = "zsh";
         meta.createdAt = "2026-07-02T00:00:00Z";
         meta.cwd = "/home/user/projects";

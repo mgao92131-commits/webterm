@@ -50,7 +50,6 @@ public final class TerminalLifecycleController {
     private View quickBar;
     private Button ctrlButton;
     private TextView terminalTitle;
-    private TextView terminalSubtitle;
     private boolean terminalAttachStarted;
     private boolean ctrlDown;
     private WebTermTerminalSessionClient activeSessionClient;
@@ -129,7 +128,7 @@ public final class TerminalLifecycleController {
 
     public void showTerminal(
         String baseUrl, String cookie, String sessionId,
-        String termTitle, String sessionName, String createdAt, String instanceId,
+        String termTitle, String createdAt, String instanceId,
         String relayDeviceId, String cwd,
         WebTermTerminalViewClient.Host viewClientHost,
         WebTermTerminalSessionClient sessionClient,
@@ -143,7 +142,7 @@ public final class TerminalLifecycleController {
             diskRestore[0] = terminalCache.restore(baseUrl, sessionId, normalizedInstanceId, normalizedCreatedAt);
         }
         TerminalLaunchState launchState = TerminalLaunchState.resolve(
-            sessionId, termTitle, sessionName, cwd, normalizedCreatedAt, normalizedInstanceId, cached, diskRestore[0]
+            sessionId, termTitle, cwd, normalizedCreatedAt, normalizedInstanceId, cached, diskRestore[0]
         );
         terminalState.setServerSession(baseUrl, cookie, sessionId, relayDeviceId);
         closed.set(false);
@@ -152,7 +151,6 @@ public final class TerminalLifecycleController {
         TerminalScreenBuilder.Result terminalScreen = TerminalScreenBuilder.build(
             activity,
             launchState.headerTitle,
-            launchState.headerSubtitle,
             host.getSavedFontSize(),
             host.getTypefaceByName(host.getSavedFontType()),
             new WebTermTerminalViewClient(viewClientHost),
@@ -170,8 +168,6 @@ public final class TerminalLifecycleController {
         activeSessionClient = sessionClient;
         terminalAttachStarted = false;
         terminalTitle = terminalScreen.title;
-        terminalSubtitle = terminalScreen.subtitle;
-        terminalSubtitle.setText(launchState.headerSubtitle);
         connectionStatus.bind(terminalScreen.statusIndicator, terminalScreen.retryButton, terminalScreen.reconnectOverlay);
         host.installTerminalInsets(terminalRoot);
         if (cached != null && cached.terminalSession != null) {
@@ -209,7 +205,6 @@ public final class TerminalLifecycleController {
         terminalView = null;
         connectionStatus.clear();
         terminalTitle = null;
-        terminalSubtitle = null;
         terminalRoot = null;
         terminalViewport = null;
         quickBar = null;
@@ -238,7 +233,6 @@ public final class TerminalLifecycleController {
         quickBar = null;
         ctrlButton = null;
         terminalTitle = null;
-        terminalSubtitle = null;
         terminalAttachStarted = false;
     }
 
@@ -253,7 +247,6 @@ public final class TerminalLifecycleController {
         terminalView = null;
         connectionStatus.clear();
         terminalTitle = null;
-        terminalSubtitle = null;
         terminalRoot = null;
         terminalViewport = null;
         quickBar = null;
@@ -382,15 +375,19 @@ public final class TerminalLifecycleController {
     }
 
     public void onInfo(org.json.JSONObject info) {
-        String termTitle = info.optString("termTitle", "").trim();
-        String name = info.optString("name", "").trim();
+        String termTitle = displayTermTitle(info.optString("termTitle", ""));
         String instanceId = info.optString("instanceId", "").trim();
         String createdAt = info.optString("createdAt", "").trim();
         terminalState.updateIdentity(instanceId, createdAt);
         activity.runOnUiThread(() -> {
-            if (terminalTitle != null && !termTitle.isEmpty()) terminalTitle.setText(termTitle);
-            if (terminalSubtitle != null && !name.isEmpty()) terminalSubtitle.setText(name);
+            if (terminalTitle != null) terminalTitle.setText(termTitle);
         });
+    }
+
+    static String displayTermTitle(String termTitle) {
+        if (termTitle == null) return "Terminal";
+        String trimmed = termTitle.trim();
+        return trimmed.isEmpty() ? "Terminal" : trimmed;
     }
 
     public void onExit(int code) {
@@ -462,7 +459,7 @@ public final class TerminalLifecycleController {
 
     private void cacheCurrentTerminal() {
         if (terminalCache == null) return;
-        terminalCache.saveCurrent(terminalState.snapshot(terminalTitle, terminalSubtitle, terminalSession));
+        terminalCache.saveCurrent(terminalState.snapshot(terminalTitle, terminalSession));
     }
 
     private void removeCachedTerminal(String baseUrl, String sessionId) {

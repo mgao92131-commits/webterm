@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
@@ -83,7 +82,7 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 		t.Fatalf("manager initial frame = %#v payload=%s", managerFrame, managerFrame.Payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions", bytes.NewBufferString(`{"name":"mux","cwd":"."}`))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions", bytes.NewBufferString(`{"cwd":"."}`))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -206,7 +205,6 @@ func readMuxTunnel(t *testing.T, ctx context.Context, conn *websocket.Conn) prot
 		return frame
 	}
 }
-
 
 func waitForV2Presence(t *testing.T, relayApp *relayapp.App, userID, deviceID string) {
 	t.Helper()

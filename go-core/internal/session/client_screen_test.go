@@ -67,7 +67,6 @@ func newTestTerminal() *TerminalSession {
 	return &TerminalSession{
 		id:        "s1",
 		instance:  "i1",
-		name:      "test",
 		status:    StatusRunning,
 		cols:      20,
 		rows:      4,

@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "claude-session",
+  "cwd": "/tmp/project",
+  "tool_name": "AskUserQuestion",
+  "tool_use_id": "toolu_question_1",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "选择哪种认证方案？",
+        "header": "认证",
+        "options": [
+          {"label": "OAuth", "description": "使用 OAuth 登录"},
+          {"label": "Token", "description": "使用访问令牌"}
+        ],
+        "multiSelect": false
+      }
+    ]
+  }
+}

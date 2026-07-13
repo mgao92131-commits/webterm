@@ -50,7 +50,6 @@ public final class TerminalCacheCoordinator {
                 snapshot.sessionId,
                 snapshot.instanceId,
                 snapshot.termTitle,
-                snapshot.sessionName,
                 snapshot.cwd,
                 snapshot.createdAt,
                 snapshot.terminalSession
@@ -60,7 +59,6 @@ public final class TerminalCacheCoordinator {
         cached.cookie = snapshot.cookie;
         cached.instanceId = snapshot.instanceId;
         cached.termTitle = snapshot.termTitle;
-        cached.sessionName = snapshot.sessionName;
         cached.cwd = snapshot.cwd;
         cached.createdAt = snapshot.createdAt;
         cached.terminalSession = snapshot.terminalSession;
@@ -151,7 +149,6 @@ public final class TerminalCacheCoordinator {
         public String sessionId;
         public String instanceId;
         public String termTitle;
-        public String sessionName;
         public String cwd;
         public String createdAt;
         public TerminalSession terminalSession;

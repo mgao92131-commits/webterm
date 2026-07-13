@@ -30,7 +30,6 @@ const (
 
 type TerminalOptions struct {
 	ID            string
-	Name          string
 	CWD           string
 	Command       string
 	Args          []string
@@ -45,7 +44,6 @@ type TerminalSession struct {
 	mu              sync.RWMutex
 	id              string
 	instance        string
-	name            string
 	termTitle       string
 	cwd             string
 	liveCwd         string
@@ -121,7 +119,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	terminal = &TerminalSession{
 		id:             options.ID,
 		instance:       randomID(),
-		name:           normalize(options.Name),
 		cwd:            process.CWD(),
 		command:        process.Command(),
 		status:         StatusRunning,
@@ -171,9 +168,7 @@ func (terminal *TerminalSession) Info() Info {
 	return Info{
 		ID:                terminal.id,
 		InstanceID:        terminal.instance,
-		Name:              terminal.name,
 		TermTitle:         terminal.termTitle,
-		DisplayTitle:      displayTitle(terminal.name, terminal.termTitle),
 		CWD:               cwd,
 		RecentInputLines:  []string{},
 		RecentInputHidden: false,
@@ -235,12 +230,6 @@ func (terminal *TerminalSession) lastInputKind() string {
 	return terminal.lastInput.Kind
 }
 
-func (terminal *TerminalSession) Rename(name string) {
-	terminal.mu.Lock()
-	defer terminal.mu.Unlock()
-	terminal.name = normalize(name)
-	terminal.touchLocked()
-}
 
 func (terminal *TerminalSession) Close() {
 	terminal.mu.Lock()
@@ -673,17 +662,6 @@ func (terminal *TerminalSession) touchLocked() {
 	terminal.activeAt = time.Now().UTC()
 }
 
-func displayTitle(name string, termTitle string) string {
-	cleanName := normalize(name)
-	cleanTermTitle := normalize(termTitle)
-	if cleanTermTitle == "" {
-		cleanTermTitle = "Terminal"
-	}
-	if cleanName != "" {
-		return cleanName + " - " + cleanTermTitle
-	}
-	return cleanTermTitle
-}
 
 func normalize(value string) string {
 	return strings.TrimSpace(value)

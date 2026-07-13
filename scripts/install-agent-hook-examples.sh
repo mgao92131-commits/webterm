@@ -31,9 +31,22 @@ AGY_BAK="$AGY_HOOKS.webterm.bak"
 backup_if_exists() {
   local path="$1"
   local bak="$2"
-  if [ -f "$path" ] && [ ! -f "$bak" ]; then
-    cp "$path" "$bak"
-    echo "备份: $path -> $bak"
+  if [ -f "$path" ]; then
+    if [ ! -f "$bak" ]; then
+      cp "$path" "$bak"
+      echo "备份: $path -> $bak"
+    fi
+
+    local timestamp versioned suffix
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    versioned="$path.$timestamp.bak"
+    suffix=1
+    while [ -e "$versioned" ]; do
+      versioned="$path.$timestamp.$suffix.bak"
+      suffix=$((suffix + 1))
+    done
+    cp "$path" "$versioned"
+    echo "本轮备份: $path -> $versioned"
   fi
 }
 
@@ -83,6 +96,8 @@ install_claude() {
   new_hooks='{
   "hooks": {
     "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" claude"}]}],
+    "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Question\" claude"}]}],
+    "PostToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" claude </dev/null"}]}],
     "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Waiting for approval\" claude"}]}],
     "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" claude"}]}],
     "StopFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Failed\" claude"}]}],
@@ -100,7 +115,11 @@ with open(path, 'r') as f:
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
 for event, entries in list(existing_hooks.items()):
-    existing_hooks[event] = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    kept = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    if kept:
+        existing_hooks[event] = kept
+    else:
+        del existing_hooks[event]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:
@@ -131,9 +150,27 @@ command = "__WEBTERM_HELPER__ quiet \"Running\" kimi"
 timeout = 5
 
 [[hooks]]
+event = "PreToolUse"
+matcher = "^AskUserQuestion$"
+command = "__WEBTERM_HELPER__ alert \"Question\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "PostToolUse"
+matcher = "^AskUserQuestion$"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi </dev/null"
+timeout = 5
+
+[[hooks]]
 event = "PermissionRequest"
 matcher = ".*"
 command = "__WEBTERM_HELPER__ alert \"Waiting for approval\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "PermissionResult"
+matcher = ".*"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi </dev/null"
 timeout = 5
 
 [[hooks]]
@@ -212,7 +249,11 @@ with open(path, 'r') as f:
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
 for event, entries in list(existing_hooks.items()):
-    existing_hooks[event] = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    kept = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    if kept:
+        existing_hooks[event] = kept
+    else:
+        del existing_hooks[event]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:
@@ -227,6 +268,7 @@ PY
   fi
   chmod 600 "$CODEX_HOOKS"
   echo "  -> $CODEX_HOOKS"
+  echo "  提示: Codex Hook 定义发生变化后，请在 Codex 中执行 /hooks 审查并信任新定义。"
 }
 
 install_agy() {

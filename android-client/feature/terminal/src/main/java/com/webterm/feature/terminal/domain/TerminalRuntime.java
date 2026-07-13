@@ -71,7 +71,7 @@ public final class TerminalRuntime implements TerminalConnection.Listener,
                        Runnable onBack) {
         currentViewHost = viewHost;
         lifecycle.showTerminal(
-            args.baseUrl, args.cookie, args.sessionId, args.termTitle, args.sessionName,
+            args.baseUrl, args.cookie, args.sessionId, args.termTitle,
             args.createdAt, args.instanceId, args.relayDeviceId, args.cwd,
             this, sessionClient, onBack
         );

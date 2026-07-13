@@ -11,7 +11,6 @@ func newBenchTerminal(rows, cols int) *TerminalSession {
 	return &TerminalSession{
 		id:        "s1",
 		instance:  "i1",
-		name:      "bench",
 		status:    StatusRunning,
 		cols:      cols,
 		rows:      rows,

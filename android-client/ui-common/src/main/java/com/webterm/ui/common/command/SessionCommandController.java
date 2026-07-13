@@ -7,7 +7,6 @@ import android.widget.Toast;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.api.SessionIds;
-import com.webterm.ui.common.dialog.RenameSessionDialogHelper;
 
 public final class SessionCommandController {
     private final Activity activity;
@@ -27,7 +26,7 @@ public final class SessionCommandController {
                 String canonicalSessionId = server.isRelayDevice()
                     ? SessionIds.canonical(sessionId, server.getDeviceId())
                     : sessionId;
-                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), canonicalSessionId, "Terminal", "", server.isRelayDevice(), server.getDeviceId()));
+                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), canonicalSessionId, "Terminal", server.isRelayDevice(), server.getDeviceId()));
             }
 
             @Override
@@ -59,27 +58,6 @@ public final class SessionCommandController {
         });
     }
 
-    public void showRenameDialog(ServerConfig server, String sessionId, String oldName) {
-        RenameSessionDialogHelper.show(() -> activity, oldName, (newName, dialog) -> {
-            api.renameSession(server, sessionId, newName, new WebTermApi.SimpleCallback() {
-                @Override
-                public void onReady() {
-                    activity.runOnUiThread(() -> {
-                        listener.onShowHome();
-                        dialog.dismiss();
-                    });
-                }
-
-                @Override
-                public void onError(String message) {
-                    activity.runOnUiThread(() -> {
-                        Toast.makeText(activity, "重命名失败: " + message, Toast.LENGTH_SHORT).show();
-                        dialog.dismiss();
-                    });
-                }
-            });
-        });
-    }
 
     public void showCloseConfirmDialog(ServerConfig server, String sessionId) {
         showCloseConfirmDialog(server, sessionId, null);
@@ -153,7 +131,7 @@ public final class SessionCommandController {
 
     public interface Listener {
         void onAuthenticated(ServerConfig server);
-        void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId);
+        void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, boolean isRelayDevice, String relayDeviceId);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
         void onSessionClosed(ServerConfig server, String sessionId);
         void onShowHome();

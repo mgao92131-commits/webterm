@@ -33,7 +33,7 @@ func newUploadTestServer(t *testing.T, cwd string) (*Server, []*http.Cookie, str
 	}
 	cookies := loginResponse.Result().Cookies()
 
-	createBody := bytes.NewBufferString(`{"name":"upload","cwd":` + strconv.Quote(cwd) + `}`)
+	createBody := bytes.NewBufferString(`{"cwd":` + strconv.Quote(cwd) + `}`)
 	createRequest := httptest.NewRequest(http.MethodPost, "/api/sessions", createBody)
 	for _, cookie := range cookies {
 		createRequest.AddCookie(cookie)

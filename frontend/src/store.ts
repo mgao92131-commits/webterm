@@ -17,8 +17,6 @@ export interface Device {
 
 export interface Session {
   id: string;
-  name?: string;
-  displayTitle?: string;
   termTitle?: string;
   cwd: string;
   state?: 'running' | 'exited';

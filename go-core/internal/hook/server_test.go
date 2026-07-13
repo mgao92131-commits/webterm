@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/agentnotify"
+	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
@@ -73,7 +73,7 @@ func TestServerDispatchResolvesPID(t *testing.T) {
 	}
 	defer conn.Close()
 
-	terminal, err := application.Sessions().Create("work", ".")
+	terminal, err := application.Sessions().Create(".")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
 	sender := &recordingSender{}
 	application.FileSendService().RegisterSender("dev-1", sender)
 
-	terminal, err := application.Sessions().Create("work", ".")
+	terminal, err := application.Sessions().Create(".")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -290,8 +290,8 @@ func TestDispatchHookEventSendsAgentNotification(t *testing.T) {
 			if msg["importance"] != "alert" || msg["message"] != "agent failed" || msg["source"] != "claude-code" {
 				t.Fatalf("msg=%v", msg)
 			}
-			if msg["title"] != terminal.Info().DisplayTitle {
-				t.Fatalf("title=%v, want DisplayTitle %q", msg["title"], terminal.Info().DisplayTitle)
+			if msg["title"] != "claude-code" {
+				t.Fatalf("title=%v, want %q", msg["title"], "claude-code")
 			}
 			eid, _ := msg["event_id"].(string)
 			if len(eid) < 8 || eid[:3] != "ev_" {
@@ -311,7 +311,7 @@ func TestDispatchHookEventWithoutImportanceSkipsAgentNotification(t *testing.T) 
 	sender := &recordingSender{}
 	application.FileSendService().RegisterSender("dev-1", sender)
 
-	terminal, err := application.Sessions().Create("work", ".")
+	terminal, err := application.Sessions().Create(".")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -337,5 +337,118 @@ func TestDispatchHookEventWithoutImportanceSkipsAgentNotification(t *testing.T) 
 	time.Sleep(300 * time.Millisecond)
 	if msg := sender.last(); msg != nil && msg["type"] == agentnotify.TypeAgentNotification {
 		t.Fatalf("agent_notification should not be dispatched without importance, msg=%v", msg)
+	}
+}
+
+func TestDispatchHookEventWithQuietImportanceUpdatesSessionWithoutAgentNotification(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg.Shell.Command = "/bin/sh"
+	application := app.New(cfg, "test")
+
+	sender := &recordingSender{}
+	application.FileSendService().RegisterSender("dev-1", sender)
+
+	terminal, err := application.Sessions().Create(".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer terminal.Close()
+
+	ev := protocol.HookEvent{
+		Type:       "agent_event",
+		SessionID:  terminal.ID(),
+		Importance: "quiet",
+		Message:    "quiet event",
+		Source:     "claude-code",
+	}
+	s := Server{app: application}
+	if err := s.dispatch(ev); err != nil {
+		t.Fatalf("dispatch quiet event: %v", err)
+	}
+
+	if msg := sender.last(); msg != nil && msg["type"] == agentnotify.TypeAgentNotification {
+		t.Fatalf("agent_notification should not be dispatched for quiet importance, msg=%v", msg)
+	}
+	info := terminal.Info()
+	if info.Notification == nil {
+		t.Fatal("quiet event should still update session notification")
+	}
+	if info.Notification.Importance != "quiet" || info.Notification.Message != "quiet event" || info.Notification.Source != "claude-code" {
+		t.Fatalf("notification=%+v", info.Notification)
+	}
+}
+
+func TestDispatchHookEventSourcingTitle(t *testing.T) {
+	application, _, cancel := startHookServer(t)
+	defer cancel()
+
+	sender := &recordingSender{}
+	application.FileSendService().RegisterSender("dev-1", sender)
+
+	terminal, err := application.Sessions().Create(".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer terminal.Close()
+
+	// 1. 两者均空
+	{
+		ev := protocol.HookEvent{
+			Type:       "agent_event",
+			SessionID:  terminal.ID(),
+			Importance: "alert",
+			Message:    "test msg",
+		}
+		s := Server{app: application}
+		s.dispatchAgentNotification(terminal.ID(), terminal, ev)
+		msg := sender.last()
+		if msg == nil || msg["title"] != "agent_event" {
+			t.Fatalf("title expected agent_event, got %v", msg)
+		}
+	}
+
+	// 2. 无标题但有 source
+	{
+		ev := protocol.HookEvent{
+			Type:       "agent_event",
+			SessionID:  terminal.ID(),
+			Importance: "alert",
+			Message:    "test msg",
+			Source:     "my-source",
+		}
+		s := Server{app: application}
+		s.dispatchAgentNotification(terminal.ID(), terminal, ev)
+		msg := sender.last()
+		if msg == nil || msg["title"] != "my-source" {
+			t.Fatalf("title expected my-source, got %v", msg)
+		}
+	}
+
+	// 3. 有 termTitle
+	{
+		terminal.WriteInput([]byte("printf '\\033]0;my-term-title\\007\\n'\r"))
+		time.Sleep(100 * time.Millisecond)
+
+		ev := protocol.HookEvent{
+			Type:       "agent_event",
+			SessionID:  terminal.ID(),
+			Importance: "alert",
+			Message:    "test msg",
+			Source:     "my-source",
+		}
+		s := Server{app: application}
+		s.dispatchAgentNotification(terminal.ID(), terminal, ev)
+		msg := sender.last()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) && (msg == nil || msg["title"] != "my-term-title") {
+			s.dispatchAgentNotification(terminal.ID(), terminal, ev)
+			msg = sender.last()
+			time.Sleep(50 * time.Millisecond)
+		}
+		if msg == nil || msg["title"] != "my-term-title" {
+			t.Fatalf("title expected my-term-title, got %v (termTitle is %q)", msg, terminal.Info().TermTitle)
+		}
 	}
 }

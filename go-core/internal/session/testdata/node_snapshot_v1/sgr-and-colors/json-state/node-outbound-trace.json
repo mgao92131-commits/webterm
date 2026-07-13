@@ -15,15 +15,13 @@
     {
       "index": 1,
       "isBinary": false,
-      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-sgr-and-colors-json-state\",\"instanceId\":\"5d0ceee2-d397-4e8b-a57f-87ead7a7be60\",\"name\":\"Trace\",\"termTitle\":\"\",\"displayTitle\":\"Trace - Terminal\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:43.378Z\",\"lastActiveAt\":\"2026-07-10T01:39:43.471Z\"}}",
+      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-sgr-and-colors-json-state\",\"instanceId\":\"5d0ceee2-d397-4e8b-a57f-87ead7a7be60\",\"termTitle\":\"\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:43.378Z\",\"lastActiveAt\":\"2026-07-10T01:39:43.471Z\"}}",
       "decoded": {
         "type": "info",
         "data": {
           "id": "trace-sgr-and-colors-json-state",
           "instanceId": "5d0ceee2-d397-4e8b-a57f-87ead7a7be60",
-          "name": "Trace",
           "termTitle": "",
-          "displayTitle": "Trace - Terminal",
           "cwd": "/private/tmp",
           "recentInputLines": [],
           "recentInputHidden": false,

@@ -72,7 +72,6 @@ public final class TerminalViewModel extends ViewModel {
         public final String cookie;
         public final String sessionId;
         public final String termTitle;
-        public final String sessionName;
         public final String createdAt;
         public final String instanceId;
         public final boolean relayDevice;
@@ -80,14 +79,13 @@ public final class TerminalViewModel extends ViewModel {
         public final String cwd;
 
         public TerminalSessionArgs(String baseUrl, String cookie, String sessionId,
-                                    String termTitle, String sessionName,
+                                    String termTitle,
                                     String createdAt, String instanceId,
                                     boolean relayDevice, String relayDeviceId, String cwd) {
             this.baseUrl = baseUrl;
             this.cookie = cookie;
             this.sessionId = sessionId;
             this.termTitle = termTitle;
-            this.sessionName = sessionName;
             this.createdAt = createdAt;
             this.instanceId = instanceId;
             this.relayDevice = relayDevice;

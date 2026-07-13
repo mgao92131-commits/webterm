@@ -1,1 +1,5 @@
-{"type":"state","seq":2,"data":"\u001b[1mbold\u001b[0m \u001b[3mitalic\u001b[0m \u001b[4munderline\r\n\u001b[38;5;196;24m256-fg\u001b[0m \u001b[48;5;21m256-bg\u001b[0m \u001b[38;2;255;128;0mrgb-fg\u001b[1B\u001b[20D\u001b[0m"}
+{
+  "type": "state",
+  "seq": 2,
+  "data": "\u001b[1mbold\u001b[0m \u001b[3mitalic\u001b[0m \u001b[4munderline\r\n\u001b[38;5;196;24m256-fg\u001b[0m \u001b[48;5;21m256-bg\u001b[0m \u001b[38;2;255;128;0mrgb-fg\u001b[1B\u001b[20D\u001b[0m"
+}

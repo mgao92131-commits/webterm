@@ -184,13 +184,12 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 	}
 	if method == http.MethodPost && path == "/api/sessions" {
 		var req struct {
-			Name string `json:"name"`
 			CWD  string `json:"cwd"`
 		}
 		if len(body) > 0 {
 			_ = json.Unmarshal(body, &req)
 		}
-		terminal, err := r.manager.Create(req.Name, req.CWD)
+		terminal, err := r.manager.Create(req.CWD)
 		if err != nil {
 			return http.StatusBadRequest, nil, err
 		}
@@ -200,17 +199,7 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 		id := strings.TrimPrefix(path, "/api/sessions/")
 		id, _ = url.PathUnescape(id)
 		if method == http.MethodPatch {
-			var req struct {
-				Name string `json:"name"`
-			}
-			if len(body) > 0 {
-				_ = json.Unmarshal(body, &req)
-			}
-			terminal, ok := r.manager.Rename(id, req.Name)
-			if !ok {
-				return http.StatusNotFound, nil, errors.New("session not found")
-			}
-			return marshalStatus(http.StatusOK, terminal.Info())
+			return http.StatusMethodNotAllowed, nil, errors.New("method not allowed")
 		}
 		if method == http.MethodDelete {
 			if !r.manager.Close(id) {

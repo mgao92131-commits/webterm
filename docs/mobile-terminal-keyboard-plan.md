@@ -7,14 +7,12 @@
 1. 软键盘弹出时终端视图会缩放（`fit()` 导致行列数变化、内容重排）
 2. 底部 quickbar 有时不弹出，有时高出来一块
 3. 软键盘弹出时终端视图有时不在最底部
-4. 顶部标题输入框 focus 时被浏览器推到最顶部
 
 ## 目标
 
 1. 软键盘弹出时，不让终端视图缩放
 2. 保证终端视图最后一行文本正好在键盘上方
-3. 顶部标题输入框 focus 时，不被推到页面最顶部
-4. 大幅简化 `TerminalLayoutController` 的逻辑
+3. 大幅简化 `TerminalLayoutController` 的逻辑
 
 ## 最终方案
 
@@ -77,7 +75,7 @@ const isKeyboardEvent =
   Math.abs(visualViewport.scale - 1) < 0.05;
 ```
 
-可选增强：结合当前 `activeElement` 判断（`.xterm-helper-textarea` 或 `#sessionName`）。
+可选增强：结合当前 `activeElement` 判断是否为 `.xterm-helper-textarea`。
 
 ### 三、软键盘弹出处理
 
@@ -110,25 +108,9 @@ terminalView.fit();
 sendResizeMessage();
 ```
 
-### 六、标题输入框处理
+### 六、只读标题处理
 
-在 `TerminalView.vue` 的 `onTitleFocus` 中：
-
-```js
-function onTitleFocus() {
-  titleEditing = true;
-  if (context) {
-    context.titleBeforeEdit = sessionNameVal.value;
-  }
-  const titleInput = document.getElementById("sessionName") as HTMLInputElement;
-  titleInput?.focus({ preventScroll: true });
-  titleInput?.select();
-  // iOS 兜底：防止页面滚动
-  requestAnimationFrame(() => window.scrollTo(0, 0));
-}
-```
-
-因为 `body` 已 `overflow: hidden` 且 header 是 fixed，标题栏不会被推走。
+顶部标题栏现在是只读文本，移动端无需处理标题控件聚焦时的防滚动与防位移逻辑，直接渲染即可。
 
 ## 需要删除/简化的逻辑
 
@@ -159,6 +141,5 @@ function onTitleFocus() {
 1. 移动端点击终端区域，软键盘弹出，终端内容不缩放、不重排
 2. 终端最后一行光标/文本正好位于键盘上方
 3. quickbar 始终位于键盘上方，不出现"高出来一块"或"不弹出"
-4. 点击标题输入框，软键盘弹出时标题栏保持在原位
-5. 旋转屏幕、调整字体大小后终端能正确 fit
-6. 键盘收起后终端恢复正常尺寸
+4. 旋转屏幕、调整字体大小后终端能正确 fit
+5. 键盘收起后终端恢复正常尺寸

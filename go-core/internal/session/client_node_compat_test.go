@@ -329,7 +329,6 @@ func newTestTerminalWithSize(cols, rows int) *TerminalSession {
 	return &TerminalSession{
 		id:        "s1",
 		instance:  "i1",
-		name:      "test",
 		status:    StatusRunning,
 		cols:      cols,
 		rows:      rows,

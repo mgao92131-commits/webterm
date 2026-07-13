@@ -179,8 +179,8 @@ public final class AppFlowCoordinator implements
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
-            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice, relayDeviceId, "");
+            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, boolean isRelayDevice, String relayDeviceId) {
+                showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", isRelayDevice, relayDeviceId, "");
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -291,7 +291,7 @@ public final class AppFlowCoordinator implements
 
     /** 导航到终端页；生命周期允许、参数齐全且 navigate 未抛异常才返回 true。 */
     public boolean navigateToTerminal(String baseUrl, String cookie, String sessionId,
-                                      String termTitle, String sessionName,
+                                      String termTitle,
                                       String createdAt, String instanceId,
                                       boolean relayDevice, String relayDeviceId, String cwd) {
         Bundle args = new Bundle();
@@ -299,7 +299,6 @@ public final class AppFlowCoordinator implements
         args.putString("cookie", cookie);
         args.putString("sessionId", sessionId);
         args.putString("termTitle", termTitle);
-        args.putString("sessionName", sessionName);
         args.putString("createdAt", createdAt != null ? createdAt : "");
         args.putString("instanceId", instanceId != null ? instanceId : "");
         args.putBoolean("relayDevice", relayDevice);
@@ -503,24 +502,24 @@ public final class AppFlowCoordinator implements
     // ── Terminal ─────────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false, "", "");
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false, "", "");
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false, "", "");
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String createdAt) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice, "", "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId, relayDevice, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
         // connectionKey 必须与 WebTermDeviceService 生产侧一致（直连映射 "direct"），
         // 否则 Agent 告警的“终端可见则免打扰”判定永远失效。
         String connectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDevice, relayDeviceId);
-        if (navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+        if (navigateToTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
             relayDevice, relayDeviceId, cwd)) {
             terminalFocus.setVisible(connectionKey, sessionId);
             mCurrentTerminalConnectionKey = connectionKey;
@@ -533,7 +532,7 @@ public final class AppFlowCoordinator implements
     public void startTerminalInFragment(Activity activity, TerminalViewModel.TerminalSessionArgs args,
                                           TerminalFragment fragment) {
         startTerminalInFragment(activity, args.baseUrl, args.cookie, args.sessionId,
-            args.termTitle, args.sessionName, args.createdAt, args.instanceId,
+            args.termTitle, args.createdAt, args.instanceId,
             args.relayDevice, args.relayDeviceId, args.cwd, fragment);
     }
 
@@ -543,13 +542,13 @@ public final class AppFlowCoordinator implements
     }
 
     public void startTerminalInFragment(Activity activity, String baseUrl, String cookie, String sessionId,
-                                         String termTitle, String sessionName,
+                                         String termTitle,
                                          String createdAt, String instanceId,
                                          boolean relayDevice, String relayDeviceId, String cwd,
                                          TerminalFragment fragment) {
         mScreenMode = ScreenMode.TERMINAL;
         TerminalViewModel.TerminalSessionArgs args = new TerminalViewModel.TerminalSessionArgs(
-            baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+            baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
             relayDevice, relayDeviceId, cwd
         );
         if (mTerminalRuntimeRegistry == null) {
@@ -598,14 +597,14 @@ public final class AppFlowCoordinator implements
     // ── HomeHost ─────────────────────────────────────────────────────
 
     public void showTerminal(Activity activity, ServerConfig server, String sessionId, String termTitle,
-                             String sessionName, String createdAt, String instanceId, String cwd) {
-        openSession(activity, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd);
+                             String createdAt, String instanceId, String cwd) {
+        openSession(activity, server, sessionId, termTitle, createdAt, instanceId, cwd);
     }
 
-    public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle, String sessionName,
+    public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle,
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
     }
 
     /** 处理 Agent 通知点击：只登记/替换挂起任务，实际导航由 drainPendingTerminalOpen
@@ -667,7 +666,7 @@ public final class AppFlowCoordinator implements
             return true;
         }
         boolean switchingTerminal = currentDestinationId() == R.id.terminalFragment;
-        if (!navigateToTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", "", "", "",
+        if (!navigateToTerminal(server.getUrl(), server.getCookie(), sessionId, "Terminal", "", "",
             server.isRelayDevice(), server.getDeviceId(), "")) {
             return false;
         }
@@ -899,9 +898,7 @@ public final class AppFlowCoordinator implements
 
     // ── SessionRowActions (not implemented by AppFlowCoordinator directly; handled via MainActivity) ──────────────────────────────────────────
 
-    public void renameSession(ServerConfig server, String sessionId, String oldName) {
-        if (mSessionCommands != null) mSessionCommands.showRenameDialog(server, sessionId, oldName);
-    }
+
     public void closeSession(ServerConfig server, String sessionId) {
         closeSession(server, sessionId, null);
     }

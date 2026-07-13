@@ -30,7 +30,6 @@ public final class TerminalScreenBuilder {
     public static Result build(
         Activity activity,
         String headerTitle,
-        String headerSubtitle,
         int fontSize,
         Typeface typeface,
         TerminalViewClient terminalViewClient,
@@ -79,7 +78,7 @@ public final class TerminalScreenBuilder {
         title.setEllipsize(TextUtils.TruncateAt.END);
         labels.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        // 副标题容器：[指示灯] + [副标题]
+        // 副标题容器：[指示灯]
         LinearLayout subtitleContainer = new LinearLayout(activity);
         subtitleContainer.setOrientation(LinearLayout.HORIZONTAL);
         subtitleContainer.setGravity(Gravity.CENTER_VERTICAL);
@@ -90,14 +89,6 @@ public final class TerminalScreenBuilder {
             UIUtils.dp(activity, DesignTokens.STATUS_DOT_SIZE));
         indicatorLp.setMargins(0, 0, UIUtils.dp(activity, DesignTokens.SPACE_2), 0);
         subtitleContainer.addView(statusIndicator, indicatorLp);
-
-        TextView subtitle = new TextView(activity);
-        subtitle.setText(headerSubtitle);
-        subtitle.setTextColor(DesignTokens.TEXT_SECONDARY);
-        subtitle.setTextSize(DesignTokens.TEXT_CAPTION_SIZE);
-        subtitle.setSingleLine(true);
-        subtitle.setEllipsize(TextUtils.TruncateAt.END);
-        subtitleContainer.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
 
         labels.addView(subtitleContainer, new LinearLayout.LayoutParams(-1, -2));
         heading.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
@@ -211,7 +202,6 @@ public final class TerminalScreenBuilder {
         result.terminalViewport = terminalViewport;
         result.quickBar = quickBar;
         result.title = title;
-        result.subtitle = subtitle;
         result.retryButton = retryButton;
         result.statusIndicator = statusIndicator;
         result.ctrlButton = outCtrlButton[0];
@@ -343,7 +333,6 @@ public final class TerminalScreenBuilder {
         public View terminalViewport;
         public View quickBar;
         public TextView title;
-        public TextView subtitle;
         public ImageButton retryButton;
         public StatusIndicatorView statusIndicator;
         public Button ctrlButton;

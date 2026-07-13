@@ -109,7 +109,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     @Override public void showAddServerDialog(ServerConfig existingServer) { coordinator.showAddServerDialog(this, existingServer); }
     @Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
-    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd); }
+    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) { coordinator.onServerAuthenticated(existingServer, name, url, cookie, username, password); }
     @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
     @Override public void navigateHome() { coordinator.navigateToHome(); }
@@ -140,7 +140,6 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     // ── SessionRowActions ────────────────────────────────────────
 
-    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId, String cwd) { coordinator.openSession(this, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd); }
-    @Override public void renameSession(ServerConfig server, String sessionId, String oldName) { coordinator.renameSession(server, sessionId, oldName); }
+    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.openSession(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void closeSession(ServerConfig server, String sessionId) { coordinator.closeSession(server, sessionId); }
 }

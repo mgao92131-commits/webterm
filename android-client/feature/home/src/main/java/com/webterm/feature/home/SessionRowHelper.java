@@ -62,18 +62,7 @@ public final class SessionRowHelper {
 
         content.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        // 会话别名/名称副标题（始终可见，没有时留空行）
-        TextView subtitleView = new TextView(context);
-        subtitleView.setTag("subtitle");
-        subtitleView.setTextColor(DesignTokens.TEXT_SECONDARY);
-        subtitleView.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
-        subtitleView.setTypeface(DesignTokens.fontGeistSans(context));
-        subtitleView.setSingleLine(true);
-        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
-        subtitleView.setVisibility(View.VISIBLE);
-        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
-        subtitleLp.setMargins(0, UIUtils.dp(context, DesignTokens.SPACE_1), 0, 0); // 与主标题空开小间距
-        content.addView(subtitleView, subtitleLp);
+
 
         // 最近命令行
         TextView commandView = new TextView(context);
@@ -95,7 +84,6 @@ public final class SessionRowHelper {
 
     public static void updateSessionRow(final SessionRowActions actions, View row, JSONObject session, final ServerConfig server) {
         TextView titleView = row.findViewWithTag("title");
-        TextView subtitleView = row.findViewWithTag("subtitle");
         TextView agentChip = row.findViewWithTag("agent_chip");
         TextView commandView = row.findViewWithTag("command_box");
 
@@ -104,8 +92,6 @@ public final class SessionRowHelper {
 
         String rawTermTitle = session.optString("termTitle", "").trim();
         final String termTitle = rawTermTitle.isEmpty() ? "Terminal" : rawTermTitle;
-        final String nameText = session.optString("name", "").trim();
-        final String displayTitle = session.optString("displayTitle", "").trim();
         final String createdAt = session.optString("createdAt", "").trim();
         final String instanceId = session.optString("instanceId", "").trim();
         final String cwd = session.optString("cwd", "").trim();
@@ -114,25 +100,10 @@ public final class SessionRowHelper {
             titleView.setText(termTitle);
         }
 
-        if (subtitleView != null) {
-            if (nameText.isEmpty()) {
-                subtitleView.setVisibility(View.GONE);
-            } else {
-                subtitleView.setText(nameText);
-                subtitleView.setVisibility(View.VISIBLE);
-            }
-        }
-
         updateAgentChip(agentChip, session);
         updateCommandLine(commandView, session);
 
-        final String titleForAction = !nameText.isEmpty() ? nameText : termTitle;
-        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, nameText, createdAt, instanceId, cwd));
-
-        row.setOnLongClickListener((v) -> {
-            actions.renameSession(server, id, titleForAction);
-            return true;
-        });
+        row.setOnClickListener((v) -> actions.openSession(server, id, termTitle, createdAt, instanceId, cwd));
     }
 
     private static void updateAgentChip(TextView agentChip, JSONObject session) {

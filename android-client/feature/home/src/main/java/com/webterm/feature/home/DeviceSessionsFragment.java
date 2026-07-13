@@ -177,16 +177,12 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
 
     @Override
     public void openSession(ServerConfig server, String sessionId, String termTitle,
-                            String sessionName, String createdAt, String instanceId, String cwd) {
+                            String createdAt, String instanceId, String cwd) {
         if (mHost != null) {
-            mHost.showTerminal(server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd);
+            mHost.showTerminal(server, sessionId, termTitle, createdAt, instanceId, cwd);
         }
     }
 
-    @Override
-    public void renameSession(ServerConfig server, String sessionId, String oldName) {
-        if (mHost != null) mHost.renameSession(server, sessionId, oldName);
-    }
 
     @Override
     public void closeSession(ServerConfig server, String sessionId) {

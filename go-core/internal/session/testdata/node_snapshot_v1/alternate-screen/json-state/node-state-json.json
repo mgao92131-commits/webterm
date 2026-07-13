@@ -1,1 +1,5 @@
-{"type":"state","seq":2,"data":"main screen line\u001b[1B\u001b[16D"}
+{
+  "type": "state",
+  "seq": 2,
+  "data": "main screen line\u001b[1B\u001b[16D"
+}

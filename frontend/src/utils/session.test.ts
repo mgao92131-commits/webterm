@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSessionId, sortSessionsByAttention } from './session';
+import { displayTermTitle, parseSessionId, sortSessionsByAttention } from './session';
 
 describe('parseSessionId', () => {
   it('returns localId only for plain id', () => {
@@ -16,6 +16,18 @@ describe('parseSessionId', () => {
 
   it('treats empty deviceId as still present', () => {
     expect(parseSessionId(':s1')).toEqual({ deviceId: '', localId: 's1' });
+  });
+});
+
+describe('displayTermTitle', () => {
+  it('falls back for missing or blank titles', () => {
+    expect(displayTermTitle()).toBe('Terminal');
+    expect(displayTermTitle('')).toBe('Terminal');
+    expect(displayTermTitle('   ')).toBe('Terminal');
+  });
+
+  it('trims reported titles', () => {
+    expect(displayTermTitle('  Codex  ')).toBe('Codex');
   });
 });
 

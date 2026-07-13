@@ -25,15 +25,13 @@
     {
       "index": 1,
       "isBinary": false,
-      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-json-replay\",\"instanceId\":\"4b1922d8-0f67-43d3-ab06-95362e271d9c\",\"name\":\"Trace\",\"termTitle\":\"\",\"displayTitle\":\"Trace - Terminal\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:42.888Z\",\"lastActiveAt\":\"2026-07-10T01:39:42.980Z\"}}",
+      "rawBase64": "{\"type\":\"info\",\"data\":{\"id\":\"trace-json-replay\",\"instanceId\":\"4b1922d8-0f67-43d3-ab06-95362e271d9c\",\"termTitle\":\"\",\"cwd\":\"/private/tmp\",\"recentInputLines\":[],\"recentInputHidden\":false,\"command\":\"/bin/cat\",\"status\":\"running\",\"clients\":1,\"cols\":100,\"rows\":30,\"createdAt\":\"2026-07-10T01:39:42.888Z\",\"lastActiveAt\":\"2026-07-10T01:39:42.980Z\"}}",
       "decoded": {
         "type": "info",
         "data": {
           "id": "trace-json-replay",
           "instanceId": "4b1922d8-0f67-43d3-ab06-95362e271d9c",
-          "name": "Trace",
           "termTitle": "",
-          "displayTitle": "Trace - Terminal",
           "cwd": "/private/tmp",
           "recentInputLines": [],
           "recentInputHidden": false,

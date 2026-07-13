@@ -140,7 +140,6 @@ public class SessionRepositoryTest {
         metadata.instanceId = "i1";
         metadata.createdAt = "2026-07-02T00:00:00Z";
         metadata.termTitle = "zsh";
-        metadata.sessionName = "cached";
         return metadata;
     }
 

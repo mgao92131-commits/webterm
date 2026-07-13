@@ -19,7 +19,7 @@ import (
 func newUploadRouter(t *testing.T, cwd string, maxSize int64) (*SessionRouter, string) {
 	t.Helper()
 	manager := session.NewManager(session.TerminalDefaults{Command: "/bin/sh"})
-	terminal, err := manager.Create("upload-route-test", cwd)
+	terminal, err := manager.Create(cwd)
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}

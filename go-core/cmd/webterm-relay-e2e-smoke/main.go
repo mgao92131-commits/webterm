@@ -103,19 +103,13 @@ func runSessionLifecycle(ctx context.Context, relayApp *relayapp.App, baseURL st
 	if err := waitForNoStreams(ctx, relayApp, phase+" create session"); err != nil {
 		return err
 	}
-	if err := expectSessionName(ctx, baseURL, token, deviceID, sessionID, "relay-e2e-"+phase); err != nil {
-		return err
-	}
 	secondSessionID := ""
 	if useMux {
-		secondSessionID, err = createSessionWithName(ctx, baseURL, token, deviceID, cwd, "relay-e2e-"+phase+"-second")
+		secondSessionID, err = createSession(ctx, baseURL, token, deviceID, cwd, phase)
 		if err != nil {
 			return err
 		}
 		if err := waitForNoStreams(ctx, relayApp, phase+" create second session"); err != nil {
-			return err
-		}
-		if err := expectSessionName(ctx, baseURL, token, deviceID, secondSessionID, "relay-e2e-"+phase+"-second"); err != nil {
 			return err
 		}
 	}
@@ -148,19 +142,7 @@ func runSessionLifecycle(ctx context.Context, relayApp *relayapp.App, baseURL st
 			return err
 		}
 	}
-	renamed := "relay-e2e-" + phase + "-renamed"
-	if err := renameSession(ctx, baseURL, token, deviceID, sessionID, renamed); err != nil {
-		return err
-	}
-	if err := waitForNoStreams(ctx, relayApp, phase+" rename session"); err != nil {
-		return err
-	}
-	if err := expectSessionName(ctx, baseURL, token, deviceID, sessionID, renamed); err != nil {
-		return err
-	}
-	if err := waitForNoStreams(ctx, relayApp, phase+" list renamed session"); err != nil {
-		return err
-	}
+
 	if err := deleteSession(ctx, baseURL, token, deviceID, sessionID); err != nil {
 		return err
 	}
@@ -300,11 +282,7 @@ func waitForNoStreams(ctx context.Context, relayApp *relayapp.App, phase string)
 }
 
 func createSession(ctx context.Context, baseURL string, token string, deviceID string, cwd string, phase string) (string, error) {
-	return createSessionWithName(ctx, baseURL, token, deviceID, cwd, "relay-e2e-"+phase)
-}
-
-func createSessionWithName(ctx context.Context, baseURL string, token string, deviceID string, cwd string, name string) (string, error) {
-	statusCode, body, err := sessionAPI(ctx, http.MethodPost, baseURL, token, deviceID, "/api/sessions", []byte(fmt.Sprintf(`{"name":%q,"cwd":%q}`, name, cwd)))
+	statusCode, body, err := sessionAPI(ctx, http.MethodPost, baseURL, token, deviceID, "/api/sessions", []byte(fmt.Sprintf(`{"cwd":%q}`, cwd)))
 	if err != nil {
 		return "", err
 	}
@@ -321,22 +299,6 @@ func createSessionWithName(ctx context.Context, baseURL string, token string, de
 		return "", fmt.Errorf("create session returned empty id: %s", body)
 	}
 	return created.ID, nil
-}
-
-func expectSessionName(ctx context.Context, baseURL string, token string, deviceID string, sessionID string, name string) error {
-	sessions, err := listSessions(ctx, baseURL, token, deviceID)
-	if err != nil {
-		return err
-	}
-	for _, session := range sessions {
-		if session.ID == sessionID {
-			if session.Name != name {
-				return fmt.Errorf("session %s name=%q, want %q", sessionID, session.Name, name)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("session %s missing from list", sessionID)
 }
 
 func expectSessionDeleted(ctx context.Context, baseURL string, token string, deviceID string, sessionID string) error {
@@ -367,23 +329,7 @@ func listSessions(ctx context.Context, baseURL string, token string, deviceID st
 	return sessions, nil
 }
 
-func renameSession(ctx context.Context, baseURL string, token string, deviceID string, sessionID string, name string) error {
-	statusCode, body, err := sessionAPI(ctx, http.MethodPatch, baseURL, token, deviceID, "/api/sessions/"+sessionID, []byte(fmt.Sprintf(`{"name":%q}`, name)))
-	if err != nil {
-		return err
-	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("rename session status=%d body=%s", statusCode, body)
-	}
-	var renamed sessionInfo
-	if err := json.Unmarshal(body, &renamed); err != nil {
-		return err
-	}
-	if renamed.ID != sessionID || renamed.Name != name {
-		return fmt.Errorf("rename response id=%q name=%q, want id=%q name=%q", renamed.ID, renamed.Name, sessionID, name)
-	}
-	return nil
-}
+
 
 func deleteSession(ctx context.Context, baseURL string, token string, deviceID string, sessionID string) error {
 	statusCode, body, err := sessionAPI(ctx, http.MethodDelete, baseURL, token, deviceID, "/api/sessions/"+sessionID, nil)
@@ -421,7 +367,6 @@ func sessionAPI(ctx context.Context, method string, baseURL string, token string
 
 type sessionInfo struct {
 	ID   string `json:"id"`
-	Name string `json:"name"`
 }
 
 type terminalProbe struct {

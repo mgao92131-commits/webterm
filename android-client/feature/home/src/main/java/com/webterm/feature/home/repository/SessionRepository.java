@@ -20,7 +20,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicLong;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -138,7 +137,6 @@ public final class SessionRepository {
     private final class ServerSubscription implements ServerSessionDataSource.Listener {
         final ServerConfig server;
         final ServerSessionsLiveData liveData = new ServerSessionsLiveData(this);
-        final AtomicLong hydrateGeneration = new AtomicLong(0);
         int observerCount = 0;
         boolean wsStarted = false;
         long fallbackDelayMs = FALLBACK_INITIAL_DELAY_MS;
@@ -188,7 +186,6 @@ public final class SessionRepository {
                 wsStarted = false;
                 wsSource.stop(server);
             }
-            hydrateGeneration.incrementAndGet();
         }
 
         private void scheduleGracefulStop() {
@@ -224,33 +221,15 @@ public final class SessionRepository {
 
 
 
-        /**
-         * Hydrates session names off the main thread (the disk cache may do IO)
-         * and emits the result on the main thread. A generation counter drops
-         * stale results when a newer update arrives or the subscription stops.
-         */
-        void hydrateAndEmit(JSONArray sessions, SessionListResult.State state, String errorMessage) {
-            final long generation = hydrateGeneration.incrementAndGet();
-            final JSONArray input = copySessions(sessions);
-            if (executor == null) {
-                emitIfCurrent(generation, hydrateCachedNames(server, input), state, errorMessage);
-                return;
-            }
-            executor.execute(() -> {
-                JSONArray hydrated = hydrateCachedNames(server, input);
-                mainHandler.post(() -> emitIfCurrent(generation, hydrated, state, errorMessage));
-            });
-        }
-
-        void emitIfCurrent(long generation, JSONArray sessions, SessionListResult.State state, String errorMessage) {
-            if (generation != hydrateGeneration.get()) return;
+        void emitSessions(JSONArray sessions, SessionListResult.State state, String errorMessage) {
+            JSONArray input = copySessions(sessions);
             sessionCache.put(server, new SessionListCache.Snapshot(
-                copySessions(sessions),
+                copySessions(input),
                 System.currentTimeMillis(),
                 toCacheState(state),
                 errorMessage
             ));
-            liveData.setValue(new SessionListResult(sessions, state, errorMessage, false));
+            liveData.setValue(new SessionListResult(input, state, errorMessage, false));
         }
 
         // ── WS callbacks ─────────────────────────────────────────────
@@ -281,7 +260,7 @@ public final class SessionRepository {
         @Override
         public void onSessions(JSONArray sessions) {
             JSONArray filtered = filterAndNormalize(server, sessions);
-            hydrateAndEmit(filtered, SessionListResult.State.CONNECTED, null);
+            emitSessions(filtered, SessionListResult.State.CONNECTED, null);
         }
 
         @Override
@@ -294,7 +273,7 @@ public final class SessionRepository {
                 ? copySessions(snapshot.sessions)
                 : new JSONArray();
             upsertSession(sessions, normalized);
-            hydrateAndEmit(sessions, SessionListResult.State.CONNECTED, null);
+            emitSessions(sessions, SessionListResult.State.CONNECTED, null);
         }
 
         @Override
@@ -413,7 +392,7 @@ public final class SessionRepository {
                 state = SessionListResult.State.CONNECTED;
                 JSONArray onlineSessions = result.sessions != null ? result.sessions : new JSONArray();
                 if (sub != null) {
-                    sub.hydrateAndEmit(onlineSessions, state, null);
+                    sub.emitSessions(onlineSessions, state, null);
                 } else {
                     sessionCache.put(server, new SessionListCache.Snapshot(
                         copySessions(onlineSessions),
@@ -598,46 +577,7 @@ public final class SessionRepository {
         sessions.put(normalizedData);
     }
 
-    private JSONArray hydrateCachedNames(ServerConfig server, JSONArray sessions) {
-        if (terminalCache == null || sessions == null) return sessions;
-        Map<String, CachedTerminal> memoryCaches = terminalCache.getMemorySessionsForServer(server);
-        List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server);
-        Map<String, TerminalDiskCache.Metadata> diskMap = new HashMap<>();
-        if (diskCaches != null) {
-            for (TerminalDiskCache.Metadata meta : diskCaches) {
-                if (meta.sessionId != null) diskMap.put(meta.sessionId, meta);
-            }
-        }
 
-        JSONArray result = new JSONArray();
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject session = sessions.optJSONObject(i);
-            if (session == null) continue;
-            String sessionId = session.optString("id");
-            String sessionName = null;
-            CachedTerminal memCached = memoryCaches.get(sessionId);
-            if (memCached != null) {
-                sessionName = memCached.sessionName;
-            } else {
-                TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
-                if (diskCached != null) {
-                    sessionName = diskCached.sessionName;
-                }
-            }
-            if (sessionName != null && session.optString("name", "").trim().isEmpty()) {
-                try {
-                    JSONObject copy = new JSONObject(session.toString());
-                    copy.put("name", sessionName);
-                    result.put(copy);
-                } catch (JSONException ignored) {
-                    result.put(session);
-                }
-            } else {
-                result.put(session);
-            }
-        }
-        return result;
-    }
 
     // ── Cache utilities ──────────────────────────────────────────────
 

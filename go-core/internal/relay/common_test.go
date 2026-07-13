@@ -73,7 +73,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	application := app.New(cfg, "test")
 	client := NewV2(cfg.Relay, application)
 
-	status, body, err := client.router.RouteHTTP(http.MethodPost, "/api/sessions", []byte(`{"name":"relay-test","cwd":"."}`))
+	status, body, err := client.router.RouteHTTP(http.MethodPost, "/api/sessions", []byte(`{"cwd":"."}`))
 	if err != nil {
 		t.Fatalf("POST /api/sessions returned error: %v", err)
 	}
@@ -104,19 +104,12 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 		t.Fatalf("list length = %d, want 1", len(list))
 	}
 
-	status, body, err = client.router.RouteHTTP(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{"name":"renamed"}`))
-	if err != nil {
+	status, _, err = client.router.RouteHTTP(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{}`))
+	if err != nil && err.Error() != "method not allowed" {
 		t.Fatalf("PATCH returned error: %v", err)
 	}
-	if status != http.StatusOK {
-		t.Fatalf("PATCH status = %d, want 200", status)
-	}
-	var renamed session.Info
-	if err := json.Unmarshal(body, &renamed); err != nil {
-		t.Fatalf("decode renamed session: %v", err)
-	}
-	if renamed.Name != "renamed" {
-		t.Fatalf("renamed name = %q, want renamed", renamed.Name)
+	if status != http.StatusMethodNotAllowed {
+		t.Fatalf("PATCH status = %d, want 405", status)
 	}
 
 	status, _, err = client.router.RouteHTTP(http.MethodDelete, "/api/sessions/s1", nil)

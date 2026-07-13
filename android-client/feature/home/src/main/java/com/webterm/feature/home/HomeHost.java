@@ -11,7 +11,7 @@ import java.util.Set;
 public interface HomeHost {
     void showAddServerDialog(ServerConfig existingServer);
     void showSettingsDialog();
-    void showTerminal(ServerConfig server, String sessionId, String termTitle, String sessionName,
+    void showTerminal(ServerConfig server, String sessionId, String termTitle,
                       String createdAt, String instanceId, String cwd);
     void onServerAuthenticated(ServerConfig existingServer, String name, String url,
                                String cookie, String username, String password);
@@ -28,8 +28,6 @@ public interface HomeHost {
     /** Close a terminal session and run a UI callback after the server confirms it. */
     void closeSession(ServerConfig server, String sessionId, Runnable onClosed);
 
-    /** Rename a terminal session. */
-    void renameSession(ServerConfig server, String sessionId, String oldName);
 
     /** Remove a saved server. */
     void removeServer(ServerConfig server);

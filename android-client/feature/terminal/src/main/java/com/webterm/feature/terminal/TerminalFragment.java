@@ -101,7 +101,6 @@ public final class TerminalFragment extends Fragment {
                     args.getString("cookie"),
                     args.getString("sessionId"),
                     args.getString("termTitle", "Terminal"),
-                    args.getString("sessionName", ""),
                     args.getString("createdAt", ""),
                     args.getString("instanceId", ""),
                     args.getBoolean("relayDevice", false),

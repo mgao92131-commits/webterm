@@ -35,7 +35,7 @@ fi
 # 读取 stdin 中的 JSON payload
 payload=$(cat 2>/dev/null || true)
 
-# 从 payload 提取文本，失败时使用空字符串
+# 从 payload 提取文本，失败时使用默认消息
 msg=$(python3 -c '
 import sys, json
 
@@ -50,6 +50,22 @@ def first(d, keys):
 def extract(data):
     if not isinstance(data, dict):
         return ""
+
+    # 优先检查是否存在 questions 数组
+    q_list = None
+    if isinstance(data.get("questions"), list):
+        q_list = data["questions"]
+    else:
+        ti = data.get("tool_input")
+        if isinstance(ti, dict) and isinstance(ti.get("questions"), list):
+            q_list = ti["questions"]
+
+    if q_list and len(q_list) > 0:
+        first_q = q_list[0]
+        if isinstance(first_q, dict):
+            question = first_q.get("question")
+            if isinstance(question, str) and question:
+                return f"Question: {question}"
 
     # 顶层字段
     text = first(data, ("prompt", "content", "message", "last_assistant_message", "text"))
@@ -81,10 +97,10 @@ try:
 except Exception:
     data = {}
 
-print(extract(data)[:120].strip())
+msg = extract(data)
+print(msg.replace("\r", " ").replace("\n", " ")[:120].strip())
 ' <<<"$payload" 2>/dev/null || true)
 
-# 如果提取不到，使用默认消息
 if [ -z "$msg" ]; then
   msg="$default_msg"
 fi
@@ -149,7 +165,7 @@ import sys, json, subprocess
 tty = sys.argv[1]
 addr = sys.argv[2]
 try:
-    out = subprocess.check_output(["curl", "-s", "--max-time", "3", f"{addr}/control/sessions"], text=True)
+    out = subprocess.check_output(["curl", "-s", "--max-time", "1", f"{addr}/control/sessions"], text=True)
     sessions = json.loads(out)
     for s in sessions:
         if s.get("tty") == tty:

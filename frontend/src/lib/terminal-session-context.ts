@@ -1,7 +1,7 @@
 import { CONFIG } from '../config';
-import { renameSession } from '../services/session.service';
 import { getTerminalTheme } from '../config/themes';
 import { connectionService } from '../services/connection.service';
+import { displayTermTitle } from '../utils/session';
 import type { RelayMuxChannel } from './relay-mux-session';
 import { decodeTerminalMessage, encodeTerminalMessage } from './terminal-binary-protocol';
 import { DisposableStore, IDisposable } from './disposable';
@@ -28,9 +28,7 @@ export interface TerminalSessionState {
   isSelectionMode: boolean;
   isCtrlActive: boolean;
   isRestoring: boolean;
-  sessionName: string;
-  sessionPlaceholder: string;
-  displayTitle: string;
+  title: string;
 }
 
 export interface TerminalSessionContextOptions {
@@ -70,15 +68,11 @@ export class TerminalSessionContext implements IDisposable {
     isSelectionMode: false,
     isCtrlActive: false,
     isRestoring: false,
-    sessionName: '',
-    sessionPlaceholder: 'Terminal',
-    displayTitle: 'Terminal',
+    title: 'Terminal',
   };
 
-  private currentSessionName = '';
   private currentTermTitle = '';
-  private currentDisplayTitle = 'Terminal';
-  public titleBeforeEdit = '';
+  private currentTitle = 'Terminal';
 
   constructor(private options: TerminalSessionContextOptions) {
     this.lastSeq = Number(sessionStorage.getItem(`${CONFIG.storageKeys.lastSeqPrefix}${options.sessionId}:lastSeq`) || 0);
@@ -410,27 +404,18 @@ export class TerminalSessionContext implements IDisposable {
   }
 
   private setTerminalInfo(session: any = {}) {
-    if (Object.prototype.hasOwnProperty.call(session, 'name')) {
-      this.currentSessionName = String(session.name || '').trim();
-    }
     if (Object.prototype.hasOwnProperty.call(session, 'termTitle')) {
       this.currentTermTitle = String(session.termTitle || '').trim();
     }
-    this.currentDisplayTitle = session.displayTitle || (() => {
-      const term = this.currentTermTitle || 'Terminal';
-      return this.currentSessionName ? `${this.currentSessionName} - ${term}` : term;
-    })();
+    this.currentTitle = displayTermTitle(this.currentTermTitle);
 
-    const sessionPlaceholder = this.currentTermTitle || 'Terminal';
-    const displayTitle = `${this.currentDisplayTitle} - WebTerm`;
+    const documentTitle = `${this.currentTitle} - WebTerm`;
     if (this.options.setDocumentTitle !== false) {
-      document.title = displayTitle;
+      document.title = documentTitle;
     }
 
     this.updateState({
-      sessionName: this.currentSessionName,
-      sessionPlaceholder,
-      displayTitle,
+      title: this.currentTitle,
     });
   }
 
@@ -445,28 +430,6 @@ export class TerminalSessionContext implements IDisposable {
     }
   }
 
-  // --- 标题就地编辑 API 调用 ---
-
-  public async commitTerminalTitle(nextName: string): Promise<void> {
-    const oldName = this.titleBeforeEdit || '';
-    this.updateState({ sessionName: nextName });
-
-    if (nextName === oldName) {
-      this.setTerminalInfo({ name: oldName });
-      this.terminalView?.focus();
-      return;
-    }
-
-    try {
-      const session = await renameSession(this.options.sessionId, nextName);
-      this.setTerminalInfo(session);
-    } catch (err: any) {
-      this.setTerminalInfo({ name: oldName });
-      alert(err.message?.trim() || '修改标题失败');
-    } finally {
-      this.terminalView?.focus();
-    }
-  }
 
   // --- UI/DOM 细节计算 ---
 

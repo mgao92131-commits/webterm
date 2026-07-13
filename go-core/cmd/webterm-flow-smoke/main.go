@@ -75,7 +75,7 @@ func login(ctx context.Context, client *http.Client, base *url.URL, username str
 }
 
 func createSession(ctx context.Context, client *http.Client, base *url.URL, cwd string) (string, error) {
-	body := map[string]string{"name": "flow-smoke", "cwd": cwd}
+	body := map[string]string{"cwd": cwd}
 	response, err := postJSON(ctx, client, base.JoinPath("/api/sessions"), body)
 	if err != nil {
 		return "", err

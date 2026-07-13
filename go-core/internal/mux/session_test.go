@@ -227,7 +227,7 @@ func TestMuxTerminalChannelRoundTrip(t *testing.T) {
 	defer cancel()
 
 	manager := newManagerWithShell(t)
-	terminal, err := manager.Create("mux-test", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestMuxWSConnectedIsFirstMessage(t *testing.T) {
 	defer cancel()
 
 	manager := newManagerWithShell(t)
-	terminal, err := manager.Create("mux-order", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

@@ -46,7 +46,7 @@ func TestAppProxiesSessionHTTPToAgentStream(t *testing.T) {
 	}()
 	waitForPresence(t, app, user.ID, device.ID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions", bytes.NewBufferString(`{"name":"Android"}`))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions", bytes.NewBufferString(`{}`))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -166,8 +166,8 @@ func runHTTPProxyAgent(ctx context.Context, serverURL, credential string) error 
 	if err != nil {
 		return err
 	}
-	if bodyFrame.Type != relaycore.FrameTypeHTTPChunk || string(bodyFrame.Payload) != `{"name":"Android"}` {
-		return errUnexpected("request body", string(bodyFrame.Payload), `{"name":"Android"}`)
+	if bodyFrame.Type != relaycore.FrameTypeHTTPChunk || string(bodyFrame.Payload) != `{}` {
+		return errUnexpected("request body", string(bodyFrame.Payload), `{}`)
 	}
 
 	responseMeta, _ := json.Marshal(relaycore.HTTPResponseMeta{

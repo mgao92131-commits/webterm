@@ -315,20 +315,6 @@ func readRequestBody(w http.ResponseWriter, r *http.Request) []byte {
 
 func (direct *Server) routeSession(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
-	case http.MethodPatch:
-		var body struct {
-			Name string `json:"name"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, directMaxRequestBodySize)).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json")
-			return
-		}
-		terminal, ok := direct.app.Sessions().Rename(id, body.Name)
-		if !ok {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
-		writeJSON(w, http.StatusOK, terminal.Info())
 	case http.MethodDelete:
 		if !direct.app.Sessions().Close(id) {
 			writeError(w, http.StatusNotFound, "session not found")

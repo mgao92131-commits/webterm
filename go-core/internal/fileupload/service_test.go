@@ -20,7 +20,7 @@ import (
 func newUploadSession(t *testing.T, cwd string) (*session.Manager, *session.TerminalSession) {
 	t.Helper()
 	manager := session.NewManager(session.TerminalDefaults{Command: "/bin/sh"})
-	terminal, err := manager.Create("upload-test", cwd)
+	terminal, err := manager.Create(cwd)
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}

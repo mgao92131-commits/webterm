@@ -129,25 +129,24 @@ public final class TerminalRuntimeState {
     public void clearPersistence() {
     }
 
-    public TerminalCacheCoordinator.Snapshot snapshot(TextView titleView, TextView subtitleView, TerminalSession terminalSession) {
+    public TerminalCacheCoordinator.Snapshot snapshot(TextView titleView, TerminalSession terminalSession) {
         TerminalCacheCoordinator.Snapshot snapshot = new TerminalCacheCoordinator.Snapshot();
         snapshot.baseUrl = baseUrl;
         snapshot.cookie = cookie;
         snapshot.sessionId = sessionId;
         snapshot.instanceId = instanceId;
         snapshot.termTitle = titleView == null ? "" : String.valueOf(titleView.getText());
-        snapshot.sessionName = subtitleView == null ? "" : String.valueOf(subtitleView.getText());
         snapshot.createdAt = createdAt;
         snapshot.cwd = cwd;
         snapshot.terminalSession = terminalSession;
         snapshot.lastSeq = lastSeq;
         snapshot.columns = columns;
         snapshot.rows = rows;
-        snapshot.diskMetadata = diskMetadata(titleView, subtitleView);
+        snapshot.diskMetadata = diskMetadata(titleView);
         return snapshot;
     }
 
-    public TerminalDiskCache.Metadata diskMetadata(TextView titleView, TextView subtitleView) {
+    public TerminalDiskCache.Metadata diskMetadata(TextView titleView) {
         if (baseUrl == null || sessionId == null) return null;
         TerminalDiskCache.Metadata metadata = new TerminalDiskCache.Metadata();
         metadata.baseUrl = baseUrl;
@@ -155,7 +154,6 @@ public final class TerminalRuntimeState {
         metadata.instanceId = instanceId == null ? "" : instanceId;
         metadata.createdAt = createdAt == null ? "" : createdAt;
         metadata.termTitle = titleView == null ? "" : String.valueOf(titleView.getText());
-        metadata.sessionName = subtitleView == null ? "" : String.valueOf(subtitleView.getText());
         metadata.cwd = cwd;
         metadata.columns = columns;
         metadata.rows = rows;

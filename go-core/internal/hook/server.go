@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -176,8 +177,8 @@ func (s *Server) dispatch(ev protocol.HookEvent) error {
 }
 
 // dispatchAgentNotification 把 agent_event Hook 事件以设备级 agent_notification 下发到 Android。
-// 仅处理带 importance 的 agent_event（alert|normal|quiet）；空 importance 不下发。
-// 标题取终端会话 DisplayTitle（用户自定义名 - 终端标题），回退 source、再回退事件类型。
+// 仅把 alert|normal 的 agent_event 下发到设备级通知通道；quiet 只更新 session 状态，不下发。
+// 标题取终端会话 TermTitle，回退 source、再回退事件类型。
 // 首版 deviceID 留空，依赖底层单设备回退；多设备精确路由留待后续。失败仅记录，不影响原有 MSG_HOOK 路径。
 func (s *Server) dispatchAgentNotification(sessionID string, terminal *session.TerminalSession, ev protocol.HookEvent) {
 	dispatcher := s.app.AgentNotificationDispatcher()
@@ -185,10 +186,10 @@ func (s *Server) dispatchAgentNotification(sessionID string, terminal *session.T
 		return
 	}
 	importance := ev.Importance
-	if importance == "" {
+	if importance == "" || importance == "quiet" {
 		return
 	}
-	title := terminal.Info().DisplayTitle
+	title := strings.TrimSpace(terminal.Info().TermTitle)
 	if title == "" {
 		title = ev.Source
 	}
@@ -293,9 +294,9 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 	svc := s.app.FileSendService()
 	task, err := svc.CreateTask(filesend.CreateTaskOptions{
 		Path:     absPath,
-		FileName:  info.Name(),
-		Size:      info.Size(),
-		SHA256:    sha256Hex,
+		FileName: info.Name(),
+		Size:     info.Size(),
+		SHA256:   sha256Hex,
 	})
 	if err != nil {
 		fail("create_task_failed")
