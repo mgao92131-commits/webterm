@@ -1,10 +1,15 @@
 # Go Agent 与 Android 权威终端性能优化计划
 
-> 状态：待实施（2026-07-13 审查后修订）  
+> 状态：已完成（2026-07-13 复审修正后；明确延期项除外）
 > 制定日期：2026-07-13  
-> 修订记录：2026-07-13 对照代码完成实施前审查，补充 dirty 路径审计、跨边界选择 bug 前置修复、字节预算重校准等条目（见第 12 节）  
+> 修订记录：2026-07-13 对照代码完成实施前审查；实施后复审补正 Android 历史快照不可变性、Go benchmark 口径，并完成阶段 4 的低风险项（见复审报告）
 > 范围：`go-core` 与 `android-client` 远程终端主链路  
 > 不包含：网页端、Legacy Termux 模拟器性能优化、协议无关的 UI 重构
+>
+> 实施状态：阶段 2/3 已完成并经过 2026-07-13 复审修正；阶段 4 中 Handler 复用、
+> Android styled ASCII run 合批和 mouse MOVE 合并已实施，Go printable span 批处理
+> 因锁/decoder 边界风险按 profile 延期。最终证据见
+> `docs/go-android-terminal-performance-post-review-report.md`。
 
 ## 1. 背景与目标
 
