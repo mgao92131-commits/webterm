@@ -14,23 +14,29 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
  * 覆盖 resize 的投递保证：租约未授予时的请求必须缓存并在授予后补发，
  * 断线期间的请求必须等重连拿到新租约后补发，不能静默丢失。
+ * 同时覆盖 §6 的 resync 可恢复状态机：重试退避、generation 过期、
+ * 围栏解除、mailbox 二次溢出与超限后的 channel 重建。
  */
 public final class TerminalSessionRuntimeResizeTest {
 
   private TerminalSessionRuntime runtime;
   private FakeScreenConnection connection;
+  private FakeTimeoutScheduler scheduler;
 
   @Before
   public void setUp() {
     // 同步 executor：handleScreenMessage 直接在当前线程执行，断言无需等待。
+    // timeout 用可注入的假调度器，测试手动推进，不做真实 sleep。
+    scheduler = new FakeTimeoutScheduler();
     runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
-        Runnable::run, Runnable::run);
+        Runnable::run, Runnable::run, scheduler);
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
   }
@@ -81,15 +87,7 @@ public final class TerminalSessionRuntimeResizeTest {
 
     // Both patches are based on revision 0 while the model is at revision 1.
     // The first requests recovery; the second must not amplify it.
-    TerminalScreenProto.ScreenEnvelope stalePatch = TerminalScreenProto.ScreenEnvelope.newBuilder()
-        .setProtocolVersion(1)
-        .setPatch(TerminalScreenProto.ScreenPatch.newBuilder()
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setBaseRevision(0)
-            .setScreenRevision(2)
-            .build())
-        .build();
+    TerminalScreenProto.ScreenEnvelope stalePatch = patch(0, 2);
     connection.listener.onScreenMessage(stalePatch.toByteArray());
     connection.listener.onScreenMessage(stalePatch.toByteArray());
     assertEquals(1, connection.resyncRequests);
@@ -114,22 +112,159 @@ public final class TerminalSessionRuntimeResizeTest {
   @Test
   public void excessiveQueuedFrames_areCollapsedAndRecoveredByOneSnapshot() {
     QueuingExecutor modelExecutor = new QueuingExecutor();
-    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(), modelExecutor, Runnable::run);
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, scheduler);
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
 
     // The mailbox accepts a bounded burst. The next frame must discard stale
-    // work and request one authoritative resync instead of growing the
-    // executor queue without bound.
+    // work and escalate to the model executor, which requests one authoritative
+    // resync instead of growing the executor queue without bound.
     for (int revision = 1; revision <= 65; revision++) {
       connection.listener.onScreenMessage(snapshot(revision).toByteArray());
     }
 
-    assertEquals(1, connection.resyncRequests);
-    assertEquals("one mailbox drain runnable serves the whole burst", 1, modelExecutor.tasks.size());
+    assertEquals("resync decisions belong to the model executor", 0, connection.resyncRequests);
+    assertEquals("one drain runnable plus one overflow escalation serve the whole burst",
+        2, modelExecutor.tasks.size());
 
     modelExecutor.runAll();
     assertEquals(65, runtime.model().screenRevision);
+    assertEquals("overflow must converge through one resync", 1, connection.resyncRequests);
+  }
+
+  @Test
+  public void invalidSnapshotWhileWaiting_resendsResyncWithBackoff() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    // An invalid snapshot must not silently drop: schedule a bounded retry.
+    connection.listener.onScreenMessage(invalidSnapshot().toByteArray());
+    assertEquals("retry is scheduled, not sent immediately", 1, connection.resyncRequests);
+    assertEquals(Arrays.asList(2000L, 1000L), scheduler.delays);
+
+    // The stale wait timeout (old generation) must not double-send.
+    scheduler.runNext();
+    assertEquals(1, connection.resyncRequests);
+
+    // The retry runnable resends resync and re-arms the wait timeout.
+    scheduler.runNext();
+    assertEquals(2, connection.resyncRequests);
+    assertEquals(Arrays.asList(2000L, 1000L, 2000L), scheduler.delays);
+  }
+
+  @Test
+  public void resyncWaitTimeout_retriesUpToLimitThenReconnectsOnce() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    // wait timeout -> retry(1s) -> resend; repeated with 2s/4s backoff.
+    scheduler.runNext(); // wait timeout 1 -> schedule retry 1
+    scheduler.runNext(); // retry 1 fires
+    assertEquals(2, connection.resyncRequests);
+    scheduler.runNext(); // wait timeout 2 -> schedule retry 2
+    scheduler.runNext(); // retry 2 fires
+    assertEquals(3, connection.resyncRequests);
+    scheduler.runNext(); // wait timeout 3 -> schedule retry 3
+    scheduler.runNext(); // retry 3 fires
+    assertEquals(4, connection.resyncRequests);
+    assertEquals("1s/2s/4s bounded backoff between resends",
+        Arrays.asList(2000L, 1000L, 2000L, 2000L, 2000L, 4000L, 2000L), scheduler.delays);
+
+    scheduler.runNext(); // final wait timeout -> retries exhausted
+    assertEquals("retries exhausted: escalate to channel rebuild", 1, connection.reconnectRequests);
+    assertEquals(4, connection.resyncRequests);
+
+    // Once escalated, further gaps or invalid snapshots must not amplify.
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    connection.listener.onScreenMessage(invalidSnapshot().toByteArray());
+    assertEquals("reconnect is requested exactly once", 1, connection.reconnectRequests);
+    assertEquals(4, connection.resyncRequests);
+  }
+
+  @Test
+  public void staleTimeoutAfterDisconnect_doesNotAffectNewConnection() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    // Disconnect cancels the pending timeout by advancing the generation.
+    connection.listener.onDisconnected("relay lost");
+    scheduler.runNext();
+    assertEquals("old timeout must be discarded after disconnect", 1, connection.resyncRequests);
+    assertEquals(0, connection.reconnectRequests);
+
+    // The reconnected session can still start a fresh recovery.
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 3).toByteArray());
+    assertEquals("new connection recovers independently", 2, connection.resyncRequests);
+  }
+
+  @Test
+  public void validSnapshot_releasesFenceAndSubsequentPatchesApply() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    assertEquals(2, runtime.model().screenRevision);
+
+    connection.listener.onScreenMessage(patch(2, 3).toByteArray());
+    assertEquals("patch after fence release applies normally", 3, runtime.model().screenRevision);
+    assertEquals("no spurious resync after recovery", 1, connection.resyncRequests);
+  }
+
+  @Test
+  public void patchDuringResync_isDroppedAndDoesNotAdvanceRevision() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    // This patch would apply cleanly (base revision matches), but the fence
+    // must hold until an authoritative snapshot arrives.
+    connection.listener.onScreenMessage(patch(1, 2).toByteArray());
+    assertEquals("fenced patch must not advance local revision", 1, runtime.model().screenRevision);
+
+    connection.listener.onScreenMessage(snapshot(3).toByteArray());
+    connection.listener.onScreenMessage(patch(3, 4).toByteArray());
+    assertEquals(4, runtime.model().screenRevision);
+  }
+
+  @Test
+  public void mailboxOverflowDuringResync_resendsResyncAndDoesNotFreeze() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, scheduler);
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    modelExecutor.runAll();
+    assertEquals(1, connection.resyncRequests);
+
+    // The awaited snapshot is in flight inside the mailbox when a burst of
+    // 64 more frames overflows it. Clearing the queue must not freeze the
+    // session: the state machine has to resend resync with a fresh generation.
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    for (int i = 0; i < 64; i++) {
+      connection.listener.onScreenMessage(patch(0, 2).toByteArray());
+    }
+    modelExecutor.runAll();
+    assertEquals("overflow while waiting must resend resync", 2, connection.resyncRequests);
+    assertEquals("the in-flight snapshot was cleared, not applied", 1, runtime.model().screenRevision);
+
+    // A fresh snapshot still releases the fence afterwards.
+    connection.listener.onScreenMessage(snapshot(3).toByteArray());
+    modelExecutor.runAll();
+    assertEquals(3, runtime.model().screenRevision);
+    connection.listener.onScreenMessage(patch(3, 4).toByteArray());
+    modelExecutor.runAll();
+    assertEquals("session converges, no permanent freeze", 4, runtime.model().screenRevision);
+    assertEquals(0, connection.reconnectRequests);
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
@@ -142,6 +277,33 @@ public final class TerminalSessionRuntimeResizeTest {
             .setScreenRevision(revision)
             .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
             .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
+            .build())
+        .build();
+  }
+
+  /** Fails validation: rows below the validator's minimum. */
+  private static TerminalScreenProto.ScreenEnvelope invalidSnapshot() {
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
+            .setSessionId("s1")
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setScreenRevision(2)
+            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(1).setCols(10).build())
+            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
+            .build())
+        .build();
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope patch(long baseRevision, long screenRevision) {
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setPatch(TerminalScreenProto.ScreenPatch.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setBaseRevision(baseRevision)
+            .setScreenRevision(screenRevision)
             .build())
         .build();
   }
@@ -174,6 +336,7 @@ public final class TerminalSessionRuntimeResizeTest {
   private static final class FakeScreenConnection implements TerminalSessionRuntime.ScreenConnection {
     final List<int[]> resizes = new ArrayList<>();
     int resyncRequests;
+    int reconnectRequests;
     String historyRequestId = "";
     String leaseId = "";
     Listener listener;
@@ -222,6 +385,11 @@ public final class TerminalSessionRuntimeResizeTest {
     }
 
     @Override
+    public void requestReconnect(@NonNull String reason) {
+      reconnectRequests++;
+    }
+
+    @Override
     public void acquireLayout(boolean interactive) {}
 
     @Override
@@ -233,6 +401,23 @@ public final class TerminalSessionRuntimeResizeTest {
 
     @Override
     public void close() {}
+  }
+
+  /** 手动推进的调度器：任务按入队顺序逐个执行，可断言每次退避延迟。 */
+  private static final class FakeTimeoutScheduler implements TerminalSessionRuntime.TimeoutScheduler {
+    final List<Runnable> tasks = new ArrayList<>();
+    final List<Long> delays = new ArrayList<>();
+
+    @Override
+    public void schedule(@NonNull Runnable task, long delayMs) {
+      tasks.add(task);
+      delays.add(delayMs);
+    }
+
+    void runNext() {
+      assertFalse("no scheduled timeout to run", tasks.isEmpty());
+      tasks.remove(0).run();
+    }
   }
 
   private static final class QueuingExecutor implements Executor {

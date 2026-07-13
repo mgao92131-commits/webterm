@@ -159,6 +159,19 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
   }
 
   @Override
+  public void requestReconnect(@NonNull String reason) {
+    // resync 重试耗尽的最终恢复：重建 screen channel。closeChannel 只移除本地
+    // 通道记录并发送 ws close（与 mux 传输重连后重开 channel 的路径一致，服务端
+    // 保留会话）；connectNow() 重新 openScreenChannel，onConnected 后发送 hello，
+    // 服务端以权威 snapshot 回应，解除上层恢复围栏。
+    if (relayMuxSession != null && relayChannelId != null) {
+      relayMuxSession.closeChannel(relayChannelId);
+    }
+    relayChannelId = null;
+    connectNow();
+  }
+
+  @Override
   public void close() {
     if (relayMuxSession != null && relayChannelId != null) {
       relayMuxSession.closeChannel(relayChannelId);
