@@ -1,0 +1,85 @@
+package com.webterm.terminal.renderer;
+
+import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.TerminalSelection;
+
+import java.util.List;
+
+/**
+ * 把 {@link TerminalSelection} 转换为可复制到剪贴板的纯文本。
+ *
+ * <p>此类不依赖 Android 视图系统，因此可以单元测试。它接收已排序的历史行
+ * 列表和活动屏幕行数组，输出选择范围内的字符文本（跳过宽字符 spacer）。
+ */
+final class TerminalSelectionTextExtractor {
+
+  private TerminalSelectionTextExtractor() {}
+
+  /**
+   * 提取选择范围内的文本。
+   *
+   * @param selection 已归一化的选择范围（start <= end）
+   * @param history   按 {@link TerminalLine#id} 升序排列的历史行；可能为空
+   * @param screen    活动屏幕行数组；可能为 null
+   */
+  static String extract(TerminalSelection selection, List<TerminalLine> history, TerminalLine[] screen) {
+    StringBuilder sb = new StringBuilder();
+    TerminalSelection.Anchor start = selection.start;
+    TerminalSelection.Anchor end = selection.end;
+
+    if (start.historyLineId != 0) {
+      appendHistoryRange(sb, start, end, history);
+    } else if (end.historyLineId == 0 && start.screenRow == end.screenRow) {
+      appendScreenRow(sb, screen, start.screenRow, start.col, end.col);
+    } else {
+      appendScreenRange(sb, start, end, screen);
+    }
+    return sb.toString();
+  }
+
+  private static void appendHistoryRange(StringBuilder sb, TerminalSelection.Anchor start,
+                                         TerminalSelection.Anchor end, List<TerminalLine> history) {
+    boolean first = true;
+    for (TerminalLine line : history) {
+      long lineId = line.id;
+      if (lineId < start.historyLineId) continue;
+      if (lineId > end.historyLineId) break;
+      if (!first) sb.append('\n');
+      first = false;
+      int c0 = lineId == start.historyLineId ? start.col : 0;
+      int c1 = lineId == end.historyLineId ? end.col : line.length();
+      appendLineText(sb, line, c0, c1);
+    }
+  }
+
+  private static void appendScreenRange(StringBuilder sb, TerminalSelection.Anchor start,
+                                        TerminalSelection.Anchor end, TerminalLine[] screen) {
+    if (screen == null) return;
+    boolean first = true;
+    for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
+      if (!first) sb.append('\n');
+      first = false;
+      int c0 = row == start.screenRow ? start.col : 0;
+      int c1 = row == end.screenRow ? end.col : (row < screen.length ? screen[row].length() : 0);
+      appendScreenRow(sb, screen, row, c0, c1);
+    }
+  }
+
+  private static void appendScreenRow(StringBuilder sb, TerminalLine[] screen, int row, int colStart, int colEnd) {
+    if (screen == null || row < 0 || row >= screen.length) return;
+    appendLineText(sb, screen[row], colStart, colEnd);
+  }
+
+  private static void appendLineText(StringBuilder sb, TerminalLine line, int colStart, int colEnd) {
+    if (line == null) return;
+    int start = Math.max(0, Math.min(line.length(), colStart));
+    int end = Math.max(0, Math.min(line.length(), colEnd));
+    for (int i = start; i < end; i++) {
+      TerminalCell cell = line.at(i);
+      if (cell == null || cell.isSpacer()) continue;
+      String text = cell.text;
+      sb.append(text == null || text.isEmpty() ? " " : text);
+    }
+  }
+}

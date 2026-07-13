@@ -36,6 +36,7 @@ import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 
@@ -593,67 +594,9 @@ public final class RemoteTerminalView extends View {
   private String selectedText() {
     if (selectionStart == null || selectionEnd == null || model == null) return "";
     TerminalSelection normalized = new TerminalSelection(selectionStart, selectionEnd).normalized();
-    StringBuilder sb = new StringBuilder();
-    TerminalSelection.Anchor start = normalized.start;
-    TerminalSelection.Anchor end = normalized.end;
-
-    if (start.historyLineId != 0) {
-      appendHistoryRange(sb, start, end);
-    } else if (end.historyLineId == 0 && start.screenRow == end.screenRow) {
-      appendScreenRow(sb, start.screenRow, start.col, end.col);
-    } else {
-      appendScreenRange(sb, start, end);
-    }
-    return sb.toString();
-  }
-
-  private void appendHistoryRange(StringBuilder sb, TerminalSelection.Anchor start,
-                                  TerminalSelection.Anchor end) {
-    NavigableMap<Long, TerminalLine> history = model.historyCache();
-    boolean first = true;
-    for (Map.Entry<Long, TerminalLine> entry : history.entrySet()) {
-      long lineId = entry.getKey();
-      if (lineId < start.historyLineId) continue;
-      if (lineId > end.historyLineId) break;
-      if (!first) sb.append('\n');
-      first = false;
-      TerminalLine line = entry.getValue();
-      int c0 = lineId == start.historyLineId ? start.col : 0;
-      int c1 = lineId == end.historyLineId ? end.col : line.length();
-      appendLineText(sb, line, c0, c1);
-    }
-  }
-
-  private void appendScreenRange(StringBuilder sb, TerminalSelection.Anchor start,
-                                 TerminalSelection.Anchor end) {
-    TerminalLine[] screen = model.screen();
-    if (screen == null) return;
-    boolean first = true;
-    for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
-      if (!first) sb.append('\n');
-      first = false;
-      int c0 = row == start.screenRow ? start.col : 0;
-      int c1 = row == end.screenRow ? end.col : (row < screen.length ? screen[row].length() : 0);
-      appendScreenRow(sb, row, c0, c1);
-    }
-  }
-
-  private void appendScreenRow(StringBuilder sb, int row, int colStart, int colEnd) {
-    TerminalLine[] screen = model.screen();
-    if (screen == null || row < 0 || row >= screen.length) return;
-    appendLineText(sb, screen[row], colStart, colEnd);
-  }
-
-  private void appendLineText(StringBuilder sb, TerminalLine line, int colStart, int colEnd) {
-    if (line == null) return;
-    int start = Math.max(0, Math.min(line.length(), colStart));
-    int end = Math.max(0, Math.min(line.length(), colEnd));
-    for (int i = start; i < end; i++) {
-      TerminalCell cell = line.at(i);
-      if (cell == null || cell.isSpacer()) continue;
-      String text = cell.text;
-      sb.append(text == null || text.isEmpty() ? " " : text);
-    }
+    List<TerminalLine> history = model.historyCache().values().stream()
+        .collect(java.util.stream.Collectors.toList());
+    return TerminalSelectionTextExtractor.extract(normalized, history, model.screen());
   }
 
   private void copySelectionToClipboard() {
