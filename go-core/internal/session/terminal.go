@@ -24,45 +24,48 @@ const (
 )
 
 type TerminalOptions struct {
-	ID            string
-	Name          string
-	CWD           string
-	Command       string
-	Args          []string
-	Cols          int
-	Rows          int
-	Env           map[string]string
-	OnTitle       func()
-	OnInfoChanged func()
+	ID      string
+	Name    string
+	CWD     string
+	Command string
+	Args    []string
+	Cols    int
+	Rows    int
+	Env     map[string]string
+	// ScrollbackMaxLines/ScrollbackMaxBytes 是 scrollback 双上限；非正值使用默认。
+	ScrollbackMaxLines int
+	ScrollbackMaxBytes int
+	OnTitle            func()
+	OnInfoChanged      func()
 }
 
 type TerminalSession struct {
-	mu              sync.RWMutex
-	id              string
-	instance        string
-	name            string
-	termTitle       string
-	cwd             string
-	liveCwd         string
-	command         string
-	status          string
-	shellState      string
-	lastInput       *LastInput
-	notification    *Notification
-	cols            int
-	rows            int
-	createdAt       time.Time
-	activeAt        time.Time
-	ring            *EventRing
-	runtime         *terminalsession.Runtime
-	process         *pty.Process
-	shellPid        int
-	ttyPath         string
-	clients         map[*Client]struct{}
-	onTitleChanged  func()
-	onInfoChanged   func()
-	titleChanged    bool
-	manager         *Manager
+	mu             sync.RWMutex
+	id             string
+	instance       string
+	name           string
+	termTitle      string
+	cwd            string
+	liveCwd        string
+	command        string
+	status         string
+	shellState     string
+	lastInput      *LastInput
+	notification   *Notification
+	cols           int
+	rows           int
+	createdAt      time.Time
+	activeAt       time.Time
+	ring           *EventRing
+	runtime        *terminalsession.Runtime
+	process        *pty.Process
+	shellPid       int
+	ttyPath        string
+	clients        map[*Client]struct{}
+	onTitleChanged func()
+	onInfoChanged  func()
+	titleChanged   bool
+	manager        *Manager
 }
 
 type Notification struct {
@@ -152,6 +155,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 			}
 		}),
 		terminalsession.WithPTYResizer(process.Resize),
+		terminalsession.WithScrollbackLimits(options.ScrollbackMaxLines, options.ScrollbackMaxBytes),
 	)
 	go terminal.waitLoop()
 	return terminal, nil

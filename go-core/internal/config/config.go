@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"webterm/go-core/internal/terminalengine"
 )
 
 const (
@@ -18,18 +20,33 @@ const (
 
 const RedactedSecret = "********"
 
+// scrollback 默认值与 terminalengine 的缺省上限保持一致（单一事实来源）。
+const (
+	DefaultScrollbackMaxLines = terminalengine.DefaultScrollbackLineLimit
+	DefaultScrollbackMaxBytes = terminalengine.DefaultScrollbackByteLimit
+)
+
 type Options struct {
 	Mode       string
 	ConfigPath string
 }
 
 type Config struct {
-	Mode       string        `json:"mode"`
-	SocketPath string        `json:"socketPath,omitempty"`
-	Direct     DirectConfig  `json:"direct"`
-	Relay      RelayConfig   `json:"relay"`
-	Control    ControlConfig `json:"control"`
-	Shell      ShellConfig   `json:"shell"`
+	Mode       string           `json:"mode"`
+	SocketPath string           `json:"socketPath,omitempty"`
+	Direct     DirectConfig     `json:"direct"`
+	Relay      RelayConfig      `json:"relay"`
+	Control    ControlConfig    `json:"control"`
+	Shell      ShellConfig      `json:"shell"`
+	Scrollback ScrollbackConfig `json:"scrollback"`
+}
+
+// ScrollbackConfig 是终端历史（scrollback）的双上限配置。
+// MaxLines 是行数安全上限，MaxBytes 是近似内存预算；实际保留量以先达到者为准，
+// 不承诺保留任何固定行数。非正值在 Load 时回退到默认值。
+type ScrollbackConfig struct {
+	MaxLines int `json:"maxLines,omitempty"`
+	MaxBytes int `json:"maxBytes,omitempty"`
 }
 
 type DirectConfig struct {
@@ -132,6 +149,12 @@ func MergeEditable(current Config, next Config) Config {
 	if next.Shell.CWD != "" {
 		current.Shell.CWD = next.Shell.CWD
 	}
+	if next.Scrollback.MaxLines > 0 {
+		current.Scrollback.MaxLines = next.Scrollback.MaxLines
+	}
+	if next.Scrollback.MaxBytes > 0 {
+		current.Scrollback.MaxBytes = next.Scrollback.MaxBytes
+	}
 	if current.Mode == "" {
 		current.Mode = ModeDirect
 	}
@@ -163,6 +186,13 @@ func Load(options Options) Config {
 		cfg.Mode = ModeDirect
 	}
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
+	// 非法值兜底：行数上限与字节预算必须为正，否则回退默认（保持现行为不变）。
+	if cfg.Scrollback.MaxLines <= 0 {
+		cfg.Scrollback.MaxLines = DefaultScrollbackMaxLines
+	}
+	if cfg.Scrollback.MaxBytes <= 0 {
+		cfg.Scrollback.MaxBytes = DefaultScrollbackMaxBytes
+	}
 	return cfg
 }
 
@@ -184,6 +214,10 @@ func defaultConfig() Config {
 		},
 		Shell: ShellConfig{
 			CWD: cwd,
+		},
+		Scrollback: ScrollbackConfig{
+			MaxLines: DefaultScrollbackMaxLines,
+			MaxBytes: DefaultScrollbackMaxBytes,
 		},
 	}
 }
@@ -264,6 +298,12 @@ func mergeConfig(base Config, override Config) Config {
 	}
 	if override.Shell.CWD != "" {
 		base.Shell.CWD = override.Shell.CWD
+	}
+	if override.Scrollback.MaxLines > 0 {
+		base.Scrollback.MaxLines = override.Scrollback.MaxLines
+	}
+	if override.Scrollback.MaxBytes > 0 {
+		base.Scrollback.MaxBytes = override.Scrollback.MaxBytes
 	}
 	return base
 }

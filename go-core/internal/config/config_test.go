@@ -170,6 +170,75 @@ func TestSaveAndLoadConfigFile(t *testing.T) {
 	}
 }
 
+func TestLoadScrollbackDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	cfg := Load(Options{})
+	if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines {
+		t.Fatalf("Scrollback.MaxLines = %d, want default %d", cfg.Scrollback.MaxLines, DefaultScrollbackMaxLines)
+	}
+	if cfg.Scrollback.MaxBytes != DefaultScrollbackMaxBytes {
+		t.Fatalf("Scrollback.MaxBytes = %d, want default %d", cfg.Scrollback.MaxBytes, DefaultScrollbackMaxBytes)
+	}
+	// dry-run 输出（Redacted）必须展示生效中的 scrollback 上限。
+	redacted := cfg.Redacted()
+	if redacted.Scrollback != cfg.Scrollback {
+		t.Fatalf("Redacted changed scrollback limits: %#v", redacted.Scrollback)
+	}
+}
+
+func TestLoadScrollbackFromFile(t *testing.T) {
+	clearConfigEnv(t)
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"scrollback":{"maxLines":5000,"maxBytes":1048576}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	cfg := Load(Options{ConfigPath: path})
+	if cfg.Scrollback.MaxLines != 5000 {
+		t.Fatalf("Scrollback.MaxLines = %d, want 5000", cfg.Scrollback.MaxLines)
+	}
+	if cfg.Scrollback.MaxBytes != 1048576 {
+		t.Fatalf("Scrollback.MaxBytes = %d, want 1048576", cfg.Scrollback.MaxBytes)
+	}
+}
+
+func TestLoadScrollbackInvalidFallsBackToDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	for _, body := range []string{
+		`{"scrollback":{"maxLines":-1,"maxBytes":-4096}}`,
+		`{"scrollback":{"maxLines":0,"maxBytes":0}}`,
+		`{}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		cfg := Load(Options{ConfigPath: path})
+		if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines {
+			t.Fatalf("%s: Scrollback.MaxLines = %d, want default %d", body, cfg.Scrollback.MaxLines, DefaultScrollbackMaxLines)
+		}
+		if cfg.Scrollback.MaxBytes != DefaultScrollbackMaxBytes {
+			t.Fatalf("%s: Scrollback.MaxBytes = %d, want default %d", body, cfg.Scrollback.MaxBytes, DefaultScrollbackMaxBytes)
+		}
+	}
+}
+
+func TestMergeEditablePreservesScrollback(t *testing.T) {
+	current := Config{
+		Mode:       ModeDirect,
+		Scrollback: ScrollbackConfig{MaxLines: 5000, MaxBytes: 1048576},
+	}
+	// 不带 scrollback 的编辑必须保留现值。
+	merged := MergeEditable(current, Config{Direct: DirectConfig{Addr: "127.0.0.1:9999"}})
+	if merged.Scrollback != current.Scrollback {
+		t.Fatalf("Scrollback = %#v, want preserved %#v", merged.Scrollback, current.Scrollback)
+	}
+	// 显式设置必须生效。
+	merged = MergeEditable(current, Config{Scrollback: ScrollbackConfig{MaxLines: 20000, MaxBytes: 2 << 20}})
+	if merged.Scrollback.MaxLines != 20000 || merged.Scrollback.MaxBytes != 2<<20 {
+		t.Fatalf("Scrollback = %#v, want updated", merged.Scrollback)
+	}
+}
+
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{

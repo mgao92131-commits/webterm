@@ -35,8 +35,10 @@ func New(cfg config.Config, version string) *App {
 	installShellHook(logger)
 
 	manager := session.NewManager(session.TerminalDefaults{
-		CWD:     cfg.Shell.CWD,
-		Command: cfg.Shell.Command,
+		CWD:                cfg.Shell.CWD,
+		Command:            cfg.Shell.Command,
+		ScrollbackMaxLines: cfg.Scrollback.MaxLines,
+		ScrollbackMaxBytes: cfg.Scrollback.MaxBytes,
 	})
 
 	sessionEnv := map[string]string{
@@ -143,8 +145,10 @@ func (app *App) ApplyRuntimeConfig(cfg config.Config) {
 	app.mu.Unlock()
 
 	app.sessions.SetDefaults(session.TerminalDefaults{
-		CWD:     cfg.Shell.CWD,
-		Command: cfg.Shell.Command,
+		CWD:                cfg.Shell.CWD,
+		Command:            cfg.Shell.Command,
+		ScrollbackMaxLines: cfg.Scrollback.MaxLines,
+		ScrollbackMaxBytes: cfg.Scrollback.MaxBytes,
 	})
 	app.Log("info", "runtime", fmt.Sprintf("runtime applied mode=%s", cfg.Mode))
 }

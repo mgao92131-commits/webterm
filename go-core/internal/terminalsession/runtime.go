@@ -26,6 +26,9 @@ type Runtime struct {
 	pty        io.ReadWriteCloser
 	ptyResizer func(cols, rows int) error
 
+	scrollbackMaxLines int
+	scrollbackMaxBytes int
+
 	events   chan event
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -101,9 +104,14 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		opt(r)
 	}
 
-	r.scrollback = terminalengine.NewTrackedScrollback(10000, func(ev terminalengine.ScrollbackTrimEvent) {
+	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
+	// scrollbackMaxBytes<=0 时保留 NewTrackedScrollback 的 DefaultScrollbackByteLimit。
+	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, func(ev terminalengine.ScrollbackTrimEvent) {
 		r.postEvent(historyTrimEvent{firstAvailableID: ev.FirstAvailableID})
 	})
+	if r.scrollbackMaxBytes > 0 {
+		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
+	}
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
 		terminalengine.WithPTYWriter(pty),
 		terminalengine.WithBellHandler(func() {

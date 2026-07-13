@@ -35,15 +35,22 @@ type TrackedScrollback struct {
 	onTrim func(ScrollbackTrimEvent)
 }
 
+// DefaultScrollbackLineLimit 是行数安全上限的缺省值。它是上限而非保留承诺：
+// 字节预算（DefaultScrollbackByteLimit）可能先触发驱逐，实际保留行数可以远低于它。
+const DefaultScrollbackLineLimit = 10000
+
 // DefaultScrollbackByteLimit bounds memory independently of line count. Wide
 // terminals and richly styled output can make 10k physical rows much larger
 // than a line-only capacity suggests.
 const DefaultScrollbackByteLimit = 8 << 20
 
-// NewTrackedScrollback 创建容量为 capacity 的可跟踪 scrollback。
+// NewTrackedScrollback 创建可跟踪 scrollback。
+// capacity 是行数安全上限（<=0 使用 DefaultScrollbackLineLimit），字节预算
+// 默认 DefaultScrollbackByteLimit；两个上限以先达到者为准从最旧端驱逐，
+// 因此不承诺保留任何固定行数。
 func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *TrackedScrollback {
 	if capacity <= 0 {
-		capacity = 10000
+		capacity = DefaultScrollbackLineLimit
 	}
 	return &TrackedScrollback{
 		capacity: capacity,
@@ -204,7 +211,7 @@ func (t *TrackedScrollback) Clear() {
 	t.fireTrimLocked()
 }
 
-// SetMaxLines 调整容量。
+// SetMaxLines 调整行数安全上限；字节预算（SetMaxBytes）仍可能先触发驱逐。
 func (t *TrackedScrollback) SetMaxLines(max int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -239,6 +246,8 @@ func (t *TrackedScrollback) MaxLines() int {
 	return t.capacity
 }
 
+// trimToLimitsLocked 从最旧端驱逐，直到行数与字节两个上限都不再超限。
+// 两个上限以先达到者为准；超字节时至少保留最新一行（见 overBytes 条件）。
 func (t *TrackedScrollback) trimToLimitsLocked() bool {
 	trimmed := 0
 	for trimmed < len(t.lines) {
@@ -264,13 +273,29 @@ func (t *TrackedScrollback) trimToLimitsLocked() bool {
 	return true
 }
 
+// estimateHistoryLineBytes 返回一行的近似堆占用。这是容量记账预算而非精确的
+// Go 堆内省：只要求不明显低估，允许与真实占用有 ±15% 左右的偏差。
+//
+// 常量依据 BenchmarkHistoryLineMemory（go 1.25.1, darwin/arm64）的实测
+// （80/200 列 × 纯 ASCII/宽字符/逐 cell 样式样本，1024 行驻留堆）：
+//
+//	样本                  实测 B/行   本函数估算   偏差
+//	80col-plain-ascii       8560      8544        -0.2%
+//	200col-plain-ascii     19264     21264       +10%
+//	80col-wide-cjk          8848      8864        +0.2%
+//	200col-wide-cjk        20048     22064       +10%
+//	80col-rich-styled      10112      8544        -15%
+//	200col-rich-styled     23264     21264        -9%
+//
+// 组成：headlessterm.Cell 结构体 88B（unsafe.Sizeof）+ 每 cell 字符串数据
+// 最小 size class 8B + 颜色/样式对象摊销 8B = 每 cell 104B；len(Char)*2 覆盖
+// 多字节字符簇的字符串数据；基线 64B 覆盖 HistoryLine 结构体（48B）与
+// cells 切片的分配/size-class 取整开销。逐 cell 独立颜色的极端样式输出
+// （每 cell 两个 8B 颜色对象）仍可能低估约 15%，可接受。
 func estimateHistoryLineBytes(cells []headlessterm.Cell) int {
-	// This is a conservative accounting budget rather than Go heap-exact
-	// introspection. It captures the dominant variable cost: cell count and
-	// UTF-8 text retained by each cell.
 	bytes := 64
 	for _, cell := range cells {
-		bytes += 48 + len(cell.Char)*2
+		bytes += 104 + len(cell.Char)*2
 	}
 	return bytes
 }

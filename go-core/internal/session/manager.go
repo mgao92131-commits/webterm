@@ -94,6 +94,9 @@ type Manager struct {
 type TerminalDefaults struct {
 	CWD     string
 	Command string
+	// Scrollback 双上限；非正值使用 terminalengine 默认值。
+	ScrollbackMaxLines int
+	ScrollbackMaxBytes int
 }
 
 func NewManager(defaults ...TerminalDefaults) *Manager {
@@ -160,11 +163,13 @@ func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error
 	}
 	command := manager.defaults.Command
 	terminal, err := NewTerminalSession(TerminalOptions{
-		ID:   id,
-		Name: name,
-		CWD:  cwd,
-		Command: command,
-		Env: manager.buildSessionEnv(id),
+		ID:                 id,
+		Name:               name,
+		CWD:                cwd,
+		Command:            command,
+		Env:                manager.buildSessionEnv(id),
+		ScrollbackMaxLines: manager.defaults.ScrollbackMaxLines,
+		ScrollbackMaxBytes: manager.defaults.ScrollbackMaxBytes,
 		OnInfoChanged: func() {
 			manager.mu.RLock()
 			term, ok := manager.sessions[id]

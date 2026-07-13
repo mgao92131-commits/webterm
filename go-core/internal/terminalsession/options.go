@@ -54,3 +54,14 @@ func WithPTYResizer(fn func(cols, rows int) error) Option {
 		r.ptyResizer = fn
 	}
 }
+
+// WithScrollbackLimits 设置 scrollback 双上限：maxLines 是行数安全上限，
+// maxBytes 是近似内存预算，实际保留量以先达到者为准。
+// 非正值使用 terminalengine 默认值（DefaultScrollbackLineLimit /
+// DefaultScrollbackByteLimit）。
+func WithScrollbackLimits(maxLines, maxBytes int) Option {
+	return func(r *Runtime) {
+		r.scrollbackMaxLines = maxLines
+		r.scrollbackMaxBytes = maxBytes
+	}
+}
