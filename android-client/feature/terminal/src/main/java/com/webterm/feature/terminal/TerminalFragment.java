@@ -1,7 +1,9 @@
 package com.webterm.feature.terminal;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,7 +13,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.view.ViewCompat;
@@ -20,6 +25,10 @@ import androidx.lifecycle.ViewModelProvider;
 
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
+import com.webterm.core.fileupload.FileUploadController;
+import com.webterm.core.fileupload.UploadTask;
+import com.webterm.feature.terminal.upload.UploadConnectionKeys;
+import com.webterm.feature.terminal.upload.UploadDocumentMetadata;
 
 import org.json.JSONObject;
 
@@ -38,11 +47,14 @@ public final class TerminalFragment extends Fragment {
     private FrameLayout mContainer;
     private final Handler bannerHandler = new Handler(Looper.getMainLooper());
     private View currentBanner;
+    private ActivityResultLauncher<String[]> uploadLauncher;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mViewModel = new ViewModelProvider(this).get(TerminalViewModel.class);
+        uploadLauncher = registerForActivityResult(
+            new ActivityResultContracts.OpenDocument(), this::onUploadFileSelected);
     }
 
     @Override
@@ -79,7 +91,6 @@ public final class TerminalFragment extends Fragment {
                     args.getString("cookie"),
                     args.getString("sessionId"),
                     args.getString("termTitle", "Terminal"),
-                    args.getString("sessionName", ""),
                     args.getString("createdAt", ""),
                     args.getString("instanceId", ""),
                     args.getBoolean("relayDevice", false),
@@ -104,6 +115,55 @@ public final class TerminalFragment extends Fragment {
                 new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
         }
+    }
+
+    public void requestFileUpload() {
+        if (uploadLauncher == null) return;
+        if (uploadController() == null) {
+            toast("上传服务未启动，请稍后重试");
+            return;
+        }
+        TerminalViewModel.TerminalSessionArgs args = currentArgs();
+        if (args == null || args.sessionId == null || args.sessionId.isEmpty()) {
+            toast("当前没有可上传的终端会话");
+            return;
+        }
+        uploadLauncher.launch(new String[]{"*/*"});
+    }
+
+    private void onUploadFileSelected(@Nullable Uri uri) {
+        if (uri == null) return;
+        FileUploadController controller = uploadController();
+        TerminalViewModel.TerminalSessionArgs args = currentArgs();
+        if (controller == null || args == null) {
+            toast("上传服务未启动，请稍后重试");
+            return;
+        }
+        try {
+            requireContext().getContentResolver().takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {
+        }
+        UploadDocumentMetadata.Metadata metadata = UploadDocumentMetadata.resolve(
+            requireContext().getContentResolver(), uri);
+        String connectionKey = UploadConnectionKeys.connectionKey(args.baseUrl, args.relayDeviceId);
+        UploadTask task = controller.submit(connectionKey, args.sessionId, uri.toString(),
+            metadata.displayName, metadata.size);
+        if (task == null) toast("已有上传任务进行中");
+    }
+
+    @Nullable
+    private TerminalViewModel.TerminalSessionArgs currentArgs() {
+        return mViewModel == null ? null : mViewModel.getSessionArgs().getValue();
+    }
+
+    @Nullable
+    private FileUploadController uploadController() {
+        return mHost == null ? null : mHost.uploadController();
+    }
+
+    private void toast(String message) {
+        if (isAdded()) Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
     }
 
     public void showHookNotification(JSONObject ev) {

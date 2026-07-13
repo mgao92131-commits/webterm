@@ -32,6 +32,9 @@ public final class MuxSession {
 
         /** 物理连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
+
+        /** 设备级文本控制消息（文件传输、Agent 通知等），不属于虚拟终端通道。 */
+        default void onControlMessage(JSONObject msg) {}
     }
 
     private final Handler mainHandler;
@@ -116,6 +119,12 @@ public final class MuxSession {
 
     boolean sendTunnelFrameText(String tunnelId, String text) {
         return sendTunnelFrame(tunnelId, text.getBytes(StandardCharsets.UTF_8), false);
+    }
+
+    /** 发送设备级文本控制消息。 */
+    public boolean sendControl(JSONObject msg) {
+        if (msg == null || !connected) return false;
+        return sendText(msg.toString());
     }
 
     private boolean sendText(String text) {
@@ -225,8 +234,9 @@ public final class MuxSession {
             int code = msg.optInt("code", 1000);
             String reason = msg.optString("reason", "");
             mainHandler.post(() -> listener.onTunnelClosed(tunnelId, code, reason));
+        } else if (type != null && !type.isEmpty()) {
+            mainHandler.post(() -> listener.onControlMessage(msg));
         }
-        // 其它控制消息（服务端角色不发送 ws-connect）忽略。
     }
 
     // dispatchBinaryFrame 是纯方法，单测覆盖（见 MuxSessionRoutingTest）。

@@ -577,9 +577,7 @@ node-datachannel 对应能力不在第一阶段迁移
 {
   "id": "s1",
   "instanceId": "...",
-  "name": "",
   "termTitle": "",
-  "displayTitle": "Terminal",
   "cwd": "/Users/gao/Documents/webterm-clone",
   "recentInputLines": [],
   "recentInputHidden": false,

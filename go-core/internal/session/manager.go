@@ -21,9 +21,7 @@ const (
 type Info struct {
 	ID                string        `json:"id"`
 	InstanceID        string        `json:"instanceId"`
-	Name              string        `json:"name"`
 	TermTitle         string        `json:"termTitle"`
-	DisplayTitle      string        `json:"displayTitle"`
 	CWD               string        `json:"cwd"`
 	RecentInputLines  []string      `json:"recentInputLines"`
 	RecentInputHidden bool          `json:"recentInputHidden"`
@@ -154,7 +152,7 @@ func (manager *Manager) buildSessionEnv(id string) map[string]string {
 	return env
 }
 
-func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error) {
+func (manager *Manager) Create(cwd string) (*TerminalSession, error) {
 	manager.mu.Lock()
 	id := fmt.Sprintf("s%d", manager.nextID)
 	manager.nextID++
@@ -164,7 +162,6 @@ func (manager *Manager) Create(name string, cwd string) (*TerminalSession, error
 	command := manager.defaults.Command
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:                 id,
-		Name:               name,
 		CWD:                cwd,
 		Command:            command,
 		Env:                manager.buildSessionEnv(id),
@@ -203,21 +200,6 @@ func (manager *Manager) Get(id string) (*TerminalSession, bool) {
 	defer manager.mu.RUnlock()
 	terminal, ok := manager.sessions[id]
 	return terminal, ok
-}
-
-func (manager *Manager) Rename(id string, name string) (*TerminalSession, bool) {
-	manager.mu.Lock()
-	terminal, ok := manager.sessions[id]
-	if !ok {
-		manager.mu.Unlock()
-		return nil, false
-	}
-	terminal.Rename(name)
-	info := terminal.Info()
-	manager.mu.Unlock()
-
-	manager.broadcastManager(ManagerMessage{Type: "session", Data: info})
-	return terminal, true
 }
 
 func (manager *Manager) Close(id string) bool {

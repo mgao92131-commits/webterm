@@ -133,11 +133,11 @@ public final class HomeViewModel extends ViewModel {
     }
 
     public void requestOpenTerminal(String baseUrl, String cookie, String sessionId,
-                                    String termTitle, String sessionName,
+                                    String termTitle,
                                     String createdAt, String instanceId,
                                     boolean relayDevice, String relayDeviceId, String cwd) {
         TerminalArgs args = new TerminalArgs(
-                baseUrl, cookie, sessionId, termTitle, sessionName,
+                baseUrl, cookie, sessionId, termTitle,
                 createdAt, instanceId, relayDevice, relayDeviceId, cwd);
         openTerminal.setValue(args);
     }
@@ -158,19 +158,18 @@ public final class HomeViewModel extends ViewModel {
     // ── Data class ───────────────────────────────────────────────
 
     public static final class TerminalArgs {
-        public final String baseUrl, cookie, sessionId, termTitle, sessionName;
+        public final String baseUrl, cookie, sessionId, termTitle;
         public final String createdAt, instanceId, relayDeviceId, cwd;
         public final boolean relayDevice;
 
         public TerminalArgs(String baseUrl, String cookie, String sessionId,
-                            String termTitle, String sessionName,
+                            String termTitle,
                             String createdAt, String instanceId,
                             boolean relayDevice, String relayDeviceId, String cwd) {
             this.baseUrl = baseUrl;
             this.cookie = cookie;
             this.sessionId = sessionId;
             this.termTitle = termTitle;
-            this.sessionName = sessionName;
             this.createdAt = createdAt;
             this.instanceId = instanceId;
             this.relayDevice = relayDevice;

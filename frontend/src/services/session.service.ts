@@ -22,11 +22,3 @@ export async function closeSession(sessionId: string): Promise<void> {
   const { localId } = parseSessionId(sessionId);
   await httpClient(`/api/sessions/${encodeURIComponent(localId)}`, { method: 'DELETE' });
 }
-
-export async function renameSession(sessionId: string, name: string): Promise<Session> {
-  const { localId } = parseSessionId(sessionId);
-  return httpClient(`/api/sessions/${encodeURIComponent(localId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ name }),
-  });
-}

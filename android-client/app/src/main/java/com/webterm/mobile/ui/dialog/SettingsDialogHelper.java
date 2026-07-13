@@ -198,6 +198,24 @@ public final class SettingsDialogHelper {
         downloadDirRow.setOnClickListener((v) -> host.openDownloadDirPicker());
         container.addView(downloadDirRow);
 
+        LinearLayout batteryRow = new LinearLayout(activity);
+        batteryRow.setOrientation(LinearLayout.HORIZONTAL);
+        batteryRow.setGravity(Gravity.CENTER_VERTICAL);
+        batteryRow.setPadding(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_5));
+        TextView batteryLabel = new TextView(activity);
+        batteryLabel.setText("后台持续连接");
+        batteryLabel.setTextColor(DesignTokens.TEXT_PRIMARY);
+        batteryLabel.setTextSize(DesignTokens.TEXT_BODY_SIZE);
+        batteryRow.addView(batteryLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView batteryStatus = new TextView(activity);
+        boolean batteryOptimized = host.isBatteryOptimizationIgnored();
+        batteryStatus.setText(batteryOptimized ? "已开启" : "未开启 (去设置)");
+        batteryStatus.setTextColor(batteryOptimized ? DesignTokens.TEXT_SECONDARY : 0xFFEF4444);
+        batteryStatus.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        batteryRow.addView(batteryStatus, new LinearLayout.LayoutParams(-2, -2));
+        if (!batteryOptimized) batteryRow.setOnClickListener(v -> host.requestIgnoreBatteryOptimization());
+        container.addView(batteryRow);
+
         // ----------------- 关闭/确定按钮 -----------------
         LinearLayout btnBar = new LinearLayout(activity);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -225,6 +243,8 @@ public final class SettingsDialogHelper {
     public interface Host {
         Activity activity();
         int getSavedFontSize();
+        boolean isBatteryOptimizationIgnored();
+        void requestIgnoreBatteryOptimization();
         String getSavedFontType();
         Typeface getTypefaceByName(String type);
         String getFontDisplayName(String fontType);

@@ -21,6 +21,11 @@ export function parseSessionId(sessionId: string): ParsedSessionId {
   return { localId: sessionId };
 }
 
+/** 将终端 OSC 标题规范化为客户端统一展示文本。 */
+export function displayTermTitle(termTitle?: string | null): string {
+  return termTitle?.trim() || 'Terminal';
+}
+
 /**
  * 按注意力优先级排序会话。
  * 需要用户处理的状态置顶，避免通知被淹没。

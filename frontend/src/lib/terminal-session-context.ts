@@ -1,5 +1,4 @@
 import { CONFIG } from '../config';
-import { renameSession } from '../services/session.service';
 import { getTerminalTheme } from '../config/themes';
 import { connectionService } from '../services/connection.service';
 import type { RelayMuxChannel } from './relay-mux-session';
@@ -9,6 +8,7 @@ import { TerminalView } from './terminal-view';
 import { TerminalInputController } from './terminal-input-controller';
 import { TerminalLayoutController } from './terminal-layout';
 import { TerminalSelectionController } from './terminal-selection';
+import { displayTermTitle } from '../utils/session';
 
 function getInitialFontSize(): number {
   if (typeof window !== 'undefined') {
@@ -28,8 +28,6 @@ export interface TerminalSessionState {
   isSelectionMode: boolean;
   isCtrlActive: boolean;
   isRestoring: boolean;
-  sessionName: string;
-  sessionPlaceholder: string;
   displayTitle: string;
 }
 
@@ -70,15 +68,10 @@ export class TerminalSessionContext implements IDisposable {
     isSelectionMode: false,
     isCtrlActive: false,
     isRestoring: false,
-    sessionName: '',
-    sessionPlaceholder: 'Terminal',
     displayTitle: 'Terminal',
   };
 
-  private currentSessionName = '';
   private currentTermTitle = '';
-  private currentDisplayTitle = 'Terminal';
-  public titleBeforeEdit = '';
 
   constructor(private options: TerminalSessionContextOptions) {
     this.lastSeq = Number(sessionStorage.getItem(`${CONFIG.storageKeys.lastSeqPrefix}${options.sessionId}:lastSeq`) || 0);
@@ -410,28 +403,15 @@ export class TerminalSessionContext implements IDisposable {
   }
 
   private setTerminalInfo(session: any = {}) {
-    if (Object.prototype.hasOwnProperty.call(session, 'name')) {
-      this.currentSessionName = String(session.name || '').trim();
-    }
     if (Object.prototype.hasOwnProperty.call(session, 'termTitle')) {
       this.currentTermTitle = String(session.termTitle || '').trim();
     }
-    this.currentDisplayTitle = session.displayTitle || (() => {
-      const term = this.currentTermTitle || 'Terminal';
-      return this.currentSessionName ? `${this.currentSessionName} - ${term}` : term;
-    })();
-
-    const sessionPlaceholder = this.currentTermTitle || 'Terminal';
-    const displayTitle = `${this.currentDisplayTitle} - WebTerm`;
+    const displayTitle = displayTermTitle(this.currentTermTitle);
     if (this.options.setDocumentTitle !== false) {
-      document.title = displayTitle;
+      document.title = `${displayTitle} - WebTerm`;
     }
 
-    this.updateState({
-      sessionName: this.currentSessionName,
-      sessionPlaceholder,
-      displayTitle,
-    });
+    this.updateState({ displayTitle });
   }
 
   // --- 字体大小动态调整 ---
@@ -442,29 +422,6 @@ export class TerminalSessionContext implements IDisposable {
     if (this.layoutController) {
       this.layoutController.setFontSize(next);
       localStorage.setItem(CONFIG.storageKeys.fontSize, String(next));
-    }
-  }
-
-  // --- 标题就地编辑 API 调用 ---
-
-  public async commitTerminalTitle(nextName: string): Promise<void> {
-    const oldName = this.titleBeforeEdit || '';
-    this.updateState({ sessionName: nextName });
-
-    if (nextName === oldName) {
-      this.setTerminalInfo({ name: oldName });
-      this.terminalView?.focus();
-      return;
-    }
-
-    try {
-      const session = await renameSession(this.options.sessionId, nextName);
-      this.setTerminalInfo(session);
-    } catch (err: any) {
-      this.setTerminalInfo({ name: oldName });
-      alert(err.message?.trim() || '修改标题失败');
-    } finally {
-      this.terminalView?.focus();
     }
   }
 

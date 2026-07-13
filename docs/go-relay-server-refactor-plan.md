@@ -297,7 +297,6 @@ Stream 可以有 route metadata，例如 path、method、subprotocol，但不能
 禁止放入 Stream 的字段：
 
 ```text
-sessionName
 termTitle
 cwd
 screen state

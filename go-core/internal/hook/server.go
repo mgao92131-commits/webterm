@@ -3,16 +3,21 @@ package hook
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"webterm/go-core/internal/app"
+	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/protocol"
+	"webterm/go-core/internal/session"
 )
 
 // Server 监听本地 Unix Socket，接收 webterm CLI / shell hook 上报的事件与命令。
@@ -167,7 +172,35 @@ func (s *Server) dispatch(ev protocol.HookEvent) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 	terminal.ApplyHookEvent(ev)
+	s.dispatchAgentNotification(sessionID, terminal, ev)
 	return nil
+}
+
+// dispatchAgentNotification 把 agent_event Hook 事件以设备级 agent_notification 下发到 Android。
+// 仅把 alert|normal 的 agent_event 下发到设备级通知通道；quiet 只更新 session 状态，不下发。
+// 标题取终端会话 TermTitle，回退 source、再回退事件类型。
+// 首版 deviceID 留空，依赖底层单设备回退；多设备精确路由留待后续。失败仅记录，不影响原有 MSG_HOOK 路径。
+func (s *Server) dispatchAgentNotification(sessionID string, terminal *session.TerminalSession, ev protocol.HookEvent) {
+	dispatcher := s.app.AgentNotificationDispatcher()
+	if dispatcher == nil {
+		return
+	}
+	importance := ev.Importance
+	if importance == "" || importance == "quiet" {
+		return
+	}
+	title := strings.TrimSpace(terminal.Info().TermTitle)
+	if title == "" {
+		title = ev.Source
+	}
+	if title == "" {
+		title = ev.Type
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := dispatcher.Notify(ctx, "", sessionID, importance, title, ev.Message, ev.Source); err != nil {
+		s.app.Log("warn", "hook", fmt.Sprintf("agent_notification dispatch failed: %v", err))
+	}
 }
 
 func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
@@ -178,6 +211,12 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 			Status: "failed",
 			Error:  "missing_command_type",
 		})
+		return
+	}
+
+	// send 是设备级命令，与终端会话无关，不做 session 解析。
+	if cmd.Type == "send" {
+		s.handleSendCommand(conn, cmd)
 		return
 	}
 
@@ -217,6 +256,102 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 	}
 
 	terminal.HandleCLICommand(conn, cmd)
+}
+
+func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
+	fail := func(errCode string) {
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:   "response",
+			Type:   "file_send_status",
+			Status: string(filesend.StatusFailed),
+			Error:  errCode,
+		})
+	}
+
+	if cmd.FilePath == "" {
+		fail("missing_file_path")
+		return
+	}
+	absPath := cmd.FilePath
+	if !filepath.IsAbs(absPath) && cmd.CWD != "" {
+		absPath = filepath.Join(cmd.CWD, absPath)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		fail("file_not_found")
+		return
+	}
+	if !info.Mode().IsRegular() {
+		fail("file_not_regular")
+		return
+	}
+	sha256Hex, err := fileSHA256(absPath)
+	if err != nil {
+		fail("hash_failed")
+		return
+	}
+
+	svc := s.app.FileSendService()
+	task, err := svc.CreateTask(filesend.CreateTaskOptions{
+		Path:     absPath,
+		FileName: info.Name(),
+		Size:     info.Size(),
+		SHA256:   sha256Hex,
+	})
+	if err != nil {
+		fail("create_task_failed")
+		return
+	}
+
+	// 先发一个 offered 响应，让 CLI 立即进入等待态。
+	writeResponse(conn, protocol.CLIResponse{
+		Kind:       "response",
+		Type:       "file_send_status",
+		Status:     string(filesend.StatusOffered),
+		DownloadID: task.ID,
+		FilePath:   task.FileName,
+		TotalBytes: task.Size,
+	})
+
+	if err := svc.SendOffer(context.Background(), task); err != nil {
+		// 里程碑 B：设备级 sender 尚未注册（Android WebTermDeviceService 在里程碑 C 接入）。
+		s.app.Log("warn", "hook", fmt.Sprintf("send offer not delivered: %v", err))
+		task.SetFailed("device_not_connected")
+		writeResponse(conn, protocol.CLIResponse{
+			Kind:       "response",
+			Type:       "file_send_status",
+			Status:     string(filesend.StatusFailed),
+			DownloadID: task.ID,
+			FilePath:   task.FileName,
+			Error:      "device_not_connected",
+		})
+		svc.Remove(task.ID)
+		return
+	}
+
+	// 转发 file_send.* 状态流直到终态。
+	for resp := range task.StateChan {
+		if resp.Timestamp == 0 {
+			resp.Timestamp = time.Now().Unix()
+		}
+		writeResponse(conn, resp)
+		if filesend.Status(resp.Status).IsTerminal() {
+			return
+		}
+	}
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func writeResponse(conn net.Conn, resp protocol.CLIResponse) {

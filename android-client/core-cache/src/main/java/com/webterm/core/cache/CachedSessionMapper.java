@@ -15,7 +15,6 @@ public final class CachedSessionMapper {
             try {
                 session.put("id", meta.sessionId);
                 session.put("instanceId", meta.instanceId);
-                session.put("name", meta.sessionName);
                 session.put("termTitle", meta.termTitle);
                 session.put("createdAt", meta.createdAt);
                 session.put("cwd", meta.cwd);

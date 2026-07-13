@@ -26,7 +26,7 @@ import (
 	"webterm/go-core/internal/testutil"
 )
 
-func TestDirectLoginAndSessionCRUD(t *testing.T) {
+func TestDirectLoginAndSessionLifecycle(t *testing.T) {
 	cfg := config.Config{
 		Mode:   config.ModeDirect,
 		Direct: config.DirectConfig{Addr: "127.0.0.1:0", User: "admin", Password: "pw"},
@@ -45,7 +45,7 @@ func TestDirectLoginAndSessionCRUD(t *testing.T) {
 		t.Fatalf("login did not set cookies")
 	}
 
-	createBody := bytes.NewBufferString(`{"name":"work","cwd":"/tmp"}`)
+	createBody := bytes.NewBufferString(`{"cwd":"/tmp"}`)
 	createRequest := httptest.NewRequest(http.MethodPost, "/api/sessions", createBody)
 	createRequest.AddCookie(cookies[0])
 	createResponse := httptest.NewRecorder()
@@ -61,13 +61,12 @@ func TestDirectLoginAndSessionCRUD(t *testing.T) {
 		t.Fatalf("created ID = %q, want s1", created.ID)
 	}
 
-	renameBody := bytes.NewBufferString(`{"name":"renamed"}`)
-	renameRequest := httptest.NewRequest(http.MethodPatch, "/api/sessions/s1", renameBody)
-	renameRequest.AddCookie(cookies[0])
-	renameResponse := httptest.NewRecorder()
-	server.route(renameResponse, renameRequest)
-	if renameResponse.Code != http.StatusOK {
-		t.Fatalf("rename status = %d, want 200 body=%s", renameResponse.Code, renameResponse.Body.String())
+	patchRequest := httptest.NewRequest(http.MethodPatch, "/api/sessions/s1", bytes.NewBufferString(`{}`))
+	patchRequest.AddCookie(cookies[0])
+	patchResponse := httptest.NewRecorder()
+	server.route(patchResponse, patchRequest)
+	if patchResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("patch status = %d, want 405 body=%s", patchResponse.Code, patchResponse.Body.String())
 	}
 
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/sessions/s1", nil)

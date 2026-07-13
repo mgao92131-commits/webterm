@@ -648,38 +648,8 @@ public final class SessionRepository {
     }
 
     private JSONArray hydrateCachedNames(ServerConfig server, JSONArray sessions) {
-        if (terminalCache == null || sessions == null) return sessions;
-        List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server);
-        Map<String, TerminalDiskCache.Metadata> diskMap = new HashMap<>();
-        if (diskCaches != null) {
-            for (TerminalDiskCache.Metadata meta : diskCaches) {
-                if (meta.sessionId != null) diskMap.put(meta.sessionId, meta);
-            }
-        }
-
-        JSONArray result = new JSONArray();
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject session = sessions.optJSONObject(i);
-            if (session == null) continue;
-            String sessionId = session.optString("id");
-            String sessionName = null;
-            TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
-            if (diskCached != null) {
-                sessionName = diskCached.sessionName;
-            }
-            if (sessionName != null && session.optString("name", "").trim().isEmpty()) {
-                try {
-                    JSONObject copy = new JSONObject(session.toString());
-                    copy.put("name", sessionName);
-                    result.put(copy);
-                } catch (JSONException ignored) {
-                    result.put(session);
-                }
-            } else {
-                result.put(session);
-            }
-        }
-        return result;
+        // 自定义会话名已删除；服务端返回的 OSC termTitle 是唯一标题来源。
+        return sessions;
     }
 
     // ── Cache utilities ──────────────────────────────────────────────

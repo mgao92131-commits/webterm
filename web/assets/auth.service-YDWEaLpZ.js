@@ -1,0 +1,1 @@
+import{P as s,O as r,Q as a,R as t,S as o}from"./index-yfEtPTYM.js";async function u(n){return t(n.email,n.password)}async function i(n){return a(n.email,n.password)}async function c(){return s()}async function f(){return o()}async function g(n){return r(n)}export{u as a,i as b,f,c as l,g as r};

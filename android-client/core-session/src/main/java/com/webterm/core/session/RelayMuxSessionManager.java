@@ -7,6 +7,8 @@ import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
 
+import org.json.JSONObject;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -29,6 +31,10 @@ public final class RelayMuxSessionManager {
 
         /** 物理 mux 连接每次自动重连尝试时触发，attempt 从 1 起递增。 */
         default void onReconnectAttempt(int attempt) {}
+    }
+
+    public interface ControlListener {
+        void onControlMessage(JSONObject msg);
     }
 
     private static final ChannelListener NO_OP_LISTENER = new ChannelListener() {
@@ -63,6 +69,7 @@ public final class RelayMuxSessionManager {
     private MuxSession muxSession;
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
+    private volatile ControlListener controlListener;
 
     RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this.http = http;
@@ -111,6 +118,12 @@ public final class RelayMuxSessionManager {
                 for (Channel channel : snapshotChannels()) {
                     channel.listener.onReconnectAttempt(attempt);
                 }
+            }
+
+            @Override public void onControlMessage(JSONObject msg) {
+                if (generation != muxGeneration) return;
+                ControlListener listener = controlListener;
+                if (listener != null) listener.onControlMessage(msg);
             }
 
             @Override public void onTunnelConnected(String tunnelId) {
@@ -284,6 +297,15 @@ public final class RelayMuxSessionManager {
 
     public boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
         return muxSession.sendTunnelFrame(channelId, payload, binary);
+    }
+
+    /** 注册设备级控制消息监听，不改变 screen channel 的所有权。 */
+    public void setControlListener(ControlListener listener) {
+        controlListener = listener;
+    }
+
+    public boolean sendControl(JSONObject msg) {
+        return muxSession.sendControl(msg);
     }
 
     void stop() {

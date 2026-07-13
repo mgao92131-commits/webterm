@@ -71,7 +71,7 @@ func NewWithEvents(config Config, store *relaystore.MemoryStore, registry *relay
 	wsGateway := relaygateway.NewWSGateway(store, registry, streams)
 	mux.Handle("/api/sessions", httpGateway)
 	mux.Handle("/api/sessions/", httpGateway)
-	mux.Handle("/api/fs/", httpGateway)
+	mux.Handle("/api/file-send/", httpGateway)
 	mux.Handle("/ws/sessions", wsGateway)
 	metrics.Register(mux)
 	mux.Handle("/", control.Handler())

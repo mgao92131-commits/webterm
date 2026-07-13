@@ -2,16 +2,19 @@ package application
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
+	"webterm/go-core/internal/agentnotify"
+	"webterm/go-core/internal/filesend"
+	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
@@ -24,6 +27,10 @@ type MuxServeFunc func(conn session.Socket, opts *MuxServeOpts) MuxSession
 // MuxSession 是 mux.Session 的接口抽象。
 type MuxSession interface {
 	Run(ctx context.Context) error
+	// SendControl 发送设备级控制消息（file_send.* / agent_notification）。
+	// *mux.Session 已实现；签名与 filesend.ControlSender 一致，便于在 relay 代理侧
+	// 把重建出的 mux session 直接注册为设备 ControlSender。
+	SendControl(ctx context.Context, msg map[string]any) error
 }
 
 // MuxServeOpts 是 mux.ServeOpts 的类型投影。
@@ -43,9 +50,12 @@ type MuxVirtualSocket interface {
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
 // 供 direct server 和 relay agent 共用，消除重复。
 type SessionRouter struct {
-	manager  *session.Manager
-	muxServe MuxServeFunc // 可选：用于 mux 子协议包装
-	logger   *logs.Logger
+	manager    *session.Manager
+	muxServe   MuxServeFunc // 可选：用于 mux 子协议包装
+	onControl  func(ctx context.Context, msg map[string]any)
+	fileSend   *filesend.Service
+	fileUpload *fileupload.Service
+	logger     *logs.Logger
 }
 
 func NewSessionRouter(manager *session.Manager, logger ...*logs.Logger) *SessionRouter {
@@ -62,6 +72,53 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 	return &SessionRouter{manager: manager, muxServe: muxServe, logger: log}
 }
 
+// SetControlHandler 设置 mux 设备级控制消息处理器。
+// 用于 file_send.*、agent_notification 等不经过虚拟通道的控制消息。
+func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, msg map[string]any)) {
+	r.onControl = onControl
+}
+
+// SetFileSendService 注入 FileSendService，并把它链接到 mux 控制消息处理链前端：
+// file_send.* 消息优先交给 Service.HandleControl，未处理的消息继续传递给此前注册的处理器。
+func (r *SessionRouter) SetFileSendService(svc *filesend.Service) {
+	r.fileSend = svc
+	prev := r.onControl
+	r.onControl = func(ctx context.Context, msg map[string]any) {
+		if svc != nil && svc.HandleControl(msg) {
+			return
+		}
+		if prev != nil {
+			prev(ctx, msg)
+		}
+	}
+}
+
+// SetFileUploadService 注入 FileUploadService，供 POST /api/sessions/{id}/upload 路由调用。
+// 与 filesend 不同，上传不参与 mux 控制消息链，只消费流式 HTTP 请求 body。
+func (r *SessionRouter) SetFileUploadService(svc *fileupload.Service) {
+	r.fileUpload = svc
+}
+
+// SetAgentNotificationDispatcher 注入 AgentNotificationDispatcher 并链接到控制链前端：
+// agent_notification.ack 交给 Dispatcher.HandleAck 清理 pending，其余消息继续传递。
+// 首版按单设备处理，deviceID 留空（与 Dispatcher.Notify 的 deviceID="" 一致）。
+func (r *SessionRouter) SetAgentNotificationDispatcher(d *agentnotify.Dispatcher) {
+	prev := r.onControl
+	r.onControl = func(ctx context.Context, msg map[string]any) {
+		if d != nil {
+			if typ, _ := msg["type"].(string); typ == agentnotify.TypeAgentAck {
+				if eventID, _ := msg["event_id"].(string); eventID != "" {
+					d.HandleAck("", eventID)
+				}
+				return
+			}
+		}
+		if prev != nil {
+			prev(ctx, msg)
+		}
+	}
+}
+
 // RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
 // 返回 start 函数由调用方在握手 ack 完成后调用。
 func (r *SessionRouter) RouteOpen(
@@ -70,6 +127,18 @@ func (r *SessionRouter) RouteOpen(
 	path string,
 	protocols []string,
 ) (func(), error) {
+	start, _, err := r.RouteOpenWithControl(ctx, socket, path, protocols)
+	return start, err
+}
+
+// RouteOpenWithControl 与 RouteOpen 相同，但在 mux 分支额外返回重建出的 mux session
+// 作为 filesend.ControlSender，供 relay 代理侧注册为设备级控制通道。非 mux 分支 ctrl 为 nil。
+func (r *SessionRouter) RouteOpenWithControl(
+	ctx context.Context,
+	socket session.Socket,
+	path string,
+	protocols []string,
+) (func(), filesend.ControlSender, error) {
 	clean := cleanPath(path)
 	switch {
 	case clean == "/ws/sessions":
@@ -78,34 +147,34 @@ func (r *SessionRouter) RouteOpen(
 				OnOpen: func(ctx context.Context, vs MuxVirtualSocket, p string, protos []string) (func(), error) {
 					return r.RouteOpen(ctx, vs, p, protos)
 				},
-				Logger: r.logger,
+				OnControl: r.onControl,
+				Logger:    r.logger,
 			})
-			return func() {
+			start := func() {
 				defer socket.Close()
 				_ = muxSession.Run(ctx)
-			}, nil
+			}
+			return start, muxSession, nil
 		}
 		mc := session.NewManagerClient(socket, r.logger)
-		return func() { go mc.Run(ctx, r.manager) }, nil
+		return func() { go mc.Run(ctx, r.manager) }, nil, nil
 
 	case strings.HasPrefix(clean, "/ws/sessions/"):
-		// The Android client is the sole terminal consumer. It renders the
-		// authoritative screen projection, so raw-output JSON/binary terminal
-		// transports are intentionally not accepted here anymore.
+		// c1 只接受 Go 权威屏幕协议；设备级文件/通知控制仍走外层 mux control。
 		if !hasProtocol(protocols, protocol.ScreenSubprotocol) {
-			return nil, fmt.Errorf("terminal sessions require %s", protocol.ScreenSubprotocol)
+			return nil, nil, fmt.Errorf("terminal sessions require %s", protocol.ScreenSubprotocol)
 		}
 		id := strings.TrimPrefix(clean, "/ws/sessions/")
 		id, _ = url.PathUnescape(id)
 		terminal, ok := r.manager.Get(id)
 		if !ok {
-			return nil, fmt.Errorf("session %s not found", id)
+			return nil, nil, fmt.Errorf("session %s not found", id)
 		}
 		client := session.NewClient(socket, terminal, session.ClientModeScreen, r.logger)
-		return func() { go client.Run(ctx) }, nil
+		return func() { go client.Run(ctx) }, nil, nil
 
 	default:
-		return nil, fmt.Errorf("unknown path: %s", path)
+		return nil, nil, fmt.Errorf("unknown path: %s", path)
 	}
 }
 
@@ -118,13 +187,12 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 	}
 	if method == http.MethodPost && path == "/api/sessions" {
 		var req struct {
-			Name string `json:"name"`
-			CWD  string `json:"cwd"`
+			CWD string `json:"cwd"`
 		}
 		if len(body) > 0 {
 			_ = json.Unmarshal(body, &req)
 		}
-		terminal, err := r.manager.Create(req.Name, req.CWD)
+		terminal, err := r.manager.Create(req.CWD)
 		if err != nil {
 			return http.StatusBadRequest, nil, err
 		}
@@ -134,17 +202,7 @@ func (r *SessionRouter) RouteHTTP(method string, rawPath string, body []byte) (i
 		id := strings.TrimPrefix(path, "/api/sessions/")
 		id, _ = url.PathUnescape(id)
 		if method == http.MethodPatch {
-			var req struct {
-				Name string `json:"name"`
-			}
-			if len(body) > 0 {
-				_ = json.Unmarshal(body, &req)
-			}
-			terminal, ok := r.manager.Rename(id, req.Name)
-			if !ok {
-				return http.StatusNotFound, nil, errors.New("session not found")
-			}
-			return marshalStatus(http.StatusOK, terminal.Info())
+			return http.StatusMethodNotAllowed, nil, errors.New("method not allowed")
 		}
 		if method == http.MethodDelete {
 			if !r.manager.Close(id) {
@@ -169,16 +227,36 @@ type HTTPResult struct {
 	Data       []byte // 小文件兜底：当 Body 为 nil 时使用 Data
 }
 
-// RouteHTTPv2 处理需要流式响应的 HTTP 请求（例如文件下载）。
-func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reader) (*HTTPResult, error) {
+// RouteHTTPv2 处理需要流式响应的 HTTP 请求（例如文件下载/发送）。
+// header 用于提取授权信息（例如 transfer_token），可为 nil。
+func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, header http.Header, body io.Reader) (*HTTPResult, error) {
 	path := cleanPath(rawPath)
 
-	if strings.HasPrefix(path, "/api/fs/download") {
-		parsed, err := url.Parse(rawPath)
-		if err != nil {
-			return nil, err
+	// POST /api/sessions/{sessionId}/upload：流式上传，body 直接透传给 fileupload.Service，
+	// 禁止 io.ReadAll；业务错误按 5.2 表返回正常 JSON 响应，不能转成 StreamError。
+	if method == http.MethodPost && strings.HasPrefix(path, "/api/sessions/") {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(path, "/api/sessions/"), "/upload"); ok {
+			id, _ = url.PathUnescape(id)
+			return r.routeUpload(header, body, id), nil
 		}
-		return r.handleDownload(parsed.RawQuery)
+	}
+
+	if strings.HasPrefix(path, "/api/file-send/") {
+		if r.fileSend == nil {
+			return &HTTPResult{
+				StatusCode: http.StatusServiceUnavailable,
+				Data:       []byte("file-send service unavailable"),
+			}, nil
+		}
+		transferID := strings.TrimPrefix(path, "/api/file-send/")
+		transferID, _, _ = strings.Cut(transferID, "?")
+		token := filesend.TokenFromRequest(header)
+		res := r.fileSend.HandleFileSendRequest(transferID, token)
+		return &HTTPResult{
+			StatusCode: res.StatusCode,
+			Header:     res.Header,
+			Body:       res.Body,
+		}, nil
 	}
 
 	// 其他路由回退到 RouteHTTP
@@ -193,112 +271,103 @@ func (r *SessionRouter) RouteHTTPv2(method string, rawPath string, body io.Reade
 	}, nil
 }
 
-func (r *SessionRouter) handleDownload(query string) (*HTTPResult, error) {
-	params, err := url.ParseQuery(query)
+// routeUpload 处理 POST /api/sessions/{sessionId}/upload。
+// DeclaredSize 取值优先级：X-File-Size > Content-Length > -1（未知）；
+// 最终大小判据以实际 body 字节数为准（由 fileupload.Service 在落盘后校验）。
+func (r *SessionRouter) routeUpload(header http.Header, body io.Reader, sessionID string) *HTTPResult {
+	if r.fileUpload == nil {
+		return uploadErrorResult(http.StatusServiceUnavailable, fileupload.CodeInternalError, "上传服务不可用")
+	}
+	// Android 端 OkHttp 拒绝非 ASCII header 值，统一改用 X-File-Name-B64
+	//（文件名字节数组的 URL-safe Base64，带填充）；直连 curl 等场景仍兼容原始 X-File-Name。
+	fileName := header.Get("X-File-Name")
+	if fileName == "" {
+		if encoded := header.Get("X-File-Name-B64"); encoded != "" {
+			decoded, err := base64.URLEncoding.DecodeString(encoded)
+			if err != nil {
+				return uploadErrorResult(http.StatusBadRequest, fileupload.CodeInvalidFileName, "X-File-Name-B64 解码失败")
+			}
+			fileName = string(decoded)
+		}
+	}
+	if fileName == "" {
+		return uploadErrorResult(http.StatusBadRequest, fileupload.CodeInvalidFileName, "缺少 X-File-Name")
+	}
+	declaredSize := int64(-1)
+	if sizeHeader := header.Get("X-File-Size"); sizeHeader != "" {
+		size, err := strconv.ParseInt(sizeHeader, 10, 64)
+		if err != nil || size < 0 {
+			return uploadErrorResult(http.StatusBadRequest, fileupload.CodeSizeMismatch, "X-File-Size 非法")
+		}
+		declaredSize = size
+	} else if contentLength := header.Get("Content-Length"); contentLength != "" {
+		// 注意：net/http 服务端请求中 Content-Length 不在 Header map 里，
+		// 调用方（direct server / relay gateway）需要显式转发 r.ContentLength。
+		if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil && size >= 0 {
+			declaredSize = size
+		}
+	}
+	if body == nil {
+		body = http.NoBody
+	}
+	result, err := r.fileUpload.Upload(context.Background(), fileupload.Request{
+		SessionID:    sessionID,
+		FileName:     fileName,
+		DeclaredSize: declaredSize,
+		Body:         body,
+	})
 	if err != nil {
-		return nil, err
+		code := fileupload.CodeOf(err)
+		message := "上传失败"
+		var uploadErr *fileupload.Error
+		if errors.As(err, &uploadErr) {
+			message = uploadErr.Message
+		}
+		return uploadErrorResult(uploadHTTPStatus(code), code, message)
 	}
-	downloadID := params.Get("downloadId")
-	if downloadID == "" {
-		return nil, errors.New("missing downloadId")
+	data, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return uploadErrorResult(http.StatusInternalServerError, fileupload.CodeInternalError, "序列化上传结果失败")
 	}
-
-	task, ok := r.manager.GetDownloadTask(downloadID)
-	if !ok {
-		return &HTTPResult{
-			StatusCode: http.StatusGone,
-			Data:       []byte("download task not found"),
-		}, nil
-	}
-	if task.SessionID != params.Get("sessionId") {
-		r.notifyDownloadStatus(task, "failed", "session mismatch")
-		return &HTTPResult{
-			StatusCode: http.StatusGone,
-			Data:       []byte("download task not found"),
-		}, nil
-	}
-
-	file, err := os.Open(task.Path)
-	if err != nil {
-		r.notifyDownloadStatus(task, "failed", err.Error())
-		return &HTTPResult{
-			StatusCode: http.StatusForbidden,
-			Data:       []byte(err.Error()),
-		}, nil
-	}
-
-	header := http.Header{}
-	header.Set("Content-Type", "application/octet-stream")
-	header.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, task.FileName))
-	header.Set("Content-Length", strconv.FormatInt(task.Size, 10))
-
-	r.notifyDownloadStatus(task, "started", "")
-
 	return &HTTPResult{
 		StatusCode: http.StatusOK,
-		Header:     header,
-		Body:       &downloadNotifyReader{ReadCloser: file, task: task},
-	}, nil
-}
-
-// downloadNotifyReader 在读取到 EOF 时自动发送 complete 状态。
-type downloadNotifyReader struct {
-	io.ReadCloser
-	task *session.DownloadTask
-	done bool
-}
-
-func (r *downloadNotifyReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if err == io.EOF && !r.done {
-		r.done = true
-		notifyDownloadTaskComplete(r.task)
+		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Data:       data,
 	}
-	return n, err
 }
 
-func notifyDownloadTaskComplete(task *session.DownloadTask) {
-	if task == nil {
-		return
-	}
-	select {
-	case task.StateChan <- protocol.CLIResponse{
-		Kind:             "response",
-		Type:             "download_status",
-		Status:           "complete",
-		DownloadID:       task.ID,
-		BytesTransferred: task.Size,
-		TotalBytes:       task.Size,
-	}:
+// uploadHTTPStatus 按计划 5.2 表把上传业务错误码映射为 HTTP 状态码。
+// UPLOAD_CONFLICT 不在表中：同 session 已有活跃上传，按资源冲突返回 409。
+func uploadHTTPStatus(code fileupload.Code) int {
+	switch code {
+	case fileupload.CodeSessionNotFound:
+		return http.StatusNotFound
+	case fileupload.CodeSessionCWDUnavailable, fileupload.CodeUploadDirectoryInvalid, fileupload.CodeUploadConflict:
+		return http.StatusConflict
+	case fileupload.CodeUploadDirectoryNotWritable:
+		return http.StatusForbidden
+	case fileupload.CodeInvalidFileName, fileupload.CodeSizeMismatch, fileupload.CodeTransferInterrupted:
+		return http.StatusBadRequest
+	case fileupload.CodeFileTooLarge:
+		return http.StatusRequestEntityTooLarge
+	case fileupload.CodeInsufficientDiskSpace:
+		return http.StatusInsufficientStorage
 	default:
+		return http.StatusInternalServerError
 	}
 }
 
-func (r *SessionRouter) notifyDownloadStatus(task *session.DownloadTask, status, errMsg string) {
-	if task == nil {
-		return
+// uploadErrorResult 构造 {"code":"...","message":"..."} 形状的业务错误响应。
+func uploadErrorResult(status int, code fileupload.Code, message string) *HTTPResult {
+	data, err := json.Marshal(map[string]string{"code": string(code), "message": message})
+	if err != nil {
+		data = []byte(`{"code":"INTERNAL_ERROR","message":"上传失败"}`)
+		status = http.StatusInternalServerError
 	}
-	var resp protocol.CLIResponse
-	if status == "failed" {
-		resp = protocol.CLIResponse{
-			Kind:       "response",
-			Type:       "download_status",
-			Status:     "failed",
-			DownloadID: task.ID,
-			Error:      errMsg,
-		}
-	} else {
-		resp = protocol.CLIResponse{
-			Kind:       "response",
-			Type:       "download_status",
-			Status:     status,
-			DownloadID: task.ID,
-			TotalBytes: task.Size,
-		}
-	}
-	select {
-	case task.StateChan <- resp:
-	default:
+	return &HTTPResult{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Data:       data,
 	}
 }
 
@@ -311,6 +380,25 @@ func hasProtocol(protocols []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func selectProtocol(protocols []string) string {
+	for _, p := range protocols {
+		if p == protocol.ScreenSubprotocol {
+			return protocol.ScreenSubprotocol
+		}
+	}
+	for _, p := range protocols {
+		if p == protocol.BinarySubprotocol {
+			return protocol.BinarySubprotocol
+		}
+	}
+	for _, p := range protocols {
+		if p == protocol.JSONSubprotocol {
+			return protocol.JSONSubprotocol
+		}
+	}
+	return protocol.JSONSubprotocol
 }
 
 func cleanPath(raw string) string {

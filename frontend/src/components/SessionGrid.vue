@@ -48,7 +48,7 @@
         <!-- Header row: title + agent status/notification -->
         <div class="flex items-center justify-between gap-2 min-w-0">
           <h3 class="flex-1 text-[14px] font-medium text-fg truncate">
-            {{ s.displayTitle || s.name || s.termTitle || 'Terminal' }}
+            {{ displayTermTitle(s.termTitle) }}
           </h3>
           <div class="flex items-center gap-1.5 flex-shrink-0">
             <span
@@ -88,6 +88,7 @@
 <script setup lang="ts">
 import { Plus, Monitor, Terminal, Folder, X, AlertCircle } from '@lucide/vue';
 import type { Session } from '../store';
+import { displayTermTitle } from '../utils/session';
 
 defineProps<{
   sessions: Session[];

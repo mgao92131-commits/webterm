@@ -18,11 +18,11 @@ const shellHookTemplate = `#!/usr/bin/env bash
 WEBTERM="{{.WebtermBin}}"
 [ -x "$WEBTERM" ] || WEBTERM="webterm"
 
-# 安全调用 webterm meta --last-command（双引号包裹，避免特殊字符破坏命令行）
-webterm_meta_last_command() {
+# 安全调用 webterm meta；每个提示符同时上报当前目录，避免 cd 后上传仍落到初始目录。
+webterm_meta() {
   local text="$1"
   local kind="${2:-shell}"
-  "$WEBTERM" meta --quiet --last-command "$text" --input-kind "$kind"
+  "$WEBTERM" meta --quiet --cwd "$PWD" --last-command "$text" --input-kind "$kind"
 }
 
 # Bash 使用 PROMPT_COMMAND
@@ -30,9 +30,7 @@ if [ -n "${BASH_VERSION:-}" ]; then
   __webterm_prompt_command() {
     local last
     last="$(history 1 2>/dev/null | sed 's/^[ ]*[0-9]*[ ]*//')"
-    if [ -n "$last" ]; then
-      webterm_meta_last_command "$last" "shell"
-    fi
+    webterm_meta "$last" "shell"
   }
   if [ -z "${PROMPT_COMMAND:-}" ]; then
     PROMPT_COMMAND='__webterm_prompt_command'
@@ -46,9 +44,7 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   __webterm_precmd() {
     local last
     last="$(fc -ln -1 2>/dev/null | sed 's/^[ ]*//')"
-    if [ -n "$last" ]; then
-      webterm_meta_last_command "$last" "shell"
-    fi
+    webterm_meta "$last" "shell"
   }
   if ! printf '%s\n' "${precmd_functions[@]}" | grep -qx '__webterm_precmd'; then
     precmd_functions+=(__webterm_precmd)

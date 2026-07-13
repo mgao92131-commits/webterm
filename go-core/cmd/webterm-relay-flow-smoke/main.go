@@ -115,7 +115,7 @@ func handleAgent(ctx context.Context, w http.ResponseWriter, r *http.Request, cw
 	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPHeaders, createID, 0, createMeta)); err != nil {
 		return err
 	}
-	createBody := []byte(fmt.Sprintf(`{"name":"relay-flow-smoke","cwd":%q}`, cwd))
+	createBody := []byte(fmt.Sprintf(`{"cwd":%q}`, cwd))
 	if err := writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, createID, relaycore.FrameFlagFin, createBody)); err != nil {
 		return err
 	}

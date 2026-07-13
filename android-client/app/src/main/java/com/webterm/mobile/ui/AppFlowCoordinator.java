@@ -8,6 +8,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
+import android.util.Log;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.view.View;
@@ -18,13 +20,12 @@ import androidx.documentfile.provider.DocumentFile;
 
 import org.json.JSONObject;
 
-import org.json.JSONObject;
-
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.api.DeviceConnectionKeys;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
@@ -33,8 +34,10 @@ import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.api.SessionIds;
 import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.feature.terminal.domain.RemoteTerminalIntegration;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
+import com.webterm.mobile.device.NotificationTerminalResolver;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.mobile.download.FileDownloadHelper;
@@ -62,6 +65,7 @@ import dagger.hilt.android.scopes.ActivityScoped;
 public final class AppFlowCoordinator implements
     ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host {
 
+    private static final String TAG = "AppFlowCoordinator";
     public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
 
     private final WebTermApi api;
@@ -72,12 +76,14 @@ public final class AppFlowCoordinator implements
     private final ServerConfigManager serverConfigs;
     private final Handler mainHandler;
     private final OkHttpClient http;
+    private final TerminalFocusStore terminalFocus;
 
     private final RemoteTerminalIntegration remoteTerminalIntegration;
     private final RelayService mRelayService;
     private FileDownloadHelper downloadHelper;
 
     private boolean mInForeground = true;
+    private boolean activityResumed;
     private boolean terminalAuthRecoveryInFlight;
     private int terminalAuthRecoveryGeneration;
     private SessionCommandController mSessionCommands;
@@ -92,6 +98,9 @@ public final class AppFlowCoordinator implements
     private NavController mNavController;
     private HomeFragment mHomeFragment;
     private MainActivity mActivity;
+    private PendingTerminalOpen pendingTerminalOpen;
+    private String currentTerminalConnectionKey = "";
+    private String currentTerminalSessionId = "";
 
     public enum ScreenMode {
         DEVICES,
@@ -111,6 +120,7 @@ public final class AppFlowCoordinator implements
         ServerConfigManager serverConfigs,
         Handler mainHandler,
         OkHttpClient http,
+        TerminalFocusStore terminalFocus,
         RemoteTerminalIntegration remoteTerminalIntegration,
         RelayService relayService
     ) {
@@ -122,6 +132,7 @@ public final class AppFlowCoordinator implements
         this.serverConfigs = serverConfigs;
         this.mainHandler = mainHandler;
         this.http = http;
+        this.terminalFocus = terminalFocus;
         this.remoteTerminalIntegration = remoteTerminalIntegration;
         this.mRelayService = relayService;
     }
@@ -151,8 +162,8 @@ public final class AppFlowCoordinator implements
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
-            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, boolean isRelayDevice, String relayDeviceId) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", isRelayDevice, relayDeviceId, "");
+            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, boolean isRelayDevice, String relayDeviceId) {
+                showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", isRelayDevice, relayDeviceId, "");
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -167,6 +178,11 @@ public final class AppFlowCoordinator implements
 
     public void onResume() {
         mInForeground = true;
+        activityResumed = true;
+        if (!currentTerminalConnectionKey.isEmpty() && !currentTerminalSessionId.isEmpty()) {
+            terminalFocus.setVisible(currentTerminalConnectionKey, currentTerminalSessionId);
+        }
+        mainHandler.post(this::drainPendingTerminalOpen);
 
         mHomeFragment = findHomeFragment();
 
@@ -189,6 +205,8 @@ public final class AppFlowCoordinator implements
     public void onPause() {
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
+        activityResumed = false;
+        terminalFocus.clear();
         if (!hasTerminalSession()) {
             mRelayService.stop();
         }
@@ -247,7 +265,7 @@ public final class AppFlowCoordinator implements
     // ── Navigation methods ─────────────────────────────────────────
 
     public void navigateToTerminal(String baseUrl, String cookie, String sessionId,
-                                   String termTitle, String sessionName,
+                                   String termTitle,
                                    String createdAt, String instanceId,
                                    boolean relayDevice, String relayDeviceId, String cwd) {
         Bundle args = new Bundle();
@@ -255,7 +273,6 @@ public final class AppFlowCoordinator implements
         args.putString("cookie", cookie);
         args.putString("sessionId", sessionId);
         args.putString("termTitle", termTitle);
-        args.putString("sessionName", sessionName);
         args.putString("createdAt", createdAt != null ? createdAt : "");
         args.putString("instanceId", instanceId != null ? instanceId : "");
         args.putBoolean("relayDevice", relayDevice);
@@ -312,6 +329,9 @@ public final class AppFlowCoordinator implements
         terminalAuthRecoveryGeneration++;
         terminalAuthRecoveryInFlight = false;
         remoteTerminalIntegration.stop();
+        terminalFocus.clear();
+        currentTerminalConnectionKey = "";
+        currentTerminalSessionId = "";
     }
 
     // ── UI helpers ───────────────────────────────────────────────────
@@ -453,21 +473,24 @@ public final class AppFlowCoordinator implements
     // ── Terminal ─────────────────────────────────────────────────────
 
     void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", "", false, "", "");
+        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, "", "", false, "", "");
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, "", false, "", "");
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String createdAt) {
+        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, "", false, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId, relayDevice, "", "");
+        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId, relayDevice, "", "");
     }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String sessionName,
+    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
-        navigateToTerminal(baseUrl, cookie, sessionId, termTitle, sessionName, createdAt, instanceId,
+        currentTerminalConnectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDevice, relayDeviceId);
+        currentTerminalSessionId = sessionId == null ? "" : sessionId;
+        if (activityResumed) terminalFocus.setVisible(currentTerminalConnectionKey, currentTerminalSessionId);
+        navigateToTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
             relayDevice, relayDeviceId, cwd);
     }
 
@@ -501,14 +524,71 @@ public final class AppFlowCoordinator implements
     // ── HomeHost ─────────────────────────────────────────────────────
 
     public void showTerminal(Activity activity, ServerConfig server, String sessionId, String termTitle,
-                             String sessionName, String createdAt, String instanceId, String cwd) {
-        openSession(activity, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd);
+                             String createdAt, String instanceId, String cwd) {
+        openSession(activity, server, sessionId, termTitle, createdAt, instanceId, cwd);
     }
 
-    public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle, String sessionName,
+    public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle,
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, sessionName, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+    }
+
+    public void requestOpenTerminalFromNotification(String connectionKey, String sessionId) {
+        if (connectionKey == null || connectionKey.isEmpty() || sessionId == null || sessionId.isEmpty()) {
+            clearNotificationOpenRequest(new PendingTerminalOpen(connectionKey, sessionId));
+            return;
+        }
+        pendingTerminalOpen = new PendingTerminalOpen(connectionKey, sessionId);
+        if (activityResumed) mainHandler.post(this::drainPendingTerminalOpen);
+    }
+
+    private void drainPendingTerminalOpen() {
+        PendingTerminalOpen pending = pendingTerminalOpen;
+        if (pending == null || !activityResumed || mActivity == null
+            || mActivity.getSupportFragmentManager().isStateSaved() || mNavController == null) return;
+        NotificationTerminalResolver.Result result = NotificationTerminalResolver.resolve(
+            pending.connectionKey, serverConfigs.servers(), mRelayService.devices(),
+            mRelayService.areDevicesLoaded());
+        if (result.status == NotificationTerminalResolver.ResolveStatus.RESOLVED) {
+            pendingTerminalOpen = null;
+            if (!pending.connectionKey.equals(currentTerminalConnectionKey)
+                || !pending.sessionId.equals(currentTerminalSessionId)) {
+                ServerConfig server = result.server;
+                mSelectedServer = server;
+                showTerminal(server.getUrl(), server.getCookie(), pending.sessionId, "Terminal",
+                    "", "", server.isRelayDevice(), server.getDeviceId(), "");
+            }
+            clearNotificationOpenRequest(pending);
+        } else if (result.status == NotificationTerminalResolver.ResolveStatus.WAITING_FOR_RELAY_DEVICES) {
+            if (!pending.relayRefreshRequested) {
+                pending.relayRefreshRequested = true;
+                mRelayService.refresh();
+            }
+        } else {
+            Log.w(TAG, "通知跳转找不到目标设备: " + pending.connectionKey);
+            pendingTerminalOpen = null;
+            Toast.makeText(mActivity, "无法找到通知对应的设备", Toast.LENGTH_SHORT).show();
+            clearNotificationOpenRequest(pending);
+        }
+    }
+
+    private void clearNotificationOpenRequest(PendingTerminalOpen pending) {
+        if (mActivity instanceof NotificationOpenHost) {
+            ((NotificationOpenHost) mActivity).clearNotificationOpenRequest(
+                pending.connectionKey, pending.sessionId);
+        }
+    }
+
+    private static final class PendingTerminalOpen {
+        final String connectionKey;
+        final String sessionId;
+        boolean relayRefreshRequested;
+
+        PendingTerminalOpen(String connectionKey, String sessionId) {
+            this.connectionKey = connectionKey;
+            this.sessionId = sessionId;
+        }
     }
 
     private void startFileDownload(String downloadId, String fileName, long fileSize, String sessionId) {
@@ -637,9 +717,6 @@ public final class AppFlowCoordinator implements
 
     // ── SessionRowActions (not implemented by AppFlowCoordinator directly; handled via MainActivity) ──────────────────────────────────────────
 
-    public void renameSession(ServerConfig server, String sessionId, String oldName) {
-        if (mSessionCommands != null) mSessionCommands.showRenameDialog(server, sessionId, oldName);
-    }
     public void closeSession(ServerConfig server, String sessionId) {
         closeSession(server, sessionId, null);
     }
@@ -709,6 +786,16 @@ public final class AppFlowCoordinator implements
         if (mHomeFragment != null) {
             mHomeFragment.refreshDevices();
         }
+        mainHandler.post(this::drainPendingTerminalOpen);
+    }
+    @Override
+    public void onRelayDevicesLoadFailed(String message) {
+        PendingTerminalOpen pending = pendingTerminalOpen;
+        if (pending == null || !pending.relayRefreshRequested || !activityResumed) return;
+        pendingTerminalOpen = null;
+        Toast.makeText(mActivity, message == null || message.isEmpty()
+            ? "无法获取中转设备列表" : message, Toast.LENGTH_SHORT).show();
+        clearNotificationOpenRequest(pending);
     }
     @Override
     public void onRelayAuthDone() {
@@ -779,6 +866,25 @@ public final class AppFlowCoordinator implements
             intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
         }
         mActivity.startActivityForResult(intent, REQUEST_CODE_DOWNLOAD_DIR);
+    }
+
+    @Override
+    public boolean isBatteryOptimizationIgnored() {
+        if (mActivity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        PowerManager pm = (PowerManager) mActivity.getSystemService(android.content.Context.POWER_SERVICE);
+        return pm == null || pm.isIgnoringBatteryOptimizations(mActivity.getPackageName());
+    }
+
+    @Override
+    public void requestIgnoreBatteryOptimization() {
+        if (mActivity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        try {
+            Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(Uri.parse("package:" + mActivity.getPackageName()));
+            mActivity.startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(mActivity, "打开设置失败，请手动在系统设置中允许后台运行", Toast.LENGTH_LONG).show();
+        }
     }
 
     public void onDownloadDirPickerResult(int resultCode, Intent data) {

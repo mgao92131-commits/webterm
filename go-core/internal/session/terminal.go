@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,7 +24,6 @@ const (
 
 type TerminalOptions struct {
 	ID      string
-	Name    string
 	CWD     string
 	Command string
 	Args    []string
@@ -43,7 +41,6 @@ type TerminalSession struct {
 	mu             sync.RWMutex
 	id             string
 	instance       string
-	name           string
 	termTitle      string
 	cwd            string
 	liveCwd        string
@@ -69,10 +66,11 @@ type TerminalSession struct {
 }
 
 type Notification struct {
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	Source    string `json:"source,omitempty"`
-	Timestamp int64  `json:"timestamp"`
+	Level      string `json:"level,omitempty"`
+	Importance string `json:"importance,omitempty"`
+	Message    string `json:"message"`
+	Source     string `json:"source,omitempty"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
@@ -101,7 +99,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	terminal := &TerminalSession{
 		id:             options.ID,
 		instance:       randomID(),
-		name:           normalize(options.Name),
 		cwd:            process.CWD(),
 		command:        process.Command(),
 		status:         StatusRunning,
@@ -193,9 +190,7 @@ func (terminal *TerminalSession) Info() Info {
 	return Info{
 		ID:                terminal.id,
 		InstanceID:        instanceID,
-		Name:              terminal.name,
 		TermTitle:         terminal.termTitle,
-		DisplayTitle:      displayTitle(terminal.name, terminal.termTitle),
 		CWD:               cwd,
 		RecentInputLines:  []string{},
 		RecentInputHidden: false,
@@ -228,11 +223,26 @@ func (terminal *TerminalSession) lastInputKind() string {
 	return terminal.lastInput.Kind
 }
 
-func (terminal *TerminalSession) Rename(name string) {
-	terminal.mu.Lock()
-	defer terminal.mu.Unlock()
-	terminal.name = normalize(name)
-	terminal.touchLocked()
+// SnapshotUploadCWD 在上传开始时冻结当前工作目录。
+func (terminal *TerminalSession) SnapshotUploadCWD() (string, error) {
+	terminal.mu.RLock()
+	if terminal.status == StatusClosed {
+		terminal.mu.RUnlock()
+		return "", errors.New("terminal session is closed")
+	}
+	cwd := terminal.liveCwd
+	if cwd == "" {
+		cwd = terminal.cwd
+	}
+	terminal.mu.RUnlock()
+	if cwd == "" {
+		return "", errors.New("terminal working directory is unavailable")
+	}
+	info, err := os.Stat(cwd)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("terminal working directory is unavailable")
+	}
+	return cwd, nil
 }
 
 func (terminal *TerminalSession) Close() {
@@ -452,12 +462,13 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 		return
 	}
 	switch ev.Type {
-	case "notify":
+	case "notify", "agent_event":
 		terminal.notification = &Notification{
-			Level:     ev.Level,
-			Message:   ev.Message,
-			Source:    ev.Source,
-			Timestamp: ev.Timestamp,
+			Level:      ev.Level,
+			Importance: ev.Importance,
+			Message:    ev.Message,
+			Source:     ev.Source,
+			Timestamp:  ev.Timestamp,
 		}
 		terminal.touchLocked()
 	case "state":
@@ -697,22 +708,6 @@ func (terminal *TerminalSession) clientSnapshotLocked() []*Client {
 
 func (terminal *TerminalSession) touchLocked() {
 	terminal.activeAt = time.Now().UTC()
-}
-
-func displayTitle(name string, termTitle string) string {
-	cleanName := normalize(name)
-	cleanTermTitle := normalize(termTitle)
-	if cleanTermTitle == "" {
-		cleanTermTitle = "Terminal"
-	}
-	if cleanName != "" {
-		return cleanName + " - " + cleanTermTitle
-	}
-	return cleanTermTitle
-}
-
-func normalize(value string) string {
-	return strings.TrimSpace(value)
 }
 
 func reverse(frames []EventFrame) {

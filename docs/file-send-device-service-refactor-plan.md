@@ -181,10 +181,10 @@ Responsibilities:
 
 - `FileSendService`
   - Parse `webterm send <file>` commands from the local socket command protocol.
-  - Resolve path from CLI cwd and session context.
+  - Resolve path from CLI cwd.
   - Validate file exists, is regular, and is readable.
   - Create and track `FileSendTask`.
-  - Bind task to session and target remote Android device.
+  - Target the connected Android device (single-device fallback).
   - Send `file_send.offer`.
   - Stream status back to CLI.
   - Handle `accepted`, `progress`, `saved`, `failed`, `cancelled`.
@@ -193,7 +193,7 @@ Responsibilities:
 - `FileSendTask`
   - `transferId`
   - source file path/name/size
-  - session id and optional cwd metadata
+  - optional cwd metadata
   - target connection/device id
   - status
   - status channel
@@ -319,7 +319,6 @@ Go to Android:
   "type": "file_send.offer",
   "transfer_id": "t_xxx",
   "connection_key": "...",
-  "session_id": "s1",
   "file_name": "app-release.apk",
   "file_size": 15234567,
   "file_hash_sha256": "hex...",

@@ -3967,9 +3967,7 @@ type TerminalInfo struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	InstanceId     string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	Title          string                 `protobuf:"bytes,4,opt,name=title,proto3" json:"title,omitempty"`
-	DisplayTitle   string                 `protobuf:"bytes,5,opt,name=display_title,json=displayTitle,proto3" json:"display_title,omitempty"`
 	Cwd            string                 `protobuf:"bytes,6,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	Command        string                 `protobuf:"bytes,7,opt,name=command,proto3" json:"command,omitempty"`
 	Status         string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
@@ -4025,23 +4023,9 @@ func (x *TerminalInfo) GetInstanceId() string {
 	return ""
 }
 
-func (x *TerminalInfo) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
 func (x *TerminalInfo) GetTitle() string {
 	if x != nil {
 		return x.Title
-	}
-	return ""
-}
-
-func (x *TerminalInfo) GetDisplayTitle() string {
-	if x != nil {
-		return x.DisplayTitle
 	}
 	return ""
 }
@@ -4431,15 +4415,13 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
 	"\aallowed\x18\x02 \x01(\bR\aallowed\x12\x18\n" +
 	"\atimeout\x18\x03 \x01(\bR\atimeout\x12\x12\n" +
-	"\x04data\x18\x04 \x01(\fR\x04data\"\xd8\x02\n" +
+	"\x04data\x18\x04 \x01(\fR\x04data\"\xab\x02\n" +
 	"\fTerminalInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
-	"instanceId\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\x12\x14\n" +
-	"\x05title\x18\x04 \x01(\tR\x05title\x12#\n" +
-	"\rdisplay_title\x18\x05 \x01(\tR\fdisplayTitle\x12\x10\n" +
+	"instanceId\x12\x14\n" +
+	"\x05title\x18\x04 \x01(\tR\x05title\x12\x10\n" +
 	"\x03cwd\x18\x06 \x01(\tR\x03cwd\x12\x18\n" +
 	"\acommand\x18\a \x01(\tR\acommand\x12\x16\n" +
 	"\x06status\x18\b \x01(\tR\x06status\x12\x12\n" +
@@ -4447,7 +4429,7 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x04rows\x18\n" +
 	" \x01(\x05R\x04rows\x12\"\n" +
 	"\rcreated_at_ms\x18\v \x01(\x03R\vcreatedAtMs\x12)\n" +
-	"\x11last_active_at_ms\x18\f \x01(\x03R\x0elastActiveAtMs\"\x1a\n" +
+	"\x11last_active_at_ms\x18\f \x01(\x03R\x0elastActiveAtMsJ\x04\b\x03\x10\x04J\x04\b\x05\x10\x06\"\x1a\n" +
 	"\x04Exit\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code*Z\n" +
 	"\n" +

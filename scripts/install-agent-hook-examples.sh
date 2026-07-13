@@ -23,12 +23,30 @@ CODEX_DIR="$HOME_DIR/.codex"
 CODEX_HOOKS="$CODEX_DIR/hooks.json"
 CODEX_BAK="$CODEX_HOOKS.webterm.bak"
 
+# agy（Antigravity CLI）的全局定制化根目录是 ~/.gemini/config/
+AGY_DIR="$HOME_DIR/.gemini/config"
+AGY_HOOKS="$AGY_DIR/hooks.json"
+AGY_BAK="$AGY_HOOKS.webterm.bak"
+
 backup_if_exists() {
   local path="$1"
   local bak="$2"
-  if [ -f "$path" ] && [ ! -f "$bak" ]; then
-    cp "$path" "$bak"
-    echo "备份: $path -> $bak"
+  if [ -f "$path" ]; then
+    if [ ! -f "$bak" ]; then
+      cp "$path" "$bak"
+      echo "备份: $path -> $bak"
+    fi
+
+    local timestamp versioned suffix
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    versioned="$path.$timestamp.bak"
+    suffix=1
+    while [ -e "$versioned" ]; do
+      versioned="$path.$timestamp.$suffix.bak"
+      suffix=$((suffix + 1))
+    done
+    cp "$path" "$versioned"
+    echo "本轮备份: $path -> $versioned"
   fi
 }
 
@@ -77,35 +95,40 @@ install_claude() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" claude"}]}],
-    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ error \"Waiting for approval\" claude"}]}],
-    "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ error \"Needs attention\" claude"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Done\" claude"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Idle\" claude"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" claude"}]}],
+    "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Question\" claude"}]}],
+    "PostToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" claude </dev/null"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Waiting for approval\" claude"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" claude"}]}],
+    "StopFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Failed\" claude"}]}],
+    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Session ended\" claude"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CLAUDE_SETTINGS" ]; then
-    if grep -q 'webterm-notify-helper' "$CLAUDE_SETTINGS" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
-    fi
-    python3 - "$CLAUDE_SETTINGS" "$new_hooks" <<'PY' 2>/dev/null || true
+    if ! python3 - "$CLAUDE_SETTINGS" "$new_hooks" <<'PY'
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
 with open(path, 'r') as f:
     existing = json.load(f)
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
+for event, entries in list(existing_hooks.items()):
+    kept = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    if kept:
+        existing_hooks[event] = kept
+    else:
+        del existing_hooks[event]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:
     json.dump(existing, f, indent=2)
     f.write('\n')
 PY
+    then
+      echo "警告: 合并 $CLAUDE_SETTINGS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
   else
     echo "$new_hooks" > "$CLAUDE_SETTINGS"
   fi
@@ -123,47 +146,77 @@ install_kimi() {
   block='[[hooks]]
 event = "UserPromptSubmit"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ running \"Running\" kimi"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "PreToolUse"
-matcher = ".*"
-command = "__WEBTERM_HELPER__ running \"Running\" kimi"
+matcher = "^AskUserQuestion$"
+command = "__WEBTERM_HELPER__ alert \"Question\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "PostToolUse"
+matcher = "^AskUserQuestion$"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi </dev/null"
 timeout = 5
 
 [[hooks]]
 event = "PermissionRequest"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Waiting for approval\" kimi"
+command = "__WEBTERM_HELPER__ alert \"Waiting for approval\" kimi"
 timeout = 5
 
 [[hooks]]
-event = "Notification"
+event = "PermissionResult"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Needs attention\" kimi"
+command = "__WEBTERM_HELPER__ quiet \"Running\" kimi </dev/null"
 timeout = 5
 
 [[hooks]]
 event = "StopFailure"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ error \"Task failed\" kimi"
+command = "__WEBTERM_HELPER__ alert \"Failed\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "Stop"
+matcher = ".*"
+command = "__WEBTERM_HELPER__ normal \"Done\" kimi"
+timeout = 5
+
+[[hooks]]
+event = "Notification"
+matcher = "task\\.completed"
+command = "__WEBTERM_HELPER__ normal \"Done\" kimi"
 timeout = 5
 
 [[hooks]]
 event = "SessionEnd"
 matcher = ".*"
-command = "__WEBTERM_HELPER__ idle \"Idle\" kimi"
+command = "__WEBTERM_HELPER__ quiet \"Session ended\" kimi"
 timeout = 5
 '
   block="${block//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$KIMI_CONFIG" ]; then
-    if grep -q 'webterm-notify-helper' "$KIMI_CONFIG" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
+    if ! python3 - "$KIMI_CONFIG" "$block" <<'PY'
+import sys
+path, replacement = sys.argv[1], sys.argv[2]
+text = open(path, 'r').read()
+parts = text.split('[[hooks]]')
+head, blocks = parts[0], parts[1:]
+kept = [part for part in blocks if 'webterm-notify-helper' not in part]
+with open(path, 'w') as f:
+    f.write(head.rstrip())
+    for part in kept:
+        f.write('\n\n[[hooks]]' + part.rstrip())
+    f.write('\n\n' + replacement)
+    f.write('\n')
+PY
+    then
+      echo "警告: 合并 $KIMI_CONFIG 失败，WebTerm hook 未写入，请检查该文件" >&2
     fi
-    printf '\n%s' "$block" >> "$KIMI_CONFIG"
   else
     printf '%s' "$block" > "$KIMI_CONFIG"
   fi
@@ -180,37 +233,87 @@ install_codex() {
   local new_hooks
   new_hooks='{
   "hooks": {
-    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" codex"}]}],
-    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ running \"Running\" codex"}]}],
-    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Done\" codex"}]}],
-    "SessionEnd": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ idle \"Idle\" codex"}]}]
+    "UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" codex"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ alert \"Waiting for approval\" codex"}]}],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" codex"}]}]
   }
 }'
   new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
 
   if [ -f "$CODEX_HOOKS" ]; then
-    if grep -q 'webterm-notify-helper' "$CODEX_HOOKS" 2>/dev/null; then
-      echo "  已包含 webterm-notify-helper，跳过"
-      return
-    fi
-    python3 - "$CODEX_HOOKS" "$new_hooks" <<'PY' 2>/dev/null || true
+    if ! python3 - "$CODEX_HOOKS" "$new_hooks" <<'PY'
 import sys, json
 path, new_json = sys.argv[1], sys.argv[2]
 with open(path, 'r') as f:
     existing = json.load(f)
 new_hooks = json.loads(new_json).get('hooks', {})
 existing_hooks = existing.setdefault('hooks', {})
+for event, entries in list(existing_hooks.items()):
+    kept = [entry for entry in entries if 'webterm-notify-helper' not in json.dumps(entry)]
+    if kept:
+        existing_hooks[event] = kept
+    else:
+        del existing_hooks[event]
 for event, entries in new_hooks.items():
     existing_hooks.setdefault(event, []).extend(entries)
 with open(path, 'w') as f:
     json.dump(existing, f, indent=2)
     f.write('\n')
 PY
+    then
+      echo "警告: 合并 $CODEX_HOOKS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
   else
     echo "$new_hooks" > "$CODEX_HOOKS"
   fi
   chmod 600 "$CODEX_HOOKS"
   echo "  -> $CODEX_HOOKS"
+  echo "  提示: Codex Hook 定义发生变化后，请在 Codex 中执行 /hooks 审查并信任新定义。"
+}
+
+install_agy() {
+  echo "安装 agy (Antigravity) hook 配置..."
+  mkdir -p "$AGY_DIR"
+  backup_if_exists "$AGY_HOOKS" "$AGY_BAK"
+  migrate_helper_path "$AGY_HOOKS"
+
+  # agy 的 hooks.json 顶层 key 是 hook 名字；PreInvocation/Stop 为扁平
+  # handler 列表（不需要 matcher 分组）。agy 没有 PermissionRequest /
+  # SessionEnd 等价事件，Stop 的 terminationReason 统一按 normal 处理。
+  local new_hooks
+  new_hooks='{
+  "webterm-notify": {
+    "PreInvocation": [
+      {"type": "command", "command": "__WEBTERM_HELPER__ quiet \"Running\" agy", "timeout": 5}
+    ],
+    "Stop": [
+      {"type": "command", "command": "__WEBTERM_HELPER__ normal \"Done\" agy", "timeout": 5}
+    ]
+  }
+}'
+  new_hooks="${new_hooks//__WEBTERM_HELPER__/$HELPER_CMD}"
+
+  if [ -f "$AGY_HOOKS" ]; then
+    if ! python3 - "$AGY_HOOKS" "$new_hooks" <<'PY'
+import sys, json
+path, new_json = sys.argv[1], sys.argv[2]
+with open(path, 'r') as f:
+    existing = json.load(f)
+for name in [k for k, v in existing.items() if 'webterm-notify-helper' in json.dumps(v)]:
+    del existing[name]
+existing.update(json.loads(new_json))
+with open(path, 'w') as f:
+    json.dump(existing, f, indent=2)
+    f.write('\n')
+PY
+    then
+      echo "警告: 合并 $AGY_HOOKS 失败（可能是 JSON 格式问题），WebTerm hook 未写入，请检查该文件" >&2
+    fi
+  else
+    echo "$new_hooks" > "$AGY_HOOKS"
+  fi
+  chmod 600 "$AGY_HOOKS"
+  echo "  -> $AGY_HOOKS"
 }
 
 # main
@@ -226,6 +329,7 @@ fi
 install_claude
 install_kimi
 install_codex
+install_agy
 
 echo ""
 echo "安装完成。请确保 ~/.webterm/bin 在你的 PATH 中，或在 shell 配置文件里 export WEBTERM_BIN=/path/to/webterm。"

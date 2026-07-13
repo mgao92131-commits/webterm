@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.webterm.mobile.R;
+import com.webterm.mobile.device.AndroidNotificationRenderer;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.feature.home.HomeHost;
@@ -26,7 +27,7 @@ import dagger.hilt.android.AndroidEntryPoint;
 import javax.inject.Inject;
 
 @AndroidEntryPoint
-public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions {
+public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions, NotificationOpenHost {
 
     @Inject AppFlowCoordinator coordinator;
 
@@ -39,6 +40,32 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) getWindow().setDecorFitsSystemWindows(false);
         coordinator.attachActivity(this);
         coordinator.onCreate();
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL, false)) return;
+        coordinator.requestOpenTerminalFromNotification(
+            intent.getStringExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY),
+            intent.getStringExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID));
+    }
+
+    @Override
+    public void clearNotificationOpenRequest(String connectionKey, String sessionId) {
+        Intent intent = getIntent();
+        if (intent == null || !intent.getBooleanExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL, false)) return;
+        if (!android.text.TextUtils.equals(connectionKey, intent.getStringExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY))) return;
+        if (!android.text.TextUtils.equals(sessionId, intent.getStringExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID))) return;
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_OPEN_TERMINAL);
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_CONNECTION_KEY);
+        intent.removeExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID);
     }
 
     @Override protected void onResume() { super.onResume(); coordinator.onResume(); }
@@ -63,7 +90,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     @Override public void showAddServerDialog(ServerConfig existingServer) { coordinator.showAddServerDialog(this, existingServer); }
     @Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
-    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd); }
+    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) { coordinator.onServerAuthenticated(existingServer, name, url, cookie, username, password); }
     @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
     @Override public void navigateHome() { coordinator.navigateToHome(); }
@@ -81,6 +108,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     @Override public void startRemoteTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment) { coordinator.startRemoteTerminalInFragment(this, args, fragment); }
     @Override public void detachTerminalFragment(TerminalFragment fragment) { coordinator.detachTerminalFragment(fragment); }
+    @Override public com.webterm.core.fileupload.FileUploadController uploadController() { return com.webterm.mobile.device.WebTermDeviceService.uploadController(); }
 
     // ── RelayHost ─────────────────────────────────────────────────
 
@@ -93,7 +121,6 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     // ── SessionRowActions ────────────────────────────────────────
 
-    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String sessionName, String createdAt, String instanceId, String cwd) { coordinator.openSession(this, server, sessionId, termTitle, sessionName, createdAt, instanceId, cwd); }
-    @Override public void renameSession(ServerConfig server, String sessionId, String oldName) { coordinator.renameSession(server, sessionId, oldName); }
+    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.openSession(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void closeSession(ServerConfig server, String sessionId) { coordinator.closeSession(server, sessionId); }
 }

@@ -38,6 +38,10 @@ import dagger.hilt.android.scopes.ActivityScoped;
  */
 @ActivityScoped
 public final class RemoteTerminalIntegration {
+  public static String displayTermTitle(@Nullable String title) {
+    if (title == null || title.trim().isEmpty()) return "Terminal";
+    return title.trim();
+  }
 
   public interface TitleListener {
     void onTitleChanged(@Nullable String title);
@@ -140,13 +144,14 @@ public final class RemoteTerminalIntegration {
       }
     });
 
-    String subtitle = args.cwd != null && !args.cwd.isEmpty() ? args.cwd : args.sessionName;
+    String subtitle = args.cwd == null ? "" : args.cwd;
         TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
             activity,
-            args.termTitle == null || args.termTitle.isEmpty() ? "Terminal" : args.termTitle,
+            displayTermTitle(args.termTitle),
             subtitle == null ? "" : subtitle,
             activity::onBackPressed,
         () -> reconnectFresh(null),
+        fragment::requestFileUpload,
         () -> {
           ctrlArmed = !ctrlArmed;
           TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, ctrlArmed);
@@ -253,7 +258,7 @@ public final class RemoteTerminalIntegration {
     if (cookie != null) {
       currentArgs = new TerminalViewModel.TerminalSessionArgs(
           currentArgs.baseUrl, cookie, currentArgs.sessionId,
-          currentArgs.termTitle, currentArgs.sessionName, currentArgs.createdAt,
+          currentArgs.termTitle, currentArgs.createdAt,
           currentArgs.instanceId, currentArgs.relayDevice, currentArgs.relayDeviceId,
           currentArgs.cwd
       );

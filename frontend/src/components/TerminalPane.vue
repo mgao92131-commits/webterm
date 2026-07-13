@@ -4,22 +4,11 @@
     <header class="terminal-bar w-full h-10 px-3 border-b border-border bg-app-bg flex items-center justify-between z-10 gap-2 flex-shrink-0">
       <slot name="leading" />
 
-      <!-- Title input -->
+      <!-- 终端通过 OSC 上报的只读标题 -->
       <div class="flex-1 flex justify-center min-w-0 px-2">
-        <input
-          id="sessionName"
-          autocomplete="off"
-          maxlength="80"
-          v-model="sessionNameVal"
-          @focus="onTitleFocus"
-          @blur="onTitleBlur"
-          @keydown.enter="onTitleEnter"
-          @keydown.escape="onTitleEsc"
-          class="w-full max-w-[360px] text-center h-7 px-2 bg-transparent border border-transparent rounded-sm text-fg hover:border-border focus:border-accent focus:bg-app-bg focus:outline-none transition-colors font-mono text-[13px] truncate"
-          :placeholder="sessionPlaceholder"
-          aria-label="会话名称"
-          title="会话名称，留空时显示终端标题"
-        />
+        <span class="w-full max-w-[360px] text-center text-fg font-mono text-[13px] truncate" :title="displayTitle">
+          {{ displayTitle }}
+        </span>
       </div>
 
       <div class="flex items-center gap-1 flex-shrink-0">
@@ -136,17 +125,13 @@ const props = defineProps<{
 const quickKeys = ['Ctrl', 'Esc', 'Tab', 'Enter', 'Ctrl C', 'Ctrl D', 'Ctrl Z', 'Ctrl X', '/', '-', '|', '>', '\\', '$', '&', '←', '↓', '↑', '→'];
 
 const terminalRef = ref<HTMLElement | null>(null);
-const sessionNameVal = ref('');
-const sessionPlaceholder = ref('Terminal');
+const displayTitle = ref('Terminal');
 const isSelectionMode = ref(false);
 const isCtrlActive = ref(false);
 const hookToast = ref<HookToast | null>(null);
 let hookToastTimer: ReturnType<typeof setTimeout> | null = null;
 
 let context: TerminalSessionContext | null = null;
-
-let titleEditing = false;
-let skipTitleCommit = false;
 
 function createContext(sessionId: string): void {
   if (!terminalRef.value) {
@@ -164,10 +149,7 @@ function createContext(sessionId: string): void {
     onStateChange: (change) => {
       if (change.isSelectionMode !== undefined) isSelectionMode.value = change.isSelectionMode;
       if (change.isCtrlActive !== undefined) isCtrlActive.value = change.isCtrlActive;
-      if (change.sessionPlaceholder !== undefined) sessionPlaceholder.value = change.sessionPlaceholder;
-      if (change.sessionName !== undefined && !titleEditing) {
-        sessionNameVal.value = change.sessionName;
-      }
+      if (change.displayTitle !== undefined) displayTitle.value = change.displayTitle;
     },
     onExit: () => {
       // 终端连接断开退出
@@ -195,11 +177,7 @@ watch(() => props.sessionId, (newId, oldId) => {
 
   disposeContext();
 
-  // 重置编辑状态，避免旧会话标题残留
-  titleEditing = false;
-  skipTitleCommit = false;
-  sessionNameVal.value = '';
-  sessionPlaceholder.value = 'Terminal';
+  displayTitle.value = 'Terminal';
 
   createContext(newId);
 });
@@ -207,44 +185,6 @@ watch(() => props.sessionId, (newId, oldId) => {
 onUnmounted(() => {
   disposeContext();
 });
-
-function onTitleFocus() {
-  titleEditing = true;
-  if (context) {
-    context.titleBeforeEdit = sessionNameVal.value;
-  }
-  const titleInput = document.getElementById("sessionName") as HTMLInputElement;
-  titleInput?.select();
-}
-
-function onTitleBlur() { commitTitle(); }
-
-function onTitleEnter() {
-  const titleInput = document.getElementById("sessionName") as HTMLInputElement;
-  titleInput?.blur();
-}
-
-function onTitleEsc() {
-  skipTitleCommit = true;
-  titleEditing = false;
-  if (context) {
-    sessionNameVal.value = context.titleBeforeEdit;
-  }
-  const titleInput = document.getElementById("sessionName") as HTMLInputElement;
-  titleInput?.blur();
-}
-
-async function commitTitle() {
-  if (skipTitleCommit) {
-    skipTitleCommit = false;
-    titleEditing = false;
-    return;
-  }
-  titleEditing = false;
-  if (context) {
-    await context.commitTerminalTitle(sessionNameVal.value.trim());
-  }
-}
 
 function copySelection(event?: Event) {
   context?.selectionController?.copySelection(event);

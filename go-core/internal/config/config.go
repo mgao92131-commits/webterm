@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"webterm/go-core/internal/terminalengine"
 )
@@ -19,6 +20,9 @@ const (
 )
 
 const RedactedSecret = "********"
+
+// DefaultMaxUploadBytes 是单个上传文件的默认大小上限（100 MiB）。
+const DefaultMaxUploadBytes int64 = 104857600
 
 // scrollback 默认值与 terminalengine 的缺省上限保持一致（单一事实来源）。
 const (
@@ -39,6 +43,7 @@ type Config struct {
 	Control    ControlConfig    `json:"control"`
 	Shell      ShellConfig      `json:"shell"`
 	Scrollback ScrollbackConfig `json:"scrollback"`
+	Upload     UploadConfig     `json:"upload"`
 }
 
 // ScrollbackConfig 是终端历史（scrollback）的双上限配置。
@@ -47,6 +52,11 @@ type Config struct {
 type ScrollbackConfig struct {
 	MaxLines int `json:"maxLines,omitempty"`
 	MaxBytes int `json:"maxBytes,omitempty"`
+}
+
+// UploadConfig 是客户端上传到 Agent 的单文件限制。
+type UploadConfig struct {
+	MaxBytes int64 `json:"maxBytes"`
 }
 
 type DirectConfig struct {
@@ -155,6 +165,9 @@ func MergeEditable(current Config, next Config) Config {
 	if next.Scrollback.MaxBytes > 0 {
 		current.Scrollback.MaxBytes = next.Scrollback.MaxBytes
 	}
+	if next.Upload.MaxBytes > 0 {
+		current.Upload.MaxBytes = next.Upload.MaxBytes
+	}
 	if current.Mode == "" {
 		current.Mode = ModeDirect
 	}
@@ -219,6 +232,7 @@ func defaultConfig() Config {
 			MaxLines: DefaultScrollbackMaxLines,
 			MaxBytes: DefaultScrollbackMaxBytes,
 		},
+		Upload: UploadConfig{MaxBytes: DefaultMaxUploadBytes},
 	}
 }
 
@@ -255,6 +269,9 @@ func envConfig() Config {
 		},
 		Shell: ShellConfig{
 			Command: env("WEBTERM_SHELL"),
+		},
+		Upload: UploadConfig{
+			MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES"),
 		},
 	}
 }
@@ -305,9 +322,24 @@ func mergeConfig(base Config, override Config) Config {
 	if override.Scrollback.MaxBytes > 0 {
 		base.Scrollback.MaxBytes = override.Scrollback.MaxBytes
 	}
+	if override.Upload.MaxBytes > 0 {
+		base.Upload.MaxBytes = override.Upload.MaxBytes
+	}
 	return base
 }
 
 func env(key string) string {
 	return os.Getenv(key)
+}
+
+func envInt64(key string) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
 }

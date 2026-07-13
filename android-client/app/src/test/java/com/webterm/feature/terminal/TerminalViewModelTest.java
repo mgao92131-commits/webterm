@@ -38,7 +38,7 @@ public class TerminalViewModelTest {
     @Test
     public void setSessionArgs_emitsValue() {
         TerminalViewModel.TerminalSessionArgs args = new TerminalViewModel.TerminalSessionArgs(
-            "http://mac.test", "cookie", "s1", "vim", "session", "", "", false, "", "/tmp");
+            "http://mac.test", "cookie", "s1", "vim", "", "", false, "", "/tmp");
         RecordingObserver<TerminalViewModel.TerminalSessionArgs> observer = new RecordingObserver<>();
         viewModel.getSessionArgs().observeForever(observer);
 

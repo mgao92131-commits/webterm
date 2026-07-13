@@ -13,14 +13,14 @@ import (
 	"webterm/go-core/internal/protocol"
 )
 
-func TestManagerCreateListRenameClose(t *testing.T) {
+func TestManagerCreateListClose(t *testing.T) {
 	manager := NewManager()
-	first, err := manager.Create("work", "/tmp")
+	first, err := manager.Create("/tmp")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	defer first.Close()
-	second, err := manager.Create("", "/var")
+	second, err := manager.Create("/var")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -33,15 +33,9 @@ func TestManagerCreateListRenameClose(t *testing.T) {
 		t.Fatalf("Count = %d, want 2", manager.Count())
 	}
 
-	if _, ok := manager.Rename("s1", "renamed"); !ok {
-		t.Fatalf("Rename returned false")
-	}
-	got, ok := manager.Get("s1")
+	_, ok := manager.Get("s1")
 	if !ok {
 		t.Fatalf("Get returned false")
-	}
-	if got.Info().DisplayTitle != "renamed - Terminal" {
-		t.Fatalf("DisplayTitle = %q", got.Info().DisplayTitle)
 	}
 
 	if !manager.Close("s1") {
@@ -62,20 +56,13 @@ func TestManagerBroadcastsSessionLifecycle(t *testing.T) {
 		t.Fatalf("initial messages = %#v", sink.messages)
 	}
 
-	terminal, err := manager.Create("work", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	defer terminal.Close()
 	if last := sink.last(); last.Type != "session" {
 		t.Fatalf("create broadcast = %#v", last)
-	}
-
-	if _, ok := manager.Rename("s1", "renamed"); !ok {
-		t.Fatalf("Rename returned false")
-	}
-	if last := sink.last(); last.Type != "session" {
-		t.Fatalf("rename broadcast = %#v", last)
 	}
 
 	if !manager.Close("s1") {
@@ -122,7 +109,7 @@ func TestManagerTitleBroadcast(t *testing.T) {
 	defer manager.RemoveManagerSink(sink)
 
 	// 创建真实的 shell terminal
-	terminal, err := manager.Create("work", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -160,7 +147,7 @@ func TestManagerTitleBroadcast(t *testing.T) {
 
 func TestManagerWorkingDirectoryComesFromRuntimeEffect(t *testing.T) {
 	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
-	terminal, err := manager.Create("work", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -181,7 +168,7 @@ func TestManagerWorkingDirectoryComesFromRuntimeEffect(t *testing.T) {
 
 func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
-	terminal, err := manager.Create("work", ".")
+	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}

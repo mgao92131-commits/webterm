@@ -50179,18 +50179,6 @@ public final class TerminalScreenProto {
         getInstanceIdBytes();
 
     /**
-     * <code>string name = 3;</code>
-     * @return The name.
-     */
-    java.lang.String getName();
-    /**
-     * <code>string name = 3;</code>
-     * @return The bytes for name.
-     */
-    com.google.protobuf.ByteString
-        getNameBytes();
-
-    /**
      * <code>string title = 4;</code>
      * @return The title.
      */
@@ -50201,18 +50189,6 @@ public final class TerminalScreenProto {
      */
     com.google.protobuf.ByteString
         getTitleBytes();
-
-    /**
-     * <code>string display_title = 5;</code>
-     * @return The displayTitle.
-     */
-    java.lang.String getDisplayTitle();
-    /**
-     * <code>string display_title = 5;</code>
-     * @return The bytes for displayTitle.
-     */
-    com.google.protobuf.ByteString
-        getDisplayTitleBytes();
 
     /**
      * <code>string cwd = 6;</code>
@@ -50298,9 +50274,7 @@ public final class TerminalScreenProto {
     private TerminalInfo() {
       sessionId_ = "";
       instanceId_ = "";
-      name_ = "";
       title_ = "";
-      displayTitle_ = "";
       cwd_ = "";
       command_ = "";
       status_ = "";
@@ -50397,45 +50371,6 @@ public final class TerminalScreenProto {
       }
     }
 
-    public static final int NAME_FIELD_NUMBER = 3;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object name_ = "";
-    /**
-     * <code>string name = 3;</code>
-     * @return The name.
-     */
-    @java.lang.Override
-    public java.lang.String getName() {
-      java.lang.Object ref = name_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs = 
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        name_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string name = 3;</code>
-     * @return The bytes for name.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getNameBytes() {
-      java.lang.Object ref = name_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        name_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
     public static final int TITLE_FIELD_NUMBER = 4;
     @SuppressWarnings("serial")
     private volatile java.lang.Object title_ = "";
@@ -50469,45 +50404,6 @@ public final class TerminalScreenProto {
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
-    public static final int DISPLAY_TITLE_FIELD_NUMBER = 5;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object displayTitle_ = "";
-    /**
-     * <code>string display_title = 5;</code>
-     * @return The displayTitle.
-     */
-    @java.lang.Override
-    public java.lang.String getDisplayTitle() {
-      java.lang.Object ref = displayTitle_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs = 
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        displayTitle_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string display_title = 5;</code>
-     * @return The bytes for displayTitle.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getDisplayTitleBytes() {
-      java.lang.Object ref = displayTitle_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        displayTitle_ = b;
         return b;
       } else {
         return (com.google.protobuf.ByteString) ref;
@@ -50695,14 +50591,8 @@ public final class TerminalScreenProto {
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 2, instanceId_);
       }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(name_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 3, name_);
-      }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(title_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 4, title_);
-      }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(displayTitle_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 5, displayTitle_);
       }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(cwd_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 6, cwd_);
@@ -50740,14 +50630,8 @@ public final class TerminalScreenProto {
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(2, instanceId_);
       }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(name_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(3, name_);
-      }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(title_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(4, title_);
-      }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(displayTitle_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(5, displayTitle_);
       }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(cwd_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(6, cwd_);
@@ -50793,12 +50677,8 @@ public final class TerminalScreenProto {
           .equals(other.getSessionId())) return false;
       if (!getInstanceId()
           .equals(other.getInstanceId())) return false;
-      if (!getName()
-          .equals(other.getName())) return false;
       if (!getTitle()
           .equals(other.getTitle())) return false;
-      if (!getDisplayTitle()
-          .equals(other.getDisplayTitle())) return false;
       if (!getCwd()
           .equals(other.getCwd())) return false;
       if (!getCommand()
@@ -50828,12 +50708,8 @@ public final class TerminalScreenProto {
       hash = (53 * hash) + getSessionId().hashCode();
       hash = (37 * hash) + INSTANCE_ID_FIELD_NUMBER;
       hash = (53 * hash) + getInstanceId().hashCode();
-      hash = (37 * hash) + NAME_FIELD_NUMBER;
-      hash = (53 * hash) + getName().hashCode();
       hash = (37 * hash) + TITLE_FIELD_NUMBER;
       hash = (53 * hash) + getTitle().hashCode();
-      hash = (37 * hash) + DISPLAY_TITLE_FIELD_NUMBER;
-      hash = (53 * hash) + getDisplayTitle().hashCode();
       hash = (37 * hash) + CWD_FIELD_NUMBER;
       hash = (53 * hash) + getCwd().hashCode();
       hash = (37 * hash) + COMMAND_FIELD_NUMBER;
@@ -50983,9 +50859,7 @@ public final class TerminalScreenProto {
         bitField0_ = 0;
         sessionId_ = "";
         instanceId_ = "";
-        name_ = "";
         title_ = "";
-        displayTitle_ = "";
         cwd_ = "";
         command_ = "";
         status_ = "";
@@ -51033,33 +50907,27 @@ public final class TerminalScreenProto {
           result.instanceId_ = instanceId_;
         }
         if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.name_ = name_;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
           result.title_ = title_;
         }
-        if (((from_bitField0_ & 0x00000010) != 0)) {
-          result.displayTitle_ = displayTitle_;
-        }
-        if (((from_bitField0_ & 0x00000020) != 0)) {
+        if (((from_bitField0_ & 0x00000008) != 0)) {
           result.cwd_ = cwd_;
         }
-        if (((from_bitField0_ & 0x00000040) != 0)) {
+        if (((from_bitField0_ & 0x00000010) != 0)) {
           result.command_ = command_;
         }
-        if (((from_bitField0_ & 0x00000080) != 0)) {
+        if (((from_bitField0_ & 0x00000020) != 0)) {
           result.status_ = status_;
         }
-        if (((from_bitField0_ & 0x00000100) != 0)) {
+        if (((from_bitField0_ & 0x00000040) != 0)) {
           result.cols_ = cols_;
         }
-        if (((from_bitField0_ & 0x00000200) != 0)) {
+        if (((from_bitField0_ & 0x00000080) != 0)) {
           result.rows_ = rows_;
         }
-        if (((from_bitField0_ & 0x00000400) != 0)) {
+        if (((from_bitField0_ & 0x00000100) != 0)) {
           result.createdAtMs_ = createdAtMs_;
         }
-        if (((from_bitField0_ & 0x00000800) != 0)) {
+        if (((from_bitField0_ & 0x00000200) != 0)) {
           result.lastActiveAtMs_ = lastActiveAtMs_;
         }
       }
@@ -51086,34 +50954,24 @@ public final class TerminalScreenProto {
           bitField0_ |= 0x00000002;
           onChanged();
         }
-        if (!other.getName().isEmpty()) {
-          name_ = other.name_;
-          bitField0_ |= 0x00000004;
-          onChanged();
-        }
         if (!other.getTitle().isEmpty()) {
           title_ = other.title_;
-          bitField0_ |= 0x00000008;
-          onChanged();
-        }
-        if (!other.getDisplayTitle().isEmpty()) {
-          displayTitle_ = other.displayTitle_;
-          bitField0_ |= 0x00000010;
+          bitField0_ |= 0x00000004;
           onChanged();
         }
         if (!other.getCwd().isEmpty()) {
           cwd_ = other.cwd_;
-          bitField0_ |= 0x00000020;
+          bitField0_ |= 0x00000008;
           onChanged();
         }
         if (!other.getCommand().isEmpty()) {
           command_ = other.command_;
-          bitField0_ |= 0x00000040;
+          bitField0_ |= 0x00000010;
           onChanged();
         }
         if (!other.getStatus().isEmpty()) {
           status_ = other.status_;
-          bitField0_ |= 0x00000080;
+          bitField0_ |= 0x00000020;
           onChanged();
         }
         if (other.getCols() != 0) {
@@ -51164,54 +51022,44 @@ public final class TerminalScreenProto {
                 bitField0_ |= 0x00000002;
                 break;
               } // case 18
-              case 26: {
-                name_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 26
               case 34: {
                 title_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000008;
+                bitField0_ |= 0x00000004;
                 break;
               } // case 34
-              case 42: {
-                displayTitle_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000010;
-                break;
-              } // case 42
               case 50: {
                 cwd_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000020;
+                bitField0_ |= 0x00000008;
                 break;
               } // case 50
               case 58: {
                 command_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000040;
+                bitField0_ |= 0x00000010;
                 break;
               } // case 58
               case 66: {
                 status_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000080;
+                bitField0_ |= 0x00000020;
                 break;
               } // case 66
               case 72: {
                 cols_ = input.readInt32();
-                bitField0_ |= 0x00000100;
+                bitField0_ |= 0x00000040;
                 break;
               } // case 72
               case 80: {
                 rows_ = input.readInt32();
-                bitField0_ |= 0x00000200;
+                bitField0_ |= 0x00000080;
                 break;
               } // case 80
               case 88: {
                 createdAtMs_ = input.readInt64();
-                bitField0_ |= 0x00000400;
+                bitField0_ |= 0x00000100;
                 break;
               } // case 88
               case 96: {
                 lastActiveAtMs_ = input.readInt64();
-                bitField0_ |= 0x00000800;
+                bitField0_ |= 0x00000200;
                 break;
               } // case 96
               default: {
@@ -51375,78 +51223,6 @@ public final class TerminalScreenProto {
         return this;
       }
 
-      private java.lang.Object name_ = "";
-      /**
-       * <code>string name = 3;</code>
-       * @return The name.
-       */
-      public java.lang.String getName() {
-        java.lang.Object ref = name_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          name_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string name = 3;</code>
-       * @return The bytes for name.
-       */
-      public com.google.protobuf.ByteString
-          getNameBytes() {
-        java.lang.Object ref = name_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          name_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string name = 3;</code>
-       * @param value The name to set.
-       * @return This builder for chaining.
-       */
-      public Builder setName(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        name_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string name = 3;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearName() {
-        name_ = getDefaultInstance().getName();
-        bitField0_ = (bitField0_ & ~0x00000004);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string name = 3;</code>
-       * @param value The bytes for name to set.
-       * @return This builder for chaining.
-       */
-      public Builder setNameBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        name_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-
       private java.lang.Object title_ = "";
       /**
        * <code>string title = 4;</code>
@@ -51490,7 +51266,7 @@ public final class TerminalScreenProto {
           java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
         title_ = value;
-        bitField0_ |= 0x00000008;
+        bitField0_ |= 0x00000004;
         onChanged();
         return this;
       }
@@ -51500,7 +51276,7 @@ public final class TerminalScreenProto {
        */
       public Builder clearTitle() {
         title_ = getDefaultInstance().getTitle();
-        bitField0_ = (bitField0_ & ~0x00000008);
+        bitField0_ = (bitField0_ & ~0x00000004);
         onChanged();
         return this;
       }
@@ -51514,79 +51290,7 @@ public final class TerminalScreenProto {
         if (value == null) { throw new NullPointerException(); }
         checkByteStringIsUtf8(value);
         title_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
-        return this;
-      }
-
-      private java.lang.Object displayTitle_ = "";
-      /**
-       * <code>string display_title = 5;</code>
-       * @return The displayTitle.
-       */
-      public java.lang.String getDisplayTitle() {
-        java.lang.Object ref = displayTitle_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          displayTitle_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string display_title = 5;</code>
-       * @return The bytes for displayTitle.
-       */
-      public com.google.protobuf.ByteString
-          getDisplayTitleBytes() {
-        java.lang.Object ref = displayTitle_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          displayTitle_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string display_title = 5;</code>
-       * @param value The displayTitle to set.
-       * @return This builder for chaining.
-       */
-      public Builder setDisplayTitle(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        displayTitle_ = value;
-        bitField0_ |= 0x00000010;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string display_title = 5;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearDisplayTitle() {
-        displayTitle_ = getDefaultInstance().getDisplayTitle();
-        bitField0_ = (bitField0_ & ~0x00000010);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string display_title = 5;</code>
-       * @param value The bytes for displayTitle to set.
-       * @return This builder for chaining.
-       */
-      public Builder setDisplayTitleBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        displayTitle_ = value;
-        bitField0_ |= 0x00000010;
+        bitField0_ |= 0x00000004;
         onChanged();
         return this;
       }
@@ -51634,7 +51338,7 @@ public final class TerminalScreenProto {
           java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
         cwd_ = value;
-        bitField0_ |= 0x00000020;
+        bitField0_ |= 0x00000008;
         onChanged();
         return this;
       }
@@ -51644,7 +51348,7 @@ public final class TerminalScreenProto {
        */
       public Builder clearCwd() {
         cwd_ = getDefaultInstance().getCwd();
-        bitField0_ = (bitField0_ & ~0x00000020);
+        bitField0_ = (bitField0_ & ~0x00000008);
         onChanged();
         return this;
       }
@@ -51658,7 +51362,7 @@ public final class TerminalScreenProto {
         if (value == null) { throw new NullPointerException(); }
         checkByteStringIsUtf8(value);
         cwd_ = value;
-        bitField0_ |= 0x00000020;
+        bitField0_ |= 0x00000008;
         onChanged();
         return this;
       }
@@ -51706,7 +51410,7 @@ public final class TerminalScreenProto {
           java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
         command_ = value;
-        bitField0_ |= 0x00000040;
+        bitField0_ |= 0x00000010;
         onChanged();
         return this;
       }
@@ -51716,7 +51420,7 @@ public final class TerminalScreenProto {
        */
       public Builder clearCommand() {
         command_ = getDefaultInstance().getCommand();
-        bitField0_ = (bitField0_ & ~0x00000040);
+        bitField0_ = (bitField0_ & ~0x00000010);
         onChanged();
         return this;
       }
@@ -51730,7 +51434,7 @@ public final class TerminalScreenProto {
         if (value == null) { throw new NullPointerException(); }
         checkByteStringIsUtf8(value);
         command_ = value;
-        bitField0_ |= 0x00000040;
+        bitField0_ |= 0x00000010;
         onChanged();
         return this;
       }
@@ -51778,7 +51482,7 @@ public final class TerminalScreenProto {
           java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
         status_ = value;
-        bitField0_ |= 0x00000080;
+        bitField0_ |= 0x00000020;
         onChanged();
         return this;
       }
@@ -51788,7 +51492,7 @@ public final class TerminalScreenProto {
        */
       public Builder clearStatus() {
         status_ = getDefaultInstance().getStatus();
-        bitField0_ = (bitField0_ & ~0x00000080);
+        bitField0_ = (bitField0_ & ~0x00000020);
         onChanged();
         return this;
       }
@@ -51802,7 +51506,7 @@ public final class TerminalScreenProto {
         if (value == null) { throw new NullPointerException(); }
         checkByteStringIsUtf8(value);
         status_ = value;
-        bitField0_ |= 0x00000080;
+        bitField0_ |= 0x00000020;
         onChanged();
         return this;
       }
@@ -51824,7 +51528,7 @@ public final class TerminalScreenProto {
       public Builder setCols(int value) {
 
         cols_ = value;
-        bitField0_ |= 0x00000100;
+        bitField0_ |= 0x00000040;
         onChanged();
         return this;
       }
@@ -51833,7 +51537,7 @@ public final class TerminalScreenProto {
        * @return This builder for chaining.
        */
       public Builder clearCols() {
-        bitField0_ = (bitField0_ & ~0x00000100);
+        bitField0_ = (bitField0_ & ~0x00000040);
         cols_ = 0;
         onChanged();
         return this;
@@ -51856,7 +51560,7 @@ public final class TerminalScreenProto {
       public Builder setRows(int value) {
 
         rows_ = value;
-        bitField0_ |= 0x00000200;
+        bitField0_ |= 0x00000080;
         onChanged();
         return this;
       }
@@ -51865,7 +51569,7 @@ public final class TerminalScreenProto {
        * @return This builder for chaining.
        */
       public Builder clearRows() {
-        bitField0_ = (bitField0_ & ~0x00000200);
+        bitField0_ = (bitField0_ & ~0x00000080);
         rows_ = 0;
         onChanged();
         return this;
@@ -51888,7 +51592,7 @@ public final class TerminalScreenProto {
       public Builder setCreatedAtMs(long value) {
 
         createdAtMs_ = value;
-        bitField0_ |= 0x00000400;
+        bitField0_ |= 0x00000100;
         onChanged();
         return this;
       }
@@ -51897,7 +51601,7 @@ public final class TerminalScreenProto {
        * @return This builder for chaining.
        */
       public Builder clearCreatedAtMs() {
-        bitField0_ = (bitField0_ & ~0x00000400);
+        bitField0_ = (bitField0_ & ~0x00000100);
         createdAtMs_ = 0L;
         onChanged();
         return this;
@@ -51920,7 +51624,7 @@ public final class TerminalScreenProto {
       public Builder setLastActiveAtMs(long value) {
 
         lastActiveAtMs_ = value;
-        bitField0_ |= 0x00000800;
+        bitField0_ |= 0x00000200;
         onChanged();
         return this;
       }
@@ -51929,7 +51633,7 @@ public final class TerminalScreenProto {
        * @return This builder for chaining.
        */
       public Builder clearLastActiveAtMs() {
-        bitField0_ = (bitField0_ & ~0x00000800);
+        bitField0_ = (bitField0_ & ~0x00000200);
         lastActiveAtMs_ = 0L;
         onChanged();
         return this;
@@ -52865,40 +52569,39 @@ public final class TerminalScreenProto {
       "Mark\022\014\n\004type\030\001 \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021Clip" +
       "boardResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007all" +
       "owed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(" +
-      "\014\"\347\001\n\014TerminalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023" +
-      "\n\013instance_id\030\002 \001(\t\022\014\n\004name\030\003 \001(\t\022\r\n\005tit" +
-      "le\030\004 \001(\t\022\025\n\rdisplay_title\030\005 \001(\t\022\013\n\003cwd\030\006" +
-      " \001(\t\022\017\n\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022\014\n" +
-      "\004cols\030\t \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_at_" +
-      "ms\030\013 \001(\003\022\031\n\021last_active_at_ms\030\014 \001(\003\"\024\n\004E" +
-      "xit\022\014\n\004code\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027BUFFE" +
-      "R_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN" +
-      "\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tColorK" +
-      "ind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025COLOR" +
-      "_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DEFAULT" +
-      "_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COLOR_KI" +
-      "ND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013Curs" +
-      "orShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED\020\000\022\026\n" +
-      "\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BA" +
-      "R\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n\rMous" +
-      "eTracking\022\036\n\032MOUSE_TRACKING_UNSPECIFIED\020" +
-      "\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE_TRAC" +
-      "KING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n\036" +
-      "MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n\033MOUS" +
-      "E_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRACK" +
-      "ING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_SGR_PI" +
-      "XELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_ENCODI" +
-      "NG_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001" +
-      "\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_ENCOD" +
-      "ING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004*\242\001\n\013" +
-      "MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIED\020" +
-      "\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON" +
-      "_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOU" +
-      "SE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005" +
-      "Bq\n\'com.webterm.terminal.protocol.genera" +
-      "tedB\023TerminalScreenProtoZ1webterm/go-cor" +
-      "e/internal/screenprotocol/generatedb\006pro" +
-      "to3"
+      "\014\"\316\001\n\014TerminalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023" +
+      "\n\013instance_id\030\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cw" +
+      "d\030\006 \001(\t\022\017\n\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t" +
+      "\022\014\n\004cols\030\t \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_" +
+      "at_ms\030\013 \001(\003\022\031\n\021last_active_at_ms\030\014 \001(\003J\004" +
+      "\010\003\020\004J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBuff" +
+      "erKind\022\033\n\027BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020B" +
+      "UFFER_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNA" +
+      "TE\020\002*\240\001\n\tColorKind\022\032\n\026COLOR_KIND_UNSPECI" +
+      "FIED\020\000\022\031\n\025COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COL" +
+      "OR_KIND_DEFAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSO" +
+      "R\020\003\022\026\n\022COLOR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIN" +
+      "D_RGB\020\005*u\n\013CursorShape\022\034\n\030CURSOR_SHAPE_U" +
+      "NSPECIFIED\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020" +
+      "CURSOR_SHAPE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDER" +
+      "LINE\020\003*\374\001\n\rMouseTracking\022\036\n\032MOUSE_TRACKI" +
+      "NG_UNSPECIFIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020" +
+      "\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACK" +
+      "ING_VT200\020\003\022\"\n\036MOUSE_TRACKING_VT200_HIGH" +
+      "LIGHT\020\004\022\037\n\033MOUSE_TRACKING_BUTTON_EVENT\020\005" +
+      "\022\034\n\030MOUSE_TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_" +
+      "TRACKING_SGR_PIXELS\020\007*\222\001\n\rMouseEncoding\022" +
+      "\036\n\032MOUSE_ENCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE" +
+      "_ENCODING_X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002" +
+      "\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODI" +
+      "NG_URXVT\020\004*\242\001\n\013MouseButton\022\034\n\030MOUSE_BUTT" +
+      "ON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022" +
+      "\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON" +
+      "_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUS" +
+      "E_BUTTON_MOVE\020\005Bq\n\'com.webterm.terminal." +
+      "protocol.generatedB\023TerminalScreenProtoZ" +
+      "1webterm/go-core/internal/screenprotocol" +
+      "/generatedb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -53191,7 +52894,7 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_TerminalInfo_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor,
-        new java.lang.String[] { "SessionId", "InstanceId", "Name", "Title", "DisplayTitle", "Cwd", "Command", "Status", "Cols", "Rows", "CreatedAtMs", "LastActiveAtMs", });
+        new java.lang.String[] { "SessionId", "InstanceId", "Title", "Cwd", "Command", "Status", "Cols", "Rows", "CreatedAtMs", "LastActiveAtMs", });
     internal_static_webterm_terminal_screen_v1_Exit_descriptor =
       getDescriptor().getMessageTypes().get(48);
     internal_static_webterm_terminal_screen_v1_Exit_fieldAccessorTable = new

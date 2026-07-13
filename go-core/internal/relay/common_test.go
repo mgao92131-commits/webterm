@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/session"
 )
 
@@ -27,6 +29,41 @@ func TestAgentWebSocketURL(t *testing.T) {
 	}
 }
 
+func TestNewV2InjectsFileUploadService(t *testing.T) {
+	cfg := config.Config{
+		Mode:  config.ModeRelay,
+		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
+		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
+	}
+	application := app.New(cfg, "test")
+	client := NewV2(cfg.Relay, application)
+
+	header := http.Header{}
+	header.Set("X-File-Name", "demo.txt")
+	header.Set("X-File-Size", "4")
+	result, err := client.router.RouteHTTPv2(
+		http.MethodPost,
+		"/api/sessions/missing/upload",
+		header,
+		bytes.NewReader([]byte("data")),
+	)
+	if err != nil {
+		t.Fatalf("upload route returned error: %v", err)
+	}
+	if result.StatusCode != http.StatusNotFound {
+		t.Fatalf("upload status = %d, want 404; body=%s", result.StatusCode, result.Data)
+	}
+	var response struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(result.Data, &response); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if response.Code != string(fileupload.CodeSessionNotFound) {
+		t.Fatalf("upload code = %q, want %q", response.Code, fileupload.CodeSessionNotFound)
+	}
+}
+
 func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	cfg := config.Config{
 		Mode:  config.ModeRelay,
@@ -36,7 +73,7 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	application := app.New(cfg, "test")
 	client := NewV2(cfg.Relay, application)
 
-	status, body, err := client.router.RouteHTTP(http.MethodPost, "/api/sessions", []byte(`{"name":"relay-test","cwd":"."}`))
+	status, body, err := client.router.RouteHTTP(http.MethodPost, "/api/sessions", []byte(`{"cwd":"."}`))
 	if err != nil {
 		t.Fatalf("POST /api/sessions returned error: %v", err)
 	}
@@ -67,19 +104,12 @@ func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 		t.Fatalf("list length = %d, want 1", len(list))
 	}
 
-	status, body, err = client.router.RouteHTTP(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{"name":"renamed"}`))
-	if err != nil {
+	status, _, err = client.router.RouteHTTP(http.MethodPatch, "/api/sessions/s1?device=d1", []byte(`{}`))
+	if err != nil && err.Error() != "method not allowed" {
 		t.Fatalf("PATCH returned error: %v", err)
 	}
-	if status != http.StatusOK {
-		t.Fatalf("PATCH status = %d, want 200", status)
-	}
-	var renamed session.Info
-	if err := json.Unmarshal(body, &renamed); err != nil {
-		t.Fatalf("decode renamed session: %v", err)
-	}
-	if renamed.Name != "renamed" {
-		t.Fatalf("renamed name = %q, want renamed", renamed.Name)
+	if status != http.StatusMethodNotAllowed {
+		t.Fatalf("PATCH status = %d, want 405", status)
 	}
 
 	status, _, err = client.router.RouteHTTP(http.MethodDelete, "/api/sessions/s1", nil)

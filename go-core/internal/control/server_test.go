@@ -293,7 +293,7 @@ func TestControlScreenSnapshot(t *testing.T) {
 	cfg.Shell.Command = "/bin/sh"
 	application := app.New(cfg, "test-version")
 	server := New("127.0.0.1:0", application)
-	terminal, err := application.Sessions().Create("test", ".")
+	terminal, err := application.Sessions().Create(".")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}

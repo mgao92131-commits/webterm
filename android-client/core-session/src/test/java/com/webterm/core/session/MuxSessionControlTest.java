@@ -10,11 +10,51 @@ import android.os.Handler;
 import com.webterm.transport.api.MuxTransport;
 
 import org.junit.Test;
+import org.json.JSONObject;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class MuxSessionControlTest {
+
+    @Test
+    public void routesDeviceLevelControlMessage() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        AtomicReference<String> type = new AtomicReference<>();
+        MuxSession session = new MuxSession(transport, synchronousHandler(), new MuxSession.Listener() {
+            @Override public void onMuxConnected() {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
+            @Override public void onTunnelConnected(String tunnelId) {}
+            @Override public void onTunnelError(String tunnelId, int code, String message) {}
+            @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}
+            @Override public void onTunnelClosed(String tunnelId, int code, String reason) {}
+            @Override public void onControlMessage(JSONObject msg) { type.set(msg.optString("type")); }
+        });
+        session.start();
+        transport.simulateText("{\"type\":\"agent_notification\",\"event_id\":\"e1\"}");
+        assertEquals("agent_notification", type.get());
+    }
+
+    @Test
+    public void sendControlUsesPhysicalMuxTextFrame() throws Exception {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        MuxSession session = new MuxSession(transport, synchronousHandler(), noOpListener());
+        session.start();
+        transport.simulateOpen();
+        session.sendControl(new JSONObject().put("type", "file_send.accepted"));
+        assertEquals("file_send.accepted", new JSONObject(transport.lastText).getString("type"));
+    }
+
+    private static MuxSession.Listener noOpListener() {
+        return new MuxSession.Listener() {
+            @Override public void onMuxConnected() {}
+            @Override public void onMuxDisconnected(int code, String reason) {}
+            @Override public void onTunnelConnected(String tunnelId) {}
+            @Override public void onTunnelError(String tunnelId, int code, String message) {}
+            @Override public void onTunnelData(String tunnelId, byte[] payload, boolean binary) {}
+            @Override public void onTunnelClosed(String tunnelId, int code, String reason) {}
+        };
+    }
 
     private static Handler synchronousHandler() {
         Handler handler = mock(Handler.class);
@@ -163,6 +203,7 @@ public class MuxSessionControlTest {
         private Listener listener;
         int startCount;
         int closeCount;
+        String lastText;
 
         @Override public void start(Listener listener) {
             this.listener = listener;
@@ -173,9 +214,13 @@ public class MuxSessionControlTest {
             if (listener != null) listener.onText(text);
         }
 
+        public void simulateOpen() {
+            if (listener != null) listener.onOpen();
+        }
+
         @Override public void close() { closeCount++; }
         @Override public boolean isConnected() { return true; }
-        @Override public boolean sendText(String text) { return true; }
+        @Override public boolean sendText(String text) { lastText = text; return true; }
         @Override public boolean sendBinary(byte[] data) { return true; }
     }
 }

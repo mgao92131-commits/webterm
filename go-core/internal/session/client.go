@@ -155,9 +155,7 @@ func encodeTerminalInfo(info Info) ([]byte, error) {
 			Info: &pb.TerminalInfo{
 				SessionId:      info.ID,
 				InstanceId:     info.InstanceID,
-				Name:           info.Name,
 				Title:          info.TermTitle,
-				DisplayTitle:   info.DisplayTitle,
 				Cwd:            info.CWD,
 				Command:        info.Command,
 				Status:         info.Status,

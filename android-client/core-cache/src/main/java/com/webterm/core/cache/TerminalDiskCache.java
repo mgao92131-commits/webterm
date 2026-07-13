@@ -273,7 +273,6 @@ public final class TerminalDiskCache {
         public String instanceId = "";
         public String createdAt = "";
         public String termTitle = "";
-        public String sessionName = "";
         public String cwd = "";
         public int columns;
         public int rows;
@@ -289,7 +288,6 @@ public final class TerminalDiskCache {
             instanceId = other.instanceId;
             createdAt = other.createdAt;
             termTitle = other.termTitle;
-            sessionName = other.sessionName;
             cwd = other.cwd;
             columns = other.columns;
             rows = other.rows;
@@ -304,7 +302,6 @@ public final class TerminalDiskCache {
             json.put("instanceId", instanceId);
             json.put("createdAt", createdAt);
             json.put("termTitle", termTitle);
-            json.put("sessionName", sessionName);
             json.put("cwd", cwd);
             json.put("cols", columns);
             json.put("rows", rows);
@@ -320,7 +317,6 @@ public final class TerminalDiskCache {
             metadata.instanceId = json.optString("instanceId", "");
             metadata.createdAt = json.optString("createdAt", "");
             metadata.termTitle = json.optString("termTitle", "");
-            metadata.sessionName = json.optString("sessionName", "");
             metadata.cwd = json.optString("cwd", "");
             metadata.columns = json.optInt("cols", 0);
             metadata.rows = json.optInt("rows", 0);

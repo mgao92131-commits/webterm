@@ -1,5 +1,9 @@
 package com.webterm.feature.terminal;
 
+import androidx.annotation.Nullable;
+
+import com.webterm.core.fileupload.FileUploadController;
+
 /**
  * Host interface for TerminalFragment to communicate with its Activity
  * for starting terminal sessions.
@@ -15,4 +19,7 @@ public interface TerminalHost {
      * Detach the fragment view from the terminal runtime without closing the runtime.
      */
     void detachTerminalFragment(TerminalFragment fragment);
+
+    /** 由设备前台服务持有的上传控制器；服务不可用时返回 null。 */
+    @Nullable FileUploadController uploadController();
 }

@@ -2,38 +2,40 @@
 set -euo pipefail
 
 # WebTerm Agent Hook 辅助脚本。
-# 从 stdin 读取 Agent 事件 JSON，提取最有意义的文本，然后调用 webterm notify。
+# 从 stdin 读取 Agent 事件 JSON，提取最有意义的文本，然后调用 webterm agent-event。
 #
 # 目标 session 解析顺序：
 #   1. 环境变量 WEBTERM_SESSION_ID
 #   2. 调用者进程（PPID）所在 TTY 对应的 WebTerm session
-#   3.  fallback：把调用者 PID 交给 webterm notify / agent 解析
+#   3.  fallback：把调用者 PID 交给 webterm agent-event / agent 解析
 #
 # 用法：
-#   webterm-notify-helper <level> <default-message> <source>
+#   webterm-notify-helper <importance> <default-message> <source>
 #
 # 示例：
-#   echo '{"prompt":"hello world"}' | webterm-notify-helper running "Running" claude
+#   echo '{"prompt":"hello world"}' | webterm-notify-helper quiet "Running" claude
 
 level="${1:-}"
 default_msg="${2:-}"
 source="${3:-}"
 
+# 注意：helper 由 agent hook 调用，绝不能 exit 2——Kimi/Claude 会把 exit 2
+# 解释为阻止工具调用或阻止本轮结束（死循环）。参数错误是非阻塞错误，exit 1 跳过通知。
 if [ -z "$level" ] || [ -z "$default_msg" ] || [ -z "$source" ]; then
-  echo "Usage: $0 <level> <default-message> <source>" >&2
-  echo "Example: echo '{\"prompt\":\"hi\"}' | $0 running \"Running\" claude" >&2
-  exit 2
+  echo "Usage: $0 <importance> <default-message> <source>" >&2
+  echo "Example: echo '{\"prompt\":\"hi\"}' | $0 quiet \"Running\" claude" >&2
+  exit 1
 fi
 
-if [ "$level" != "idle" ] && [ "$level" != "running" ] && [ "$level" != "error" ]; then
-  echo "Invalid level '$level'. Must be idle|running|error." >&2
-  exit 2
+if [ "$level" != "alert" ] && [ "$level" != "normal" ] && [ "$level" != "quiet" ]; then
+  echo "Invalid importance '$level' (expected alert|normal|quiet)." >&2
+  exit 1
 fi
 
 # 读取 stdin 中的 JSON payload
 payload=$(cat 2>/dev/null || true)
 
-# 从 payload 提取文本，失败时使用空字符串
+# 从 payload 提取文本，失败时使用默认消息
 msg=$(python3 -c '
 import sys, json
 
@@ -46,24 +48,46 @@ def first(d, keys):
     return None
 
 def extract(data):
+    if not isinstance(data, dict):
+        return ""
+
+    # 优先检查是否存在 questions 数组
+    q_list = None
+    if isinstance(data.get("questions"), list):
+        q_list = data["questions"]
+    else:
+        ti = data.get("tool_input")
+        if isinstance(ti, dict) and isinstance(ti.get("questions"), list):
+            q_list = ti["questions"]
+
+    if q_list and len(q_list) > 0:
+        first_q = q_list[0]
+        if isinstance(first_q, dict):
+            question = first_q.get("question")
+            if isinstance(question, str) and question:
+                return f"Question: {question}"
+
     # 顶层字段
-    text = first(data, ("prompt", "content", "message", "text"))
+    text = first(data, ("prompt", "content", "message", "last_assistant_message", "text"))
     if text:
         return text
 
     # messages 数组最后一个
-    msgs = data.get("messages") if isinstance(data, dict) else None
+    msgs = data.get("messages")
     if isinstance(msgs, list) and msgs:
         last = msgs[-1]
         text = first(last, ("content", "text", "prompt"))
         if text:
             return text
 
-    # tool_input 里的命令
-    ti = data.get("tool_input") if isinstance(data, dict) else None
+    # tool_input 里的命令；带 tool_name 时输出 "工具名: 命令"
+    ti = data.get("tool_input")
     if isinstance(ti, dict):
-        text = first(ti, ("command", "cmd", "code", "script"))
+        text = first(ti, ("command", "cmd", "code", "script", "description"))
         if text:
+            tool_name = data.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                return f"{tool_name}: {text}"
             return text
 
     return ""
@@ -73,10 +97,10 @@ try:
 except Exception:
     data = {}
 
-print(extract(data)[:60].strip())
+msg = extract(data)
+print(msg.replace("\r", " ").replace("\n", " ")[:120].strip())
 ' <<<"$payload" 2>/dev/null || true)
 
-# 如果提取不到，使用默认消息
 if [ -z "$msg" ]; then
   msg="$default_msg"
 fi
@@ -141,7 +165,7 @@ import sys, json, subprocess
 tty = sys.argv[1]
 addr = sys.argv[2]
 try:
-    out = subprocess.check_output(["curl", "-s", "--max-time", "3", f"{addr}/control/sessions"], text=True)
+    out = subprocess.check_output(["curl", "-s", "--max-time", "1", f"{addr}/control/sessions"], text=True)
     sessions = json.loads(out)
     for s in sessions:
         if s.get("tty") == tty:
@@ -165,10 +189,10 @@ if [ -z "$session_id" ]; then
 fi
 
 notify_args=(
-  notify
-  --level "$level"
-  --message "$msg"
-  --source "$source"
+  agent-event
+  -i "$level"
+  -m "$msg"
+  -s "$source"
 )
 
 if [ -n "$session_id" ]; then
@@ -179,7 +203,7 @@ else
   echo "webterm-notify-helper: cannot resolve WebTerm session for pid $caller_pid (is this Agent started inside a WebTerm terminal?)" >&2
 fi
 
-# 调用 webterm notify；失败也不应中断 agent 工作流
+# 调用 webterm agent-event；失败也不应中断 agent 工作流
 "$WEBTERM" "${notify_args[@]}" >/dev/null 2>&1 || true
 
 exit 0

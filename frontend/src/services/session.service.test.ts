@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchSessions, createSession, closeSession, renameSession } from './session.service';
+import { fetchSessions, createSession, closeSession } from './session.service';
 
 vi.mock('../api/client', () => ({
   httpClient: vi.fn(),
@@ -26,7 +26,7 @@ describe('session.service', () => {
   });
 
   it('fetches sessions', async () => {
-    const sessions = [{ id: 's1', cwd: '/home', name: 'Term' }];
+    const sessions = [{ id: 's1', cwd: '/home' }];
     mockedHttpClient.mockResolvedValueOnce(sessions);
 
     const result = await fetchSessions();
@@ -44,7 +44,7 @@ describe('session.service', () => {
   });
 
   it('creates a session', async () => {
-    const session = { id: 's2', cwd: '/', name: '' };
+    const session = { id: 's2', cwd: '/' };
     mockedHttpClient.mockResolvedValueOnce(session);
 
     const result = await createSession();
@@ -72,16 +72,5 @@ describe('session.service', () => {
     expect(mockedHttpClient).toHaveBeenCalledWith('/api/sessions/s1', { method: 'DELETE' });
   });
 
-  it('renames a session', async () => {
-    const updated = { id: 's1', cwd: '/', name: 'New Name' };
-    mockedHttpClient.mockResolvedValueOnce(updated);
 
-    const result = await renameSession('d1:s1', 'New Name');
-
-    expect(mockedHttpClient).toHaveBeenCalledWith('/api/sessions/s1', {
-      method: 'PATCH',
-      body: JSON.stringify({ name: 'New Name' }),
-    });
-    expect(result).toEqual(updated);
-  });
 });

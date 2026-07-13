@@ -463,9 +463,9 @@ message ClipboardResponse {
 message TerminalInfo {
   string session_id = 1;
   string instance_id = 2;
-  string name = 3;
+  reserved 3; // 已移除自定义会话名称，禁止复用字段号
   string title = 4;
-  string display_title = 5;
+  reserved 5; // 已移除服务端派生显示标题，客户端直接展示 title
   string cwd = 6;
   string command = 7;
   string status = 8;

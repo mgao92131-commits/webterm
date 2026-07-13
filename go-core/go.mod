@@ -17,7 +17,6 @@ require (
 	github.com/danielgatis/go-vte v1.0.11 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/unilibs/uniwidth v0.1.0 // indirect
 )
 
 replace github.com/danielgatis/go-headless-term => ./internal/headlessterm

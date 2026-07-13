@@ -43,6 +43,7 @@ public final class RelayService {
     private final WebTermApi api;
 
     private Host host;
+    private DeviceListener deviceListener;
     private ServerConfig relayMasterConfig;
     private final List<ServerConfig> relayDevices = new ArrayList<>();
     private RelayState relayState = RelayState.NOT_CONFIGURED;
@@ -51,6 +52,7 @@ public final class RelayService {
     private boolean refreshInFlight;
     private String refreshCookieInFlight = "";
     private boolean loginInFlight;
+    private boolean devicesLoaded;
 
     // ── LiveData for UI observation ──────────────────────────────
 
@@ -73,6 +75,11 @@ public final class RelayService {
         this.host = host;
     }
 
+    /** 后台设备服务的独立监听器，不依赖 Activity 生命周期。 */
+    public void setDeviceListener(DeviceListener listener) {
+        deviceListener = listener;
+    }
+
     // ── Public API ───────────────────────────────────────────────
 
     public void loadMasterFromServers(List<ServerConfig> servers) {
@@ -91,6 +98,10 @@ public final class RelayService {
 
     public List<ServerConfig> devices() {
         return relayDevices;
+    }
+
+    public boolean areDevicesLoaded() {
+        return devicesLoaded;
     }
 
     public boolean hasMaster() {
@@ -127,7 +138,9 @@ public final class RelayService {
 
     public void destroy() {
         stop();
+        devicesLoaded = false;
         relayDevices.clear();
+        notifyDeviceListener();
         relayMasterConfig = null;
     }
 
@@ -146,27 +159,11 @@ public final class RelayService {
                     devicesFetchInFlight = false;
                     httpAuthFailures = 0;
                     relayDevices.clear();
-                    for (int i = 0; i < devices.length(); i++) {
-                        JSONObject deviceObj = devices.optJSONObject(i);
-                        if (deviceObj == null) continue;
-                        String deviceId = deviceObj.optString("deviceId");
-                        String deviceName = deviceObj.optString("deviceName");
-                        if (deviceId.isEmpty()) continue;
-
-                        if (!isDeviceOnline(deviceObj)) continue;
-
-                        relayDevices.add(new ServerConfig(
-                            "relay_dev_" + deviceId,
-                            deviceName,
-                            relayMasterConfig.getUrl(),
-                            relayMasterConfig.getCookie(),
-                            relayMasterConfig.getUsername(),
-                            "",
-                            false, true, deviceId
-                        ));
-                    }
+                    relayDevices.addAll(toOnlineDeviceConfigs(relayMasterConfig, devices));
+                    devicesLoaded = true;
                     updateState(RelayState.CONNECTED);
                     if (host != null) host.onRelayDevicesChanged();
+                    notifyDeviceListener();
                 });
             }
 
@@ -185,6 +182,7 @@ public final class RelayService {
                         refreshSavedCookieOrFail();
                     } else {
                         updateState(RelayState.CONNECT_FAILED);
+                        if (host != null) host.onRelayDevicesLoadFailed(message);
                     }
                 });
             }
@@ -194,6 +192,7 @@ public final class RelayService {
                 mainHandler.post(() -> {
                     if (!devicesFetchInFlight) return;
                     devicesFetchInFlight = false;
+                    if (host != null) host.onRelayDevicesLoadFailed(message);
                 });
             }
         });
@@ -401,20 +400,43 @@ public final class RelayService {
             }
         }
         relayMasterConfig = null;
+        devicesLoaded = false;
         httpAuthFailures = 0;
         devicesFetchInFlight = false;
         if (host != null) host.saveServers();
         stop();
         relayDevices.clear();
+        notifyDeviceListener();
         updateState(RelayState.NOT_CONFIGURED);
         if (host != null) host.onRelayAuthDone();
     }
 
     // ── Internal helpers ─────────────────────────────────────────
 
-    private boolean isDeviceOnline(JSONObject deviceObj) {
+    static List<ServerConfig> toOnlineDeviceConfigs(ServerConfig master, JSONArray devices) {
+        List<ServerConfig> result = new ArrayList<>();
+        if (master == null || devices == null) return result;
+        for (int i = 0; i < devices.length(); i++) {
+            JSONObject device = devices.optJSONObject(i);
+            if (device == null || !isDeviceOnline(device)) continue;
+            String deviceId = device.optString("deviceId");
+            if (deviceId.isEmpty()) continue;
+            result.add(new ServerConfig(
+                "relay_dev_" + deviceId, device.optString("deviceName"),
+                master.getUrl(), master.getCookie(), master.getUsername(), "",
+                false, true, deviceId));
+        }
+        return result;
+    }
+
+    private static boolean isDeviceOnline(JSONObject deviceObj) {
         return deviceObj.optBoolean("online", false)
             || "online".equalsIgnoreCase(deviceObj.optString("status", ""));
+    }
+
+    private void notifyDeviceListener() {
+        DeviceListener listener = deviceListener;
+        if (listener != null) listener.onRelayDevicesChanged(new ArrayList<>(relayDevices));
     }
 
     private void updateState(RelayState state) {
@@ -454,8 +476,13 @@ public final class RelayService {
     public interface Host {
         android.app.Activity activity();
         void onRelayDevicesChanged();
+        default void onRelayDevicesLoadFailed(String message) {}
         void onRelayAuthDone();
         void saveServers();
         ServerConfigManager serverConfigs();
+    }
+
+    public interface DeviceListener {
+        void onRelayDevicesChanged(List<ServerConfig> devices);
     }
 }

@@ -287,15 +287,10 @@ public final class WebTermApi {
     }
 
     public void createSession(ServerConfig server, SessionCreateCallback callback) {
-        JSONObject body = new JSONObject();
-        try {
-            body.put("name", "");
-        } catch (JSONException ignored) {
-        }
         Request.Builder builder = new Request.Builder()
             .url(server.getUrl() + "/api/sessions")
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
-            .post(RequestBody.create(body.toString(), JSON));
+            .post(RequestBody.create("{}", JSON));
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
             builder.header("x-device-id", server.getDeviceId());
         }
@@ -324,15 +319,10 @@ public final class WebTermApi {
     }
 
     public void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
-        JSONObject body = new JSONObject();
-        try {
-            body.put("name", "");
-        } catch (JSONException ignored) {
-        }
         Request request = new Request.Builder()
             .url(baseUrl + "/api/sessions")
             .header("Cookie", cookie != null ? cookie : "")
-            .post(RequestBody.create(body.toString(), JSON))
+            .post(RequestBody.create("{}", JSON))
             .build();
         http.newCall(request).enqueue(new Callback() {
             @Override
@@ -356,23 +346,6 @@ public final class WebTermApi {
                 }
             }
         });
-    }
-
-    public void renameSession(ServerConfig server, String sessionId, String newName, SimpleCallback callback) {
-        JSONObject body = new JSONObject();
-        try {
-            body.put("name", newName);
-        } catch (JSONException ignored) {
-        }
-        String apiSessionId = stripRelaySessionPrefix(sessionId);
-        Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
-            .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
-            .patch(RequestBody.create(body.toString(), JSON));
-        if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
-            builder.header("x-device-id", server.getDeviceId());
-        }
-        http.newCall(builder.build()).enqueue(simpleCallback(callback, "Rename failed"));
     }
 
     public void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
