@@ -89,14 +89,19 @@ func (r *SessionRouter) RouteOpen(
 		return func() { go mc.Run(ctx, r.manager) }, nil
 
 	case strings.HasPrefix(clean, "/ws/sessions/"):
+		// The Android client is the sole terminal consumer. It renders the
+		// authoritative screen projection, so raw-output JSON/binary terminal
+		// transports are intentionally not accepted here anymore.
+		if !hasProtocol(protocols, protocol.ScreenSubprotocol) {
+			return nil, fmt.Errorf("terminal sessions require %s", protocol.ScreenSubprotocol)
+		}
 		id := strings.TrimPrefix(clean, "/ws/sessions/")
 		id, _ = url.PathUnescape(id)
 		terminal, ok := r.manager.Get(id)
 		if !ok {
 			return nil, fmt.Errorf("session %s not found", id)
 		}
-		mode := session.ClientModeFromProtocol(selectProtocol(protocols))
-		client := session.NewClient(socket, terminal, mode, r.logger)
+		client := session.NewClient(socket, terminal, session.ClientModeScreen, r.logger)
 		return func() { go client.Run(ctx) }, nil
 
 	default:
@@ -306,25 +311,6 @@ func hasProtocol(protocols []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func selectProtocol(protocols []string) string {
-	for _, p := range protocols {
-		if p == protocol.ScreenSubprotocol {
-			return protocol.ScreenSubprotocol
-		}
-	}
-	for _, p := range protocols {
-		if p == protocol.BinarySubprotocol {
-			return protocol.BinarySubprotocol
-		}
-	}
-	for _, p := range protocols {
-		if p == protocol.JSONSubprotocol {
-			return protocol.JSONSubprotocol
-		}
-	}
-	return protocol.JSONSubprotocol
 }
 
 func cleanPath(raw string) string {

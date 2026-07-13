@@ -181,8 +181,9 @@ type Terminal struct {
 	kittyEnabled bool
 
 	// Pending grapheme cluster input. The ansicode decoder feeds one rune at a
-	// time via Input, so we buffer here until a complete cluster is formed.
-	pendingInput string
+	// time via Input, so keep this as bytes to avoid allocating and copying a
+	// new Go string for every printable rune.
+	pendingInput []byte
 
 	// Notification provider for OSC 99 (Kitty desktop notifications)
 	notificationProvider NotificationProvider
@@ -591,12 +592,12 @@ func (t *Terminal) flushPendingInput() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.pendingInput == "" {
+	if len(t.pendingInput) == 0 {
 		return
 	}
 
-	cluster := t.pendingInput
-	t.pendingInput = ""
+	cluster := string(t.pendingInput)
+	t.pendingInput = t.pendingInput[:0]
 
 	// Determine the cluster width using the same segmentation state we used while
 	// buffering. Falling back to clusterWidth covers any residual pending text.

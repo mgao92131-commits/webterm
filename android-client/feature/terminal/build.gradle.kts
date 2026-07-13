@@ -25,8 +25,6 @@ dependencies {
     implementation(project(":core-session"))
     implementation(project(":transport-api"))
     implementation(project(":ui-common"))
-    implementation(project(":terminal-ui"))
-    implementation(project(":terminal-view"))
     implementation(project(":terminal-model"))
     implementation(project(":terminal-protocol"))
     implementation(project(":terminal-renderer"))

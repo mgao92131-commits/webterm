@@ -36,9 +36,28 @@ public final class RemoteTerminalRendererTest {
     assertEquals(4f, RemoteTerminalRenderer.contentTopY(600, 0, 35, 17f, 4f, 0f), 0.001f);
   }
 
+  @Test public void hardTopAnchorsFirstHistoryRowInsideViewport() {
+    // A 680px viewport with 20px cells and a 4px inset leaves a 16px remainder
+    // (676 usable = 33 rows + 16). The old bottom-anchored bound stopped the
+    // first history row at y=-12, clipped by the view edge; the top bound must
+    // be historyRows * lineHeight so the row lands exactly at topInset.
+    assertEquals(4f, RemoteTerminalRenderer.contentTopY(680, 100, 33, 20f, 4f, 2000f), 0.001f);
+    assertEquals(4f, RemoteTerminalRenderer.contentTopY(680, 100, 33, 20f, 4f, 999999f), 0.001f);
+    assertEquals(2004f, RemoteTerminalRenderer.screenTopY(680, 100, 33, 20f, 4f, 999999f), 0.001f);
+    // Content shorter than the viewport still cannot scroll at all.
+    assertEquals(-36f, RemoteTerminalRenderer.contentTopY(680, 2, 30, 20f, 4f, 500f), 0.001f);
+  }
+
   @Test public void selectionHighlightIsTranslucent() {
     // Selection must tint an already-rendered glyph rather than replace its
     // foreground/background colors with an opaque reverse-video cell.
     assertEquals(0x66, (RemoteTerminalRenderer.SELECTION_OVERLAY >>> 24) & 0xFF);
+  }
+
+  @Test public void requestsOlderHistoryOnlyWhenPushingPastTheHardTop() {
+    assertFalse(RemoteTerminalView.shouldRequestOlderHistory(-80, 600, 600, false));
+    assertFalse(RemoteTerminalView.shouldRequestOlderHistory(80, 520, 600, false));
+    assertFalse(RemoteTerminalView.shouldRequestOlderHistory(80, 600, 600, true));
+    assertTrue(RemoteTerminalView.shouldRequestOlderHistory(80, 600, 600, false));
   }
 }

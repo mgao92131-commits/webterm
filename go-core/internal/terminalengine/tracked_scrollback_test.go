@@ -74,17 +74,46 @@ func TestTrackedScrollback_Pop(t *testing.T) {
 	}
 }
 
-func TestTrackedScrollback_SetLayoutEpoch(t *testing.T) {
+func TestTrackedScrollback_SetLayoutEpochPreservesHistory(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
 	sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
 	sb.SetLayoutEpoch(7)
 	if got := sb.LayoutEpoch(); got != 7 {
 		t.Fatalf("LayoutEpoch=7, got %d", got)
 	}
+	if got := sb.Len(); got != 1 {
+		t.Fatalf("expected history preserved across ordinary resize, got %d", got)
+	}
+	if got := sb.FirstID(); got != 1 {
+		t.Fatalf("FirstID=1, got %d", got)
+	}
+}
+
+func TestTrackedScrollback_ResetForReflowClearsHistory(t *testing.T) {
+	sb := NewTrackedScrollback(10000, nil)
+	sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
+	sb.ResetForReflow(7)
+	if got := sb.LayoutEpoch(); got != 7 {
+		t.Fatalf("LayoutEpoch=7, got %d", got)
+	}
 	if got := sb.Len(); got != 0 {
-		t.Fatalf("expected empty after epoch reset, got %d", got)
+		t.Fatalf("expected empty after explicit reflow reset, got %d", got)
 	}
 	if got := sb.FirstID(); got != 1 {
 		t.Fatalf("FirstID reset to 1, got %d", got)
+	}
+}
+
+func TestTrackedScrollback_ByteBudgetTrimsOldestLines(t *testing.T) {
+	tb := NewTrackedScrollback(100, nil)
+	tb.SetMaxBytes(250)
+	for i := 0; i < 4; i++ {
+		tb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{{Char: "0123456789"}}})
+	}
+	if tb.Len() >= 4 {
+		t.Fatalf("byte budget did not trim: len=%d bytes=%d", tb.Len(), tb.Bytes())
+	}
+	if tb.Bytes() > 250 && tb.Len() > 1 {
+		t.Fatalf("byte budget exceeded: len=%d bytes=%d", tb.Len(), tb.Bytes())
 	}
 }

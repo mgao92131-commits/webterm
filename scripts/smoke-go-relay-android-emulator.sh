@@ -42,6 +42,7 @@ COOKIE_JAR="$TMP_DIR/cookies.txt"
 PREFS_XML="$TMP_DIR/webterm.xml"
 RELAY_LOG="$TMP_DIR/relay.log"
 AGENT_LOG="$TMP_DIR/agent.log"
+AGENT_SOCKET="$TMP_DIR/webterm-agent.sock"
 RELAY_PID=""
 AGENT_PID=""
 
@@ -102,6 +103,8 @@ wait_for_ui_text() {
       tail -80 "$RELAY_LOG" >&2 || true
       echo "agent log:" >&2
       tail -80 "$AGENT_LOG" >&2 || true
+      echo "Android logcat:" >&2
+      "$ADB" logcat -d -t 200 >&2 || true
       exit 1
     fi
     sleep 0.5
@@ -205,6 +208,7 @@ echo "[5/9] starting Go Agent"
   DEVICE_NAME="$DEVICE_NAME" \
   WEBTERM_RELAY_PROTOCOL=v2 \
   WEBTERM_CONTROL_ADDR=127.0.0.1:0 \
+  WEBTERM_SOCKET_PATH="$AGENT_SOCKET" \
   WEBTERM_SHELL=/bin/sh \
   "$AGENT_BIN" --mode relay
 ) >"$AGENT_LOG" 2>&1 &

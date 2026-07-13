@@ -88,6 +88,14 @@ func NewEngine(rows, cols int, scrollback *TrackedScrollback, options ...Option)
 			onWrite: e.onClipboardWrite,
 		}))
 	}
+	if e.onWorkingDirectory != nil {
+		opts = append(opts, headlessterm.WithMiddleware(&headlessterm.Middleware{
+			SetWorkingDirectory: func(uri string, next func(string)) {
+				next(uri)
+				e.onWorkingDirectory(e.WorkingDirectory())
+			},
+		}))
+	}
 	if e.onNotification != nil {
 		opts = append(opts, headlessterm.WithNotification(&engineNotificationProvider{onNotify: e.onNotification}))
 	}

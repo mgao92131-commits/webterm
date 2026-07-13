@@ -10,6 +10,21 @@ func WithOnTitle(fn func(string)) Option {
 	}
 }
 
+// WithOnWorkingDirectory 设置 OSC 7 工作目录变化回调。
+func WithOnWorkingDirectory(fn func(string)) Option {
+	return func(r *Runtime) {
+		previous := r.onEffect
+		r.onEffect = func(effect terminalEffect) {
+			if previous != nil {
+				previous(effect)
+			}
+			if effect.workingDirectory != "" {
+				fn(effect.workingDirectory)
+			}
+		}
+	}
+}
+
 // WithOnBell 设置 bell 回调。
 func WithOnBell(fn func()) Option {
 	return func(r *Runtime) {

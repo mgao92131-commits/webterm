@@ -163,6 +163,10 @@ type ScreenFrame struct {
 	Title        string
 	WorkingDir   string
 	PromotedRows []PromotedRow
+	// ForceSnapshot is process-local projection metadata. It is never encoded;
+	// it tells a per-client sender that a style/link dictionary rotation made
+	// its old baseline invalid even though terminal geometry did not change.
+	ForceSnapshot bool
 }
 
 // PromotedRow 表示活动行滚入历史时的 ID 映射。

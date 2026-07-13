@@ -12,10 +12,7 @@ import (
 	"sync"
 	"time"
 
-	headlessterm "github.com/danielgatis/go-headless-term"
-
 	"webterm/go-core/internal/fsops"
-	"webterm/go-core/internal/infrastructure/emulator"
 	"webterm/go-core/internal/infrastructure/pty"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/terminalsession"
@@ -24,9 +21,6 @@ import (
 const (
 	DefaultCols = 100
 	DefaultRows = 30
-
-	// StateBytes 与 Node @xterm/headless 保持相同的 10k scrollback 契约。
-	maxStateScrollbackLines = 10000
 )
 
 type TerminalOptions struct {
@@ -60,7 +54,6 @@ type TerminalSession struct {
 	createdAt       time.Time
 	activeAt        time.Time
 	ring            *EventRing
-	screen          *ScreenState
 	runtime         *terminalsession.Runtime
 	process         *pty.Process
 	shellPid        int
@@ -69,9 +62,6 @@ type TerminalSession struct {
 	onTitleChanged  func()
 	onInfoChanged   func()
 	titleChanged    bool
-	stateCache      []byte
-	stateCacheValid bool
-	stateCacheGen   uint64
 	manager         *Manager
 }
 
@@ -105,22 +95,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		return nil, err
 	}
 
-	var terminal *TerminalSession
-	// Note: onTitle is triggered synchronously inside screen.Write, which is called
-	// within pushOutputLocked while terminal.mu is held. Thus directly updating the
-	// terminal fields here is thread-safe and free from data races.
-	// WARNING: Do NOT attempt to acquire terminal.mu.Lock() inside this callback,
-	// as that will cause a deadlock since the lock is already held by the caller.
-	titleProvider := &emulator.TerminalTitleProvider{
-		OnTitle: func(title string) {
-			if terminal != nil {
-				terminal.termTitle = title
-				terminal.titleChanged = true
-			}
-		},
-	}
-
-	terminal = &TerminalSession{
+	terminal := &TerminalSession{
 		id:             options.ID,
 		instance:       randomID(),
 		name:           normalize(options.Name),
@@ -132,7 +107,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		createdAt:      now,
 		activeAt:       now,
 		ring:           NewEventRing(0, 0),
-		screen:         NewScreenState(rows, cols, process.PTY(), titleProvider),
 		process:        process,
 		shellPid:       process.PID(),
 		ttyPath:        process.TTYPath(),
@@ -148,6 +122,34 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		terminalsession.WithOnOutput(func(data []byte) {
 			frame := terminal.PushOutput(data)
 			terminal.broadcastOutput(frame)
+		}),
+		terminalsession.WithOnTitle(func(title string) {
+			terminal.mu.Lock()
+			terminal.termTitle = title
+			terminal.titleChanged = true
+			onTitleChanged := terminal.onTitleChanged
+			onInfoChanged := terminal.onInfoChanged
+			terminal.mu.Unlock()
+			if onTitleChanged != nil {
+				onTitleChanged()
+			}
+			if onInfoChanged != nil {
+				onInfoChanged()
+			}
+		}),
+		terminalsession.WithOnWorkingDirectory(func(cwd string) {
+			terminal.mu.Lock()
+			terminal.liveCwd = cwd
+			terminal.touchLocked()
+			onTitleChanged := terminal.onTitleChanged
+			onInfoChanged := terminal.onInfoChanged
+			terminal.mu.Unlock()
+			if onTitleChanged != nil {
+				onTitleChanged()
+			}
+			if onInfoChanged != nil {
+				onInfoChanged()
+			}
 		}),
 		terminalsession.WithPTYResizer(process.Resize),
 	)
@@ -312,9 +314,6 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 	terminal.mu.Lock()
 	terminal.cols = cols
 	terminal.rows = rows
-	if terminal.screen != nil {
-		terminal.screen.Resize(rows, cols)
-	}
 	if terminal.process != nil {
 		terminal.process.Resize(cols, rows)
 	}
@@ -322,7 +321,6 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 		terminal.runtime.ResizeEngine(rows, cols)
 	}
 	terminal.touchLocked()
-	terminal.invalidateStateCache()
 	terminal.mu.Unlock()
 	return nil
 }
@@ -369,8 +367,7 @@ func (terminal *TerminalSession) ScreenRuntime() *terminalsession.Runtime {
 }
 
 // ProjectedScreenSnapshot exposes the authoritative screen-protocol frame for
-// local diagnostics. Unlike ScreenSnapshot, it does not use the legacy
-// compatibility emulator.
+// local diagnostics.
 func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 	terminal.mu.RLock()
 	rt := terminal.runtime
@@ -403,145 +400,6 @@ func (terminal *TerminalSession) RawPTYOutputSnapshot() terminalsession.RawPTYOu
 	return rt.RawPTYOutputSnapshot()
 }
 
-// terminalModes 生成终端模式恢复 ANSI 序列（与 @xterm/addon-serialize 对齐）
-func (terminal *TerminalSession) terminalModes() []byte {
-	terminal.mu.RLock()
-	screen := terminal.screen
-	terminal.mu.RUnlock()
-	if screen == nil {
-		return nil
-	}
-
-	var buf []byte
-	t := screen.Terminal
-
-	// 默认 false 的模式，启用时输出 set 序列
-	if t.HasMode(headlessterm.ModeCursorKeys) {
-		buf = append(buf, "\x1b[?1h"...)
-	}
-	if t.HasMode(headlessterm.ModeKeypadApplication) {
-		buf = append(buf, "\x1b[?66h"...)
-	}
-	if t.HasMode(headlessterm.ModeBracketedPaste) {
-		buf = append(buf, "\x1b[?2004h"...)
-	}
-	if t.HasMode(headlessterm.ModeInsert) {
-		buf = append(buf, "\x1b[4h"...)
-	}
-	if t.HasMode(headlessterm.ModeOrigin) {
-		buf = append(buf, "\x1b[?6h"...)
-	}
-	if t.HasMode(headlessterm.ModeReportFocusInOut) {
-		buf = append(buf, "\x1b[?1004h"...)
-	}
-
-	// 鼠标上报模式
-	if t.HasMode(headlessterm.ModeReportAllMouseMotion) {
-		buf = append(buf, "\x1b[?1003h"...)
-	} else if t.HasMode(headlessterm.ModeReportCellMouseMotion) {
-		buf = append(buf, "\x1b[?1002h"...)
-	} else if t.HasMode(headlessterm.ModeReportMouseClicks) {
-		buf = append(buf, "\x1b[?1000h"...)
-	}
-
-	// 默认 true 的模式，禁用时输出 reset 序列
-	if !t.HasMode(headlessterm.ModeLineWrap) {
-		buf = append(buf, "\x1b[?7l"...)
-	}
-
-	return buf
-}
-
-// StateBytes 返回 binary MSG_STATE 的 payload：包含清屏前缀 + 序列化状态 + 终端模式。
-// 为兼容既有测试，它继续返回带清屏前缀的字节；JSON state 请使用 StateBytesJSON()。
-func (terminal *TerminalSession) StateBytes() []byte {
-	return terminal.encodeSnapshot(SnapshotModeBinary)
-}
-
-// StateBytesJSON 返回 JSON state 的 payload：不包含清屏前缀，与 Node JSON 契约一致。
-func (terminal *TerminalSession) StateBytesJSON() []byte {
-	return terminal.encodeSnapshot(SnapshotModeJSON)
-}
-
-// encodeSnapshot 生成指定线协议的快照 payload，并处理 screen 为 nil 的私有容错路径。
-func (terminal *TerminalSession) encodeSnapshot(mode SnapshotMode) []byte {
-	terminal.mu.RLock()
-	cache := terminal.stateCache
-	valid := terminal.stateCacheValid
-	gen := terminal.stateCacheGen
-	screen := terminal.screen
-	terminal.mu.RUnlock()
-	if valid {
-		payload := append([]byte(nil), cache...)
-		return terminal.wrapSnapshotPayload(payload, mode)
-	}
-
-	var payload []byte
-	if screen != nil {
-		encoder := NewSnapshotEncoder(screen, terminal.terminalModes)
-		encoder.SetScrollbackLimit(maxStateScrollbackLines)
-		payload = encoder.Encode(SnapshotModeJSON)
-	} else {
-		// Go 私有容错路径：screen 为 nil 时从 ring 拼接文本。Node 没有等价生产路径。
-		terminal.mu.RLock()
-		frames := terminal.ring.After(0)
-		terminal.mu.RUnlock()
-		const maxBytes = 256 * 1024
-		total := 0
-		var selected []EventFrame
-		for i := len(frames) - 1; i >= 0; i-- {
-			if total+len(frames[i].Bytes) > maxBytes && len(selected) > 0 {
-				break
-			}
-			selected = append(selected, frames[i])
-			total += len(frames[i].Bytes)
-		}
-		reverse(selected)
-		for _, frame := range selected {
-			payload = append(payload, frame.Bytes...)
-		}
-	}
-
-	terminal.mu.Lock()
-	if terminal.stateCacheGen == gen {
-		terminal.stateCache = append([]byte(nil), payload...)
-		terminal.stateCacheValid = true
-	}
-	terminal.mu.Unlock()
-	return terminal.wrapSnapshotPayload(payload, mode)
-}
-
-func (terminal *TerminalSession) wrapSnapshotPayload(payload []byte, mode SnapshotMode) []byte {
-	if mode == SnapshotModeBinary {
-		out := make([]byte, 0, len(clearStatePrefix)+len(payload))
-		out = append(out, clearStatePrefix...)
-		out = append(out, payload...)
-		return out
-	}
-	return payload
-}
-
-func (terminal *TerminalSession) ScreenSnapshot() *ScreenSnapshot {
-	terminal.mu.RLock()
-	screen := terminal.screen
-	terminal.mu.RUnlock()
-	if screen == nil {
-		return nil
-	}
-	return screen.Snapshot("styled")
-}
-
-func (terminal *TerminalSession) ScreenDelta() ScreenDelta {
-	terminal.mu.RLock()
-	screen := terminal.screen
-	seq := terminal.ring.LatestSeq()
-	terminal.mu.RUnlock()
-	if screen == nil {
-		return ScreenDelta{Seq: seq}
-	}
-	return screen.DirtyDelta(seq)
-}
-
 func (terminal *TerminalSession) waitLoop() {
 	code, _ := terminal.process.Wait()
 	terminal.markClosed()
@@ -553,22 +411,8 @@ func (terminal *TerminalSession) waitLoop() {
 // the terminal.titleChanged flag (as done in PushOutput) to ensure title updates
 // are properly broadcasted and titleChanged state does not leak.
 func (terminal *TerminalSession) pushOutputLocked(data []byte) EventFrame {
-	if terminal.screen != nil {
-		if cwd, err := terminal.screen.WriteAndWorkingDirectoryPath(data); err == nil && cwd != "" && cwd != terminal.liveCwd {
-			terminal.liveCwd = cwd
-			terminal.titleChanged = true
-		}
-	}
 	terminal.touchLocked()
-	terminal.invalidateStateCache()
 	return terminal.ring.Push(data)
-}
-
-// invalidateStateCache 必须在 terminal.mu 锁内调用。
-func (terminal *TerminalSession) invalidateStateCache() {
-	terminal.stateCacheValid = false
-	terminal.stateCache = nil
-	terminal.stateCacheGen++
 }
 
 func (terminal *TerminalSession) markClosed() {
@@ -582,9 +426,8 @@ func (terminal *TerminalSession) broadcastOutput(frame EventFrame) {
 	terminal.mu.RLock()
 	clients := terminal.clientSnapshotLocked()
 	terminal.mu.RUnlock()
-	delta := terminal.ScreenDelta()
 	for _, client := range clients {
-		client.SendOutput(frame, delta)
+		client.SendOutput(frame)
 	}
 }
 

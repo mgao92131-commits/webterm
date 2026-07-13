@@ -12,7 +12,6 @@ import androidx.arch.core.executor.testing.InstantTaskExecutorRule;
 import androidx.lifecycle.Observer;
 
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.feature.terminal.domain.TerminalRuntimeState;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -58,12 +57,6 @@ public class TerminalViewModelTest {
     public void saveFontSize_delegatesToStore() {
         viewModel.saveFontSize(32);
         verify(configStore).saveFontSize(32);
-    }
-
-    @Test
-    public void getRuntimeState_returnsSameInstance() {
-        TerminalRuntimeState state = viewModel.getRuntimeState();
-        assertSame(state, viewModel.getRuntimeState());
     }
 
     private static final class RecordingObserver<T> implements Observer<T> {

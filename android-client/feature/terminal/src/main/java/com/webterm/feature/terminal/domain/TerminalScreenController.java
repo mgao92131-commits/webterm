@@ -33,12 +33,17 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   private static final long RESIZE_DEBOUNCE_MS = 100L;
+  // A terminal can receive many PTY chunks before Android draws the next frame.
+  // Rendering the latest published model once per frame window prevents stale
+  // callback work from accumulating on the main thread.
+  private static final long RENDER_FRAME_WINDOW_MS = 16L;
 
   private final TerminalSessionRuntime runtime;
   private final TerminalViewportState viewport = new TerminalViewportState();
   private final LifecycleEventObserver lifecycleObserver;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Runnable sendResizeRunnable = this::sendResizeNow;
+  private final Runnable renderRunnable = this::renderNow;
 
   private int pendingCols;
   private int pendingRows;
@@ -46,6 +51,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private int sentRows = -1;
   private EffectListener effectListener;
   private View view;
+  private boolean renderScheduled;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
     this.runtime = runtime;
@@ -70,6 +76,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     runtime.removeListener(this);
     owner.getLifecycle().removeObserver(lifecycleObserver);
     view = null;
+    mainHandler.removeCallbacks(renderRunnable);
+    renderScheduled = false;
   }
 
   public void sendText(@NonNull String text) {
@@ -107,11 +115,9 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
   }
 
-  public void onScrollPixels(int deltaPixels) {
+  public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
     if (deltaPixels == 0) return;
-    viewport.scrollOffsetPixels = Math.max(0, viewport.scrollOffsetPixels + deltaPixels);
-    // 与 termux 的 mTopRow == 0 语义一致：滚到底部即自动恢复跟随新输出。
-    viewport.followTail = viewport.scrollOffsetPixels == 0;
+    viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
     requestRender();
   }
 
@@ -138,6 +144,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   @Override
   public void onModelChange(@NonNull ModelChange change) {
+    // A resize/new-instance snapshot replaces physical screen rows and history
+    // anchors. Keep a user's viewport during same-geometry full snapshots, but
+    // reset it when the authoritative terminal geometry changes.
+    if (change.geometryChanged) {
+      viewport.resetForSnapshot();
+    }
     if (!viewport.followTail && change.historyChanged) {
       if (change.appendedHistoryLines > 0 && view != null) {
         view.onHistoryAppended(change.appendedHistoryLines);
@@ -175,6 +187,13 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   private void requestRender() {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    mainHandler.postDelayed(renderRunnable, RENDER_FRAME_WINDOW_MS);
+  }
+
+  private void renderNow() {
+    renderScheduled = false;
     View v = view;
     if (v != null) {
       v.render(runtime.model(), viewport);

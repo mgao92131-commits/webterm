@@ -21,8 +21,6 @@ import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.ui.common.StatusIndicatorView;
 
-import com.termux.view.TerminalView;
-import com.termux.view.TerminalViewClient;
 
 public final class TerminalScreenBuilder {
     private TerminalScreenBuilder() {}
@@ -31,9 +29,6 @@ public final class TerminalScreenBuilder {
         Activity activity,
         String headerTitle,
         String headerSubtitle,
-        int fontSize,
-        Typeface typeface,
-        TerminalViewClient terminalViewClient,
         Runnable onBack,
         Runnable onRetry,
         Runnable onCtrl,
@@ -120,18 +115,10 @@ public final class TerminalScreenBuilder {
         topBar.addView(buttonGroup, new LinearLayout.LayoutParams(-2, -2));
         content.addView(topbarWrapper, new LinearLayout.LayoutParams(-1, -2));
 
-        TerminalView terminalView = new TerminalView(activity, null);
-        terminalView.setFocusable(true);
-        terminalView.setFocusableInTouchMode(true);
-        terminalView.setTextSize(fontSize);
-        terminalView.setTypeface(typeface);
-        terminalView.setTerminalViewClient(terminalViewClient);
-
         FrameLayout terminalViewport = new FrameLayout(activity);
         terminalViewport.setClipChildren(true);
         terminalViewport.setClipToPadding(true);
         terminalViewport.setBackgroundColor(DesignTokens.TERMINAL_BG);
-        terminalViewport.addView(terminalView, new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout reconnectOverlay = new LinearLayout(activity);
         reconnectOverlay.setOrientation(LinearLayout.VERTICAL);
@@ -190,12 +177,11 @@ public final class TerminalScreenBuilder {
         root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
 
         Button[] outCtrlButton = new Button[1];
-        View quickBar = createQuickBar(activity, terminalView, onCtrl, textSender, outCtrlButton);
+        View quickBar = createQuickBar(activity, terminalViewport, onCtrl, textSender, outCtrlButton);
         root.addView(quickBar, new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, DesignTokens.QUICKBAR_HEIGHT)));
 
         Result result = new Result();
         result.root = root;
-        result.terminalView = terminalView;
         result.terminalViewport = terminalViewport;
         result.quickBar = quickBar;
         result.title = title;
@@ -211,7 +197,7 @@ public final class TerminalScreenBuilder {
         return UIUtils.iconButtonBackground(activity, radius);
     }
 
-    private static View createQuickBar(Activity activity, TerminalView terminalView, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {
+    private static View createQuickBar(Activity activity, View focusTarget, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {
         LinearLayout bar = new LinearLayout(activity);
         bar.setOrientation(LinearLayout.VERTICAL);
         bar.setPadding(
@@ -224,24 +210,24 @@ public final class TerminalScreenBuilder {
 
         LinearLayout firstRow = quickBarRow(activity);
         LinearLayout secondRow = quickBarRow(activity);
-        Button ctrlButton = addKey(activity, terminalView, firstRow, "Ctrl", onCtrl);
+        Button ctrlButton = addKey(activity, focusTarget, firstRow, "Ctrl", onCtrl);
         if (outCtrlButton != null && outCtrlButton.length > 0) {
             outCtrlButton[0] = ctrlButton;
         }
-        addKey(activity, terminalView, firstRow, "Esc", () -> textSender.send("\033"));
-        addKey(activity, terminalView, firstRow, "C-l", () -> textSender.send("\014"));
-        addKey(activity, terminalView, firstRow, "C-d", () -> textSender.send("\004"));
-        addKey(activity, terminalView, firstRow, "C-c", () -> textSender.send("\003"));
-        addKey(activity, terminalView, firstRow, "S-Tab", () -> textSender.send("\033[Z"));
-        addKey(activity, terminalView, firstRow, "Tab", () -> textSender.send("\t"));
+        addKey(activity, focusTarget, firstRow, "Esc", () -> textSender.send("\033"));
+        addKey(activity, focusTarget, firstRow, "C-l", () -> textSender.send("\014"));
+        addKey(activity, focusTarget, firstRow, "C-d", () -> textSender.send("\004"));
+        addKey(activity, focusTarget, firstRow, "C-c", () -> textSender.send("\003"));
+        addKey(activity, focusTarget, firstRow, "S-Tab", () -> textSender.send("\033[Z"));
+        addKey(activity, focusTarget, firstRow, "Tab", () -> textSender.send("\t"));
 
-        addKey(activity, terminalView, secondRow, "/", () -> textSender.send("/"));
-        addKey(activity, terminalView, secondRow, "PgUp", () -> textSender.send("\033[5~"));
-        addKey(activity, terminalView, secondRow, "PgDn", () -> textSender.send("\033[6~"));
-        addKey(activity, terminalView, secondRow, "←", () -> textSender.send("\033[D"));
-        addKey(activity, terminalView, secondRow, "→", () -> textSender.send("\033[C"));
-        addKey(activity, terminalView, secondRow, "↓", () -> textSender.send("\033[B"));
-        addKey(activity, terminalView, secondRow, "↑", () -> textSender.send("\033[A"));
+        addKey(activity, focusTarget, secondRow, "/", () -> textSender.send("/"));
+        addKey(activity, focusTarget, secondRow, "PgUp", () -> textSender.send("\033[5~"));
+        addKey(activity, focusTarget, secondRow, "PgDn", () -> textSender.send("\033[6~"));
+        addKey(activity, focusTarget, secondRow, "←", () -> textSender.send("\033[D"));
+        addKey(activity, focusTarget, secondRow, "→", () -> textSender.send("\033[C"));
+        addKey(activity, focusTarget, secondRow, "↓", () -> textSender.send("\033[B"));
+        addKey(activity, focusTarget, secondRow, "↑", () -> textSender.send("\033[A"));
         bar.addView(firstRow, new LinearLayout.LayoutParams(-1, 0, 1));
         bar.addView(secondRow, new LinearLayout.LayoutParams(-1, 0, 1));
         return bar;
@@ -254,7 +240,7 @@ public final class TerminalScreenBuilder {
         return row;
     }
 
-    private static Button addKey(Activity activity, TerminalView terminalView, LinearLayout row, String label, Runnable action) {
+    private static Button addKey(Activity activity, View focusTarget, LinearLayout row, String label, Runnable action) {
         Button button = new Button(activity);
         button.setFocusable(false);
         button.setText(label);
@@ -267,7 +253,7 @@ public final class TerminalScreenBuilder {
         button.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_1), 0, UIUtils.dp(activity, DesignTokens.SPACE_1), 0);
         button.setBackground(quickBarButtonBackground(activity, false));
         button.setOnClickListener((v) -> {
-            if (!terminalView.isFocused()) terminalView.requestFocus();
+            if (!focusTarget.isFocused()) focusTarget.requestFocus();
             action.run();
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1);
@@ -316,7 +302,6 @@ public final class TerminalScreenBuilder {
 
     public static final class Result {
         public LinearLayout root;
-        public TerminalView terminalView;
         public View terminalViewport;
         public View quickBar;
         public TextView title;

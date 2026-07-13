@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/protocol"
+	pb "webterm/go-core/internal/screenprotocol/generated"
 	"webterm/go-core/internal/session"
 	"webterm/go-core/internal/testutil"
 )
@@ -248,16 +250,23 @@ func TestMuxTerminalChannelRoundTrip(t *testing.T) {
 		"type":               protocol.WSConnect,
 		"tunnelConnectionId": "term1",
 		"path":               "/ws/sessions/" + terminal.Info().ID,
-		"protocols":          []string{protocol.BinarySubprotocol},
+		"protocols":          []string{protocol.ScreenSubprotocol},
 	})
 	connected := readJSON(t, ctx, conn)
 	if connected["type"] != protocol.WSConnected {
 		t.Fatalf("ws-connected = %#v", connected)
 	}
 
-	// 发 hello（binary 帧经 tunnel frame）。
-	helloPayload, _ := json.Marshal(map[string]any{"lastSeq": 0})
-	helloFrame := append([]byte{protocol.MsgHello}, helloPayload...)
+	// 发 screen hello（protobuf 帧经 tunnel frame）。
+	helloFrame, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
+			Version: 1, Cols: 80, Rows: 24,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal screen hello: %v", err)
+	}
 	writeTunnel(t, ctx, conn, "term1", helloFrame, true)
 
 	// 读服务端回的输出/state/info（任一 tunnel frame 即可证明通道通）。
@@ -311,7 +320,7 @@ func TestMuxWSConnectedIsFirstMessage(t *testing.T) {
 		"type":               protocol.WSConnect,
 		"tunnelConnectionId": "term1",
 		"path":               "/ws/sessions/" + terminal.Info().ID,
-		"protocols":          []string{protocol.BinarySubprotocol},
+		"protocols":          []string{protocol.ScreenSubprotocol},
 	})
 
 	readCtx, readCancel := context.WithTimeout(ctx, 3*time.Second)

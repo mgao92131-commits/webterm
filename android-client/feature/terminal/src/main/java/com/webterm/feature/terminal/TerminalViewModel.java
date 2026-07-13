@@ -5,7 +5,6 @@ import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
 
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.feature.terminal.domain.TerminalRuntimeState;
 
 import javax.inject.Inject;
 
@@ -23,9 +22,6 @@ public final class TerminalViewModel extends ViewModel {
     // Terminal session arguments
     private final MutableLiveData<TerminalSessionArgs> sessionArgs = new MutableLiveData<>();
 
-    // Runtime state (shared across terminal lifecycle)
-    private final TerminalRuntimeState runtimeState = new TerminalRuntimeState();
-
     @Inject
     public TerminalViewModel(ServerConfigStore configStore) {
         this.configStore = configStore;
@@ -39,10 +35,6 @@ public final class TerminalViewModel extends ViewModel {
 
     public LiveData<TerminalSessionArgs> getSessionArgs() {
         return sessionArgs;
-    }
-
-    public TerminalRuntimeState getRuntimeState() {
-        return runtimeState;
     }
 
     // ── Config ───────────────────────────────────────────────────

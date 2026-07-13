@@ -5,7 +5,6 @@ import android.os.Handler;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.CachedSessionMapper;
-import com.webterm.core.cache.CachedTerminal;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.cache.TerminalDiskCache;
 import com.webterm.core.config.ServerConfig;
@@ -272,8 +271,18 @@ public final class SessionRepository {
 
         @Override
         public void onDisconnected(String reason) {
-            updateState(SessionListResult.State.DISCONNECTED);
-            scheduleFallback();
+            if (reason != null && (reason.contains("401") || reason.contains("Unauthorized"))) {
+                if (wsStarted) {
+                    wsStarted = false;
+                    wsSource.stop(server);
+                }
+                cancelFallback();
+                updateState(SessionListResult.State.AUTH_REQUIRED);
+                loadHttp(server);
+            } else {
+                updateState(SessionListResult.State.DISCONNECTED);
+                scheduleFallback();
+            }
         }
 
         @Override
@@ -412,6 +421,9 @@ public final class SessionRepository {
                 JSONArray onlineSessions = result.sessions != null ? result.sessions : new JSONArray();
                 if (sub != null) {
                     sub.hydrateAndEmit(onlineSessions, state, null);
+                    if (sub.observerCount > 0 && !sub.wsStarted) {
+                        sub.startObserving();
+                    }
                 } else {
                     sessionCache.put(server, new SessionListCache.Snapshot(
                         copySessions(onlineSessions),
@@ -598,7 +610,6 @@ public final class SessionRepository {
 
     private JSONArray hydrateCachedNames(ServerConfig server, JSONArray sessions) {
         if (terminalCache == null || sessions == null) return sessions;
-        Map<String, CachedTerminal> memoryCaches = terminalCache.getMemorySessionsForServer(server);
         List<TerminalDiskCache.Metadata> diskCaches = terminalCache.getCachedSessionsForServer(server);
         Map<String, TerminalDiskCache.Metadata> diskMap = new HashMap<>();
         if (diskCaches != null) {
@@ -613,14 +624,9 @@ public final class SessionRepository {
             if (session == null) continue;
             String sessionId = session.optString("id");
             String sessionName = null;
-            CachedTerminal memCached = memoryCaches.get(sessionId);
-            if (memCached != null) {
-                sessionName = memCached.sessionName;
-            } else {
-                TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
-                if (diskCached != null) {
-                    sessionName = diskCached.sessionName;
-                }
+            TerminalDiskCache.Metadata diskCached = diskMap.get(sessionId);
+            if (diskCached != null) {
+                sessionName = diskCached.sessionName;
             }
             if (sessionName != null && session.optString("name", "").trim().isEmpty()) {
                 try {

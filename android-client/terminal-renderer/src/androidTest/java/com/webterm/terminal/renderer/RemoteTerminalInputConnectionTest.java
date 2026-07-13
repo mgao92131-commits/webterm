@@ -48,6 +48,47 @@ public final class RemoteTerminalInputConnectionTest {
     assertEquals(KeyEvent.KEYCODE_ENTER, host.keys.get(0).getKeyCode());
   }
 
+  @Test public void imeComposingTextFlow() {
+    Context context = ApplicationProvider.getApplicationContext();
+    RecordingHost host = new RecordingHost();
+    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+      RemoteTerminalView view = new RemoteTerminalView(context);
+      view.setHost(host);
+      InputConnection connection = view.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+
+      // Composing text starts
+      connection.setComposingText("今天", 1);
+      // It shouldn't commit immediately during composing
+      assertEquals(0, host.text.size());
+
+      // Composing text updates
+      connection.setComposingText("今天天气", 1);
+      assertEquals(0, host.text.size());
+
+      // Composing text finished
+      connection.finishComposingText();
+    });
+
+    // The finished text should now be output
+    assertEquals(java.util.Collections.singletonList("今天天气"), host.text);
+  }
+
+  @Test public void deleteSurroundingTextEmitsBackspaceKeys() {
+    Context context = ApplicationProvider.getApplicationContext();
+    RecordingHost host = new RecordingHost();
+    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+      RemoteTerminalView view = new RemoteTerminalView(context);
+      view.setHost(host);
+      InputConnection connection = view.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+      connection.deleteSurroundingText(3, 0);
+    });
+
+    assertEquals(3, host.keys.size());
+    for (KeyEvent event : host.keys) {
+      assertEquals(KeyEvent.KEYCODE_DEL, event.getKeyCode());
+    }
+  }
+
   private static final class RecordingHost implements RemoteTerminalView.Host {
     final List<String> text = new ArrayList<>();
     final List<KeyEvent> keys = new ArrayList<>();
@@ -56,7 +97,7 @@ public final class RemoteTerminalInputConnectionTest {
     @Override public void onKeyEvent(KeyEvent event) { keys.add(event); }
     @Override public void onRequestResize(int cols, int rows) {}
     @Override public void onRequestShowKeyboard() {}
-    @Override public void onScrollPixels(int deltaPixels) {}
+    @Override public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {}
     @Override public void onRequestHistoryPage() {}
     @Override public void onFocusChanged(boolean focused) {}
     @Override public void onMouse(int row, int col, String button, int wheelDelta,

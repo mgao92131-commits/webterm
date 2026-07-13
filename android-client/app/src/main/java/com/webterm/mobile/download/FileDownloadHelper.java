@@ -5,7 +5,6 @@ import android.app.Activity;
 import com.webterm.core.api.WebTermApi;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.feature.terminal.domain.TerminalConnection;
 
 public final class FileDownloadHelper {
     private final Activity activity;
@@ -19,7 +18,7 @@ public final class FileDownloadHelper {
     }
 
     public void startDownload(ServerConfig server, String downloadId, String fileName,
-                              long fileSize, String sessionId, TerminalConnection connection) {
+                              long fileSize, String sessionId) {
         // TODO: implement download progress handling
     }
 }

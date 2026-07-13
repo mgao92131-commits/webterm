@@ -13,15 +13,20 @@ import com.webterm.terminal.protocol.ScreenMessageMapper;
 import com.webterm.terminal.protocol.ScreenMessageValidator;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
+import java.util.ArrayDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 无 Activity 的终端会话运行时。持有连接、远端模型和模型执行器。
  * View detach 不关闭连接；只有显式 close 或进程销毁才结束。
  */
 public final class TerminalSessionRuntime {
+
+  /** Bound retained wire data per session when a remote PTY outpaces model parsing. */
+  private static final int MAX_PENDING_SCREEN_MESSAGES = 64;
 
   public interface Listener {
     void onModelChange(@NonNull ModelChange change);
@@ -36,9 +41,7 @@ public final class TerminalSessionRuntime {
     CLOSED
   }
 
-  /**
-   * 屏幕协议连接抽象。TerminalConnection 或新的实现可适配此接口。
-   */
+  /** 屏幕协议连接抽象。 */
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
     void setLayoutLeaseId(@NonNull String leaseId);
@@ -49,7 +52,7 @@ public final class TerminalSessionRuntime {
                         boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
     void sendFocusInput(boolean focused);
     void requestResize(int cols, int rows);
-    void requestHistoryPage(long beforeLineId, int limit);
+    void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit);
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     void acquireLayout(boolean interactive);
     void releaseLayout();
@@ -69,13 +72,20 @@ public final class TerminalSessionRuntime {
   private final Executor modelExecutor;
   private final Executor callbackExecutor;
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
+  private final Object screenMailboxLock = new Object();
+  private final ArrayDeque<byte[]> pendingScreenMessages = new ArrayDeque<>();
+  private boolean screenDrainScheduled;
 
   private volatile State state = State.CONNECTING;
   private volatile String layoutLeaseId = "";
   private volatile boolean layoutLeaseGranted;
   private volatile int lastRequestedCols;
   private volatile int lastRequestedRows;
-  private ScreenConnection connection;
+  /** A revision-gap recovery has been requested; wait for its authoritative snapshot. */
+  private volatile boolean resyncInFlight;
+  private final AtomicLong nextHistoryRequestId = new AtomicLong();
+  @Nullable private volatile String pendingHistoryRequestId;
+  private volatile ScreenConnection connection;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, new RemoteTerminalModel(), Executors.newSingleThreadExecutor(r -> {
@@ -141,6 +151,8 @@ public final class TerminalSessionRuntime {
         // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
         layoutLeaseGranted = false;
         layoutLeaseId = "";
+        resyncInFlight = false;
+        pendingHistoryRequestId = null;
         updateState(State.RECONNECTING);
       }
 
@@ -218,9 +230,11 @@ public final class TerminalSessionRuntime {
   }
 
   public void requestHistoryPage(long beforeLineId, int limit) {
+    String requestId = "h-" + nextHistoryRequestId.incrementAndGet();
+    pendingHistoryRequestId = requestId;
     ScreenConnection c = connection;
     if (c != null) {
-      c.requestHistoryPage(beforeLineId, limit);
+      c.requestHistoryPage(requestId, beforeLineId, limit);
     }
   }
 
@@ -233,6 +247,9 @@ public final class TerminalSessionRuntime {
 
   public void close() {
     updateState(State.CLOSED);
+    synchronized (screenMailboxLock) {
+      pendingScreenMessages.clear();
+    }
     ScreenConnection c = connection;
     if (c != null) {
       c.releaseLayout();
@@ -243,7 +260,53 @@ public final class TerminalSessionRuntime {
   }
 
   private void handleScreenMessage(byte[] payload) {
-    modelExecutor.execute(() -> {
+    boolean scheduleDrain = false;
+    boolean requestResync = false;
+    synchronized (screenMailboxLock) {
+      if (state == State.CLOSED) return;
+      if (pendingScreenMessages.size() >= MAX_PENDING_SCREEN_MESSAGES) {
+        // Patches are sequential and cannot be safely coalesced. Drop the
+        // stale backlog, fence patches, and converge through one authoritative
+        // snapshot instead of retaining an unbounded queue of byte arrays.
+        pendingScreenMessages.clear();
+        if (!resyncInFlight) {
+          resyncInFlight = true;
+          requestResync = true;
+        }
+      }
+      pendingScreenMessages.addLast(payload);
+      if (!screenDrainScheduled) {
+        screenDrainScheduled = true;
+        scheduleDrain = true;
+      }
+    }
+    if (requestResync) requestResyncForBackpressure();
+    if (scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
+  }
+
+  private void drainScreenMailbox() {
+    while (true) {
+      byte[] payload;
+      synchronized (screenMailboxLock) {
+        payload = pendingScreenMessages.pollFirst();
+        if (payload == null) {
+          screenDrainScheduled = false;
+          return;
+        }
+      }
+      processScreenMessage(payload);
+    }
+  }
+
+  private void requestResyncForBackpressure() {
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.requestResync(model.layoutEpoch, model.screenRevision,
+          "screen model backlog exceeded " + MAX_PENDING_SCREEN_MESSAGES + " frames");
+    }
+  }
+
+  private void processScreenMessage(byte[] payload) {
       try {
         ScreenMessageValidator.ValidationResult size = ScreenMessageValidator.validateEnvelopeSize(payload);
         if (!size.ok) throw new IllegalArgumentException(size.reason);
@@ -257,14 +320,27 @@ public final class TerminalSessionRuntime {
           case SNAPSHOT:
             requireValid(ScreenMessageValidator.validateSnapshot(envelope.getSnapshot()));
             change = model.applySnapshot(ScreenMessageMapper.mapSnapshot(envelope.getSnapshot()));
+            // A snapshot atomically replaces the local projection and is the
+            // only frame that may release a revision-gap recovery fence.
+            resyncInFlight = false;
+            pendingHistoryRequestId = null;
             break;
           case PATCH:
+            // A patch is relative to the state that failed validation. Applying
+            // queued patches while waiting for a snapshot only creates repeated
+            // revision gaps and a resync storm on slow links.
+            if (resyncInFlight) return;
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch()));
             change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
             break;
           case HISTORY_PAGE:
+            // A page is anchored to the cache window that requested it. A late
+            // response after reconnect/snapshot must not prepend rows into a
+            // different viewport.
+            if (!envelope.getHistoryPage().getRequestId().equals(pendingHistoryRequestId)) return;
             requireValid(ScreenMessageValidator.validateHistoryPage(envelope.getHistoryPage()));
             change = model.prependHistoryPage(ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage()));
+            pendingHistoryRequestId = null;
             break;
           case HISTORY_TRIM:
             change = model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
@@ -291,11 +367,11 @@ public final class TerminalSessionRuntime {
         dispatchModelChange(change);
       } catch (Exception e) {
         ScreenConnection c = connection;
-        if (c != null) {
+        if (c != null && !resyncInFlight) {
+          resyncInFlight = true;
           c.requestResync(model.layoutEpoch, model.screenRevision, e.getMessage() != null ? e.getMessage() : "invalid screen message");
         }
       }
-    });
   }
 
   private static void requireValid(ScreenMessageValidator.ValidationResult result) {

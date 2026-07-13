@@ -201,7 +201,10 @@ public final class RelayService {
 
     private void refreshSavedCookieOrFail() {
         if (relayMasterConfig == null || relayMasterConfig.getCookie() == null || relayMasterConfig.getCookie().isEmpty()) {
-            updateState(RelayState.AUTH_FAILED);
+            // A freshly saved relay configuration has credentials but no session
+            // cookie yet. Treat it as a normal first login rather than requiring
+            // the user to open the login screen again.
+            performPasswordLogin();
             return;
         }
         if (refreshInFlight) return;

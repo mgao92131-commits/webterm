@@ -11,6 +11,7 @@ type HistoryLine struct {
 	ID      uint64
 	Wrapped bool
 	Cells   []headlessterm.Cell
+	bytes   int
 }
 
 // ScrollbackTrimEvent 在历史行因容量限制被丢弃时触发。
@@ -23,6 +24,8 @@ type ScrollbackTrimEvent struct {
 type TrackedScrollback struct {
 	mu       sync.RWMutex
 	capacity int
+	maxBytes int
+	bytes    int
 
 	layoutEpoch uint64
 	firstID     uint64
@@ -32,6 +35,11 @@ type TrackedScrollback struct {
 	onTrim func(ScrollbackTrimEvent)
 }
 
+// DefaultScrollbackByteLimit bounds memory independently of line count. Wide
+// terminals and richly styled output can make 10k physical rows much larger
+// than a line-only capacity suggests.
+const DefaultScrollbackByteLimit = 8 << 20
+
 // NewTrackedScrollback 创建容量为 capacity 的可跟踪 scrollback。
 func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *TrackedScrollback {
 	if capacity <= 0 {
@@ -39,21 +47,35 @@ func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *Track
 	}
 	return &TrackedScrollback{
 		capacity: capacity,
+		maxBytes: DefaultScrollbackByteLimit,
 		onTrim:   onTrim,
 		firstID:  1,
 		nextID:   1,
 	}
 }
 
-// SetLayoutEpoch 在 resize/reflow 导致旧物理行全部失效时调用。
-// 这会清空历史并重新从 1 开始分配 ID。
+// SetLayoutEpoch records the geometry generation that produced the live grid.
+// Ordinary terminal resize does not invalidate scrollback: history line IDs are
+// stable for the lifetime of a session and remain pageable across geometry
+// changes. Call ResetForReflow only when a future true reflow implementation
+// has rebuilt every physical history line.
 func (t *TrackedScrollback) SetLayoutEpoch(epoch uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.layoutEpoch = epoch
+}
+
+// ResetForReflow discards physical history after a real reflow rebuild. It is
+// deliberately separate from SetLayoutEpoch so a normal rows/cols resize can
+// never erase a user's scrollback.
+func (t *TrackedScrollback) ResetForReflow(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.layoutEpoch = epoch
 	t.firstID = 1
 	t.nextID = 1
 	t.lines = t.lines[:0]
+	t.bytes = 0
 }
 
 // LayoutEpoch 返回当前 layout epoch。
@@ -71,17 +93,17 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	cells := make([]headlessterm.Cell, len(line.Cells))
 	copy(cells, line.Cells)
 
-	t.lines = append(t.lines, HistoryLine{
+	historyLine := HistoryLine{
 		ID:      t.nextID,
 		Wrapped: line.Wrapped,
 		Cells:   cells,
-	})
+		bytes:   estimateHistoryLineBytes(cells),
+	}
+	t.lines = append(t.lines, historyLine)
+	t.bytes += historyLine.bytes
 	t.nextID++
 
-	if len(t.lines) > t.capacity {
-		excess := len(t.lines) - t.capacity
-		t.lines = t.lines[excess:]
-		t.firstID = t.lines[0].ID
+	if t.trimToLimitsLocked() {
 		t.fireTrimLocked()
 	}
 }
@@ -95,6 +117,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	}
 	line := t.lines[len(t.lines)-1]
 	t.lines = t.lines[:len(t.lines)-1]
+	t.bytes -= line.bytes
 	if len(t.lines) > 0 {
 		t.firstID = t.lines[0].ID
 	} else {
@@ -175,6 +198,7 @@ func (t *TrackedScrollback) Clear() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lines = t.lines[:0]
+	t.bytes = 0
 	t.firstID = 1
 	t.nextID = 1
 	t.fireTrimLocked()
@@ -185,12 +209,27 @@ func (t *TrackedScrollback) SetMaxLines(max int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.capacity = max
-	if max > 0 && len(t.lines) > max {
-		excess := len(t.lines) - max
-		t.lines = t.lines[excess:]
-		t.firstID = t.lines[0].ID
+	if t.trimToLimitsLocked() {
 		t.fireTrimLocked()
 	}
+}
+
+// SetMaxBytes changes the approximate memory budget. A non-positive value
+// disables byte trimming while retaining the line cap.
+func (t *TrackedScrollback) SetMaxBytes(max int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxBytes = max
+	if t.trimToLimitsLocked() {
+		t.fireTrimLocked()
+	}
+}
+
+// Bytes returns the current approximate memory footprint of stored history.
+func (t *TrackedScrollback) Bytes() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.bytes
 }
 
 // MaxLines 返回容量。
@@ -198,6 +237,42 @@ func (t *TrackedScrollback) MaxLines() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.capacity
+}
+
+func (t *TrackedScrollback) trimToLimitsLocked() bool {
+	trimmed := 0
+	for trimmed < len(t.lines) {
+		overLines := t.capacity > 0 && len(t.lines)-trimmed > t.capacity
+		// Keep the newest line even if it individually exceeds the budget; an
+		// empty scrollback is less useful and the next push will evict it.
+		overBytes := t.maxBytes > 0 && t.bytes > t.maxBytes && len(t.lines)-trimmed > 1
+		if !overLines && !overBytes {
+			break
+		}
+		t.bytes -= t.lines[trimmed].bytes
+		trimmed++
+	}
+	if trimmed == 0 {
+		return false
+	}
+	t.lines = t.lines[trimmed:]
+	if len(t.lines) > 0 {
+		t.firstID = t.lines[0].ID
+	} else {
+		t.firstID = t.nextID
+	}
+	return true
+}
+
+func estimateHistoryLineBytes(cells []headlessterm.Cell) int {
+	// This is a conservative accounting budget rather than Go heap-exact
+	// introspection. It captures the dominant variable cost: cell count and
+	// UTF-8 text retained by each cell.
+	bytes := 64
+	for _, cell := range cells {
+		bytes += 48 + len(cell.Char)*2
+	}
+	return bytes
 }
 
 func (t *TrackedScrollback) fireTrimLocked() {

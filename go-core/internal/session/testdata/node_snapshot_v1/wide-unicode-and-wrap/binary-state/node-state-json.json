@@ -1,1 +1,0 @@
-{"type":"state","seq":2,"data":"中文\u001b[1C日本語\u001b[1C🎉\u001b[1C±\u001b[1C½\r\nthis is a very long line that should soft wrap on a one hundred column screen boundary to test wrap state preservation properly\u001b[1B\u001b[27D"}

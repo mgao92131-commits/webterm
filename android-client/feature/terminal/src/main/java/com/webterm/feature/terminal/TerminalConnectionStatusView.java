@@ -3,7 +3,6 @@ package com.webterm.feature.terminal;
 import android.view.View;
 import android.widget.ImageButton;
 
-import com.webterm.feature.terminal.domain.TerminalConnection;
 import com.webterm.feature.terminal.domain.TerminalSessionRuntime;
 import com.webterm.ui.common.StatusIndicatorView;
 
@@ -25,40 +24,6 @@ public final class TerminalConnectionStatusView {
         indicator = null;
         retryButton = null;
         reconnectOverlay = null;
-    }
-
-    public void update(TerminalConnection.State state, int reconnectAttempts) {
-        if (indicator == null) return;
-        switch (state) {
-            case CONNECTED:
-                indicator.setStatus(StatusIndicatorView.Status.CONNECTED);
-                if (retryButton != null) retryButton.setVisibility(View.GONE);
-                if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
-                break;
-            case CONNECTING:
-                indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
-                if (retryButton != null) retryButton.setVisibility(View.GONE);
-                if (reconnectOverlay != null && reconnectAttempts < 5) {
-                    reconnectOverlay.setVisibility(View.GONE);
-                }
-                break;
-            case RECONNECTING:
-                indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
-                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
-                if (reconnectOverlay != null) {
-                    if (reconnectAttempts >= 5) {
-                        reconnectOverlay.setVisibility(View.VISIBLE);
-                    } else {
-                        reconnectOverlay.setVisibility(View.GONE);
-                    }
-                }
-                break;
-            case DISCONNECTED:
-                indicator.setStatus(StatusIndicatorView.Status.DISCONNECTED);
-                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
-                if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.VISIBLE);
-                break;
-        }
     }
 
     /** Render the state emitted by the Go-authoritative screen runtime. */

@@ -192,6 +192,46 @@ public class SessionRepositoryObserveTest {
         return handler;
     }
 
+    @Test
+    public void observeSessions_whenWsDisconnectsWith401_stopsWebSocketAndStartsHttpFetch() {
+        ServerConfig server = server("expired_cookie");
+        RecordingObserver observer = new RecordingObserver();
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        // 触发 WS 连接 401 失败
+        wsListener.get().onDisconnected("Expected HTTP 101 response but was '401 Unauthorized'");
+
+        // 验证 wsSource.stop 被调用，停止了 WS 无限重试
+        verify(wsSource).stop(server);
+        // 验证触发了 HTTP 刷新
+        verify(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
+    }
+
+    @Test
+    public void observeSessions_whenHttpFetchSucceedsAfter401_restartsWebSocket() throws JSONException {
+        ServerConfig server = server("expired_cookie");
+        RecordingObserver observer = new RecordingObserver();
+
+        // 模拟 api.fetchSessions 成功返回数据
+        doAnswer(invocation -> {
+            WebTermApi.SessionsCallback callback = invocation.getArgument(1);
+            callback.onReady(sessions("[{\"id\":\"s1\"}]"));
+            return null;
+        }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
+
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        // 先触发 401 失败 -> 进入 HTTP 恢复逻辑，由于我们 Mock 了 fetchSessions，它会自动且成功返回
+        wsListener.get().onDisconnected("Expected HTTP 101 response but was '401 Unauthorized'");
+
+        // 验证 wsSource.start 被再次调用（因为 setup 已经调用过一次，这里应该是至少 2 次）
+        // 由于第二次是在 HTTP ONLINE 之后重新 startObserving() 触发的
+        verify(wsSource, org.mockito.Mockito.times(2)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+    }
+
     private static final class RecordingObserver implements Observer<SessionRepository.SessionListResult> {
         private final List<SessionRepository.SessionListResult> values = new ArrayList<>();
 

@@ -31,8 +31,10 @@ type Runtime struct {
 	stopCh   chan struct{}
 	stopped  bool
 
-	layoutEpoch    uint64
-	screenRevision uint64
+	layoutEpoch       uint64
+	screenRevision    uint64
+	projectionPending bool
+	projectionToken   uint64
 
 	clients map[string]*ScreenClient
 
@@ -53,10 +55,13 @@ type Runtime struct {
 
 // ScreenClient 是 screen protocol 客户端的抽象。
 type ScreenClient struct {
-	ID              string
-	Interactive     bool
-	LayoutLeaseID   string
-	Send            func(terminalengine.ScreenFrame)
+	ID            string
+	Interactive   bool
+	LayoutLeaseID string
+	Send          func(terminalengine.ScreenFrame)
+	// ResetProjection invalidates the client's derived frame baseline before a
+	// forced full state (attach/resync/dictionary rotation).
+	ResetProjection func()
 	SendHistory     func(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData)
 	SendHistoryTrim func(epoch, firstAvailableID uint64)
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
@@ -344,6 +349,8 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleHistoryTrim(e)
 	case clientResyncEvent:
 		r.handleClientResync(e.clientID)
+	case projectionFlushEvent:
+		r.handleProjectionFlush(e)
 	case resizeEngineEvent:
 		r.engine.Resize(e.rows, e.cols)
 	case projectedSnapshotEvent:
@@ -465,7 +472,7 @@ func (r *Runtime) handlePTYOutput(data []byte) {
 		r.onOutput(data)
 	}
 	r.bumpScreenRevision()
-	r.broadcastFrame()
+	r.scheduleProjectionFlush()
 }
 
 func (r *Runtime) captureRawPTYOutput(data []byte) {
@@ -506,6 +513,12 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
 		return
 	}
+	// Android may recreate a View during background return and send the same
+	// terminal geometry again. A repeated size has no terminal effect and must
+	// not advance layoutEpoch, reset client baselines, or trigger a snapshot.
+	if e.cols == r.engine.Cols() && e.rows == r.engine.Rows() {
+		return
+	}
 	// 先同步 PTY winsize（触发 SIGWINCH 让 shell/TUI 感知新尺寸），再调整无头终端几何。
 	// best-effort：PTY 调整失败不阻断引擎 resize，否则屏幕投影会与客户端请求脱节。
 	if r.ptyResizer != nil {
@@ -513,15 +526,23 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	}
 	r.layoutEpoch++
 	r.engine.Resize(e.rows, e.cols)
+	// layoutEpoch scopes the live screen geometry; it does not invalidate main
+	// scrollback. The subsequent epoch-changing frame is a full snapshot, so
+	// clients replace their cached screen/history window atomically.
 	r.scrollback.SetLayoutEpoch(r.layoutEpoch)
 	r.bumpScreenRevision()
-	r.broadcastFrame()
+	// Geometry changes replace physical rows, so do not wait for the regular
+	// output coalescing window: clients need the new authoritative snapshot now.
+	r.flushProjectionNow()
 }
 
 func (r *Runtime) handleClientAttach(c *ScreenClient) {
 	r.clients[c.ID] = c
-	frame := r.projector.FrameForClient(c.ID, r.layoutEpoch, r.nextRevision())
-	c.Send(frame)
+	if c.ResetProjection != nil {
+		c.ResetProjection()
+	}
+	state := r.projector.ExportState(r.layoutEpoch, r.nextRevision())
+	c.Send(state)
 }
 
 func (r *Runtime) handleClientDetach(clientID string) {
@@ -578,16 +599,55 @@ func (r *Runtime) handleClientResync(clientID string) {
 		return
 	}
 	r.projector.UnregisterClient(clientID)
-	frame := r.projector.FrameForClient(clientID, r.layoutEpoch, r.nextRevision())
-	client.Send(frame)
+	if client.ResetProjection != nil {
+		client.ResetProjection()
+	}
+	state := r.projector.ExportState(r.layoutEpoch, r.nextRevision())
+	client.Send(state)
 }
 
 func (r *Runtime) broadcastFrame() {
 	rev := r.currentRevision()
+	// Export the headless terminal only once per revision. Per-client work below
+	// is limited to diffing against that client's baseline; without this split a
+	// second viewer multiplied every grid/history traversal and allocation.
+	state := r.projector.ExportState(r.layoutEpoch, rev)
 	for _, c := range r.clients {
-		frame := r.projector.FrameForClient(c.ID, r.layoutEpoch, rev)
-		c.Send(frame)
+		c.Send(state)
 	}
+}
+
+const projectionFlushWindow = 16 * time.Millisecond
+
+// scheduleProjectionFlush batches PTY chunks into one terminal export. The
+// actor continues applying every byte immediately; only projection/encoding is
+// delayed by at most one display frame.
+func (r *Runtime) scheduleProjectionFlush() {
+	if r.projectionPending {
+		return
+	}
+	r.projectionPending = true
+	r.projectionToken++
+	token := r.projectionToken
+	time.AfterFunc(projectionFlushWindow, func() {
+		r.postEvent(projectionFlushEvent{token: token})
+	})
+}
+
+func (r *Runtime) handleProjectionFlush(e projectionFlushEvent) {
+	if !r.projectionPending || e.token != r.projectionToken {
+		return
+	}
+	r.projectionPending = false
+	r.broadcastFrame()
+}
+
+func (r *Runtime) flushProjectionNow() {
+	if r.projectionPending {
+		r.projectionPending = false
+		r.projectionToken++ // invalidate the scheduled timer event
+	}
+	r.broadcastFrame()
 }
 
 func (r *Runtime) bumpScreenRevision() uint64 {
@@ -665,6 +725,10 @@ type historyTrimEvent struct {
 
 type clientResyncEvent struct {
 	clientID string
+}
+
+type projectionFlushEvent struct {
+	token uint64
 }
 
 type resizeEngineEvent struct {

@@ -307,20 +307,18 @@ func TestControlScreenSnapshot(t *testing.T) {
 		t.Fatalf("status code = %d, want 200; body=%s", response.Code, response.Body.String())
 	}
 	var decoded struct {
-		Size struct {
-			Rows int `json:"rows"`
-			Cols int `json:"cols"`
-		} `json:"size"`
+		Rows int `json:"rows"`
+		Cols int `json:"cols"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("failed to decode body: %v", err)
 	}
-	if decoded.Size.Rows != 30 || decoded.Size.Cols != 100 {
-		t.Fatalf("unexpected screen size: %#v", decoded.Size)
+	if decoded.Rows != 30 || decoded.Cols != 100 {
+		t.Fatalf("unexpected screen size: %#v", decoded)
 	}
 }
 
-func TestControlScreenDeltaNotFound(t *testing.T) {
+func TestControlLegacyScreenDeltaEndpointNotFound(t *testing.T) {
 	cfg := config.Load(config.Options{Mode: config.ModeDirect})
 	application := app.New(cfg, "test-version")
 	server := New("127.0.0.1:0", application)

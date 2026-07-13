@@ -27,8 +27,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "webterm"
 include(":app")
-include(":terminal-emulator")
-include(":terminal-view")
 include(":terminal-interaction")
 include(":terminal-protocol")
 include(":terminal-model")
@@ -41,7 +39,6 @@ include(":core-cache")
 include(":core-session")
 include(":core-relay")
 include(":ui-common")
-include(":terminal-ui")
 include(":feature:settings")
 include(":feature:relay")
 include(":feature:terminal")

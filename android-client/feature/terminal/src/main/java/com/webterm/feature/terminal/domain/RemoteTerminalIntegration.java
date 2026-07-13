@@ -22,9 +22,8 @@ import com.webterm.feature.terminal.TerminalFragment;
 import com.webterm.feature.terminal.TerminalScreenBuilder;
 import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalViewModel;
-import com.webterm.feature.terminal.WebTermTerminalViewClient;
 import com.webterm.terminal.renderer.RemoteTerminalView;
-import com.webterm.terminal.ui.TerminalWindowInsetsController;
+import com.webterm.ui.common.WindowInsetsController;
 import com.webterm.ui.common.UIUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -133,18 +132,11 @@ public final class RemoteTerminalIntegration {
     });
 
     String subtitle = args.cwd != null && !args.cwd.isEmpty() ? args.cwd : args.sessionName;
-    TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
-        activity,
-        args.termTitle == null || args.termTitle.isEmpty() ? "Terminal" : args.termTitle,
-        subtitle == null ? "" : subtitle,
-        fontSize,
-        typeface,
-        new WebTermTerminalViewClient(new WebTermTerminalViewClient.Host() {
-          @Override public void onTerminalViewTapped() {}
-          @Override public boolean readTerminalControlKey() { return false; }
-          @Override public void clearTerminalControlKey() {}
-        }),
-        activity::onBackPressed,
+        TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
+            activity,
+            args.termTitle == null || args.termTitle.isEmpty() ? "Terminal" : args.termTitle,
+            subtitle == null ? "" : subtitle,
+            activity::onBackPressed,
         () -> reconnectFresh(null),
         () -> {
           ctrlArmed = !ctrlArmed;
@@ -162,7 +154,6 @@ public final class RemoteTerminalIntegration {
         }
     );
     FrameLayout viewport = (FrameLayout) shell.terminalViewport;
-    viewport.removeView(shell.terminalView);
     viewport.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
     root = shell.root;
     terminalViewport = viewport;
@@ -326,7 +317,7 @@ public final class RemoteTerminalIntegration {
       view.setTranslationY(0);
       return;
     }
-    // 与旧 TerminalWindowInsetsController.updateKeyboardAvoidance 一致：只把视图上移
+    // 与通用 WindowInsetsController 的键盘避让规则一致：只把视图上移
     // "保护行（光标行与最后一个非空行中靠下者）底边 + 12dp 超出快捷栏顶边"的距离。
     // 内容少时少移甚至不移，避免整体上移整个键盘高度把内容推出可视区顶部。
     int[] rootLocation = new int[2];
@@ -346,7 +337,7 @@ public final class RemoteTerminalIntegration {
 
   private void installInsets(@NonNull Activity activity) {
     if (root == null) return;
-    TerminalWindowInsetsController.installRootInsets(activity, root, 0, 0, 0, 0,
+    WindowInsetsController.installRootInsets(activity, root, 0, 0, 0, 0,
         false, true, (imeOverlap) -> {
           this.imeOverlap = imeOverlap;
           updateKeyboardAvoidance();

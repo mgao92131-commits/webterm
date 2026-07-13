@@ -52,7 +52,8 @@ public final class RemoteTerminalView extends View {
     void onKeyEvent(@NonNull KeyEvent event);
     void onRequestResize(int cols, int rows);
     void onRequestShowKeyboard();
-    void onScrollPixels(int deltaPixels);
+    /** @param maxScrollOffsetPixels inclusive top bound for this rendered content. */
+    void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels);
     void onRequestHistoryPage();
     void onFocusChanged(boolean focused);
     void onMouse(int row, int col, @NonNull String button, int wheelDelta,
@@ -76,6 +77,10 @@ public final class RemoteTerminalView extends View {
   private TerminalSelection.Anchor selectionEnd;
   private int userTextSizeSp;
   private Typeface userTypeface;
+  private int appliedGeometryWidth = -1;
+  private int appliedGeometryHeight = -1;
+  private int appliedTextSizeSp = -1;
+  @Nullable private Typeface appliedTypeface;
   private boolean scrolledWithFinger;
   private float lastPointerX;
   private float lastPointerY;
@@ -137,9 +142,6 @@ public final class RemoteTerminalView extends View {
 
   public void setTypeface(@Nullable Typeface typeface) {
     this.userTypeface = typeface;
-    if (typeface != null) {
-      renderer.setTypeface(typeface);
-    }
     requestLayoutIfSizeChanged();
     invalidate();
   }
@@ -161,7 +163,7 @@ public final class RemoteTerminalView extends View {
     super.onDraw(canvas);
     if (model == null) return;
     computeScrollOffset();
-    renderer.render(canvas, model, viewport);
+    renderer.render(canvas, model.renderSnapshot(), viewport);
     drawSelectionHandles(canvas);
     if (viewport.followTail && model.cursor().visible && model.cursor().blink) {
       postInvalidateDelayed(500L);
@@ -175,13 +177,16 @@ public final class RemoteTerminalView extends View {
 
   @Override
   public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-    outAttrs.inputType = EditorInfo.TYPE_NULL;
+    outAttrs.inputType = android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
     outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
     return new RemoteTerminalInputConnection(this, host);
   }
 
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
+    if (keyCode == KeyEvent.KEYCODE_BACK) {
+      return super.onKeyDown(keyCode, event);
+    }
     if (host != null) {
       traceInput("view-key", eventSummary(event));
       host.onKeyEvent(event);
@@ -192,6 +197,9 @@ public final class RemoteTerminalView extends View {
 
   @Override
   public boolean onKeyUp(int keyCode, KeyEvent event) {
+    if (keyCode == KeyEvent.KEYCODE_BACK) {
+      return super.onKeyUp(keyCode, event);
+    }
     if (host != null) {
       host.onKeyEvent(event);
       return true;
@@ -221,11 +229,6 @@ public final class RemoteTerminalView extends View {
     }
     if (handleSelectionHandleTouch(event)) return true;
     gestureRecognizer.onTouchEvent(event);
-    if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-      if (!viewport.followTail && host != null && isNearTop()) {
-        host.onRequestHistoryPage();
-      }
-    }
     return true;
   }
 
@@ -237,9 +240,6 @@ public final class RemoteTerminalView extends View {
       lastFlingY = scroller.getCurrY();
       applyScrollDelta(delta);
       invalidate();
-      if (scroller.isFinished() && !viewport.followTail && host != null && isNearTop()) {
-        host.onRequestHistoryPage();
-      }
     }
   }
 
@@ -248,9 +248,6 @@ public final class RemoteTerminalView extends View {
       int delta = (int) (scroller.getCurrY() - lastFlingY);
       lastFlingY = scroller.getCurrY();
       applyScrollDelta(delta);
-      if (scroller.isFinished() && !viewport.followTail && host != null && isNearTop()) {
-        host.onRequestHistoryPage();
-      }
     }
   }
 
@@ -268,7 +265,8 @@ public final class RemoteTerminalView extends View {
       // rowsDown 为正发送 ArrowDown（向最新输出），与「正值向历史」相反，取负。
       host.onAlternateScreenScroll(-Math.round(deltaPixels / lineHeight()));
     } else {
-      host.onScrollPixels(deltaPixels);
+      host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
+      requestOlderHistoryAtHardTop(deltaPixels);
     }
   }
 
@@ -342,13 +340,43 @@ public final class RemoteTerminalView extends View {
     return super.onGenericMotionEvent(event);
   }
 
-  private boolean isNearTop() {
-    if (model == null) return false;
-    if (isAlternateBuffer()) return false;
-    int historyRows = model.historyCache().size();
-    int totalRows = historyRows + (model.screen() != null ? model.screen().length : 0);
+  /**
+   * Loads an older page only after the user actually reaches the hard history
+   * boundary while moving further upward. Requesting on ACTION_UP while merely
+   * near the top made a returned page preserve its anchor and undo several
+   * reverse (toward-tail) swipes.
+   */
+  private void requestOlderHistoryAtHardTop(int deltaPixels) {
+    if (host == null) return;
+    int maxOffset = maxScrollOffsetPixels();
+    if (shouldRequestOlderHistory(deltaPixels, viewport.scrollOffsetPixels, maxOffset,
+        viewport.followTail)) {
+      host.onRequestHistoryPage();
+    }
+  }
+
+  static boolean shouldRequestOlderHistory(int deltaPixels, int scrollOffsetPixels,
+                                           int maxScrollOffsetPixels, boolean followTail) {
+    return deltaPixels > 0 && !followTail && maxScrollOffsetPixels > 0
+        && scrollOffsetPixels >= maxScrollOffsetPixels;
+  }
+
+  /**
+   * The controller owns the viewport state, while this View owns the pixel
+   * geometry. Supply the exact renderer-compatible top bound on every user
+   * scroll so state cannot retain invisible overscroll beyond cached history.
+   */
+  private int maxScrollOffsetPixels() {
+    if (model == null || isAlternateBuffer()) return 0;
+    TerminalLine[] screen = model.screen();
+    int screenRows = screen != null ? screen.length : 0;
+    int totalRows = model.historySize() + screenRows;
     float contentHeight = totalRows * lineHeight();
-    return viewport.scrollOffsetPixels >= contentHeight - getHeight() - lineHeight() * 50;
+    float usableHeight = Math.max(0f, getHeight() - renderer.getTopInset());
+    if (contentHeight <= usableHeight) return 0;
+    // 与 RemoteTerminalRenderer.contentTopY 上界一致：滚到顶时首条历史行完整
+    // 贴在 topInset 处。ceil 保证能到达该锚点，渲染侧的钳制吸收 <1px 过冲。
+    return Math.max(0, (int) Math.ceil(model.historySize() * lineHeight()));
   }
 
   private float lineHeight() {
@@ -370,7 +398,17 @@ public final class RemoteTerminalView extends View {
 
   public void updateSize(int w, int h) {
     if (w <= 0 || h <= 0) return;
-    updateFontMetrics();
+    int effectiveTextSizeSp = userTextSizeSp > 0 ? userTextSizeSp : 14;
+    boolean fontChanged = appliedTextSizeSp != effectiveTextSizeSp || appliedTypeface != userTypeface;
+    boolean sizeChanged = appliedGeometryWidth != w || appliedGeometryHeight != h;
+    if (!fontChanged && !sizeChanged) return;
+    if (fontChanged) {
+      updateFontMetrics();
+      appliedTextSizeSp = effectiveTextSizeSp;
+      appliedTypeface = userTypeface;
+    }
+    appliedGeometryWidth = w;
+    appliedGeometryHeight = h;
     float cellW = cellWidth();
     float lineH = lineHeight();
     if (cellW <= 0 || lineH <= 0) return;
@@ -865,15 +903,45 @@ public final class RemoteTerminalView extends View {
 
     @Override
     public boolean commitText(CharSequence text, int newCursorPosition) {
-      if (host != null && text != null) {
-        traceInput("ime-commit", "len=" + text.length() + " hash=" + text.hashCode());
-        host.onTextInput(text.toString());
-      }
+      super.commitText(text, newCursorPosition);
+      sendTextToTerminal();
       return true;
     }
 
     @Override
+    public boolean finishComposingText() {
+      super.finishComposingText();
+      sendTextToTerminal();
+      return true;
+    }
+
+    @Override
+    public boolean deleteSurroundingText(int leftLength, int rightLength) {
+      traceInput("ime-delete", "left=" + leftLength + " right=" + rightLength);
+      if (host != null) {
+        KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
+        for (int i = 0; i < leftLength; i++) {
+          host.onKeyEvent(deleteKey);
+        }
+      }
+      return super.deleteSurroundingText(leftLength, rightLength);
+    }
+
+    private void sendTextToTerminal() {
+      android.text.Editable content = getEditable();
+      if (host != null && content != null && content.length() > 0) {
+        String text = content.toString();
+        traceInput("ime-send", "len=" + text.length() + " text=" + text);
+        host.onTextInput(text);
+        content.clear();
+      }
+    }
+
+    @Override
     public boolean sendKeyEvent(KeyEvent event) {
+      if (event != null && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+        return super.sendKeyEvent(event);
+      }
       // IMEs commonly emit both commitText() and a synthetic Unicode KeyEvent
       // for the same composing result. Text belongs exclusively to
       // commitText(); forwarding both produces a second PTY write (Claude then

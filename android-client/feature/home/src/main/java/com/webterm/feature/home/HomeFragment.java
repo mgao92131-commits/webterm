@@ -18,7 +18,7 @@ import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.feature.relay.RelayUiState;
-import com.webterm.terminal.ui.TerminalWindowInsetsController;
+import com.webterm.ui.common.WindowInsetsController;
 
 import java.util.List;
 
@@ -177,7 +177,7 @@ public final class HomeFragment extends Fragment {
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight,
                                    int baseBottom, boolean avoidImeWithPadding,
                                    boolean includeStatusBar) {
-        TerminalWindowInsetsController.installRootInsets(requireActivity(), root,
+        WindowInsetsController.installRootInsets(requireActivity(), root,
             baseLeft, baseTop, baseRight, baseBottom, avoidImeWithPadding, includeStatusBar,
             (imeOverlap) -> mImeOverlap = imeOverlap);
     }

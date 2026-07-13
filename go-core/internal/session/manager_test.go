@@ -158,6 +158,27 @@ func TestManagerTitleBroadcast(t *testing.T) {
 	}
 }
 
+func TestManagerWorkingDirectoryComesFromRuntimeEffect(t *testing.T) {
+	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	terminal, err := manager.Create("work", ".")
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	if err := terminal.WriteInput([]byte("printf '\\033]7;file://localhost/tmp\\007\\n'\r")); err != nil {
+		t.Fatalf("WriteInput returned error: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if terminal.Info().CWD == "/tmp" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("runtime OSC 7 effect did not update cwd: %q", terminal.Info().CWD)
+}
+
 func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
 	terminal, err := manager.Create("work", ".")

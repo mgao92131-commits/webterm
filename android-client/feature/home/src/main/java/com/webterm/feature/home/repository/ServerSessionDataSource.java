@@ -65,6 +65,18 @@ public final class ServerSessionDataSource {
             }
 
             @Override
+            public void onChannelGone(String id, int code, String reason) {
+                if (!channelId.equals(id)) return;
+                listener.onDisconnected("channel gone: " + reason + " (" + code + ")");
+            }
+
+            @Override
+            public void onClosed(String id, int code, String reason) {
+                if (!channelId.equals(id)) return;
+                listener.onDisconnected("channel closed: " + reason + " (" + code + ")");
+            }
+
+            @Override
             public void onReconnectAttempt(int attempt) {
                 listener.onConnecting();
             }

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/color"
+	"unicode/utf8"
 
 	"github.com/danielgatis/go-ansicode"
 	"github.com/rivo/uniseg"
@@ -678,19 +679,21 @@ func (t *Terminal) inputInternal(r rune) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.pendingInput += string(r)
+	t.pendingInput = utf8.AppendRune(t.pendingInput, r)
 
 	for {
-		// Always start segmentation from scratch; pendingInput is short and this
-		// avoids state bookkeeping errors for incomplete clusters.
-		cluster, rest, _, _ := uniseg.StepString(t.pendingInput, -1)
-		if rest == "" {
+		// Step operates directly on bytes and returns subslices, so ordinary
+		// terminal output no longer allocates one string and reruns the string
+		// segmenter for every rune the ANSI decoder emits.
+		cluster, rest, _, _ := uniseg.Step(t.pendingInput, -1)
+		if len(rest) == 0 {
 			// Incomplete cluster or a single complete cluster that may still extend.
 			t.pendingInput = cluster
 			return
 		}
 
-		t.writeCluster(cluster, clusterWidth(cluster))
+		clusterString := string(cluster)
+		t.writeCluster(clusterString, clusterWidth(clusterString))
 		t.pendingInput = rest
 	}
 }

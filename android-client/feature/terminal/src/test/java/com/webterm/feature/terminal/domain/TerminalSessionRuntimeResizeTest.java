@@ -15,6 +15,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * 覆盖 resize 的投递保证：租约未授予时的请求必须缓存并在授予后补发，
@@ -74,6 +75,91 @@ public final class TerminalSessionRuntimeResizeTest {
     assertTrue(connection.resizes.isEmpty());
   }
 
+  @Test
+  public void revisionGap_requestsOneResyncUntilAuthoritativeSnapshotArrives() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+
+    // Both patches are based on revision 0 while the model is at revision 1.
+    // The first requests recovery; the second must not amplify it.
+    TerminalScreenProto.ScreenEnvelope stalePatch = TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setPatch(TerminalScreenProto.ScreenPatch.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setBaseRevision(0)
+            .setScreenRevision(2)
+            .build())
+        .build();
+    connection.listener.onScreenMessage(stalePatch.toByteArray());
+    connection.listener.onScreenMessage(stalePatch.toByteArray());
+    assertEquals(1, connection.resyncRequests);
+
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    connection.listener.onScreenMessage(stalePatch.toByteArray());
+    assertEquals("new snapshot releases the recovery fence", 2, connection.resyncRequests);
+  }
+
+  @Test
+  public void historyPage_isAppliedOnlyForTheOutstandingRequest() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    runtime.requestHistoryPage(100, 250);
+
+    connection.listener.onScreenMessage(historyPage("stale", 42).toByteArray());
+    assertEquals(0, runtime.model().firstAvailableHistoryId());
+
+    connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
+    assertEquals(42, runtime.model().firstAvailableHistoryId());
+  }
+
+  @Test
+  public void excessiveQueuedFrames_areCollapsedAndRecoveredByOneSnapshot() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(), modelExecutor, Runnable::run);
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    // The mailbox accepts a bounded burst. The next frame must discard stale
+    // work and request one authoritative resync instead of growing the
+    // executor queue without bound.
+    for (int revision = 1; revision <= 65; revision++) {
+      connection.listener.onScreenMessage(snapshot(revision).toByteArray());
+    }
+
+    assertEquals(1, connection.resyncRequests);
+    assertEquals("one mailbox drain runnable serves the whole burst", 1, modelExecutor.tasks.size());
+
+    modelExecutor.runAll();
+    assertEquals(65, runtime.model().screenRevision);
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
+            .setSessionId("s1")
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setScreenRevision(revision)
+            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
+            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
+            .build())
+        .build();
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope historyPage(@NonNull String requestId,
+                                                                 long firstAvailableLineId) {
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setHistoryPage(TerminalScreenProto.HistoryPage.newBuilder()
+            .setRequestId(requestId)
+            .setLayoutEpoch(1)
+            .setAsOfRevision(1)
+            .setFirstAvailableLineId(firstAvailableLineId)
+            .setHasMoreBefore(false)
+            .build())
+        .build();
+  }
+
   private void grantLease(@NonNull String leaseId) {
     TerminalScreenProto.ScreenEnvelope envelope = TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
@@ -87,6 +173,8 @@ public final class TerminalSessionRuntimeResizeTest {
 
   private static final class FakeScreenConnection implements TerminalSessionRuntime.ScreenConnection {
     final List<int[]> resizes = new ArrayList<>();
+    int resyncRequests;
+    String historyRequestId = "";
     String leaseId = "";
     Listener listener;
 
@@ -124,7 +212,14 @@ public final class TerminalSessionRuntimeResizeTest {
     }
 
     @Override
-    public void requestHistoryPage(long beforeLineId, int limit) {}
+    public void requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+      historyRequestId = requestId;
+    }
+
+    @Override
+    public void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {
+      resyncRequests++;
+    }
 
     @Override
     public void acquireLayout(boolean interactive) {}
@@ -138,5 +233,20 @@ public final class TerminalSessionRuntimeResizeTest {
 
     @Override
     public void close() {}
+  }
+
+  private static final class QueuingExecutor implements Executor {
+    final List<Runnable> tasks = new ArrayList<>();
+
+    @Override
+    public void execute(@NonNull Runnable command) {
+      tasks.add(command);
+    }
+
+    void runAll() {
+      while (!tasks.isEmpty()) {
+        tasks.remove(0).run();
+      }
+    }
   }
 }

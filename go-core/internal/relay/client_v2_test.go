@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
@@ -19,6 +20,7 @@ import (
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relayapp"
 	"webterm/go-core/internal/relaycore"
+	pb "webterm/go-core/internal/screenprotocol/generated"
 	"webterm/go-core/internal/testutil"
 )
 
@@ -105,17 +107,23 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 		"type":               protocol.WSConnect,
 		"tunnelConnectionId": "term:s1",
 		"path":               "/ws/sessions/s1",
-		"protocols":          []string{protocol.BinarySubprotocol},
+		"protocols":          []string{protocol.ScreenSubprotocol},
 	})
 	terminalConnected := readMuxJSON(t, ctx, ws)
 	if terminalConnected["type"] != protocol.WSConnected || terminalConnected["tunnelConnectionId"] != "term:s1" {
 		t.Fatalf("terminal ws-connected = %#v", terminalConnected)
 	}
 
-	hello := append([]byte{protocol.MsgHello}, []byte(`{"lastSeq":0,"cols":80,"rows":24}`)...)
+	hello, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
+			Version: 1, Cols: 80, Rows: 24,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal screen hello: %v", err)
+	}
 	writeMuxTunnel(t, ctx, ws, "term:s1", hello, true)
-	input := append([]byte{protocol.MsgInput}, []byte("printf V2_MUX_RELAY_OK\\n\r")...)
-	writeMuxTunnel(t, ctx, ws, "term:s1", input, true)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -123,7 +131,8 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 		if frame.ID != "term:s1" || len(frame.Payload) == 0 {
 			continue
 		}
-		if frame.Payload[0] == protocol.MsgOutput && strings.Contains(string(frame.Payload), "V2_MUX_RELAY_OK") {
+		var envelope pb.ScreenEnvelope
+		if err := proto.Unmarshal(frame.Payload, &envelope); err == nil && envelope.GetSnapshot() != nil {
 			cancel()
 			if err := <-errCh; !isContextCanceledError(err) {
 				t.Fatalf("client returned %v, want context.Canceled", err)

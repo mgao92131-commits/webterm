@@ -17,27 +17,6 @@
     public <init>();
 }
 
-# Keep JNI native methods and the class that loads the native library.
-# R8 must not rename native methods or the class name used by System.loadLibrary().
--keep class com.termux.terminal.JNI { *; }
-
-# Keep terminal public API that may be accessed via reflection or from app code.
--keep public class com.termux.terminal.TerminalSession {
-    public <init>(...);
-    public **[] get*(...);
-    public void set*(...);
-    public ** append*(...);
-}
--keep public class com.termux.view.TerminalView {
-    public <init>(...);
-    public ** get*(...);
-    public void set*(...);
-}
--keep public class com.termux.view.TerminalRenderer { *; }
-
-# Keep classes used by reflection in terminal-view support code.
--keep class com.termux.view.support.PopupWindowCompatGingerbread { *; }
-
 # OkHttp / Okio: keep rules required for certificate pinning, reflection on
 # platform internals, and Kotlin metadata used by Okio.
 -dontwarn okhttp3.**
@@ -76,5 +55,4 @@
     public static final ** CREATOR;
 }
 -keep class * implements java.io.Serializable { *; }
-
 

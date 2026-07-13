@@ -23,6 +23,22 @@ type clientBaseline struct {
 	frame terminalengine.ScreenFrame
 }
 
+// FrameDeriver owns one transport client's last successfully scheduled
+// authoritative state. It derives a frame only when that client is actually
+// about to write, so a slow client can collapse many intermediate states
+// without creating a BaseRevision gap.
+type FrameDeriver struct {
+	baseline clientBaseline
+}
+
+func (d *FrameDeriver) Reset() {
+	d.baseline = clientBaseline{}
+}
+
+func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	return frameForBaseline(&d.baseline, state)
+}
+
 // NewProjector 创建新的 screen projector。
 func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.TrackedScrollback, sessionID, instanceID string) *Projector {
 	return &Projector{
@@ -57,18 +73,35 @@ func (p *Projector) HistoryPage(beforeID uint64, limit int) terminalengine.Histo
 	return terminalengine.HistoryPageData{Window: window, Styles: p.exporter.styleTable.Styles(), Links: p.exporter.linkTable.Links()}
 }
 
+// ExportState exports the authoritative terminal once for a screen revision.
+// Runtime shares this immutable value across all clients before deriving their
+// individual snapshot/patch frames. This keeps export cost independent of the
+// number of attached viewers.
+func (p *Projector) ExportState(epoch, seq uint64) terminalengine.ScreenFrame {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exportStateLocked(epoch, seq)
+}
+
 // FrameForClient 为指定 client 生成 snapshot 或 patch。
 // 如果 client 没有基线或 instance/layout epoch 变化，返回 snapshot。
 func (p *Projector) FrameForClient(clientID string, epoch, seq uint64) terminalengine.ScreenFrame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.frameForClientLocked(clientID, p.exportStateLocked(epoch, seq))
+}
 
-	baseline, ok := p.clients[clientID]
-	if !ok {
-		baseline = &clientBaseline{}
-		p.clients[clientID] = baseline
-	}
+// FrameForClientState derives a client frame from a state previously returned
+// by ExportState. The supplied state must belong to this projector and the
+// current actor revision; it is intentionally a value so clients cannot alter
+// the shared export.
+func (p *Projector) FrameForClientState(clientID string, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.frameForClientLocked(clientID, state)
+}
 
+func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFrame {
 	if p.exportEpoch != epoch {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.exportEpoch = epoch
@@ -82,24 +115,37 @@ func (p *Projector) FrameForClient(clientID string, epoch, seq uint64) terminale
 		for id := range p.clients {
 			p.clients[id] = &clientBaseline{}
 		}
-		baseline = p.clients[clientID]
+		frame.ForceSnapshot = true
+	}
+	return frame
+}
+
+func (p *Projector) frameForClientLocked(clientID string, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	baseline, ok := p.clients[clientID]
+	if !ok {
+		baseline = &clientBaseline{}
+		p.clients[clientID] = baseline
 	}
 
-	// 第一帧或 instance/layout epoch 变化，发送完整 snapshot。
-	if baseline.frame.Seq == 0 || baseline.frame.InstanceID != frame.InstanceID || baseline.frame.Epoch != frame.Epoch || baseline.frame.ActiveBuffer != frame.ActiveBuffer {
-		baseline.frame = frame
-		return frame
+	return frameForBaseline(baseline, state)
+}
+
+func frameForBaseline(baseline *clientBaseline, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	// 第一帧、字典轮转、instance/layout epoch 或备用屏变化，发送完整 snapshot。
+	if state.ForceSnapshot || baseline.frame.Seq == 0 || baseline.frame.InstanceID != state.InstanceID || baseline.frame.Epoch != state.Epoch || baseline.frame.ActiveBuffer != state.ActiveBuffer {
+		baseline.frame = state
+		return state
 	}
 
 	// 否则生成 patch（整行替换）。
-	patch := p.diffToPatch(baseline.frame, frame)
-	baseline.frame = frame
+	patch := diffToPatch(baseline.frame, state)
+	baseline.frame = state
 	return patch
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
 // 如果变化行数超过活动屏幕的 60%，直接返回 snapshot。
-func (p *Projector) diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	// 单次输出跨过了客户端持有窗口时，patch 无法表达中间历史行；改发完整窗口。
 	if new.History.LastIncludedLineID > old.History.LastIncludedLineID {
 		appended := new.History.LastIncludedLineID - old.History.LastIncludedLineID
@@ -163,10 +209,27 @@ func (p *Projector) diffToPatch(old, new terminalengine.ScreenFrame) terminaleng
 			Lines:                historyAppend,
 		},
 		Screen: screenRows,
-		Styles: new.Styles,
-		Links:  new.Links,
+		// Snapshot owns a complete dictionary. A patch only needs entries that
+		// appeared after the recipient's baseline; repeatedly sending the whole
+		// table was pure wire and allocation overhead.
+		Styles: newlyAddedStyles(old.Styles, new.Styles),
+		Links:  newlyAddedLinks(old.Links, new.Links),
 		Title:  new.Title,
 	}
+}
+
+func newlyAddedStyles(old, new []terminalengine.TerminalStyle) []terminalengine.TerminalStyle {
+	if len(new) <= len(old) {
+		return nil
+	}
+	return new[len(old):]
+}
+
+func newlyAddedLinks(old, new []terminalengine.Hyperlink) []terminalengine.Hyperlink {
+	if len(new) <= len(old) {
+		return nil
+	}
+	return new[len(old):]
 }
 
 func linesEqual(a, b terminalengine.Line) bool {

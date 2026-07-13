@@ -51,7 +51,6 @@ android {
 }
 
 dependencies {
-  implementation(project(":terminal-view"))
   implementation(project(":transport-api"))
   implementation(project(":transport-websocket"))
   implementation(project(":core-api"))
@@ -60,7 +59,6 @@ dependencies {
   implementation(project(":core-session"))
   implementation(project(":core-relay"))
   implementation(project(":ui-common"))
-  implementation(project(":terminal-ui"))
   implementation(project(":feature:settings"))
   implementation(project(":feature:relay"))
   implementation(project(":feature:terminal"))

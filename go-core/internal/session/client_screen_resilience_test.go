@@ -1,12 +1,15 @@
 package session
 
 import (
+	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 	pb "webterm/go-core/internal/screenprotocol/generated"
+	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -161,8 +164,9 @@ func TestScreenReconnectAfterDetachSendsSnapshot(t *testing.T) {
 
 	// 重新 attach，应收到包含最新内容的 snapshot。
 	terminal.AttachScreenClient(&terminalsession.ScreenClient{
-		ID:   client.screenClientID,
-		Send: client.sendScreenFrame,
+		ID:              client.screenClientID,
+		Send:            client.sendScreenState,
+		ResetProjection: client.resetScreenProjection,
 	})
 
 	deadline := time.Now().Add(time.Second)
@@ -177,6 +181,105 @@ func TestScreenReconnectAfterDetachSendsSnapshot(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected snapshot after reconnect")
+}
+
+// Resize changes the live grid geometry, but must never discard the
+// authoritative main-buffer scrollback. Android recreates its View on
+// background return and may send the same geometry again, so an identical
+// resize is a strict no-op while a real resize produces a fresh snapshot that
+// still carries the history tail.
+func TestScreenResizePreservesHistoryAndIgnoresIdenticalGeometry(t *testing.T) {
+	var mu sync.Mutex
+	resizeCalls := 0
+	terminal, ptyOut := newScreenTestTerminalWithResizer(t, func(cols, rows int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		resizeCalls++
+		return nil
+	})
+	for i := 0; i < 32; i++ {
+		if _, err := ptyOut.Write([]byte(fmt.Sprintf("history-%02d\r\n", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForProjectedHistory(t, terminal)
+
+	frames := make(chan terminalengine.ScreenFrame, 4)
+	runtime := terminal.ScreenRuntime()
+	runtime.AttachClient(&terminalsession.ScreenClient{
+		ID:   "resize-test-client",
+		Send: func(frame terminalengine.ScreenFrame) { frames <- frame },
+	})
+	initial := waitForRuntimeFrame(t, frames)
+	if len(initial.History.Lines) == 0 {
+		t.Fatal("initial snapshot omitted scrollback")
+	}
+	leaseID, granted := runtime.AcquireLayout("resize-test-client", true)
+	if !granted || leaseID == "" {
+		t.Fatal("expected layout lease")
+	}
+
+	before := runtime.Info()
+	runtime.Resize("resize-test-client", leaseID, 20, 4)
+	time.Sleep(100 * time.Millisecond)
+	afterSame := runtime.Info()
+	if afterSame.LayoutEpoch != before.LayoutEpoch {
+		t.Fatalf("identical resize changed epoch: before=%d after=%d", before.LayoutEpoch, afterSame.LayoutEpoch)
+	}
+	mu.Lock()
+	if resizeCalls != 0 {
+		mu.Unlock()
+		t.Fatalf("identical resize called PTY resizer %d times", resizeCalls)
+	}
+	mu.Unlock()
+	waitForProjectedHistory(t, terminal)
+
+	runtime.Resize("resize-test-client", leaseID, 24, 6)
+	var resized terminalengine.ScreenFrame
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		candidate := waitForRuntimeFrame(t, frames)
+		if candidate.Epoch > before.LayoutEpoch {
+			resized = candidate
+			break
+		}
+	}
+	if resized.Epoch == 0 {
+		t.Fatal("timed out waiting for resize snapshot")
+	}
+	if got := len(resized.History.Lines); got == 0 {
+		t.Fatal("resize snapshot discarded scrollback")
+	}
+	if got := resized.Epoch; got <= before.LayoutEpoch {
+		t.Fatalf("resize did not advance layout epoch: before=%d after=%d", before.LayoutEpoch, got)
+	}
+	if resized.BaseRevision != 0 {
+		t.Fatalf("resize should send a full snapshot, got patch base revision %d", resized.BaseRevision)
+	}
+}
+
+func waitForRuntimeFrame(t *testing.T, frames <-chan terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	t.Helper()
+	select {
+	case frame := <-frames:
+		return frame
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for screen runtime frame")
+		return terminalengine.ScreenFrame{}
+	}
+}
+
+func waitForProjectedHistory(t *testing.T, terminal *TerminalSession) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		frame, ok := terminal.ProjectedScreenSnapshot().(terminalengine.ScreenFrame)
+		if ok && len(frame.History.Lines) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("projected scrollback was empty")
 }
 
 func consumeInitialScreenSnapshot(t *testing.T, client *Client) {

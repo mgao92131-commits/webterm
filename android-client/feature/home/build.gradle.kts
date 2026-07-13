@@ -22,7 +22,6 @@ dependencies {
     implementation(project(":core-relay"))
     implementation(project(":transport-api"))
     implementation(project(":ui-common"))
-    implementation(project(":terminal-ui"))
     implementation(project(":feature:relay"))
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)

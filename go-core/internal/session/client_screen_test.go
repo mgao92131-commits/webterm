@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	pb "webterm/go-core/internal/screenprotocol/generated"
+	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -189,6 +190,62 @@ func TestScreenClientSendsPatchOnOutput(t *testing.T) {
 	t.Fatalf("expected patch containing 'ab'")
 }
 
+func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
+	socket := newBlockingWriteSocket()
+	client := NewClient(socket, nil, ClientModeScreen)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.writerStarted.Store(true)
+	go client.writeLoop(ctx)
+	defer client.Close()
+
+	client.sendScreenState(testScreenState(1, "one"))
+	select {
+	case <-socket.firstWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("initial screen write did not start")
+	}
+
+	// The first snapshot is still blocked in the socket. These intermediate
+	// states must collapse to revision 3, not create a patch chain 1 -> 2 -> 3.
+	client.sendScreenState(testScreenState(2, "two"))
+	client.sendScreenState(testScreenState(3, "three"))
+	close(socket.releaseFirstWrite)
+
+	first := socket.waitWrite(t)
+	second := socket.waitWrite(t)
+	var firstEnv, secondEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(first, &firstEnv); err != nil || firstEnv.GetSnapshot() == nil {
+		t.Fatalf("first write must be snapshot: err=%v payload=%T", err, firstEnv.Payload)
+	}
+	if err := proto.Unmarshal(second, &secondEnv); err != nil {
+		t.Fatal(err)
+	}
+	patch := secondEnv.GetPatch()
+	if patch == nil {
+		t.Fatalf("second write must be latest patch, got %T", secondEnv.Payload)
+	}
+	if patch.GetBaseRevision() != 1 || patch.GetScreenRevision() != 3 {
+		t.Fatalf("coalesced patch base=%d revision=%d, want 1 -> 3",
+			patch.GetBaseRevision(), patch.GetScreenRevision())
+	}
+}
+
+func testScreenState(revision uint64, text string) terminalengine.ScreenFrame {
+	screen := make([]terminalengine.Line, 5)
+	for row := range screen {
+		screen[row] = terminalengine.Line{Row: row}
+	}
+	screen[0] = terminalengine.Line{Row: 0, Runs: []terminalengine.CellRun{{
+		Col: 0, Cells: []terminalengine.Cell{{Text: text, Width: 1}},
+	}}}
+	return terminalengine.ScreenFrame{
+		Version: 1, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: revision,
+		Rows: 5, Cols: 10, ActiveBuffer: terminalengine.BufferMain,
+		Screen: screen,
+	}
+}
+
 func newScreenTestTerminal(t *testing.T) (*TerminalSession, *io.PipeWriter) {
 	return newScreenTestTerminalWithResizer(t, nil)
 }
@@ -210,7 +267,6 @@ func newScreenTestTerminalWithResizer(t *testing.T, resizer func(cols, rows int)
 		createdAt: time.Now().UTC(),
 		activeAt:  time.Now().UTC(),
 		ring:      NewEventRing(0, 0),
-		screen:    NewScreenState(4, 20, nil, nil),
 		clients:   make(map[*Client]struct{}),
 	}
 	opts := []terminalsession.Option{
@@ -255,7 +311,7 @@ func readClientBinary(t *testing.T, client *Client) []byte {
 	select {
 	case message := <-client.send:
 		if message.binary == nil {
-			t.Fatalf("expected binary message, got text=%s", message.text)
+			t.Fatalf("expected binary message")
 		}
 		return message.binary
 	case <-time.After(time.Second):
@@ -323,6 +379,53 @@ type testSocket struct {
 	protocolName string
 }
 
+type blockingWriteSocket struct {
+	firstWriteStarted  chan struct{}
+	releaseFirstWrite  chan struct{}
+	writes             chan []byte
+	firstWriteObserved sync.Once
+}
+
+func newBlockingWriteSocket() *blockingWriteSocket {
+	return &blockingWriteSocket{
+		firstWriteStarted: make(chan struct{}),
+		releaseFirstWrite: make(chan struct{}),
+		writes:            make(chan []byte, 4),
+	}
+}
+
+func (socket *blockingWriteSocket) Read(ctx context.Context) (MessageType, []byte, error) {
+	<-ctx.Done()
+	return 0, nil, ctx.Err()
+}
+
+func (socket *blockingWriteSocket) Write(_ context.Context, _ MessageType, data []byte) error {
+	wait := false
+	socket.firstWriteObserved.Do(func() {
+		wait = true
+		close(socket.firstWriteStarted)
+	})
+	if wait {
+		<-socket.releaseFirstWrite
+	}
+	socket.writes <- append([]byte(nil), data...)
+	return nil
+}
+
+func (socket *blockingWriteSocket) Close() error        { return nil }
+func (socket *blockingWriteSocket) Subprotocol() string { return "webterm.screen.v1" }
+
+func (socket *blockingWriteSocket) waitWrite(t *testing.T) []byte {
+	t.Helper()
+	select {
+	case data := <-socket.writes:
+		return data
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for socket write")
+		return nil
+	}
+}
+
 func (socket *testSocket) Read(ctx context.Context) (MessageType, []byte, error) {
 	<-ctx.Done()
 	return 0, nil, ctx.Err()
@@ -339,4 +442,3 @@ func (socket *testSocket) Close() error {
 func (socket *testSocket) Subprotocol() string {
 	return socket.protocolName
 }
-

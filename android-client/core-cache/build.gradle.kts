@@ -15,5 +15,4 @@ dependencies {
     annotationProcessor(libs.hilt.compiler)
     implementation(project(":core-config"))
     implementation(project(":core-api"))
-    implementation(project(":terminal-emulator"))
 }

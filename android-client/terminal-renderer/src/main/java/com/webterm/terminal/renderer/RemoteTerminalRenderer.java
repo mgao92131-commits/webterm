@@ -20,11 +20,11 @@ import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.ScreenSnapshot;
 
 import java.util.Map;
-import java.util.NavigableMap;
+import java.util.List;
 
 /**
  * Go 权威屏幕投影的 Canvas renderer。
- * 视觉规则与旧 com.termux.view.TerminalRenderer 对齐，状态则只来自 RemoteTerminalModel。
+ * 视觉规则与应用既有终端体验对齐，状态只来自 RemoteTerminalModel。
  */
 public final class RemoteTerminalRenderer {
 
@@ -33,6 +33,8 @@ public final class RemoteTerminalRenderer {
   private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Paint bgPaint = new Paint();
   private final Paint selectionPaint = new Paint();
+  /** Reused on the UI thread for the common, plain-ASCII output path. */
+  private final StringBuilder plainAsciiRun = new StringBuilder();
 
   private float cellWidth;
   private float lineHeight;
@@ -88,46 +90,48 @@ public final class RemoteTerminalRenderer {
     textPaint.setTypeface(typeface != null ? typeface : Typeface.MONOSPACE);
   }
 
-  public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel model,
+  public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport) {
-    TerminalLine[] screen = model.screen();
+    TerminalLine[] screen = model.screen;
     if (screen == null || lineHeight <= 0 || cellWidth <= 0) return;
 
     // Full-screen TUIs run on the alternate buffer. Its main-buffer scrollback
     // is not part of the current canvas and must never be composited underneath.
-    NavigableMap<Long, TerminalLine> history = model.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
-        ? new java.util.TreeMap<>() : model.historyCache();
+    List<TerminalLine> history = model.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+        ? java.util.Collections.emptyList() : model.historyLines;
     int screenRows = screen.length;
     int historyRows = history.size();
     float scrollOffset = viewport.followTail ? 0 : viewport.scrollOffsetPixels;
     float screenTopY = screenTopY(canvas.getHeight(), historyRows, screenRows, lineHeight,
         getTopInset(), scrollOffset);
 
-    TerminalPalette palette = model.palette();
-    Map<Integer, TerminalStyle> styles = model.styles();
+    TerminalPalette palette = model.palette;
+    Map<Integer, TerminalStyle> styles = model.styles;
     int canvasBackground = resolveColor(palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
     canvas.drawColor(canvasBackground);
 
     TerminalSelection selection = viewport.selection;
-    TerminalCursor cursor = model.cursor();
+    TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
+    TerminalCursor cursor = model.cursor;
     boolean cursorVisible = viewport.followTail && cursor.visible
         && (!cursor.blink || ((SystemClock.uptimeMillis() / 500L) & 1L) == 0L);
 
     for (int row = 0; row < screenRows; row++) {
       float y = screenTopY + row * lineHeight;
       if (y + lineHeight < 0 || y > canvas.getHeight()) continue;
-      drawLine(canvas, model.columns, palette, styles, screen[row], y, 0, row, selection,
+      drawLine(canvas, model.columns, palette, styles, screen[row], y, 0, row, normalizedSelection,
           cursor, cursorVisible, canvasBackground);
     }
 
-    int historyIndex = 0;
-    for (Map.Entry<Long, TerminalLine> entry : history.entrySet()) {
-      float y = screenTopY - (historyRows - historyIndex) * lineHeight;
-      if (y + lineHeight >= 0 && y <= canvas.getHeight()) {
-        drawLine(canvas, model.columns, palette, styles, entry.getValue(), y, entry.getKey(), -1,
-            selection, cursor, false, canvasBackground);
-      }
-      historyIndex++;
+    float historyTopY = screenTopY - historyRows * lineHeight;
+    int firstHistoryRow = Math.max(0, (int) Math.floor(-historyTopY / lineHeight) - 1);
+    int lastHistoryRow = Math.min(historyRows,
+        (int) Math.ceil((canvas.getHeight() - historyTopY) / lineHeight) + 1);
+    for (int historyIndex = firstHistoryRow; historyIndex < lastHistoryRow; historyIndex++) {
+      TerminalLine line = history.get(historyIndex);
+      float y = historyTopY + historyIndex * lineHeight;
+      drawLine(canvas, model.columns, palette, styles, line, y, line.id, -1,
+          normalizedSelection, cursor, false, canvasBackground);
     }
   }
 
@@ -136,9 +140,38 @@ public final class RemoteTerminalRenderer {
                         long historyLineId, int screenRow, TerminalSelection selection,
                         TerminalCursor cursor, boolean cursorVisible, int canvasBackground) {
     if (line == null) return;
-    for (int col = 0; col < line.length() && col < columns; col++) {
+    int lineLength = Math.min(line.length(), columns);
+    for (int col = 0; col < lineLength; ) {
       TerminalCell cell = line.at(col);
-      if (cell == null || cell.isSpacer()) continue;
+      if (cell == null || cell.isSpacer()) {
+        col++;
+        continue;
+      }
+
+      // The overwhelming common case (shell output) is a run of unstyled ASCII.
+      // Keep all stateful/Unicode cases on the per-cell path below, but turn the
+      // safe case into one Canvas call instead of one call per character.
+      if (!palette.reverseVideo && canBatchPlainAscii(cell, styles, selection, historyLineId,
+          screenRow, col, cursor, cursorVisible)) {
+        int runStart = col;
+        plainAsciiRun.setLength(0);
+        do {
+          plainAsciiRun.append(line.at(col).text.charAt(0));
+          col++;
+        } while (col < lineLength && canBatchPlainAscii(line.at(col), styles, selection,
+            historyLineId, screenRow, col, cursor, cursorVisible));
+        if (plainAsciiRun.length() >= 3) {
+          textPaint.setColor(resolveColor(palette.defaultFg));
+          textPaint.setFakeBoldText(false);
+          textPaint.setTextSkewX(0f);
+          canvas.drawText(plainAsciiRun, 0, plainAsciiRun.length(), runStart * cellWidth,
+              y + baselineOffset, textPaint);
+          continue;
+        }
+        // Very short runs are not worth a special draw; render them through the
+        // canonical cell logic to keep the path simple.
+        col = runStart;
+      }
       int columnWidth = cell.isWideStart() ? 2 : 1;
       boolean selected = isCellSelected(selection, historyLineId, screenRow, col, columnWidth);
       boolean insideCursor = cursorVisible && screenRow == cursor.row
@@ -148,7 +181,20 @@ public final class RemoteTerminalRenderer {
           hasRightPadding(line, col, columnWidth, cell.styleId));
       drawCell(canvas, palette, styles, cell, col, y, selected, insideCursor, cursor,
           preserveAspect, canvasBackground);
+      col++;
     }
+  }
+
+  private static boolean canBatchPlainAscii(TerminalCell cell, Map<Integer, TerminalStyle> styles,
+                                            TerminalSelection selection, long historyLineId,
+                                            int screenRow, int col, TerminalCursor cursor,
+                                            boolean cursorVisible) {
+    if (cell == null || cell.isSpacer() || cell.isWideStart() || styles.get(cell.styleId) != null
+        || cell.text == null || cell.text.length() != 1) return false;
+    char c = cell.text.charAt(0);
+    if (c < ' ' || c > '~') return false;
+    if (isCellSelected(selection, historyLineId, screenRow, col, 1)) return false;
+    return !cursorVisible || screenRow != cursor.row || cursor.col != col;
   }
 
   private void drawCell(Canvas canvas, TerminalPalette palette, Map<Integer, TerminalStyle> styles,
@@ -196,29 +242,32 @@ public final class RemoteTerminalRenderer {
       }
     }
 
-    textPaint.setColor(fg);
-    textPaint.setFakeBoldText(bold);
-    textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
     String text = cell.text;
     if (text == null || text.isEmpty()) text = " ";
-
-    float expectedWidth = (cell.isWideStart() ? 2 : 1) * cellWidth;
-    float measuredWidth = textPaint.measureText(text);
-    boolean scaleGlyph = !preserveAspect && !text.equals(" ")
-        && measuredWidth > 0 && Math.abs(measuredWidth - expectedWidth) > 0.01f;
-    boolean savedMatrix = false;
-    float drawX = x;
-    if (scaleGlyph) {
-      canvas.save();
-      float scaleX = expectedWidth / measuredWidth;
-      canvas.scale(scaleX, 1f);
-      drawX = x / scaleX;
-      savedMatrix = true;
-    }
-    if (style == null || !style.hidden()) {
+    // A terminal's common case is an unstyled blank cell. Its background was
+    // already handled above, so measuring and drawing a space per cell only
+    // burns UI-thread time without changing pixels.
+    boolean drawGlyph = !" ".equals(text) && (style == null || !style.hidden());
+    if (drawGlyph) {
+      textPaint.setColor(fg);
+      textPaint.setFakeBoldText(bold);
+      textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
+      float expectedWidth = (cell.isWideStart() ? 2 : 1) * cellWidth;
+      float measuredWidth = textPaint.measureText(text);
+      boolean scaleGlyph = !preserveAspect && measuredWidth > 0
+          && Math.abs(measuredWidth - expectedWidth) > 0.01f;
+      boolean savedMatrix = false;
+      float drawX = x;
+      if (scaleGlyph) {
+        canvas.save();
+        float scaleX = expectedWidth / measuredWidth;
+        canvas.scale(scaleX, 1f);
+        drawX = x / scaleX;
+        savedMatrix = true;
+      }
       canvas.drawText(text, drawX, rowY + baselineOffset, textPaint);
+      if (savedMatrix) canvas.restore();
     }
-    if (savedMatrix) canvas.restore();
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
       textPaint.setColor(style.underlineColor != null ? resolveColor(style.underlineColor) : fg);
@@ -248,14 +297,24 @@ public final class RemoteTerminalRenderer {
         && (next.text == null || next.text.isEmpty() || " ".equals(next.text));
   }
 
-  private boolean isCellSelected(TerminalSelection selection, long historyLineId, int screenRow,
-                                 int col, int columnWidth) {
+  private static boolean isCellSelected(TerminalSelection selection, long historyLineId, int screenRow,
+                                        int col, int columnWidth) {
     if (selection == null) return false;
-    TerminalSelection normalized = selection.normalized();
-    TerminalSelection.Anchor cellStart = new TerminalSelection.Anchor(historyLineId, screenRow, col);
-    TerminalSelection.Anchor cellEnd = new TerminalSelection.Anchor(historyLineId, screenRow,
-        col + Math.max(1, columnWidth));
-    return cellStart.compareTo(normalized.end) < 0 && cellEnd.compareTo(normalized.start) > 0;
+    return compareSelectionPosition(historyLineId, screenRow, col, selection.end) < 0
+        && compareSelectionPosition(historyLineId, screenRow, col + Math.max(1, columnWidth),
+            selection.start) > 0;
+  }
+
+  private static int compareSelectionPosition(long historyLineId, int screenRow, int col,
+                                              TerminalSelection.Anchor other) {
+    if (historyLineId != 0 && other.historyLineId != 0) {
+      int cmp = Long.compare(historyLineId, other.historyLineId);
+      return cmp != 0 ? cmp : Integer.compare(col, other.col);
+    }
+    if (historyLineId != 0) return -1;
+    if (other.historyLineId != 0) return 1;
+    int cmp = Integer.compare(screenRow, other.screenRow);
+    return cmp != 0 ? cmp : Integer.compare(col, other.col);
   }
 
   static int resolveColor(TerminalColor color) {
@@ -275,7 +334,10 @@ public final class RemoteTerminalRenderer {
                            float lineHeight, float topInset, float scrollOffsetPixels) {
     float usableHeight = Math.max(0, viewportHeight - topInset);
     float contentHeight = (historyRows + screenRows) * lineHeight;
-    float maxOffset = Math.max(0, contentHeight - usableHeight);
+    // 上界按"首条历史行贴顶"锚定：滚到顶时 contentTopY == topInset，首行完整可见。
+    // 旧公式 contentHeight - usableHeight 是底部锚定，行数 floor 取整的余数会让
+    // 首行停在视口顶边之外，被裁掉半行。内容不足一屏时不允许滚动。
+    float maxOffset = contentHeight > usableHeight ? historyRows * lineHeight : 0f;
     float offset = Math.max(0, Math.min(scrollOffsetPixels, maxOffset));
     return topInset + offset - historyRows * lineHeight;
   }

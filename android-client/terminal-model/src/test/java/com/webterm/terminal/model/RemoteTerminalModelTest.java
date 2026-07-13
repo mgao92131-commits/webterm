@@ -17,6 +17,7 @@ public class RemoteTerminalModelTest {
     ModelChange change = model.applySnapshot(snapshot);
 
     assertTrue(change.fullInvalidate);
+    assertTrue(change.geometryChanged);
     assertEquals(1, model.screenRevision);
     assertEquals("i1", model.instanceId);
     assertEquals(2, model.rows);
@@ -27,6 +28,18 @@ public class RemoteTerminalModelTest {
     assertEquals(1, model.historyCache().size());
     assertEquals(100L, (long) model.historyCache().firstKey());
     assertEquals(4, model.historyCache().firstEntry().getValue().length());
+  }
+
+  @Test
+  public void applySnapshot_marksOnlyGeometryOrInstanceChanges() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+
+    ModelChange sameGeometry = model.applySnapshot(sampleSnapshot(2, 4, 2, "cd"));
+    assertFalse(sameGeometry.geometryChanged);
+
+    ModelChange resized = model.applySnapshot(sampleSnapshot(3, 4, 3, "ef"));
+    assertTrue(resized.geometryChanged);
   }
 
   @Test
@@ -63,8 +76,24 @@ public class RemoteTerminalModelTest {
     ModelChange change = model.prependHistoryPage(page);
 
     assertTrue(change.historyChanged);
+    assertEquals(1, change.appendedHistoryLines);
     assertEquals(2, model.historyCache().size());
     assertEquals(98L, model.firstAvailableHistoryId());
+  }
+
+  @Test
+  public void historyCache_trimsByByteBudgetBeforeLineLimit() {
+    RemoteTerminalModel model = new RemoteTerminalModel(100, 100, 250, 300);
+    model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+
+    List<TerminalLine> lines = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      lines.add(line(90 - i, "0123456789"));
+    }
+    model.prependHistoryPage(new HistoryPage("r1", 1, 1, 1, false, lines));
+
+    assertTrue("byte budget should trim despite generous line limit", model.historyCache().size() < 6);
+    assertTrue(model.historyBytes() <= 300 || model.historyCache().size() == 1);
   }
 
   @Test
