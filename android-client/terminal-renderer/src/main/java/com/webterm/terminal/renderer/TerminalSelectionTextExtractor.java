@@ -29,34 +29,42 @@ final class TerminalSelectionTextExtractor {
     TerminalSelection.Anchor end = selection.end;
 
     if (start.historyLineId != 0) {
-      appendHistoryRange(sb, start, end, history);
+      if (end.historyLineId != 0) {
+        // 历史内部选择。
+        appendHistoryRange(sb, start.historyLineId, end.historyLineId, start.col, end.col, history);
+      } else {
+        // 起点在历史、终点在屏幕：先取到历史末尾，再取屏幕开头到终点。
+        appendHistoryRange(sb, start.historyLineId, Long.MAX_VALUE, start.col, -1, history);
+        appendScreenRange(sb, new TerminalSelection.Anchor(0, 0, 0), end, screen, /* prependNewline */ sb.length() > 0);
+      }
     } else if (end.historyLineId == 0 && start.screenRow == end.screenRow) {
       appendScreenRow(sb, screen, start.screenRow, start.col, end.col);
     } else {
-      appendScreenRange(sb, start, end, screen);
+      appendScreenRange(sb, start, end, screen, /* prependNewline */ false);
     }
     return sb.toString();
   }
 
-  private static void appendHistoryRange(StringBuilder sb, TerminalSelection.Anchor start,
-                                         TerminalSelection.Anchor end, List<TerminalLine> history) {
+  private static void appendHistoryRange(StringBuilder sb, long startLineId, long endLineId,
+                                         int startCol, int endCol, List<TerminalLine> history) {
     boolean first = true;
     for (TerminalLine line : history) {
       long lineId = line.id;
-      if (lineId < start.historyLineId) continue;
-      if (lineId > end.historyLineId) break;
+      if (lineId < startLineId) continue;
+      if (lineId > endLineId) break;
       if (!first) sb.append('\n');
       first = false;
-      int c0 = lineId == start.historyLineId ? start.col : 0;
-      int c1 = lineId == end.historyLineId ? end.col : line.length();
+      int c0 = lineId == startLineId ? startCol : 0;
+      int c1 = lineId == endLineId ? (endCol >= 0 ? endCol : line.length()) : line.length();
       appendLineText(sb, line, c0, c1);
     }
   }
 
   private static void appendScreenRange(StringBuilder sb, TerminalSelection.Anchor start,
-                                        TerminalSelection.Anchor end, TerminalLine[] screen) {
+                                        TerminalSelection.Anchor end, TerminalLine[] screen,
+                                        boolean prependNewline) {
     if (screen == null) return;
-    boolean first = true;
+    boolean first = !prependNewline;
     for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
       if (!first) sb.append('\n');
       first = false;
