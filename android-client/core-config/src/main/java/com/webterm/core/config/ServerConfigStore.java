@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class ServerConfigStore {
     static final String PREFS = "webterm";
-    public static final String DEFAULT_URL = "http://100.121.115.14:8080";
+    public static final String DEFAULT_URL = "http://120.46.85.237:9001";
     static final String DEFAULT_USER = "admin";
 
     private static final String TAG = "ServerConfigStore";
