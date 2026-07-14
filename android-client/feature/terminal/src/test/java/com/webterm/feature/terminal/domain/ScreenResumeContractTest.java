@@ -159,6 +159,24 @@ public final class ScreenResumeContractTest {
     assertEquals(1, deliveries[0]);
   }
 
+  @Test
+  public void androidKillSwitchDowngradesHealthyProjectionToColdHello() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(ScreenResumeContractFixtures.snapshotModel(7));
+    ResumeToken healthy = model.resumeToken();
+    assertTrue(healthy.hasProjection);
+
+    TerminalResumePolicy.setIncrementalResumeEnabled(false);
+    try {
+      ResumeToken downgraded = TerminalResumePolicy.effectiveToken(healthy);
+      assertFalse(downgraded.hasProjection);
+      assertEquals(healthy.schemaGeneration, downgraded.schemaGeneration);
+      assertEquals(0, downgraded.screenRevision);
+    } finally {
+      TerminalResumePolicy.setIncrementalResumeEnabled(true);
+    }
+  }
+
   private static RuntimeFixture runtimeWithSnapshot(
       TerminalScreenProto.ScreenEnvelope snapshot) {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),

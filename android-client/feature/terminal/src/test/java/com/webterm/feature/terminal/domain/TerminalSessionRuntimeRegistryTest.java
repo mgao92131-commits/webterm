@@ -40,6 +40,31 @@ public final class TerminalSessionRuntimeRegistryTest {
   }
 
   @Test
+  public void fiftyHotSessionSwitchesCreateNoNewRuntimeOrChannel() {
+    Fixture fixture = new Fixture();
+    TerminalRuntimeKey a = key("server", "account", "a");
+    TerminalRuntimeKey b = key("server", "account", "b");
+    TerminalSessionRuntime runtimeA = fixture.registry.acquire(a, HistoryBudget.defaults());
+    FakeConnection connectionA = new FakeConnection();
+    runtimeA.attachConnection(connectionA);
+    fixture.registry.releaseView(a);
+    TerminalSessionRuntime runtimeB = fixture.registry.acquire(b, HistoryBudget.defaults());
+    FakeConnection connectionB = new FakeConnection();
+    runtimeB.attachConnection(connectionB);
+
+    for (int i = 0; i < 50; i++) {
+      fixture.registry.releaseView((i & 1) == 0 ? b : a);
+      TerminalRuntimeKey next = (i & 1) == 0 ? a : b;
+      TerminalSessionRuntime expected = (i & 1) == 0 ? runtimeA : runtimeB;
+      assertSame(expected, fixture.registry.acquire(next, HistoryBudget.defaults()));
+    }
+    assertEquals(0, connectionA.closeCalls);
+    assertEquals(0, connectionB.closeCalls);
+    assertSame(runtimeA, fixture.registry.get(a));
+    assertSame(runtimeB, fixture.registry.get(b));
+  }
+
+  @Test
   public void graceExpiryMakesWarmWithoutClearingProjection() {
     Fixture fixture = new Fixture();
     TerminalRuntimeKey key = key("server-1", "account-1", "s1");

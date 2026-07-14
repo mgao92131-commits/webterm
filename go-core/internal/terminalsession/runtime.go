@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"webterm/go-core/internal/screenprojection"
@@ -48,12 +49,15 @@ type Runtime struct {
 	rawPTYOutput     []byte
 	rawPTYTruncated  bool
 
-	onTitle  func(string)
-	onBell   func()
-	onInfo   func()
-	onOutput func([]byte)
-	onEffect func(terminalEffect)
-	onResync func(clientID string, reason string)
+	onTitle        func(string)
+	onBell         func()
+	onInfo         func()
+	onOutput       func([]byte)
+	onEffect       func(terminalEffect)
+	onResync       func(clientID string, reason string)
+	resumeExact    atomic.Uint64
+	resumePatch    atomic.Uint64
+	resumeSnapshot atomic.Uint64
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -94,6 +98,21 @@ type InitialSync struct {
 	Exact bool
 	Frame terminalengine.ScreenFrame
 	State terminalengine.ScreenFrame
+	// 仅含版本/计数，不含终端正文，可安全用于结构化观测。
+	Decision                string
+	Reason                  string
+	ClientRevision          uint64
+	ServerRevision          uint64
+	SnapshotBarrierRevision uint64
+	ChangedRows             int
+	HistoryAppendLines      int
+}
+
+// ResumeMetricsSnapshot 是 runtime 内增量恢复决策计数器的无锁快照。
+type ResumeMetricsSnapshot struct {
+	Exact    uint64
+	Patch    uint64
+	Snapshot uint64
 }
 
 // Version 标识屏幕状态版本。
@@ -644,23 +663,45 @@ func (r *Runtime) startInitialSync(client *ScreenClient, forceSnapshot bool) {
 	state := r.projector.ExportState(r.layoutEpoch, rev)
 	state.Kind = terminalengine.FrameSnapshot
 
-	sync := InitialSync{State: state}
+	sync := InitialSync{State: state, ClientRevision: client.Resume.ScreenRevision,
+		ServerRevision: state.Seq, SnapshotBarrierRevision: r.projector.SnapshotBarrierRevision()}
 	resume := client.Resume
 	switch {
-	case forceSnapshot || !resume.HasProjection:
+	case forceSnapshot:
 		sync.Frame = state
-	case resume.InstanceID != r.instanceID || resume.LayoutEpoch != r.layoutEpoch:
+		sync.Decision, sync.Reason = "snapshot", "resync"
+	case !resume.HasProjection || os.Getenv("WEBTERM_SCREEN_RESUME") == "0":
 		sync.Frame = state
+		sync.Decision, sync.Reason = "snapshot", "cold"
+	case resume.InstanceID != r.instanceID:
+		sync.Frame = state
+		sync.Decision, sync.Reason = "snapshot", "instance"
+	case resume.LayoutEpoch != r.layoutEpoch:
+		sync.Frame = state
+		sync.Decision, sync.Reason = "snapshot", "epoch"
 	default:
 		derived := r.projector.DeriveResumeFrame(state, resume.ScreenRevision)
 		switch derived.Outcome {
 		case screenprojection.ResumeOutcomeExact:
 			sync.Exact = true
+			sync.Decision = "exact"
 		case screenprojection.ResumeOutcomePatch:
 			sync.Frame = derived.Frame
+			sync.Decision = "patch"
+			sync.ChangedRows = len(derived.Frame.Screen)
+			sync.HistoryAppendLines = len(derived.Frame.History.Lines)
 		default:
 			sync.Frame = state
+			sync.Decision = "snapshot"
 		}
+		sync.Reason = derived.Reason
+	}
+	if sync.Decision == "exact" {
+		r.resumeExact.Add(1)
+	} else if sync.Decision == "patch" {
+		r.resumePatch.Add(1)
+	} else {
+		r.resumeSnapshot.Add(1)
 	}
 
 	client.synced = false
@@ -685,6 +726,13 @@ func (r *Runtime) startInitialSync(client *ScreenClient, forceSnapshot bool) {
 			clientID: client.ID, generation: generation, revision: state.Seq, written: written,
 		})
 	})
+}
+
+// ResumeMetrics 返回不含终端内容的累计决策计数。
+func (r *Runtime) ResumeMetrics() ResumeMetricsSnapshot {
+	return ResumeMetricsSnapshot{
+		Exact: r.resumeExact.Load(), Patch: r.resumePatch.Load(), Snapshot: r.resumeSnapshot.Load(),
+	}
 }
 
 func (r *Runtime) handleClientInitialSyncResult(e clientInitialSyncResultEvent) {

@@ -82,6 +82,8 @@ public final class TerminalSessionRuntimeRegistry {
     if (entry == null) {
       entry = new Entry(key, runtimeFactory.create(key.sessionId, historyBudget), clock.nowMs());
       entries.put(key, entry);
+    } else if (entry.state == LifecycleState.HOT && !entry.visible) {
+      TerminalResumeMetrics.pageReattach();
     }
     entry.visible = true;
     entry.state = LifecycleState.HOT;
@@ -261,11 +263,13 @@ public final class TerminalSessionRuntimeRegistry {
     entry.state = LifecycleState.WARM;
     entry.transitionGeneration++;
     entry.runtime.suspendConnection();
+    TerminalResumeMetrics.hotToWarm();
   }
 
   private void coldLocked(Entry entry) {
     entries.remove(entry.key);
     entry.transitionGeneration++;
     entry.runtime.close();
+    TerminalResumeMetrics.warmToCold();
   }
 }

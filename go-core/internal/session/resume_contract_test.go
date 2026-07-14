@@ -87,6 +87,21 @@ func TestResumeContract_ExactResumeGetsResumeAck(t *testing.T) {
 	}
 }
 
+func TestResumeContract_RuntimeKillSwitchForcesSnapshot(t *testing.T) {
+	t.Setenv("WEBTERM_SCREEN_RESUME", "0")
+	terminal, _ := newScreenTestTerminal(t)
+	info := terminal.ScreenRuntime().Info()
+	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client.handleBinary(resumeHello(true, info.InstanceID, info.LayoutEpoch, info.ScreenRevision))
+	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
+		t.Fatalf("disabled resume payload=%T, want snapshot", env.Payload)
+	}
+	metrics := terminal.ScreenRuntime().ResumeMetrics()
+	if metrics.Snapshot != 1 || metrics.Exact != 0 || metrics.Patch != 0 {
+		t.Fatalf("resume metrics=%+v, want one snapshot", metrics)
+	}
+}
+
 func TestResumeContract_CumulativePatchSkipsIntermediateRevisions(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	runtime := terminal.ScreenRuntime()
@@ -137,12 +152,6 @@ func TestResumeContract_AttachAndResyncDoNotAdvanceRevision(t *testing.T) {
 	if after := runtime.Info().ScreenRevision; after != before.ScreenRevision {
 		t.Fatalf("resync advanced revision %d -> %d", before.ScreenRevision, after)
 	}
-}
-
-// history watermark 的 Android 原子应用属于 Task 6；Go 端生成与 presence 已由
-// screenprojection/history_resume_test.go 和 screenprotocol/encoder_test.go 覆盖。
-func TestResumeContract_HistoryWatermarkAppliedAtomicallyWithResumePatch(t *testing.T) {
-	t.Skip("待 Task 6：Android model executor 原子应用与 HistoryTrim 乱序测试")
 }
 
 func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) []byte {

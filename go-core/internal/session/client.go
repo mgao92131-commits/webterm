@@ -295,6 +295,20 @@ func (client *Client) writeInitialScreenSync(ctx context.Context, initial initia
 		client.Close()
 		return false
 	}
+	if client.logger != nil {
+		patchBytes, snapshotBytes := 0, 0
+		if initial.sync.Decision == "patch" {
+			patchBytes = len(payload)
+		} else if initial.sync.Decision == "snapshot" {
+			snapshotBytes = len(payload)
+		}
+		client.logger.Add("info", "screen-resume", fmt.Sprintf(
+			"resume_decision=%s resume_reason=%s client_revision=%d server_revision=%d snapshot_barrier_revision=%d changed_rows=%d history_append_lines=%d patch_bytes=%d snapshot_bytes=%d",
+			initial.sync.Decision, initial.sync.Reason, initial.sync.ClientRevision,
+			initial.sync.ServerRevision, initial.sync.SnapshotBarrierRevision,
+			initial.sync.ChangedRows, initial.sync.HistoryAppendLines,
+			patchBytes, snapshotBytes))
+	}
 	if !client.writeMessage(ctx, outboundMessage{binary: payload}) {
 		initial.done(false)
 		return false

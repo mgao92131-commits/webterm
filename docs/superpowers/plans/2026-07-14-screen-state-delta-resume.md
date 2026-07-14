@@ -1,7 +1,7 @@
 # Screen 状态增量恢复实施方案（修订版）
 
 **日期：** 2026-07-14  
-**状态：** 实施中：Task 0–7 已完成（分支 feat/screen-delta-resume），Task 8 待实施
+**状态：** 实施完成：Task 0–8 已完成（分支 feat/screen-delta-resume）；实体设备长期流量/电量纳入发布验收
 **范围：** Go `webterm.screen.v1`、Android terminal runtime、页面生命周期、混合版本发布  
 **目标：** 页面切换优先复用同一 Runtime；真实断线或 WARM 会话重连时，服务端根据各状态组件的最后变化 revision 直接生成“当前最终状态 Patch”；只有状态无法连续、协议屏障已跨越或 Patch 不划算时才发送 Snapshot。
 
@@ -535,7 +535,7 @@ patch.screenRevision > patch.baseRevision
 - History watermark 与 Patch 乱序无关；
 - envelope/row/history/style/link 资源上限。
 
-实施状态（2026-07-14，分支 feat/screen-delta-resume）：optional 三态与 ResumeAck wire 已在 Task 0 落地；malformed Hello、重复 Hello 拒绝、strict `screenRevision > baseRevision`、envelope/row/history/style/link 资源上限、空 patch 源头抑制已在本任务落地并测试。revision 跳跃累计 Patch、instance/epoch/barrier/future revision Snapshot、attach/resync 不推进 revision、History watermark 乱序无关四项依赖 Task 2–6 的机制，已以 Go `t.Skip`（`session/resume_contract_test.go`）与 Android `@Ignore`（`ScreenResumeContractTest`）桩冻结，随对应任务启用。
+实施状态（2026-07-14，分支 feat/screen-delta-resume）：optional 三态与 ResumeAck wire 已在 Task 0 落地；malformed Hello、重复 Hello 拒绝、strict `screenRevision > baseRevision`、envelope/row/history/style/link 资源上限、空 patch 源头抑制已在本任务落地并测试。revision 跳跃累计 Patch、instance/epoch/barrier/future revision Snapshot、attach/resync 不推进 revision、History watermark 乱序无关四项已随 Task 2–6 全部启用，不再保留跳过测试。
 
 ### Task 2：Projector ChangeIndex 与持久 barrier
 
@@ -647,6 +647,14 @@ lease，既不关闭 channel 也不清 model；HOT reattach 复用 channel，WAR
 ### Task 8：兼容发布、指标和真机回归
 
 实现结构化日志、混合版本测试、运行时降级开关和真机流量/电量验收。
+
+实施状态（2026-07-14，分支 feat/screen-delta-resume）：Go 已提供
+`WEBTERM_SCREEN_RESUME=0` 冷 Snapshot 降级、initial-sync 安全结构化日志和
+exact/patch/snapshot 计数；Android 已提供 remote-config 接线策略、恢复/超时/
+runtime 生命周期计数与无正文日志。目标包、race、Go 全量、Android 全门禁、前端
+类型/单测/构建均通过；模拟器实机链路验证 HOT grace 内重开为 0 网络恢复。完整结果、
+基准和发布期实体设备采样边界见
+`docs/superpowers/specs/2026-07-14-screen-state-delta-resume-rollout.md`。
 
 ## 13. 可观测性
 

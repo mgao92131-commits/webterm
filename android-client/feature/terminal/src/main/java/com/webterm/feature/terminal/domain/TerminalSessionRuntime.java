@@ -435,6 +435,7 @@ public final class TerminalSessionRuntime {
 
   private void onSynchronizationTimeout(long generation) {
     if (generation != syncGeneration || state != State.SYNCING) return;
+    TerminalResumeMetrics.syncTimeout();
     startResyncRecovery("initial synchronization timeout");
   }
 
@@ -489,6 +490,7 @@ public final class TerminalSessionRuntime {
 
   private void startResyncRecovery(@NonNull String reason) {
     if (resyncState != ResyncState.IDLE) return;
+    TerminalResumeMetrics.resync(reason);
     resyncAttempt = 0;
     resyncReason = reason;
     resyncState = ResyncState.WAITING_SNAPSHOT;
@@ -613,6 +615,7 @@ public final class TerminalSessionRuntime {
               return;
             }
             change = model.applySnapshot(ScreenMessageMapper.mapSnapshot(envelope.getSnapshot()));
+            TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
             // A snapshot atomically replaces the local projection and is the
             // only frame that may release a revision-gap recovery fence.
             onAuthoritativeSnapshot();
@@ -629,7 +632,15 @@ public final class TerminalSessionRuntime {
             // rows 取当前模型 geometry：patch 自身不携带 geometry，
             // 行索引上界只能相对本地投影校验（计划 §10.1）。
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
+            boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
+            long patchBase = envelope.getPatch().getBaseRevision();
             change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
+            if (resumePatch) {
+              TerminalResumeMetrics.cumulativePatch(patchBase,
+                  envelope.getPatch().getScreenRevision(),
+                  envelope.getPatch().getScreenRowsCount(),
+                  envelope.getPatch().getHistoryAppendCount());
+            }
             completeSynchronization();
             break;
           case HISTORY_PAGE:
@@ -660,9 +671,12 @@ public final class TerminalSessionRuntime {
             updateState(State.CLOSED);
             break;
           case RESUME_ACK:
+            long ackBase = model.screenRevision;
             model.applyResumeAck(
                 envelope.getResumeAck().getInstanceId(),
                 envelope.getResumeAck().getLayoutEpoch(),
+                envelope.getResumeAck().getScreenRevision());
+            TerminalResumeMetrics.exactResume(ackBase,
                 envelope.getResumeAck().getScreenRevision());
             change = ModelChange.none();
             completeSynchronization();

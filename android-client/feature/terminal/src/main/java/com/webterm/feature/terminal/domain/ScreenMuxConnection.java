@@ -73,7 +73,7 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public boolean beginSync(@NonNull ResumeToken resumeToken) {
-    sendHello(resumeToken);
+    sendHello(TerminalResumePolicy.effectiveToken(resumeToken));
     return relayMuxSession != null && relayChannelId != null;
   }
 

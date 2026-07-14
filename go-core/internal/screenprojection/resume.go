@@ -139,8 +139,8 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 			WorkingDir:        state.WorkingDir,
 			TitleChanged:      titleChanged,
 			WorkingDirChanged: cwdChanged,
-			// TODO(Task 3)：history_append（CreatedRevision > clientRevision 且
-			// 连续可用的历史行）与原子水位 first_available_history_line_id。
+			// history append 与原子水位由 Projector.DeriveResumeFrame 在持锁
+			// 历史选择后附加；纯函数层只推导屏幕与元数据。
 		},
 	}
 }

@@ -121,6 +121,14 @@ type Projector struct {
 	scrollbackNextID uint64
 }
 
+// SnapshotBarrierRevision 返回当前 epoch 内最近的快照屏障。
+// 仅暴露版本号用于安全观测，不泄露投影正文。
+func (p *Projector) SnapshotBarrierRevision() uint64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.changeIndex.SnapshotBarrierRevision
+}
+
 // FrameDeriver owns one transport client's last successfully scheduled
 // authoritative state. It derives a frame only when that client is actually
 // about to write, so a slow client can collapse many intermediate states
