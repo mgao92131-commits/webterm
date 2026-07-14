@@ -40,6 +40,27 @@ func ValidateHello(h *pb.Hello) error {
 	if h.Rows > 0 && (h.Rows < minRows || h.Rows > maxRows) {
 		return fmt.Errorf("invalid rows: %d", h.Rows)
 	}
+	// 恢复 token 一致性（计划 §3.5）：无投影时 token 字段必须全部为默认值；
+	// 有投影时 token 必须完整且客户端声明支持 row patch。选择拒绝而非忽略：
+	// 现有客户端都发干净 Hello，拒绝更确定、可测。
+	if !h.HasProjection {
+		if h.InstanceId != "" || h.LayoutEpoch != 0 || h.ScreenRevision != 0 {
+			return fmt.Errorf("hello without projection must not carry resume token")
+		}
+		return nil
+	}
+	if h.InstanceId == "" {
+		return fmt.Errorf("hello with projection missing instance id")
+	}
+	if h.LayoutEpoch < 1 {
+		return fmt.Errorf("hello with projection has invalid layout epoch: %d", h.LayoutEpoch)
+	}
+	if h.ScreenRevision < 1 {
+		return fmt.Errorf("hello with projection has invalid screen revision: %d", h.ScreenRevision)
+	}
+	if h.Capabilities == nil || !h.Capabilities.RowPatches {
+		return fmt.Errorf("hello with projection requires row_patches capability")
+	}
 	return nil
 }
 

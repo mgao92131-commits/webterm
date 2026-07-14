@@ -282,6 +282,10 @@ func (client *Client) writeLatestScreenState(ctx context.Context) bool {
 	frame := client.screenDeriver.FrameForState(state)
 	client.screenMu.Unlock()
 
+	if frame.Kind == 0 {
+		// 空 patch 被抑制：无可观察变化，不写出；deriver baseline 未推进。
+		return true
+	}
 	payload, err := screenprotocol.EncodeFrame(frame)
 	if err != nil {
 		client.screenMu.Lock()
@@ -343,9 +347,16 @@ func (client *Client) sendLayoutLease(leaseID string, granted bool) {
 }
 
 func (client *Client) handleScreenHello(hello *pb.Hello) {
-	if client.screenAttached.CompareAndSwap(false, true) {
-		client.attachScreenClient()
+	if !client.screenAttached.CompareAndSwap(false, true) {
+		// 同一 screen channel 只接受一次 Hello（计划 §3.5）。重复 Hello 是
+		// 协议错误：不能重复 seed baseline，关闭连接而不是再次 SendInfo。
+		if client.logger != nil {
+			client.logger.Add("warn", "session", fmt.Sprintf("duplicate screen hello, closing session=%s", client.session.ID()))
+		}
+		client.Close()
+		return
 	}
+	client.attachScreenClient()
 	client.SendInfo()
 	client.ready.Store(true)
 }
@@ -412,7 +423,10 @@ func (client *Client) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
 // that intentionally use Client without Run retain the old immediate path.
 func (client *Client) sendScreenState(state terminalengine.ScreenFrame) {
 	if !client.writerStarted.Load() {
-		client.sendScreenFrameNow(client.screenDeriver.FrameForState(state))
+		frame := client.screenDeriver.FrameForState(state)
+		if frame.Kind != 0 { // Kind==0：空 patch 被抑制，不发送
+			client.sendScreenFrameNow(frame)
+		}
 		return
 	}
 	client.screenMu.Lock()

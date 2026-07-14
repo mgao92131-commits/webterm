@@ -90,6 +90,10 @@ type Projector struct {
 // authoritative state. It derives a frame only when that client is actually
 // about to write, so a slow client can collapse many intermediate states
 // without creating a BaseRevision gap.
+//
+// 相对 baseline 无任何可观察变化时（bell、title 设回原值等输出仍会推进
+// canonical revision），FrameForState 返回 Kind 未设置的零值帧表示"不发送"，
+// 且不推进 baseline：下一个真实 patch 的 base 仍等于最后实际写出的 revision。
 type FrameDeriver struct {
 	baseline terminalengine.ScreenFrame
 }
@@ -98,6 +102,8 @@ func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 }
 
+// FrameForState 返回应写出的帧；返回值的 Kind 为 0 表示该状态相对 baseline
+// 无任何可观察变化，调用方不得编码或发送它。
 func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	return frameForBaseline(&d.baseline, state)
 }
@@ -291,8 +297,34 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 
 	// 否则生成 patch（整行替换）。
 	patch := diffToPatch(*baseline, state)
+	if patch.Kind == terminalengine.FramePatch && isEmptyPatch(*baseline, patch) {
+		// 无可观察变化（bell、title 设回原值等仍会让 Runtime bump revision）：
+		// 抑制空 patch（计划 §3.4/§10.1：patch 必须携带实际变化），不推进
+		// baseline，下一帧仍相对最后实际写出的 revision 做 diff。
+		return terminalengine.ScreenFrame{}
+	}
 	*baseline = state
 	return patch
+}
+
+// isEmptyPatch 判断 diff 出的 patch 是否不含任何可观察变化。patch 始终携带
+// cursor/modes/palette 的当前值（尚无 presence 标志），因此这些组件与
+// baseline 相等才算未变化；history append、变化行、promoted rows、新字典项
+// 与 title/cwd 标志任一非空即为真实变化。
+func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
+	return len(patch.History.Lines) == 0 &&
+		len(patch.Screen) == 0 &&
+		len(patch.PromotedRows) == 0 &&
+		len(patch.Styles) == 0 &&
+		len(patch.Links) == 0 &&
+		!patch.TitleChanged &&
+		!patch.WorkingDirChanged &&
+		patch.Cursor == baseline.Cursor &&
+		patch.Modes == baseline.Modes &&
+		patch.ReverseVideo == baseline.ReverseVideo &&
+		patch.DefaultFG == baseline.DefaultFG &&
+		patch.DefaultBG == baseline.DefaultBG &&
+		patch.CursorColor == baseline.CursorColor
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。

@@ -13,6 +13,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -176,7 +177,9 @@ func TestScreenWriter_ScreenFloodNeverDropsOrReordersControl(t *testing.T) {
 
 	const floods = 10
 	for i := 2; i <= floods+1; i++ {
-		client.sendScreenState(testScreenState(uint64(i), "rev"))
+		// 每个状态携带不同内容：空 patch（与上一写出状态无差异）按契约被抑制，
+		// 本测试关心的是合并与顺序，不是空帧。
+		client.sendScreenState(testScreenState(uint64(i), fmt.Sprintf("rev-%d", i)))
 		client.sendScreenEffect("i1", uint64(i), terminalengine.Effect{Kind: terminalengine.EffectBell})
 	}
 	close(socket.releaseFirstWrite)
@@ -229,5 +232,50 @@ func TestScreenWriter_ScreenFloodNeverDropsOrReordersControl(t *testing.T) {
 	}
 	if got := screenRevisions[len(screenRevisions)-1]; got != floods+1 {
 		t.Fatalf("last screen revision=%d, want latest %d", got, floods+1)
+	}
+}
+
+// 空 patch 抑制（计划 §3.4/§10.1）：与最后写出状态内容相同、仅 revision
+// 递增的状态不得写出；下一个真实变化的 patch base 仍等于最后实际写出的
+// revision，且不得因抑制触发 encode 错误重置 deriver。
+func TestScreenWriter_SuppressesEmptyPatch(t *testing.T) {
+	client, socket, _ := newOrderTestClient(t)
+
+	client.sendScreenState(testScreenState(1, "one"))
+	select {
+	case <-socket.firstWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("initial screen write did not start")
+	}
+
+	// rev2 与 rev1 内容完全相同（bell/原值 title 类输出）：不得写出。
+	client.sendScreenState(testScreenState(2, "one"))
+	close(socket.releaseFirstWrite)
+
+	first := socket.waitWrite(t)
+	var firstEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(first, &firstEnv); err != nil || firstEnv.GetSnapshot() == nil {
+		t.Fatalf("first write must be snapshot: err=%v payload=%T", err, firstEnv.Payload)
+	}
+	select {
+	case extra := <-socket.writes:
+		t.Fatalf("empty patch must not be written: %d bytes", len(extra))
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// 真实变化：patch base=1（最后实际写出的 revision），rev=3。
+	client.sendScreenState(testScreenState(3, "three"))
+	second := socket.waitWrite(t)
+	var secondEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(second, &secondEnv); err != nil {
+		t.Fatal(err)
+	}
+	patch := secondEnv.GetPatch()
+	if patch == nil {
+		t.Fatalf("real change after suppression must be patch, got %T", secondEnv.Payload)
+	}
+	if patch.GetBaseRevision() != 1 || patch.GetScreenRevision() != 3 {
+		t.Fatalf("patch base=%d revision=%d, want 1 -> 3",
+			patch.GetBaseRevision(), patch.GetScreenRevision())
 	}
 }

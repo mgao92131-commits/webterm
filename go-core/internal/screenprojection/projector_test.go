@@ -321,3 +321,52 @@ func TestProjector_LayoutEpochChangeAdvancesDictionaryGeneration(t *testing.T) {
 			after.DictionaryGeneration, before.DictionaryGeneration+1)
 	}
 }
+
+// 空 patch 抑制（计划 §3.4/§10.1）：输出只推进 revision 而无任何可观察变化
+// （bell、title 设为原值）时，deriver 返回 Kind==0 的零值帧且不推进
+// baseline；下一个真实 patch 的 base 仍等于最后实际写出的 revision。
+func TestFrameDeriver_SuppressesEmptyPatch(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(5, 10, sb)
+	if err := engine.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(engine, sb, "s1", "i1")
+	var deriver FrameDeriver
+
+	first := deriver.FrameForState(p.ExportState(0, 1))
+	if first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
+	}
+
+	// bell 是副作用，屏幕状态不变。
+	if err := engine.Write([]byte("\x07")); err != nil {
+		t.Fatal(err)
+	}
+	if frame := deriver.FrameForState(p.ExportState(0, 2)); frame.Kind != 0 {
+		t.Fatalf("bell-only state must be suppressed, got kind=%v", frame.Kind)
+	}
+
+	// title 设为原值（空串）：三态中属于"未变化"，同样不得产出 patch。
+	if err := engine.Write([]byte("\x1b]0;\x07")); err != nil {
+		t.Fatal(err)
+	}
+	if frame := deriver.FrameForState(p.ExportState(0, 3)); frame.Kind != 0 {
+		t.Fatalf("same-title state must be suppressed, got kind=%v", frame.Kind)
+	}
+
+	// 真实变化：base 必须仍是最后实际写出的 revision 1。
+	if err := engine.Write([]byte("!")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(0, 4))
+	if patch.Kind != terminalengine.FramePatch {
+		t.Fatalf("real change must derive patch, got kind=%v", patch.Kind)
+	}
+	if patch.BaseRevision != 1 {
+		t.Fatalf("patch base=%d after suppressed empties, want last written revision 1", patch.BaseRevision)
+	}
+	if patch.Seq != 4 {
+		t.Fatalf("patch seq=%d, want 4", patch.Seq)
+	}
+}

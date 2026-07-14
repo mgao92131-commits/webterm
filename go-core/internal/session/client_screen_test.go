@@ -145,6 +145,46 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 	}
 }
 
+// 同一 screen channel 只接受一次 Hello（计划 §3.5）：第二个 Hello 是协议
+// 错误，连接必须关闭且不得再次 SendInfo。
+func TestScreenClientRejectsDuplicateHello(t *testing.T) {
+	terminal, _ := newScreenTestTerminal(t)
+	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 20, Rows: 10}},
+	})
+	client.handleBinary(helloBytes)
+
+	// 第一个 Hello 正常：等到初始 snapshot 到达，排除后续竞态。
+	consumeInitialScreenSnapshot(t, client)
+	drainFrames(t, client, 200*time.Millisecond)
+	select {
+	case <-client.done:
+		t.Fatal("first hello must not close the connection")
+	default:
+	}
+
+	client.handleBinary(helloBytes)
+	select {
+	case <-client.done:
+	default:
+		t.Fatal("duplicate hello must close the connection")
+	}
+
+	// 关闭后不得再有 Info（或任何消息）流出。
+	select {
+	case msg := <-client.send:
+		if isInfo(msg.binary) {
+			t.Fatal("duplicate hello must not resend Info")
+		}
+		t.Fatalf("unexpected message after duplicate hello: %d bytes", len(msg.binary))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func dumpScreen(t *testing.T, data []byte) {
 	t.Helper()
 	var env pb.ScreenEnvelope
