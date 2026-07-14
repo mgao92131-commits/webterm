@@ -99,6 +99,10 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
 		capturePTYOutput: os.Getenv("WEBTERM_CAPTURE_PTY_OUTPUT") == "1",
+		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
+		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
+		layoutEpoch:    1,
+		screenRevision: 1,
 	}
 	for _, opt := range options {
 		opt(r)
