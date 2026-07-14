@@ -382,10 +382,10 @@ func (t *Terminal) clearScreenInternal(mode ansicode.ClearMode) {
 		// Clear all image placements (CSI 2J behavior per Kitty/WezTerm)
 		t.images.ClearPlacements()
 	case ansicode.ClearModeSaved:
-		// Clear saved lines (scrollback) - not implemented for now
-		t.activeBuffer.ClearAll()
-		// Clear all image placements
-		t.images.ClearPlacements()
+		// CSI 3 J 只清除主屏的 saved lines（scrollback）。当前可见网格由
+		// CSI 0/1/2 J 负责，不能在这里重复清除；备用屏自身没有历史，但
+		// 在备用屏内收到该序列时仍应清除主屏保存的历史。
+		t.primaryBuffer.ClearScrollback()
 	}
 }
 

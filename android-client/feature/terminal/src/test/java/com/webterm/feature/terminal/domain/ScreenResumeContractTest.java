@@ -94,6 +94,24 @@ public final class ScreenResumeContractTest {
   }
 
   @Test
+  public void historyTrimClearsCachedScrollbackAndAdvancesWatermark() {
+    RuntimeFixture fixture = runtimeWithSnapshot(snapshotWithHistory(100, 100, 101));
+    TerminalSessionRuntime runtime = fixture.runtime;
+    FakeScreenConnection connection = fixture.connection;
+    assertEquals(2, runtime.model().historySize());
+
+    connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setHistoryTrim(TerminalScreenProto.HistoryTrim.newBuilder()
+            .setLayoutEpoch(1).setFirstAvailableLineId(102))
+        .build().toByteArray());
+
+    assertEquals(102, runtime.model().firstAvailableHistoryId());
+    assertEquals(0, runtime.model().historySize());
+    assertTrue(runtime.model().renderSnapshot().history.isEmpty());
+  }
+
+  @Test
   public void connectedOnlyAfterResumeAckOrAtomicResumeFrame() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
         Runnable::run, Runnable::run, (task, delayMs) -> {});

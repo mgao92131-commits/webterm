@@ -364,9 +364,9 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	assertStateEquivalent(t, back, forceFullExport(p, 4))
 }
 
-// §6.4：Clear/Pop 使缓存的较新行不再存在（LastID 回落），增量无法修复，
-// 全量重建。
-func TestProjector_ScrollbackClearAndPopRebuildHistoryCache(t *testing.T) {
+// §6.4：Clear 推进头部水位，Pop 使尾部 LastID 回落；历史窗口缓存必须
+// 分别通过增量裁剪或全量重建恢复到权威状态。
+func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 	t.Run("clear", func(t *testing.T) {
 		engine, sb, p := newHistoryRig(t, 5, 20)
 		writeScrollLines(t, engine, 0, 20)
@@ -379,13 +379,18 @@ func TestProjector_ScrollbackClearAndPopRebuildHistoryCache(t *testing.T) {
 		}
 		assertStateEquivalent(t, cleared, forceFullExport(p, 3))
 
-		// 重建后历史重新增量累积。
+		clearedWatermark := cleared.History.FirstAvailableLineID
+		if clearedWatermark <= 1 {
+			t.Fatalf("Clear must advance the history watermark, got %d", clearedWatermark)
+		}
+
+		// 重建后历史继续以单调 LineID 增量累积。
 		writeScrollLines(t, engine, 20, 10)
 		next := p.ExportState(0, 4)
 		if len(next.History.Lines) != sb.Len() {
 			t.Fatalf("window=%d lines after re-accumulation, want scrollback len %d", len(next.History.Lines), sb.Len())
 		}
-		if len(next.History.Lines) == 0 || next.History.FirstIncludedLineID != 1 {
+		if len(next.History.Lines) == 0 || next.History.FirstIncludedLineID != clearedWatermark {
 			t.Fatalf("re-accumulated window wrong: %+v", next.History)
 		}
 		assertConsecutiveIDs(t, next.History)

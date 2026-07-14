@@ -80,8 +80,7 @@ public final class RemoteTerminalRendererTest {
     int type = RemoteTerminalView.TERMINAL_INPUT_TYPE;
     assertEquals(android.text.InputType.TYPE_CLASS_TEXT,
         type & android.text.InputType.TYPE_MASK_CLASS);
-    assertEquals(android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-        type & android.text.InputType.TYPE_MASK_VARIATION);
+    assertEquals(0, type & android.text.InputType.TYPE_MASK_VARIATION);
     assertTrue((type & android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0);
     // No-capitalization is expressed by the absence of every CAP_* flag bit.
     int capFlags = android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS

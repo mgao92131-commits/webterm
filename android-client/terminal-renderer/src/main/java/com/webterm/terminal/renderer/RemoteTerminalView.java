@@ -46,6 +46,12 @@ import java.util.Map;
 public final class RemoteTerminalView extends View {
 
   private static final String INPUT_TRACE_TAG = "WebTermInputTrace";
+  private static final int HANDLE_NONE = 0;
+  private static final int HANDLE_START = 1;
+  private static final int HANDLE_END = 2;
+  private static final float AUTO_SCROLL_EDGE_DP = 48f;
+  private static final float AUTO_SCROLL_MIN_LINES_PER_SECOND = 3f;
+  private static final float AUTO_SCROLL_MAX_LINES_PER_SECOND = 12f;
 
   /**
    * 终端输入类型：禁止 IME 自动改正、自动大写与联想词。VISIBLE_PASSWORD 变体让
@@ -54,7 +60,6 @@ public final class RemoteTerminalView extends View {
    * 禁用自动大写，VISIBLE_PASSWORD 进一步保证 IME 不按句子规则大写。
    */
   static final int TERMINAL_INPUT_TYPE = android.text.InputType.TYPE_CLASS_TEXT
-      | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
       | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
 
   public interface Host {
@@ -83,7 +88,7 @@ public final class RemoteTerminalView extends View {
   private float lastFlingY;
   private boolean selecting;
   @Nullable private ActionMode selectionActionMode;
-  private int draggingHandle; // 0 = none, 1 = start, 2 = end
+  private int draggingHandle; // HANDLE_NONE / HANDLE_START / HANDLE_END
   private TerminalSelection.Anchor selectionStart;
   private TerminalSelection.Anchor selectionEnd;
   private int userTextSizeSp;
@@ -100,6 +105,14 @@ public final class RemoteTerminalView extends View {
   private int pendingMouseCol;
   private int pendingMouseMeta;
   private final Runnable mouseMoveRunnable = this::flushPendingMouseMove;
+  private float selectionPointerX;
+  private float selectionPointerY;
+  private float handleTouchOffsetX;
+  private float handleTouchOffsetY;
+  private float autoScrollRemainderPixels;
+  private long autoScrollLastFrameNanos;
+  private boolean autoScrollScheduled;
+  private final Runnable selectionAutoScrollRunnable = this::runSelectionAutoScrollFrame;
 
   public RemoteTerminalView(Context context) {
     this(context, null);
@@ -119,6 +132,7 @@ public final class RemoteTerminalView extends View {
 
   public void setHost(@Nullable Host host) {
     clearPendingMouseMove();
+    if (host == null) stopSelectionAutoScroll();
     this.host = host;
   }
 
@@ -181,6 +195,7 @@ public final class RemoteTerminalView extends View {
   @Override
   protected void onDetachedFromWindow() {
     clearPendingMouseMove();
+    stopSelectionAutoScroll();
     stopSelection();
     super.onDetachedFromWindow();
   }
@@ -252,6 +267,10 @@ public final class RemoteTerminalView extends View {
       requestFocus();
       if (!scroller.isFinished()) scroller.forceFinished(true);
     }
+    if (event.getActionMasked() == MotionEvent.ACTION_UP
+        || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+      stopSelectionAutoScroll();
+    }
     if (event.isFromSource(InputDevice.SOURCE_MOUSE)) {
       if (handleMouseEvent(event)) return true;
     }
@@ -296,6 +315,102 @@ public final class RemoteTerminalView extends View {
       host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
       requestOlderHistoryAtHardTop(deltaPixels);
     }
+  }
+
+  /**
+   * 选择期间只移动 Android 主缓冲区 viewport。备用屏滚动会转换成方向键，不能由
+   * 文本选择手势触发。
+   *
+   */
+  private void scrollSelectionViewport(int deltaPixels) {
+    if (host == null || deltaPixels == 0 || isAlternateBuffer()) return;
+    host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
+    requestOlderHistoryAtHardTop(deltaPixels);
+  }
+
+  private void updateSelectionAutoScroll(float x, float y) {
+    selectionPointerX = x;
+    selectionPointerY = y;
+    if (!selecting || host == null || isAlternateBuffer()
+        || autoScrollVelocityPixelsPerSecond(y) == 0f) {
+      stopSelectionAutoScroll();
+      return;
+    }
+    if (!autoScrollScheduled) {
+      autoScrollScheduled = true;
+      autoScrollLastFrameNanos = 0L;
+      autoScrollRemainderPixels = 0f;
+      postOnAnimation(selectionAutoScrollRunnable);
+    }
+  }
+
+  private void runSelectionAutoScrollFrame() {
+    if (!autoScrollScheduled || !selecting || host == null || isAlternateBuffer()) {
+      stopSelectionAutoScroll();
+      return;
+    }
+    float velocity = autoScrollVelocityPixelsPerSecond(selectionPointerY);
+    if (velocity == 0f) {
+      stopSelectionAutoScroll();
+      return;
+    }
+
+    long now = System.nanoTime();
+    float elapsedSeconds = autoScrollLastFrameNanos == 0L
+        ? 1f / 60f
+        : Math.min(0.05f, (now - autoScrollLastFrameNanos) / 1_000_000_000f);
+    autoScrollLastFrameNanos = now;
+    float requested = velocity * elapsedSeconds + autoScrollRemainderPixels;
+    int deltaPixels = requested > 0 ? (int) Math.floor(requested) : (int) Math.ceil(requested);
+    autoScrollRemainderPixels = requested - deltaPixels;
+
+    if (deltaPixels != 0) {
+      scrollSelectionViewport(deltaPixels);
+      TerminalSelection.Anchor anchor = selectionAnchorAtPointer(selectionPointerX, selectionPointerY);
+      if (anchor != null) {
+        updateSelectionEndpoint(draggingHandle == HANDLE_START ? HANDLE_START : HANDLE_END, anchor);
+      }
+    }
+    postOnAnimation(selectionAutoScrollRunnable);
+  }
+
+  private float autoScrollVelocityPixelsPerSecond(float y) {
+    float edge = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, AUTO_SCROLL_EDGE_DP,
+        getResources().getDisplayMetrics());
+    if (edge <= 0f || getHeight() <= 0) return 0f;
+    float top = renderer.getTopInset();
+    float depth;
+    float direction;
+    if (y < top + edge) {
+      depth = (top + edge - y) / edge;
+      direction = 1f;
+    } else if (y > getHeight() - edge) {
+      depth = (y - (getHeight() - edge)) / edge;
+      direction = -1f;
+    } else {
+      return 0f;
+    }
+    depth = Math.max(0f, Math.min(1f, depth));
+    float linesPerSecond = AUTO_SCROLL_MIN_LINES_PER_SECOND
+        + depth * (AUTO_SCROLL_MAX_LINES_PER_SECOND - AUTO_SCROLL_MIN_LINES_PER_SECOND);
+    return direction * linesPerSecond * lineHeight();
+  }
+
+  private void stopSelectionAutoScroll() {
+    removeCallbacks(selectionAutoScrollRunnable);
+    autoScrollScheduled = false;
+    autoScrollLastFrameNanos = 0L;
+    autoScrollRemainderPixels = 0f;
+  }
+
+  @Nullable
+  private TerminalSelection.Anchor selectionAnchorAtPointer(float pointerX, float pointerY) {
+    if (draggingHandle == HANDLE_NONE) return pointToAnchor(pointerX, pointerY);
+    // 手柄圆心位于行底边，而 pointToAnchor 接收单元格内部坐标。保留按下时手指
+    // 相对圆心的偏移，再以目标行中线做命中，避免一开始拖动就跳到下一行。
+    float hotspotX = pointerX - handleTouchOffsetX;
+    float hotspotY = pointerY - handleTouchOffsetY;
+    return pointToAnchor(hotspotX, hotspotY - lineHeight() * 0.5f);
   }
 
   private boolean isMouseTracking() {
@@ -515,14 +630,14 @@ public final class RemoteTerminalView extends View {
     if (!selecting) return;
     TerminalSelection.Anchor anchor = pointToAnchor(x, y);
     if (anchor == null) return;
-    selectionEnd = anchor;
-    updateViewportSelection();
+    updateSelectionEndpoint(HANDLE_END, anchor);
     invalidate();
   }
 
   private void clearSelection() {
+    stopSelectionAutoScroll();
     selecting = false;
-    draggingHandle = 0;
+    draggingHandle = HANDLE_NONE;
     selectionStart = null;
     selectionEnd = null;
     updateViewportSelection();
@@ -557,6 +672,27 @@ public final class RemoteTerminalView extends View {
     }
   }
 
+  private void updateSelectionEndpoint(int handle, @NonNull TerminalSelection.Anchor proposed) {
+    if (selectionStart == null || selectionEnd == null) return;
+    if (handle == HANDLE_START) {
+      selectionStart = constrainSelectionEndpoint(true, proposed, selectionStart, selectionEnd);
+    } else if (handle == HANDLE_END) {
+      selectionEnd = constrainSelectionEndpoint(false, proposed, selectionStart, selectionEnd);
+    }
+    updateViewportSelection();
+    if (selectionActionMode != null) selectionActionMode.invalidate();
+    invalidate();
+  }
+
+  static TerminalSelection.Anchor constrainSelectionEndpoint(
+      boolean startHandle, @NonNull TerminalSelection.Anchor proposed,
+      @NonNull TerminalSelection.Anchor currentStart,
+      @NonNull TerminalSelection.Anchor currentEnd) {
+    if (startHandle && proposed.compareTo(currentEnd) > 0) return currentEnd;
+    if (!startHandle && proposed.compareTo(currentStart) < 0) return currentStart;
+    return proposed;
+  }
+
   private TerminalSelection.Anchor pointToAnchor(float x, float y) {
     if (model == null) return null;
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
@@ -572,18 +708,20 @@ public final class RemoteTerminalView extends View {
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     int screenRows = screen != null ? screen.length : 0;
     int historyRows = history.size();
+    if (screenRows == 0 && historyRows == 0) return null;
     float scrollOffset = viewport.followTail ? 0 : viewport.scrollOffsetPixels;
     float contentTopY = RemoteTerminalRenderer.contentTopY(getHeight(), historyRows, screenRows,
         lineH, renderer.getTopInset(), scrollOffset);
     float screenTopY = RemoteTerminalRenderer.screenTopY(getHeight(), historyRows, screenRows,
         lineH, renderer.getTopInset(), scrollOffset);
 
-    if (y >= screenTopY) {
+    if (screenRows > 0 && (y >= screenTopY || historyRows == 0)) {
       int row = (int) ((y - screenTopY) / lineH);
       row = Math.max(0, Math.min(screenRows - 1, row));
       return new TerminalSelection.Anchor(0, row, normalizeSelectionColumn(screen[row], col));
     }
 
+    if (historyRows == 0) return null;
     int historyIndex = (int) ((y - contentTopY) / lineH);
     historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
     TerminalLine line = history.lineAt(historyIndex);
@@ -715,54 +853,77 @@ public final class RemoteTerminalView extends View {
   private boolean handleSelectionHandleTouch(MotionEvent event) {
     if (!selecting) return false;
     if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-      float[] start = anchorToPoint(selectionStart, false);
-      float[] end = anchorToPoint(selectionEnd, true);
+      float[] start = anchorToHandleCenter(selectionStart);
+      float[] end = anchorToHandleCenter(selectionEnd);
       float radius = handleRadius();
-      if (isNear(event, start, radius)) {
-        draggingHandle = 1;
-        return true;
-      }
-      if (isNear(event, end, radius)) {
-        draggingHandle = 2;
+      draggingHandle = nearestHandle(event, start, end, radius);
+      if (draggingHandle != HANDLE_NONE) {
+        float[] center = draggingHandle == HANDLE_START ? start : end;
+        handleTouchOffsetX = center == null ? 0f : event.getX() - center[0];
+        handleTouchOffsetY = center == null ? 0f : event.getY() - center[1];
+        selectionPointerX = event.getX();
+        selectionPointerY = event.getY();
         return true;
       }
       return false;
     }
-    if (draggingHandle == 0) return false;
+    if (draggingHandle == HANDLE_NONE) return false;
     if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-      TerminalSelection.Anchor anchor = pointToAnchor(event.getX(), event.getY());
+      TerminalSelection.Anchor anchor = selectionAnchorAtPointer(event.getX(), event.getY());
       if (anchor != null) {
-        if (draggingHandle == 1) selectionStart = anchor; else selectionEnd = anchor;
-        updateViewportSelection();
-        if (selectionActionMode != null) selectionActionMode.invalidate();
-        invalidate();
+        updateSelectionEndpoint(draggingHandle, anchor);
       }
+      updateSelectionAutoScroll(event.getX(), event.getY());
     } else if (event.getActionMasked() == MotionEvent.ACTION_UP
         || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-      draggingHandle = 0;
+      draggingHandle = HANDLE_NONE;
+      handleTouchOffsetX = 0f;
+      handleTouchOffsetY = 0f;
+      stopSelectionAutoScroll();
     }
     return true;
   }
 
-  private boolean isNear(MotionEvent event, @Nullable float[] point, float radius) {
-    if (point == null) return false;
+  private int nearestHandle(MotionEvent event, @Nullable float[] start, @Nullable float[] end,
+                            float radius) {
+    float startDistance = distanceSquared(event, start);
+    float endDistance = distanceSquared(event, end);
+    float maxDistance = radius * radius * 2f;
+    boolean startHit = startDistance <= maxDistance;
+    boolean endHit = endDistance <= maxDistance;
+    if (startHit && endHit) return startDistance <= endDistance ? HANDLE_START : HANDLE_END;
+    if (startHit) return HANDLE_START;
+    if (endHit) return HANDLE_END;
+    return HANDLE_NONE;
+  }
+
+  private float distanceSquared(MotionEvent event, @Nullable float[] point) {
+    if (point == null) return Float.POSITIVE_INFINITY;
     float dx = event.getX() - point[0];
     float dy = event.getY() - point[1];
-    return dx * dx + dy * dy <= radius * radius * 2;
+    return dx * dx + dy * dy;
   }
 
   private void drawSelectionHandles(Canvas canvas) {
     if (!selecting) return;
     selectionHandlePaint.setColor(0xFF3B82F6);
     float radius = handleRadius();
-    float[] start = anchorToPoint(selectionStart, false);
-    float[] end = anchorToPoint(selectionEnd, true);
-    if (start != null) canvas.drawCircle(start[0], start[1] + lineHeight(), radius, selectionHandlePaint);
-    if (end != null) canvas.drawCircle(end[0], end[1] + lineHeight(), radius, selectionHandlePaint);
+    float[] start = anchorToHandleCenter(selectionStart);
+    float[] end = anchorToHandleCenter(selectionEnd);
+    if (start != null) canvas.drawCircle(start[0], start[1], radius, selectionHandlePaint);
+    if (end != null) canvas.drawCircle(end[0], end[1], radius, selectionHandlePaint);
   }
 
   private float handleRadius() {
     return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 9, getResources().getDisplayMetrics());
+  }
+
+  @Nullable
+  private float[] anchorToHandleCenter(@Nullable TerminalSelection.Anchor anchor) {
+    float[] point = anchorToPoint(anchor, false);
+    if (point == null) return null;
+    point[1] += lineHeight();
+    return point;
   }
 
   @Nullable
@@ -857,6 +1018,7 @@ public final class RemoteTerminalView extends View {
 
     @Override
     public boolean onUp(MotionEvent event) {
+      stopSelectionAutoScroll();
       if (isMouseTracking() && !selecting && !scrolledWithFinger) {
         sendMouse(event, "left", 0, true);
         sendMouse(event, "left", 0, false);
@@ -874,6 +1036,7 @@ public final class RemoteTerminalView extends View {
     public boolean onScroll(MotionEvent e2, float distanceX, float distanceY) {
       if (selecting) {
         extendSelectionTo(e2.getX(), e2.getY());
+        updateSelectionAutoScroll(e2.getX(), e2.getY());
       } else {
         scrolledWithFinger = true;
         // GestureDetector 的 distanceY 在手指上滑时为正（内容应跟随手指向底部移动），

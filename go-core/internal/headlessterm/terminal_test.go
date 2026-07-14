@@ -78,6 +78,29 @@ func TestTerminalClearScreen(t *testing.T) {
 	}
 }
 
+func TestTerminalClearSavedLinesPreservesVisibleScreen(t *testing.T) {
+	storage := &testScrollback{lines: make([]ScrollbackLine, 0)}
+	storage.SetMaxLines(100)
+	term := New(WithSize(3, 20), WithScrollback(storage))
+
+	for i := 0; i < 6; i++ {
+		term.WriteString("old\r\n")
+	}
+	if term.ScrollbackLen() == 0 {
+		t.Fatal("expected scrollback before CSI 3 J")
+	}
+	term.WriteString("visible")
+
+	term.WriteString("\x1b[3J")
+
+	if got := term.ScrollbackLen(); got != 0 {
+		t.Fatalf("scrollback len after CSI 3 J = %d, want 0", got)
+	}
+	if got := term.LineContent(2); got != "visible" {
+		t.Fatalf("visible content after CSI 3 J = %q, want %q", got, "visible")
+	}
+}
+
 func TestTerminalScrollback(t *testing.T) {
 	storage := &testScrollback{lines: make([]ScrollbackLine, 0)}
 	storage.SetMaxLines(100)

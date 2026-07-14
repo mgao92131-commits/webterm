@@ -47,6 +47,38 @@ func TestTrackedScrollback_Trim(t *testing.T) {
 	}
 }
 
+func TestTrackedScrollback_ClearKeepsLineIDsMonotonicAndFiresTrim(t *testing.T) {
+	var trims []ScrollbackTrimEvent
+	sb := NewTrackedScrollback(10000, func(ev ScrollbackTrimEvent) { trims = append(trims, ev) })
+	for i := 0; i < 3; i++ {
+		sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
+	}
+
+	sb.Clear()
+
+	if got := sb.Len(); got != 0 {
+		t.Fatalf("Len after Clear = %d, want 0", got)
+	}
+	if got := sb.FirstID(); got != 4 {
+		t.Fatalf("FirstID after Clear = %d, want 4", got)
+	}
+	if got := sb.NextID(); got != 4 {
+		t.Fatalf("NextID after Clear = %d, want 4", got)
+	}
+	if len(trims) != 1 || trims[0].FirstAvailableID != 4 {
+		t.Fatalf("trim events after Clear = %+v, want watermark 4", trims)
+	}
+
+	sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
+	line, ok := sb.LineByID(4)
+	if !ok || line.ID != 4 {
+		t.Fatalf("first line after Clear = (%+v, %v), want ID 4", line, ok)
+	}
+	if _, ok := sb.LineByID(1); ok {
+		t.Fatal("cleared LineID 1 must not become available again")
+	}
+}
+
 func TestTrackedScrollback_PageBefore(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
 	for i := 0; i < 10; i++ {

@@ -298,10 +298,15 @@ func (t *TrackedScrollback) NextID() uint64 {
 func (t *TrackedScrollback) Clear() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if len(t.lines) == 0 {
+		return
+	}
 	t.lines = t.lines[:0]
 	t.bytes = 0
-	t.firstID = 1
-	t.nextID = 1
+	// clear 是同一 layout epoch 内的历史裁剪，不是 LineID 空间重建。
+	// 保持 nextID 单调递增，使 HistoryTrim 水位可被客户端接受，也避免后续
+	// 输出复用已经被客户端见过的历史行 ID。
+	t.firstID = t.nextID
 	t.fireTrimLocked()
 }
 
