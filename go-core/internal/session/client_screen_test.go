@@ -286,6 +286,51 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 	}
 }
 
+func TestScreenWriter_InitialSyncCommitsOnlyAfterSocketWrite(t *testing.T) {
+	socket := newBlockingWriteSocket()
+	client := NewClient(socket, nil, ClientModeScreen)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.writerStarted.Store(true)
+	go client.writeLoop(ctx)
+	defer client.Close()
+
+	state := testScreenState(7, "seven")
+	state.Kind = terminalengine.FrameSnapshot
+	committed := make(chan bool, 1)
+	client.sendInitialScreenSync(terminalsession.InitialSync{Frame: state, State: state}, func(written bool) {
+		committed <- written
+	})
+	select {
+	case <-socket.firstWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("initial sync socket write did not start")
+	}
+	select {
+	case result := <-committed:
+		t.Fatalf("initial sync committed before socket write completed: %v", result)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(socket.releaseFirstWrite)
+	if result := <-committed; !result {
+		t.Fatal("successful initial socket write must commit baseline")
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(socket.waitWrite(t), &env); err != nil || env.GetSnapshot() == nil {
+		t.Fatalf("initial write payload=%T err=%v, want snapshot", env.Payload, err)
+	}
+
+	// 提交后的实时状态必须从实际写出的 revision 7 派生。
+	client.sendScreenState(testScreenState(9, "nine"))
+	if err := proto.Unmarshal(socket.waitWrite(t), &env); err != nil {
+		t.Fatal(err)
+	}
+	if patch := env.GetPatch(); patch == nil || patch.BaseRevision != 7 || patch.ScreenRevision != 9 {
+		t.Fatalf("post-initial patch=%+v, want 7 -> 9", patch)
+	}
+}
+
 func testScreenState(revision uint64, text string) terminalengine.ScreenFrame {
 	screen := make([]terminalengine.Line, 5)
 	for row := range screen {

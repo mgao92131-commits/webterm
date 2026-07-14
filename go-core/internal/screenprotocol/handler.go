@@ -166,3 +166,17 @@ func EncodePong(screenRevision uint64) ([]byte, error) {
 	}
 	return proto.Marshal(envelope)
 }
+
+// EncodeResumeAck 编码 exact resume 确认。Ack 与初始 Snapshot/Patch 共用
+// screen writer 的 initial-sync slot，不进入独立 control queue。
+func EncodeResumeAck(instanceID string, layoutEpoch, screenRevision uint64) ([]byte, error) {
+	envelope := &pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_ResumeAck{ResumeAck: &pb.ResumeAck{
+			InstanceId:     instanceID,
+			LayoutEpoch:    layoutEpoch,
+			ScreenRevision: screenRevision,
+		}},
+	}
+	return proto.Marshal(envelope)
+}

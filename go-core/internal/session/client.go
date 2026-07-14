@@ -42,11 +42,17 @@ type Client struct {
 	screenPending terminalengine.ScreenFrame
 	hasScreenData bool
 	screenWake    chan struct{}
+	screenInitial chan initialScreenMessage
 	screenDeriver screenprojection.FrameDeriver
 }
 
 type outboundMessage struct {
 	binary []byte
+}
+
+type initialScreenMessage struct {
+	sync terminalsession.InitialSync
+	done func(bool)
 }
 
 func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger ...*logs.Logger) *Client {
@@ -67,6 +73,7 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger
 		logger:         log,
 		screenClientID: randomID(),
 		screenWake:     make(chan struct{}, 1),
+		screenInitial:  make(chan initialScreenMessage, 1),
 	}
 	if terminal != nil && mode == ClientModeScreen {
 		client.screenHandler = client.newScreenHandler()
@@ -228,11 +235,12 @@ func (client *Client) readLoop(ctx context.Context) {
 // Envelope ordering contract (pinned by client_envelope_order_test.go).
 //
 // All outbound envelopes are produced by the single terminal actor goroutine,
-// but the writer consumes them through two entries: the buffered send channel
-// (control messages: effect/history trim/history page/info/exit/pong) and the
-// single-slot screen mailbox woken by screenWake. The relative write order
-// between the two streams is therefore NOT the production order, and that is
-// intentional: every message is protocol-independent because it carries the
+// but the writer consumes them through three entries: the buffered send channel
+// (control messages: effect/history trim/history page/info/exit/pong), the
+// single-slot screen mailbox woken by screenWake, and the capacity-one,
+// non-overwritable initial-sync slot. The relative write order between control
+// and screen state is therefore NOT the production order, and that is
+// intentional: every ordinary message is protocol-independent because it carries the
 // anchors a client needs to judge applicability on its own —
 //   - snapshot/patch: instance id + layout epoch + baseRevision chain
 //     (a gap triggers client resync, see Android RemoteTerminalModel.applyPatch);
@@ -241,12 +249,14 @@ func (client *Client) readLoop(ctx context.Context) {
 //   - effect:         instance id; fire-and-forget UI signal;
 //   - exit:           terminal state; clients drop anything after it.
 //
-// The writer only guarantees two invariants:
+// The writer guarantees three invariants:
 //  1. control messages keep channel FIFO and are never dropped by screen load
 //     (mailbox coalescing applies to screen states only);
 //  2. screen frames form a self-consistent chain: the FrameDeriver diffs
 //     against the last state actually written, so every patch baseRevision
 //     equals the previously written screen revision.
+//  3. ResumeAck/恢复 Patch/Snapshot 走同一个 writer 的 initial-sync slot；只有
+//     socket 写成功后才 Seed 完整 baseline 并通知 actor 开放实时 mailbox。
 //
 // Do not "fix" the dual entry by priority-draining one channel before select:
 // that reorders control messages relative to their production order without
@@ -267,8 +277,33 @@ func (client *Client) writeLoop(ctx context.Context) {
 			if !client.writeLatestScreenState(ctx) {
 				return
 			}
+		case initial := <-client.screenInitial:
+			if !client.writeInitialScreenSync(ctx, initial) {
+				return
+			}
 		}
 	}
+}
+
+func (client *Client) writeInitialScreenSync(ctx context.Context, initial initialScreenMessage) bool {
+	payload, err := encodeInitialScreenSync(initial.sync)
+	if err != nil {
+		initial.done(false)
+		if client.logger != nil {
+			client.logger.Add("error", "session", fmt.Sprintf("encode initial screen sync failed: %v", err))
+		}
+		client.Close()
+		return false
+	}
+	if !client.writeMessage(ctx, outboundMessage{binary: payload}) {
+		initial.done(false)
+		return false
+	}
+	client.screenMu.Lock()
+	client.screenDeriver.Seed(initial.sync.State)
+	client.screenMu.Unlock()
+	initial.done(true)
+	return true
 }
 
 func (client *Client) writeLatestScreenState(ctx context.Context) bool {
@@ -356,7 +391,7 @@ func (client *Client) handleScreenHello(hello *pb.Hello) {
 		client.Close()
 		return
 	}
-	client.attachScreenClient()
+	client.attachScreenClient(hello)
 	client.SendInfo()
 	client.ready.Store(true)
 }
@@ -385,15 +420,73 @@ func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {
 	}
 }
 
-func (client *Client) attachScreenClient() {
+func (client *Client) attachScreenClient(hello *pb.Hello) {
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
-		ID:              client.screenClientID,
+		ID: client.screenClientID,
+		Resume: terminalsession.ResumeToken{
+			HasProjection:  hello.GetHasProjection(),
+			InstanceID:     hello.GetInstanceId(),
+			LayoutEpoch:    hello.GetLayoutEpoch(),
+			ScreenRevision: hello.GetScreenRevision(),
+		},
 		Send:            client.sendScreenState,
+		SendInitial:     client.sendInitialScreenSync,
 		ResetProjection: client.resetScreenProjection,
 		SendHistory:     client.sendScreenHistory,
 		SendHistoryTrim: client.sendScreenHistoryTrim,
 		SendEffect:      client.sendScreenEffect,
 	})
+}
+
+func (client *Client) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
+	if !client.writerStarted.Load() {
+		payload, err := encodeInitialScreenSync(syncMessage)
+		if err != nil {
+			done(false)
+			return
+		}
+		client.screenMu.Lock()
+		client.screenDeriver.Seed(syncMessage.State)
+		client.screenMu.Unlock()
+		client.enqueueBinary(payload)
+		done(true)
+		return
+	}
+
+	// 初始同步不可被 mailbox 覆盖。开始新的 resync 前清掉尚未写出的实时状态；
+	// actor 会在初始帧提交后从最新 canonical state 重新派生。
+	client.screenMu.Lock()
+	client.hasScreenData = false
+	client.screenPending = terminalengine.ScreenFrame{}
+	client.screenMu.Unlock()
+	select {
+	case <-client.done:
+		done(false)
+	case client.screenInitial <- initialScreenMessage{sync: syncMessage, done: done}:
+	}
+}
+
+func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, error) {
+	if syncMessage.Exact {
+		state := syncMessage.State
+		return screenprotocol.EncodeResumeAck(state.InstanceID, state.Epoch, state.Seq)
+	}
+	patchBytes, err := screenprotocol.EncodeFrame(syncMessage.Frame)
+	if err != nil || syncMessage.Frame.Kind != terminalengine.FramePatch {
+		return patchBytes, err
+	}
+	// 恢复慢路径同时编码候选 Patch 与 Snapshot。Patch 达到 Snapshot 的 80%
+	// 时直接发送自包含 Snapshot；比较只发生在 initial-sync，不进入在线热路径。
+	snapshot := syncMessage.State
+	snapshot.Kind = terminalengine.FrameSnapshot
+	snapshotBytes, err := screenprotocol.EncodeFrame(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if len(patchBytes)*10 >= len(snapshotBytes)*8 {
+		return snapshotBytes, nil
+	}
+	return patchBytes, nil
 }
 
 func (client *Client) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {

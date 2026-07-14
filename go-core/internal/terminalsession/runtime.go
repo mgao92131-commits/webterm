@@ -62,12 +62,38 @@ type ScreenClient struct {
 	Interactive   bool
 	LayoutLeaseID string
 	Send          func(terminalengine.ScreenFrame)
+	// Resume 是 Hello 携带的完整投影声明。HasProjection=false 表示 cold attach。
+	Resume ResumeToken
+	// SendInitial 把不可覆盖的恢复首帧交给单一 screen writer；done 只有在
+	// 实际写出成功后才提交 actor baseline。nil 保留给内部旧调用/测试兼容路径。
+	SendInitial func(InitialSync, func(written bool))
 	// ResetProjection invalidates the client's derived frame baseline before a
 	// forced full state (attach/resync/dictionary rotation).
 	ResetProjection func()
 	SendHistory     func(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData)
 	SendHistoryTrim func(epoch, firstAvailableID uint64)
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
+
+	// 以下字段仅由 Runtime actor 访问。
+	synced            bool
+	initialGeneration uint64
+	pendingState      terminalengine.ScreenFrame
+}
+
+// ResumeToken 是客户端投影的原子版本锚点。
+type ResumeToken struct {
+	HasProjection  bool
+	InstanceID     string
+	LayoutEpoch    uint64
+	ScreenRevision uint64
+}
+
+// InitialSync 是 initial-sync slot 的不可覆盖消息。Frame 用于 Snapshot/Patch；
+// Exact=true 时 writer 发送 ResumeAck。State 始终是成功后要提交的完整权威状态。
+type InitialSync struct {
+	Exact bool
+	Frame terminalengine.ScreenFrame
+	State terminalengine.ScreenFrame
 }
 
 // Version 标识屏幕状态版本。
@@ -361,6 +387,8 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleHistoryTrim(e)
 	case clientResyncEvent:
 		r.handleClientResync(e.clientID)
+	case clientInitialSyncResultEvent:
+		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
 		r.handleProjectionFlush(e)
 	case resizeEngineEvent:
@@ -550,11 +578,7 @@ func (r *Runtime) handleResize(e resizeEvent) {
 
 func (r *Runtime) handleClientAttach(c *ScreenClient) {
 	r.clients[c.ID] = c
-	if c.ResetProjection != nil {
-		c.ResetProjection()
-	}
-	state := r.projector.ExportState(r.layoutEpoch, r.nextRevision())
-	c.Send(state)
+	r.startInitialSync(c, false)
 }
 
 func (r *Runtime) handleClientDetach(clientID string) {
@@ -606,14 +630,78 @@ func (r *Runtime) handleHistoryTrim(e historyTrimEvent) {
 
 func (r *Runtime) handleClientResync(clientID string) {
 	client := r.clients[clientID]
-	if client == nil {
+	if client == nil || !client.synced {
+		// initial-sync 已在途时忽略重复 Resync，保证不可覆盖 slot 不会堆叠，
+		// 也避免恶意客户端阻塞 terminal actor。
 		return
 	}
-	if client.ResetProjection != nil {
-		client.ResetProjection()
+	// Resync 始终以当前 revision 发送权威 Snapshot，不推进 canonical revision。
+	r.startInitialSync(client, true)
+}
+
+func (r *Runtime) startInitialSync(client *ScreenClient, forceSnapshot bool) {
+	rev := r.currentRevision()
+	state := r.projector.ExportState(r.layoutEpoch, rev)
+	state.Kind = terminalengine.FrameSnapshot
+
+	sync := InitialSync{State: state}
+	resume := client.Resume
+	switch {
+	case forceSnapshot || !resume.HasProjection:
+		sync.Frame = state
+	case resume.InstanceID != r.instanceID || resume.LayoutEpoch != r.layoutEpoch:
+		sync.Frame = state
+	default:
+		derived := r.projector.DeriveResumeFrame(state, resume.ScreenRevision)
+		switch derived.Outcome {
+		case screenprojection.ResumeOutcomeExact:
+			sync.Exact = true
+		case screenprojection.ResumeOutcomePatch:
+			sync.Frame = derived.Frame
+		default:
+			sync.Frame = state
+		}
 	}
-	state := r.projector.ExportState(r.layoutEpoch, r.nextRevision())
-	client.Send(state)
+
+	client.synced = false
+	client.pendingState = terminalengine.ScreenFrame{}
+	client.initialGeneration++
+	generation := client.initialGeneration
+	if client.SendInitial == nil {
+		// 内部旧调用/benchmark 兼容：没有异步 writer 时以调度成功作为提交点。
+		if client.ResetProjection != nil {
+			client.ResetProjection()
+		}
+		if sync.Exact {
+			client.synced = true
+			return
+		}
+		client.Send(sync.Frame)
+		client.synced = true
+		return
+	}
+	client.SendInitial(sync, func(written bool) {
+		r.postEvent(clientInitialSyncResultEvent{
+			clientID: client.ID, generation: generation, revision: state.Seq, written: written,
+		})
+	})
+}
+
+func (r *Runtime) handleClientInitialSyncResult(e clientInitialSyncResultEvent) {
+	client := r.clients[e.clientID]
+	if client == nil || client.initialGeneration != e.generation {
+		return
+	}
+	if !e.written {
+		delete(r.clients, e.clientID)
+		return
+	}
+	client.synced = true
+	if client.pendingState.Seq > e.revision {
+		pending := client.pendingState
+		client.pendingState = terminalengine.ScreenFrame{}
+		client.Send(pending)
+	}
 }
 
 func (r *Runtime) broadcastFrame() {
@@ -623,7 +711,11 @@ func (r *Runtime) broadcastFrame() {
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
 	for _, c := range r.clients {
-		c.Send(state)
+		if c.synced {
+			c.Send(state)
+		} else {
+			c.pendingState = state
+		}
 	}
 }
 
@@ -661,13 +753,6 @@ func (r *Runtime) flushProjectionNow() {
 }
 
 func (r *Runtime) bumpScreenRevision() uint64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.screenRevision++
-	return r.screenRevision
-}
-
-func (r *Runtime) nextRevision() uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.screenRevision++
@@ -735,6 +820,13 @@ type historyTrimEvent struct {
 
 type clientResyncEvent struct {
 	clientID string
+}
+
+type clientInitialSyncResultEvent struct {
+	clientID   string
+	generation uint64
+	revision   uint64
+	written    bool
 }
 
 type projectionFlushEvent struct {

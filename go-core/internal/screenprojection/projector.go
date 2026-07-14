@@ -137,6 +137,12 @@ func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 }
 
+// Seed 在恢复首帧成功写出后提交该客户端的完整权威 baseline。恢复 Patch 和
+// ResumeAck 本身都不是完整状态，不能直接作为后续在线 diff 的基线。
+func (d *FrameDeriver) Seed(state terminalengine.ScreenFrame) {
+	d.baseline = state
+}
+
 // FrameForState 返回应写出的帧；返回值的 Kind 为 0 表示该状态相对 baseline
 // 无任何可观察变化，调用方不得编码或发送它。
 func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
