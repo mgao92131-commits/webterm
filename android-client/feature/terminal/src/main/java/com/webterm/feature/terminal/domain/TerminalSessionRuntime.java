@@ -485,6 +485,8 @@ public final class TerminalSessionRuntime {
 
   private void processScreenMessage(byte[] payload) {
       try {
+        // envelope 2 MiB 上限（proto 头部契约 / 计划 §10.1）必须在解码前校验，
+        // 避免超大帧直接触发内存分配。
         ScreenMessageValidator.ValidationResult size = ScreenMessageValidator.validateEnvelopeSize(payload);
         if (!size.ok) throw new IllegalArgumentException(size.reason);
         TerminalScreenProto.ScreenEnvelope envelope =
@@ -516,7 +518,9 @@ public final class TerminalSessionRuntime {
             // already parsed here on modelExecutor; drop without validating
             // or touching the local revision.
             if (resyncState != ResyncState.IDLE) return;
-            requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch()));
+            // rows 取当前模型 geometry：patch 自身不携带 geometry，
+            // 行索引上界只能相对本地投影校验（计划 §10.1）。
+            requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
             break;
           case HISTORY_PAGE:
