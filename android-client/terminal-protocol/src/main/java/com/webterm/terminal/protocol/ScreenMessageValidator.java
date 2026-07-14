@@ -149,12 +149,12 @@ public final class ScreenMessageValidator {
     if (p.getHistoryAppendCount() > MAX_HISTORY_APPEND) {
       return ValidationResult.fail("history append too large: " + p.getHistoryAppendCount());
     }
-    // history LineID 严格递增（蕴含不重复）。
+    // history_append 必须是连续 LineID 段（蕴含严格递增且不重复）。
     long prevHistoryLineId = -1;
     for (TerminalScreenProto.HistoryLine line : p.getHistoryAppendList()) {
       long lineId = line.getId();
-      if (lineId <= prevHistoryLineId) {
-        return ValidationResult.fail("history line id not strictly increasing: " + lineId);
+      if (lineId <= 0 || (prevHistoryLineId >= 0 && lineId != prevHistoryLineId + 1)) {
+        return ValidationResult.fail("history line ids are not contiguous: " + lineId);
       }
       prevHistoryLineId = lineId;
       ValidationResult lineResult = validateHistoryLine(line);
@@ -173,6 +173,9 @@ public final class ScreenMessageValidator {
       if (!seenPromotedLineIds.add(promoted.getHistoryLineId())) {
         return ValidationResult.fail("duplicate promoted history line id: "
             + promoted.getHistoryLineId());
+      }
+      if (promoted.getHistoryLineId() <= 0) {
+        return ValidationResult.fail("invalid promoted history line id");
       }
     }
     ValidationResult dictResult = validateStylesLinks(p.getNewStylesList(), p.getNewLinksList());

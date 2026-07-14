@@ -11,7 +11,6 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -21,8 +20,7 @@ import java.util.concurrent.Executor;
 /**
  * 屏幕增量恢复契约测试（计划 §12 Task 1）。
  *
- * <p>已生效的用例固化 §15 混合版本兼容行为；@Ignore 桩冻结尚未实现的 Task 5/6
- * 契约（JUnit4 无 @Disabled，@Ignore 为等价语义），实现到位后移除 @Ignore 并补全方法体。</p>
+ * <p>同时固化 §15 混合版本兼容行为，以及 Task 5/6 的同步门和原子恢复契约。</p>
  */
 public final class ScreenResumeContractTest {
 
@@ -51,18 +49,48 @@ public final class ScreenResumeContractTest {
     assertEquals("empty patch must not trigger reconnect", 0, connection.reconnectRequests);
   }
 
-  @Ignore("Task 6：累计恢复 Patch 的原子应用尚未实现（计划 §6、§10.2）")
   @Test
   public void cumulativeResumePatchAppliedAtomicallyWithRevisionJump() {
-    // Task 6：patch 从 revision 100 直接跳到 150（不回放中间 revision），整帧原子应用；
-    // 任一校验失败不得留下部分 mutation。
+    RuntimeFixture fixture = runtimeWithSnapshot(snapshot(100));
+    TerminalSessionRuntime runtime = fixture.runtime;
+    FakeScreenConnection connection = fixture.connection;
+
+    connection.listener.onScreenMessage(envelope(patch(100, 150)
+        .addScreenRows(terminalLine(0, "z", 0))
+        .setTitle("resumed")).toByteArray());
+
+    assertEquals(150, runtime.model().screenRevision);
+    assertEquals("z", runtime.model().renderSnapshot().screen[0].at(0).text);
+    assertEquals("resumed", runtime.model().title());
+    assertEquals(0, connection.resyncRequests);
   }
 
-  @Ignore("Task 6：history watermark 与恢复 Patch 的原子应用尚未实现（计划 §5.2）")
   @Test
   public void historyWatermarkAppliedAtomicallyIndependentOfHistoryTrimOrder() {
-    // Task 6：恢复 Patch 的 first_available_history_line_id 与 history_append 在同一
-    // model executor 事务内应用，已 trim 行不得复活；与 HistoryTrim 乱序无关。
+    RuntimeFixture fixture = runtimeWithSnapshot(snapshotWithHistory(100, 100, 101));
+    TerminalSessionRuntime runtime = fixture.runtime;
+    FakeScreenConnection connection = fixture.connection;
+
+    TerminalScreenProto.ScreenPatch.Builder builder = patch(100, 150)
+        .setFirstAvailableHistoryLineId(102);
+    for (long id = 100; id <= 102; id++) {
+      builder.addHistoryAppend(historyLine(id, "h" + id));
+    }
+    connection.listener.onScreenMessage(envelope(builder).toByteArray());
+
+    assertEquals(150, runtime.model().screenRevision);
+    assertEquals(102, runtime.model().firstAvailableHistoryId());
+    assertEquals(1, runtime.model().historySize());
+    assertEquals(102, runtime.model().firstCachedHistoryId());
+
+    // 晚到的旧 HistoryTrim 不得让水位倒退或复活已删除行。
+    connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setHistoryTrim(TerminalScreenProto.HistoryTrim.newBuilder()
+            .setLayoutEpoch(1).setFirstAvailableLineId(101))
+        .build().toByteArray());
+    assertEquals(102, runtime.model().firstAvailableHistoryId());
+    assertEquals(102, runtime.model().firstCachedHistoryId());
   }
 
   @Test
@@ -83,11 +111,40 @@ public final class ScreenResumeContractTest {
     assertTrue(runtime.model().projectionHealth().complete);
   }
 
-  @Ignore("Task 6：校验失败的单一 resync fence 收敛尚未实现（计划 §10.2）")
   @Test
   public void validationFailureRejectsWholeFrameAndSendsSingleResyncRequest() {
-    // Task 6：校验失败整帧拒绝、不推进本地 revision、进入单一 resync fence、
-    // 只发送一次 ResyncRequest，只允许权威 Snapshot 解除 fence。
+    RuntimeFixture fixture = runtimeWithSnapshot(snapshot(1));
+    TerminalSessionRuntime runtime = fixture.runtime;
+    FakeScreenConnection connection = fixture.connection;
+
+    // style 7 未在已有字典或 new_styles 中定义；title 也不得部分落地。
+    byte[] invalid = envelope(patch(1, 2)
+        .addScreenRows(terminalLine(0, "x", 7))
+        .setTitle("must-not-commit")).toByteArray();
+    connection.listener.onScreenMessage(invalid);
+    connection.listener.onScreenMessage(invalid);
+
+    assertEquals(1, runtime.model().screenRevision);
+    assertEquals("", runtime.model().title());
+    assertEquals(0, runtime.model().styles().size());
+    assertEquals(1, connection.resyncRequests);
+
+    // 围栏期间合法 Patch 也被丢弃；只有权威 Snapshot 能解除。
+    connection.listener.onScreenMessage(envelope(patch(1, 2).setTitle("ignored")).toByteArray());
+    assertEquals(1, runtime.model().screenRevision);
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    assertEquals(2, runtime.model().screenRevision);
+    assertEquals(1, connection.resyncRequests);
+  }
+
+  private static RuntimeFixture runtimeWithSnapshot(
+      TerminalScreenProto.ScreenEnvelope snapshot) {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onScreenMessage(snapshot.toByteArray());
+    return new RuntimeFixture(runtime, connection);
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
@@ -102,6 +159,72 @@ public final class ScreenResumeContractTest {
             .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
             .build())
         .build();
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope snapshotWithHistory(
+      long revision, long firstId, long lastId) {
+    TerminalScreenProto.HistoryWindow.Builder history =
+        TerminalScreenProto.HistoryWindow.newBuilder()
+            .setFirstAvailableLineId(firstId)
+            .setFirstIncludedLineId(firstId)
+            .setLastIncludedLineId(lastId);
+    for (long id = firstId; id <= lastId; id++) {
+      history.addLines(historyLine(id, "h" + id));
+    }
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
+            .setSessionId("s1")
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setScreenRevision(revision)
+            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10))
+            .setHistory(history))
+        .build();
+  }
+
+  private static TerminalScreenProto.ScreenPatch.Builder patch(long baseRevision,
+                                                                long screenRevision) {
+    return TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("i1")
+        .setLayoutEpoch(1)
+        .setBaseRevision(baseRevision)
+        .setScreenRevision(screenRevision);
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope envelope(
+      TerminalScreenProto.ScreenPatch.Builder patch) {
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setPatch(patch)
+        .build();
+  }
+
+  private static TerminalScreenProto.TerminalLine terminalLine(int row, String text, int styleId) {
+    return TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(row)
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
+            .addCells(TerminalScreenProto.Cell.newBuilder()
+                .setText(text).setWidth(1).setStyleId(styleId)))
+        .build();
+  }
+
+  private static TerminalScreenProto.HistoryLine historyLine(long id, String text) {
+    return TerminalScreenProto.HistoryLine.newBuilder()
+        .setId(id)
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
+            .addCells(TerminalScreenProto.Cell.newBuilder().setText(text).setWidth(1)))
+        .build();
+  }
+
+  private static final class RuntimeFixture {
+    final TerminalSessionRuntime runtime;
+    final FakeScreenConnection connection;
+
+    RuntimeFixture(TerminalSessionRuntime runtime, FakeScreenConnection connection) {
+      this.runtime = runtime;
+      this.connection = connection;
+    }
   }
 
   private static TerminalScreenProto.ScreenEnvelope emptyPatch(long baseRevision,

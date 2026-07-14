@@ -133,11 +133,14 @@ public final class ScreenMessageValidatorTest {
   }
 
   @Test
-  public void historyLineIdsStrictlyIncreasing() {
+  public void historyLineIdsPositiveAndContiguous() {
+    assertFalse(validate(validPatch().addHistoryAppend(historyLine(0))).ok);
     assertFalse(validate(validPatch()
         .addHistoryAppend(historyLine(1)).addHistoryAppend(historyLine(1))).ok);
     assertFalse(validate(validPatch()
         .addHistoryAppend(historyLine(2)).addHistoryAppend(historyLine(1))).ok);
+    assertFalse(validate(validPatch()
+        .addHistoryAppend(historyLine(1)).addHistoryAppend(historyLine(3))).ok);
     assertTrue(validate(validPatch()
         .addHistoryAppend(historyLine(1))
         .addHistoryAppend(historyLine(2))

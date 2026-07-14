@@ -82,14 +82,14 @@ public final class ScreenMessageMapperTest {
   }
 
   @Test
-  public void patchWithFirstAvailableHistoryLineIdIsIgnored() {
+  public void patchMapsOptionalFirstAvailableHistoryLineId() {
     TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
         .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
         .setFirstAvailableHistoryLineId(42).build();
 
-    // 历史水位由后续 Task 6 消费；当前映射必须不崩溃、不影响其他字段。
     ScreenPatch patch = ScreenMessageMapper.mapPatch(pb);
     assertEquals(2, patch.screenRevision);
+    assertEquals(Long.valueOf(42), patch.firstAvailableHistoryLineId);
     assertNull(patch.title);
   }
 }

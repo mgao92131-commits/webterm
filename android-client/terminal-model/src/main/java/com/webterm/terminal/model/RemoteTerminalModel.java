@@ -140,34 +140,49 @@ public final class RemoteTerminalModel {
     if (screenRevision != patch.baseRevision) {
       throw new RevisionGapException("revision gap: local=" + screenRevision + " base=" + patch.baseRevision);
     }
+    if (patch.screenRevision <= patch.baseRevision) {
+      throw new RevisionGapException("patch revision must advance beyond base");
+    }
+    validatePatchAtomically(patch);
     boolean projectionWasComplete = projectionHealth.complete;
 
     Set<Integer> changedRows = new HashSet<>();
     int tailAppendedLines = 0;
+    long watermark = patch.firstAvailableHistoryLineId != null
+        ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
 
-    for (TerminalLine line : patch.screenRows) {
-      int row = findRow(line.id);
-      if (row >= 0 && row < screen.length) {
-        screen[row] = padOrCopyLine(line, columns);
-        changedRows.add(row);
-      }
+    // promoted row 必须从 mutation 前的基线屏幕捕获，避免 screenRows 覆盖后
+    // 错把新行当成滚入历史的旧行。
+    List<TerminalLine> promotedHistory = new ArrayList<>();
+    for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
+      TerminalLine promotedLine = screen[promoted.screenRow];
+      promotedHistory.add(promotedLine.withId(promoted.historyLineId));
     }
 
+    // 恢复 Patch 的原子顺序：先推进水位并 trim，再丢弃水位以下 append。
+    if (patch.firstAvailableHistoryLineId != null) {
+      firstAvailableHistoryId = watermark;
+      history.trimHeadUntil(watermark);
+      recalculateHistoryBytes();
+    }
+
+    if (patch.newStyles != null) styles.putAll(patch.newStyles);
+    if (patch.newLinks != null) links.putAll(patch.newLinks);
+
     for (TerminalLine line : patch.historyAppend) {
-      if (line.id != 0) {
+      if (line.id >= watermark) {
         if (putHistoryLine(line)) tailAppendedLines++;
       }
     }
 
-    for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
-      if (promoted.screenRow >= 0 && promoted.screenRow < screen.length) {
-        TerminalLine promotedLine = screen[promoted.screenRow];
-        if (promotedLine != null && promoted.historyLineId != 0) {
-          if (putHistoryLine(promotedLine.withId(promoted.historyLineId))) {
-            tailAppendedLines++;
-          }
-        }
-      }
+    for (TerminalLine line : promotedHistory) {
+      if (line.id >= watermark && putHistoryLine(line)) tailAppendedLines++;
+    }
+
+    for (TerminalLine line : patch.screenRows) {
+      int row = findRow(line.id);
+      screen[row] = padOrCopyLine(line, columns);
+      changedRows.add(row);
     }
 
     if (patch.cursor != null) {
@@ -179,12 +194,6 @@ public final class RemoteTerminalModel {
     if (patch.palette != null) {
       palette = patch.palette;
     }
-    if (patch.newStyles != null) {
-      styles.putAll(patch.newStyles);
-    }
-    if (patch.newLinks != null) {
-      links.putAll(patch.newLinks);
-    }
     if (patch.title != null) {
       title = patch.title;
     }
@@ -192,7 +201,8 @@ public final class RemoteTerminalModel {
       workingDirectory = patch.workingDirectory;
     }
 
-    boolean historyChanged = !patch.historyAppend.isEmpty() || !patch.promotedRows.isEmpty();
+    boolean historyChanged = patch.firstAvailableHistoryLineId != null
+        || !patch.historyAppend.isEmpty() || !patch.promotedRows.isEmpty();
     boolean stylesChanged = !patch.newStyles.isEmpty();
     boolean linksChanged = !patch.newLinks.isEmpty();
     screenRevision = patch.screenRevision;
@@ -264,6 +274,8 @@ public final class RemoteTerminalModel {
 
   public synchronized ModelChange trimHistory(long trimLayoutEpoch, long firstAvailableLineId) {
     if (layoutEpoch != trimLayoutEpoch) return ModelChange.none();
+    // HistoryTrim 可能与恢复 Patch 跨 channel/队列乱序到达；水位只能单调前进。
+    if (firstAvailableLineId <= this.firstAvailableHistoryId) return ModelChange.none();
     this.firstAvailableHistoryId = firstAvailableLineId;
     history.trimHeadUntil(firstAvailableLineId);
     recalculateHistoryBytes();
@@ -332,6 +344,70 @@ public final class RemoteTerminalModel {
       if (!referencesComplete(line)) return false;
     }
     return true;
+  }
+
+  private void validatePatchAtomically(ScreenPatch patch) throws RevisionGapException {
+    if (screen == null || screen.length != rows) {
+      throw new RevisionGapException("local projection is incomplete");
+    }
+    if (patch.firstAvailableHistoryLineId != null
+        && patch.firstAvailableHistoryLineId < firstAvailableHistoryId) {
+      throw new RevisionGapException("history watermark moved backwards");
+    }
+    Set<Integer> rowIndexes = new HashSet<>();
+    for (TerminalLine line : patch.screenRows) {
+      int row = findRow(line.id);
+      if (row < 0 || row >= rows || !rowIndexes.add(row)) {
+        throw new RevisionGapException("invalid or duplicate screen row " + line.id);
+      }
+    }
+    Set<Integer> promotedRows = new HashSet<>();
+    Set<Long> promotedIDs = new HashSet<>();
+    for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
+      if (promoted.screenRow < 0 || promoted.screenRow >= rows
+          || promoted.historyLineId <= 0 || !promotedRows.add(promoted.screenRow)
+          || !promotedIDs.add(promoted.historyLineId)) {
+        throw new RevisionGapException("invalid promoted row mapping");
+      }
+    }
+    long watermark = patch.firstAvailableHistoryLineId != null
+        ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
+    long previous = -1;
+    for (TerminalLine line : patch.historyAppend) {
+      if (line.id <= 0) throw new RevisionGapException("invalid history line id");
+      if (line.id < watermark) continue;
+      if (previous >= 0 && line.id != previous + 1) {
+        throw new RevisionGapException("history append is not contiguous");
+      }
+      if (history.findLineIndex(line.id) >= 0 || promotedIDs.contains(line.id)) {
+        throw new RevisionGapException("duplicate history line " + line.id);
+      }
+      previous = line.id;
+    }
+
+    Map<Integer, TerminalStyle> availableStyles = new HashMap<>(styles);
+    availableStyles.putAll(patch.newStyles);
+    Map<Integer, Hyperlink> availableLinks = new HashMap<>(links);
+    availableLinks.putAll(patch.newLinks);
+    for (TerminalLine line : patch.screenRows) {
+      validateReferences(line, availableStyles, availableLinks);
+    }
+    for (TerminalLine line : patch.historyAppend) {
+      if (line.id >= watermark) validateReferences(line, availableStyles, availableLinks);
+    }
+  }
+
+  private static void validateReferences(TerminalLine line,
+      Map<Integer, TerminalStyle> availableStyles,
+      Map<Integer, Hyperlink> availableLinks) throws RevisionGapException {
+    for (int i = 0; i < line.length(); i++) {
+      TerminalCell cell = line.at(i);
+      if (cell == null
+          || (cell.styleId != 0 && !availableStyles.containsKey(cell.styleId))
+          || (cell.linkId != 0 && !availableLinks.containsKey(cell.linkId))) {
+        throw new RevisionGapException("unknown style/link reference");
+      }
+    }
   }
 
   /** Returns the atomically published, immutable input for one Canvas frame. */
