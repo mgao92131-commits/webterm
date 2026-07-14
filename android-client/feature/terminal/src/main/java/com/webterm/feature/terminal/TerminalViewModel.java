@@ -67,11 +67,22 @@ public final class TerminalViewModel extends ViewModel {
         public final boolean relayDevice;
         public final String relayDeviceId;
         public final String cwd;
+        public final String serverConfigId;
+        public final String authIdentity;
 
         public TerminalSessionArgs(String baseUrl, String cookie, String sessionId,
                                     String termTitle,
                                     String createdAt, String instanceId,
                                     boolean relayDevice, String relayDeviceId, String cwd) {
+            this(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId, relayDevice,
+                relayDeviceId, cwd, baseUrl, "default");
+        }
+
+        public TerminalSessionArgs(String baseUrl, String cookie, String sessionId,
+                                    String termTitle,
+                                    String createdAt, String instanceId,
+                                    boolean relayDevice, String relayDeviceId, String cwd,
+                                    String serverConfigId, String authIdentity) {
             this.baseUrl = baseUrl;
             this.cookie = cookie;
             this.sessionId = sessionId;
@@ -81,6 +92,8 @@ public final class TerminalViewModel extends ViewModel {
             this.relayDevice = relayDevice;
             this.relayDeviceId = relayDeviceId;
             this.cwd = cwd;
+            this.serverConfigId = serverConfigId;
+            this.authIdentity = authIdentity;
         }
     }
 }

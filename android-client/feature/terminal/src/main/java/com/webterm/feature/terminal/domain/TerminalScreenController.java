@@ -40,7 +40,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private static final long RENDER_FRAME_WINDOW_MS = 16L;
 
   private final TerminalSessionRuntime runtime;
-  private final TerminalViewportState viewport = new TerminalViewportState();
+  private final TerminalViewportState viewport;
   private final LifecycleEventObserver lifecycleObserver;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Runnable sendResizeRunnable = this::sendResizeNow;
@@ -57,7 +57,14 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private long lastRequestedHistoryBeforeId = -1;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
+    this(runtime, new TerminalViewportState());
+  }
+
+  /** Registry 注入 session-scoped viewport，使普通 View 重建不丢失滚动锚点。 */
+  public TerminalScreenController(@NonNull TerminalSessionRuntime runtime,
+                                  @NonNull TerminalViewportState viewport) {
     this.runtime = runtime;
+    this.viewport = viewport;
     this.lifecycleObserver = (source, event) -> {
       if (event == Lifecycle.Event.ON_RESUME) {
         runtime.addListener(this);

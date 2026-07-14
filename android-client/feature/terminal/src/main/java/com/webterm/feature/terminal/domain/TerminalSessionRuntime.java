@@ -46,6 +46,13 @@ public final class TerminalSessionRuntime {
     void onConnectionStateChange(@NonNull State state);
   }
 
+  /** 不依赖 Activity/View 的副作用处理器；页面不存在时仍必须持续存在。 */
+  public interface EffectSink {
+    void onEffect(@NonNull TerminalSessionRuntime runtime,
+                  @NonNull TerminalScreenEffect effect,
+                  boolean hasPageListener);
+  }
+
   public enum State {
     CONNECTING,
     TRANSPORT_CONNECTED,
@@ -123,7 +130,9 @@ public final class TerminalSessionRuntime {
   private final AtomicLong nextHistoryRequestId = new AtomicLong();
   @Nullable private volatile String pendingHistoryRequestId;
   private volatile ScreenConnection connection;
+  private volatile boolean connectionRequiresReplacement;
   @Nullable private volatile AuthenticationListener authenticationListener;
+  @Nullable private volatile EffectSink effectSink;
   private final TimeoutScheduler timeoutScheduler;
   private long syncGeneration;
 
@@ -188,25 +197,35 @@ public final class TerminalSessionRuntime {
   }
 
   public void attachConnection(@NonNull ScreenConnection connection) {
+    ScreenConnection previous = this.connection;
+    if (previous != null && previous != connection) {
+      previous.releaseLayout();
+      previous.close();
+    }
     this.connection = connection;
+    this.connectionRequiresReplacement = false;
     connection.setListener(new ScreenConnection.Listener() {
       @Override
       public void onScreenMessage(@NonNull byte[] payload) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
         handleScreenMessage(payload);
       }
 
       @Override
       public void onConnected() {
+        if (TerminalSessionRuntime.this.connection != connection) return;
         updateState(State.TRANSPORT_CONNECTED);
         modelExecutor.execute(() -> beginSynchronization(connection));
       }
 
       @Override
       public void onDisconnected(@Nullable String reason) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
         // 断线后 Go 侧会释放租约；本地同步失效，避免 resize 丢进死通道，
         // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
         layoutLeaseGranted = false;
         layoutLeaseId = "";
+        connectionRequiresReplacement = false;
         // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
         modelExecutor.execute(() -> {
           syncGeneration++;
@@ -217,8 +236,10 @@ public final class TerminalSessionRuntime {
 
       @Override
       public void onAuthenticationRequired(@Nullable String reason) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
         layoutLeaseGranted = false;
         layoutLeaseId = "";
+        connectionRequiresReplacement = true;
         // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
         // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
         // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
@@ -237,9 +258,51 @@ public final class TerminalSessionRuntime {
 
       @Override
       public void onClosed() {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        TerminalSessionRuntime.this.connection = null;
+        connectionRequiresReplacement = false;
         updateState(State.CLOSED);
       }
     });
+  }
+
+  public boolean hasConnection() {
+    return connection != null && state != State.CLOSED && !connectionRequiresReplacement;
+  }
+
+  /** HOT→WARM：关闭 screen channel，但保留完整 model 与 resume token。 */
+  public void suspendConnection() {
+    ScreenConnection current = connection;
+    connection = null;
+    connectionRequiresReplacement = false;
+    layoutLeaseGranted = false;
+    layoutLeaseId = "";
+    modelExecutor.execute(() -> {
+      syncGeneration++;
+      resetResyncRecovery();
+    });
+    if (current != null) {
+      current.releaseLayout();
+      current.close();
+    }
+    if (state != State.CLOSED) updateState(State.RECONNECTING);
+  }
+
+  /** View detach 只释放焦点与交互租约，不关闭 channel。 */
+  public void detachPage() {
+    ScreenConnection current = connection;
+    if (current != null) {
+      current.sendFocusInput(false);
+      current.releaseLayout();
+    }
+    layoutLeaseGranted = false;
+    layoutLeaseId = "";
+  }
+
+  /** HOT reattach 不需要网络恢复，只重新申请交互租约。 */
+  public void attachPage() {
+    ScreenConnection current = connection;
+    if (current != null && state == State.CONNECTED) current.acquireLayout(true);
   }
 
   public void addListener(@NonNull Listener listener) {
@@ -254,6 +317,10 @@ public final class TerminalSessionRuntime {
 
   public void setAuthenticationListener(@Nullable AuthenticationListener listener) {
     authenticationListener = listener;
+  }
+
+  public void setEffectSink(@Nullable EffectSink sink) {
+    effectSink = sink;
   }
 
   public void sendTextInput(@NonNull String text) {
@@ -683,6 +750,8 @@ public final class TerminalSessionRuntime {
 
   private void dispatchEffect(@NonNull TerminalScreenEffect effect) {
     callbackExecutor.execute(() -> {
+      EffectSink sink = effectSink;
+      if (sink != null) sink.onEffect(this, effect, !listeners.isEmpty());
       for (Listener listener : listeners) listener.onEffect(effect);
     });
   }

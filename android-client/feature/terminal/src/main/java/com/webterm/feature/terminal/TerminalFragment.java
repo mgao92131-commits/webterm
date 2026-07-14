@@ -95,7 +95,9 @@ public final class TerminalFragment extends Fragment {
                     args.getString("instanceId", ""),
                     args.getBoolean("relayDevice", false),
                     args.getString("relayDeviceId", ""),
-                    args.getString("cwd", "")
+                    args.getString("cwd", ""),
+                    args.getString("serverConfigId", args.getString("baseUrl", "")),
+                    args.getString("authIdentity", "default")
                 );
             mViewModel.setSessionArgs(sessionArgs);
 

@@ -137,6 +137,28 @@ public final class ScreenResumeContractTest {
     assertEquals(1, connection.resyncRequests);
   }
 
+  @Test
+  public void detachedEffectStillDeliveredToPersistentSink() {
+    RuntimeFixture fixture = runtimeWithSnapshot(snapshot(1));
+    int[] deliveries = {0};
+    fixture.runtime.setEffectSink((runtime, effect, hasPageListener) -> {
+      assertFalse(hasPageListener);
+      assertEquals(TerminalScreenEffect.Type.NOTIFICATION, effect.type());
+      deliveries[0]++;
+    });
+
+    fixture.connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setEffect(TerminalScreenProto.TerminalEffect.newBuilder()
+            .setInstanceId("i1")
+            .setScreenRevision(1)
+            .setNotification(TerminalScreenProto.DesktopNotification.newBuilder()
+                .setTitle("done").setBody("body")))
+        .build().toByteArray());
+
+    assertEquals(1, deliveries[0]);
+  }
+
   private static RuntimeFixture runtimeWithSnapshot(
       TerminalScreenProto.ScreenEnvelope snapshot) {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),

@@ -1,7 +1,7 @@
 # Screen 状态增量恢复实施方案（修订版）
 
 **日期：** 2026-07-14  
-**状态：** 实施中：Task 0–6 已完成（分支 feat/screen-delta-resume），Task 7 起待实施
+**状态：** 实施中：Task 0–7 已完成（分支 feat/screen-delta-resume），Task 8 待实施
 **范围：** Go `webterm.screen.v1`、Android terminal runtime、页面生命周期、混合版本发布  
 **目标：** 页面切换优先复用同一 Runtime；真实断线或 WARM 会话重连时，服务端根据各状态组件的最后变化 revision 直接生成“当前最终状态 Patch”；只有状态无法连续、协议屏障已跨越或 Patch 不划算时才发送 Snapshot。
 
@@ -634,6 +634,15 @@ Snapshot 才能解除。对应契约测试已全部启用。
 - Application/DeviceService effect routing
 
 实现 connection/runtime 所有权迁移、完整 registry key、grace/LRU/内存压力策略、viewport state 和持久 effect sink。
+
+实施状态（2026-07-14，分支 feat/screen-delta-resume）：`TerminalSessionRuntimeRegistry`
+现以 server config、账号身份、规范化 URL、Relay device、session 五元组隔离 Runtime，
+集中执行 60 秒 HOT grace、3 HOT / 5 WARM、64 MiB WARM history 预算、后台 30 秒
+降温与内存压力淘汰。View detach 只移除 listener、发送 focus=false、释放 layout
+lease，既不关闭 channel 也不清 model；HOT reattach 复用 channel，WARM reattach
+保留 ResumeToken 并重建 screen channel，COLD 才创建新 model。Viewport 改为 Registry
+内的 session-scoped 状态。Application Context effect sink 在页面不存在时仍处理通知，
+并明确拒绝无前台上下文的 clipboard 请求；Activity 重建不再关闭进程级共享 mux。
 
 ### Task 8：兼容发布、指标和真机回归
 

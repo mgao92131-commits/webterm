@@ -91,6 +91,12 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     @Override protected void onResume() { super.onResume(); coordinator.onResume(); }
     @Override protected void onPause() { coordinator.onPause(); super.onPause(); }
     @Override protected void onDestroy() { coordinator.onDestroy(); super.onDestroy(); }
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            coordinator.onMemoryPressure();
+        }
+    }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {

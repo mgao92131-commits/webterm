@@ -152,7 +152,7 @@ public final class AppFlowCoordinator implements
             if (mRelayService != null) {
                 mRelayService.resetAndRefresh();
             }
-            if (mScreenMode == ScreenMode.TERMINAL && remoteTerminalIntegration.hasSession()) {
+            if (mScreenMode == ScreenMode.TERMINAL && remoteTerminalIntegration.needsReconnect()) {
                 requestTerminalFreshReconnect();
             }
         });
@@ -179,6 +179,7 @@ public final class AppFlowCoordinator implements
     public void onResume() {
         mInForeground = true;
         activityResumed = true;
+        remoteTerminalIntegration.setAppVisible(true);
         if (!currentTerminalConnectionKey.isEmpty() && !currentTerminalSessionId.isEmpty()) {
             terminalFocus.setVisible(currentTerminalConnectionKey, currentTerminalSessionId);
         }
@@ -196,7 +197,7 @@ public final class AppFlowCoordinator implements
             mHomeFragment.refreshDevices();
         }
 
-        if (remoteTerminalIntegration.hasSession()) {
+        if (remoteTerminalIntegration.needsReconnect()) {
             requestTerminalFreshReconnect();
         }
         mNetworkRecoveryController.register();
@@ -206,6 +207,7 @@ public final class AppFlowCoordinator implements
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
         mInForeground = false;
         activityResumed = false;
+        remoteTerminalIntegration.setAppVisible(false);
         terminalFocus.clear();
         if (!hasTerminalSession()) {
             mRelayService.stop();
@@ -215,10 +217,14 @@ public final class AppFlowCoordinator implements
     public void onDestroy() {
         mainHandler.removeCallbacksAndMessages(null);
         mRelayService.stop();
-        remoteTerminalIntegration.closeSession();
+        remoteTerminalIntegration.stop();
         terminalCache.shutdown();
-        relayMuxRegistry.shutdown();
-        http.dispatcher().cancelAll();
+        // Relay mux 与 terminal runtime 是进程级所有权。Activity 重建不能关闭它们；
+        // 进程退出时由系统统一回收。
+    }
+
+    public void onMemoryPressure() {
+        remoteTerminalIntegration.onMemoryPressure();
     }
 
     public boolean onBackPressed() {
@@ -278,6 +284,16 @@ public final class AppFlowCoordinator implements
         args.putBoolean("relayDevice", relayDevice);
         args.putString("relayDeviceId", relayDeviceId != null ? relayDeviceId : "");
         args.putString("cwd", cwd != null ? cwd : "");
+        ServerConfig identityServer = mSelectedServer;
+        if (identityServer != null
+            && WebTermUrls.normalizeBaseUrl(identityServer.getUrl()).equals(
+                WebTermUrls.normalizeBaseUrl(baseUrl))) {
+            args.putString("serverConfigId", identityServer.getId());
+            args.putString("authIdentity", identityServer.getUsername());
+        } else {
+            args.putString("serverConfigId", WebTermUrls.normalizeBaseUrl(baseUrl));
+            args.putString("authIdentity", "default");
+        }
         if (mNavController != null) {
             mNavController.navigate(R.id.terminalFragment, args);
         }
@@ -740,6 +756,7 @@ public final class AppFlowCoordinator implements
             && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {
             remoteTerminalIntegration.closeSession();
         }
+        remoteTerminalIntegration.closeServer(server.getId());
         removeCachedTerminalsForServer(server);
         serverConfigs.remove(server);
         saveServers();
@@ -936,6 +953,7 @@ public final class AppFlowCoordinator implements
     }
 
     private void disposeRuntimeForSession(ServerConfig server, String sessionId) {
+        remoteTerminalIntegration.closeStoredSession(server.getId(), sessionId);
         if (isRemoteTerminalActive()
             && sessionId.equals(remoteTerminalIntegration.sessionId())
             && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {

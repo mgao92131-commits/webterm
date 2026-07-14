@@ -1,13 +1,10 @@
 package com.webterm.feature.terminal.domain;
 
 import android.app.Activity;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Typeface;
-import android.os.Build;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.Button;
@@ -15,9 +12,7 @@ import android.widget.Button;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LifecycleOwner;
-import androidx.core.app.NotificationCompat;
 
-import com.webterm.feature.terminal.R;
 import com.webterm.feature.terminal.TerminalFragment;
 import com.webterm.feature.terminal.TerminalScreenBuilder;
 import com.webterm.feature.terminal.TerminalConnectionStatusView;
@@ -55,13 +50,12 @@ public final class RemoteTerminalIntegration {
   private final TerminalSessionRuntimeRegistry registry;
   private final ScreenMuxConnection.Factory screenConnectionFactory;
 
-  private static final String NOTIFICATION_CHANNEL_ID = "terminal_notifications";
-
   private TerminalClipboardPolicy clipboardPolicy;
 
   private TerminalViewModel.TerminalSessionArgs currentArgs;
   private TerminalFragment activeFragment;
   private TerminalSessionRuntime runtime;
+  private TerminalRuntimeKey runtimeKey;
   private TerminalScreenController controller;
   private LifecycleOwner controllerOwner;
   private ScreenMuxConnection connection;
@@ -91,7 +85,10 @@ public final class RemoteTerminalIntegration {
     this.activeFragment = fragment;
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
 
-    runtime = registry.getOrCreate(args.sessionId, TerminalHistoryBudgets.forDevice(activity));
+    runtimeKey = new TerminalRuntimeKey(args.serverConfigId, args.authIdentity, args.baseUrl,
+        args.relayDeviceId, args.sessionId);
+    runtime = registry.acquire(runtimeKey, TerminalHistoryBudgets.forDevice(activity));
+    runtime.setEffectSink(new ApplicationTerminalEffectSink(activity));
     runtime.setAuthenticationListener(reason -> {
       AuthenticationListener listener = authenticationListener;
       if (listener != null) listener.onAuthenticationRequired(reason);
@@ -102,15 +99,19 @@ public final class RemoteTerminalIntegration {
     // initial SNAPSHOT round trip can be dropped while ScreenMuxConnection has no
     // listener yet. That snapshot is the only authoritative restoration of the
     // local history window.
-    connection = screenConnectionFactory.create(
-        args.baseUrl, args.cookie, args.sessionId, args.relayDeviceId);
-    runtime.attachConnection(connection);
-    connection.connect(80, 24);
+    if (!runtime.hasConnection()) {
+      connection = screenConnectionFactory.create(
+          args.baseUrl, args.cookie, args.sessionId, args.relayDeviceId);
+      runtime.attachConnection(connection);
+      connection.connect(80, 24);
+    } else {
+      connection = null; // live channel is retained and owned by runtime
+    }
 
     view = new RemoteTerminalView(activity);
     view.setTextSize(fontSize);
     view.setTypeface(typeface);
-    controller = new TerminalScreenController(runtime);
+    controller = new TerminalScreenController(runtime, registry.viewport(runtimeKey));
     RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(view, controller,
         connectionStatusView::updateRemote);
     // 键盘弹出期间内容刷新（光标移动/新输出）时重算避让平移，
@@ -135,9 +136,6 @@ public final class RemoteTerminalIntegration {
           break;
         case CLIPBOARD_WRITE:
           handleClipboardWrite(effect.asClipboardWrite());
-          break;
-        case NOTIFICATION:
-          handleNotification(activity, effect.asNotification());
           break;
         default:
           break;
@@ -181,6 +179,10 @@ public final class RemoteTerminalIntegration {
   }
 
   public void stop() {
+    clearViewBindings(true);
+  }
+
+  private void clearViewBindings(boolean releaseRuntime) {
     if (controller != null) {
       controller.setEffectListener(null);
       if (controllerOwner != null) {
@@ -189,18 +191,13 @@ public final class RemoteTerminalIntegration {
       controller = null;
     }
     controllerOwner = null;
-    if (connection != null) {
-      connection.close();
-      connection = null;
-    }
-    // A reopened page must never render a previous View's screen as if it were
-    // the newly attached projection. The following server snapshot repopulates
-    // both screen and history atomically after the listener is already active.
     if (runtime != null) {
       runtime.setAuthenticationListener(null);
-      runtime.model().resetForReconnect();
+      if (releaseRuntime && runtimeKey != null) registry.releaseView(runtimeKey);
     }
+    connection = null;
     runtime = null;
+    runtimeKey = null;
     view = null;
     root = null;
     terminalViewport = null;
@@ -223,14 +220,33 @@ public final class RemoteTerminalIntegration {
   }
 
   public void closeSession() {
-    if (runtime != null) {
-      runtime.close();
-    }
-    stop();
+    TerminalRuntimeKey key = runtimeKey;
+    clearViewBindings(false);
+    if (key != null) registry.close(key);
   }
 
   public boolean hasSession() {
     return runtime != null;
+  }
+
+  public boolean needsReconnect() {
+    return runtime != null && !runtime.hasConnection();
+  }
+
+  public void setAppVisible(boolean visible) {
+    registry.setAppVisible(visible);
+  }
+
+  public void onMemoryPressure() {
+    registry.onMemoryPressure();
+  }
+
+  public void closeServer(@NonNull String serverConfigId) {
+    registry.closeServer(serverConfigId);
+  }
+
+  public void closeStoredSession(@NonNull String serverConfigId, @NonNull String sessionId) {
+    registry.closeSession(serverConfigId, sessionId);
   }
 
   @Nullable
@@ -260,22 +276,15 @@ public final class RemoteTerminalIntegration {
           currentArgs.baseUrl, cookie, currentArgs.sessionId,
           currentArgs.termTitle, currentArgs.createdAt,
           currentArgs.instanceId, currentArgs.relayDevice, currentArgs.relayDeviceId,
-          currentArgs.cwd
+          currentArgs.cwd, currentArgs.serverConfigId, currentArgs.authIdentity
       );
     }
-    if (connection != null) {
-      connection.close();
-    }
     if (runtime != null) {
-      runtime.model().resetForReconnect();
-    }
-    if (currentArgs != null && connection != null) {
+      runtime.suspendConnection();
       connection = screenConnectionFactory.create(
           currentArgs.baseUrl, currentArgs.cookie, currentArgs.sessionId,
           currentArgs.relayDeviceId);
-      if (runtime != null) {
-        runtime.attachConnection(connection);
-      }
+      runtime.attachConnection(connection);
       connection.connect(80, 24);
     }
   }
@@ -388,30 +397,4 @@ public final class RemoteTerminalIntegration {
     }
   }
 
-  private void handleNotification(@NonNull Activity activity, @NonNull TerminalScreenEffect.Notification notification) {
-    NotificationManager manager = (NotificationManager)
-        activity.getSystemService(Context.NOTIFICATION_SERVICE);
-    if (manager == null) return;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      NotificationChannel channel = new NotificationChannel(
-          NOTIFICATION_CHANNEL_ID,
-          activity.getString(R.string.terminal_notification_channel_name),
-          NotificationManager.IMPORTANCE_DEFAULT);
-      manager.createNotificationChannel(channel);
-    }
-    NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, NOTIFICATION_CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_menu_info_details)
-        .setContentTitle(sanitize(notification.title))
-        .setContentText(sanitize(notification.body))
-        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        .setAutoCancel(true);
-    manager.notify((int) System.currentTimeMillis(), builder.build());
-  }
-
-  @NonNull
-  private static String sanitize(@NonNull String value) {
-    // 清理控制字符，限制长度。
-    String cleaned = value.replaceAll("[\\p{Cntrl}]", " ");
-    return cleaned.length() > 200 ? cleaned.substring(0, 200) + "…" : cleaned;
-  }
 }
