@@ -1,7 +1,7 @@
 # Screen 状态增量恢复实施方案（修订版）
 
 **日期：** 2026-07-14  
-**状态：** 实施中：Task 0–1 已完成（分支 feat/screen-delta-resume），Task 2 起待实施  
+**状态：** 实施中：Task 0–2 已完成（分支 feat/screen-delta-resume），Task 3 起待实施  
 **范围：** Go `webterm.screen.v1`、Android terminal runtime、页面生命周期、混合版本发布  
 **目标：** 页面切换优先复用同一 Runtime；真实断线或 WARM 会话重连时，服务端根据各状态组件的最后变化 revision 直接生成“当前最终状态 Patch”；只有状态无法连续、协议屏障已跨越或 Patch 不划算时才发送 Snapshot。
 
@@ -168,6 +168,8 @@ SnapshotBarrierRevision uint64
 
 现状说明：当前 `ForceSnapshot` 仅在 style/link 字典超过 4096 项轮转时置位（`go-core/internal/screenprojection/projector.go`）；main/alternate buffer 切换与 epoch 变化目前靠 `FrameDeriver` 的 baseline 比较（`ActiveBuffer`/`Epoch`/`DictionaryGeneration` 不匹配）触发 Snapshot，不经过 ForceSnapshot。实施时需把这些触发点统一改为推进 `SnapshotBarrierRevision`。
 
+实施说明（2026-07-14，Task 2）：barrier 的单调性只在同一 epoch 内成立——epoch 变化时 ChangeIndex 整体重置，barrier 设为新 epoch 首个导出 revision（§6 的 epoch 校验先于 barrier 判定，跨 epoch resume 永远走不到 barrier 判定）。NewProjector 后首次导出视为"projector/model 整体重建"事件，barrier 初值取首次导出 revision。历史 LineID 体系重置目前以 scrollback NextID 回退为探测 seam（`Clear`/`ResetForReflow` 暂无生产调用路径，属前置保守实现）。
+
 ### 4.3 ChangeIndex
 
 ```go
@@ -288,6 +290,8 @@ historyWatermark = 当前 firstAvailableHistoryLineId
 ```
 
 Patch 可以从 revision 100 直接跳到 150；不回放 101..149。只有最终状态必须完整表达。
+
+实施说明（2026-07-14，Task 2）：cursor/modes/palette 第一版在累计 Patch 中**总是携带当前值**（沿用在线 diff 的既有 wire 语义，encoder 对 patch 总是编码这三个组件）；各组件的 ChangedRevision 仅用于空 Patch 判定与 §13 指标，未来引入显式 presence 时再按 `revision > clientRevision` 决定是否出现。另外，revision 有 gap 但 gap 内无任何可观察变化（bell 等只推进 revision 的输出）时按 exact resume 处理——合法 Patch 必须满足 `screenRevision > baseRevision` 且 §10.1 禁止空 Patch，由 Task 4 以 `ResumeAck(currentRevision)` 直接把客户端推进到 currentRevision。推导实现为纯函数 `screenprojection.DeriveResumeFrame`。
 
 ### 6.1 成本降级
 
