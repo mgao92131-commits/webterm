@@ -1,6 +1,8 @@
 package com.webterm.mobile.ui;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -8,6 +10,7 @@ import android.view.WindowManager;
 
 import com.webterm.mobile.R;
 import com.webterm.mobile.device.AndroidNotificationRenderer;
+import com.webterm.mobile.device.WebTermDeviceService;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.feature.home.HomeHost;
@@ -29,6 +32,8 @@ import javax.inject.Inject;
 @AndroidEntryPoint
 public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions, NotificationOpenHost {
 
+    private static final int REQUEST_POST_NOTIFICATIONS = 1001;
+
     @Inject AppFlowCoordinator coordinator;
 
     @Override
@@ -41,6 +46,21 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         coordinator.attachActivity(this);
         coordinator.onCreate();
         handleNotificationIntent(getIntent());
+        requestNotificationPermissionIfNeeded();
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIFICATIONS);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_POST_NOTIFICATIONS) return;
+        if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) return;
+        WebTermDeviceService.start(this);
     }
 
     @Override
