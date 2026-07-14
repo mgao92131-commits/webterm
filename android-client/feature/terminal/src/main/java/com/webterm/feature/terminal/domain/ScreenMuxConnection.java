@@ -10,6 +10,7 @@ import com.webterm.core.session.RelayMuxSessionManager;
 import com.webterm.core.session.RelayMuxSessionRegistry;
 import com.webterm.terminal.protocol.ScreenMessageBuilder;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+import com.webterm.terminal.model.ResumeToken;
 
 import dagger.assisted.Assisted;
 import dagger.assisted.AssistedFactory;
@@ -68,6 +69,12 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
   @Override
   public void setListener(@NonNull Listener listener) {
     this.listener = listener;
+  }
+
+  @Override
+  public boolean beginSync(@NonNull ResumeToken resumeToken) {
+    sendHello(resumeToken);
+    return relayMuxSession != null && relayChannelId != null;
   }
 
   @Override
@@ -197,7 +204,6 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
     relayChannelId = relayMuxSession.openScreenChannel(localSessionId, new RelayMuxSessionManager.ChannelListener() {
       @Override
       public void onConnected(String channelId) {
-        sendHello();
         if (listener != null) listener.onConnected();
       }
 
@@ -238,9 +244,10 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
     });
   }
 
-  private void sendHello() {
+  private void sendHello(@NonNull ResumeToken resumeToken) {
     if (relayMuxSession == null || relayChannelId == null) return;
-    relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.hello(columns, rows), true);
+    relayMuxSession.sendTunnelFrame(
+        relayChannelId, ScreenMessageBuilder.hello(columns, rows, resumeToken), true);
   }
 
   private static TerminalScreenProto.MouseButton mouseButtonFromString(@NonNull String button) {

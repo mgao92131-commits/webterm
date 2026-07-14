@@ -1,11 +1,14 @@
 package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Ignore;
@@ -62,11 +65,22 @@ public final class ScreenResumeContractTest {
     // model executor 事务内应用，已 trim 行不得复活；与 HistoryTrim 乱序无关。
   }
 
-  @Ignore("Task 5/6：SYNCING 状态机与恢复完成门尚未实现（计划 §7.2）")
   @Test
   public void connectedOnlyAfterResumeAckOrAtomicResumeFrame() {
-    // Task 5/6：收到并校验 ResumeAck，或成功原子应用恢复 Patch/Snapshot 之后，
-    // 才允许进入 CONNECTED。
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onConnected();
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+    assertFalse(connection.resumeToken.hasProjection);
+    assertEquals("SYNCING must not acquire an interactive lease", 0, connection.acquireRequests);
+
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+    assertEquals(1, connection.acquireRequests);
+    assertTrue(runtime.model().projectionHealth().complete);
   }
 
   @Ignore("Task 6：校验失败的单一 resync fence 收敛尚未实现（计划 §10.2）")
@@ -106,11 +120,19 @@ public final class ScreenResumeContractTest {
   private static final class FakeScreenConnection implements TerminalSessionRuntime.ScreenConnection {
     int resyncRequests;
     int reconnectRequests;
+    int acquireRequests;
+    ResumeToken resumeToken = ResumeToken.cold(0);
     Listener listener;
 
     @Override
     public void setListener(@NonNull Listener listener) {
       this.listener = listener;
+    }
+
+    @Override
+    public boolean beginSync(@NonNull ResumeToken resumeToken) {
+      this.resumeToken = resumeToken;
+      return false;
     }
 
     @Override
@@ -153,7 +175,7 @@ public final class ScreenResumeContractTest {
     }
 
     @Override
-    public void acquireLayout(boolean interactive) {}
+    public void acquireLayout(boolean interactive) { acquireRequests++; }
 
     @Override
     public void releaseLayout() {}

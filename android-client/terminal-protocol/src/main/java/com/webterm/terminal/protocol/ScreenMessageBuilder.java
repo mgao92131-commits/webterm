@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+import com.webterm.terminal.model.ResumeToken;
 
 /**
  * 构造 webterm.screen.v1 出站 Protobuf 消息。
@@ -14,10 +15,22 @@ public final class ScreenMessageBuilder {
 
   @NonNull
   public static byte[] hello(int cols, int rows) {
+    return hello(cols, rows, ResumeToken.cold(0));
+  }
+
+  @NonNull
+  public static byte[] hello(int cols, int rows, @NonNull ResumeToken resumeToken) {
     TerminalScreenProto.Hello hello = TerminalScreenProto.Hello.newBuilder()
         .setVersion(1)
         .setCols(cols)
         .setRows(rows)
+        .setHasProjection(resumeToken.hasProjection)
+        .setInstanceId(resumeToken.instanceId)
+        .setLayoutEpoch(resumeToken.layoutEpoch)
+        .setScreenRevision(resumeToken.screenRevision)
+        .setCapabilities(TerminalScreenProto.CapabilitySet.newBuilder()
+            .setRowPatches(true)
+            .build())
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.HELLO,
         TerminalScreenProto.ScreenEnvelope.newBuilder().setHello(hello)).toByteArray();

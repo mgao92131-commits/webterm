@@ -9,6 +9,7 @@ import androidx.annotation.Nullable;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.protocol.ScreenMessageMapper;
 import com.webterm.terminal.protocol.ScreenMessageValidator;
@@ -47,6 +48,8 @@ public final class TerminalSessionRuntime {
 
   public enum State {
     CONNECTING,
+    TRANSPORT_CONNECTED,
+    SYNCING,
     CONNECTED,
     RECONNECTING,
     CLOSED
@@ -60,6 +63,8 @@ public final class TerminalSessionRuntime {
   /** 屏幕协议连接抽象。 */
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
+    /** transport 建立后由 model executor 提供原子 resume token 并开始 Hello。 */
+    default boolean beginSync(@NonNull ResumeToken resumeToken) { return false; }
     void setLayoutLeaseId(@NonNull String leaseId);
     void sendTextInput(@NonNull String text);
     void sendPasteInput(@NonNull String text);
@@ -120,6 +125,7 @@ public final class TerminalSessionRuntime {
   private volatile ScreenConnection connection;
   @Nullable private volatile AuthenticationListener authenticationListener;
   private final TimeoutScheduler timeoutScheduler;
+  private long syncGeneration;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -191,11 +197,8 @@ public final class TerminalSessionRuntime {
 
       @Override
       public void onConnected() {
-        updateState(State.CONNECTED);
-        ScreenConnection c = connection;
-        if (c != null) {
-          c.acquireLayout(true);
-        }
+        updateState(State.TRANSPORT_CONNECTED);
+        modelExecutor.execute(() -> beginSynchronization(connection));
       }
 
       @Override
@@ -205,7 +208,10 @@ public final class TerminalSessionRuntime {
         layoutLeaseGranted = false;
         layoutLeaseId = "";
         // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
-        modelExecutor.execute(() -> resetResyncRecovery());
+        modelExecutor.execute(() -> {
+          syncGeneration++;
+          resetResyncRecovery();
+        });
         updateState(State.RECONNECTING);
       }
 
@@ -216,7 +222,10 @@ public final class TerminalSessionRuntime {
         // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
         // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
         // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
-        modelExecutor.execute(() -> resetResyncRecovery());
+        modelExecutor.execute(() -> {
+          syncGeneration++;
+          resetResyncRecovery();
+        });
         updateState(State.RECONNECTING);
         if (authenticationListener != null) {
           callbackExecutor.execute(() -> {
@@ -248,7 +257,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendTextInput(@NonNull String text) {
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendTextInput(text);
@@ -256,7 +265,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendPasteInput(@NonNull String text) {
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendPasteInput(text);
@@ -265,7 +274,7 @@ public final class TerminalSessionRuntime {
 
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
@@ -275,7 +284,7 @@ public final class TerminalSessionRuntime {
   public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
@@ -283,7 +292,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendFocusInput(boolean focused) {
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendFocusInput(focused);
@@ -296,7 +305,7 @@ public final class TerminalSessionRuntime {
     // 否则首次连接（租约往返慢于 View 首帧）或断线重连期间的尺寸请求会静默丢失。
     lastRequestedCols = cols;
     lastRequestedRows = rows;
-    if (!layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !layoutLeaseGranted) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.requestResize(cols, rows);
@@ -308,6 +317,7 @@ public final class TerminalSessionRuntime {
    * 否则返回 false，调用方必须清除 loading 状态并允许之后重试。
    */
   public boolean requestHistoryPage(long beforeLineId, int limit) {
+    if (state != State.CONNECTED) return false;
     ScreenConnection c = connection;
     if (c == null) return false;
     String requestId = "h-" + nextHistoryRequestId.incrementAndGet();
@@ -337,6 +347,36 @@ public final class TerminalSessionRuntime {
     }
     layoutLeaseId = "";
     layoutLeaseGranted = false;
+    modelExecutor.execute(() -> syncGeneration++);
+  }
+
+  // ---- transport/screen 同步状态机（modelExecutor 唯一推进） ----
+
+  private void beginSynchronization(@NonNull ScreenConnection expectedConnection) {
+    if (state == State.CLOSED || connection != expectedConnection) return;
+    ResumeToken token = resyncState == ResyncState.IDLE
+        ? model.resumeToken()
+        : ResumeToken.cold(RemoteTerminalModel.SCHEMA_GENERATION);
+    updateState(State.SYNCING);
+    long generation = ++syncGeneration;
+    if (expectedConnection.beginSync(token)) {
+      timeoutScheduler.schedule(
+          () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
+          RESYNC_SNAPSHOT_TIMEOUT_MS);
+    }
+  }
+
+  private void onSynchronizationTimeout(long generation) {
+    if (generation != syncGeneration || state != State.SYNCING) return;
+    startResyncRecovery("initial synchronization timeout");
+  }
+
+  private void completeSynchronization() {
+    if (state != State.SYNCING && state != State.TRANSPORT_CONNECTED) return;
+    syncGeneration++;
+    updateState(State.CONNECTED);
+    ScreenConnection c = connection;
+    if (c != null) c.acquireLayout(true);
   }
 
   private void handleScreenMessage(byte[] payload) {
@@ -509,6 +549,7 @@ public final class TerminalSessionRuntime {
             // A snapshot atomically replaces the local projection and is the
             // only frame that may release a revision-gap recovery fence.
             onAuthoritativeSnapshot();
+            completeSynchronization();
             break;
           }
           case PATCH:
@@ -522,6 +563,7 @@ public final class TerminalSessionRuntime {
             // 行索引上界只能相对本地投影校验（计划 §10.1）。
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
+            completeSynchronization();
             break;
           case HISTORY_PAGE:
             // A page is anchored to the cache window that requested it. A late
@@ -551,9 +593,12 @@ public final class TerminalSessionRuntime {
             updateState(State.CLOSED);
             break;
           case RESUME_ACK:
-            // exact resume 确认：Task 6 才正式消费。现阶段与未知类型一致显式忽略，
-            // 不触碰本地 revision，也不触发 resync。
+            model.applyResumeAck(
+                envelope.getResumeAck().getInstanceId(),
+                envelope.getResumeAck().getLayoutEpoch(),
+                envelope.getResumeAck().getScreenRevision());
             change = ModelChange.none();
+            completeSynchronization();
             break;
           default:
             change = ModelChange.none();
@@ -581,6 +626,7 @@ public final class TerminalSessionRuntime {
   }
 
   private void handleLayoutLease(TerminalScreenProto.LayoutLease lease) {
+    if (state != State.CONNECTED) return;
     if (lease.getGranted()) {
       layoutLeaseId = lease.getLeaseId();
       layoutLeaseGranted = true;

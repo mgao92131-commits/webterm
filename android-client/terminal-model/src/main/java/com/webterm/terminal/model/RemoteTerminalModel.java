@@ -12,6 +12,8 @@ import java.util.Set;
  * Android 远程终端模型。只维护投影和缓存，可由 Go 权威快照重建。
  */
 public final class RemoteTerminalModel {
+
+  public static final long SCHEMA_GENERATION = 1L;
   // 历史容量是双上限：行数是安全上限，字节是近似内存预算（estimateHistoryLineBytes），
   // 先达到者触发驱逐。保留行数随列宽和内容变化（80 列文本行约 5–6KB 估算），
   // 产品和注释都不承诺固定保留行数。默认值可由 HistoryBudget 按设备内存分档覆盖。
@@ -47,6 +49,8 @@ public final class RemoteTerminalModel {
    * on every frame.
    */
   private volatile RenderSnapshot renderSnapshot = RenderSnapshot.empty();
+  private volatile ProjectionHealth projectionHealth =
+      ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
   public RemoteTerminalModel() {
     this(HistoryBudget.defaults());
@@ -122,6 +126,9 @@ public final class RemoteTerminalModel {
     }
 
     publishRenderSnapshot(true, true, true);
+    projectionHealth = projectionIsStructurallyComplete()
+        ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
+        : ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
     return ModelChange.full(geometryChanged);
   }
@@ -133,6 +140,7 @@ public final class RemoteTerminalModel {
     if (screenRevision != patch.baseRevision) {
       throw new RevisionGapException("revision gap: local=" + screenRevision + " base=" + patch.baseRevision);
     }
+    boolean projectionWasComplete = projectionHealth.complete;
 
     Set<Integer> changedRows = new HashSet<>();
     int tailAppendedLines = 0;
@@ -190,6 +198,9 @@ public final class RemoteTerminalModel {
     screenRevision = patch.screenRevision;
     evictHistoryIfNeeded();
     publishRenderSnapshot(historyChanged, stylesChanged, linksChanged);
+    projectionHealth = projectionWasComplete && patchReferencesComplete(patch)
+        ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
+        : ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
     return new ModelChange(
         false,
@@ -201,6 +212,19 @@ public final class RemoteTerminalModel {
         tailAppendedLines,
         0
     );
+  }
+
+  /** exact resume 只推进已验证的 revision，不修改任何投影内容。 */
+  public synchronized void applyResumeAck(String ackInstanceId, long ackLayoutEpoch,
+                                          long ackScreenRevision) throws RevisionGapException {
+    if (instanceId == null || !instanceId.equals(ackInstanceId)
+        || layoutEpoch != ackLayoutEpoch || ackScreenRevision < screenRevision) {
+      throw new RevisionGapException("resume ack does not match local projection");
+    }
+    screenRevision = ackScreenRevision;
+    projectionHealth = projectionIsStructurallyComplete()
+        ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
+        : ProjectionHealth.incomplete(SCHEMA_GENERATION);
   }
 
   public synchronized ModelChange prependHistoryPage(HistoryPage page) {
@@ -262,6 +286,52 @@ public final class RemoteTerminalModel {
     title = "";
     workingDirectory = "";
     publishRenderSnapshot(true, true, true);
+    projectionHealth = ProjectionHealth.incomplete(SCHEMA_GENERATION);
+  }
+
+  /** 只能在 model executor 的完整事务边界读取，返回不可变快照。 */
+  public synchronized ProjectionHealth projectionHealth() {
+    return projectionHealth;
+  }
+
+  /** 只能在 model executor 上调用，保证版本字段来自同一个已提交模型事务。 */
+  public synchronized ResumeToken resumeToken() {
+    return ResumeToken.from(projectionHealth);
+  }
+
+  private boolean projectionIsStructurallyComplete() {
+    if (instanceId == null || instanceId.isEmpty() || layoutEpoch < 1 || screenRevision < 1
+        || rows <= 0 || columns <= 0 || screen == null || screen.length != rows) {
+      return false;
+    }
+    for (TerminalLine line : screen) {
+      if (line == null || line.length() != columns || !referencesComplete(line)) return false;
+    }
+    TerminalHistorySnapshot historySnapshot = history.snapshot();
+    for (int i = 0; i < historySnapshot.size(); i++) {
+      if (!referencesComplete(historySnapshot.lineAt(i))) return false;
+    }
+    return true;
+  }
+
+  private boolean referencesComplete(TerminalLine line) {
+    for (int i = 0; i < line.length(); i++) {
+      TerminalCell cell = line.at(i);
+      if (cell == null) return false;
+      if (cell.styleId != 0 && !styles.containsKey(cell.styleId)) return false;
+      if (cell.linkId != 0 && !links.containsKey(cell.linkId)) return false;
+    }
+    return true;
+  }
+
+  private boolean patchReferencesComplete(ScreenPatch patch) {
+    for (TerminalLine line : patch.screenRows) {
+      if (!referencesComplete(line)) return false;
+    }
+    for (TerminalLine line : patch.historyAppend) {
+      if (!referencesComplete(line)) return false;
+    }
+    return true;
   }
 
   /** Returns the atomically published, immutable input for one Canvas frame. */

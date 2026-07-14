@@ -39,10 +39,12 @@ public final class TerminalSessionRuntimeResizeTest {
         Runnable::run, Runnable::run, scheduler);
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
+    connection.listener.onConnected();
   }
 
   @Test
   public void requestResizeBeforeLeaseGranted_isFlushedOnGrant() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
     runtime.requestResize(120, 40);
     assertTrue("租约授予前不应发送 resize", connection.resizes.isEmpty());
 
@@ -57,6 +59,7 @@ public final class TerminalSessionRuntimeResizeTest {
 
   @Test
   public void requestResizeDuringDisconnect_isFlushedAfterRegrant() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
     grantLease("lease-1");
     runtime.requestResize(120, 40);
     assertEquals(1, connection.resizes.size());
@@ -67,6 +70,8 @@ public final class TerminalSessionRuntimeResizeTest {
     runtime.requestResize(130, 50);
     assertEquals("断线期间的 resize 不应丢进死通道", 1, connection.resizes.size());
 
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
     grantLease("lease-2");
     assertEquals("lease-2", connection.leaseId);
     assertEquals("拿到新租约后应补发最新尺寸", 2, connection.resizes.size());

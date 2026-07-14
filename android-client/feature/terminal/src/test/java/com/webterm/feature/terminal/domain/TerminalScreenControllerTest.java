@@ -41,6 +41,7 @@ public final class TerminalScreenControllerTest {
         Runnable::run, Runnable::run);
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
+    connection.listener.onConnected();
     controller = new TerminalScreenController(runtime);
     view = new RecordingView();
     LifecycleOwner owner = mock(LifecycleOwner.class);
