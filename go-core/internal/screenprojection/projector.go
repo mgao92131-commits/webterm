@@ -7,6 +7,16 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
+// paletteState 是投影的调色板分量（ReverseVideo/DefaultFG/DefaultBG/CursorColor）。
+// 当前导出恒为默认值（OSC 调色板覆盖 ProjectionRead.Colors 尚未接入投影），
+// 接入后 ChangeIndex.PaletteChangedRevision 会自动开始推进。
+type paletteState struct {
+	reverseVideo bool
+	defaultFG    terminalengine.Color
+	defaultBG    terminalengine.Color
+	cursorColor  terminalengine.Color
+}
+
 // projectedState 缓存最近一次完整权威投影。它只在导出侧（ExportState 持
 // p.mu 期间）读写，不跨 goroutine 共享。screen 中未变化的行复用旧 Line
 // 对象；Line 一旦创建即不可变，合并时只整体替换。
@@ -18,6 +28,7 @@ type projectedState struct {
 	activeBuffer terminalengine.BufferKind
 	cursor       terminalengine.Cursor
 	modes        terminalengine.Modes
+	palette      paletteState
 	title        string
 	workingDir   string
 	// 历史窗口缓存（阶段 2c）：已导出的尾部窗口行（Line 不可变，跨帧零拷贝
@@ -64,6 +75,14 @@ func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
 	s.activeBuffer = activeBuffer
 	s.cursor = exportProjectionCursor(proj.Cursor)
 	s.modes = exportProjectionModes(proj.Modes)
+	// palette 当前常量导出（见 paletteState 注释）；集中在这里赋值，
+	// 一旦接入动态调色板，ChangeIndex 的 palette 比较无需改动。
+	s.palette = paletteState{
+		reverseVideo: false,
+		defaultFG:    terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		defaultBG:    terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+		cursorColor:  terminalengine.Color{Kind: terminalengine.ColorCursor},
+	}
 	s.title = proj.Title
 	s.workingDir = proj.WorkingDir
 }
@@ -84,6 +103,18 @@ type Projector struct {
 	// from a stale dictionary even when the ForceSnapshot frame was coalesced
 	// away by a single-slot mailbox.
 	dictGeneration uint64
+	// changeIndex 记录各状态组件最后一次变化的导出 revision 与持久 snapshot
+	// 屏障（计划 docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
+	// §4.2/§4.3），只在 p.mu 持锁期间读写（规则 5）。它不参与在线
+	// FrameDeriver 热路径，仅供 resume 推导（resume.go）。
+	changeIndex ChangeIndex
+	// changeIndexReady 标记首次导出已完成：NewProjector 后的首次导出视为
+	// “projector 整体重建”事件，把 barrier 初始化到首次导出 revision。
+	changeIndexReady bool
+	// scrollbackNextID 是上次导出时观察到的 scrollback.NextID()。nextID 回退
+	// 表示历史 LineID 体系被 Clear/ResetForReflow 重置（§4.2 barrier 事件）；
+	// Pop（resize 放大从 scrollback 回拉行）不回退 nextID，不会误触发。
+	scrollbackNextID uint64
 }
 
 // FrameDeriver owns one transport client's last successfully scheduled
@@ -138,12 +169,37 @@ func (p *Projector) ExportState(epoch, seq uint64) terminalengine.ScreenFrame {
 }
 
 func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFrame {
+	if !p.changeIndexReady {
+		// projector 整体重建（NewProjector 后首次导出，§4.2）：barrier 初值取
+		// 首次导出 revision。结合 §6 的 clientRevision < barrier → Snapshot
+		// 语义，更早 revision 的恢复请求一律走 snapshot；同一 instance/epoch
+		// 的客户端 revision 必然 >= 该值，不会被误伤。
+		p.changeIndex.advanceBarrier(seq)
+		p.changeIndexReady = true
+	}
 	if p.exportEpoch != epoch {
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.exportEpoch = epoch
 		p.dictGeneration++
 		// 缓存行引用的 style/link ID 出自被废弃的字典，必须整体重建。
 		p.projected = projectedState{}
+		// epoch 变化：ChangeIndex 整体重置，barrier 直接设为新 epoch 首个导出
+		// revision。同 epoch 的客户端不可能跨越 epoch resume（§6 的 epoch 校验
+		// 先于 barrier 判定），因此 barrier 的单调性只需在 epoch 内成立；新
+		// epoch 客户端的 revision 必然 >= 该值。字典随 epoch 轮转本身也是
+		// §4.2 的 barrier 事件。
+		p.changeIndex.resetForEpoch(seq)
+	}
+	// 历史 LineID 体系重置探测：nextID 回退只可能来自 TrackedScrollback
+	// Clear/ResetForReflow（当前无生产调用路径，此处是保守的前置 seam）。
+	// 旧 LineID 与新分配不可比较，断线期间的投影不能再 patch 恢复，推进
+	// barrier。普通清屏（ED 2）、全屏重绘不触碰 LineID，不推进。
+	if p.scrollback != nil {
+		nextID := p.scrollback.NextID()
+		if nextID < p.scrollbackNextID {
+			p.changeIndex.advanceBarrier(seq)
+		}
+		p.scrollbackNextID = nextID
 	}
 	frame := p.mergeAndExport(epoch, seq)
 	// 字典只增不改；大量瞬时 RGB/OSC8 若使历史字典膨胀，则以权威 snapshot
@@ -152,6 +208,11 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		p.exporter = newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG})
 		p.dictGeneration++
 		p.projected = projectedState{}
+		// 字典世代轮转（现有 ForceSnapshot 事件，§4.2）：推进 barrier 并重建
+		// created-revision 索引（规则 4）；行/元数据索引仍然有效——屏幕内容
+		// 未变，只是字典编码重建。
+		p.changeIndex.advanceBarrier(seq)
+		p.changeIndex.resetDictionary()
 		frame = p.mergeAndExport(epoch, seq)
 		frame.ForceSnapshot = true
 	}
@@ -160,9 +221,20 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 }
 
 // mergeAndExport 读一次投影、合并进全屏缓存并产出完整 State。产出的帧始终
-// 是完整状态（全屏行 + 元数据），FrameDeriver 与协议层无感知。
+// 是完整状态（全屏行 + 元数据），FrameDeriver 与协议层无感知。合并完成后
+// 同步更新 ChangeIndex（每次导出只与上一权威投影比较一次，因此同一 16ms
+// 窗口内的多次变化天然只保留最终值与最终 revision，规则 6）。
 func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame {
 	s := &p.projected
+	prev := projectedMeta{
+		valid:        s.valid,
+		activeBuffer: s.activeBuffer,
+		cursor:       s.cursor,
+		modes:        s.modes,
+		palette:      s.palette,
+		title:        s.title,
+		workingDir:   s.workingDir,
+	}
 	proj := p.engine.ReadProjection()
 	if !proj.Full && (!s.valid || s.rows != proj.Rows || s.cols != proj.Cols) {
 		// 缓存不可用（首次导出后被 epoch/字典轮转丢弃）或几何与缓存不一致，
@@ -175,6 +247,7 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 		s.merge(proj, p.exporter)
 	}
 	p.engine.ConsumeProjectionDirty(proj)
+	p.updateChangeIndexLocked(seq, prev, proj)
 	return p.assembleFrame(epoch, seq)
 }
 
@@ -209,10 +282,10 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 		Rows:         s.rows,
 		Cols:         s.cols,
 		ActiveBuffer: s.activeBuffer,
-		ReverseVideo: false,
-		DefaultFG:    terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
-		DefaultBG:    terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
-		CursorColor:  terminalengine.Color{Kind: terminalengine.ColorCursor},
+		ReverseVideo: s.palette.reverseVideo,
+		DefaultFG:    s.palette.defaultFG,
+		DefaultBG:    s.palette.defaultBG,
+		CursorColor:  s.palette.cursorColor,
 		Cursor:       s.cursor,
 		Modes:        s.modes,
 		History:      history,
@@ -351,8 +424,9 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		}
 	}
 
-	const snapshotThresholdPercent = 60
-	threshold := len(new.Screen) * snapshotThresholdPercent / 100
+	// 变化行超过阈值时回退 snapshot；阈值与 resume 推导共用
+	// （snapshotRowThresholdPercent，计划 §6.1 第 1 条）。
+	threshold := len(new.Screen) * snapshotRowThresholdPercent / 100
 	if len(changedRows) > threshold {
 		return new
 	}
