@@ -108,6 +108,10 @@ type Projector struct {
 	// §4.2/§4.3），只在 p.mu 持锁期间读写（规则 5）。它不参与在线
 	// FrameDeriver 热路径，仅供 resume 推导（resume.go）。
 	changeIndex ChangeIndex
+	// historyChangeIndex 记录当前权威 scrollback 中各 LineID 的创建 revision。
+	// 与 changeIndex 一样只在 p.mu 下同步和查询；Cell 始终从 scrollback 导出，
+	// 索引本身不复制终端内容。
+	historyChangeIndex HistoryChangeIndex
 	// changeIndexReady 标记首次导出已完成：NewProjector 后的首次导出视为
 	// “projector 整体重建”事件，把 barrier 初始化到首次导出 revision。
 	changeIndexReady bool
@@ -201,7 +205,15 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		}
 		p.scrollbackNextID = nextID
 	}
+	if p.historyChangeIndex.sync(p.scrollback, seq) {
+		// 尾部回退、LineID 跳号或索引遗漏意味着旧投影无法用 append+watermark
+		// 准确修复。推进持久 barrier，并确保在线客户端也收到同 revision snapshot。
+		p.changeIndex.advanceBarrier(seq)
+	}
 	frame := p.mergeAndExport(epoch, seq)
+	if p.historyChangeIndex.GapRevision == seq {
+		frame.ForceSnapshot = true
+	}
 	// 字典只增不改；大量瞬时 RGB/OSC8 若使历史字典膨胀，则以权威 snapshot
 	// 旋转字典。当前可见状态仍超过上限时由协议校验拒绝。
 	if len(frame.Styles) > 4096 || len(frame.Links) > 4096 {

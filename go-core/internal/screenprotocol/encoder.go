@@ -109,6 +109,9 @@ func encodePatch(frame terminalengine.ScreenFrame) *pb.ScreenPatch {
 	if frame.WorkingDirChanged {
 		patch.WorkingDirectory = proto.String(frame.WorkingDir)
 	}
+	if frame.FirstAvailableHistoryLineIDChanged {
+		patch.FirstAvailableHistoryLineId = proto.Uint64(frame.History.FirstAvailableLineID)
+	}
 	return patch
 }
 

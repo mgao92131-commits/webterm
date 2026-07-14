@@ -1,6 +1,7 @@
 package terminalengine
 
 import (
+	"sort"
 	"sync"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
@@ -26,6 +27,15 @@ type ScrollbackWindow struct {
 	FirstID uint64        // 当前最老可用行 ID
 	LastID  uint64        // 当前最新行 ID；历史为空时为 FirstID-1
 	Lines   []HistoryLine // 窗口内的行，按 ID 升序
+}
+
+// ScrollbackIndexWindow 是供版本索引使用的轻量窗口。它只复制 LineID，
+// 不复制 Cell 切片；FirstID/LastID/NextID 与 IDs 在同一次 RLock 下取得。
+type ScrollbackIndexWindow struct {
+	FirstID uint64
+	LastID  uint64
+	NextID  uint64
+	IDs     []uint64
 }
 
 // TrackedScrollback 是 headless-term 的唯一 scrollback provider。
@@ -167,9 +177,10 @@ func (t *TrackedScrollback) LineByID(id uint64) (HistoryLine, bool) {
 	if id < t.firstID || id >= t.nextID {
 		return HistoryLine{}, false
 	}
-	// ID 单调递增且与切片下标一一对应。
-	index := int(id - t.firstID)
-	if index >= len(t.lines) {
+	// Pop 后 nextID 不回退，后续 Push 会留下 ID 缺口；不能用 id-firstID
+	// 直接换算下标。二分保持分页/恢复查询在缺口后仍可用。
+	index := sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID >= id })
+	if index >= len(t.lines) || t.lines[index].ID != id {
 		return HistoryLine{}, false
 	}
 	return t.lines[index], true
@@ -184,7 +195,7 @@ func (t *TrackedScrollback) PageBefore(beforeID uint64, limit int) []HistoryLine
 	}
 	end := len(t.lines)
 	if beforeID < t.nextID {
-		end = int(beforeID - t.firstID)
+		end = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID >= beforeID })
 	}
 	start := end - limit
 	if start < 0 {
@@ -208,7 +219,7 @@ func (t *TrackedScrollback) LinesAfter(lastLineID uint64, limit int) ScrollbackW
 	}
 	start := 0
 	if lastLineID >= t.firstID {
-		start = int(lastLineID - t.firstID + 1)
+		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID > lastLineID })
 	}
 	if len(t.lines)-start > limit {
 		start = len(t.lines) - limit
@@ -233,6 +244,31 @@ func (t *TrackedScrollback) Window(limit int) ScrollbackWindow {
 	}
 	w.Lines = make([]HistoryLine, len(t.lines)-start)
 	copy(w.Lines, t.lines[start:])
+	return w
+}
+
+// IndexAfter 返回 ID 严格大于 lastLineID 的所有当前驻留行 ID 以及原子边界。
+// 该接口只供 HistoryChangeIndex 的增量同步使用；返回量最多等于实际驻留行数，
+// 且不会复制历史 Cell。
+func (t *TrackedScrollback) IndexAfter(lastLineID uint64) ScrollbackIndexWindow {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	w := ScrollbackIndexWindow{
+		FirstID: t.firstID,
+		LastID:  t.lastIDLocked(),
+		NextID:  t.nextID,
+	}
+	if len(t.lines) == 0 || lastLineID >= w.LastID {
+		return w
+	}
+	start := 0
+	if lastLineID >= t.firstID {
+		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID > lastLineID })
+	}
+	w.IDs = make([]uint64, len(t.lines)-start)
+	for i := start; i < len(t.lines); i++ {
+		w.IDs[i-start] = t.lines[i].ID
+	}
 	return w
 }
 

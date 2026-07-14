@@ -9,6 +9,44 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
+func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
+	frame := terminalengine.ScreenFrame{
+		Kind:         terminalengine.FramePatch,
+		InstanceID:   "i1",
+		Epoch:        1,
+		BaseRevision: 1,
+		Seq:          2,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableLineID: 42,
+		},
+	}
+
+	encoded, err := EncodeFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.GetPatch().FirstAvailableHistoryLineId != nil {
+		t.Fatal("watermark must be absent without explicit presence flag")
+	}
+
+	frame.FirstAvailableHistoryLineIDChanged = true
+	encoded, err = EncodeFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Reset()
+	if err := proto.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.GetPatch().FirstAvailableHistoryLineId == nil || envelope.GetPatch().GetFirstAvailableHistoryLineId() != 42 {
+		t.Fatalf("watermark=%v, want present 42", envelope.GetPatch().FirstAvailableHistoryLineId)
+	}
+}
+
 func TestEncodeFrame_SnapshotRoundTrip(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(5, 10, sb)

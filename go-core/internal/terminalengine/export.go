@@ -178,7 +178,11 @@ type ScreenFrame struct {
 	// 可独立显示，总是携带 title/cwd，不需要标志。
 	TitleChanged      bool
 	WorkingDirChanged bool
-	PromotedRows      []PromotedRow
+	// FirstAvailableHistoryLineIDChanged 只用于恢复 Patch：与 History 中的
+	// FirstAvailableLineID 配合表达 optional history watermark presence。
+	// 在线 Patch 仍可依赖独立 HistoryTrim，不默认携带该字段。
+	FirstAvailableHistoryLineIDChanged bool
+	PromotedRows                       []PromotedRow
 	// ForceSnapshot is process-local projection metadata. It is never encoded;
 	// it tells a per-client sender that a style/link dictionary rotation made
 	// its old baseline invalid even though terminal geometry did not change.

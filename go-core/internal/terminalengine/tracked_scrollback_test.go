@@ -420,3 +420,36 @@ func TestTrackedScrollback_LinesAfterPopLowersLastID(t *testing.T) {
 		t.Fatalf("Window after Pop ids=%v, want [1 2]", got)
 	}
 }
+
+func TestTrackedScrollback_QueriesRemainValidAfterPopCreatesIDGap(t *testing.T) {
+	sb := NewTrackedScrollback(10000, nil)
+	pushBlankLines(sb, 3)
+	sb.Pop()              // 移除 ID 3，nextID 保持 4。
+	pushBlankLines(sb, 2) // 新增 ID 4、5，驻留序列为 1、2、4、5。
+
+	if line, ok := sb.LineByID(4); !ok || line.ID != 4 {
+		t.Fatalf("LineByID(4)=(%+v,%v), want ID 4", line, ok)
+	}
+	if _, ok := sb.LineByID(3); ok {
+		t.Fatal("popped ID 3 must remain absent")
+	}
+	if got := windowIDs(sb.LinesAfter(2, 10)); len(got) != 2 || got[0] != 4 || got[1] != 5 {
+		t.Fatalf("LinesAfter(2)=%v, want [4 5]", got)
+	}
+	page := sb.PageBefore(5, 10)
+	if len(page) != 3 || page[0].ID != 1 || page[2].ID != 4 {
+		t.Fatalf("PageBefore(5) IDs=%v, want [1 2 4]", historyIDs(page))
+	}
+	idx := sb.IndexAfter(2)
+	if len(idx.IDs) != 2 || idx.IDs[0] != 4 || idx.IDs[1] != 5 {
+		t.Fatalf("IndexAfter(2)=%v, want [4 5]", idx.IDs)
+	}
+}
+
+func historyIDs(lines []HistoryLine) []uint64 {
+	ids := make([]uint64, len(lines))
+	for i, line := range lines {
+		ids[i] = line.ID
+	}
+	return ids
+}

@@ -31,6 +31,7 @@ const (
 	ResumeReasonFutureRevision = "future_revision"
 	ResumeReasonBarrier        = "barrier"
 	ResumeReasonPatchCost      = "patch_cost"
+	ResumeReasonHistoryGap     = "history_gap"
 )
 
 // ResumeDerivation 是 DeriveResumeFrame 的返回。
@@ -148,9 +149,76 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 // （规则 5：ChangeIndex 只在 Projector 锁内读写）。state 必须是本 Projector
 // 最近导出的权威状态；instance/epoch 校验由调用方（Task 4 的 actor）完成。
 func (p *Projector) DeriveResumeFrame(state terminalengine.ScreenFrame, clientRevision uint64) ResumeDerivation {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return DeriveResumeFrame(state, &p.changeIndex, clientRevision)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 先执行不需要历史 Cell 的快速判定。future/barrier/活动行成本已经要求
+	// snapshot 时，不再进入历史导出慢路径。
+	derived := DeriveResumeFrame(state, &p.changeIndex, clientRevision)
+	if derived.Outcome == ResumeOutcomeSnapshot {
+		return derived
+	}
+	selection := p.historyChangeIndex.selectAfter(clientRevision)
+	if selection.reason != "" {
+		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: selection.reason}
+	}
+	historyLines, err := p.exportResumeHistoryLocked(selection.lineIDs)
+	if err != nil {
+		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: ResumeReasonHistoryGap}
+	}
+
+	// 历史行可能首次把某个 style/link 引入当前 exporter。把新增字典项绑定到
+	// 当前导出 revision，再重新推导一次，确保恢复 Patch 先携带其引用。
+	styles := p.exporter.styleTable.Styles()
+	if len(styles) > 4096 || len(p.exporter.linkTable.Links()) > 4096 {
+		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: ResumeReasonPatchCost}
+	}
+	for len(p.changeIndex.StyleCreatedRevision) < len(styles) {
+		p.changeIndex.StyleCreatedRevision = append(p.changeIndex.StyleCreatedRevision, state.Seq)
+	}
+	links := p.exporter.linkTable.Links()
+	for len(p.changeIndex.LinkCreatedRevision) < len(links) {
+		p.changeIndex.LinkCreatedRevision = append(p.changeIndex.LinkCreatedRevision, state.Seq)
+	}
+	state.Styles = styles
+	state.Links = links
+	derived = DeriveResumeFrame(state, &p.changeIndex, clientRevision)
+	if derived.Outcome == ResumeOutcomeSnapshot {
+		return derived
+	}
+
+	if derived.Outcome == ResumeOutcomeExact && len(historyLines) == 0 && !selection.watermarkChanged {
+		return derived
+	}
+	if derived.Outcome == ResumeOutcomeExact {
+		// 只有 history append/watermark 发生变化时也必须生成合法非空 Patch。
+		derived = ResumeDerivation{Outcome: ResumeOutcomePatch, Frame: terminalengine.ScreenFrame{
+			Version:      1,
+			Kind:         terminalengine.FramePatch,
+			SessionID:    state.SessionID,
+			InstanceID:   state.InstanceID,
+			Epoch:        state.Epoch,
+			Seq:          state.Seq,
+			BaseRevision: clientRevision,
+			Rows:         state.Rows,
+			Cols:         state.Cols,
+			ActiveBuffer: state.ActiveBuffer,
+			ReverseVideo: state.ReverseVideo,
+			DefaultFG:    state.DefaultFG,
+			DefaultBG:    state.DefaultBG,
+			CursorColor:  state.CursorColor,
+			Cursor:       state.Cursor,
+			Modes:        state.Modes,
+		}}
+	}
+	derived.Frame.History = terminalengine.HistoryWindow{
+		FirstAvailableLineID: selection.firstAvailableID,
+		Lines:                historyLines,
+	}
+	// 每一帧恢复 Patch 都原子携带当前水位；接收端无需依赖 HistoryTrim 与
+	// screen mailbox 的相对顺序。
+	derived.Frame.FirstAvailableHistoryLineIDChanged = true
+	return derived
 }
 
 // stylesCreatedAfter 选出 created revision > clientRevision 的字典项。

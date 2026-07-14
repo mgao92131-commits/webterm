@@ -1,7 +1,7 @@
 # Screen 状态增量恢复实施方案（修订版）
 
 **日期：** 2026-07-14  
-**状态：** 实施中：Task 0–2 已完成（分支 feat/screen-delta-resume），Task 3 起待实施  
+**状态：** 实施中：Task 0–3 已完成（分支 feat/screen-delta-resume），Task 4 起待实施
 **范围：** Go `webterm.screen.v1`、Android terminal runtime、页面生命周期、混合版本发布  
 **目标：** 页面切换优先复用同一 Runtime；真实断线或 WARM 会话重连时，服务端根据各状态组件的最后变化 revision 直接生成“当前最终状态 Patch”；只有状态无法连续、协议屏障已跨越或 Patch 不划算时才发送 Snapshot。
 
@@ -556,6 +556,15 @@ patch.screenRevision > patch.baseRevision
 - `go-core/internal/screenprojection/history.go`（已存在，现为 `HistoryView` 分页查询，在其基础上扩展）
 
 实现 LineID/revision 绑定、trim 同步、连续查询、缺口显式失败和恢复 Patch 水位。
+
+实施状态（2026-07-14，分支 feat/screen-delta-resume）：已在 Projector 的 actor
+导出提交点维护有界 `HistoryChangeIndex`，创建 revision 以实际可导出的 revision
+为准；索引按 `TrackedScrollback` 的真实行数/字节 trim 水位同步淘汰。累计恢复
+Patch 会从权威 scrollback 导出 `CreatedRevision > clientRevision` 的连续存活行，
+并以 optional `first_available_history_line_id` 原子携带当前水位；超过 500 行、
+LineID 缺口或读取竞态均显式降级 Snapshot。尾部 Pop/LineID 回退会推进持久
+barrier 并强制同 revision 在线 Snapshot。另修正了 Pop 后 LineID 有缺口时
+`LineByID`/分页/增量索引不能再用 `id-firstID` 直接换算下标的问题。
 
 ### Task 4：Hello 驱动 actor 内初始同步
 
