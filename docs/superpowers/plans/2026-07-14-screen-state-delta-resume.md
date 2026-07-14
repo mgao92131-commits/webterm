@@ -1,7 +1,7 @@
 # Screen 状态增量恢复实施方案（修订版）
 
 **日期：** 2026-07-14  
-**状态：** 设计修订完成（2026-07-14 经代码核查后二次修订），尚未实施  
+**状态：** 实施中：Task 0–1 已完成（分支 feat/screen-delta-resume），Task 2 起待实施  
 **范围：** Go `webterm.screen.v1`、Android terminal runtime、页面生命周期、混合版本发布  
 **目标：** 页面切换优先复用同一 Runtime；真实断线或 WARM 会话重连时，服务端根据各状态组件的最后变化 revision 直接生成“当前最终状态 Patch”；只有状态无法连续、协议屏障已跨越或 Patch 不划算时才发送 Snapshot。
 
@@ -464,6 +464,8 @@ Go 和 Android validator 同步增加：
 - envelope 总大小 `<= 2 MiB`；
 - metadata-only Patch 至少包含一个实际变化字段。
 
+混合版本容忍（§15，2026-07-14 实施时补充）：旧 Go Agent（Task 0 之前）仍在野期间，接收端暂缓执行其中两条——`layout_epoch >= 1`（旧 Go 初始 epoch 为 0，其 patch 合法）与"metadata-only Patch 至少一个变化字段"（旧 Go 可能因 bell 等输出发送空 patch，接收端按 no-op 容忍）。空 patch 的抑制由新版服务端在源头保证（`FrameDeriver` 对无可观察变化的 diff 返回不发送信号，且不推进 client baseline）。待混合版本窗口结束（§15 第 6 步）后接收端再收紧为拒绝。
+
 ### 10.2 Android 原子应用
 
 `RemoteTerminalModel.applyPatch()` 在任何 mutation 之前验证：
@@ -528,6 +530,8 @@ patch.screenRevision > patch.baseRevision
 - malformed Hello、重复 Hello；
 - History watermark 与 Patch 乱序无关；
 - envelope/row/history/style/link 资源上限。
+
+实施状态（2026-07-14，分支 feat/screen-delta-resume）：optional 三态与 ResumeAck wire 已在 Task 0 落地；malformed Hello、重复 Hello 拒绝、strict `screenRevision > baseRevision`、envelope/row/history/style/link 资源上限、空 patch 源头抑制已在本任务落地并测试。revision 跳跃累计 Patch、instance/epoch/barrier/future revision Snapshot、attach/resync 不推进 revision、History watermark 乱序无关四项依赖 Task 2–6 的机制，已以 Go `t.Skip`（`session/resume_contract_test.go`）与 Android `@Ignore`（`ScreenResumeContractTest`）桩冻结，随对应任务启用。
 
 ### Task 2：Projector ChangeIndex 与持久 barrier
 
