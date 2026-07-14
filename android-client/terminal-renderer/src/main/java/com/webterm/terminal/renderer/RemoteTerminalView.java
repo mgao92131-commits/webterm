@@ -54,10 +54,9 @@ public final class RemoteTerminalView extends View {
   private static final float AUTO_SCROLL_MAX_LINES_PER_SECOND = 12f;
 
   /**
-   * 终端输入类型：禁止 IME 自动改正、自动大写与联想词。VISIBLE_PASSWORD 变体让
-   * 输入法按"明文但不学习"处理，避免把命令和密码写进个人词典或预测栏。
-   * Android 没有 NO_CAPITALIZATION 常量；不设置任何 TYPE_TEXT_FLAG_CAP_* 位即
-   * 禁用自动大写，VISIBLE_PASSWORD 进一步保证 IME 不按句子规则大写。
+   * 使用系统普通文本输入类型，保留用户当前输入法及中英文状态；只关闭联想、
+   * 自动改正与自动大写。不能使用 VISIBLE_PASSWORD，部分 OEM 输入法会因此
+   * 强制切换到英文安全键盘。
    */
   static final int TERMINAL_INPUT_TYPE = android.text.InputType.TYPE_CLASS_TEXT
       | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;

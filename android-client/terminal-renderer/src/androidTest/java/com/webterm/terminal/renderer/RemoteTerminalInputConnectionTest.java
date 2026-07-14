@@ -175,8 +175,7 @@ public final class RemoteTerminalInputConnectionTest {
     });
 
     assertEquals(InputType.TYPE_CLASS_TEXT, info.inputType & InputType.TYPE_MASK_CLASS);
-    assertEquals(InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-        info.inputType & InputType.TYPE_MASK_VARIATION);
+    assertEquals(0, info.inputType & InputType.TYPE_MASK_VARIATION);
     assertTrue((info.inputType & InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0);
     // No-capitalization is expressed by the absence of every CAP_* flag bit.
     int capFlags = InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
