@@ -127,6 +127,44 @@ public class RemoteTerminalModelTest {
     assertEquals(101L, model.firstAvailableHistoryId());
   }
 
+  @Test
+  public void applyPatch_presentEmptyTitleAndCwdClearModel() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(titledSnapshot("vim", "/home/u"));
+
+    // present 空串表示 title/cwd 已被清空，模型必须清空而不是保持原值。
+    ModelChange change = model.applyPatch(titlePatch("", ""));
+
+    assertEquals("", model.title());
+    assertEquals("", model.workingDirectory());
+    assertEquals("", model.renderSnapshot().title);
+    assertTrue(change.titleChanged);
+  }
+
+  @Test
+  public void applyPatch_absentTitleAndCwdKeepModelValues() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(titledSnapshot("vim", "/home/u"));
+
+    // null 表示未变化，模型保持原值。
+    ModelChange change = model.applyPatch(titlePatch(null, null));
+
+    assertEquals("vim", model.title());
+    assertEquals("/home/u", model.workingDirectory());
+    assertFalse(change.titleChanged);
+  }
+
+  @Test
+  public void applyPatch_presentTitleAndCwdUpdateModel() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(titledSnapshot("vim", "/home/u"));
+
+    model.applyPatch(titlePatch("bash", "/tmp"));
+
+    assertEquals("bash", model.title());
+    assertEquals("/tmp", model.workingDirectory());
+  }
+
   private static ScreenSnapshot sampleSnapshot(int rows, int cols, long revision, String text) {
     List<TerminalLine> screen = new ArrayList<>();
     for (int r = 0; r < rows; r++) {
@@ -149,6 +187,25 @@ public class RemoteTerminalModelTest {
         "i1", 1, baseRevision, revision, Collections.emptyList(), rows,
         null, null, null, Collections.emptyMap(), Collections.emptyMap(),
         null, null, Collections.emptyList()
+    );
+  }
+
+  private static ScreenSnapshot titledSnapshot(String title, String cwd) {
+    List<TerminalLine> screen = new ArrayList<>();
+    screen.add(line(0, "ab"));
+    return new ScreenSnapshot(
+        "s1", "i1", 1, 1, 1, 2, ScreenSnapshot.BufferKind.MAIN,
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
+        new HistoryWindow(1, 0, 0, false, Collections.emptyList()),
+        screen, Collections.emptyMap(), Collections.emptyMap(), title, cwd
+    );
+  }
+
+  private static ScreenPatch titlePatch(String title, String cwd) {
+    return new ScreenPatch(
+        "i1", 1, 1, 2, Collections.emptyList(), Collections.emptyList(),
+        null, null, null, Collections.emptyMap(), Collections.emptyMap(),
+        title, cwd, Collections.emptyList()
     );
   }
 

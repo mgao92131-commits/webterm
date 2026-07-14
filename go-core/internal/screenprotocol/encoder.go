@@ -9,18 +9,22 @@ import (
 )
 
 // EncodeFrame 把 ScreenFrame 编码为 ScreenEnvelope 二进制。
+// 帧类型只由 frame.Kind 决定，禁止再用 BaseRevision == 0 判断。
 func EncodeFrame(frame terminalengine.ScreenFrame) ([]byte, error) {
 	var envelope *pb.ScreenEnvelope
-	if frame.BaseRevision == 0 {
+	switch frame.Kind {
+	case terminalengine.FrameSnapshot:
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
 			Payload:         &pb.ScreenEnvelope_Snapshot{Snapshot: encodeSnapshot(frame)},
 		}
-	} else {
+	case terminalengine.FramePatch:
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
 			Payload:         &pb.ScreenEnvelope_Patch{Patch: encodePatch(frame)},
 		}
+	default:
+		return nil, fmt.Errorf("unknown screen frame kind: %d", frame.Kind)
 	}
 	return proto.Marshal(envelope)
 }
@@ -83,22 +87,29 @@ func encodeSnapshot(frame terminalengine.ScreenFrame) *pb.ScreenSnapshot {
 }
 
 func encodePatch(frame terminalengine.ScreenFrame) *pb.ScreenPatch {
-	return &pb.ScreenPatch{
-		InstanceId:       frame.InstanceID,
-		LayoutEpoch:      frame.Epoch,
-		BaseRevision:     frame.BaseRevision,
-		ScreenRevision:   frame.Seq,
-		HistoryAppend:    encodeHistoryLines(frame.History.Lines),
-		ScreenRows:       encodeScreenLines(frame.Screen),
-		Cursor:           encodeCursor(frame.Cursor),
-		Modes:            encodeModes(frame.Modes),
-		Palette:          encodePalette(frame.DefaultFG, frame.DefaultBG, frame.CursorColor, frame.ReverseVideo),
-		NewStyles:        encodeStyles(frame.Styles),
-		NewLinks:         encodeLinks(frame.Links),
-		Title:            frame.Title,
-		WorkingDirectory: frame.WorkingDir,
-		PromotedRows:     encodePromotedRows(frame.PromotedRows),
+	patch := &pb.ScreenPatch{
+		InstanceId:     frame.InstanceID,
+		LayoutEpoch:    frame.Epoch,
+		BaseRevision:   frame.BaseRevision,
+		ScreenRevision: frame.Seq,
+		HistoryAppend:  encodeHistoryLines(frame.History.Lines),
+		ScreenRows:     encodeScreenLines(frame.Screen),
+		Cursor:         encodeCursor(frame.Cursor),
+		Modes:          encodeModes(frame.Modes),
+		Palette:        encodePalette(frame.DefaultFG, frame.DefaultBG, frame.CursorColor, frame.ReverseVideo),
+		NewStyles:      encodeStyles(frame.Styles),
+		NewLinks:       encodeLinks(frame.Links),
+		PromotedRows:   encodePromotedRows(frame.PromotedRows),
 	}
+	// title/cwd 是 proto3 optional：只在显式变化标志置位时出现，
+	// 以此在 wire 上区分“未变化”和“变为空串”。
+	if frame.TitleChanged {
+		patch.Title = proto.String(frame.Title)
+	}
+	if frame.WorkingDirChanged {
+		patch.WorkingDirectory = proto.String(frame.WorkingDir)
+	}
+	return patch
 }
 
 func encodeSize(rows, cols int) *pb.Size {

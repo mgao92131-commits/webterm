@@ -8,6 +8,15 @@ const (
 	BufferAlternate
 )
 
+// FrameKind 显式标识屏幕帧类型。编码器只依据它区分 snapshot/patch，
+// 不再使用 BaseRevision == 0 的惯例；零值表示未设置，编码时必须报错。
+type FrameKind uint8
+
+const (
+	FrameSnapshot FrameKind = iota + 1
+	FramePatch
+)
+
 // ColorKind 表示颜色语义。
 type ColorKind string
 
@@ -139,9 +148,11 @@ type HistoryPageData struct {
 }
 
 // ScreenFrame 是传输无关的权威屏幕帧，也可作为 patch 的载体。
-// BaseRevision == 0 表示完整 snapshot；否则为 patch。
+// Kind 显式区分 snapshot 与 patch；BaseRevision 只表达 patch 基线，
+// snapshot 的 base 不参与语义。
 type ScreenFrame struct {
 	Version      int
+	Kind         FrameKind
 	SessionID    string
 	InstanceID   string
 	Epoch        uint64
@@ -162,7 +173,12 @@ type ScreenFrame struct {
 	Links        []Hyperlink
 	Title        string
 	WorkingDir   string
-	PromotedRows []PromotedRow
+	// TitleChanged/WorkingDirChanged 只在 patch 帧上有意义：标记 title/cwd 相对
+	// 基线是否变化（变为空串也必须显式标记，与“未变化”区分）。snapshot 必须
+	// 可独立显示，总是携带 title/cwd，不需要标志。
+	TitleChanged      bool
+	WorkingDirChanged bool
+	PromotedRows      []PromotedRow
 	// ForceSnapshot is process-local projection metadata. It is never encoded;
 	// it tells a per-client sender that a style/link dictionary rotation made
 	// its old baseline invalid even though terminal geometry did not change.

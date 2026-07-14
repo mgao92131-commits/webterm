@@ -44,6 +44,7 @@ message ScreenEnvelope {
     Exit exit = 25;
     Ping ping = 26;
     Pong pong = 27;
+    ResumeAck resume_ack = 28;
   }
 }
 
@@ -82,6 +83,14 @@ message Pong {
   uint64 screen_revision = 1;
 }
 
+// exact resume 确认：仅在服务端确认客户端投影与当前权威状态完全相同时发送。
+// Patch 和 Snapshot 是另外两条恢复路径的完成凭证，不额外发送 ResumeAck。
+message ResumeAck {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 screen_revision = 3;
+}
+
 // ---------------------------------------------------------------------------
 // 屏幕快照与增量
 // ---------------------------------------------------------------------------
@@ -115,10 +124,11 @@ message ScreenPatch {
   TerminalPalette palette = 8;   // 只在变化时非空
   repeated TerminalStyle new_styles = 9;     // 本 patch 新增的 style
   repeated Hyperlink new_links = 10;         // 本 patch 新增的 link
-  string title = 11;             // 只在变化时非空
-  string working_directory = 12; // 只在变化时非空
+  optional string title = 11;             // 只在变化时出现；has=true 且为空串表示已清空
+  optional string working_directory = 12; // 只在变化时出现；has=true 且为空串表示已清空
   repeated PromotedRow promoted_rows = 13;   // 活动行滚入历史时的 ID 映射
   string instance_id = 14;          // 必须匹配当前 snapshot.instance_id
+  optional uint64 first_available_history_line_id = 15; // 恢复 Patch 携带的当前历史水位，只在需要推进水位时出现
 }
 
 message PromotedRow {

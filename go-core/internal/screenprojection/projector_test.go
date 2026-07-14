@@ -16,8 +16,8 @@ func TestProjector_FirstFrameIsSnapshot(t *testing.T) {
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
 	frame := deriver.FrameForState(p.ExportState(0, 1))
-	if frame.BaseRevision != 0 {
-		t.Fatalf("expected snapshot, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("expected snapshot, got kind=%v", frame.Kind)
 	}
 }
 
@@ -37,6 +37,65 @@ func TestProjector_PatchAfterBaseline(t *testing.T) {
 	}
 }
 
+// FrameDeriver 的所有产出路径都必须打上正确的 Kind；patch 以显式标志表达
+// title/cwd 三态（未变化不置标志）。
+func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(5, 10, sb)
+	if err := engine.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(engine, sb, "s1", "i1")
+	var deriver FrameDeriver
+
+	// 首帧：snapshot。
+	first := deriver.FrameForState(p.ExportState(0, 1))
+	if first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("first frame kind=%d, want FrameSnapshot", first.Kind)
+	}
+
+	// 小变化：patch；title/cwd 未变化，标志必须为 false。
+	if err := engine.Write([]byte("!")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(0, 2))
+	if patch.Kind != terminalengine.FramePatch {
+		t.Fatalf("patch kind=%d, want FramePatch", patch.Kind)
+	}
+	if patch.TitleChanged || patch.WorkingDirChanged {
+		t.Fatal("unchanged title/cwd must not set change flags")
+	}
+
+	// title/cwd 变化：patch 上显式置标志并携带新值。
+	if err := engine.Write([]byte("\x1b]0;new-title\x07")); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Write([]byte("\x1b]7;file://localhost/tmp/work\x07")); err != nil {
+		t.Fatal(err)
+	}
+	metaPatch := deriver.FrameForState(p.ExportState(0, 3))
+	if metaPatch.Kind != terminalengine.FramePatch {
+		t.Fatalf("metadata patch kind=%d, want FramePatch", metaPatch.Kind)
+	}
+	if !metaPatch.TitleChanged || metaPatch.Title != "new-title" {
+		t.Fatalf("title change not flagged: changed=%v title=%q",
+			metaPatch.TitleChanged, metaPatch.Title)
+	}
+	if !metaPatch.WorkingDirChanged || metaPatch.WorkingDir != "/tmp/work" {
+		t.Fatalf("cwd change not flagged: changed=%v cwd=%q",
+			metaPatch.WorkingDirChanged, metaPatch.WorkingDir)
+	}
+
+	// 超过 60% 行变化：diffToPatch 回退 snapshot，Kind 仍为 FrameSnapshot。
+	if err := engine.Write([]byte("row0\r\nrow1\r\nrow2\r\nrow3")); err != nil {
+		t.Fatal(err)
+	}
+	full := deriver.FrameForState(p.ExportState(0, 4))
+	if full.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("snapshot fallback kind=%d, want FrameSnapshot", full.Kind)
+	}
+}
+
 func TestProjector_OneExportFeedsIndependentClientBaselines(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(5, 10, sb)
@@ -47,11 +106,11 @@ func TestProjector_OneExportFeedsIndependentClientBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := p.ExportState(0, 1)
-	if first := d1.FrameForState(initial); first.BaseRevision != 0 {
-		t.Fatalf("c1 first frame must be snapshot, got base=%d", first.BaseRevision)
+	if first := d1.FrameForState(initial); first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("c1 first frame must be snapshot, got kind=%v", first.Kind)
 	}
-	if first := d2.FrameForState(initial); first.BaseRevision != 0 {
-		t.Fatalf("c2 first frame must be snapshot, got base=%d", first.BaseRevision)
+	if first := d2.FrameForState(initial); first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("c2 first frame must be snapshot, got kind=%v", first.Kind)
 	}
 
 	if err := engine.Write([]byte("world\n")); err != nil {
@@ -99,8 +158,8 @@ func TestFrameDeriver_CanSkipIntermediateStatesWithoutRevisionGap(t *testing.T) 
 		t.Fatal(err)
 	}
 	first := deriver.FrameForState(p.ExportState(0, 1))
-	if first.BaseRevision != 0 {
-		t.Fatalf("first frame must be snapshot, got base=%d", first.BaseRevision)
+	if first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
 	}
 
 	if err := engine.Write([]byte(" two")); err != nil {
@@ -156,8 +215,8 @@ func TestProjector_LayoutEpochChangeIsSnapshot(t *testing.T) {
 
 	engine.Resize(6, 12)
 	frame := deriver.FrameForState(p.ExportState(1, 2))
-	if frame.BaseRevision != 0 {
-		t.Fatalf("expected snapshot after epoch change, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("expected snapshot after epoch change, got kind=%v", frame.Kind)
 	}
 }
 
@@ -175,8 +234,8 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 		t.Fatal(err)
 	}
 	first := deriver.FrameForState(p.ExportState(0, 1))
-	if first.BaseRevision != 0 {
-		t.Fatalf("first frame must be snapshot, got base=%d", first.BaseRevision)
+	if first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
 	}
 	if first.DictionaryGeneration != 0 {
 		t.Fatalf("initial dictionary generation=%d, want 0", first.DictionaryGeneration)
@@ -211,7 +270,7 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 		}
 		// Keep the deriver baseline current with every delivered state; a
 		// single changed row must stay on the patch path before rotation.
-		if frame := deriver.FrameForState(state); frame.BaseRevision == 0 {
+		if frame := deriver.FrameForState(state); frame.Kind == terminalengine.FrameSnapshot {
 			t.Fatalf("pre-rotation frame seq=%d unexpectedly became snapshot", state.Seq)
 		}
 	}
@@ -232,9 +291,9 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 			next.DictionaryGeneration, rotated.DictionaryGeneration)
 	}
 	frame := deriver.FrameForState(next)
-	if frame.BaseRevision != 0 {
-		t.Fatalf("frame after dropped rotation must be snapshot, got patch base=%d rev=%d",
-			frame.BaseRevision, frame.Seq)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("frame after dropped rotation must be snapshot, got kind=%v rev=%d",
+			frame.Kind, frame.Seq)
 	}
 
 	// Within the same generation, later changes may be patches again.

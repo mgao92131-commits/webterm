@@ -213,8 +213,8 @@ func TestProjector_PatchCarriesExactlyMissingContiguousHistoryLines(t *testing.T
 	if got := len(baseline.History.Lines); got != snapshotTailLines {
 		t.Fatalf("expected full %d-line window, got %d", snapshotTailLines, got)
 	}
-	if snap := deriver.FrameForState(baseline); snap.BaseRevision != 0 {
-		t.Fatalf("baseline must be snapshot, got patch base=%d", snap.BaseRevision)
+	if snap := deriver.FrameForState(baseline); snap.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("baseline must be snapshot, got kind=%v", snap.Kind)
 	}
 
 	const k = 7
@@ -271,8 +271,8 @@ func TestProjector_PatchFallsBackToSnapshotWhenBaselineTrimmed(t *testing.T) {
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.FrameForState(state)
-	if frame.BaseRevision != 0 {
-		t.Fatalf("trimmed baseline must fall back to snapshot, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("trimmed baseline must fall back to snapshot, got kind=%v", frame.Kind)
 	}
 	if got := len(frame.History.Lines); got != snapshotTailLines {
 		t.Fatalf("snapshot window=%d lines, want %d", got, snapshotTailLines)
@@ -295,8 +295,8 @@ func TestProjector_ResizeRebuildsHistoryOnEpochChange(t *testing.T) {
 	engine.Resize(7, 24) // 放大还会从 scrollback 拉回（Pop）2 行
 	state := p.ExportState(1, 2)
 	frame := deriver.FrameForState(state)
-	if frame.BaseRevision != 0 {
-		t.Fatalf("epoch change must derive snapshot, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("epoch change must derive snapshot, got kind=%v", frame.Kind)
 	}
 	// 历史内容与新几何下全量导出逐格相等。
 	assertStateEquivalent(t, state, forceFullExportAt(p, 1, 3))
@@ -340,8 +340,8 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	if len(alt.History.Lines) != 0 {
 		t.Fatalf("alternate buffer leaked %d history lines", len(alt.History.Lines))
 	}
-	if frame := deriver.FrameForState(alt); frame.BaseRevision != 0 {
-		t.Fatalf("buffer switch must derive snapshot, got patch base=%d", frame.BaseRevision)
+	if frame := deriver.FrameForState(alt); frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("buffer switch must derive snapshot, got kind=%v", frame.Kind)
 	}
 
 	if err := engine.Write([]byte("\x1b[?1049l")); err != nil {
@@ -351,8 +351,8 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	if back.ActiveBuffer != terminalengine.BufferMain {
 		t.Fatalf("expected main buffer, got %v", back.ActiveBuffer)
 	}
-	if frame := deriver.FrameForState(back); frame.BaseRevision != 0 {
-		t.Fatalf("buffer switch back must derive snapshot, got patch base=%d", frame.BaseRevision)
+	if frame := deriver.FrameForState(back); frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("buffer switch back must derive snapshot, got kind=%v", frame.Kind)
 	}
 	if back.History.LastIncludedLineID != main.History.LastIncludedLineID {
 		t.Fatalf("history lost across alt round trip: lastID %d -> %d",
@@ -415,8 +415,8 @@ func TestProjector_AttachSnapshotIncludesFullHistoryWindow(t *testing.T) {
 
 	var deriver FrameDeriver
 	snap := deriver.FrameForState(p.ExportState(0, 2))
-	if snap.BaseRevision != 0 {
-		t.Fatalf("attach must derive snapshot, got patch base=%d", snap.BaseRevision)
+	if snap.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("attach must derive snapshot, got kind=%v", snap.Kind)
 	}
 	if got := len(snap.History.Lines); got != 36 {
 		t.Fatalf("attach snapshot carried %d history lines, want 36", got)

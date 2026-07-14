@@ -546,6 +546,11 @@ public final class TerminalSessionRuntime {
             change = ModelChange.none();
             updateState(State.CLOSED);
             break;
+          case RESUME_ACK:
+            // exact resume 确认：Task 6 才正式消费。现阶段与未知类型一致显式忽略，
+            // 不触碰本地 revision，也不触发 resync。
+            change = ModelChange.none();
+            break;
           default:
             change = ModelChange.none();
             break;

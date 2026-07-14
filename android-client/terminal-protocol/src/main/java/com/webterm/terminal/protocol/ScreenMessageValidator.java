@@ -108,6 +108,14 @@ public final class ScreenMessageValidator {
     if (p.getNewStylesCount() > MAX_STYLES || p.getNewLinksCount() > MAX_LINKS) {
       return ValidationResult.fail("too many new styles or links");
     }
+    // title/cwd 为 optional：absent 时 getter 返回空串，present 空串（清空）同样合法，
+    // 只限制长度上限，与 validateSnapshot 保持一致。
+    if (!validateString(p.getTitle(), MAX_TITLE_BYTES)) {
+      return ValidationResult.fail("title too long");
+    }
+    if (!validateString(p.getWorkingDirectory(), MAX_CWD_BYTES)) {
+      return ValidationResult.fail("cwd too long");
+    }
     return validateLines(p.getScreenRowsList(), MAX_COLS);
   }
 

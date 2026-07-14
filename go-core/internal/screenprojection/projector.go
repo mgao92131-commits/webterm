@@ -195,6 +195,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 
 	return terminalengine.ScreenFrame{
 		Version:      1,
+		Kind:         terminalengine.FrameSnapshot,
 		SessionID:    p.sessionID,
 		InstanceID:   p.instanceID,
 		Epoch:        epoch,
@@ -276,6 +277,10 @@ func (p *Projector) rebuildHistoryWindow() terminalengine.HistoryWindow {
 }
 
 func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	// 输入始终是完整状态，可直接作为 snapshot 发送；统一打上 Kind，避免
+	// 调用方漏设导致编码失败。diffToPatch 的 snapshot 回退路径也借此得到
+	// 正确的 Kind。
+	state.Kind = terminalengine.FrameSnapshot
 	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
 	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
 	// epoch 或备用屏变化，发送完整 snapshot。
@@ -329,6 +334,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 
 	return terminalengine.ScreenFrame{
 		Version:      1,
+		Kind:         terminalengine.FramePatch,
 		SessionID:    new.SessionID,
 		InstanceID:   new.InstanceID,
 		Epoch:        new.Epoch,
@@ -356,7 +362,11 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		// table was pure wire and allocation overhead.
 		Styles: newlyAddedStyles(old.Styles, new.Styles),
 		Links:  newlyAddedLinks(old.Links, new.Links),
-		Title:  new.Title,
+		// title/cwd 以显式 presence 标志表达三态：未变化 / 变为空串 / 新值。
+		Title:             new.Title,
+		WorkingDir:        new.WorkingDir,
+		TitleChanged:      old.Title != new.Title,
+		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
 	}
 }
 

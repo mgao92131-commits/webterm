@@ -235,8 +235,8 @@ func TestProjector_ResizeRebuildsCacheWithNewGeometry(t *testing.T) {
 	var deriver FrameDeriver
 	deriver.FrameForState(first)
 	frame := deriver.FrameForState(p.ExportState(1, 2))
-	if frame.BaseRevision != 0 {
-		t.Fatalf("epoch change must derive snapshot, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("epoch change must derive snapshot, got kind=%v", frame.Kind)
 	}
 	if frame.Rows != 6 || frame.Cols != 12 || len(frame.Screen) != 6 {
 		t.Fatalf("resized frame geometry wrong: %dx%d rows=%d", frame.Rows, frame.Cols, len(frame.Screen))
@@ -256,8 +256,8 @@ func TestProjector_AlternateBufferSwitchExportsFullSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	frame := deriver.FrameForState(p.ExportState(0, 2))
-	if frame.BaseRevision != 0 {
-		t.Fatalf("buffer switch must derive snapshot, got patch base=%d", frame.BaseRevision)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("buffer switch must derive snapshot, got kind=%v", frame.Kind)
 	}
 	if frame.ActiveBuffer != terminalengine.BufferAlternate {
 		t.Fatalf("expected alternate buffer, got %v", frame.ActiveBuffer)
@@ -291,8 +291,8 @@ func TestProjector_AttachResyncDerivesCompleteSnapshot(t *testing.T) {
 	var d2 FrameDeriver
 	attach := p.ExportState(0, 3)
 	snap := d2.FrameForState(attach)
-	if snap.BaseRevision != 0 {
-		t.Fatalf("attach must derive snapshot, got patch base=%d", snap.BaseRevision)
+	if snap.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("attach must derive snapshot, got kind=%v", snap.Kind)
 	}
 	if len(snap.Screen) != 5 {
 		t.Fatalf("attach snapshot incomplete: %d rows", len(snap.Screen))
@@ -302,8 +302,8 @@ func TestProjector_AttachResyncDerivesCompleteSnapshot(t *testing.T) {
 	// resync：同样无变化，新 deriver 仍得完整 snapshot。
 	var d3 FrameDeriver
 	resync := d3.FrameForState(p.ExportState(0, 5))
-	if resync.BaseRevision != 0 {
-		t.Fatalf("resync must derive snapshot, got patch base=%d", resync.BaseRevision)
+	if resync.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("resync must derive snapshot, got kind=%v", resync.Kind)
 	}
 	assertStateEquivalent(t, resync, p.ExportState(0, 6))
 }

@@ -9,6 +9,7 @@ import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public final class ScreenMessageMapperTest {
@@ -43,5 +44,52 @@ public final class ScreenMessageMapperTest {
     ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(pb);
     assertEquals(1, snapshot.screen.size());
     assertEquals(10, snapshot.screen.get(0).length());
+  }
+
+  @Test
+  public void patchAbsentTitleAndCwdMapToNull() {
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .build();
+
+    ScreenPatch patch = ScreenMessageMapper.mapPatch(pb);
+    // absent 必须映射为 null，模型据此保持原值。
+    assertNull(patch.title);
+    assertNull(patch.workingDirectory);
+  }
+
+  @Test
+  public void patchPresentEmptyTitleAndCwdMapToEmptyString() {
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .setTitle("").setWorkingDirectory("").build();
+
+    ScreenPatch patch = ScreenMessageMapper.mapPatch(pb);
+    // present 空串表示已被清空，必须原样传递，不能当作未变化。
+    assertEquals("", patch.title);
+    assertEquals("", patch.workingDirectory);
+  }
+
+  @Test
+  public void patchPresentTitleAndCwdMapToValue() {
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .setTitle("vim").setWorkingDirectory("/home/u").build();
+
+    ScreenPatch patch = ScreenMessageMapper.mapPatch(pb);
+    assertEquals("vim", patch.title);
+    assertEquals("/home/u", patch.workingDirectory);
+  }
+
+  @Test
+  public void patchWithFirstAvailableHistoryLineIdIsIgnored() {
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .setFirstAvailableHistoryLineId(42).build();
+
+    // 历史水位由后续 Task 6 消费；当前映射必须不崩溃、不影响其他字段。
+    ScreenPatch patch = ScreenMessageMapper.mapPatch(pb);
+    assertEquals(2, patch.screenRevision);
+    assertNull(patch.title);
   }
 }

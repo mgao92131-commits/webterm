@@ -55,6 +55,7 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 
 	return terminalengine.ScreenFrame{
 		Version:      1,
+		Kind:         terminalengine.FrameSnapshot,
 		SessionID:    sessionID,
 		InstanceID:   instanceID,
 		Epoch:        epoch,

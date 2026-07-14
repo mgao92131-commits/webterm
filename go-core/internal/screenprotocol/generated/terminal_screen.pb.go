@@ -380,6 +380,7 @@ type ScreenEnvelope struct {
 	//	*ScreenEnvelope_Exit
 	//	*ScreenEnvelope_Ping
 	//	*ScreenEnvelope_Pong
+	//	*ScreenEnvelope_ResumeAck
 	Payload       isScreenEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -591,6 +592,15 @@ func (x *ScreenEnvelope) GetPong() *Pong {
 	return nil
 }
 
+func (x *ScreenEnvelope) GetResumeAck() *ResumeAck {
+	if x != nil {
+		if x, ok := x.Payload.(*ScreenEnvelope_ResumeAck); ok {
+			return x.ResumeAck
+		}
+	}
+	return nil
+}
+
 type isScreenEnvelope_Payload interface {
 	isScreenEnvelope_Payload()
 }
@@ -667,6 +677,10 @@ type ScreenEnvelope_Pong struct {
 	Pong *Pong `protobuf:"bytes,27,opt,name=pong,proto3,oneof"`
 }
 
+type ScreenEnvelope_ResumeAck struct {
+	ResumeAck *ResumeAck `protobuf:"bytes,28,opt,name=resume_ack,json=resumeAck,proto3,oneof"`
+}
+
 func (*ScreenEnvelope_Hello) isScreenEnvelope_Payload() {}
 
 func (*ScreenEnvelope_Snapshot) isScreenEnvelope_Payload() {}
@@ -702,6 +716,8 @@ func (*ScreenEnvelope_Exit) isScreenEnvelope_Payload() {}
 func (*ScreenEnvelope_Ping) isScreenEnvelope_Payload() {}
 
 func (*ScreenEnvelope_Pong) isScreenEnvelope_Payload() {}
+
+func (*ScreenEnvelope_ResumeAck) isScreenEnvelope_Payload() {}
 
 type Hello struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -1011,6 +1027,68 @@ func (x *Pong) GetScreenRevision() uint64 {
 	return 0
 }
 
+// exact resume 确认：仅在服务端确认客户端投影与当前权威状态完全相同时发送。
+// Patch 和 Snapshot 是另外两条恢复路径的完成凭证，不额外发送 ResumeAck。
+type ResumeAck struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId     string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	LayoutEpoch    uint64                 `protobuf:"varint,2,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	ScreenRevision uint64                 `protobuf:"varint,3,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ResumeAck) Reset() {
+	*x = ResumeAck{}
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeAck) ProtoMessage() {}
+
+func (x *ResumeAck) ProtoReflect() protoreflect.Message {
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
+func (*ResumeAck) Descriptor() ([]byte, []int) {
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ResumeAck) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *ResumeAck) GetLayoutEpoch() uint64 {
+	if x != nil {
+		return x.LayoutEpoch
+	}
+	return 0
+}
+
+func (x *ResumeAck) GetScreenRevision() uint64 {
+	if x != nil {
+		return x.ScreenRevision
+	}
+	return 0
+}
+
 type ScreenSnapshot struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1034,7 +1112,7 @@ type ScreenSnapshot struct {
 
 func (x *ScreenSnapshot) Reset() {
 	*x = ScreenSnapshot{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[6]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1046,7 +1124,7 @@ func (x *ScreenSnapshot) String() string {
 func (*ScreenSnapshot) ProtoMessage() {}
 
 func (x *ScreenSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[6]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1059,7 +1137,7 @@ func (x *ScreenSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScreenSnapshot.ProtoReflect.Descriptor instead.
 func (*ScreenSnapshot) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{6}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ScreenSnapshot) GetSessionId() string {
@@ -1168,28 +1246,29 @@ func (x *ScreenSnapshot) GetWorkingDirectory() string {
 }
 
 type ScreenPatch struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	LayoutEpoch      uint64                 `protobuf:"varint,1,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
-	BaseRevision     uint64                 `protobuf:"varint,2,opt,name=base_revision,json=baseRevision,proto3" json:"base_revision,omitempty"`       // 必须等于客户端当前 screen_revision
-	ScreenRevision   uint64                 `protobuf:"varint,3,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"` // 应用后的新 revision
-	HistoryAppend    []*HistoryLine         `protobuf:"bytes,4,rep,name=history_append,json=historyAppend,proto3" json:"history_append,omitempty"`     // 新进入 scrollback 的行
-	ScreenRows       []*TerminalLine        `protobuf:"bytes,5,rep,name=screen_rows,json=screenRows,proto3" json:"screen_rows,omitempty"`              // 被替换的活动屏幕行（row 索引由 TerminalLine.row 指定）
-	Cursor           *Cursor                `protobuf:"bytes,6,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	Modes            *Modes                 `protobuf:"bytes,7,opt,name=modes,proto3" json:"modes,omitempty"`                                                // 只在变化时非空
-	Palette          *TerminalPalette       `protobuf:"bytes,8,opt,name=palette,proto3" json:"palette,omitempty"`                                            // 只在变化时非空
-	NewStyles        []*TerminalStyle       `protobuf:"bytes,9,rep,name=new_styles,json=newStyles,proto3" json:"new_styles,omitempty"`                       // 本 patch 新增的 style
-	NewLinks         []*Hyperlink           `protobuf:"bytes,10,rep,name=new_links,json=newLinks,proto3" json:"new_links,omitempty"`                         // 本 patch 新增的 link
-	Title            string                 `protobuf:"bytes,11,opt,name=title,proto3" json:"title,omitempty"`                                               // 只在变化时非空
-	WorkingDirectory string                 `protobuf:"bytes,12,opt,name=working_directory,json=workingDirectory,proto3" json:"working_directory,omitempty"` // 只在变化时非空
-	PromotedRows     []*PromotedRow         `protobuf:"bytes,13,rep,name=promoted_rows,json=promotedRows,proto3" json:"promoted_rows,omitempty"`             // 活动行滚入历史时的 ID 映射
-	InstanceId       string                 `protobuf:"bytes,14,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                   // 必须匹配当前 snapshot.instance_id
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                       protoimpl.MessageState `protogen:"open.v1"`
+	LayoutEpoch                 uint64                 `protobuf:"varint,1,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	BaseRevision                uint64                 `protobuf:"varint,2,opt,name=base_revision,json=baseRevision,proto3" json:"base_revision,omitempty"`       // 必须等于客户端当前 screen_revision
+	ScreenRevision              uint64                 `protobuf:"varint,3,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"` // 应用后的新 revision
+	HistoryAppend               []*HistoryLine         `protobuf:"bytes,4,rep,name=history_append,json=historyAppend,proto3" json:"history_append,omitempty"`     // 新进入 scrollback 的行
+	ScreenRows                  []*TerminalLine        `protobuf:"bytes,5,rep,name=screen_rows,json=screenRows,proto3" json:"screen_rows,omitempty"`              // 被替换的活动屏幕行（row 索引由 TerminalLine.row 指定）
+	Cursor                      *Cursor                `protobuf:"bytes,6,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	Modes                       *Modes                 `protobuf:"bytes,7,opt,name=modes,proto3" json:"modes,omitempty"`                                                                                              // 只在变化时非空
+	Palette                     *TerminalPalette       `protobuf:"bytes,8,opt,name=palette,proto3" json:"palette,omitempty"`                                                                                          // 只在变化时非空
+	NewStyles                   []*TerminalStyle       `protobuf:"bytes,9,rep,name=new_styles,json=newStyles,proto3" json:"new_styles,omitempty"`                                                                     // 本 patch 新增的 style
+	NewLinks                    []*Hyperlink           `protobuf:"bytes,10,rep,name=new_links,json=newLinks,proto3" json:"new_links,omitempty"`                                                                       // 本 patch 新增的 link
+	Title                       *string                `protobuf:"bytes,11,opt,name=title,proto3,oneof" json:"title,omitempty"`                                                                                       // 只在变化时出现；has=true 且为空串表示已清空
+	WorkingDirectory            *string                `protobuf:"bytes,12,opt,name=working_directory,json=workingDirectory,proto3,oneof" json:"working_directory,omitempty"`                                         // 只在变化时出现；has=true 且为空串表示已清空
+	PromotedRows                []*PromotedRow         `protobuf:"bytes,13,rep,name=promoted_rows,json=promotedRows,proto3" json:"promoted_rows,omitempty"`                                                           // 活动行滚入历史时的 ID 映射
+	InstanceId                  string                 `protobuf:"bytes,14,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                                                                 // 必须匹配当前 snapshot.instance_id
+	FirstAvailableHistoryLineId *uint64                `protobuf:"varint,15,opt,name=first_available_history_line_id,json=firstAvailableHistoryLineId,proto3,oneof" json:"first_available_history_line_id,omitempty"` // 恢复 Patch 携带的当前历史水位，只在需要推进水位时出现
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *ScreenPatch) Reset() {
 	*x = ScreenPatch{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[7]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1201,7 +1280,7 @@ func (x *ScreenPatch) String() string {
 func (*ScreenPatch) ProtoMessage() {}
 
 func (x *ScreenPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[7]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1214,7 +1293,7 @@ func (x *ScreenPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScreenPatch.ProtoReflect.Descriptor instead.
 func (*ScreenPatch) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{7}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ScreenPatch) GetLayoutEpoch() uint64 {
@@ -1288,15 +1367,15 @@ func (x *ScreenPatch) GetNewLinks() []*Hyperlink {
 }
 
 func (x *ScreenPatch) GetTitle() string {
-	if x != nil {
-		return x.Title
+	if x != nil && x.Title != nil {
+		return *x.Title
 	}
 	return ""
 }
 
 func (x *ScreenPatch) GetWorkingDirectory() string {
-	if x != nil {
-		return x.WorkingDirectory
+	if x != nil && x.WorkingDirectory != nil {
+		return *x.WorkingDirectory
 	}
 	return ""
 }
@@ -1315,6 +1394,13 @@ func (x *ScreenPatch) GetInstanceId() string {
 	return ""
 }
 
+func (x *ScreenPatch) GetFirstAvailableHistoryLineId() uint64 {
+	if x != nil && x.FirstAvailableHistoryLineId != nil {
+		return *x.FirstAvailableHistoryLineId
+	}
+	return 0
+}
+
 type PromotedRow struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScreenRow     int32                  `protobuf:"varint,1,opt,name=screen_row,json=screenRow,proto3" json:"screen_row,omitempty"`               // 旧活动屏幕行索引
@@ -1325,7 +1411,7 @@ type PromotedRow struct {
 
 func (x *PromotedRow) Reset() {
 	*x = PromotedRow{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[8]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1337,7 +1423,7 @@ func (x *PromotedRow) String() string {
 func (*PromotedRow) ProtoMessage() {}
 
 func (x *PromotedRow) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[8]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1350,7 +1436,7 @@ func (x *PromotedRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromotedRow.ProtoReflect.Descriptor instead.
 func (*PromotedRow) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{8}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PromotedRow) GetScreenRow() int32 {
@@ -1377,7 +1463,7 @@ type Size struct {
 
 func (x *Size) Reset() {
 	*x = Size{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[9]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1389,7 +1475,7 @@ func (x *Size) String() string {
 func (*Size) ProtoMessage() {}
 
 func (x *Size) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[9]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1402,7 +1488,7 @@ func (x *Size) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Size.ProtoReflect.Descriptor instead.
 func (*Size) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{9}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Size) GetRows() int32 {
@@ -1431,7 +1517,7 @@ type TerminalLine struct {
 
 func (x *TerminalLine) Reset() {
 	*x = TerminalLine{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[10]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1443,7 +1529,7 @@ func (x *TerminalLine) String() string {
 func (*TerminalLine) ProtoMessage() {}
 
 func (x *TerminalLine) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[10]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1456,7 +1542,7 @@ func (x *TerminalLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalLine.ProtoReflect.Descriptor instead.
 func (*TerminalLine) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{10}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TerminalLine) GetRow() int32 {
@@ -1497,7 +1583,7 @@ type CellRun struct {
 
 func (x *CellRun) Reset() {
 	*x = CellRun{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[11]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +1595,7 @@ func (x *CellRun) String() string {
 func (*CellRun) ProtoMessage() {}
 
 func (x *CellRun) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[11]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +1608,7 @@ func (x *CellRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellRun.ProtoReflect.Descriptor instead.
 func (*CellRun) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{11}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CellRun) GetCol() int32 {
@@ -1551,7 +1637,7 @@ type Cell struct {
 
 func (x *Cell) Reset() {
 	*x = Cell{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[12]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1563,7 +1649,7 @@ func (x *Cell) String() string {
 func (*Cell) ProtoMessage() {}
 
 func (x *Cell) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[12]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1576,7 +1662,7 @@ func (x *Cell) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cell.ProtoReflect.Descriptor instead.
 func (*Cell) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{12}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Cell) GetText() string {
@@ -1618,7 +1704,7 @@ type Color struct {
 
 func (x *Color) Reset() {
 	*x = Color{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[13]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1630,7 +1716,7 @@ func (x *Color) String() string {
 func (*Color) ProtoMessage() {}
 
 func (x *Color) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[13]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1643,7 +1729,7 @@ func (x *Color) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Color.ProtoReflect.Descriptor instead.
 func (*Color) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{13}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Color) GetKind() ColorKind {
@@ -1680,7 +1766,7 @@ type TerminalStyle struct {
 
 func (x *TerminalStyle) Reset() {
 	*x = TerminalStyle{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[14]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1692,7 +1778,7 @@ func (x *TerminalStyle) String() string {
 func (*TerminalStyle) ProtoMessage() {}
 
 func (x *TerminalStyle) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[14]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1705,7 +1791,7 @@ func (x *TerminalStyle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalStyle.ProtoReflect.Descriptor instead.
 func (*TerminalStyle) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{14}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TerminalStyle) GetId() uint32 {
@@ -1764,7 +1850,7 @@ type CellAttrs struct {
 
 func (x *CellAttrs) Reset() {
 	*x = CellAttrs{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[15]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1776,7 +1862,7 @@ func (x *CellAttrs) String() string {
 func (*CellAttrs) ProtoMessage() {}
 
 func (x *CellAttrs) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[15]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1789,7 +1875,7 @@ func (x *CellAttrs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellAttrs.ProtoReflect.Descriptor instead.
 func (*CellAttrs) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{15}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CellAttrs) GetBold() bool {
@@ -1894,7 +1980,7 @@ type Hyperlink struct {
 
 func (x *Hyperlink) Reset() {
 	*x = Hyperlink{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[16]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +1992,7 @@ func (x *Hyperlink) String() string {
 func (*Hyperlink) ProtoMessage() {}
 
 func (x *Hyperlink) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[16]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +2005,7 @@ func (x *Hyperlink) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hyperlink.ProtoReflect.Descriptor instead.
 func (*Hyperlink) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{16}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Hyperlink) GetId() uint32 {
@@ -1956,7 +2042,7 @@ type Cursor struct {
 
 func (x *Cursor) Reset() {
 	*x = Cursor{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[17]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1968,7 +2054,7 @@ func (x *Cursor) String() string {
 func (*Cursor) ProtoMessage() {}
 
 func (x *Cursor) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[17]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1981,7 +2067,7 @@ func (x *Cursor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cursor.ProtoReflect.Descriptor instead.
 func (*Cursor) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{17}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Cursor) GetRow() int32 {
@@ -2033,7 +2119,7 @@ type Modes struct {
 
 func (x *Modes) Reset() {
 	*x = Modes{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[18]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2045,7 +2131,7 @@ func (x *Modes) String() string {
 func (*Modes) ProtoMessage() {}
 
 func (x *Modes) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[18]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2058,7 +2144,7 @@ func (x *Modes) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Modes.ProtoReflect.Descriptor instead.
 func (*Modes) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{18}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Modes) GetApplicationCursor() bool {
@@ -2115,7 +2201,7 @@ type TerminalPalette struct {
 
 func (x *TerminalPalette) Reset() {
 	*x = TerminalPalette{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[19]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2127,7 +2213,7 @@ func (x *TerminalPalette) String() string {
 func (*TerminalPalette) ProtoMessage() {}
 
 func (x *TerminalPalette) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[19]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2140,7 +2226,7 @@ func (x *TerminalPalette) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalPalette.ProtoReflect.Descriptor instead.
 func (*TerminalPalette) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{19}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TerminalPalette) GetDefaultFg() *Color {
@@ -2184,7 +2270,7 @@ type HistoryWindow struct {
 
 func (x *HistoryWindow) Reset() {
 	*x = HistoryWindow{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[20]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2196,7 +2282,7 @@ func (x *HistoryWindow) String() string {
 func (*HistoryWindow) ProtoMessage() {}
 
 func (x *HistoryWindow) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[20]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2209,7 +2295,7 @@ func (x *HistoryWindow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryWindow.ProtoReflect.Descriptor instead.
 func (*HistoryWindow) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{20}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HistoryWindow) GetFirstAvailableLineId() uint64 {
@@ -2258,7 +2344,7 @@ type HistoryLine struct {
 
 func (x *HistoryLine) Reset() {
 	*x = HistoryLine{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[21]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2270,7 +2356,7 @@ func (x *HistoryLine) String() string {
 func (*HistoryLine) ProtoMessage() {}
 
 func (x *HistoryLine) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[21]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2283,7 +2369,7 @@ func (x *HistoryLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryLine.ProtoReflect.Descriptor instead.
 func (*HistoryLine) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{21}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *HistoryLine) GetId() uint64 {
@@ -2319,7 +2405,7 @@ type HistoryRequest struct {
 
 func (x *HistoryRequest) Reset() {
 	*x = HistoryRequest{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[22]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2331,7 +2417,7 @@ func (x *HistoryRequest) String() string {
 func (*HistoryRequest) ProtoMessage() {}
 
 func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[22]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2344,7 +2430,7 @@ func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryRequest.ProtoReflect.Descriptor instead.
 func (*HistoryRequest) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{22}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *HistoryRequest) GetRequestId() string {
@@ -2391,7 +2477,7 @@ type HistoryPage struct {
 
 func (x *HistoryPage) Reset() {
 	*x = HistoryPage{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[23]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2403,7 +2489,7 @@ func (x *HistoryPage) String() string {
 func (*HistoryPage) ProtoMessage() {}
 
 func (x *HistoryPage) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[23]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2416,7 +2502,7 @@ func (x *HistoryPage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryPage.ProtoReflect.Descriptor instead.
 func (*HistoryPage) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{23}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *HistoryPage) GetRequestId() string {
@@ -2485,7 +2571,7 @@ type HistoryTrim struct {
 
 func (x *HistoryTrim) Reset() {
 	*x = HistoryTrim{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[24]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2497,7 +2583,7 @@ func (x *HistoryTrim) String() string {
 func (*HistoryTrim) ProtoMessage() {}
 
 func (x *HistoryTrim) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[24]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2510,7 +2596,7 @@ func (x *HistoryTrim) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryTrim.ProtoReflect.Descriptor instead.
 func (*HistoryTrim) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{24}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *HistoryTrim) GetLayoutEpoch() uint64 {
@@ -2538,7 +2624,7 @@ type ResyncRequest struct {
 
 func (x *ResyncRequest) Reset() {
 	*x = ResyncRequest{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[25]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2550,7 +2636,7 @@ func (x *ResyncRequest) String() string {
 func (*ResyncRequest) ProtoMessage() {}
 
 func (x *ResyncRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[25]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2563,7 +2649,7 @@ func (x *ResyncRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResyncRequest.ProtoReflect.Descriptor instead.
 func (*ResyncRequest) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{25}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ResyncRequest) GetLayoutEpoch() uint64 {
@@ -2597,7 +2683,7 @@ type AcquireLayout struct {
 
 func (x *AcquireLayout) Reset() {
 	*x = AcquireLayout{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[26]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2609,7 +2695,7 @@ func (x *AcquireLayout) String() string {
 func (*AcquireLayout) ProtoMessage() {}
 
 func (x *AcquireLayout) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[26]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2622,7 +2708,7 @@ func (x *AcquireLayout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcquireLayout.ProtoReflect.Descriptor instead.
 func (*AcquireLayout) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{26}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AcquireLayout) GetRequestId() string {
@@ -2653,7 +2739,7 @@ type LayoutLease struct {
 
 func (x *LayoutLease) Reset() {
 	*x = LayoutLease{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[27]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2665,7 +2751,7 @@ func (x *LayoutLease) String() string {
 func (*LayoutLease) ProtoMessage() {}
 
 func (x *LayoutLease) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[27]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2678,7 +2764,7 @@ func (x *LayoutLease) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LayoutLease.ProtoReflect.Descriptor instead.
 func (*LayoutLease) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{27}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *LayoutLease) GetRequestId() string {
@@ -2732,7 +2818,7 @@ type ReleaseLayout struct {
 
 func (x *ReleaseLayout) Reset() {
 	*x = ReleaseLayout{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[28]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2744,7 +2830,7 @@ func (x *ReleaseLayout) String() string {
 func (*ReleaseLayout) ProtoMessage() {}
 
 func (x *ReleaseLayout) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[28]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2757,7 +2843,7 @@ func (x *ReleaseLayout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseLayout.ProtoReflect.Descriptor instead.
 func (*ReleaseLayout) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{28}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ReleaseLayout) GetLeaseId() string {
@@ -2779,7 +2865,7 @@ type Resize struct {
 
 func (x *Resize) Reset() {
 	*x = Resize{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[29]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2791,7 +2877,7 @@ func (x *Resize) String() string {
 func (*Resize) ProtoMessage() {}
 
 func (x *Resize) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[29]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2804,7 +2890,7 @@ func (x *Resize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resize.ProtoReflect.Descriptor instead.
 func (*Resize) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{29}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Resize) GetCols() int32 {
@@ -2852,7 +2938,7 @@ type TerminalInput struct {
 
 func (x *TerminalInput) Reset() {
 	*x = TerminalInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[30]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2864,7 +2950,7 @@ func (x *TerminalInput) String() string {
 func (*TerminalInput) ProtoMessage() {}
 
 func (x *TerminalInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[30]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2877,7 +2963,7 @@ func (x *TerminalInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalInput.ProtoReflect.Descriptor instead.
 func (*TerminalInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{30}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TerminalInput) GetLeaseId() string {
@@ -2982,7 +3068,7 @@ type TextInput struct {
 
 func (x *TextInput) Reset() {
 	*x = TextInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[31]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2994,7 +3080,7 @@ func (x *TextInput) String() string {
 func (*TextInput) ProtoMessage() {}
 
 func (x *TextInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[31]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3007,7 +3093,7 @@ func (x *TextInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextInput.ProtoReflect.Descriptor instead.
 func (*TextInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{31}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TextInput) GetData() string {
@@ -3028,7 +3114,7 @@ type KeyInput struct {
 
 func (x *KeyInput) Reset() {
 	*x = KeyInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[32]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3040,7 +3126,7 @@ func (x *KeyInput) String() string {
 func (*KeyInput) ProtoMessage() {}
 
 func (x *KeyInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[32]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3053,7 +3139,7 @@ func (x *KeyInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyInput.ProtoReflect.Descriptor instead.
 func (*KeyInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{32}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *KeyInput) GetKey() string {
@@ -3086,7 +3172,7 @@ type PasteInput struct {
 
 func (x *PasteInput) Reset() {
 	*x = PasteInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[33]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3098,7 +3184,7 @@ func (x *PasteInput) String() string {
 func (*PasteInput) ProtoMessage() {}
 
 func (x *PasteInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[33]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3111,7 +3197,7 @@ func (x *PasteInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasteInput.ProtoReflect.Descriptor instead.
 func (*PasteInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{33}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PasteInput) GetData() string {
@@ -3135,7 +3221,7 @@ type MouseInput struct {
 
 func (x *MouseInput) Reset() {
 	*x = MouseInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[34]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3147,7 +3233,7 @@ func (x *MouseInput) String() string {
 func (*MouseInput) ProtoMessage() {}
 
 func (x *MouseInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[34]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3160,7 +3246,7 @@ func (x *MouseInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MouseInput.ProtoReflect.Descriptor instead.
 func (*MouseInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{34}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *MouseInput) GetRow() int32 {
@@ -3214,7 +3300,7 @@ type FocusInput struct {
 
 func (x *FocusInput) Reset() {
 	*x = FocusInput{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[35]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3226,7 +3312,7 @@ func (x *FocusInput) String() string {
 func (*FocusInput) ProtoMessage() {}
 
 func (x *FocusInput) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[35]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3239,7 +3325,7 @@ func (x *FocusInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FocusInput.ProtoReflect.Descriptor instead.
 func (*FocusInput) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{35}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *FocusInput) GetFocused() bool {
@@ -3261,7 +3347,7 @@ type ModifierSet struct {
 
 func (x *ModifierSet) Reset() {
 	*x = ModifierSet{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[36]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3273,7 +3359,7 @@ func (x *ModifierSet) String() string {
 func (*ModifierSet) ProtoMessage() {}
 
 func (x *ModifierSet) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[36]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3286,7 +3372,7 @@ func (x *ModifierSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModifierSet.ProtoReflect.Descriptor instead.
 func (*ModifierSet) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{36}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ModifierSet) GetShift() bool {
@@ -3338,7 +3424,7 @@ type TerminalEffect struct {
 
 func (x *TerminalEffect) Reset() {
 	*x = TerminalEffect{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[37]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3350,7 +3436,7 @@ func (x *TerminalEffect) String() string {
 func (*TerminalEffect) ProtoMessage() {}
 
 func (x *TerminalEffect) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[37]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3363,7 +3449,7 @@ func (x *TerminalEffect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalEffect.ProtoReflect.Descriptor instead.
 func (*TerminalEffect) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{37}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *TerminalEffect) GetInstanceId() string {
@@ -3519,7 +3605,7 @@ type Bell struct {
 
 func (x *Bell) Reset() {
 	*x = Bell{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[38]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3531,7 +3617,7 @@ func (x *Bell) String() string {
 func (*Bell) ProtoMessage() {}
 
 func (x *Bell) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[38]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3544,7 +3630,7 @@ func (x *Bell) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Bell.ProtoReflect.Descriptor instead.
 func (*Bell) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{38}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{39}
 }
 
 type TitleChanged struct {
@@ -3556,7 +3642,7 @@ type TitleChanged struct {
 
 func (x *TitleChanged) Reset() {
 	*x = TitleChanged{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[39]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3568,7 +3654,7 @@ func (x *TitleChanged) String() string {
 func (*TitleChanged) ProtoMessage() {}
 
 func (x *TitleChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[39]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3581,7 +3667,7 @@ func (x *TitleChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TitleChanged.ProtoReflect.Descriptor instead.
 func (*TitleChanged) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{39}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *TitleChanged) GetTitle() string {
@@ -3600,7 +3686,7 @@ type WorkingDirectoryChanged struct {
 
 func (x *WorkingDirectoryChanged) Reset() {
 	*x = WorkingDirectoryChanged{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[40]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3612,7 +3698,7 @@ func (x *WorkingDirectoryChanged) String() string {
 func (*WorkingDirectoryChanged) ProtoMessage() {}
 
 func (x *WorkingDirectoryChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[40]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3625,7 +3711,7 @@ func (x *WorkingDirectoryChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkingDirectoryChanged.ProtoReflect.Descriptor instead.
 func (*WorkingDirectoryChanged) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{40}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *WorkingDirectoryChanged) GetPath() string {
@@ -3645,7 +3731,7 @@ type ClipboardReadRequest struct {
 
 func (x *ClipboardReadRequest) Reset() {
 	*x = ClipboardReadRequest{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[41]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3657,7 +3743,7 @@ func (x *ClipboardReadRequest) String() string {
 func (*ClipboardReadRequest) ProtoMessage() {}
 
 func (x *ClipboardReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[41]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3670,7 +3756,7 @@ func (x *ClipboardReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClipboardReadRequest.ProtoReflect.Descriptor instead.
 func (*ClipboardReadRequest) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{41}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ClipboardReadRequest) GetRequestId() string {
@@ -3698,7 +3784,7 @@ type ClipboardWriteRequest struct {
 
 func (x *ClipboardWriteRequest) Reset() {
 	*x = ClipboardWriteRequest{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[42]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3710,7 +3796,7 @@ func (x *ClipboardWriteRequest) String() string {
 func (*ClipboardWriteRequest) ProtoMessage() {}
 
 func (x *ClipboardWriteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[42]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3723,7 +3809,7 @@ func (x *ClipboardWriteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClipboardWriteRequest.ProtoReflect.Descriptor instead.
 func (*ClipboardWriteRequest) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{42}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ClipboardWriteRequest) GetRequestId() string {
@@ -3757,7 +3843,7 @@ type DesktopNotification struct {
 
 func (x *DesktopNotification) Reset() {
 	*x = DesktopNotification{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[43]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3769,7 +3855,7 @@ func (x *DesktopNotification) String() string {
 func (*DesktopNotification) ProtoMessage() {}
 
 func (x *DesktopNotification) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[43]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3782,7 +3868,7 @@ func (x *DesktopNotification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesktopNotification.ProtoReflect.Descriptor instead.
 func (*DesktopNotification) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{43}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *DesktopNotification) GetTitle() string {
@@ -3808,7 +3894,7 @@ type PaletteChanged struct {
 
 func (x *PaletteChanged) Reset() {
 	*x = PaletteChanged{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[44]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3820,7 +3906,7 @@ func (x *PaletteChanged) String() string {
 func (*PaletteChanged) ProtoMessage() {}
 
 func (x *PaletteChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[44]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3833,7 +3919,7 @@ func (x *PaletteChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PaletteChanged.ProtoReflect.Descriptor instead.
 func (*PaletteChanged) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{44}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *PaletteChanged) GetPalette() *TerminalPalette {
@@ -3853,7 +3939,7 @@ type ShellIntegrationMark struct {
 
 func (x *ShellIntegrationMark) Reset() {
 	*x = ShellIntegrationMark{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[45]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3865,7 +3951,7 @@ func (x *ShellIntegrationMark) String() string {
 func (*ShellIntegrationMark) ProtoMessage() {}
 
 func (x *ShellIntegrationMark) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[45]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3878,7 +3964,7 @@ func (x *ShellIntegrationMark) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShellIntegrationMark.ProtoReflect.Descriptor instead.
 func (*ShellIntegrationMark) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{45}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ShellIntegrationMark) GetType() string {
@@ -3907,7 +3993,7 @@ type ClipboardResponse struct {
 
 func (x *ClipboardResponse) Reset() {
 	*x = ClipboardResponse{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[46]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3919,7 +4005,7 @@ func (x *ClipboardResponse) String() string {
 func (*ClipboardResponse) ProtoMessage() {}
 
 func (x *ClipboardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[46]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3932,7 +4018,7 @@ func (x *ClipboardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClipboardResponse.ProtoReflect.Descriptor instead.
 func (*ClipboardResponse) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{46}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ClipboardResponse) GetRequestId() string {
@@ -3981,7 +4067,7 @@ type TerminalInfo struct {
 
 func (x *TerminalInfo) Reset() {
 	*x = TerminalInfo{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[47]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3993,7 +4079,7 @@ func (x *TerminalInfo) String() string {
 func (*TerminalInfo) ProtoMessage() {}
 
 func (x *TerminalInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[47]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4006,7 +4092,7 @@ func (x *TerminalInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalInfo.ProtoReflect.Descriptor instead.
 func (*TerminalInfo) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{47}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *TerminalInfo) GetSessionId() string {
@@ -4088,7 +4174,7 @@ type Exit struct {
 
 func (x *Exit) Reset() {
 	*x = Exit{}
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[48]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4100,7 +4186,7 @@ func (x *Exit) String() string {
 func (*Exit) ProtoMessage() {}
 
 func (x *Exit) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_screen_proto_msgTypes[48]
+	mi := &file_shared_proto_terminal_screen_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4113,7 +4199,7 @@ func (x *Exit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Exit.ProtoReflect.Descriptor instead.
 func (*Exit) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{48}
+	return file_shared_proto_terminal_screen_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *Exit) GetCode() int32 {
@@ -4127,8 +4213,7 @@ var File_shared_proto_terminal_screen_proto protoreflect.FileDescriptor
 
 const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\n" +
-	"\"shared/proto/terminal_screen.proto\x12\x1awebterm.terminal.screen.v1\"\xc9\n" +
-	"\n" +
+	"\"shared/proto/terminal_screen.proto\x12\x1awebterm.terminal.screen.v1\"\x91\v\n" +
 	"\x0eScreenEnvelope\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x129\n" +
 	"\x05hello\x18\n" +
@@ -4149,7 +4234,9 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x04info\x18\x18 \x01(\v2(.webterm.terminal.screen.v1.TerminalInfoH\x00R\x04info\x126\n" +
 	"\x04exit\x18\x19 \x01(\v2 .webterm.terminal.screen.v1.ExitH\x00R\x04exit\x126\n" +
 	"\x04ping\x18\x1a \x01(\v2 .webterm.terminal.screen.v1.PingH\x00R\x04ping\x126\n" +
-	"\x04pong\x18\x1b \x01(\v2 .webterm.terminal.screen.v1.PongH\x00R\x04pongB\t\n" +
+	"\x04pong\x18\x1b \x01(\v2 .webterm.terminal.screen.v1.PongH\x00R\x04pong\x12F\n" +
+	"\n" +
+	"resume_ack\x18\x1c \x01(\v2%.webterm.terminal.screen.v1.ResumeAckH\x00R\tresumeAckB\t\n" +
 	"\apayload\"\xf5\x02\n" +
 	"\x05Hello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
@@ -4175,7 +4262,12 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x04Ping\x12'\n" +
 	"\x0fscreen_revision\x18\x01 \x01(\x04R\x0escreenRevision\"/\n" +
 	"\x04Pong\x12'\n" +
-	"\x0fscreen_revision\x18\x01 \x01(\x04R\x0escreenRevision\"\xad\x06\n" +
+	"\x0fscreen_revision\x18\x01 \x01(\x04R\x0escreenRevision\"x\n" +
+	"\tResumeAck\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12!\n" +
+	"\flayout_epoch\x18\x02 \x01(\x04R\vlayoutEpoch\x12'\n" +
+	"\x0fscreen_revision\x18\x03 \x01(\x04R\x0escreenRevision\"\xad\x06\n" +
 	"\x0eScreenSnapshot\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
@@ -4194,7 +4286,7 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x06styles\x18\f \x03(\v2).webterm.terminal.screen.v1.TerminalStyleR\x06styles\x12;\n" +
 	"\x05links\x18\r \x03(\v2%.webterm.terminal.screen.v1.HyperlinkR\x05links\x12\x14\n" +
 	"\x05title\x18\x0e \x01(\tR\x05title\x12+\n" +
-	"\x11working_directory\x18\x0f \x01(\tR\x10workingDirectory\"\x95\x06\n" +
+	"\x11working_directory\x18\x0f \x01(\tR\x10workingDirectory\"\xae\a\n" +
 	"\vScreenPatch\x12!\n" +
 	"\flayout_epoch\x18\x01 \x01(\x04R\vlayoutEpoch\x12#\n" +
 	"\rbase_revision\x18\x02 \x01(\x04R\fbaseRevision\x12'\n" +
@@ -4208,12 +4300,16 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\n" +
 	"new_styles\x18\t \x03(\v2).webterm.terminal.screen.v1.TerminalStyleR\tnewStyles\x12B\n" +
 	"\tnew_links\x18\n" +
-	" \x03(\v2%.webterm.terminal.screen.v1.HyperlinkR\bnewLinks\x12\x14\n" +
-	"\x05title\x18\v \x01(\tR\x05title\x12+\n" +
-	"\x11working_directory\x18\f \x01(\tR\x10workingDirectory\x12L\n" +
+	" \x03(\v2%.webterm.terminal.screen.v1.HyperlinkR\bnewLinks\x12\x19\n" +
+	"\x05title\x18\v \x01(\tH\x00R\x05title\x88\x01\x01\x120\n" +
+	"\x11working_directory\x18\f \x01(\tH\x01R\x10workingDirectory\x88\x01\x01\x12L\n" +
 	"\rpromoted_rows\x18\r \x03(\v2'.webterm.terminal.screen.v1.PromotedRowR\fpromotedRows\x12\x1f\n" +
 	"\vinstance_id\x18\x0e \x01(\tR\n" +
-	"instanceId\"T\n" +
+	"instanceId\x12I\n" +
+	"\x1ffirst_available_history_line_id\x18\x0f \x01(\x04H\x02R\x1bfirstAvailableHistoryLineId\x88\x01\x01B\b\n" +
+	"\x06_titleB\x14\n" +
+	"\x12_working_directoryB\"\n" +
+	" _first_available_history_line_id\"T\n" +
 	"\vPromotedRow\x12\x1d\n" +
 	"\n" +
 	"screen_row\x18\x01 \x01(\x05R\tscreenRow\x12&\n" +
@@ -4486,7 +4582,7 @@ func file_shared_proto_terminal_screen_proto_rawDescGZIP() []byte {
 }
 
 var file_shared_proto_terminal_screen_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_shared_proto_terminal_screen_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_shared_proto_terminal_screen_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_shared_proto_terminal_screen_proto_goTypes = []any{
 	(BufferKind)(0),                 // 0: webterm.terminal.screen.v1.BufferKind
 	(ColorKind)(0),                  // 1: webterm.terminal.screen.v1.ColorKind
@@ -4500,129 +4596,131 @@ var file_shared_proto_terminal_screen_proto_goTypes = []any{
 	(*CapabilitySet)(nil),           // 9: webterm.terminal.screen.v1.CapabilitySet
 	(*Ping)(nil),                    // 10: webterm.terminal.screen.v1.Ping
 	(*Pong)(nil),                    // 11: webterm.terminal.screen.v1.Pong
-	(*ScreenSnapshot)(nil),          // 12: webterm.terminal.screen.v1.ScreenSnapshot
-	(*ScreenPatch)(nil),             // 13: webterm.terminal.screen.v1.ScreenPatch
-	(*PromotedRow)(nil),             // 14: webterm.terminal.screen.v1.PromotedRow
-	(*Size)(nil),                    // 15: webterm.terminal.screen.v1.Size
-	(*TerminalLine)(nil),            // 16: webterm.terminal.screen.v1.TerminalLine
-	(*CellRun)(nil),                 // 17: webterm.terminal.screen.v1.CellRun
-	(*Cell)(nil),                    // 18: webterm.terminal.screen.v1.Cell
-	(*Color)(nil),                   // 19: webterm.terminal.screen.v1.Color
-	(*TerminalStyle)(nil),           // 20: webterm.terminal.screen.v1.TerminalStyle
-	(*CellAttrs)(nil),               // 21: webterm.terminal.screen.v1.CellAttrs
-	(*Hyperlink)(nil),               // 22: webterm.terminal.screen.v1.Hyperlink
-	(*Cursor)(nil),                  // 23: webterm.terminal.screen.v1.Cursor
-	(*Modes)(nil),                   // 24: webterm.terminal.screen.v1.Modes
-	(*TerminalPalette)(nil),         // 25: webterm.terminal.screen.v1.TerminalPalette
-	(*HistoryWindow)(nil),           // 26: webterm.terminal.screen.v1.HistoryWindow
-	(*HistoryLine)(nil),             // 27: webterm.terminal.screen.v1.HistoryLine
-	(*HistoryRequest)(nil),          // 28: webterm.terminal.screen.v1.HistoryRequest
-	(*HistoryPage)(nil),             // 29: webterm.terminal.screen.v1.HistoryPage
-	(*HistoryTrim)(nil),             // 30: webterm.terminal.screen.v1.HistoryTrim
-	(*ResyncRequest)(nil),           // 31: webterm.terminal.screen.v1.ResyncRequest
-	(*AcquireLayout)(nil),           // 32: webterm.terminal.screen.v1.AcquireLayout
-	(*LayoutLease)(nil),             // 33: webterm.terminal.screen.v1.LayoutLease
-	(*ReleaseLayout)(nil),           // 34: webterm.terminal.screen.v1.ReleaseLayout
-	(*Resize)(nil),                  // 35: webterm.terminal.screen.v1.Resize
-	(*TerminalInput)(nil),           // 36: webterm.terminal.screen.v1.TerminalInput
-	(*TextInput)(nil),               // 37: webterm.terminal.screen.v1.TextInput
-	(*KeyInput)(nil),                // 38: webterm.terminal.screen.v1.KeyInput
-	(*PasteInput)(nil),              // 39: webterm.terminal.screen.v1.PasteInput
-	(*MouseInput)(nil),              // 40: webterm.terminal.screen.v1.MouseInput
-	(*FocusInput)(nil),              // 41: webterm.terminal.screen.v1.FocusInput
-	(*ModifierSet)(nil),             // 42: webterm.terminal.screen.v1.ModifierSet
-	(*TerminalEffect)(nil),          // 43: webterm.terminal.screen.v1.TerminalEffect
-	(*Bell)(nil),                    // 44: webterm.terminal.screen.v1.Bell
-	(*TitleChanged)(nil),            // 45: webterm.terminal.screen.v1.TitleChanged
-	(*WorkingDirectoryChanged)(nil), // 46: webterm.terminal.screen.v1.WorkingDirectoryChanged
-	(*ClipboardReadRequest)(nil),    // 47: webterm.terminal.screen.v1.ClipboardReadRequest
-	(*ClipboardWriteRequest)(nil),   // 48: webterm.terminal.screen.v1.ClipboardWriteRequest
-	(*DesktopNotification)(nil),     // 49: webterm.terminal.screen.v1.DesktopNotification
-	(*PaletteChanged)(nil),          // 50: webterm.terminal.screen.v1.PaletteChanged
-	(*ShellIntegrationMark)(nil),    // 51: webterm.terminal.screen.v1.ShellIntegrationMark
-	(*ClipboardResponse)(nil),       // 52: webterm.terminal.screen.v1.ClipboardResponse
-	(*TerminalInfo)(nil),            // 53: webterm.terminal.screen.v1.TerminalInfo
-	(*Exit)(nil),                    // 54: webterm.terminal.screen.v1.Exit
+	(*ResumeAck)(nil),               // 12: webterm.terminal.screen.v1.ResumeAck
+	(*ScreenSnapshot)(nil),          // 13: webterm.terminal.screen.v1.ScreenSnapshot
+	(*ScreenPatch)(nil),             // 14: webterm.terminal.screen.v1.ScreenPatch
+	(*PromotedRow)(nil),             // 15: webterm.terminal.screen.v1.PromotedRow
+	(*Size)(nil),                    // 16: webterm.terminal.screen.v1.Size
+	(*TerminalLine)(nil),            // 17: webterm.terminal.screen.v1.TerminalLine
+	(*CellRun)(nil),                 // 18: webterm.terminal.screen.v1.CellRun
+	(*Cell)(nil),                    // 19: webterm.terminal.screen.v1.Cell
+	(*Color)(nil),                   // 20: webterm.terminal.screen.v1.Color
+	(*TerminalStyle)(nil),           // 21: webterm.terminal.screen.v1.TerminalStyle
+	(*CellAttrs)(nil),               // 22: webterm.terminal.screen.v1.CellAttrs
+	(*Hyperlink)(nil),               // 23: webterm.terminal.screen.v1.Hyperlink
+	(*Cursor)(nil),                  // 24: webterm.terminal.screen.v1.Cursor
+	(*Modes)(nil),                   // 25: webterm.terminal.screen.v1.Modes
+	(*TerminalPalette)(nil),         // 26: webterm.terminal.screen.v1.TerminalPalette
+	(*HistoryWindow)(nil),           // 27: webterm.terminal.screen.v1.HistoryWindow
+	(*HistoryLine)(nil),             // 28: webterm.terminal.screen.v1.HistoryLine
+	(*HistoryRequest)(nil),          // 29: webterm.terminal.screen.v1.HistoryRequest
+	(*HistoryPage)(nil),             // 30: webterm.terminal.screen.v1.HistoryPage
+	(*HistoryTrim)(nil),             // 31: webterm.terminal.screen.v1.HistoryTrim
+	(*ResyncRequest)(nil),           // 32: webterm.terminal.screen.v1.ResyncRequest
+	(*AcquireLayout)(nil),           // 33: webterm.terminal.screen.v1.AcquireLayout
+	(*LayoutLease)(nil),             // 34: webterm.terminal.screen.v1.LayoutLease
+	(*ReleaseLayout)(nil),           // 35: webterm.terminal.screen.v1.ReleaseLayout
+	(*Resize)(nil),                  // 36: webterm.terminal.screen.v1.Resize
+	(*TerminalInput)(nil),           // 37: webterm.terminal.screen.v1.TerminalInput
+	(*TextInput)(nil),               // 38: webterm.terminal.screen.v1.TextInput
+	(*KeyInput)(nil),                // 39: webterm.terminal.screen.v1.KeyInput
+	(*PasteInput)(nil),              // 40: webterm.terminal.screen.v1.PasteInput
+	(*MouseInput)(nil),              // 41: webterm.terminal.screen.v1.MouseInput
+	(*FocusInput)(nil),              // 42: webterm.terminal.screen.v1.FocusInput
+	(*ModifierSet)(nil),             // 43: webterm.terminal.screen.v1.ModifierSet
+	(*TerminalEffect)(nil),          // 44: webterm.terminal.screen.v1.TerminalEffect
+	(*Bell)(nil),                    // 45: webterm.terminal.screen.v1.Bell
+	(*TitleChanged)(nil),            // 46: webterm.terminal.screen.v1.TitleChanged
+	(*WorkingDirectoryChanged)(nil), // 47: webterm.terminal.screen.v1.WorkingDirectoryChanged
+	(*ClipboardReadRequest)(nil),    // 48: webterm.terminal.screen.v1.ClipboardReadRequest
+	(*ClipboardWriteRequest)(nil),   // 49: webterm.terminal.screen.v1.ClipboardWriteRequest
+	(*DesktopNotification)(nil),     // 50: webterm.terminal.screen.v1.DesktopNotification
+	(*PaletteChanged)(nil),          // 51: webterm.terminal.screen.v1.PaletteChanged
+	(*ShellIntegrationMark)(nil),    // 52: webterm.terminal.screen.v1.ShellIntegrationMark
+	(*ClipboardResponse)(nil),       // 53: webterm.terminal.screen.v1.ClipboardResponse
+	(*TerminalInfo)(nil),            // 54: webterm.terminal.screen.v1.TerminalInfo
+	(*Exit)(nil),                    // 55: webterm.terminal.screen.v1.Exit
 }
 var file_shared_proto_terminal_screen_proto_depIdxs = []int32{
 	7,  // 0: webterm.terminal.screen.v1.ScreenEnvelope.hello:type_name -> webterm.terminal.screen.v1.Hello
-	12, // 1: webterm.terminal.screen.v1.ScreenEnvelope.snapshot:type_name -> webterm.terminal.screen.v1.ScreenSnapshot
-	13, // 2: webterm.terminal.screen.v1.ScreenEnvelope.patch:type_name -> webterm.terminal.screen.v1.ScreenPatch
-	28, // 3: webterm.terminal.screen.v1.ScreenEnvelope.history_request:type_name -> webterm.terminal.screen.v1.HistoryRequest
-	29, // 4: webterm.terminal.screen.v1.ScreenEnvelope.history_page:type_name -> webterm.terminal.screen.v1.HistoryPage
-	30, // 5: webterm.terminal.screen.v1.ScreenEnvelope.history_trim:type_name -> webterm.terminal.screen.v1.HistoryTrim
-	31, // 6: webterm.terminal.screen.v1.ScreenEnvelope.resync:type_name -> webterm.terminal.screen.v1.ResyncRequest
-	32, // 7: webterm.terminal.screen.v1.ScreenEnvelope.acquire_layout:type_name -> webterm.terminal.screen.v1.AcquireLayout
-	33, // 8: webterm.terminal.screen.v1.ScreenEnvelope.layout_lease:type_name -> webterm.terminal.screen.v1.LayoutLease
-	34, // 9: webterm.terminal.screen.v1.ScreenEnvelope.release_layout:type_name -> webterm.terminal.screen.v1.ReleaseLayout
-	35, // 10: webterm.terminal.screen.v1.ScreenEnvelope.resize:type_name -> webterm.terminal.screen.v1.Resize
-	36, // 11: webterm.terminal.screen.v1.ScreenEnvelope.input:type_name -> webterm.terminal.screen.v1.TerminalInput
-	43, // 12: webterm.terminal.screen.v1.ScreenEnvelope.effect:type_name -> webterm.terminal.screen.v1.TerminalEffect
-	52, // 13: webterm.terminal.screen.v1.ScreenEnvelope.clipboard_response:type_name -> webterm.terminal.screen.v1.ClipboardResponse
-	53, // 14: webterm.terminal.screen.v1.ScreenEnvelope.info:type_name -> webterm.terminal.screen.v1.TerminalInfo
-	54, // 15: webterm.terminal.screen.v1.ScreenEnvelope.exit:type_name -> webterm.terminal.screen.v1.Exit
+	13, // 1: webterm.terminal.screen.v1.ScreenEnvelope.snapshot:type_name -> webterm.terminal.screen.v1.ScreenSnapshot
+	14, // 2: webterm.terminal.screen.v1.ScreenEnvelope.patch:type_name -> webterm.terminal.screen.v1.ScreenPatch
+	29, // 3: webterm.terminal.screen.v1.ScreenEnvelope.history_request:type_name -> webterm.terminal.screen.v1.HistoryRequest
+	30, // 4: webterm.terminal.screen.v1.ScreenEnvelope.history_page:type_name -> webterm.terminal.screen.v1.HistoryPage
+	31, // 5: webterm.terminal.screen.v1.ScreenEnvelope.history_trim:type_name -> webterm.terminal.screen.v1.HistoryTrim
+	32, // 6: webterm.terminal.screen.v1.ScreenEnvelope.resync:type_name -> webterm.terminal.screen.v1.ResyncRequest
+	33, // 7: webterm.terminal.screen.v1.ScreenEnvelope.acquire_layout:type_name -> webterm.terminal.screen.v1.AcquireLayout
+	34, // 8: webterm.terminal.screen.v1.ScreenEnvelope.layout_lease:type_name -> webterm.terminal.screen.v1.LayoutLease
+	35, // 9: webterm.terminal.screen.v1.ScreenEnvelope.release_layout:type_name -> webterm.terminal.screen.v1.ReleaseLayout
+	36, // 10: webterm.terminal.screen.v1.ScreenEnvelope.resize:type_name -> webterm.terminal.screen.v1.Resize
+	37, // 11: webterm.terminal.screen.v1.ScreenEnvelope.input:type_name -> webterm.terminal.screen.v1.TerminalInput
+	44, // 12: webterm.terminal.screen.v1.ScreenEnvelope.effect:type_name -> webterm.terminal.screen.v1.TerminalEffect
+	53, // 13: webterm.terminal.screen.v1.ScreenEnvelope.clipboard_response:type_name -> webterm.terminal.screen.v1.ClipboardResponse
+	54, // 14: webterm.terminal.screen.v1.ScreenEnvelope.info:type_name -> webterm.terminal.screen.v1.TerminalInfo
+	55, // 15: webterm.terminal.screen.v1.ScreenEnvelope.exit:type_name -> webterm.terminal.screen.v1.Exit
 	10, // 16: webterm.terminal.screen.v1.ScreenEnvelope.ping:type_name -> webterm.terminal.screen.v1.Ping
 	11, // 17: webterm.terminal.screen.v1.ScreenEnvelope.pong:type_name -> webterm.terminal.screen.v1.Pong
-	8,  // 18: webterm.terminal.screen.v1.Hello.history:type_name -> webterm.terminal.screen.v1.HistoryPreference
-	9,  // 19: webterm.terminal.screen.v1.Hello.capabilities:type_name -> webterm.terminal.screen.v1.CapabilitySet
-	15, // 20: webterm.terminal.screen.v1.ScreenSnapshot.geometry:type_name -> webterm.terminal.screen.v1.Size
-	0,  // 21: webterm.terminal.screen.v1.ScreenSnapshot.active_buffer:type_name -> webterm.terminal.screen.v1.BufferKind
-	23, // 22: webterm.terminal.screen.v1.ScreenSnapshot.cursor:type_name -> webterm.terminal.screen.v1.Cursor
-	24, // 23: webterm.terminal.screen.v1.ScreenSnapshot.modes:type_name -> webterm.terminal.screen.v1.Modes
-	25, // 24: webterm.terminal.screen.v1.ScreenSnapshot.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
-	26, // 25: webterm.terminal.screen.v1.ScreenSnapshot.history:type_name -> webterm.terminal.screen.v1.HistoryWindow
-	16, // 26: webterm.terminal.screen.v1.ScreenSnapshot.screen:type_name -> webterm.terminal.screen.v1.TerminalLine
-	20, // 27: webterm.terminal.screen.v1.ScreenSnapshot.styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
-	22, // 28: webterm.terminal.screen.v1.ScreenSnapshot.links:type_name -> webterm.terminal.screen.v1.Hyperlink
-	27, // 29: webterm.terminal.screen.v1.ScreenPatch.history_append:type_name -> webterm.terminal.screen.v1.HistoryLine
-	16, // 30: webterm.terminal.screen.v1.ScreenPatch.screen_rows:type_name -> webterm.terminal.screen.v1.TerminalLine
-	23, // 31: webterm.terminal.screen.v1.ScreenPatch.cursor:type_name -> webterm.terminal.screen.v1.Cursor
-	24, // 32: webterm.terminal.screen.v1.ScreenPatch.modes:type_name -> webterm.terminal.screen.v1.Modes
-	25, // 33: webterm.terminal.screen.v1.ScreenPatch.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
-	20, // 34: webterm.terminal.screen.v1.ScreenPatch.new_styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
-	22, // 35: webterm.terminal.screen.v1.ScreenPatch.new_links:type_name -> webterm.terminal.screen.v1.Hyperlink
-	14, // 36: webterm.terminal.screen.v1.ScreenPatch.promoted_rows:type_name -> webterm.terminal.screen.v1.PromotedRow
-	17, // 37: webterm.terminal.screen.v1.TerminalLine.runs:type_name -> webterm.terminal.screen.v1.CellRun
-	18, // 38: webterm.terminal.screen.v1.CellRun.cells:type_name -> webterm.terminal.screen.v1.Cell
-	1,  // 39: webterm.terminal.screen.v1.Color.kind:type_name -> webterm.terminal.screen.v1.ColorKind
-	19, // 40: webterm.terminal.screen.v1.TerminalStyle.fg:type_name -> webterm.terminal.screen.v1.Color
-	19, // 41: webterm.terminal.screen.v1.TerminalStyle.bg:type_name -> webterm.terminal.screen.v1.Color
-	19, // 42: webterm.terminal.screen.v1.TerminalStyle.underline_color:type_name -> webterm.terminal.screen.v1.Color
-	21, // 43: webterm.terminal.screen.v1.TerminalStyle.attrs:type_name -> webterm.terminal.screen.v1.CellAttrs
-	2,  // 44: webterm.terminal.screen.v1.Cursor.shape:type_name -> webterm.terminal.screen.v1.CursorShape
-	3,  // 45: webterm.terminal.screen.v1.Modes.mouse_tracking:type_name -> webterm.terminal.screen.v1.MouseTracking
-	4,  // 46: webterm.terminal.screen.v1.Modes.mouse_encoding:type_name -> webterm.terminal.screen.v1.MouseEncoding
-	19, // 47: webterm.terminal.screen.v1.TerminalPalette.default_fg:type_name -> webterm.terminal.screen.v1.Color
-	19, // 48: webterm.terminal.screen.v1.TerminalPalette.default_bg:type_name -> webterm.terminal.screen.v1.Color
-	19, // 49: webterm.terminal.screen.v1.TerminalPalette.cursor_color:type_name -> webterm.terminal.screen.v1.Color
-	27, // 50: webterm.terminal.screen.v1.HistoryWindow.lines:type_name -> webterm.terminal.screen.v1.HistoryLine
-	17, // 51: webterm.terminal.screen.v1.HistoryLine.runs:type_name -> webterm.terminal.screen.v1.CellRun
-	27, // 52: webterm.terminal.screen.v1.HistoryPage.lines:type_name -> webterm.terminal.screen.v1.HistoryLine
-	20, // 53: webterm.terminal.screen.v1.HistoryPage.styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
-	22, // 54: webterm.terminal.screen.v1.HistoryPage.links:type_name -> webterm.terminal.screen.v1.Hyperlink
-	15, // 55: webterm.terminal.screen.v1.LayoutLease.geometry:type_name -> webterm.terminal.screen.v1.Size
-	37, // 56: webterm.terminal.screen.v1.TerminalInput.text:type_name -> webterm.terminal.screen.v1.TextInput
-	38, // 57: webterm.terminal.screen.v1.TerminalInput.key:type_name -> webterm.terminal.screen.v1.KeyInput
-	39, // 58: webterm.terminal.screen.v1.TerminalInput.paste:type_name -> webterm.terminal.screen.v1.PasteInput
-	40, // 59: webterm.terminal.screen.v1.TerminalInput.mouse:type_name -> webterm.terminal.screen.v1.MouseInput
-	41, // 60: webterm.terminal.screen.v1.TerminalInput.focus:type_name -> webterm.terminal.screen.v1.FocusInput
-	42, // 61: webterm.terminal.screen.v1.KeyInput.modifiers:type_name -> webterm.terminal.screen.v1.ModifierSet
-	5,  // 62: webterm.terminal.screen.v1.MouseInput.button:type_name -> webterm.terminal.screen.v1.MouseButton
-	42, // 63: webterm.terminal.screen.v1.MouseInput.modifiers:type_name -> webterm.terminal.screen.v1.ModifierSet
-	44, // 64: webterm.terminal.screen.v1.TerminalEffect.bell:type_name -> webterm.terminal.screen.v1.Bell
-	45, // 65: webterm.terminal.screen.v1.TerminalEffect.title:type_name -> webterm.terminal.screen.v1.TitleChanged
-	46, // 66: webterm.terminal.screen.v1.TerminalEffect.cwd:type_name -> webterm.terminal.screen.v1.WorkingDirectoryChanged
-	47, // 67: webterm.terminal.screen.v1.TerminalEffect.clipboard_read:type_name -> webterm.terminal.screen.v1.ClipboardReadRequest
-	48, // 68: webterm.terminal.screen.v1.TerminalEffect.clipboard_write:type_name -> webterm.terminal.screen.v1.ClipboardWriteRequest
-	49, // 69: webterm.terminal.screen.v1.TerminalEffect.notification:type_name -> webterm.terminal.screen.v1.DesktopNotification
-	50, // 70: webterm.terminal.screen.v1.TerminalEffect.palette:type_name -> webterm.terminal.screen.v1.PaletteChanged
-	51, // 71: webterm.terminal.screen.v1.TerminalEffect.shell_mark:type_name -> webterm.terminal.screen.v1.ShellIntegrationMark
-	25, // 72: webterm.terminal.screen.v1.PaletteChanged.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
-	73, // [73:73] is the sub-list for method output_type
-	73, // [73:73] is the sub-list for method input_type
-	73, // [73:73] is the sub-list for extension type_name
-	73, // [73:73] is the sub-list for extension extendee
-	0,  // [0:73] is the sub-list for field type_name
+	12, // 18: webterm.terminal.screen.v1.ScreenEnvelope.resume_ack:type_name -> webterm.terminal.screen.v1.ResumeAck
+	8,  // 19: webterm.terminal.screen.v1.Hello.history:type_name -> webterm.terminal.screen.v1.HistoryPreference
+	9,  // 20: webterm.terminal.screen.v1.Hello.capabilities:type_name -> webterm.terminal.screen.v1.CapabilitySet
+	16, // 21: webterm.terminal.screen.v1.ScreenSnapshot.geometry:type_name -> webterm.terminal.screen.v1.Size
+	0,  // 22: webterm.terminal.screen.v1.ScreenSnapshot.active_buffer:type_name -> webterm.terminal.screen.v1.BufferKind
+	24, // 23: webterm.terminal.screen.v1.ScreenSnapshot.cursor:type_name -> webterm.terminal.screen.v1.Cursor
+	25, // 24: webterm.terminal.screen.v1.ScreenSnapshot.modes:type_name -> webterm.terminal.screen.v1.Modes
+	26, // 25: webterm.terminal.screen.v1.ScreenSnapshot.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
+	27, // 26: webterm.terminal.screen.v1.ScreenSnapshot.history:type_name -> webterm.terminal.screen.v1.HistoryWindow
+	17, // 27: webterm.terminal.screen.v1.ScreenSnapshot.screen:type_name -> webterm.terminal.screen.v1.TerminalLine
+	21, // 28: webterm.terminal.screen.v1.ScreenSnapshot.styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
+	23, // 29: webterm.terminal.screen.v1.ScreenSnapshot.links:type_name -> webterm.terminal.screen.v1.Hyperlink
+	28, // 30: webterm.terminal.screen.v1.ScreenPatch.history_append:type_name -> webterm.terminal.screen.v1.HistoryLine
+	17, // 31: webterm.terminal.screen.v1.ScreenPatch.screen_rows:type_name -> webterm.terminal.screen.v1.TerminalLine
+	24, // 32: webterm.terminal.screen.v1.ScreenPatch.cursor:type_name -> webterm.terminal.screen.v1.Cursor
+	25, // 33: webterm.terminal.screen.v1.ScreenPatch.modes:type_name -> webterm.terminal.screen.v1.Modes
+	26, // 34: webterm.terminal.screen.v1.ScreenPatch.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
+	21, // 35: webterm.terminal.screen.v1.ScreenPatch.new_styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
+	23, // 36: webterm.terminal.screen.v1.ScreenPatch.new_links:type_name -> webterm.terminal.screen.v1.Hyperlink
+	15, // 37: webterm.terminal.screen.v1.ScreenPatch.promoted_rows:type_name -> webterm.terminal.screen.v1.PromotedRow
+	18, // 38: webterm.terminal.screen.v1.TerminalLine.runs:type_name -> webterm.terminal.screen.v1.CellRun
+	19, // 39: webterm.terminal.screen.v1.CellRun.cells:type_name -> webterm.terminal.screen.v1.Cell
+	1,  // 40: webterm.terminal.screen.v1.Color.kind:type_name -> webterm.terminal.screen.v1.ColorKind
+	20, // 41: webterm.terminal.screen.v1.TerminalStyle.fg:type_name -> webterm.terminal.screen.v1.Color
+	20, // 42: webterm.terminal.screen.v1.TerminalStyle.bg:type_name -> webterm.terminal.screen.v1.Color
+	20, // 43: webterm.terminal.screen.v1.TerminalStyle.underline_color:type_name -> webterm.terminal.screen.v1.Color
+	22, // 44: webterm.terminal.screen.v1.TerminalStyle.attrs:type_name -> webterm.terminal.screen.v1.CellAttrs
+	2,  // 45: webterm.terminal.screen.v1.Cursor.shape:type_name -> webterm.terminal.screen.v1.CursorShape
+	3,  // 46: webterm.terminal.screen.v1.Modes.mouse_tracking:type_name -> webterm.terminal.screen.v1.MouseTracking
+	4,  // 47: webterm.terminal.screen.v1.Modes.mouse_encoding:type_name -> webterm.terminal.screen.v1.MouseEncoding
+	20, // 48: webterm.terminal.screen.v1.TerminalPalette.default_fg:type_name -> webterm.terminal.screen.v1.Color
+	20, // 49: webterm.terminal.screen.v1.TerminalPalette.default_bg:type_name -> webterm.terminal.screen.v1.Color
+	20, // 50: webterm.terminal.screen.v1.TerminalPalette.cursor_color:type_name -> webterm.terminal.screen.v1.Color
+	28, // 51: webterm.terminal.screen.v1.HistoryWindow.lines:type_name -> webterm.terminal.screen.v1.HistoryLine
+	18, // 52: webterm.terminal.screen.v1.HistoryLine.runs:type_name -> webterm.terminal.screen.v1.CellRun
+	28, // 53: webterm.terminal.screen.v1.HistoryPage.lines:type_name -> webterm.terminal.screen.v1.HistoryLine
+	21, // 54: webterm.terminal.screen.v1.HistoryPage.styles:type_name -> webterm.terminal.screen.v1.TerminalStyle
+	23, // 55: webterm.terminal.screen.v1.HistoryPage.links:type_name -> webterm.terminal.screen.v1.Hyperlink
+	16, // 56: webterm.terminal.screen.v1.LayoutLease.geometry:type_name -> webterm.terminal.screen.v1.Size
+	38, // 57: webterm.terminal.screen.v1.TerminalInput.text:type_name -> webterm.terminal.screen.v1.TextInput
+	39, // 58: webterm.terminal.screen.v1.TerminalInput.key:type_name -> webterm.terminal.screen.v1.KeyInput
+	40, // 59: webterm.terminal.screen.v1.TerminalInput.paste:type_name -> webterm.terminal.screen.v1.PasteInput
+	41, // 60: webterm.terminal.screen.v1.TerminalInput.mouse:type_name -> webterm.terminal.screen.v1.MouseInput
+	42, // 61: webterm.terminal.screen.v1.TerminalInput.focus:type_name -> webterm.terminal.screen.v1.FocusInput
+	43, // 62: webterm.terminal.screen.v1.KeyInput.modifiers:type_name -> webterm.terminal.screen.v1.ModifierSet
+	5,  // 63: webterm.terminal.screen.v1.MouseInput.button:type_name -> webterm.terminal.screen.v1.MouseButton
+	43, // 64: webterm.terminal.screen.v1.MouseInput.modifiers:type_name -> webterm.terminal.screen.v1.ModifierSet
+	45, // 65: webterm.terminal.screen.v1.TerminalEffect.bell:type_name -> webterm.terminal.screen.v1.Bell
+	46, // 66: webterm.terminal.screen.v1.TerminalEffect.title:type_name -> webterm.terminal.screen.v1.TitleChanged
+	47, // 67: webterm.terminal.screen.v1.TerminalEffect.cwd:type_name -> webterm.terminal.screen.v1.WorkingDirectoryChanged
+	48, // 68: webterm.terminal.screen.v1.TerminalEffect.clipboard_read:type_name -> webterm.terminal.screen.v1.ClipboardReadRequest
+	49, // 69: webterm.terminal.screen.v1.TerminalEffect.clipboard_write:type_name -> webterm.terminal.screen.v1.ClipboardWriteRequest
+	50, // 70: webterm.terminal.screen.v1.TerminalEffect.notification:type_name -> webterm.terminal.screen.v1.DesktopNotification
+	51, // 71: webterm.terminal.screen.v1.TerminalEffect.palette:type_name -> webterm.terminal.screen.v1.PaletteChanged
+	52, // 72: webterm.terminal.screen.v1.TerminalEffect.shell_mark:type_name -> webterm.terminal.screen.v1.ShellIntegrationMark
+	26, // 73: webterm.terminal.screen.v1.PaletteChanged.palette:type_name -> webterm.terminal.screen.v1.TerminalPalette
+	74, // [74:74] is the sub-list for method output_type
+	74, // [74:74] is the sub-list for method input_type
+	74, // [74:74] is the sub-list for extension type_name
+	74, // [74:74] is the sub-list for extension extendee
+	0,  // [0:74] is the sub-list for field type_name
 }
 
 func init() { file_shared_proto_terminal_screen_proto_init() }
@@ -4649,15 +4747,17 @@ func file_shared_proto_terminal_screen_proto_init() {
 		(*ScreenEnvelope_Exit)(nil),
 		(*ScreenEnvelope_Ping)(nil),
 		(*ScreenEnvelope_Pong)(nil),
+		(*ScreenEnvelope_ResumeAck)(nil),
 	}
-	file_shared_proto_terminal_screen_proto_msgTypes[30].OneofWrappers = []any{
+	file_shared_proto_terminal_screen_proto_msgTypes[8].OneofWrappers = []any{}
+	file_shared_proto_terminal_screen_proto_msgTypes[31].OneofWrappers = []any{
 		(*TerminalInput_Text)(nil),
 		(*TerminalInput_Key)(nil),
 		(*TerminalInput_Paste)(nil),
 		(*TerminalInput_Mouse)(nil),
 		(*TerminalInput_Focus)(nil),
 	}
-	file_shared_proto_terminal_screen_proto_msgTypes[37].OneofWrappers = []any{
+	file_shared_proto_terminal_screen_proto_msgTypes[38].OneofWrappers = []any{
 		(*TerminalEffect_Bell)(nil),
 		(*TerminalEffect_Title)(nil),
 		(*TerminalEffect_Cwd)(nil),
@@ -4673,7 +4773,7 @@ func file_shared_proto_terminal_screen_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_shared_proto_terminal_screen_proto_rawDesc), len(file_shared_proto_terminal_screen_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   49,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -9,7 +9,7 @@ import (
 
 func TestCoalescer_FirstPatchIsBuffered(t *testing.T) {
 	c := NewCoalescer()
-	f := terminalengine.ScreenFrame{Seq: 1, BaseRevision: 0}
+	f := terminalengine.ScreenFrame{Seq: 1, Kind: terminalengine.FrameSnapshot}
 	out, ok := c.Accept(f)
 	if ok {
 		t.Fatalf("first frame should be buffered, got %+v", out)
@@ -18,7 +18,7 @@ func TestCoalescer_FirstPatchIsBuffered(t *testing.T) {
 
 func TestCoalescer_FlushReturnsBuffered(t *testing.T) {
 	c := NewCoalescer()
-	f := terminalengine.ScreenFrame{Seq: 1, BaseRevision: 0}
+	f := terminalengine.ScreenFrame{Seq: 1, Kind: terminalengine.FrameSnapshot}
 	c.Accept(f)
 	out, ok := c.Flush()
 	if !ok || out.Seq != 1 {
@@ -31,14 +31,14 @@ func TestCoalescer_MergesPatchesWithinWindow(t *testing.T) {
 	c.flushWindow = 50 * time.Millisecond
 
 	// 先缓冲一帧 snapshot；随后 patch 会把它冲出去并被缓冲。
-	c.Accept(terminalengine.ScreenFrame{Seq: 1, BaseRevision: 0})
-	out, ok := c.Accept(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 1})
+	c.Accept(terminalengine.ScreenFrame{Seq: 1, Kind: terminalengine.FrameSnapshot})
+	out, ok := c.Accept(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 1, Kind: terminalengine.FramePatch})
 	if !ok || out.Seq != 1 {
 		t.Fatalf("expected snapshot flushed first, got seq=%d ok=%v", out.Seq, ok)
 	}
 
 	// 同一合并窗口内的新 patch 应与已缓冲 patch 合并。
-	out, ok = c.Accept(terminalengine.ScreenFrame{Seq: 3, BaseRevision: 2})
+	out, ok = c.Accept(terminalengine.ScreenFrame{Seq: 3, BaseRevision: 2, Kind: terminalengine.FramePatch})
 	if ok {
 		t.Fatalf("third patch should be merged within window, got seq=%d", out.Seq)
 	}
@@ -51,14 +51,14 @@ func TestCoalescer_MergesPatchesWithinWindow(t *testing.T) {
 
 func TestCoalescer_SnapshotFlushesPending(t *testing.T) {
 	c := NewCoalescer()
-	c.Accept(terminalengine.ScreenFrame{Seq: 1, BaseRevision: 1})
-	out, ok := c.Accept(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 0})
+	c.Accept(terminalengine.ScreenFrame{Seq: 1, BaseRevision: 1, Kind: terminalengine.FramePatch})
+	out, ok := c.Accept(terminalengine.ScreenFrame{Seq: 2, Kind: terminalengine.FrameSnapshot})
 	if !ok || out.Seq != 1 {
 		t.Fatalf("expected pending patch flushed before snapshot, got seq=%d ok=%v", out.Seq, ok)
 	}
 	out, ok = c.Flush()
-	if !ok || out.Seq != 2 || out.BaseRevision != 0 {
-		t.Fatalf("expected snapshot seq=2, got seq=%d base=%d", out.Seq, out.BaseRevision)
+	if !ok || out.Seq != 2 || out.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("expected snapshot seq=2, got seq=%d kind=%v", out.Seq, out.Kind)
 	}
 }
 
@@ -82,13 +82,13 @@ func TestClientQueue_EnqueueDequeue(t *testing.T) {
 
 func TestClientQueue_DropsPatchesKeepsSnapshot(t *testing.T) {
 	q := NewClientQueue(4)
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 1, BaseRevision: 0}) // snapshot
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 1}) // patch
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 3, BaseRevision: 2}) // patch
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 4, BaseRevision: 3}) // patch
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 1, Kind: terminalengine.FrameSnapshot})               // snapshot
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 1, Kind: terminalengine.FramePatch}) // patch
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 3, BaseRevision: 2, Kind: terminalengine.FramePatch}) // patch
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 4, BaseRevision: 3, Kind: terminalengine.FramePatch}) // patch
 
 	// 队列已满；再入队 snapshot 时应丢弃 patch，只保留已有 snapshot。
-	if q.Enqueue(terminalengine.ScreenFrame{Seq: 5, BaseRevision: 0}) {
+	if q.Enqueue(terminalengine.ScreenFrame{Seq: 5, Kind: terminalengine.FrameSnapshot}) {
 		t.Fatalf("snapshot should not trigger disconnect")
 	}
 
@@ -107,9 +107,9 @@ func TestClientQueue_DropsPatchesKeepsSnapshot(t *testing.T) {
 
 func TestClientQueue_SnapshotOverflowSignalsDrop(t *testing.T) {
 	q := NewClientQueue(2)
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 1, BaseRevision: 0})
-	q.Enqueue(terminalengine.ScreenFrame{Seq: 2, BaseRevision: 0})
-	if !q.Enqueue(terminalengine.ScreenFrame{Seq: 3, BaseRevision: 0}) {
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 1, Kind: terminalengine.FrameSnapshot})
+	q.Enqueue(terminalengine.ScreenFrame{Seq: 2, Kind: terminalengine.FrameSnapshot})
+	if !q.Enqueue(terminalengine.ScreenFrame{Seq: 3, Kind: terminalengine.FrameSnapshot}) {
 		t.Fatalf("expected drop signal when snapshot queue overflows")
 	}
 }

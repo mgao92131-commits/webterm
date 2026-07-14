@@ -54,6 +54,9 @@ public final class ScreenMessageMapper {
     for (TerminalScreenProto.PromotedRow row : pb.getPromotedRowsList()) {
       promotedRows.add(new ScreenPatch.PromotedRow(row.getScreenRow(), row.getHistoryLineId()));
     }
+    // title/working_directory 是 proto3 optional，按 presence 区分三态：
+    // absent 映射为 null（模型保持原值）；present 即使是空串也原样传递（模型清空）。
+    // first_available_history_line_id 此处不消费，历史水位的原子推进由后续 Task 6 处理。
     return new ScreenPatch(
         pb.getInstanceId(),
         pb.getLayoutEpoch(),
@@ -66,8 +69,8 @@ public final class ScreenMessageMapper {
         pb.hasPalette() ? mapPalette(pb.getPalette()) : null,
         mapStyles(pb.getNewStylesList()),
         mapLinks(pb.getNewLinksList()),
-        !pb.getTitle().isEmpty() ? pb.getTitle() : null,
-        !pb.getWorkingDirectory().isEmpty() ? pb.getWorkingDirectory() : null,
+        pb.hasTitle() ? pb.getTitle() : null,
+        pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : null,
         promotedRows
     );
   }

@@ -34,7 +34,7 @@ func (c *Coalescer) Accept(frame terminalengine.ScreenFrame) (terminalengine.Scr
 	}
 
 	// 如果前一帧是 snapshot 或当前帧是 snapshot，立即刷新前一帧。
-	if c.pending.BaseRevision == 0 || frame.BaseRevision == 0 {
+	if c.pending.Kind == terminalengine.FrameSnapshot || frame.Kind == terminalengine.FrameSnapshot {
 		out := c.pending
 		c.pending = frame
 		c.lastFlush = now
@@ -86,7 +86,7 @@ func (q *ClientQueue) Enqueue(frame terminalengine.ScreenFrame) (drop bool) {
 		// 丢弃所有未发送 patch，只保留 snapshot。
 		var keep []terminalengine.ScreenFrame
 		for _, f := range q.frames {
-			if f.BaseRevision == 0 {
+			if f.Kind == terminalengine.FrameSnapshot {
 				keep = append(keep, f)
 			}
 		}
