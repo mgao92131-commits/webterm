@@ -3,6 +3,7 @@ FROM golang:1.25-alpine AS go-builder
 ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY go-core/go.mod go-core/go.sum ./
+COPY go-core/internal/headlessterm/go.mod go-core/internal/headlessterm/go.sum ./internal/headlessterm/
 RUN go mod download
 COPY go-core/ ./
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /webterm-relay ./cmd/webterm-relay

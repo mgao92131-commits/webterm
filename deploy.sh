@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # ==========================================
 # WebTerm 中转服务一键部署脚本
 # ==========================================
@@ -98,7 +100,6 @@ REMOTE_COMMAND="
     rm -f webterm_deploy_temp.tar.gz && \
     mkdir -p data && \
     echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
-    docker compose down && \
     export RELAY_BOOTSTRAP_USER=${Q_RELAY_BOOTSTRAP_USER} && \
     export RELAY_BOOTSTRAP_PASSWORD=${Q_RELAY_BOOTSTRAP_PASSWORD} && \
     export WEBTERM_RELAY_PUBLIC_URL=${Q_WEBTERM_RELAY_PUBLIC_URL} && \
@@ -110,6 +111,7 @@ REMOTE_COMMAND="
     export WEBTERM_RELAY_SMTP_USERNAME=${Q_WEBTERM_RELAY_SMTP_USERNAME} && \
     export WEBTERM_RELAY_SMTP_PASSWORD=${Q_WEBTERM_RELAY_SMTP_PASSWORD} && \
     export WEBTERM_RELAY_SMTP_FROM=${Q_WEBTERM_RELAY_SMTP_FROM} && \
+    docker compose down && \
     docker compose up -d --build
 "
 
@@ -125,8 +127,8 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "远程动作:"
     echo "  1. 解压 webterm_deploy_temp.tar.gz 到 ${REMOTE_DIR}"
     echo "  2. 创建 data/ 持久化目录"
-    echo "  3. docker compose down"
-    echo "  4. 注入 Relay 环境变量（密码和 SMTP 密码不打印）"
+    echo "  3. 注入 Relay 环境变量（密码和 SMTP 密码不打印）"
+    echo "  4. docker compose down"
     echo "  5. docker compose up -d --build"
     exit 0
 fi
