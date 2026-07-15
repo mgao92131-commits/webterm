@@ -3,14 +3,13 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"testing"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/application"
-	"webterm/go-core/internal/filesend"
+	coremux "webterm/go-core/internal/mux"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
@@ -19,68 +18,7 @@ import (
 type noopFrameWriter struct{}
 
 func (noopFrameWriter) writeFrame(context.Context, *websocket.Conn, relaycore.Frame) {}
-func (noopFrameWriter) writeRaw(context.Context, *websocket.Conn, []byte) error        { return nil }
-
-// fakeRelaySession 模仿 *mux.Session：Run 持续读取 socket 直到出错（socket.close 后 Read 返回错误），
-// SendControl 记录下行控制消息。这样 CloseStream → socket.close → Run 返回 → start 返回，
-// 与真实 mux session 的生命周期一致，便于验证 UnregisterSender。
-type fakeRelaySession struct {
-	socket session.Socket
-	mu     sync.Mutex
-	sent   []map[string]any
-}
-
-func (f *fakeRelaySession) Run(ctx context.Context) error {
-	for {
-		if _, _, err := f.socket.Read(ctx); err != nil {
-			return nil
-		}
-	}
-}
-
-func (f *fakeRelaySession) SendControl(_ context.Context, msg map[string]any) error {
-	f.mu.Lock()
-	f.sent = append(f.sent, msg)
-	f.mu.Unlock()
-	return nil
-}
-
-type fakeRegistry struct {
-	mu           sync.Mutex
-	registered   map[string]filesend.ControlSender
-	unregistered map[string]filesend.ControlSender
-}
-
-func newFakeRegistry() *fakeRegistry {
-	return &fakeRegistry{
-		registered:   make(map[string]filesend.ControlSender),
-		unregistered: make(map[string]filesend.ControlSender),
-	}
-}
-
-func (r *fakeRegistry) RegisterSender(id string, s filesend.ControlSender) {
-	r.mu.Lock()
-	r.registered[id] = s
-	r.mu.Unlock()
-}
-
-func (r *fakeRegistry) UnregisterSender(id string, s filesend.ControlSender) {
-	r.mu.Lock()
-	r.unregistered[id] = s
-	r.mu.Unlock()
-}
-
-func newMuxForTest(sess *fakeRelaySession, reg *fakeRegistry) *StreamMultiplexer {
-	manager := session.NewManager(session.TerminalDefaults{})
-	muxServe := func(conn session.Socket, _ *application.MuxServeOpts) application.MuxSession {
-		sess.socket = conn
-		return sess
-	}
-	router := application.NewSessionRouterWithMux(manager, muxServe)
-	mux := NewStreamMultiplexer(router, noopFrameWriter{}, nil)
-	mux.SetControlSenderRegistry(reg)
-	return mux
-}
+func (noopFrameWriter) writeRaw(context.Context, *websocket.Conn, []byte) error      { return nil }
 
 func streamOpenFrame(id string) relaycore.Frame {
 	payload, _ := json.Marshal(relaycore.StreamRoute{
@@ -90,43 +28,67 @@ func streamOpenFrame(id string) relaycore.Frame {
 	return relaycore.NewFrame(relaycore.FrameTypeStreamOpen, id, 0, payload)
 }
 
-func TestOpenStreamRegistersControlSender(t *testing.T) {
-	sess := &fakeRelaySession{}
-	reg := newFakeRegistry()
-	mux := newMuxForTest(sess, reg)
+func TestCloseRelayMuxStreamReleasesTerminalClient(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{})
+	terminal, err := manager.Create(".")
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	defer manager.Close(terminal.ID())
 
+	router := application.NewSessionRouterWithMux(manager, coremux.MuxServeAdapter)
+	streams := NewStreamMultiplexer(router, noopFrameWriter{}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mux.OpenStream(ctx, nil, streamOpenFrame("stream-1"))
+	streams.OpenStream(ctx, nil, streamOpenFrame("stream-real"))
 
-	reg.mu.Lock()
-	got := reg.registered["stream-1"]
-	reg.mu.Unlock()
-	if got != sess {
-		t.Fatalf("RegisterSender not called with stream-1 session")
+	payload, err := json.Marshal(map[string]any{
+		"type":               protocol.WSConnect,
+		"tunnelConnectionId": "term-real",
+		"path":               "/ws/sessions/" + terminal.ID(),
+		"protocols":          []string{protocol.ScreenSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("marshal ws-connect: %v", err)
 	}
+	streams.DeliverWS(relaycore.NewFrame(
+		relaycore.FrameTypeWSText, "stream-real", 0, payload,
+	))
+	waitRelayTerminalClients(t, terminal, 1)
+
+	// Relay 的 stream close 必须一路关闭 mux 和 screen VirtualSocket；如果这里
+	// 回到 0，服务端固定超时本身不会在 Agent 端遗留旧 terminal client。
+	streams.CloseStream("stream-real", false)
+	waitRelayTerminalClients(t, terminal, 0)
 }
 
-func TestCloseStreamUnregistersControlSender(t *testing.T) {
-	sess := &fakeRelaySession{}
-	reg := newFakeRegistry()
-	mux := newMuxForTest(sess, reg)
-
+func TestCloseAllForConnectionReleasesTerminalClients(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{})
+	terminal, err := manager.Create(".")
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	defer manager.Close(terminal.ID())
+	router := application.NewSessionRouterWithMux(manager, coremux.MuxServeAdapter)
+	streams := NewStreamMultiplexer(router, noopFrameWriter{}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mux.OpenStream(ctx, nil, streamOpenFrame("stream-2"))
+	streams.OpenStream(ctx, nil, streamOpenFrame("stream-physical"))
+	payload, _ := json.Marshal(map[string]any{"type": protocol.WSConnect, "tunnelConnectionId": "term-physical", "path": "/ws/sessions/" + terminal.ID(), "protocols": []string{protocol.ScreenSubprotocol}})
+	streams.DeliverWS(relaycore.NewFrame(relaycore.FrameTypeWSText, "stream-physical", 0, payload))
+	waitRelayTerminalClients(t, terminal, 1)
+	streams.CloseAllForConnection(nil)
+	waitRelayTerminalClients(t, terminal, 0)
+}
 
-	mux.CloseStream("stream-2", false)
-
-	deadline := time.Now().Add(time.Second)
+func waitRelayTerminalClients(t *testing.T, terminal interface{ Info() session.Info }, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		reg.mu.Lock()
-		got := reg.unregistered["stream-2"]
-		reg.mu.Unlock()
-		if got == sess {
+		if terminal.Info().Clients == want {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("UnregisterSender(stream-2, same session) not called after CloseStream")
+	t.Fatalf("terminal clients = %d, want %d", terminal.Info().Clients, want)
 }

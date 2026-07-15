@@ -179,8 +179,8 @@ func TestSendCommandWithoutSenderFails(t *testing.T) {
 	if last.Status != string(filesend.StatusFailed) {
 		t.Fatalf("last status = %q, want failed", last.Status)
 	}
-	if last.Error != "device_not_connected" {
-		t.Fatalf("error = %q, want device_not_connected", last.Error)
+	if last.Error != "no_file_receiver" {
+		t.Fatalf("error = %q, want no_file_receiver", last.Error)
 	}
 }
 

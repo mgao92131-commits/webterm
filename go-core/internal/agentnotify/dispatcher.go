@@ -95,6 +95,11 @@ func (d *Dispatcher) HandleAck(deviceID, eventID string) {
 	}
 	d.mu.Lock()
 	delete(d.pending, pendingKey(deviceID, eventID))
+	// 未显式指定目标的通知由底层选择最近 Android；注册后的来源 ID
+	// 仍应能够确认该条历史 pending。
+	if deviceID != "" {
+		delete(d.pending, pendingKey("", eventID))
+	}
 	d.mu.Unlock()
 }
 

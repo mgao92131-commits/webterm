@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,8 @@ type Service struct {
 	mu                 sync.RWMutex
 	tasks              map[string]*Task
 	senders            map[string]ControlSender
+	receivers          map[string]protocol.DeviceClientInfo
+	senderClients      map[ControlSender]string
 	maxFileSize        int64
 	onSenderRegistered func()
 }
@@ -38,19 +42,39 @@ type Service struct {
 // New 创建一个 FileSendService。maxFileSize <= 0 表示不限制。
 func New(maxFileSize int64) *Service {
 	return &Service{
-		tasks:       make(map[string]*Task),
-		senders:     make(map[string]ControlSender),
-		maxFileSize: maxFileSize,
+		tasks:         make(map[string]*Task),
+		senders:       make(map[string]ControlSender),
+		receivers:     make(map[string]protocol.DeviceClientInfo),
+		senderClients: make(map[ControlSender]string),
+		maxFileSize:   maxFileSize,
 	}
 }
 
 // RegisterSender 注册某设备的 mux control 发送通道。
 func (s *Service) RegisterSender(deviceID string, sender ControlSender) {
-	if deviceID == "" || sender == nil {
+	s.RegisterClient(deviceID, deviceID, "android", []string{"file_receive", "agent_notification"}, sender)
+}
+
+// RegisterClient 以稳定 Android client_id 注册一条设备级控制连接。
+// 同一 client_id 重连时覆盖旧 sender；旧连接的延迟注销不会删除新连接。
+func (s *Service) RegisterClient(clientID, name, kind string, capabilities []string, sender ControlSender) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" || sender == nil {
 		return
 	}
+	now := time.Now().Unix()
+	if strings.TrimSpace(name) == "" {
+		name = clientID
+	}
+	info := protocol.DeviceClientInfo{ID: clientID, Name: strings.TrimSpace(name), Kind: kind,
+		Capabilities: uniqueStrings(capabilities), Online: true, ConnectedAt: now, LastActiveAt: now}
 	s.mu.Lock()
-	s.senders[deviceID] = sender
+	if old := s.senders[clientID]; old != nil && old != sender {
+		delete(s.senderClients, old)
+	}
+	s.senders[clientID] = sender
+	s.senderClients[sender] = clientID
+	s.receivers[clientID] = info
 	onRegistered := s.onSenderRegistered
 	s.mu.Unlock()
 	if onRegistered != nil {
@@ -76,7 +100,89 @@ func (s *Service) UnregisterSender(deviceID string, sender ControlSender) {
 	defer s.mu.Unlock()
 	if cur, ok := s.senders[deviceID]; ok && cur == sender {
 		delete(s.senders, deviceID)
+		delete(s.senderClients, sender)
+		info := s.receivers[deviceID]
+		info.Online = false
+		s.receivers[deviceID] = info
 	}
+}
+
+// UnregisterSenderInstance 按连接实例注销，供 mux 生命周期结束时调用。
+func (s *Service) UnregisterSenderInstance(sender ControlSender) {
+	if sender == nil {
+		return
+	}
+	s.mu.Lock()
+	clientID := s.senderClients[sender]
+	if clientID != "" && s.senders[clientID] == sender {
+		delete(s.senders, clientID)
+		info := s.receivers[clientID]
+		info.Online = false
+		s.receivers[clientID] = info
+	}
+	delete(s.senderClients, sender)
+	s.mu.Unlock()
+}
+
+// ListClients 返回已知客户端目录；在线项优先，其次按最近活跃时间倒序。
+func (s *Service) ListClients(onlineOnly bool) []protocol.DeviceClientInfo {
+	s.mu.RLock()
+	out := make([]protocol.DeviceClientInfo, 0, len(s.receivers))
+	for _, info := range s.receivers {
+		if onlineOnly && !info.Online {
+			continue
+		}
+		info.Capabilities = append([]string(nil), info.Capabilities...)
+		out = append(out, info)
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Online != out[j].Online {
+			return out[i].Online
+		}
+		if out[i].LastActiveAt != out[j].LastActiveAt {
+			return out[i].LastActiveAt > out[j].LastActiveAt
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// SelectClient 根据名称、完整/短 ID 或 recent 选择在线且具备指定能力的客户端。
+func (s *Service) SelectClient(selector, capability string) (protocol.DeviceClientInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	selector = strings.TrimSpace(selector)
+	var candidates []protocol.DeviceClientInfo
+	for id, info := range s.receivers {
+		if !info.Online || s.senders[id] == nil || !hasCapability(info.Capabilities, capability) {
+			continue
+		}
+		candidates = append(candidates, info)
+	}
+	if len(candidates) == 0 {
+		return protocol.DeviceClientInfo{}, fmt.Errorf("no_file_receiver")
+	}
+	if selector != "" && selector != "recent" {
+		var matches []protocol.DeviceClientInfo
+		for _, info := range candidates {
+			if info.ID == selector || strings.EqualFold(info.Name, selector) || strings.HasPrefix(info.ID, selector) {
+				matches = append(matches, info)
+			}
+		}
+		if len(matches) == 0 {
+			return protocol.DeviceClientInfo{}, fmt.Errorf("receiver_not_found")
+		}
+		if len(matches) > 1 {
+			return protocol.DeviceClientInfo{}, fmt.Errorf("multiple_receivers")
+		}
+		return matches[0], nil
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].LastActiveAt > candidates[j].LastActiveAt })
+	if len(candidates) > 1 && candidates[0].LastActiveAt == candidates[1].LastActiveAt {
+		return protocol.DeviceClientInfo{}, fmt.Errorf("multiple_receivers")
+	}
+	return candidates[0], nil
 }
 
 // HasSender 报告某设备当前是否注册了 sender（用于诊断与测试）。
@@ -85,6 +191,13 @@ func (s *Service) HasSender(deviceID string) bool {
 	defer s.mu.RUnlock()
 	_, ok := s.senders[deviceID]
 	return ok
+}
+
+// ClientIDForSender 返回已完成 client.register 的稳定客户端 ID。
+func (s *Service) ClientIDForSender(sender ControlSender) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.senderClients[sender]
 }
 
 // CreateTask 创建并登记一个任务，生成 transfer_id 与 transfer_token。
@@ -193,22 +306,19 @@ func (s *Service) Remove(id string) {
 }
 
 // SendOffer 通过设备级 mux control 向目标设备发送 file_send.offer。
-// 若 task.DeviceID 为空且当前仅注册了一个 sender，则默认发往该 sender（单设备直连场景）。
-// 若设备尚未注册 sender，返回错误，调用方应据此向 CLI 回报 "waiting for Android"。
+// task.DeviceID 存放稳定 Android client_id；禁止用 Relay stream ID 或 sender 数量兜底。
 func (s *Service) SendOffer(ctx context.Context, task *Task) error {
 	if task == nil || !validSHA256(task.SHA256) {
 		return fmt.Errorf("missing or invalid file sha256")
 	}
+	if task.DeviceID == "" {
+		return fmt.Errorf("no_file_receiver")
+	}
 	s.mu.RLock()
 	sender := s.senders[task.DeviceID]
-	if sender == nil && task.DeviceID == "" && len(s.senders) == 1 {
-		for _, only := range s.senders {
-			sender = only
-		}
-	}
 	s.mu.RUnlock()
 	if sender == nil {
-		return fmt.Errorf("no control sender for device %q", task.DeviceID)
+		return fmt.Errorf("receiver_disconnected")
 	}
 	offer := map[string]any{
 		"type":           TypeOffer,
@@ -226,19 +336,20 @@ func (s *Service) SendOffer(ctx context.Context, task *Task) error {
 }
 
 // SendControlToDevice 向目标设备发送一条任意设备级 mux control 消息。
-// deviceID 为空且当前仅注册一个 sender 时默认发往该 sender（单设备直连场景）。
-// 供 file_send 之外的设备级消息（如 agent_notification）复用同一发送通道。
+// clientID 为空时选择最近活跃且支持 agent_notification 的 Android。
 func (s *Service) SendControlToDevice(ctx context.Context, deviceID string, msg map[string]any) error {
+	if deviceID == "" {
+		info, err := s.SelectClient("recent", "agent_notification")
+		if err != nil {
+			return err
+		}
+		deviceID = info.ID
+	}
 	s.mu.RLock()
 	sender := s.senders[deviceID]
-	if sender == nil && deviceID == "" && len(s.senders) == 1 {
-		for _, only := range s.senders {
-			sender = only
-		}
-	}
 	s.mu.RUnlock()
 	if sender == nil {
-		return fmt.Errorf("no control sender for device %q", deviceID)
+		return fmt.Errorf("receiver_disconnected")
 	}
 	return sender.SendControl(ctx, msg)
 }
@@ -246,6 +357,41 @@ func (s *Service) SendControlToDevice(ctx context.Context, deviceID string, msg 
 // HandleControl 路由一条 file_send.* 控制消息到对应任务。
 // 返回 true 表示消息已被本服务处理；非 file_send 消息返回 false。
 func (s *Service) HandleControl(msg map[string]any) bool {
+	return s.handleFileControl("", msg)
+}
+
+// HandleControlFrom 处理带 mux 来源的客户端注册、活跃上报和文件状态消息。
+func (s *Service) HandleControlFrom(ctx context.Context, source ControlSender, msg map[string]any) bool {
+	typ, _ := msg["type"].(string)
+	switch typ {
+	case "client.register":
+		clientID, _ := msg["client_id"].(string)
+		kind, _ := msg["client_kind"].(string)
+		name, _ := msg["client_name"].(string)
+		caps := stringsFromAny(msg["capabilities"])
+		if clientID == "" || kind != "android" {
+			return true
+		}
+		s.RegisterClient(clientID, name, kind, caps, source)
+		_ = source.SendControl(ctx, map[string]any{"type": "client.registered", "client_id": clientID, "accepted_capabilities": caps})
+		return true
+	case "client.active":
+		s.mu.Lock()
+		if id := s.senderClients[source]; id != "" {
+			info := s.receivers[id]
+			info.LastActiveAt = time.Now().Unix()
+			s.receivers[id] = info
+		}
+		s.mu.Unlock()
+		return true
+	}
+	s.mu.RLock()
+	clientID := s.senderClients[source]
+	s.mu.RUnlock()
+	return s.handleFileControl(clientID, msg)
+}
+
+func (s *Service) handleFileControl(clientID string, msg map[string]any) bool {
 	typ, _ := msg["type"].(string)
 	if !IsFileSendMessage(typ) || typ == TypeOffer {
 		return false
@@ -256,6 +402,9 @@ func (s *Service) HandleControl(msg map[string]any) bool {
 	}
 	task, ok := s.GetTask(transferID)
 	if !ok {
+		return true
+	}
+	if clientID != "" && task.DeviceID != clientID {
 		return true
 	}
 	switch typ {
@@ -304,6 +453,43 @@ func (s *Service) HandleControl(msg map[string]any) bool {
 		}
 	}
 	return true
+}
+
+func hasCapability(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+func uniqueStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, v := range items {
+		v = strings.TrimSpace(v)
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+func stringsFromAny(value any) []string {
+	raw, ok := value.([]any)
+	if !ok {
+		if v, ok := value.([]string); ok {
+			return uniqueStrings(v)
+		}
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return uniqueStrings(out)
 }
 
 func (s *Service) emit(task *Task, status Status, bytes int64, errMsg string) {

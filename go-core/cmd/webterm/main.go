@@ -38,6 +38,13 @@ func main() {
 		}
 		return
 	}
+	if cmd == "devices" {
+		if err := runDevices(socketPath, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "[WebTerm] 查询设备失败：%s\n", mapErrorToChinese(err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 
 	ev := protocol.HookEvent{
 		Source:    "webterm-cli",
@@ -59,7 +66,9 @@ func main() {
 			os.Exit(2)
 		}
 		ev.Importance, ev.Message, ev.Source, ev.SessionID, ev.PID = *importance, *message, *source, *session, *pid
-		if ev.SessionID == "" && ev.PID == 0 { ev.PID = os.Getpid() }
+		if ev.SessionID == "" && ev.PID == 0 {
+			ev.PID = os.Getpid()
+		}
 	case "notify":
 		ev.Type = "notify"
 		fs := flag.NewFlagSet("notify", flag.ExitOnError)
@@ -161,11 +170,12 @@ func runSend(socketPath string, args []string) error {
 
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	quiet := fs.Bool("quiet", false, "suppress non-error output")
+	device := fs.String("device", "", "Android device name, short id, full id, or recent")
 	_ = fs.Bool("q", false, "suppress non-error output")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: webterm send [-q|--quiet] <file>")
+		fmt.Fprintln(os.Stderr, "Usage: webterm send [-q|--quiet] [--device <selector>] <file>")
 		fmt.Fprintln(os.Stderr, "运行 'webterm send --help' 查看详细说明")
 		os.Exit(2)
 	}
@@ -180,6 +190,7 @@ func runSend(socketPath string, args []string) error {
 		Type:      "send",
 		CWD:       cwd,
 		FilePath:  expandPath(fs.Arg(0)),
+		Device:    *device,
 		Timestamp: time.Now().Unix(),
 	}
 
@@ -285,6 +296,9 @@ func sendCommandAndListen(ctx context.Context, socketPath string, cmd protocol.C
 			return nil
 		case "offered":
 			if !quiet {
+				if resp.TargetDevice != nil {
+					fmt.Fprintf(os.Stderr, "[WebTerm] 目标设备：%s（%s）\n", resp.TargetDevice.Name, shortClientID(resp.TargetDevice.ID))
+				}
 				fmt.Fprintln(os.Stderr, "[WebTerm] 已发送文件请求，等待设备确认...")
 			}
 		case "accepted":
@@ -316,6 +330,82 @@ func sendCommandAndListen(ctx context.Context, socketPath string, cmd protocol.C
 			return errors.New(resp.Error)
 		}
 	}
+}
+
+func runDevices(socketPath string, args []string) error {
+	fs := flag.NewFlagSet("devices", flag.ContinueOnError)
+	jsonOutput := fs.Bool("json", false, "output JSON")
+	onlineOnly := fs.Bool("online", false, "only online devices")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	cmd := protocol.CLICommand{Kind: "command", Type: "devices", OnlineOnly: *onlineOnly, Timestamp: time.Now().Unix()}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err = conn.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var resp protocol.CLIResponse
+	if err = json.NewDecoder(conn).Decode(&resp); err != nil {
+		return err
+	}
+	if resp.Status == "failed" {
+		return errors.New(resp.Error)
+	}
+	if *jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Devices)
+	}
+	fmt.Fprintln(os.Stdout, "文件接收设备：")
+	if len(resp.Devices) == 0 {
+		fmt.Fprintln(os.Stdout, "  暂无已注册 Android 设备")
+		return nil
+	}
+	fmt.Fprintln(os.Stdout, "  NAME\tSTATUS\tLAST ACTIVE\tID")
+	for i, dev := range resp.Devices {
+		mark := " "
+		if i == 0 && dev.Online {
+			mark = "*"
+		}
+		status := "offline"
+		if dev.Online {
+			status = "online"
+		}
+		fmt.Fprintf(os.Stdout, "%s %s\t%s\t%s\t%s\n", mark, dev.Name, status, relativeTime(dev.LastActiveAt), shortClientID(dev.ID))
+	}
+	return nil
+}
+
+func shortClientID(id string) string {
+	id = strings.TrimPrefix(id, "android_")
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+func relativeTime(unix int64) string {
+	if unix <= 0 {
+		return "未知"
+	}
+	d := time.Since(time.Unix(unix, 0))
+	if d < time.Minute {
+		return "刚刚"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%d分钟前", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%d小时前", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d天前", int(d.Hours()/24))
 }
 
 func expandPath(input string) string {
@@ -364,8 +454,14 @@ func mapErrorToChinese(code string) string {
 		return "不是普通文件，请先压缩文件夹"
 	case "permission_denied":
 		return "没有读取权限"
-	case "android_not_connected", "device_not_connected":
+	case "android_not_connected", "device_not_connected", "no_file_receiver":
 		return "Android 设备未连接"
+	case "receiver_not_found":
+		return "找不到指定的 Android 设备，请运行 webterm devices 查询"
+	case "multiple_receivers":
+		return "存在多个候选设备，请运行 webterm devices 并用 --device 指定"
+	case "receiver_disconnected":
+		return "目标 Android 设备已断开"
 	case "rejected":
 		return "设备拒绝了文件"
 	case "timeout":
@@ -387,7 +483,7 @@ func mapErrorToChinese(code string) string {
 }
 
 func sendUsage() {
-	fmt.Fprintln(os.Stdout, "Usage: webterm send [-q|--quiet] <file>")
+	fmt.Fprintln(os.Stdout, "Usage: webterm send [-q|--quiet] [--device <selector>] <file>")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "把本机文件发送到已连接的安卓设备（send a local file to the connected Android device）。")
 	fmt.Fprintln(os.Stdout, "设备收到请求后主动拉取文件并校验 SHA-256，传输完成后本机显示结果。")
@@ -395,6 +491,7 @@ func sendUsage() {
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Options:")
 	fmt.Fprintln(os.Stdout, "  -q, --quiet   只输出错误信息")
+	fmt.Fprintln(os.Stdout, "  --device      设备名称、短 ID、完整 ID 或 recent")
 	fmt.Fprintln(os.Stdout, "  -h, --help    显示本帮助")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Examples:")
@@ -403,7 +500,7 @@ func sendUsage() {
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Requirements:")
 	fmt.Fprintln(os.Stdout, "  - webterm-agent 正在运行（WEBTERM_SOCKET_PATH 可覆盖默认 socket 路径）")
-	fmt.Fprintln(os.Stdout, "  - 恰好一台安卓设备在线（多台设备同时在线时暂不支持）")
+	fmt.Fprintln(os.Stdout, "  - Android 已在线并完成 client.register")
 }
 
 func usage() {
@@ -412,6 +509,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  agent-event -i alert|normal|quiet [-m MSG] [-s SRC]")
 	fmt.Fprintln(os.Stderr, "  send <file>            send a file to the connected Android device")
+	fmt.Fprintln(os.Stderr, "  devices [--online] [--json]  list Android file receivers")
 	fmt.Fprintln(os.Stderr, "  notify --level idle|running|error --message MSG --source SRC [--session ID]")
 	fmt.Fprintln(os.Stderr, "  state  --shell STATE")
 	fmt.Fprintln(os.Stderr, "  meta   --cwd PATH --last-command CMD --input-kind shell|agent_prompt|agent_tool")

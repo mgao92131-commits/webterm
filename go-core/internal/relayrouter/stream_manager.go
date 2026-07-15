@@ -74,6 +74,10 @@ func newStreamManager(events *relaycore.EventBus, responseBufferSize int, maxPen
 func (manager *StreamManager) CreateStream(kind relaycore.StreamKind, route relaycore.StreamRoute, userID, deviceID, agentConnectionID string, timeout time.Duration) StreamHandle {
 	id := fmt.Sprintf("s%d", manager.nextID.Add(1))
 	now := time.Now().UTC()
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = now.Add(timeout)
+	}
 	entry := &streamEntry{
 		info: relaycore.Stream{
 			ID:                 id,
@@ -85,7 +89,7 @@ func (manager *StreamManager) CreateStream(kind relaycore.StreamKind, route rela
 			Route:              route,
 			CreatedAt:          now,
 			LastActivityAt:     now,
-			Deadline:           now.Add(timeout),
+			Deadline:           deadline,
 			MaxPendingBytes:    manager.maxPendingBytes,
 			MaxPendingMessages: manager.responseBufferSize,
 		},

@@ -190,6 +190,62 @@ func TestMuxDuplicateChannelIDReplacesChannel(t *testing.T) {
 	openManager()
 }
 
+func TestMuxDuplicateTerminalChannelReleasesReplacedClient(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	terminal, err := manager.Create(".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	wsURL, cleanup := startMuxServer(t, ctx, manager)
+	defer cleanup()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	openTerminal := func() {
+		writeJSONMsg(t, ctx, conn, map[string]any{
+			"type":               protocol.WSConnect,
+			"tunnelConnectionId": "term-repro",
+			"path":               "/ws/sessions/" + terminal.ID(),
+			"protocols":          []string{protocol.ScreenSubprotocol},
+		})
+		connected := readJSON(t, ctx, conn)
+		if connected["type"] != protocol.WSConnected {
+			t.Fatalf("ws-connected = %#v", connected)
+		}
+	}
+
+	openTerminal()
+	waitTerminalClients(t, terminal, 1)
+	openTerminal()
+	// 同一物理 mux 内重复打开同一 logical channel 时，旧 VirtualSocket 必须退出；
+	// 若这里稳定为 1，s8 的 11 clients 就不是该替换路径自身造成的泄漏。
+	waitTerminalClients(t, terminal, 1)
+
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+	waitTerminalClients(t, terminal, 0)
+}
+
+func waitTerminalClients(t *testing.T, terminal interface{ Info() session.Info }, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if terminal.Info().Clients == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("terminal clients = %d, want %d", terminal.Info().Clients, want)
+}
+
 func TestMuxUnknownPathReturnsWSError(t *testing.T) {
 	testutil.SkipIfLoopbackListenUnavailable(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

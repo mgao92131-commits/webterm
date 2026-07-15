@@ -36,7 +36,7 @@ type MuxSession interface {
 // MuxServeOpts 是 mux.ServeOpts 的类型投影。
 type MuxServeOpts struct {
 	OnOpen    func(ctx context.Context, vs MuxVirtualSocket, path string, protocols []string) (func(), error)
-	OnControl func(ctx context.Context, msg map[string]any)
+	OnControl func(ctx context.Context, source MuxSession, msg map[string]any)
 	Logger    *logs.Logger
 }
 
@@ -52,7 +52,7 @@ type MuxVirtualSocket interface {
 type SessionRouter struct {
 	manager    *session.Manager
 	muxServe   MuxServeFunc // 可选：用于 mux 子协议包装
-	onControl  func(ctx context.Context, msg map[string]any)
+	onControl  func(ctx context.Context, source MuxSession, msg map[string]any)
 	fileSend   *filesend.Service
 	fileUpload *fileupload.Service
 	logger     *logs.Logger
@@ -74,7 +74,7 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 
 // SetControlHandler 设置 mux 设备级控制消息处理器。
 // 用于 file_send.*、agent_notification 等不经过虚拟通道的控制消息。
-func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, msg map[string]any)) {
+func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, source MuxSession, msg map[string]any)) {
 	r.onControl = onControl
 }
 
@@ -83,12 +83,12 @@ func (r *SessionRouter) SetControlHandler(onControl func(ctx context.Context, ms
 func (r *SessionRouter) SetFileSendService(svc *filesend.Service) {
 	r.fileSend = svc
 	prev := r.onControl
-	r.onControl = func(ctx context.Context, msg map[string]any) {
-		if svc != nil && svc.HandleControl(msg) {
+	r.onControl = func(ctx context.Context, source MuxSession, msg map[string]any) {
+		if svc != nil && svc.HandleControlFrom(ctx, source, msg) {
 			return
 		}
 		if prev != nil {
-			prev(ctx, msg)
+			prev(ctx, source, msg)
 		}
 	}
 }
@@ -104,17 +104,21 @@ func (r *SessionRouter) SetFileUploadService(svc *fileupload.Service) {
 // 首版按单设备处理，deviceID 留空（与 Dispatcher.Notify 的 deviceID="" 一致）。
 func (r *SessionRouter) SetAgentNotificationDispatcher(d *agentnotify.Dispatcher) {
 	prev := r.onControl
-	r.onControl = func(ctx context.Context, msg map[string]any) {
+	r.onControl = func(ctx context.Context, source MuxSession, msg map[string]any) {
 		if d != nil {
 			if typ, _ := msg["type"].(string); typ == agentnotify.TypeAgentAck {
 				if eventID, _ := msg["event_id"].(string); eventID != "" {
-					d.HandleAck("", eventID)
+					clientID := ""
+					if r.fileSend != nil {
+						clientID = r.fileSend.ClientIDForSender(source)
+					}
+					d.HandleAck(clientID, eventID)
 				}
 				return
 			}
 		}
 		if prev != nil {
-			prev(ctx, msg)
+			prev(ctx, source, msg)
 		}
 	}
 }
@@ -151,6 +155,9 @@ func (r *SessionRouter) RouteOpenWithControl(
 				Logger:    r.logger,
 			})
 			start := func() {
+				if r.fileSend != nil {
+					defer r.fileSend.UnregisterSenderInstance(muxSession)
+				}
 				defer socket.Close()
 				_ = muxSession.Run(ctx)
 			}

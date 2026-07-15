@@ -137,12 +137,13 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		return
 	}
 	router := direct.sessionRouter()
-	sess := mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
+	var sess *mux.Session
+	sess = mux.Serve(session.NewWebSocketAdapter(conn), &mux.ServeOpts{
 		OnOpen: func(ctx context.Context, vs *mux.VirtualSocket, p string, protos []string) (func(), error) {
 			return mux.OpenSessionOrManager(ctx, router, vs, p, protos)
 		},
-		OnControl: func(ctx context.Context, msg map[string]any) {
-			if svc := direct.app.FileSendService(); svc != nil && svc.HandleControl(msg) {
+		OnControl: func(ctx context.Context, source *mux.Session, msg map[string]any) {
+			if svc := direct.app.FileSendService(); svc != nil && svc.HandleControlFrom(ctx, source, msg) {
 				return
 			}
 			if direct.app.Logs() != nil {
@@ -151,26 +152,10 @@ func (direct *Server) routeWebSocket(w http.ResponseWriter, r *http.Request, pat
 		},
 		Logger: direct.app.Logs(),
 	})
-	// 把这条直连 mux 注册成设备级 ControlSender，让 FileSendService 能把 offer 下发到 Android。
-	deviceID := r.URL.Query().Get("deviceId")
-	unbind := direct.bindDeviceSender(deviceID, sess)
-	defer unbind()
+	if svc := direct.app.FileSendService(); svc != nil {
+		defer svc.UnregisterSenderInstance(sess)
+	}
 	sess.Run(r.Context())
-}
-
-// bindDeviceSender 在直连 mux 生命周期内把它注册为 FileSendService 的设备级 sender。
-// deviceID 为空时使用占位 key "direct"（单设备直连场景）。返回的函数用于在连接结束时按实例注销。
-func (direct *Server) bindDeviceSender(deviceID string, sess *mux.Session) func() {
-	svc := direct.app.FileSendService()
-	if svc == nil || sess == nil {
-		return func() {}
-	}
-	key := deviceID
-	if key == "" {
-		key = "direct"
-	}
-	svc.RegisterSender(key, sess)
-	return func() { svc.UnregisterSender(key, sess) }
 }
 
 func (direct *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

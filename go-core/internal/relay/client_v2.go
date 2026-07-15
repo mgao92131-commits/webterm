@@ -35,7 +35,7 @@ type V2Client struct {
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter, appInstance.Logs())
-	router.SetControlHandler(func(ctx context.Context, msg map[string]any) {
+	router.SetControlHandler(func(ctx context.Context, _ application.MuxSession, msg map[string]any) {
 		if appInstance.Logs() != nil {
 			appInstance.Logs().Add("debug", "relay", "mux control message type="+stringValue(msg["type"]))
 		}
@@ -54,9 +54,6 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	}
 	client.http = NewHTTPProxy(router, client)
 	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
-	// 让 relay 重建出的 mux session 注册为设备级 ControlSender，
-	// 打通 agent→device 的 file_send.offer / agent_notification。
-	client.streams.SetControlSenderRegistry(appInstance.FileSendService())
 	return client
 }
 
@@ -96,6 +93,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	}
 	conn.SetReadLimit(8 << 20)
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer client.streams.CloseAllForConnection(conn)
 
 	if err := client.registerV2(ctx, conn); err != nil {
 		return err

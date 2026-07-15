@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/app"
@@ -22,6 +23,7 @@ import (
 	"webterm/go-core/internal/relay"
 	"webterm/go-core/internal/relayapp"
 	"webterm/go-core/internal/relaycore"
+	pb "webterm/go-core/internal/screenprotocol/generated"
 )
 
 func main() {
@@ -329,8 +331,6 @@ func listSessions(ctx context.Context, baseURL string, token string, deviceID st
 	return sessions, nil
 }
 
-
-
 func deleteSession(ctx context.Context, baseURL string, token string, deviceID string, sessionID string) error {
 	statusCode, body, err := sessionAPI(ctx, http.MethodDelete, baseURL, token, deviceID, "/api/sessions/"+sessionID, nil)
 	if err != nil {
@@ -366,7 +366,7 @@ func sessionAPI(ctx context.Context, method string, baseURL string, token string
 }
 
 type sessionInfo struct {
-	ID   string `json:"id"`
+	ID string `json:"id"`
 }
 
 type terminalProbe struct {
@@ -423,7 +423,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 			"type":               protocol.WSConnect,
 			"tunnelConnectionId": terminalID,
 			"path":               "/ws/sessions/" + probe.sessionID,
-			"protocols":          []string{protocol.BinarySubprotocol},
+			"protocols":          []string{protocol.ScreenSubprotocol},
 		}); err != nil {
 			return err
 		}
@@ -434,12 +434,65 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 
 	for _, probe := range probes {
 		terminalID := "term:" + probe.sessionID
-		hello, _ := protocol.EncodeJSONMessage(protocol.MsgHello, map[string]any{"lastSeq": 0, "cols": 80, "rows": 24})
+		hello, err := proto.Marshal(&pb.ScreenEnvelope{
+			ProtocolVersion: 1,
+			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
+				Version: 1, Cols: 80, Rows: 24,
+			}},
+		})
+		if err != nil {
+			return err
+		}
 		if err := writeMuxTunnel(ctx, ws, terminalID, hello, true); err != nil {
 			return err
 		}
+		acquire, err := proto.Marshal(&pb.ScreenEnvelope{
+			ProtocolVersion: 1,
+			Payload: &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{
+				Interactive: true,
+			}},
+		})
+		if err != nil {
+			return err
+		}
+		if err := writeMuxTunnel(ctx, ws, terminalID, acquire, true); err != nil {
+			return err
+		}
+	}
+
+	leaseIDs := make(map[string]string, len(probes))
+	for len(leaseIDs) < len(probes) {
+		frame, err := readMuxTunnel(ctx, ws)
+		if err != nil {
+			return err
+		}
+		if _, ok := markers[frame.ID]; !ok {
+			continue
+		}
+		var envelope pb.ScreenEnvelope
+		if err := proto.Unmarshal(frame.Payload, &envelope); err != nil {
+			continue
+		}
+		lease := envelope.GetLayoutLease()
+		if lease != nil && lease.GetGranted() && lease.GetLeaseId() != "" {
+			leaseIDs[frame.ID] = lease.GetLeaseId()
+		}
+	}
+
+	for _, probe := range probes {
+		terminalID := "term:" + probe.sessionID
 		command := "printf " + probe.marker + "\\n\r"
-		if err := writeMuxTunnel(ctx, ws, terminalID, append([]byte{protocol.MsgInput}, []byte(command)...), true); err != nil {
+		input, err := proto.Marshal(&pb.ScreenEnvelope{
+			ProtocolVersion: 1,
+			Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
+				LeaseId: leaseIDs[terminalID],
+				Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
+			}},
+		})
+		if err != nil {
+			return err
+		}
+		if err := writeMuxTunnel(ctx, ws, terminalID, input, true); err != nil {
 			return err
 		}
 	}
@@ -452,18 +505,8 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		if _, ok := markers[frame.ID]; !ok {
 			continue
 		}
-		if len(frame.Payload) == 0 || (frame.Payload[0] != protocol.MsgOutput && frame.Payload[0] != protocol.MsgState) {
-			continue
-		}
-		payload := frame.Payload
-		if len(frame.Payload) >= 9 {
-			_, _, decoded, err := protocol.DecodeSequencedData(frame.Payload)
-			if err == nil {
-				payload = decoded
-			}
-		}
 		for terminalID, marker := range markers {
-			if !bytes.Contains(payload, []byte(marker)) {
+			if !screenEnvelopeContains(frame.Payload, marker) {
 				continue
 			}
 			if terminalID != frame.ID {
@@ -482,6 +525,34 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		}
 	}
 	return nil
+}
+
+func screenEnvelopeContains(data []byte, text string) bool {
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(data, &envelope); err != nil {
+		return false
+	}
+	var lines []*pb.TerminalLine
+	switch payload := envelope.Payload.(type) {
+	case *pb.ScreenEnvelope_Snapshot:
+		lines = payload.Snapshot.Screen
+	case *pb.ScreenEnvelope_Patch:
+		lines = payload.Patch.ScreenRows
+	default:
+		return false
+	}
+	for _, line := range lines {
+		var builder strings.Builder
+		for _, run := range line.Runs {
+			for _, cell := range run.Cells {
+				builder.WriteString(cell.Text)
+			}
+		}
+		if strings.Contains(builder.String(), text) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeMuxControl(ctx context.Context, ws *websocket.Conn, value any) error {

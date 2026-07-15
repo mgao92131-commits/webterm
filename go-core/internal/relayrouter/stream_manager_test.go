@@ -48,6 +48,27 @@ func TestStreamManagerLifecycleAndCancelExpired(t *testing.T) {
 	}
 }
 
+func TestStreamManagerZeroTimeoutHasNoDeadline(t *testing.T) {
+	manager := NewStreamManager()
+	handle := manager.CreateStream(
+		relaycore.StreamKindTerminal,
+		relaycore.StreamRoute{Path: "/ws/sessions"},
+		"u1",
+		"d1",
+		"agent-1",
+		0,
+	)
+
+	streams := manager.Snapshot()
+	if len(streams) != 1 || !streams[0].Deadline.IsZero() {
+		t.Fatalf("zero-timeout stream = %#v, want zero deadline", streams)
+	}
+	if expired := manager.CancelExpired(time.Now().Add(24 * time.Hour)); expired != 0 {
+		t.Fatalf("CancelExpired = %d, want 0 for stream without deadline", expired)
+	}
+	handle.Close("test complete")
+}
+
 func TestStreamManagerCancelByDevice(t *testing.T) {
 	manager := NewStreamManager()
 	manager.CreateStream(relaycore.StreamKindHTTP, relaycore.StreamRoute{Path: "/api/sessions"}, "u1", "d1", "agent-1", time.Minute)

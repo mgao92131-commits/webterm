@@ -26,7 +26,9 @@ func NewWSGateway(store relaystore.GatewayStore, registry relayrouter.AgentRegis
 		store:    store,
 		registry: registry,
 		streams:  streams,
-		timeout:  30 * time.Second,
+		// WebSocket 已经完成 HTTP Upgrade，后续是由读写错误和 Ping/Pong
+		// 管理的长连接，不能再套用从创建时间起算的绝对 stream Deadline。
+		timeout: 0,
 	}
 }
 

@@ -20,8 +20,9 @@ import (
 // ws-connected 之前写出，违反握手顺序）。返回 error 时由 mux 发 ws-error。
 type OpenHandler func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (start func(), err error)
 
-// ControlHandler 处理 mux 不识别的控制消息，必要时透传给上层。
-type ControlHandler func(ctx context.Context, msg map[string]any)
+// ControlHandler 处理 mux 不识别的控制消息，并携带消息来源 Session。
+// 设备级协议必须使用来源实例完成注册和回执校验，禁止依赖临时 stream ID。
+type ControlHandler func(ctx context.Context, source *Session, msg map[string]any)
 
 type ServeOpts struct {
 	OnOpen    OpenHandler    // 必填
@@ -87,7 +88,7 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 		// 服务端角色不应收到这些（它们是服务端发出的）。忽略。
 	default:
 		if s.onControl != nil {
-			s.onControl(ctx, msg)
+			s.onControl(ctx, s, msg)
 		}
 	}
 }

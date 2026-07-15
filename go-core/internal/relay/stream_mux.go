@@ -10,28 +10,19 @@ import (
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/application"
-	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
 )
 
-// controlSenderRegistry 是 *filesend.Service 的注册/注销能力子集，
-// 供 relay 代理侧把重建出的 mux session 注册为设备级控制通道。
-type controlSenderRegistry interface {
-	RegisterSender(deviceID string, sender filesend.ControlSender)
-	UnregisterSender(deviceID string, sender filesend.ControlSender)
-}
-
 // StreamMultiplexer 管理 relay 侧的 WebSocket 流多路复用。
 // 每个 stream 对应一个到 relay server 的逻辑通道。
 type StreamMultiplexer struct {
-	router   *application.SessionRouter
-	writer   frameWriter
-	logger   *logs.Logger
-	registry controlSenderRegistry
-	mu       sync.Mutex
-	streams  map[string]*relayStreamSocket
+	router  *application.SessionRouter
+	writer  frameWriter
+	logger  *logs.Logger
+	mu      sync.Mutex
+	streams map[string]*relayStreamSocket
 }
 
 type relayStreamMessage struct {
@@ -48,13 +39,6 @@ func NewStreamMultiplexer(router *application.SessionRouter, writer frameWriter,
 	}
 }
 
-// SetControlSenderRegistry 注入设备级控制 sender 注册表（通常为 *filesend.Service）。
-// 注入后，每条 mux 流重建出的 *mux.Session 会被注册为 ControlSender，使 agent→device
-// 的 file_send.offer / agent_notification 能经 relay 下发。
-func (m *StreamMultiplexer) SetControlSenderRegistry(registry controlSenderRegistry) {
-	m.registry = registry
-}
-
 // OpenStream 处理 StreamOpen 帧——创建新的 relay stream。
 func (m *StreamMultiplexer) OpenStream(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) {
 	var route relaycore.StreamRoute
@@ -63,7 +47,7 @@ func (m *StreamMultiplexer) OpenStream(ctx context.Context, conn *websocket.Conn
 		return
 	}
 	socket := newRelayStreamSocket(frame.StreamID, route.Subprotocol, m, conn, m.logger)
-	start, ctrl, err := m.router.RouteOpenWithControl(ctx, socket, route.Path, []string{route.Subprotocol})
+	start, _, err := m.router.RouteOpenWithControl(ctx, socket, route.Path, []string{route.Subprotocol})
 	if err != nil {
 		m.writer.writeFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeStreamError, frame.StreamID, 0, []byte(err.Error())))
 		return
@@ -71,16 +55,24 @@ func (m *StreamMultiplexer) OpenStream(ctx context.Context, conn *websocket.Conn
 	m.mu.Lock()
 	m.streams[frame.StreamID] = socket
 	m.mu.Unlock()
-	if ctrl != nil && m.registry != nil {
-		m.registry.RegisterSender(frame.StreamID, ctrl)
-	}
 	if start != nil {
-		go func() {
-			start()
-			if ctrl != nil && m.registry != nil {
-				m.registry.UnregisterSender(frame.StreamID, ctrl)
-			}
-		}()
+		go start()
+	}
+}
+
+// CloseAllForConnection 关闭某条 Relay Agent 物理连接创建的全部 WS stream。
+// 网络异常通常没有逐 stream close 帧，必须在 runOnce 退出时主动清理。
+func (m *StreamMultiplexer) CloseAllForConnection(conn *websocket.Conn) {
+	m.mu.Lock()
+	var sockets []*relayStreamSocket
+	for _, socket := range m.streams {
+		if socket.conn == conn {
+			sockets = append(sockets, socket)
+		}
+	}
+	m.mu.Unlock()
+	for _, socket := range sockets {
+		socket.close(false)
 	}
 }
 

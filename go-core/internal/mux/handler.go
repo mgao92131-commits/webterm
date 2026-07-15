@@ -32,7 +32,9 @@ func MuxServeAdapter(conn session.Socket, opts *application.MuxServeOpts) applic
 		}
 	}
 	if opts.OnControl != nil {
-		muxOpts.OnControl = opts.OnControl
+		muxOpts.OnControl = func(ctx context.Context, source *Session, msg map[string]any) {
+			opts.OnControl(ctx, source, msg)
+		}
 	}
 	return Serve(conn, muxOpts)
 }

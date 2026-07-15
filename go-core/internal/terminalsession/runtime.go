@@ -44,6 +44,7 @@ type Runtime struct {
 
 	leaseManager     *LeaseManager
 	pendingClipboard map[string]byte
+	engineSignals    engineSignals
 	inputTrace       []InputTrace
 	capturePTYOutput bool
 	rawPTYOutput     []byte
@@ -156,7 +157,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
 	// scrollbackMaxBytes<=0 时保留 NewTrackedScrollback 的 DefaultScrollbackByteLimit。
 	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, func(ev terminalengine.ScrollbackTrimEvent) {
-		r.postEvent(historyTrimEvent{firstAvailableID: ev.FirstAvailableID})
+		r.engineSignals.recordHistoryTrim(ev.FirstAvailableID)
 	})
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
@@ -164,22 +165,22 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
 		terminalengine.WithPTYWriter(pty),
 		terminalengine.WithBellHandler(func() {
-			r.postEvent(effectEvent{effect: terminalengine.Effect{Kind: terminalengine.EffectBell}})
+			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectBell})
 		}),
 		terminalengine.WithTitleHandler(func(title string) {
-			r.postEvent(effectEvent{effect: terminalengine.Effect{Kind: terminalengine.EffectTitle, Text: title}})
+			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectTitle, Text: title})
 		}),
 		terminalengine.WithWorkingDirectoryHandler(func(path string) {
-			r.postEvent(effectEvent{effect: terminalengine.Effect{Kind: terminalengine.EffectWorkingDirectory, Text: path}})
+			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectWorkingDirectory, Text: path})
 		}),
 		terminalengine.WithClipboardReadHandler(func(clipboard byte) {
 			requestID := randomID()
 			r.pendingClipboard[requestID] = clipboard
-			r.postEvent(effectEvent{effect: terminalengine.Effect{Kind: terminalengine.EffectClipboardRead, RequestID: requestID, Clipboard: string(clipboard)}})
+			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectClipboardRead, RequestID: requestID, Clipboard: string(clipboard)})
 		}),
 		terminalengine.WithClipboardWriteHandler(func(clipboard byte, data []byte) {
 			copyData := append([]byte(nil), data...)
-			r.postEvent(effectEvent{effect: terminalengine.Effect{Kind: terminalengine.EffectClipboardWrite, RequestID: randomID(), Clipboard: string(clipboard), Data: copyData}})
+			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectClipboardWrite, RequestID: randomID(), Clipboard: string(clipboard), Data: copyData})
 		}),
 	)
 	r.projector = screenprojection.NewProjector(r.engine, r.scrollback, id, r.instanceID)
@@ -348,6 +349,9 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) postEvent(ev event) {
+	// Actor inbox 只接收 actor 外部生产者的事件。Engine 的同步回调必须记录到
+	// engineSignals，并在当前 actor turn 结束前统一提交；actor 给自己投递到
+	// 这个有界队列会在突发输出下形成自锁。
 	select {
 	case <-r.stopCh:
 		return
@@ -402,8 +406,6 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientDetach(e.clientID)
 	case historyRequestEvent:
 		r.handleHistoryRequest(e)
-	case historyTrimEvent:
-		r.handleHistoryTrim(e)
 	case clientResyncEvent:
 		r.handleClientResync(e.clientID)
 	case clientInitialSyncResultEvent:
@@ -412,6 +414,7 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleProjectionFlush(e)
 	case resizeEngineEvent:
 		r.engine.Resize(e.rows, e.cols)
+		r.commitEngineSignals()
 	case projectedSnapshotEvent:
 		info := r.Info()
 		e.reply <- screenprojection.ExportSnapshot(
@@ -429,8 +432,6 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
 		r.handleReleaseLayout(e)
-	case effectEvent:
-		r.handleEffect(e.effect)
 	case clipboardResponseEvent:
 		r.handleClipboardResponse(e)
 	}
@@ -531,7 +532,18 @@ func (r *Runtime) handlePTYOutput(data []byte) {
 		r.onOutput(data)
 	}
 	r.bumpScreenRevision()
+	r.commitEngineSignals()
 	r.scheduleProjectionFlush()
+}
+
+func (r *Runtime) commitEngineSignals() {
+	batch := r.engineSignals.drain()
+	if batch.historyTrimFirstID != 0 {
+		r.broadcastHistoryTrim(batch.historyTrimFirstID)
+	}
+	for _, effect := range batch.effects {
+		r.handleEffect(effect)
+	}
 }
 
 func (r *Runtime) captureRawPTYOutput(data []byte) {
@@ -590,6 +602,7 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	// clients replace their cached screen/history window atomically.
 	r.scrollback.SetLayoutEpoch(r.layoutEpoch)
 	r.bumpScreenRevision()
+	r.commitEngineSignals()
 	// Geometry changes replace physical rows, so do not wait for the regular
 	// output coalescing window: clients need the new authoritative snapshot now.
 	r.flushProjectionNow()
@@ -639,10 +652,10 @@ func (r *Runtime) handleHistoryRequest(e historyRequestEvent) {
 	client.SendHistory(e.requestID, r.layoutEpoch, r.currentRevision(), r.projector.HistoryPage(e.beforeID, e.limit))
 }
 
-func (r *Runtime) handleHistoryTrim(e historyTrimEvent) {
+func (r *Runtime) broadcastHistoryTrim(firstAvailableID uint64) {
 	for _, client := range r.clients {
 		if client.SendHistoryTrim != nil {
-			client.SendHistoryTrim(r.layoutEpoch, e.firstAvailableID)
+			client.SendHistoryTrim(r.layoutEpoch, firstAvailableID)
 		}
 	}
 }
@@ -862,10 +875,6 @@ type historyRequestEvent struct {
 	limit     int
 }
 
-type historyTrimEvent struct {
-	firstAvailableID uint64
-}
-
 type clientResyncEvent struct {
 	clientID string
 }
@@ -913,10 +922,6 @@ type releaseLayoutEvent struct {
 type layoutLeaseResult struct {
 	leaseID string
 	granted bool
-}
-
-type effectEvent struct {
-	effect terminalengine.Effect
 }
 
 type clipboardResponseEvent struct {

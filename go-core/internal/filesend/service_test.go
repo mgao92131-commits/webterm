@@ -44,7 +44,7 @@ func TestCreateTaskGeneratesCredentials(t *testing.T) {
 		Path:     "/tmp/a.txt",
 		FileName: "a.txt",
 		Size:     10,
-		SHA256:    testSHA256,
+		SHA256:   testSHA256,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -251,6 +251,59 @@ func TestUnregisterSenderOnlyRemovesSameInstance(t *testing.T) {
 	svc.UnregisterSender("dev-1", fresh)
 	if svc.HasSender("dev-1") {
 		t.Fatal("unregister with current instance should remove sender")
+	}
+}
+
+func TestClientRegisterSelectsOnlyFileReceiver(t *testing.T) {
+	svc := New(0)
+	android := &fakeSender{}
+	browser := &fakeSender{}
+	svc.HandleControlFrom(context.Background(), browser, map[string]any{
+		"type": "client.register", "client_id": "web-1", "client_kind": "web",
+		"client_name": "Chrome", "capabilities": []any{},
+	})
+	svc.HandleControlFrom(context.Background(), android, map[string]any{
+		"type": "client.register", "client_id": "android_12345678", "client_kind": "android",
+		"client_name": "Pixel", "capabilities": []any{"file_receive", "agent_notification"},
+	})
+	got, err := svc.SelectClient("Pixel", "file_receive")
+	if err != nil || got.ID != "android_12345678" {
+		t.Fatalf("SelectClient = %+v, %v", got, err)
+	}
+	if len(android.msgs) != 1 || android.msgs[0]["type"] != "client.registered" {
+		t.Fatalf("registration ack = %+v", android.msgs)
+	}
+	if _, err := svc.SelectClient("Chrome", "file_receive"); err == nil || err.Error() != "receiver_not_found" {
+		t.Fatalf("browser selection error = %v", err)
+	}
+}
+
+func TestClientReconnectStaleUnregisterKeepsFreshSender(t *testing.T) {
+	svc := New(0)
+	old := &fakeSender{}
+	fresh := &fakeSender{}
+	svc.RegisterClient("android_1", "Phone", "android", []string{"file_receive"}, old)
+	svc.RegisterClient("android_1", "Phone", "android", []string{"file_receive"}, fresh)
+	svc.UnregisterSenderInstance(old)
+	if !svc.HasSender("android_1") || svc.ClientIDForSender(fresh) != "android_1" {
+		t.Fatal("stale unregister removed fresh Android sender")
+	}
+}
+
+func TestFileStatusMustComeFromTargetClient(t *testing.T) {
+	svc := New(0)
+	target := &fakeSender{}
+	other := &fakeSender{}
+	svc.RegisterClient("android_target", "Target", "android", []string{"file_receive"}, target)
+	svc.RegisterClient("android_other", "Other", "android", []string{"file_receive"}, other)
+	task, _ := svc.CreateTask(CreateTaskOptions{DeviceID: "android_target", Path: "/x", SHA256: testSHA256})
+	svc.HandleControlFrom(context.Background(), other, map[string]any{"type": TypeSaved, "transfer_id": task.ID})
+	if status, _, _ := task.Snapshot(); status == StatusSaved {
+		t.Fatal("non-target client must not complete task")
+	}
+	svc.HandleControlFrom(context.Background(), target, map[string]any{"type": TypeSaved, "transfer_id": task.ID})
+	if status, _, _ := task.Snapshot(); status != StatusSaved {
+		t.Fatalf("target status = %s", status)
 	}
 }
 

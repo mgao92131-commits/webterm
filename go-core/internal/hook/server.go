@@ -219,6 +219,10 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 		s.handleSendCommand(conn, cmd)
 		return
 	}
+	if cmd.Type == "devices" {
+		s.handleDevicesCommand(conn, cmd)
+		return
+	}
 
 	sessionID := cmd.SessionID
 	if sessionID == "" && cmd.PID > 0 {
@@ -258,6 +262,13 @@ func (s *Server) handleCommand(conn net.Conn, cmd protocol.CLICommand) {
 	terminal.HandleCLICommand(conn, cmd)
 }
 
+func (s *Server) handleDevicesCommand(conn net.Conn, cmd protocol.CLICommand) {
+	writeResponse(conn, protocol.CLIResponse{
+		Kind: "response", Type: "device_list", Status: "complete",
+		Devices: s.app.FileSendService().ListClients(cmd.OnlineOnly),
+	})
+}
+
 func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 	fail := func(errCode string) {
 		writeResponse(conn, protocol.CLIResponse{
@@ -292,7 +303,13 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 	}
 
 	svc := s.app.FileSendService()
+	target, err := svc.SelectClient(cmd.Device, "file_receive")
+	if err != nil {
+		fail(err.Error())
+		return
+	}
 	task, err := svc.CreateTask(filesend.CreateTaskOptions{
+		DeviceID: target.ID,
 		Path:     absPath,
 		FileName: info.Name(),
 		Size:     info.Size(),
@@ -305,16 +322,16 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 
 	// 先发一个 offered 响应，让 CLI 立即进入等待态。
 	writeResponse(conn, protocol.CLIResponse{
-		Kind:       "response",
-		Type:       "file_send_status",
-		Status:     string(filesend.StatusOffered),
-		DownloadID: task.ID,
-		FilePath:   task.FileName,
-		TotalBytes: task.Size,
+		Kind:         "response",
+		Type:         "file_send_status",
+		Status:       string(filesend.StatusOffered),
+		DownloadID:   task.ID,
+		FilePath:     task.FileName,
+		TotalBytes:   task.Size,
+		TargetDevice: &target,
 	})
 
 	if err := svc.SendOffer(context.Background(), task); err != nil {
-		// 里程碑 B：设备级 sender 尚未注册（Android WebTermDeviceService 在里程碑 C 接入）。
 		s.app.Log("warn", "hook", fmt.Sprintf("send offer not delivered: %v", err))
 		task.SetFailed("device_not_connected")
 		writeResponse(conn, protocol.CLIResponse{
@@ -323,7 +340,7 @@ func (s *Server) handleSendCommand(conn net.Conn, cmd protocol.CLICommand) {
 			Status:     string(filesend.StatusFailed),
 			DownloadID: task.ID,
 			FilePath:   task.FileName,
-			Error:      "device_not_connected",
+			Error:      err.Error(),
 		})
 		svc.Remove(task.ID)
 		return
