@@ -51,10 +51,10 @@ func decodeWrittenEnvelope(t *testing.T, data []byte) writtenEnvelope {
 	return out
 }
 
-func newOrderTestClient(t *testing.T) (*Client, *blockingWriteSocket, context.CancelFunc) {
+func newOrderTestClient(t *testing.T) (*terminalChannelRuntime, *blockingWriteSocket, context.CancelFunc) {
 	t.Helper()
 	socket := newBlockingWriteSocket()
-	client := NewClient(socket, nil, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, nil, ClientModeScreen)
 	ctx, cancel := context.WithCancel(context.Background())
 	client.writerStarted.Store(true)
 	go client.writeLoop(ctx)

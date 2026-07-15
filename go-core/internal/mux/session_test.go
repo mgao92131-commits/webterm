@@ -101,8 +101,8 @@ func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager)
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		sess := Serve(session.NewWebSocketAdapter(conn), &ServeOpts{
-			OnOpen: func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (func(), error) {
-				return OpenSessionOrManager(ctx, router, vs, path, protocols)
+			OnOpen: func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string) (session.LogicalChannelHandler, error) {
+				return OpenSessionOrManager(ctx, router, sink, path, protocols)
 			},
 		})
 		_ = sess.Run(ctx)
@@ -186,7 +186,7 @@ func TestMuxDuplicateChannelIDReplacesChannel(t *testing.T) {
 
 	openManager()
 	// Replaying the same logical ID is the terminal-page reattach path. It must
-	// replace the old virtual socket without deadlocking the mux read loop.
+	// replace the old handler without deadlocking the mux read loop.
 	openManager()
 }
 
@@ -226,7 +226,7 @@ func TestMuxDuplicateTerminalChannelReleasesReplacedClient(t *testing.T) {
 	openTerminal()
 	waitTerminalClients(t, terminal, 1)
 	openTerminal()
-	// 同一物理 mux 内重复打开同一 logical channel 时，旧 VirtualSocket 必须退出；
+	// 同一物理 mux 内重复打开同一 logical channel 时，旧 handler 必须退出；
 	// 若这里稳定为 1，s8 的 11 clients 就不是该替换路径自身造成的泄漏。
 	waitTerminalClients(t, terminal, 1)
 
@@ -348,7 +348,7 @@ func minInt(a, b int) int {
 
 // TestMuxWSConnectedIsFirstMessage 守住握手顺序不变量：ws-connect 之后服务端
 // 落线的第一条消息必须是 text 类型的 ws-connected，不能是 tunnel data 帧
-// （Client.SendInfo / manager 初始 sessions 列表不得抢在 ack 之前）。
+// （terminal info / manager 初始 sessions 列表不得抢在 ack 之前）。
 func TestMuxWSConnectedIsFirstMessage(t *testing.T) {
 	testutil.SkipIfLoopbackListenUnavailable(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -424,7 +424,7 @@ func TestMuxWSCloseClosesChannel(t *testing.T) {
 	readJSON(t, ctx, conn)   // ws-connected
 	readTunnel(t, ctx, conn) // initial sessions push
 
-	// 发 ws-close，服务端应关闭该 virtual socket（无 panic 即可）。
+	// 发 ws-close，服务端应关闭该 logical channel（无 panic 即可）。
 	writeJSONMsg(t, ctx, conn, map[string]any{
 		"type":               protocol.WSClose,
 		"tunnelConnectionId": "m1",

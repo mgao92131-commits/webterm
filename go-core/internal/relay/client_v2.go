@@ -21,6 +21,8 @@ const (
 	v2AgentRegisterMessage   = "agent.register"
 	v2AgentRegisteredMessage = "agent.registered"
 	v2AgentErrorMessage      = "agent.error"
+	agentPlaneRealtime       = "realtime"
+	agentPlaneBulk           = "bulk"
 )
 
 type V2Client struct {
@@ -30,7 +32,7 @@ type V2Client struct {
 	http    *HTTPProxy
 	streams *StreamMultiplexer
 
-	writeMu sync.Mutex
+	writeLocks sync.Map // map[*websocket.Conn]*sync.Mutex，两个 plane 绝不共享写锁
 }
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
@@ -87,25 +89,42 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	conn, _, err := websocket.Dial(ctx, relayURL, nil)
+	realtimeConn, _, err := websocket.Dial(ctx, relayURL, nil)
 	if err != nil {
 		return err
 	}
-	conn.SetReadLimit(8 << 20)
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	defer client.streams.CloseAllForConnection(conn)
+	realtimeConn.SetReadLimit(8 << 20)
+	defer realtimeConn.Close(websocket.StatusNormalClosure, "")
+	defer client.streams.CloseAllForConnection(realtimeConn)
+	defer client.writeLocks.Delete(realtimeConn)
 
-	if err := client.registerV2(ctx, conn); err != nil {
+	if err := client.registerV2(ctx, realtimeConn, agentPlaneRealtime); err != nil {
 		return err
 	}
-	return client.readLoop(ctx, conn)
+	bulkConn, _, err := websocket.Dial(ctx, relayURL, nil)
+	if err != nil {
+		return fmt.Errorf("connect bulk plane: %w", err)
+	}
+	bulkConn.SetReadLimit(8 << 20)
+	defer bulkConn.Close(websocket.StatusNormalClosure, "")
+	defer client.http.CloseAllForConnection(bulkConn)
+	defer client.writeLocks.Delete(bulkConn)
+	if err := client.registerV2(ctx, bulkConn, agentPlaneBulk); err != nil {
+		return fmt.Errorf("register bulk plane: %w", err)
+	}
+
+	errCh := make(chan error, 2)
+	go func() { errCh <- client.readLoop(ctx, realtimeConn) }()
+	go func() { errCh <- client.readLoop(ctx, bulkConn) }()
+	return <-errCh
 }
 
-func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn) error {
+func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, plane string) error {
 	if err := writeJSON(ctx, conn, map[string]any{
 		"type":       v2AgentRegisterMessage,
 		"credential": client.cfg.Secret,
 		"deviceName": client.cfg.DeviceName,
+		"plane":      plane,
 	}); err != nil {
 		return err
 	}
@@ -119,7 +138,9 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn) er
 	}
 	switch stringValue(msg["type"]) {
 	case v2AgentRegisteredMessage:
-		client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
+		if plane == agentPlaneRealtime {
+			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
+		}
 		return nil
 	case v2AgentErrorMessage:
 		return fmt.Errorf("relay error: %s", stringValue(msg["message"]))
@@ -169,15 +190,22 @@ func (client *V2Client) writeFrame(ctx context.Context, conn *websocket.Conn, fr
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
+	writeMu := client.writeLock(conn)
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	_ = conn.Write(writeCtx, websocket.MessageBinary, data)
 }
 
 func (client *V2Client) writeRaw(ctx context.Context, conn *websocket.Conn, data []byte) error {
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
+	writeMu := client.writeLock(conn)
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	return conn.Write(writeCtx, websocket.MessageBinary, data)
+}
+
+func (client *V2Client) writeLock(conn *websocket.Conn) *sync.Mutex {
+	lock, _ := client.writeLocks.LoadOrStore(conn, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }

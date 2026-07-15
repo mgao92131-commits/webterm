@@ -166,7 +166,7 @@ func (s *Service) SelectClient(selector, capability string) (protocol.DeviceClie
 	if selector != "" && selector != "recent" {
 		var matches []protocol.DeviceClientInfo
 		for _, info := range candidates {
-			if info.ID == selector || strings.EqualFold(info.Name, selector) || strings.HasPrefix(info.ID, selector) {
+			if matchesClientSelector(info, selector) {
 				matches = append(matches, info)
 			}
 		}
@@ -183,6 +183,20 @@ func (s *Service) SelectClient(selector, capability string) (protocol.DeviceClie
 		return protocol.DeviceClientInfo{}, fmt.Errorf("multiple_receivers")
 	}
 	return candidates[0], nil
+}
+
+// matchesClientSelector 同时接受完整 ID、devices 命令展示的短 ID 和设备名称。
+// Android 客户端 ID 使用 android_ 前缀，但表格为便于输入会隐藏该前缀；这里必须
+// 对同一个规范化 ID 做前缀匹配，否则用户复制表格中的短 ID 无法发送文件。
+func matchesClientSelector(info protocol.DeviceClientInfo, selector string) bool {
+	if strings.EqualFold(info.Name, selector) || strings.EqualFold(info.ID, selector) {
+		return true
+	}
+	fullID := strings.ToLower(info.ID)
+	normalizedID := strings.TrimPrefix(fullID, "android_")
+	normalizedSelector := strings.ToLower(selector)
+	return strings.HasPrefix(fullID, normalizedSelector) ||
+		strings.HasPrefix(normalizedID, normalizedSelector)
 }
 
 // HasSender 报告某设备当前是否注册了 sender（用于诊断与测试）。

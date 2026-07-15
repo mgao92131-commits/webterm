@@ -1,6 +1,7 @@
 package relayrouter
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -11,6 +12,63 @@ type AgentEntry struct {
 	Presence relaycore.DevicePresence
 	State    relaycore.ConnectionState
 	Sender   AgentSender
+}
+
+type splitAgentSender struct {
+	mu       sync.RWMutex
+	realtime AgentSender
+	bulk     AgentSender
+	planes   map[string]relaycore.StreamKind
+}
+
+func newSplitAgentSender(realtime AgentSender) *splitAgentSender {
+	return &splitAgentSender{realtime: realtime, planes: make(map[string]relaycore.StreamKind)}
+}
+
+func (sender *splitAgentSender) SendFrame(ctx context.Context, frame relaycore.Frame) error {
+	sender.mu.Lock()
+	kind, known := sender.planes[frame.StreamID]
+	switch frame.Type {
+	case relaycore.FrameTypeHTTPHeaders:
+		kind, known = relaycore.StreamKindHTTP, true
+		sender.planes[frame.StreamID] = kind
+	case relaycore.FrameTypeStreamOpen:
+		kind, known = relaycore.StreamKindTerminal, true
+		sender.planes[frame.StreamID] = kind
+	}
+	if frame.Type == relaycore.FrameTypeStreamClose || frame.Type == relaycore.FrameTypeStreamError {
+		delete(sender.planes, frame.StreamID)
+	}
+	if frame.Type == relaycore.FrameTypeHTTPChunk && frame.Flags.Has(relaycore.FrameFlagFin) {
+		delete(sender.planes, frame.StreamID)
+	}
+	realtime, bulk := sender.realtime, sender.bulk
+	sender.mu.Unlock()
+
+	if known && kind == relaycore.StreamKindHTTP {
+		if bulk == nil {
+			return relaycore.ErrConnectionClosed
+		}
+		return bulk.SendFrame(ctx, frame)
+	}
+	if realtime == nil {
+		return relaycore.ErrConnectionClosed
+	}
+	return realtime.SendFrame(ctx, frame)
+}
+
+func (sender *splitAgentSender) setBulk(bulk AgentSender) {
+	sender.mu.Lock()
+	sender.bulk = bulk
+	sender.mu.Unlock()
+}
+
+func (sender *splitAgentSender) clearBulk(expected AgentSender) {
+	sender.mu.Lock()
+	if sender.bulk == expected {
+		sender.bulk = nil
+	}
+	sender.mu.Unlock()
 }
 
 type Registry struct {
@@ -36,10 +94,43 @@ func (registry *Registry) RegisterAgentConnection(presence relaycore.DevicePrese
 	if presence.LastSeenAt.IsZero() {
 		presence.LastSeenAt = presence.ConnectedAt
 	}
+	var routedSender AgentSender
+	if sender != nil {
+		routedSender = newSplitAgentSender(sender)
+	}
 	registry.agents[presence.DeviceID] = AgentEntry{
 		Presence: presence,
 		State:    relaycore.ConnectionActive,
-		Sender:   sender,
+		Sender:   routedSender,
+	}
+}
+
+// RegisterAgentDataConnection 把文件/HTTP 批量平面附加到已在线的设备。
+// 它不改变 presence，也不替换 realtime 连接。
+func (registry *Registry) RegisterAgentDataConnection(deviceID string, sender AgentSender) bool {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry, ok := registry.agents[deviceID]
+	if !ok {
+		return false
+	}
+	split, ok := entry.Sender.(*splitAgentSender)
+	if !ok {
+		return false
+	}
+	split.setBulk(sender)
+	return true
+}
+
+func (registry *Registry) RemoveAgentDataConnection(deviceID string, sender AgentSender) {
+	registry.mu.RLock()
+	entry, ok := registry.agents[deviceID]
+	registry.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if split, ok := entry.Sender.(*splitAgentSender); ok {
+		split.clearBulk(sender)
 	}
 }
 

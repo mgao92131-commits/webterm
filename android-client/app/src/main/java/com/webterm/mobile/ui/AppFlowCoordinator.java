@@ -32,7 +32,7 @@ import com.webterm.core.config.ServerConfigStore;
 import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.api.SessionIds;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.feature.terminal.domain.RemoteTerminalIntegration;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
@@ -67,7 +67,7 @@ public final class AppFlowCoordinator implements
 
     private final WebTermApi api;
     private final AuthSessionCoordinator authCoordinator;
-    private final RelayMuxSessionRegistry relayMuxRegistry;
+    private final DeviceConnectionRegistry deviceConnectionRegistry;
     private final TerminalCacheCoordinator terminalCache;
     private final ServerConfigStore configStore;
     private final ServerConfigManager serverConfigs;
@@ -108,7 +108,7 @@ public final class AppFlowCoordinator implements
     public AppFlowCoordinator(
         WebTermApi api,
         AuthSessionCoordinator authCoordinator,
-        RelayMuxSessionRegistry relayMuxRegistry,
+        DeviceConnectionRegistry deviceConnectionRegistry,
         TerminalCacheCoordinator terminalCache,
         ServerConfigStore configStore,
         ServerConfigManager serverConfigs,
@@ -120,7 +120,7 @@ public final class AppFlowCoordinator implements
     ) {
         this.api = api;
         this.authCoordinator = authCoordinator;
-        this.relayMuxRegistry = relayMuxRegistry;
+        this.deviceConnectionRegistry = deviceConnectionRegistry;
         this.terminalCache = terminalCache;
         this.configStore = configStore;
         this.serverConfigs = serverConfigs;
@@ -208,7 +208,7 @@ public final class AppFlowCoordinator implements
         mRelayService.stop();
         remoteTerminalIntegration.stop();
         terminalCache.shutdown();
-        // Relay mux 与 terminal runtime 是进程级所有权。Activity 重建不能关闭它们；
+        // Device connection 与 terminal runtime 是进程级所有权。Activity 重建不能关闭它们；
         // 进程退出时由系统统一回收。
     }
 

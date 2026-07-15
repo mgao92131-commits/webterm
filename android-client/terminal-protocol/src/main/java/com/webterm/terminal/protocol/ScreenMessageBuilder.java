@@ -14,12 +14,13 @@ public final class ScreenMessageBuilder {
   private ScreenMessageBuilder() {}
 
   @NonNull
-  public static byte[] hello(int cols, int rows) {
-    return hello(cols, rows, ResumeToken.cold(0));
+  public static byte[] hello(int cols, int rows, @NonNull String clientInstanceId) {
+    return hello(cols, rows, ResumeToken.cold(0), clientInstanceId);
   }
 
   @NonNull
-  public static byte[] hello(int cols, int rows, @NonNull ResumeToken resumeToken) {
+  public static byte[] hello(int cols, int rows, @NonNull ResumeToken resumeToken,
+                             @NonNull String clientInstanceId) {
     TerminalScreenProto.Hello hello = TerminalScreenProto.Hello.newBuilder()
         .setVersion(1)
         .setCols(cols)
@@ -28,6 +29,7 @@ public final class ScreenMessageBuilder {
         .setInstanceId(resumeToken.instanceId)
         .setLayoutEpoch(resumeToken.layoutEpoch)
         .setScreenRevision(resumeToken.screenRevision)
+        .setClientInstanceId(clientInstanceId)
         .setCapabilities(TerminalScreenProto.CapabilitySet.newBuilder()
             .setRowPatches(true)
             .build())
@@ -37,9 +39,12 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] textInput(@NonNull String leaseId, @NonNull String text) {
+  public static byte[] textInput(@NonNull String leaseId, @NonNull String clientInstanceId,
+                                 long inputSeq, @NonNull String text) {
     TerminalScreenProto.TerminalInput input = TerminalScreenProto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)
+        .setClientInstanceId(clientInstanceId)
+        .setInputSeq(inputSeq)
         .setText(TerminalScreenProto.TextInput.newBuilder().setData(text).build())
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.INPUT,
@@ -47,9 +52,12 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] pasteInput(@NonNull String leaseId, @NonNull String text) {
+  public static byte[] pasteInput(@NonNull String leaseId, @NonNull String clientInstanceId,
+                                  long inputSeq, @NonNull String text) {
     TerminalScreenProto.TerminalInput input = TerminalScreenProto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)
+        .setClientInstanceId(clientInstanceId)
+        .setInputSeq(inputSeq)
         .setPaste(TerminalScreenProto.PasteInput.newBuilder().setData(text).build())
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.INPUT,
@@ -57,7 +65,8 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] keyInput(@NonNull String leaseId, @NonNull String key,
+  public static byte[] keyInput(@NonNull String leaseId, @NonNull String clientInstanceId,
+                                long inputSeq, @NonNull String key,
                                 boolean shift, boolean alt, boolean ctrl, boolean meta,
                                 boolean pressed) {
     TerminalScreenProto.KeyInput ki = TerminalScreenProto.KeyInput.newBuilder()
@@ -72,6 +81,8 @@ public final class ScreenMessageBuilder {
         .build();
     TerminalScreenProto.TerminalInput input = TerminalScreenProto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)
+        .setClientInstanceId(clientInstanceId)
+        .setInputSeq(inputSeq)
         .setKey(ki)
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.INPUT,
@@ -79,7 +90,8 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] mouseInput(@NonNull String leaseId, int row, int col,
+  public static byte[] mouseInput(@NonNull String leaseId, @NonNull String clientInstanceId,
+                                  long inputSeq, int row, int col,
                                   TerminalScreenProto.MouseButton button, int wheelDelta,
                                   boolean shift, boolean alt, boolean ctrl, boolean meta,
                                   boolean pressed) {
@@ -98,6 +110,8 @@ public final class ScreenMessageBuilder {
         .build();
     TerminalScreenProto.TerminalInput input = TerminalScreenProto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)
+        .setClientInstanceId(clientInstanceId)
+        .setInputSeq(inputSeq)
         .setMouse(mi)
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.INPUT,
@@ -105,12 +119,15 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] focusInput(@NonNull String leaseId, boolean focused) {
+  public static byte[] focusInput(@NonNull String leaseId, @NonNull String clientInstanceId,
+                                  long inputSeq, boolean focused) {
     TerminalScreenProto.FocusInput fi = TerminalScreenProto.FocusInput.newBuilder()
         .setFocused(focused)
         .build();
     TerminalScreenProto.TerminalInput input = TerminalScreenProto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)
+        .setClientInstanceId(clientInstanceId)
+        .setInputSeq(inputSeq)
         .setFocus(fi)
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.INPUT,

@@ -9,51 +9,60 @@ import (
 	"sync"
 	"time"
 
+	"nhooyr.io/websocket"
+
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	termsession "webterm/go-core/internal/session"
 )
 
-// OpenHandler 处理一个新建立的虚拟通道：创建上层客户端但暂不启动。
-// 返回的 start 在 ws-connected 发送成功后由 mux 调用，确保握手 ack 先于
-// 任何通道数据落线（否则 client.Run 的 SendInfo / manager 初始列表可能抢在
-// ws-connected 之前写出，违反握手顺序）。返回 error 时由 mux 发 ws-error。
-type OpenHandler func(ctx context.Context, vs *VirtualSocket, path string, protocols []string) (start func(), err error)
+// OpenHandler 为 logical channel 创建直接的帧处理器。
+// handler.Run 在 ws-connected 成功写出后才启动，保证握手 ACK
+// 先于 manager 初始列表或终端屏幕帧。
+type OpenHandler func(
+	ctx context.Context,
+	sink termsession.ChannelFrameSink,
+	path string,
+	protocols []string,
+) (termsession.LogicalChannelHandler, error)
 
-// ControlHandler 处理 mux 不识别的控制消息，并携带消息来源 Session。
-// 设备级协议必须使用来源实例完成注册和回执校验，禁止依赖临时 stream ID。
+// ControlHandler 处理 mux 不识别的设备级控制消息。
 type ControlHandler func(ctx context.Context, source *Session, msg map[string]any)
 
 type ServeOpts struct {
-	OnOpen    OpenHandler    // 必填
-	OnControl ControlHandler // 可选
-	Logger    *logs.Logger   // 可选，用于背压关闭日志
+	OnOpen    OpenHandler
+	OnControl ControlHandler
+	Logger    *logs.Logger
 }
 
+type channelEntry struct {
+	id      string
+	handler termsession.LogicalChannelHandler
+	sink    *channelSink
+}
+
+// Session 是一条 Android 设备连接的 actor。它解析 webterm.mux.v1 外层，
+// 再把 channel payload 直接交给 handler，Agent 内不再伪造第二层 Socket。
 type Session struct {
 	conn       termsession.Socket
 	writeMu    sync.Mutex
-	channels   map[string]*VirtualSocket
+	channels   map[string]*channelEntry
 	channelsMu sync.RWMutex
 	onOpen     OpenHandler
 	onControl  ControlHandler
 	logger     *logs.Logger
 }
 
-// Serve 包装一个已建立的 WebSocket 连接，启动多路复用。
-// Relay Agent 负责建立 websocket 连接并完成注册。
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 	return &Session{
 		conn:      conn,
-		channels:  make(map[string]*VirtualSocket),
+		channels:  make(map[string]*channelEntry),
 		onOpen:    opts.OnOpen,
 		onControl: opts.OnControl,
 		logger:    opts.Logger,
 	}
 }
 
-// Run 启动 readLoop，阻塞直到连接关闭。不创建任何通道——所有通道由 ws-connect 显式建立。
-// 物理连接断开时自动关闭所有 VirtualSocket。
 func (s *Session) Run(ctx context.Context) error {
 	defer s.closeAllChannels()
 	return s.readLoop(ctx)
@@ -83,9 +92,9 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 	case protocol.WSConnect:
 		s.handleWSConnect(ctx, msg)
 	case protocol.WSClose:
-		s.closeSocket(stringValue(msg["tunnelConnectionId"]))
+		s.closeChannel(stringValue(msg["tunnelConnectionId"]))
 	case protocol.WSConnected, protocol.WSError:
-		// 服务端角色不应收到这些（它们是服务端发出的）。忽略。
+		// 服务端角色不应收到这两类回包。
 	default:
 		if s.onControl != nil {
 			s.onControl(ctx, s, msg)
@@ -97,13 +106,13 @@ func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 	tunnelID := stringValue(msg["tunnelConnectionId"])
 	path := stringValue(msg["path"])
 	protocols := protocolsValue(msg["protocols"])
-	if tunnelID == "" {
+	if tunnelID == "" || s.onOpen == nil {
 		return
 	}
-	vs := s.newSocket(tunnelID, selectProtocol(protocols))
-	start, err := s.onOpen(ctx, vs, cleanPath(path), protocols)
+
+	sink := &channelSink{id: tunnelID, session: s}
+	handler, err := s.onOpen(ctx, sink, cleanPath(path), protocols)
 	if err != nil {
-		s.removeSocket(tunnelID)
 		_ = s.sendJSON(ctx, map[string]any{
 			"type":               protocol.WSError,
 			"tunnelConnectionId": tunnelID,
@@ -112,97 +121,104 @@ func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 		})
 		return
 	}
-	// 先发 ws-connected 并等其写出成功，再启动客户端，保证 ack 先于通道数据。
+	entry := &channelEntry{id: tunnelID, handler: handler, sink: sink}
+	sink.entry = entry
+
+	s.channelsMu.Lock()
+	old := s.channels[tunnelID]
+	s.channels[tunnelID] = entry
+	s.channelsMu.Unlock()
+	if old != nil {
+		old.handler.Close()
+	}
+
 	if err := s.sendJSON(ctx, map[string]any{
 		"type":               protocol.WSConnected,
 		"tunnelConnectionId": tunnelID,
 	}); err != nil {
-		s.removeSocket(tunnelID)
+		s.removeChannelIfCurrent(entry)
+		handler.Close()
 		return
 	}
-	if start != nil {
-		go start()
-	}
+
+	go func() {
+		handler.Run(ctx)
+		if s.removeChannelIfCurrent(entry) {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = s.sendJSON(closeCtx, map[string]any{
+				"type":               protocol.WSClose,
+				"tunnelConnectionId": tunnelID,
+				"code":               int(websocket.StatusGoingAway),
+				"reason":             "channel handler stopped",
+			})
+		}
+	}()
 }
 
 func (s *Session) handleBinaryFrame(data []byte) {
 	frame, err := protocol.DecodeTunnelFrame(data)
-	if err != nil {
-		return
-	}
-	if frame.MsgType != protocol.MsgTypeWSData {
+	if err != nil || frame.MsgType != protocol.MsgTypeWSData {
 		return
 	}
 	s.channelsMu.RLock()
-	socket := s.channels[frame.ID]
+	entry := s.channels[frame.ID]
 	s.channelsMu.RUnlock()
-	if socket == nil {
-		return
+	if entry != nil {
+		entry.handler.HandleFrame(frame.Payload, frame.ExtraByte == protocol.WSDataBinary)
 	}
-	socket.Emit(frame.Payload, frame.ExtraByte == protocol.WSDataBinary)
 }
 
-func (s *Session) newSocket(id string, protocolName string) *VirtualSocket {
-	var socket *VirtualSocket
-	socket = newVirtualSocket(id, protocolName, s, func() {
-		s.removeSocketIfCurrent(id, socket)
-	}, s.logger)
-
+func (s *Session) closeChannel(id string) {
 	s.channelsMu.Lock()
-	old := s.channels[id]
-	s.channels[id] = socket
-	s.channelsMu.Unlock()
-
-	// The Android client may re-send ws-connect for the same logical terminal
-	// channel while repairing a lost handshake. Close the replaced socket only
-	// after releasing channelsMu: Close invokes its callback, which also touches
-	// the channel map. The conditional callback ensures an old socket cannot
-	// remove the replacement from the map.
-	if old != nil {
-		_ = old.Close()
-	}
-	return socket
-}
-
-func (s *Session) removeSocket(id string) {
-	s.channelsMu.Lock()
-	delete(s.channels, id)
-	s.channelsMu.Unlock()
-}
-
-func (s *Session) removeSocketIfCurrent(id string, expected *VirtualSocket) {
-	s.channelsMu.Lock()
-	if s.channels[id] == expected {
+	entry := s.channels[id]
+	if entry != nil {
 		delete(s.channels, id)
 	}
 	s.channelsMu.Unlock()
+	if entry != nil {
+		entry.handler.Close()
+	}
 }
 
-func (s *Session) closeSocket(id string) {
-	s.channelsMu.RLock()
-	socket := s.channels[id]
-	s.channelsMu.RUnlock()
-	if socket != nil {
-		_ = socket.Close()
+func (s *Session) removeChannelIfCurrent(expected *channelEntry) bool {
+	s.channelsMu.Lock()
+	defer s.channelsMu.Unlock()
+	if s.channels[expected.id] != expected {
+		return false
 	}
+	delete(s.channels, expected.id)
+	return true
 }
 
 func (s *Session) closeAllChannels() {
-	s.channelsMu.RLock()
-	sockets := make([]*VirtualSocket, 0, len(s.channels))
-	for _, socket := range s.channels {
-		sockets = append(sockets, socket)
+	s.channelsMu.Lock()
+	entries := make([]*channelEntry, 0, len(s.channels))
+	for _, entry := range s.channels {
+		entries = append(entries, entry)
 	}
-	s.channelsMu.RUnlock()
-	for _, socket := range sockets {
-		_ = socket.Close()
+	clear(s.channels)
+	s.channelsMu.Unlock()
+	for _, entry := range entries {
+		entry.handler.Close()
 	}
 }
 
-// SendControl 发送一条设备级文本控制消息，不经过虚拟通道。
-// 用于 file_send.*、agent_notification 等控制面协议。
+// SendControl 发送一条设备级文本控制消息。
 func (s *Session) SendControl(ctx context.Context, msg map[string]any) error {
 	return s.sendJSON(ctx, msg)
+}
+
+func (s *Session) writeChannelFrame(ctx context.Context, id string, payload []byte, binary bool) error {
+	extra := protocol.WSDataText
+	if binary {
+		extra = protocol.WSDataBinary
+	}
+	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, id, extra, payload)
+	if err != nil {
+		return err
+	}
+	return s.writeBinary(ctx, frame)
 }
 
 func (s *Session) writeBinary(ctx context.Context, data []byte) error {
@@ -225,20 +241,27 @@ func (s *Session) sendJSON(ctx context.Context, value any) error {
 	return s.conn.Write(writeCtx, termsession.MessageText, bytes)
 }
 
+type channelSink struct {
+	id      string
+	session *Session
+	entry   *channelEntry
+}
+
+func (sink *channelSink) WriteFrame(ctx context.Context, payload []byte, binary bool) error {
+	sink.session.channelsMu.RLock()
+	current := sink.session.channels[sink.id] == sink.entry
+	sink.session.channelsMu.RUnlock()
+	if !current {
+		return fmt.Errorf("channel %s closed", sink.id)
+	}
+	return sink.session.writeChannelFrame(ctx, sink.id, payload, binary)
+}
+
 func cleanPath(raw string) string {
 	if parsed, err := url.Parse(raw); err == nil {
 		return parsed.Path
 	}
 	return raw
-}
-
-func selectProtocol(protocols []string) string {
-	for _, item := range protocols {
-		if item == protocol.ScreenSubprotocol {
-			return protocol.ScreenSubprotocol
-		}
-	}
-	return ""
 }
 
 func protocolsValue(value any) []string {

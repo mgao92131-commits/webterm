@@ -9,6 +9,7 @@ import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -49,7 +50,7 @@ public final class RemoteTerminalIntegration {
   }
 
   private final TerminalSessionRuntimeRegistry registry;
-  private final ScreenMuxConnection.Factory screenConnectionFactory;
+  private final TerminalChannel.Factory screenConnectionFactory;
 
   private TerminalClipboardPolicy clipboardPolicy;
 
@@ -59,7 +60,7 @@ public final class RemoteTerminalIntegration {
   private TerminalRuntimeKey runtimeKey;
   private TerminalScreenController controller;
   private LifecycleOwner controllerOwner;
-  private ScreenMuxConnection connection;
+  private TerminalChannel connection;
   private RemoteTerminalView view;
   private View root;
   private View terminalViewport;
@@ -77,7 +78,7 @@ public final class RemoteTerminalIntegration {
 
   @Inject
   public RemoteTerminalIntegration(TerminalSessionRuntimeRegistry registry,
-                                   ScreenMuxConnection.Factory screenConnectionFactory) {
+                                   TerminalChannel.Factory screenConnectionFactory) {
     this.registry = registry;
     this.screenConnectionFactory = screenConnectionFactory;
   }
@@ -101,7 +102,7 @@ public final class RemoteTerminalIntegration {
       if (listener != null) listener.onAuthenticationRequired(reason);
     });
 
-    // The relay mux may already be live when a terminal page is reopened. Attach
+    // The device connection may already be live when a terminal page is reopened. Attach
     // the connection now, but defer connect() until the controller/effect listener
     // and header views are all bound. A synchronous HELLO / initial SNAPSHOT must
     // not be delivered before the page can consume its model and metadata effects.
@@ -127,6 +128,11 @@ public final class RemoteTerminalIntegration {
           @Override
           public void onLayoutLeaseStateChanged(boolean ready) {
             connectionStatusView.updateInputReady(ready);
+          }
+
+          @Override
+          public void onInputDeliveryUncertain(@NonNull String message) {
+            Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
           }
         });
     // 键盘弹出期间内容刷新（光标移动/新输出）时重算避让平移，

@@ -28,6 +28,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     default void onHistoryAppended(int lineCount) {}
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
     default void onLayoutLeaseStateChanged(boolean ready) {}
+    default void onInputDeliveryUncertain(@NonNull String message) {}
   }
 
   public interface EffectListener {
@@ -231,6 +232,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   public void onLayoutLeaseStateChange(boolean ready) {
     View v = view;
     if (v != null) v.onLayoutLeaseStateChanged(ready);
+  }
+
+  @Override
+  public void onInputDeliveryUncertain(@NonNull String message) {
+    View v = view;
+    if (v != null) v.onInputDeliveryUncertain(message);
   }
 
   private void requestRender() {

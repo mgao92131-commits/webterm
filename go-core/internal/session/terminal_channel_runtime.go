@@ -2,15 +2,12 @@ package session
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"nhooyr.io/websocket"
-
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/screenprojection"
@@ -20,23 +17,19 @@ import (
 	"webterm/go-core/internal/terminalsession"
 )
 
-type ClientMode string
-
-const ClientModeScreen ClientMode = "screen"
-
-type Client struct {
-	socket         Socket
-	session        *TerminalSession
-	mode           ClientMode
-	send           chan outboundMessage
-	ready          atomic.Bool
-	done           chan struct{}
-	doneOnce       chan struct{}
-	logger         *logs.Logger
-	screenClientID string
-	screenAttached atomic.Bool
-	writerStarted  atomic.Bool
-	screenHandler  *screenprotocol.Handler
+type terminalChannelRuntime struct {
+	sink             ChannelFrameSink
+	session          *TerminalSession
+	send             chan outboundMessage
+	ready            atomic.Bool
+	done             chan struct{}
+	doneOnce         chan struct{}
+	logger           *logs.Logger
+	screenClientID   string
+	clientInstanceID string
+	screenAttached   atomic.Bool
+	writerStarted    atomic.Bool
+	screenHandler    *screenprotocol.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -55,18 +48,14 @@ type initialScreenMessage struct {
 	done func(bool)
 }
 
-func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger ...*logs.Logger) *Client {
-	if mode == "" {
-		mode = ClientModeScreen
-	}
+func newTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrameSink, logger ...*logs.Logger) *terminalChannelRuntime {
 	var log *logs.Logger
 	if len(logger) > 0 {
 		log = logger[0]
 	}
-	client := &Client{
-		socket:         socket,
+	client := &terminalChannelRuntime{
+		sink:           sink,
 		session:        terminal,
-		mode:           mode,
 		send:           make(chan outboundMessage, 256),
 		done:           make(chan struct{}),
 		doneOnce:       make(chan struct{}, 1),
@@ -75,13 +64,13 @@ func NewClient(socket Socket, terminal *TerminalSession, mode ClientMode, logger
 		screenWake:     make(chan struct{}, 1),
 		screenInitial:  make(chan initialScreenMessage, 1),
 	}
-	if terminal != nil && mode == ClientModeScreen {
+	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
 	}
 	return client
 }
 
-func (client *Client) newScreenHandler() *screenprotocol.Handler {
+func (client *terminalChannelRuntime) newScreenHandler() *screenprotocol.Handler {
 	if client.session == nil {
 		return nil
 	}
@@ -92,7 +81,18 @@ func (client *Client) newScreenHandler() *screenprotocol.Handler {
 		}),
 		screenprotocol.WithInputCallback(func(input *pb.TerminalInput) {
 			if rt != nil {
-				rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
+				clientInstanceID := input.GetClientInstanceId()
+				if client.clientInstanceID != "" && clientInstanceID != client.clientInstanceID {
+					client.sendInputAck(terminalsession.InputDeliveryResult{
+						ClientInstanceID:   clientInstanceID,
+						InputSeq:           input.GetInputSeq(),
+						TerminalInstanceID: rt.Info().InstanceID,
+						Status:             terminalsession.InputDeliveryRejected,
+					})
+					return
+				}
+				rt.WriteReliableSemanticInput(client.screenClientID, input.LeaseId,
+					clientInstanceID, input.GetInputSeq(), semanticInput(input), client.sendInputAck)
 			}
 		}),
 		screenprotocol.WithResizeCallback(func(resize *pb.Resize) {
@@ -136,7 +136,7 @@ func (client *Client) newScreenHandler() *screenprotocol.Handler {
 	)
 }
 
-func (client *Client) Run(ctx context.Context) {
+func (client *terminalChannelRuntime) run(ctx context.Context) {
 	client.session.Attach(client)
 	defer client.session.Detach(client)
 	defer client.Close()
@@ -144,10 +144,13 @@ func (client *Client) Run(ctx context.Context) {
 
 	client.writerStarted.Store(true)
 	go client.writeLoop(ctx)
-	client.readLoop(ctx)
+	select {
+	case <-ctx.Done():
+	case <-client.done:
+	}
 }
 
-func (client *Client) SendInfo() {
+func (client *terminalChannelRuntime) SendInfo() {
 	info := client.session.Info()
 	payload, err := encodeTerminalInfo(info)
 	if err == nil {
@@ -176,7 +179,7 @@ func encodeTerminalInfo(info Info) ([]byte, error) {
 	return proto.Marshal(envelope)
 }
 
-func (client *Client) SendHook(ev protocol.HookEvent) {
+func (client *terminalChannelRuntime) SendHook(ev protocol.HookEvent) {
 	if !client.ready.Load() {
 		return
 	}
@@ -184,14 +187,14 @@ func (client *Client) SendHook(ev protocol.HookEvent) {
 	// terminal-native notifications through screen effects instead.
 }
 
-func (client *Client) SendOutput(frame EventFrame) {
+func (client *terminalChannelRuntime) SendOutput(frame EventFrame) {
 	if !client.ready.Load() {
 		return
 	}
 	// screen protocol 由 Runtime 通过 ScreenClient.Send 回调主动推送 frame。
 }
 
-func (client *Client) SendExit(code int) {
+func (client *terminalChannelRuntime) SendExit(code int) {
 	payload, err := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 1,
 		Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
@@ -201,34 +204,11 @@ func (client *Client) SendExit(code int) {
 	}
 }
 
-type closeNotifier interface {
-	CloseWithNotify(ctx context.Context, code int, reason string)
-}
-
-func (client *Client) Close() {
+func (client *terminalChannelRuntime) Close() {
 	select {
 	case client.doneOnce <- struct{}{}:
 		close(client.done)
-		if notifier, ok := client.socket.(closeNotifier); ok {
-			notifyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			notifier.CloseWithNotify(notifyCtx, int(websocket.StatusGoingAway), "client send buffer full or write timeout")
-		} else {
-			_ = client.socket.Close()
-		}
 	default:
-	}
-}
-
-func (client *Client) readLoop(ctx context.Context) {
-	for {
-		messageType, data, err := client.socket.Read(ctx)
-		if err != nil {
-			return
-		}
-		if messageType == MessageBinary {
-			client.handleScreenBinary(data)
-		}
 	}
 }
 
@@ -262,7 +242,7 @@ func (client *Client) readLoop(ctx context.Context) {
 // that reorders control messages relative to their production order without
 // expressing any real event ordering, and the contract above makes it
 // unnecessary.
-func (client *Client) writeLoop(ctx context.Context) {
+func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -285,7 +265,7 @@ func (client *Client) writeLoop(ctx context.Context) {
 	}
 }
 
-func (client *Client) writeInitialScreenSync(ctx context.Context, initial initialScreenMessage) bool {
+func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context, initial initialScreenMessage) bool {
 	payload, err := encodeInitialScreenSync(initial.sync)
 	if err != nil {
 		initial.done(false)
@@ -320,7 +300,7 @@ func (client *Client) writeInitialScreenSync(ctx context.Context, initial initia
 	return true
 }
 
-func (client *Client) writeLatestScreenState(ctx context.Context) bool {
+func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context) bool {
 	client.screenMu.Lock()
 	if !client.hasScreenData {
 		client.screenMu.Unlock()
@@ -348,10 +328,10 @@ func (client *Client) writeLatestScreenState(ctx context.Context) bool {
 	return client.writeMessage(ctx, outboundMessage{binary: payload})
 }
 
-func (client *Client) writeMessage(ctx context.Context, message outboundMessage) bool {
+func (client *terminalChannelRuntime) writeMessage(ctx context.Context, message outboundMessage) bool {
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	var err error
-	err = client.socket.Write(writeCtx, MessageBinary, message.binary)
+	err = client.sink.WriteFrame(writeCtx, message.binary, true)
 	cancel()
 	if err != nil {
 		client.Close()
@@ -360,7 +340,7 @@ func (client *Client) writeMessage(ctx context.Context, message outboundMessage)
 	return true
 }
 
-func (client *Client) handleScreenBinary(frame []byte) {
+func (client *terminalChannelRuntime) handleScreenBinary(frame []byte) {
 	if client.screenHandler == nil {
 		client.screenHandler = client.newScreenHandler()
 		if client.screenHandler == nil {
@@ -375,11 +355,11 @@ func (client *Client) handleScreenBinary(frame []byte) {
 }
 
 // handleBinary remains package-private test plumbing for screen protocol fixtures.
-func (client *Client) handleBinary(frame []byte) {
+func (client *terminalChannelRuntime) handleBinary(frame []byte) {
 	client.handleScreenBinary(frame)
 }
 
-func (client *Client) sendLayoutLease(result terminalsession.LayoutLeaseEvent) {
+func (client *terminalChannelRuntime) sendLayoutLease(result terminalsession.LayoutLeaseEvent) {
 	expiresAtMs := uint64(0)
 	if !result.ExpiresAt.IsZero() && result.ExpiresAt.UnixMilli() > 0 {
 		expiresAtMs = uint64(result.ExpiresAt.UnixMilli())
@@ -402,7 +382,7 @@ func (client *Client) sendLayoutLease(result terminalsession.LayoutLeaseEvent) {
 	}
 }
 
-func (client *Client) handleScreenHello(hello *pb.Hello) {
+func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 	if !client.screenAttached.CompareAndSwap(false, true) {
 		// 同一 screen channel 只接受一次 Hello（计划 §3.5）。重复 Hello 是
 		// 协议错误：不能重复 seed baseline，关闭连接而不是再次 SendInfo。
@@ -412,9 +392,36 @@ func (client *Client) handleScreenHello(hello *pb.Hello) {
 		client.Close()
 		return
 	}
+	client.clientInstanceID = hello.GetClientInstanceId()
 	client.attachScreenClient(hello)
 	client.SendInfo()
 	client.ready.Store(true)
+}
+
+func (client *terminalChannelRuntime) sendInputAck(result terminalsession.InputDeliveryResult) {
+	status := pb.InputAckStatus_INPUT_ACK_STATUS_UNSPECIFIED
+	switch result.Status {
+	case terminalsession.InputDeliveryWritten:
+		status = pb.InputAckStatus_INPUT_ACK_STATUS_WRITTEN
+	case terminalsession.InputDeliveryIgnored:
+		status = pb.InputAckStatus_INPUT_ACK_STATUS_IGNORED
+	case terminalsession.InputDeliveryRejected:
+		status = pb.InputAckStatus_INPUT_ACK_STATUS_REJECTED
+	case terminalsession.InputDeliveryUncertain:
+		status = pb.InputAckStatus_INPUT_ACK_STATUS_UNCERTAIN
+	}
+	payload, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_InputAck{InputAck: &pb.InputAck{
+			ClientInstanceId:   result.ClientInstanceID,
+			InputSeq:           result.InputSeq,
+			TerminalInstanceId: result.TerminalInstanceID,
+			Status:             status,
+		}},
+	})
+	if err == nil {
+		client.enqueueBinary(payload)
+	}
 }
 
 func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {
@@ -441,7 +448,7 @@ func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {
 	}
 }
 
-func (client *Client) attachScreenClient(hello *pb.Hello) {
+func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
 		ID: client.screenClientID,
 		Resume: terminalsession.ResumeToken{
@@ -460,7 +467,7 @@ func (client *Client) attachScreenClient(hello *pb.Hello) {
 	})
 }
 
-func (client *Client) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
+func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
 	if !client.writerStarted.Load() {
 		payload, err := encodeInitialScreenSync(syncMessage)
 		if err != nil {
@@ -511,21 +518,21 @@ func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, e
 	return patchBytes, nil
 }
 
-func (client *Client) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
+func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
 	payload, err := screenprotocol.EncodeEffect(instanceID, revision, effect)
 	if err == nil {
 		client.enqueueBinary(payload)
 	}
 }
 
-func (client *Client) sendScreenHistory(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData) {
+func (client *terminalChannelRuntime) sendScreenHistory(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData) {
 	payload, err := screenprotocol.EncodeHistoryPage(requestID, epoch, revision, page)
 	if err == nil {
 		client.enqueueBinary(payload)
 	}
 }
 
-func (client *Client) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
+func (client *terminalChannelRuntime) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
 	payload, err := screenprotocol.EncodeHistoryTrim(epoch, firstAvailableID)
 	if err == nil {
 		client.enqueueBinary(payload)
@@ -535,8 +542,8 @@ func (client *Client) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
 // sendScreenState accepts a complete shared projection from the terminal actor.
 // In production it only replaces one mailbox slot; the socket writer derives a
 // patch relative to the last state it actually scheduled for writing. Tests
-// that intentionally use Client without Run retain the old immediate path.
-func (client *Client) sendScreenState(state terminalengine.ScreenFrame) {
+// that intentionally use terminalChannelRuntime without Run retain the old immediate path.
+func (client *terminalChannelRuntime) sendScreenState(state terminalengine.ScreenFrame) {
 	if !client.writerStarted.Load() {
 		frame := client.screenDeriver.FrameForState(state)
 		if frame.Kind != 0 { // Kind==0：空 patch 被抑制，不发送
@@ -554,14 +561,14 @@ func (client *Client) sendScreenState(state terminalengine.ScreenFrame) {
 	}
 }
 
-func (client *Client) resetScreenProjection() {
+func (client *terminalChannelRuntime) resetScreenProjection() {
 	client.screenMu.Lock()
 	defer client.screenMu.Unlock()
 	client.screenDeriver.Reset()
 	client.hasScreenData = false
 }
 
-func (client *Client) sendScreenFrameNow(frame terminalengine.ScreenFrame) {
+func (client *terminalChannelRuntime) sendScreenFrameNow(frame terminalengine.ScreenFrame) {
 	payload, err := screenprotocol.EncodeFrame(frame)
 	if err != nil {
 		if client.logger != nil {
@@ -572,23 +579,19 @@ func (client *Client) sendScreenFrameNow(frame terminalengine.ScreenFrame) {
 	client.enqueueBinary(payload)
 }
 
-func (client *Client) enqueueBinary(bytes []byte) {
+func (client *terminalChannelRuntime) enqueueBinary(bytes []byte) {
 	client.enqueue(outboundMessage{binary: bytes})
 }
 
-func (client *Client) enqueue(message outboundMessage) {
+func (client *terminalChannelRuntime) enqueue(message outboundMessage) {
 	select {
 	case <-client.done:
 		return
 	case client.send <- message:
 	default:
 		if client.logger != nil {
-			client.logger.Add("warn", "session", fmt.Sprintf("client send buffer full, closing session=%s mode=%s", client.session.ID(), client.mode))
+			client.logger.Add("warn", "session", fmt.Sprintf("terminal channel send buffer full, closing session=%s", client.session.ID()))
 		}
 		client.Close()
 	}
-}
-
-func IsExpectedClose(err error) bool {
-	return errors.Is(err, context.Canceled) || websocket.CloseStatus(err) == websocket.StatusNormalClosure
 }

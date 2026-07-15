@@ -49,6 +49,7 @@ public final class TerminalSessionRuntime {
     void onEffect(@NonNull TerminalScreenEffect effect);
     void onConnectionStateChange(@NonNull State state);
     default void onLayoutLeaseStateChange(boolean ready) {}
+    default void onInputDeliveryUncertain(@NonNull String message) {}
   }
 
   /** 不依赖 Activity/View 的副作用处理器；页面不存在时仍必须持续存在。 */
@@ -103,6 +104,7 @@ public final class TerminalSessionRuntime {
       void onConnected();
       void onDisconnected(@Nullable String reason);
       default void onAuthenticationRequired(@Nullable String reason) {}
+      default void onInputDeliveryUncertain(@NonNull String message) {}
       void onClosed();
     }
   }
@@ -281,6 +283,14 @@ public final class TerminalSessionRuntime {
           resetResyncRecovery();
         });
         updateState(State.RECONNECTING);
+      }
+
+      @Override
+      public void onInputDeliveryUncertain(@NonNull String message) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        callbackExecutor.execute(() -> {
+          for (Listener listener : listeners) listener.onInputDeliveryUncertain(message);
+        });
       }
 
       @Override

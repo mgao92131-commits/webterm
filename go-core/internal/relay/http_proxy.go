@@ -38,6 +38,7 @@ type httpStream struct {
 	ch        chan relaycore.Frame
 	done      chan struct{}
 	closeOnce sync.Once
+	conn      *websocket.Conn
 }
 
 func (s *httpStream) signalClosed() {
@@ -60,11 +61,26 @@ func NewHTTPProxy(router *application.SessionRouter, writer frameWriter) *HTTPPr
 
 // HandleHTTPHeaders 处理 HTTPHeaders 帧——创建新 stream 并启动处理。
 func (p *HTTPProxy) HandleHTTPHeaders(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame) {
-	hs := &httpStream{ch: make(chan relaycore.Frame, 8), done: make(chan struct{})}
+	hs := &httpStream{ch: make(chan relaycore.Frame, 8), done: make(chan struct{}), conn: conn}
 	p.mu.Lock()
 	p.streams[frame.StreamID] = hs
 	p.mu.Unlock()
 	go p.processStream(ctx, conn, frame, hs)
+}
+
+// CloseAllForConnection 在 bulk plane 断开时中止该物理连接上的全部 HTTP 流。
+func (p *HTTPProxy) CloseAllForConnection(conn *websocket.Conn) {
+	p.mu.Lock()
+	streams := make([]*httpStream, 0)
+	for _, stream := range p.streams {
+		if stream.conn == conn {
+			streams = append(streams, stream)
+		}
+	}
+	p.mu.Unlock()
+	for _, stream := range streams {
+		stream.signalClosed()
+	}
 }
 
 // DeliverChunk 将 HTTPChunk 帧投递到对应 stream。

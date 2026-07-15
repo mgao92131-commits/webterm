@@ -66,6 +66,9 @@ func newUploadGateway(t *testing.T) (*HTTPGateway, *relayrouter.StreamManager, *
 		AgentConnectionID: "conn1",
 		Online:            true,
 	}, sender)
+	if !registry.RegisterAgentDataConnection("dev1", sender) {
+		t.Fatal("register bulk agent plane")
+	}
 	streams := relayrouter.NewStreamManager()
 	cookie := &http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value}
 	return NewHTTPGateway(store, registry, streams), streams, sender, cookie

@@ -7,7 +7,7 @@ import android.os.Looper;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.transport.api.TransportFactory;
 import com.webterm.transport.websocket.WebSocketMuxTransport;
 

@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -103,6 +105,19 @@ func runSessionLifecycle(ctx context.Context, relayApp *relayapp.App, baseURL st
 		return err
 	}
 	if err := waitForNoStreams(ctx, relayApp, phase+" create session"); err != nil {
+		return err
+	}
+	uploadedPath, err := uploadSessionFile(ctx, baseURL, token, deviceID, sessionID, phase)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Remove(uploadedPath)
+		// 冒烟测试会在当前工作目录创建默认上传目录；仅当目录为空时回收，
+		// 避免验证命令在仓库内留下测试产物。
+		_ = os.Remove(filepath.Dir(uploadedPath))
+	}()
+	if err := waitForNoStreams(ctx, relayApp, phase+" upload file"); err != nil {
 		return err
 	}
 	secondSessionID := ""
@@ -302,6 +317,47 @@ func createSession(ctx context.Context, baseURL string, token string, deviceID s
 	return created.ID, nil
 }
 
+func uploadSessionFile(ctx context.Context, baseURL, token, deviceID, sessionID, phase string) (string, error) {
+	contents := []byte("WEBTERM_BULK_PLANE_" + phase + "\n")
+	fileName := fmt.Sprintf("relay-e2e-%s-%d.txt", phase, time.Now().UnixNano())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		baseURL+"/api/sessions/"+url.PathEscape(sessionID)+"/upload", bytes.NewReader(contents))
+	if err != nil {
+		return "", err
+	}
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token})
+	req.Header.Set("x-device-id", deviceID)
+	req.Header.Set("X-File-Name", fileName)
+	req.Header.Set("X-File-Size", fmt.Sprintf("%d", len(contents)))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("upload status=%d body=%s", res.StatusCode, body)
+	}
+	var result struct {
+		AbsolutePath string `json:"absolutePath"`
+		Size         int64  `json:"size"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	if result.AbsolutePath == "" || result.Size != int64(len(contents)) {
+		return "", fmt.Errorf("invalid upload result: %s", body)
+	}
+	written, err := os.ReadFile(result.AbsolutePath)
+	if err != nil {
+		return "", fmt.Errorf("read uploaded file: %w", err)
+	}
+	if !bytes.Equal(written, contents) {
+		return "", fmt.Errorf("uploaded file content mismatch")
+	}
+	return result.AbsolutePath, nil
+}
+
 func expectSessionDeleted(ctx context.Context, baseURL string, token string, deviceID string, sessionID string) error {
 	sessions, err := listSessions(ctx, baseURL, token, deviceID)
 	if err != nil {
@@ -436,7 +492,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		hello, err := proto.Marshal(&pb.ScreenEnvelope{
 			ProtocolVersion: 1,
 			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-				Version: 1, Cols: 80, Rows: 24,
+				Version: 1, Cols: 80, Rows: 24, ClientInstanceId: "relay-e2e-smoke",
 			}},
 		})
 		if err != nil {
@@ -484,8 +540,10 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		input, err := proto.Marshal(&pb.ScreenEnvelope{
 			ProtocolVersion: 1,
 			Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
-				LeaseId: leaseIDs[terminalID],
-				Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
+				LeaseId:          leaseIDs[terminalID],
+				ClientInstanceId: "relay-e2e-smoke",
+				InputSeq:         1,
+				Input:            &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
 			}},
 		})
 		if err != nil {

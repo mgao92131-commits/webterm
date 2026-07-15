@@ -45,8 +45,8 @@ import com.webterm.core.notifications.NotificationController;
 import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.core.notifications.ConnectionStatusText;
 import com.webterm.core.relay.RelayService;
-import com.webterm.core.session.RelayMuxSessionManager;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.DeviceConnection;
+import com.webterm.core.session.DeviceConnectionRegistry;
 
 import org.json.JSONObject;
 
@@ -64,7 +64,7 @@ import dagger.hilt.android.AndroidEntryPoint;
 import okhttp3.OkHttpClient;
 
 /** 长期运行的设备服务：为每个已配置设备维持一条 mux 长连，并把 file_send.offer 路由到接收控制器。
- * 连接由共享的 RelayMuxSessionRegistry 持有（与终端复用同一条 mux）；本服务只负责
+ * 连接由共享的 DeviceConnectionRegistry 持有（与终端复用同一条 mux）；本服务只负责
  * “确保在线 + 绑定设备级控制监听”，销毁时不强行 stop 共享连接。 */
 @AndroidEntryPoint
 public final class WebTermDeviceService extends Service {
@@ -90,7 +90,7 @@ public final class WebTermDeviceService extends Service {
     private static final String KEY_CLIENT_ID = "client_id";
     private static final String KEY_CLIENT_NAME = "client_name";
 
-    @Inject RelayMuxSessionRegistry registry;
+    @Inject DeviceConnectionRegistry registry;
     @Inject OkHttpClient http;
     @Inject Executor ioExecutor;
     @Inject ServerConfigManager configManager;
@@ -98,7 +98,7 @@ public final class WebTermDeviceService extends Service {
     @Inject RelayService relayService;
     @Inject TerminalFocusStore terminalFocus;
 
-    private final ConcurrentHashMap<String, RelayMuxSessionManager> managers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, DeviceConnection> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
     private final Set<String> relayConnectionKeys = ConcurrentHashMap.newKeySet();
     private FileReceiveController controller;
@@ -123,7 +123,7 @@ public final class WebTermDeviceService extends Service {
     public static void markActive() {
         WebTermDeviceService instance = activeInstance;
         if (instance == null) return;
-        for (RelayMuxSessionManager manager : instance.managers.values()) manager.markClientActive();
+        for (DeviceConnection manager : instance.managers.values()) manager.markClientActive();
     }
 
     public static void start(Context context) {
@@ -240,7 +240,7 @@ public final class WebTermDeviceService extends Service {
                 public void onAvailable(Network network) {
                     new Handler(getMainLooper()).post(() -> {
                         Log.i("WebTermDeviceService", "Network became available, refreshing connections...");
-                        for (RelayMuxSessionManager manager : managers.values()) {
+                        for (DeviceConnection manager : managers.values()) {
                             manager.forceReconnect("network-available");
                         }
                         refreshConnections();
@@ -296,7 +296,7 @@ public final class WebTermDeviceService extends Service {
     public void onDestroy() {
         activeInstance = null;
         // 共享连接不归本服务独占，仅解绑设备级监听，避免影响终端会话。
-        for (RelayMuxSessionManager manager : managers.values()) {
+        for (DeviceConnection manager : managers.values()) {
             manager.setControlListener(null);
         }
         managers.clear();
@@ -355,7 +355,7 @@ public final class WebTermDeviceService extends Service {
         }
         for (String key : new HashSet<>(relayConnectionKeys)) {
             if (nextKeys.contains(key)) continue;
-            RelayMuxSessionManager manager = managers.remove(key);
+            DeviceConnection manager = managers.remove(key);
             configs.remove(key);
             if (manager != null) {
                 manager.setControlListener(null);
@@ -379,7 +379,7 @@ public final class WebTermDeviceService extends Service {
             return null;
         }
         String key = connectionKey(url, deviceId);
-        RelayMuxSessionManager manager = registry.forDevice(url, config.getCookie(), deviceId);
+        DeviceConnection manager = registry.forDevice(url, config.getCookie(), deviceId);
         manager.setClientRegistration(receiverClientId(this), receiverClientName(this));
         managers.put(key, manager);
         configs.put(key, config);
@@ -398,7 +398,7 @@ public final class WebTermDeviceService extends Service {
      * 清空路由并退出前台。这是一次显式用户动作，与 onDestroy 不强行 stop 共享连接不同。 */
     private void stopAllDevices() {
         preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, false).apply();
-        for (RelayMuxSessionManager manager : managers.values()) {
+        for (DeviceConnection manager : managers.values()) {
             manager.setControlListener(null);
             registry.releaseIfIdle(manager);
         }
@@ -420,13 +420,13 @@ public final class WebTermDeviceService extends Service {
     }
 
     private ControlSender senderFor(String connectionKey) {
-        RelayMuxSessionManager manager = managers.get(connectionKey);
+        DeviceConnection manager = managers.get(connectionKey);
         if (manager == null) return null;
         return manager::sendControl;
     }
 
     private static String connectionKey(String baseUrl, String deviceId) {
-		// cookie 不参与设备身份，必须与 RelayMuxSessionRegistry.key() 保持一致。
+		// cookie 不参与设备身份，必须与 DeviceConnectionRegistry.key() 保持一致。
         return DeviceConnectionKeys.relay(baseUrl, deviceId);
     }
 

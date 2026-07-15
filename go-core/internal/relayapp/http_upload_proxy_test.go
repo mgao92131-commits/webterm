@@ -8,14 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"webterm/go-core/internal/relaycore"
-	"webterm/go-core/internal/relaygateway"
 	"webterm/go-core/internal/testutil"
 )
 
@@ -51,10 +49,11 @@ func TestAppStreamsUploadRequestBodyToAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	agentDone := make(chan error, 1)
+	agentReady := make(chan struct{})
 	go func() {
-		agentDone <- runUploadCollectAgent(ctx, server.URL, credential, body)
+		agentDone <- runUploadCollectAgent(ctx, server.URL, credential, body, agentReady)
 	}()
-	waitForPresence(t, app, user.ID, device.ID)
+	<-agentReady
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions/s1/upload", bytes.NewReader(body))
 	if err != nil {
@@ -83,23 +82,19 @@ func TestAppStreamsUploadRequestBodyToAgent(t *testing.T) {
 // runUploadCollectAgent 扮演 agent：校验 HTTPHeaders 元数据（含显式 Content-Length），
 // 按 64 KiB 分块收完整个 body（每帧故意 sleep 2ms 模拟慢消费者），
 // 校验内容逐字节一致与空 FIN 语义，最后返回正常 HTTP 200 响应帧。
-func runUploadCollectAgent(ctx context.Context, serverURL, credential string, want []byte) error {
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(serverURL, "http")+"/ws/agent", nil)
+func runUploadCollectAgent(ctx context.Context, serverURL, credential string, want []byte, ready chan<- struct{}) error {
+	realtime, err := dialRegisteredAgentPlane(ctx, serverURL, credential, "realtime")
+	if err != nil {
+		return err
+	}
+	defer realtime.Close(websocket.StatusNormalClosure, "")
+	conn, err := dialRegisteredAgentPlane(ctx, serverURL, credential, "bulk")
 	if err != nil {
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	conn.SetReadLimit(8 << 20)
-	if err := writeWSJSON(ctx, conn, map[string]any{
-		"type":       relaygateway.AgentRegisterMessage,
-		"credential": credential,
-		"deviceName": "Agent Mac",
-	}); err != nil {
-		return err
-	}
-	if _, _, err := conn.Read(ctx); err != nil {
-		return err
-	}
+	close(ready)
 
 	frame, err := readRelayFrame(ctx, conn)
 	if err != nil {

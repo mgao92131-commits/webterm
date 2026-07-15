@@ -45,6 +45,7 @@ message ScreenEnvelope {
     Ping ping = 26;
     Pong pong = 27;
     ResumeAck resume_ack = 28;
+    InputAck input_ack = 29;
   }
 }
 
@@ -62,6 +63,7 @@ message Hello {
   bool has_projection = 7;         // 是否持有完整可用投影
   HistoryPreference history = 8;   // 历史分页偏好
   CapabilitySet capabilities = 9;  // 客户端能力
+  string client_instance_id = 10;  // Android 终端通道实例，用于输入去重
 }
 
 message HistoryPreference {
@@ -351,6 +353,8 @@ message Resize {
 
 message TerminalInput {
   string lease_id = 1; // 只有持有 layout lease 的交互客户端才可输入
+  string client_instance_id = 2;
+  uint64 input_seq = 3; // 在 client_instance_id 内严格递增
 
   oneof input {
     TextInput text = 10;
@@ -359,6 +363,21 @@ message TerminalInput {
     MouseInput mouse = 13;
     FocusInput focus = 14;
   }
+}
+
+message InputAck {
+  string client_instance_id = 1;
+  uint64 input_seq = 2;
+  string terminal_instance_id = 3; // 用于判断断线后是否可安全重发
+  InputAckStatus status = 4;
+}
+
+enum InputAckStatus {
+  INPUT_ACK_STATUS_UNSPECIFIED = 0;
+  INPUT_ACK_STATUS_WRITTEN = 1;      // 全部字节已成功写入 PTY
+  INPUT_ACK_STATUS_IGNORED = 2;      // 输入合法但编码后无字节，例如 key-up
+  INPUT_ACK_STATUS_REJECTED = 3;     // lease/client 无效，未写入 PTY
+  INPUT_ACK_STATUS_UNCERTAIN = 4;    // PTY 部分写或写错误，禁止自动重发
 }
 
 message TextInput {

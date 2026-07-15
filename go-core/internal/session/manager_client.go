@@ -9,20 +9,20 @@ import (
 )
 
 type ManagerClient struct {
-	socket   Socket
+	sink     ChannelFrameSink
 	send     chan ManagerMessage
 	done     chan struct{}
 	doneOnce chan struct{}
 	logger   *logs.Logger
 }
 
-func NewManagerClient(socket Socket, logger ...*logs.Logger) *ManagerClient {
+func NewManagerClient(sink ChannelFrameSink, logger ...*logs.Logger) *ManagerClient {
 	var log *logs.Logger
 	if len(logger) > 0 {
 		log = logger[0]
 	}
 	return &ManagerClient{
-		socket:   socket,
+		sink:     sink,
 		send:     make(chan ManagerMessage, 64),
 		done:     make(chan struct{}),
 		doneOnce: make(chan struct{}, 1),
@@ -30,13 +30,16 @@ func NewManagerClient(socket Socket, logger ...*logs.Logger) *ManagerClient {
 	}
 }
 
-func (client *ManagerClient) Run(ctx context.Context, manager *Manager) {
+func (client *ManagerClient) run(ctx context.Context, manager *Manager) {
 	manager.AttachManagerSink(client)
 	defer manager.RemoveManagerSink(client)
 	defer client.Close()
 
 	go client.writeLoop(ctx)
-	client.readLoop(ctx)
+	select {
+	case <-ctx.Done():
+	case <-client.done:
+	}
 }
 
 func (client *ManagerClient) SendManagerMessage(message ManagerMessage) bool {
@@ -58,16 +61,7 @@ func (client *ManagerClient) Close() {
 	select {
 	case client.doneOnce <- struct{}{}:
 		close(client.done)
-		_ = client.socket.Close()
 	default:
-	}
-}
-
-func (client *ManagerClient) readLoop(ctx context.Context) {
-	for {
-		if _, _, err := client.socket.Read(ctx); err != nil {
-			return
-		}
 	}
 }
 
@@ -84,7 +78,7 @@ func (client *ManagerClient) writeLoop(ctx context.Context) {
 				continue
 			}
 			writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err = client.socket.Write(writeCtx, MessageText, bytes)
+			err = client.sink.WriteFrame(writeCtx, bytes, false)
 			cancel()
 			if err != nil {
 				client.Close()

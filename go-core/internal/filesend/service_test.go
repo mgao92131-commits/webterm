@@ -278,6 +278,37 @@ func TestClientRegisterSelectsOnlyFileReceiver(t *testing.T) {
 	}
 }
 
+func TestSelectClientAcceptsDisplayedAndroidShortID(t *testing.T) {
+	svc := New(0)
+	svc.RegisterClient(
+		"android_b3d2a9571b42452cbf5a71b4af5544e6",
+		"vivo V2507A",
+		"android",
+		[]string{"file_receive"},
+		&fakeSender{},
+	)
+
+	got, err := svc.SelectClient("b3d2a957", "file_receive")
+	if err != nil {
+		t.Fatalf("SelectClient(displayed short ID) error = %v", err)
+	}
+	if got.ID != "android_b3d2a9571b42452cbf5a71b4af5544e6" {
+		t.Fatalf("SelectClient(displayed short ID) = %+v", got)
+	}
+}
+
+func TestSelectClientRejectsAmbiguousDisplayedShortID(t *testing.T) {
+	svc := New(0)
+	svc.RegisterClient("android_deadbeef1111", "Phone A", "android",
+		[]string{"file_receive"}, &fakeSender{})
+	svc.RegisterClient("android_deadbeef2222", "Phone B", "android",
+		[]string{"file_receive"}, &fakeSender{})
+
+	if _, err := svc.SelectClient("deadbeef", "file_receive"); err == nil || err.Error() != "multiple_receivers" {
+		t.Fatalf("ambiguous displayed short ID error = %v", err)
+	}
+}
+
 func TestClientReconnectStaleUnregisterKeepsFreshSender(t *testing.T) {
 	svc := New(0)
 	old := &fakeSender{}

@@ -14,7 +14,7 @@ import (
 
 func TestResumeContract_ColdHelloGetsSnapshot(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(false, "", 0, 0))
 	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
 		t.Fatalf("cold hello payload=%T, want snapshot", env.Payload)
@@ -24,7 +24,7 @@ func TestResumeContract_ColdHelloGetsSnapshot(t *testing.T) {
 func TestResumeContract_InstanceMismatchGetsSnapshot(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
 	info := terminal.ScreenRuntime().Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(true, "stale-instance", info.LayoutEpoch, info.ScreenRevision))
 	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
 		t.Fatalf("instance mismatch payload=%T, want snapshot", env.Payload)
@@ -34,7 +34,7 @@ func TestResumeContract_InstanceMismatchGetsSnapshot(t *testing.T) {
 func TestResumeContract_EpochMismatchGetsSnapshot(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
 	info := terminal.ScreenRuntime().Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(true, info.InstanceID, info.LayoutEpoch+1, info.ScreenRevision))
 	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
 		t.Fatalf("epoch mismatch payload=%T, want snapshot", env.Payload)
@@ -44,7 +44,7 @@ func TestResumeContract_EpochMismatchGetsSnapshot(t *testing.T) {
 func TestResumeContract_FutureRevisionGetsSnapshot(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
 	info := terminal.ScreenRuntime().Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(true, info.InstanceID, info.LayoutEpoch, info.ScreenRevision+1))
 	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
 		t.Fatalf("future revision payload=%T, want snapshot", env.Payload)
@@ -55,7 +55,7 @@ func TestResumeContract_BarrierCrossedGetsSnapshot(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	runtime := terminal.ScreenRuntime()
 	base := runtime.Info()
-	cold := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	cold := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	cold.handleBinary(resumeHello(false, "", 0, 0))
 	waitInitialSyncEnvelope(t, cold)
 	terminal.DetachScreenClient(cold.screenClientID)
@@ -65,7 +65,7 @@ func TestResumeContract_BarrierCrossedGetsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForRevisionAfter(t, runtime, base.ScreenRevision)
-	resumed := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	resumed := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	resumed.handleBinary(resumeHello(true, base.InstanceID, base.LayoutEpoch, base.ScreenRevision))
 	if env := waitInitialSyncEnvelope(t, resumed); env.GetSnapshot() == nil {
 		t.Fatalf("barrier resume payload=%T, want snapshot", env.Payload)
@@ -75,7 +75,7 @@ func TestResumeContract_BarrierCrossedGetsSnapshot(t *testing.T) {
 func TestResumeContract_ExactResumeGetsResumeAck(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
 	info := terminal.ScreenRuntime().Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(true, info.InstanceID, info.LayoutEpoch, info.ScreenRevision))
 	env := waitInitialSyncEnvelope(t, client)
 	ack := env.GetResumeAck()
@@ -91,7 +91,7 @@ func TestResumeContract_RuntimeKillSwitchForcesSnapshot(t *testing.T) {
 	t.Setenv("WEBTERM_SCREEN_RESUME", "0")
 	terminal, _ := newScreenTestTerminal(t)
 	info := terminal.ScreenRuntime().Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(true, info.InstanceID, info.LayoutEpoch, info.ScreenRevision))
 	if env := waitInitialSyncEnvelope(t, client); env.GetSnapshot() == nil {
 		t.Fatalf("disabled resume payload=%T, want snapshot", env.Payload)
@@ -108,7 +108,7 @@ func TestResumeContract_CumulativePatchSkipsIntermediateRevisions(t *testing.T) 
 	base := runtime.Info()
 
 	// 先让 Projector 在 base revision 建立权威投影与 barrier。
-	cold := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	cold := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	cold.handleBinary(resumeHello(false, "", 0, 0))
 	if env := waitInitialSyncEnvelope(t, cold); env.GetSnapshot() == nil {
 		t.Fatalf("baseline payload=%T, want snapshot", env.Payload)
@@ -121,7 +121,7 @@ func TestResumeContract_CumulativePatchSkipsIntermediateRevisions(t *testing.T) 
 	waitForRevisionAfter(t, runtime, base.ScreenRevision)
 	current := runtime.Info()
 
-	resumed := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	resumed := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	resumed.handleBinary(resumeHello(true, base.InstanceID, base.LayoutEpoch, base.ScreenRevision))
 	env := waitInitialSyncEnvelope(t, resumed)
 	patch := env.GetPatch()
@@ -138,7 +138,7 @@ func TestResumeContract_AttachAndResyncDoNotAdvanceRevision(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
 	runtime := terminal.ScreenRuntime()
 	before := runtime.Info()
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.handleBinary(resumeHello(false, "", 0, 0))
 	waitInitialSyncEnvelope(t, client)
 	if after := runtime.Info().ScreenRevision; after != before.ScreenRevision {
@@ -174,7 +174,7 @@ func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) 
 	return data
 }
 
-func waitInitialSyncEnvelope(t *testing.T, client *Client) *pb.ScreenEnvelope {
+func waitInitialSyncEnvelope(t *testing.T, client *terminalChannelRuntime) *pb.ScreenEnvelope {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

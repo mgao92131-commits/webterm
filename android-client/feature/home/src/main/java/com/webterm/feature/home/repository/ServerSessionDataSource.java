@@ -2,8 +2,8 @@ package com.webterm.feature.home.repository;
 
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.ChannelFailure;
-import com.webterm.core.session.RelayMuxSessionManager;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.DeviceConnection;
+import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.feature.home.domain.ServerSessionMonitor;
 
 import org.json.JSONArray;
@@ -22,11 +22,11 @@ import javax.inject.Singleton;
 @Singleton
 public final class ServerSessionDataSource {
 
-    private final RelayMuxSessionRegistry relayMuxRegistry;
+    private final DeviceConnectionRegistry deviceConnectionRegistry;
 
     @Inject
-    public ServerSessionDataSource(RelayMuxSessionRegistry relayMuxRegistry) {
-        this.relayMuxRegistry = relayMuxRegistry;
+    public ServerSessionDataSource(DeviceConnectionRegistry deviceConnectionRegistry) {
+        this.deviceConnectionRegistry = deviceConnectionRegistry;
     }
 
     public interface Listener {
@@ -39,9 +39,9 @@ public final class ServerSessionDataSource {
     }
 
     public void start(ServerConfig server, Listener listener) {
-        RelayMuxSessionManager mux = muxFor(server);
+        DeviceConnection connection = connectionFor(server);
         String channelId = managerChannelId(server);
-        mux.openChannel(channelId, "/ws/sessions", null, new RelayMuxSessionManager.ChannelListener() {
+        connection.openChannel(channelId, "/ws/sessions", null, new DeviceConnection.ChannelListener() {
             @Override
             public void onConnected(String id) {
                 if (!channelId.equals(id)) return;
@@ -65,17 +65,17 @@ public final class ServerSessionDataSource {
                 listener.onConnecting();
             }
         });
-        mux.start();
+        connection.start();
     }
 
     public void stop(ServerConfig server) {
-        RelayMuxSessionManager mux = muxFor(server);
-        mux.closeChannel(managerChannelId(server));
-        relayMuxRegistry.releaseIfIdle(mux);
+        DeviceConnection connection = connectionFor(server);
+        connection.closeChannel(managerChannelId(server));
+        deviceConnectionRegistry.releaseIfIdle(connection);
     }
 
-    private RelayMuxSessionManager muxFor(ServerConfig server) {
-        return relayMuxRegistry.forDevice(
+    private DeviceConnection connectionFor(ServerConfig server) {
+        return deviceConnectionRegistry.forDevice(
             server.getUrl(),
             server.getCookie() != null ? server.getCookie() : "",
             server.getDeviceId()

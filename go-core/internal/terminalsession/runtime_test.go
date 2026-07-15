@@ -1,6 +1,7 @@
 package terminalsession
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -9,6 +10,35 @@ import (
 
 	"webterm/go-core/internal/terminalengine"
 )
+
+type reliableInputPTY struct {
+	closed chan struct{}
+	writes atomic.Int64
+	data   bytes.Buffer
+}
+
+func newReliableInputPTY() *reliableInputPTY {
+	return &reliableInputPTY{closed: make(chan struct{})}
+}
+
+func (p *reliableInputPTY) Read([]byte) (int, error) {
+	<-p.closed
+	return 0, io.EOF
+}
+
+func (p *reliableInputPTY) Write(data []byte) (int, error) {
+	p.writes.Add(1)
+	return p.data.Write(data)
+}
+
+func (p *reliableInputPTY) Close() error {
+	select {
+	case <-p.closed:
+	default:
+		close(p.closed)
+	}
+	return nil
+}
 
 // 版本契约（计划 §3.4）：新建 Runtime 的 layoutEpoch/screenRevision 固定为 1，
 // 0 保留给“客户端无投影”的默认值。
@@ -136,6 +166,40 @@ func TestRuntimeExpiredInputRevokesLeaseOnce(t *testing.T) {
 	case event := <-revoked:
 		t.Fatalf("duplicate revocation event: %+v", event)
 	default:
+	}
+}
+
+func TestReliableSemanticInputDeduplicatesAfterPTYWrite(t *testing.T) {
+	pty := newReliableInputPTY()
+	r := NewRuntime("reliable-input", pty, 2, 80)
+	t.Cleanup(func() { _ = r.Close() })
+	r.AttachClient(&ScreenClient{ID: "screen-1", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	results := make(chan InputDeliveryResult, 2)
+	write := func() {
+		r.WriteReliableSemanticInput("screen-1", leaseID, "android-1", 7,
+			terminalengine.SemanticInput{Kind: terminalengine.InputText, Data: "echo once\n"},
+			func(result InputDeliveryResult) { results <- result })
+	}
+	write()
+	first := <-results
+	if first.Status != InputDeliveryWritten {
+		t.Fatalf("first status=%v, want written", first.Status)
+	}
+	write()
+	second := <-results
+	if second.Status != InputDeliveryWritten {
+		t.Fatalf("duplicate status=%v, want replayed written", second.Status)
+	}
+	if got := pty.writes.Load(); got != 1 {
+		t.Fatalf("PTY writes=%d, want exactly 1", got)
+	}
+	if got := pty.data.String(); got != "echo once\n" {
+		t.Fatalf("PTY data=%q", got)
 	}
 }
 

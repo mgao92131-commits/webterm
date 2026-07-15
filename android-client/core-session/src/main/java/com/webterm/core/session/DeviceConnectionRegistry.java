@@ -1,6 +1,7 @@
 package com.webterm.core.session;
 
 import android.os.Handler;
+import android.os.HandlerThread;
 
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.TransportFactory;
@@ -11,27 +12,33 @@ import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
-import okhttp3.OkHttpClient;
-
 @Singleton
-public final class RelayMuxSessionRegistry {
-    private final OkHttpClient http;
+public final class DeviceConnectionRegistry {
     private final Handler mainHandler;
     private final TransportFactory transportFactory;
-    private final Map<String, RelayMuxSessionManager> managers = new LinkedHashMap<>();
+    private final Map<String, DeviceConnection> managers = new LinkedHashMap<>();
 
     @Inject
-    public RelayMuxSessionRegistry(OkHttpClient http, Handler mainHandler, TransportFactory transportFactory) {
-        this.http = http;
+    public DeviceConnectionRegistry(Handler mainHandler, TransportFactory transportFactory) {
         this.mainHandler = mainHandler;
         this.transportFactory = transportFactory;
     }
 
-    public synchronized RelayMuxSessionManager forDevice(String baseUrl, String cookie, String deviceId) {
+    public synchronized DeviceConnection forDevice(String baseUrl, String cookie, String deviceId) {
         String key = key(baseUrl, deviceId);
-        RelayMuxSessionManager manager = managers.get(key);
+        DeviceConnection manager = managers.get(key);
         if (manager == null) {
-            manager = new RelayMuxSessionManager(http, mainHandler, baseUrl, cookie, deviceId, transportFactory);
+            HandlerThread eventThread = new HandlerThread(
+                "WebTerm-DeviceConnection-" + Integer.toHexString(key.hashCode()));
+            eventThread.start();
+            manager = new DeviceConnection(
+                new Handler(eventThread.getLooper()),
+                mainHandler,
+                baseUrl,
+                cookie,
+                deviceId,
+                transportFactory,
+                eventThread::quitSafely);
             managers.put(key, manager);
         } else {
             manager.updateCookie(cookie);
@@ -39,15 +46,15 @@ public final class RelayMuxSessionRegistry {
         return manager;
     }
 
-    public synchronized void releaseIfIdle(RelayMuxSessionManager manager) {
+    public synchronized void releaseIfIdle(DeviceConnection manager) {
         if (manager == null) return;
-        manager.stopIfIdle();
         if (!manager.isIdle()) return;
         managers.values().removeIf(value -> value == manager);
+        manager.stop();
     }
 
     public synchronized void shutdown() {
-        for (RelayMuxSessionManager manager : managers.values().toArray(new RelayMuxSessionManager[0])) {
+        for (DeviceConnection manager : managers.values().toArray(new DeviceConnection[0])) {
             manager.stop();
         }
         managers.clear();

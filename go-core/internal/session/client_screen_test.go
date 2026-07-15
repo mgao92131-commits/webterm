@@ -24,7 +24,7 @@ func TestScreenClientSendsSnapshotOnHello(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	hello := &pb.Hello{Version: 1, Cols: 20, Rows: 10}
@@ -58,7 +58,7 @@ func TestScreenClientSendsSnapshotOnHello(t *testing.T) {
 
 func TestScreenClientReusesProtocolHandler(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 
 	handler := client.screenHandler
 	if handler == nil {
@@ -87,7 +87,7 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 	})
 
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
@@ -157,7 +157,7 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 // 错误，连接必须关闭且不得再次 SendInfo。
 func TestScreenClientRejectsDuplicateHello(t *testing.T) {
 	terminal, _ := newScreenTestTerminal(t)
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
@@ -223,7 +223,7 @@ func dumpScreen(t *testing.T, data []byte) {
 func TestScreenClientSendsPatchOnOutput(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	hello := &pb.Hello{Version: 1, Cols: 20, Rows: 10}
@@ -255,7 +255,7 @@ func TestScreenClientSendsPatchOnOutput(t *testing.T) {
 
 func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 	socket := newBlockingWriteSocket()
-	client := NewClient(socket, nil, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, nil, ClientModeScreen)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client.writerStarted.Store(true)
@@ -296,7 +296,7 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 
 func TestScreenWriter_InitialSyncCommitsOnlyAfterSocketWrite(t *testing.T) {
 	socket := newBlockingWriteSocket()
-	client := NewClient(socket, nil, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, nil, ClientModeScreen)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client.writerStarted.Store(true)
@@ -374,7 +374,7 @@ func newScreenTestTerminalWithResizer(t *testing.T, resizer func(cols, rows int)
 		createdAt: time.Now().UTC(),
 		activeAt:  time.Now().UTC(),
 		ring:      NewEventRing(0, 0),
-		clients:   make(map[*Client]struct{}),
+		clients:   make(map[*terminalChannelRuntime]struct{}),
 	}
 	opts := []terminalsession.Option{
 		terminalsession.WithOnOutput(func(data []byte) {
@@ -413,7 +413,7 @@ func (p *fakePTY) Close() error {
 	return nil
 }
 
-func readClientBinary(t *testing.T, client *Client) []byte {
+func readClientBinary(t *testing.T, client *terminalChannelRuntime) []byte {
 	t.Helper()
 	select {
 	case message := <-client.send:

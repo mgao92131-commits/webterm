@@ -21,7 +21,7 @@ func TestScreenHistoryRequestReturnsPage(t *testing.T) {
 		}
 	}
 	time.Sleep(200 * time.Millisecond)
-	client := NewClient(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(&testSocket{protocolName: "webterm.screen.v1"}, terminal, ClientModeScreen)
 	client.ready.Store(true)
 	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 20, Rows: 10}}})
 	client.handleBinary(helloBytes)
@@ -47,7 +47,7 @@ func TestScreenHistoryRequestReturnsPage(t *testing.T) {
 func TestScreenPatchSequenceMonotonic(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	hello := &pb.Hello{Version: 1, Cols: 20, Rows: 10}
@@ -95,7 +95,7 @@ func TestScreenPatchSequenceMonotonic(t *testing.T) {
 func TestScreenResyncSendsSnapshot(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	hello := &pb.Hello{Version: 1, Cols: 20, Rows: 10}
@@ -141,7 +141,7 @@ func TestScreenResyncSendsSnapshot(t *testing.T) {
 func TestScreenReconnectAfterDetachSendsSnapshot(t *testing.T) {
 	terminal, ptyOut := newScreenTestTerminal(t)
 	socket := &testSocket{protocolName: "webterm.screen.v1"}
-	client := NewClient(socket, terminal, ClientModeScreen)
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	client.ready.Store(true)
 
 	hello := &pb.Hello{Version: 1, Cols: 20, Rows: 10}
@@ -282,7 +282,7 @@ func waitForProjectedHistory(t *testing.T, terminal *TerminalSession) {
 	t.Fatal("projected scrollback was empty")
 }
 
-func consumeInitialScreenSnapshot(t *testing.T, client *Client) {
+func consumeInitialScreenSnapshot(t *testing.T, client *terminalChannelRuntime) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -307,7 +307,7 @@ func frameRevision(data []byte) (seq uint64, base uint64, ok bool) {
 	return 0, 0, false
 }
 
-func drainFrames(t *testing.T, client *Client, timeout time.Duration) {
+func drainFrames(t *testing.T, client *terminalChannelRuntime, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

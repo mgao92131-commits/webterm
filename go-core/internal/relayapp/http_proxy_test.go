@@ -41,10 +41,11 @@ func TestAppProxiesSessionHTTPToAgentStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	agentDone := make(chan error, 1)
+	agentReady := make(chan struct{})
 	go func() {
-		agentDone <- runHTTPProxyAgent(ctx, server.URL, credential)
+		agentDone <- runHTTPProxyAgent(ctx, server.URL, credential, agentReady)
 	}()
-	waitForPresence(t, app, user.ID, device.ID)
+	<-agentReady
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/sessions", bytes.NewBufferString(`{}`))
 	if err != nil {
@@ -130,22 +131,18 @@ func TestAppRejectsOversizedHTTPProxyRequestBody(t *testing.T) {
 	}
 }
 
-func runHTTPProxyAgent(ctx context.Context, serverURL, credential string) error {
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(serverURL, "http")+"/ws/agent", nil)
+func runHTTPProxyAgent(ctx context.Context, serverURL, credential string, ready chan<- struct{}) error {
+	realtime, err := dialRegisteredAgentPlane(ctx, serverURL, credential, "realtime")
+	if err != nil {
+		return err
+	}
+	defer realtime.Close(websocket.StatusNormalClosure, "")
+	conn, err := dialRegisteredAgentPlane(ctx, serverURL, credential, "bulk")
 	if err != nil {
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	if err := writeWSJSON(ctx, conn, map[string]any{
-		"type":       relaygateway.AgentRegisterMessage,
-		"credential": credential,
-		"deviceName": "Agent Mac",
-	}); err != nil {
-		return err
-	}
-	if _, _, err := conn.Read(ctx); err != nil {
-		return err
-	}
+	close(ready)
 
 	frame, err := readRelayFrame(ctx, conn)
 	if err != nil {
@@ -178,6 +175,27 @@ func runHTTPProxyAgent(ctx context.Context, serverURL, credential string) error 
 		return err
 	}
 	return writeRelayFrame(ctx, conn, relaycore.NewFrame(relaycore.FrameTypeHTTPChunk, frame.StreamID, relaycore.FrameFlagFin, []byte(`{"id":"s1"}`)))
+}
+
+func dialRegisteredAgentPlane(ctx context.Context, serverURL, credential, plane string) (*websocket.Conn, error) {
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(serverURL, "http")+"/ws/agent", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeWSJSON(ctx, conn, map[string]any{
+		"type":       relaygateway.AgentRegisterMessage,
+		"credential": credential,
+		"deviceName": "Agent Mac",
+		"plane":      plane,
+	}); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "register failed")
+		return nil, err
+	}
+	if _, _, err := conn.Read(ctx); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "register response failed")
+		return nil, err
+	}
+	return conn, nil
 }
 
 func waitForPresence(t *testing.T, app *App, userID, deviceID string) {

@@ -47,6 +47,10 @@ rm -f "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto
   --java_out="$JAVA_OUT_DIR" \
   "$PROTOS_DIR/terminal_screen.proto"
 
+# protoc Java 输出的个别空行/泛型声明会带行尾空格，保持 git diff --check 可重现。
+perl -pi -e 's/[ \t]+$//' \
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto.java"
+
 echo "  -> $JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto.java"
 
 echo "Done."

@@ -33,18 +33,12 @@ type MuxSession interface {
 	SendControl(ctx context.Context, msg map[string]any) error
 }
 
-// MuxServeOpts 是 mux.ServeOpts 的类型投影。
+// MuxServeOpts 是 mux.ServeOpts 的类型投影。logical channel 直接交付
+// frame sink 和 handler，不再投影虚拟 WebSocket。
 type MuxServeOpts struct {
-	OnOpen    func(ctx context.Context, vs MuxVirtualSocket, path string, protocols []string) (func(), error)
+	OnOpen    func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string) (session.LogicalChannelHandler, error)
 	OnControl func(ctx context.Context, source MuxSession, msg map[string]any)
 	Logger    *logs.Logger
-}
-
-// MuxVirtualSocket 是 mux.VirtualSocket 的接口抽象。
-type MuxVirtualSocket interface {
-	Read(ctx context.Context) (session.MessageType, []byte, error)
-	Write(ctx context.Context, messageType session.MessageType, data []byte) error
-	Close() error
 }
 
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
@@ -123,18 +117,6 @@ func (r *SessionRouter) SetAgentNotificationDispatcher(d *agentnotify.Dispatcher
 	}
 }
 
-// RouteOpen 根据 WebSocket 路径和子协议创建 ManagerClient 或终端 Client。
-// 返回 start 函数由调用方在握手 ack 完成后调用。
-func (r *SessionRouter) RouteOpen(
-	ctx context.Context,
-	socket session.Socket,
-	path string,
-	protocols []string,
-) (func(), error) {
-	start, _, err := r.RouteOpenWithControl(ctx, socket, path, protocols)
-	return start, err
-}
-
 // RouteOpenWithControl 与 RouteOpen 相同，但在 mux 分支额外返回重建出的 mux session
 // 作为 filesend.ControlSender，供 relay 代理侧注册为设备级控制通道。非 mux 分支 ctrl 为 nil。
 func (r *SessionRouter) RouteOpenWithControl(
@@ -148,9 +130,7 @@ func (r *SessionRouter) RouteOpenWithControl(
 	case clean == "/ws/sessions":
 		if r.muxServe != nil && hasProtocol(protocols, protocol.MuxSubprotocol) {
 			muxSession := r.muxServe(socket, &MuxServeOpts{
-				OnOpen: func(ctx context.Context, vs MuxVirtualSocket, p string, protos []string) (func(), error) {
-					return r.RouteOpen(ctx, vs, p, protos)
-				},
+				OnOpen:    r.OpenLogicalChannel,
 				OnControl: r.onControl,
 				Logger:    r.logger,
 			})
@@ -163,25 +143,41 @@ func (r *SessionRouter) RouteOpenWithControl(
 			}
 			return start, muxSession, nil
 		}
-		mc := session.NewManagerClient(socket, r.logger)
-		return func() { go mc.Run(ctx, r.manager) }, nil, nil
+		return nil, nil, fmt.Errorf("%s requires %s", clean, protocol.MuxSubprotocol)
+
+	default:
+		return nil, nil, fmt.Errorf("unknown path: %s", path)
+	}
+}
+
+// OpenLogicalChannel 把 Android mux channel 直接路由到 manager 或 Terminal Runtime handler。
+// sink 只能向当前 channel 写帧，因此这里不需要构造虚拟请求、
+// 虚拟响应、Socket.Read 队列或任何 WebSocket 对象。
+func (r *SessionRouter) OpenLogicalChannel(
+	_ context.Context,
+	sink session.ChannelFrameSink,
+	path string,
+	protocols []string,
+) (session.LogicalChannelHandler, error) {
+	clean := cleanPath(path)
+	switch {
+	case clean == "/ws/sessions":
+		return session.NewManagerChannelHandler(r.manager, sink, r.logger), nil
 
 	case strings.HasPrefix(clean, "/ws/sessions/"):
-		// c1 只接受 Go 权威屏幕协议；设备级文件/通知控制仍走外层 mux control。
 		if !hasProtocol(protocols, protocol.ScreenSubprotocol) {
-			return nil, nil, fmt.Errorf("terminal sessions require %s", protocol.ScreenSubprotocol)
+			return nil, fmt.Errorf("terminal sessions require %s", protocol.ScreenSubprotocol)
 		}
 		id := strings.TrimPrefix(clean, "/ws/sessions/")
 		id, _ = url.PathUnescape(id)
 		terminal, ok := r.manager.Get(id)
 		if !ok {
-			return nil, nil, fmt.Errorf("session %s not found", id)
+			return nil, fmt.Errorf("session %s not found", id)
 		}
-		client := session.NewClient(socket, terminal, session.ClientModeScreen, r.logger)
-		return func() { go client.Run(ctx) }, nil, nil
+		return session.NewTerminalChannelHandler(terminal, sink, r.logger), nil
 
 	default:
-		return nil, nil, fmt.Errorf("unknown path: %s", path)
+		return nil, fmt.Errorf("unknown path: %s", path)
 	}
 }
 

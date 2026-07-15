@@ -58,7 +58,7 @@ type TerminalSession struct {
 	process        *pty.Process
 	shellPid       int
 	ttyPath        string
-	clients        map[*Client]struct{}
+	clients        map[*terminalChannelRuntime]struct{}
 	onTitleChanged func()
 	onInfoChanged  func()
 	titleChanged   bool
@@ -110,7 +110,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		process:        process,
 		shellPid:       process.PID(),
 		ttyPath:        process.TTYPath(),
-		clients:        make(map[*Client]struct{}),
+		clients:        make(map[*terminalChannelRuntime]struct{}),
 		onTitleChanged: options.OnTitle,
 		onInfoChanged:  options.OnInfoChanged,
 	}
@@ -339,14 +339,14 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 	return nil
 }
 
-func (terminal *TerminalSession) Attach(client *Client) {
+func (terminal *TerminalSession) Attach(client *terminalChannelRuntime) {
 	terminal.mu.Lock()
 	terminal.clients[client] = struct{}{}
 	terminal.touchLocked()
 	terminal.mu.Unlock()
 }
 
-func (terminal *TerminalSession) Detach(client *Client) {
+func (terminal *TerminalSession) Detach(client *terminalChannelRuntime) {
 	terminal.mu.Lock()
 	delete(terminal.clients, client)
 	terminal.touchLocked()
@@ -704,8 +704,8 @@ func writeCLIResponse(conn net.Conn, resp protocol.CLIResponse) {
 	_, _ = conn.Write(append(data, '\n'))
 }
 
-func (terminal *TerminalSession) clientSnapshotLocked() []*Client {
-	clients := make([]*Client, 0, len(terminal.clients))
+func (terminal *TerminalSession) clientSnapshotLocked() []*terminalChannelRuntime {
+	clients := make([]*terminalChannelRuntime, 0, len(terminal.clients))
 	for client := range terminal.clients {
 		clients = append(clients, client)
 	}

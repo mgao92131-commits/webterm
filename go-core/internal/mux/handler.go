@@ -7,17 +7,15 @@ import (
 	"webterm/go-core/internal/session"
 )
 
-// OpenSessionOrManager 是 Relay Agent 的 OnOpen 处理器。
-// 委托给 application.SessionRouter 统一处理路径分发。
-// 返回的 start 在 ws-connected 写出成功后由 mux 调用，保证握手 ack 先于通道数据。
+// OpenSessionOrManager 把 logical channel 直接路由到 manager 或 Terminal Runtime。
 func OpenSessionOrManager(
 	ctx context.Context,
 	router *application.SessionRouter,
-	vs *VirtualSocket,
+	sink session.ChannelFrameSink,
 	path string,
 	protocols []string,
-) (func(), error) {
-	return router.RouteOpen(ctx, vs, path, protocols)
+) (session.LogicalChannelHandler, error) {
+	return router.OpenLogicalChannel(ctx, sink, path, protocols)
 }
 
 // MuxServeAdapter 将 mux.Serve 适配为 application.MuxServeFunc，
@@ -27,8 +25,8 @@ func MuxServeAdapter(conn session.Socket, opts *application.MuxServeOpts) applic
 		Logger: opts.Logger,
 	}
 	if opts.OnOpen != nil {
-		muxOpts.OnOpen = func(ctx context.Context, vs *VirtualSocket, p string, protos []string) (func(), error) {
-			return opts.OnOpen(ctx, vs, p, protos)
+		muxOpts.OnOpen = func(ctx context.Context, sink session.ChannelFrameSink, p string, protos []string) (session.LogicalChannelHandler, error) {
+			return opts.OnOpen(ctx, sink, p, protos)
 		}
 	}
 	if opts.OnControl != nil {

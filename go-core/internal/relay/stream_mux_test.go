@@ -56,7 +56,7 @@ func TestCloseRelayMuxStreamReleasesTerminalClient(t *testing.T) {
 	))
 	waitRelayTerminalClients(t, terminal, 1)
 
-	// Relay 的 stream close 必须一路关闭 mux 和 screen VirtualSocket；如果这里
+	// Relay 的 stream close 必须一路关闭 mux 和 screen channel handler；如果这里
 	// 回到 0，服务端固定超时本身不会在 Agent 端遗留旧 terminal client。
 	streams.CloseStream("stream-real", false)
 	waitRelayTerminalClients(t, terminal, 0)

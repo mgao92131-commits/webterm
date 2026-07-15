@@ -65,6 +65,12 @@ public final class ScreenMessageValidator {
     if (in.getLeaseId().isEmpty()) {
       return ValidationResult.fail("input requires layout lease");
     }
+    if (in.getClientInstanceId().isEmpty()) {
+      return ValidationResult.fail("input requires client instance id");
+    }
+    if (in.getInputSeq() == 0) {
+      return ValidationResult.fail("input requires positive sequence");
+    }
     if (!in.hasText() && !in.hasKey() && !in.hasPaste() && !in.hasMouse() && !in.hasFocus()) {
       return ValidationResult.fail("unknown input type");
     }

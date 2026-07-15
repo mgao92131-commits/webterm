@@ -4,8 +4,8 @@ import android.util.Log;
 
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.ChannelFailure;
-import com.webterm.core.session.RelayMuxSessionManager;
-import com.webterm.core.session.RelayMuxSessionRegistry;
+import com.webterm.core.session.DeviceConnection;
+import com.webterm.core.session.DeviceConnectionRegistry;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -19,17 +19,17 @@ import java.nio.charset.StandardCharsets;
 public final class ServerSessionMonitor {
     private static final String TAG = "ServerSessionMonitor";
 
-    private final RelayMuxSessionRegistry relayMuxRegistry;
+    private final DeviceConnectionRegistry deviceConnectionRegistry;
     private final ServerConfig server;
     private final Listener listener;
 
-    private RelayMuxSessionManager relayMuxSession;
+    private DeviceConnection deviceConnection;
     private boolean connected;
     private boolean enabled;
     private boolean channelOpened;
 
-    public ServerSessionMonitor(RelayMuxSessionRegistry relayMuxRegistry, ServerConfig server, Listener listener) {
-        this.relayMuxRegistry = relayMuxRegistry;
+    public ServerSessionMonitor(DeviceConnectionRegistry deviceConnectionRegistry, ServerConfig server, Listener listener) {
+        this.deviceConnectionRegistry = deviceConnectionRegistry;
         this.server = server;
         this.listener = listener;
     }
@@ -40,20 +40,20 @@ public final class ServerSessionMonitor {
             return;
         }
         enabled = true;
-        if (relayMuxSession == null) {
-            relayMuxSession = relayMuxRegistry.forDevice(
+        if (deviceConnection == null) {
+            deviceConnection = deviceConnectionRegistry.forDevice(
                 server.getUrl(),
                 server.getCookie() != null ? server.getCookie() : "",
                 server.getDeviceId()
             );
         }
         if (channelOpened) {
-            relayMuxSession.start();
+            deviceConnection.start();
             return;
         }
         String managerId = managerChannelId();
         Log.i(TAG, "TitleTrace manager start deviceId=" + server.getDeviceId());
-        relayMuxSession.openChannel(managerId, "/ws/sessions", null, new RelayMuxSessionManager.ChannelListener() {
+        deviceConnection.openChannel(managerId, "/ws/sessions", null, new DeviceConnection.ChannelListener() {
             @Override public void onConnected(String channelId) {
                 if (!managerId.equals(channelId)) return;
                 connected = true;
@@ -70,7 +70,7 @@ public final class ServerSessionMonitor {
                 if (!managerId.equals(channelId)) return;
                 connected = false;
                 listener.onMonitorError(failure.message);
-                onMuxDisconnected(failure.message);
+                onDeviceDisconnected(failure.message);
             }
         });
         channelOpened = true;
@@ -164,25 +164,25 @@ public final class ServerSessionMonitor {
         enabled = false;
         connected = false;
         channelOpened = false;
-        if (relayMuxSession != null) {
-            relayMuxSession.closeChannel(managerChannelId());
-            relayMuxRegistry.releaseIfIdle(relayMuxSession);
-            relayMuxSession = null;
+        if (deviceConnection != null) {
+            deviceConnection.closeChannel(managerChannelId());
+            deviceConnectionRegistry.releaseIfIdle(deviceConnection);
+            deviceConnection = null;
         }
     }
 
     boolean isConnected() {
-        return connected || (relayMuxSession != null && relayMuxSession.isConnected());
+        return connected || (deviceConnection != null && deviceConnection.isConnected());
     }
 
     boolean isEnabled() {
         return enabled;
     }
 
-    private void onMuxDisconnected(String reason) {
+    private void onDeviceDisconnected(String reason) {
         if (!enabled) return;
         connected = false;
-        Log.i(TAG, "TitleTrace mux manager disconnected reason=" + reason);
+        Log.i(TAG, "TitleTrace device connection disconnected reason=" + reason);
         listener.onMonitorPollingFallback();
     }
 

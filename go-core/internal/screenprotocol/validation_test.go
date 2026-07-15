@@ -75,6 +75,26 @@ func TestValidateHello_VersionAndGeometry(t *testing.T) {
 	}
 }
 
+func TestValidateInput_RequiresReliabilityAnchor(t *testing.T) {
+	valid := &pb.TerminalInput{
+		LeaseId: "lease-1", ClientInstanceId: "android-1", InputSeq: 7,
+		Input: &pb.TerminalInput_Text{Text: &pb.TextInput{Data: "x"}},
+	}
+	if err := ValidateInput(valid); err != nil {
+		t.Fatalf("valid input rejected: %v", err)
+	}
+	withoutClient := proto.Clone(valid).(*pb.TerminalInput)
+	withoutClient.ClientInstanceId = ""
+	if err := ValidateInput(withoutClient); err == nil {
+		t.Fatal("input without client instance id must be rejected")
+	}
+	withoutSeq := proto.Clone(valid).(*pb.TerminalInput)
+	withoutSeq.InputSeq = 0
+	if err := ValidateInput(withoutSeq); err == nil {
+		t.Fatal("input without sequence must be rejected")
+	}
+}
+
 // HandleMessage 是全部 inbound 消息的唯一入口：envelope 超过 2 MiB 必须在
 // 解析前被拒绝。
 func TestHandleMessage_EnvelopeSizeLimit(t *testing.T) {

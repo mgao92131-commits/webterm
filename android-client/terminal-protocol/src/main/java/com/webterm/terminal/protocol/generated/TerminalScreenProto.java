@@ -755,6 +755,182 @@ public final class TerminalScreenProto {
   }
 
   /**
+   * Protobuf enum {@code webterm.terminal.screen.v1.InputAckStatus}
+   */
+  public enum InputAckStatus
+      implements com.google.protobuf.ProtocolMessageEnum {
+    /**
+     * <code>INPUT_ACK_STATUS_UNSPECIFIED = 0;</code>
+     */
+    INPUT_ACK_STATUS_UNSPECIFIED(0),
+    /**
+     * <pre>
+     * 全部字节已成功写入 PTY
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_WRITTEN = 1;</code>
+     */
+    INPUT_ACK_STATUS_WRITTEN(1),
+    /**
+     * <pre>
+     * 输入合法但编码后无字节，例如 key-up
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_IGNORED = 2;</code>
+     */
+    INPUT_ACK_STATUS_IGNORED(2),
+    /**
+     * <pre>
+     * lease/client 无效，未写入 PTY
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_REJECTED = 3;</code>
+     */
+    INPUT_ACK_STATUS_REJECTED(3),
+    /**
+     * <pre>
+     * PTY 部分写或写错误，禁止自动重发
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_UNCERTAIN = 4;</code>
+     */
+    INPUT_ACK_STATUS_UNCERTAIN(4),
+    UNRECOGNIZED(-1),
+    ;
+
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        InputAckStatus.class.getName());
+    }
+    /**
+     * <code>INPUT_ACK_STATUS_UNSPECIFIED = 0;</code>
+     */
+    public static final int INPUT_ACK_STATUS_UNSPECIFIED_VALUE = 0;
+    /**
+     * <pre>
+     * 全部字节已成功写入 PTY
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_WRITTEN = 1;</code>
+     */
+    public static final int INPUT_ACK_STATUS_WRITTEN_VALUE = 1;
+    /**
+     * <pre>
+     * 输入合法但编码后无字节，例如 key-up
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_IGNORED = 2;</code>
+     */
+    public static final int INPUT_ACK_STATUS_IGNORED_VALUE = 2;
+    /**
+     * <pre>
+     * lease/client 无效，未写入 PTY
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_REJECTED = 3;</code>
+     */
+    public static final int INPUT_ACK_STATUS_REJECTED_VALUE = 3;
+    /**
+     * <pre>
+     * PTY 部分写或写错误，禁止自动重发
+     * </pre>
+     *
+     * <code>INPUT_ACK_STATUS_UNCERTAIN = 4;</code>
+     */
+    public static final int INPUT_ACK_STATUS_UNCERTAIN_VALUE = 4;
+
+
+    public final int getNumber() {
+      if (this == UNRECOGNIZED) {
+        throw new java.lang.IllegalArgumentException(
+            "Can't get the number of an unknown enum value.");
+      }
+      return value;
+    }
+
+    /**
+     * @param value The numeric wire value of the corresponding enum entry.
+     * @return The enum associated with the given numeric wire value.
+     * @deprecated Use {@link #forNumber(int)} instead.
+     */
+    @java.lang.Deprecated
+    public static InputAckStatus valueOf(int value) {
+      return forNumber(value);
+    }
+
+    /**
+     * @param value The numeric wire value of the corresponding enum entry.
+     * @return The enum associated with the given numeric wire value.
+     */
+    public static InputAckStatus forNumber(int value) {
+      switch (value) {
+        case 0: return INPUT_ACK_STATUS_UNSPECIFIED;
+        case 1: return INPUT_ACK_STATUS_WRITTEN;
+        case 2: return INPUT_ACK_STATUS_IGNORED;
+        case 3: return INPUT_ACK_STATUS_REJECTED;
+        case 4: return INPUT_ACK_STATUS_UNCERTAIN;
+        default: return null;
+      }
+    }
+
+    public static com.google.protobuf.Internal.EnumLiteMap<InputAckStatus>
+        internalGetValueMap() {
+      return internalValueMap;
+    }
+    private static final com.google.protobuf.Internal.EnumLiteMap<
+        InputAckStatus> internalValueMap =
+          new com.google.protobuf.Internal.EnumLiteMap<InputAckStatus>() {
+            public InputAckStatus findValueByNumber(int number) {
+              return InputAckStatus.forNumber(number);
+            }
+          };
+
+    public final com.google.protobuf.Descriptors.EnumValueDescriptor
+        getValueDescriptor() {
+      if (this == UNRECOGNIZED) {
+        throw new java.lang.IllegalStateException(
+            "Can't get the descriptor of an unrecognized enum value.");
+      }
+      return getDescriptor().getValues().get(ordinal());
+    }
+    public final com.google.protobuf.Descriptors.EnumDescriptor
+        getDescriptorForType() {
+      return getDescriptor();
+    }
+    public static final com.google.protobuf.Descriptors.EnumDescriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.getDescriptor().getEnumTypes().get(5);
+    }
+
+    private static final InputAckStatus[] VALUES = values();
+
+    public static InputAckStatus valueOf(
+        com.google.protobuf.Descriptors.EnumValueDescriptor desc) {
+      if (desc.getType() != getDescriptor()) {
+        throw new java.lang.IllegalArgumentException(
+          "EnumValueDescriptor is not for this type.");
+      }
+      if (desc.getIndex() == -1) {
+        return UNRECOGNIZED;
+      }
+      return VALUES[desc.getIndex()];
+    }
+
+    private final int value;
+
+    private InputAckStatus(int value) {
+      this.value = value;
+    }
+
+    // @@protoc_insertion_point(enum_scope:webterm.terminal.screen.v1.InputAckStatus)
+  }
+
+  /**
    * Protobuf enum {@code webterm.terminal.screen.v1.MouseButton}
    */
   public enum MouseButton
@@ -881,7 +1057,7 @@ public final class TerminalScreenProto {
     }
     public static final com.google.protobuf.Descriptors.EnumDescriptor
         getDescriptor() {
-      return com.webterm.terminal.protocol.generated.TerminalScreenProto.getDescriptor().getEnumTypes().get(5);
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.getDescriptor().getEnumTypes().get(6);
     }
 
     private static final MouseButton[] VALUES = values();
@@ -1206,6 +1382,21 @@ public final class TerminalScreenProto {
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAckOrBuilder getResumeAckOrBuilder();
 
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     * @return Whether the inputAck field is set.
+     */
+    boolean hasInputAck();
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     * @return The inputAck.
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getInputAck();
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder getInputAckOrBuilder();
+
     com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenEnvelope.PayloadCase getPayloadCase();
   }
   /**
@@ -1270,6 +1461,7 @@ public final class TerminalScreenProto {
       PING(26),
       PONG(27),
       RESUME_ACK(28),
+      INPUT_ACK(29),
       PAYLOAD_NOT_SET(0);
       private final int value;
       private PayloadCase(int value) {
@@ -1306,6 +1498,7 @@ public final class TerminalScreenProto {
           case 26: return PING;
           case 27: return PONG;
           case 28: return RESUME_ACK;
+          case 29: return INPUT_ACK;
           case 0: return PAYLOAD_NOT_SET;
           default: return null;
         }
@@ -1925,6 +2118,37 @@ public final class TerminalScreenProto {
       return com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck.getDefaultInstance();
     }
 
+    public static final int INPUT_ACK_FIELD_NUMBER = 29;
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     * @return Whether the inputAck field is set.
+     */
+    @java.lang.Override
+    public boolean hasInputAck() {
+      return payloadCase_ == 29;
+    }
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     * @return The inputAck.
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getInputAck() {
+      if (payloadCase_ == 29) {
+         return (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_;
+      }
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+    }
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder getInputAckOrBuilder() {
+      if (payloadCase_ == 29) {
+         return (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_;
+      }
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -1998,6 +2222,9 @@ public final class TerminalScreenProto {
       }
       if (payloadCase_ == 28) {
         output.writeMessage(28, (com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck) payload_);
+      }
+      if (payloadCase_ == 29) {
+        output.writeMessage(29, (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -2087,6 +2314,10 @@ public final class TerminalScreenProto {
       if (payloadCase_ == 28) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(28, (com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck) payload_);
+      }
+      if (payloadCase_ == 29) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(29, (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -2183,6 +2414,10 @@ public final class TerminalScreenProto {
           if (!getResumeAck()
               .equals(other.getResumeAck())) return false;
           break;
+        case 29:
+          if (!getInputAck()
+              .equals(other.getInputAck())) return false;
+          break;
         case 0:
         default:
       }
@@ -2275,6 +2510,10 @@ public final class TerminalScreenProto {
         case 28:
           hash = (37 * hash) + RESUME_ACK_FIELD_NUMBER;
           hash = (53 * hash) + getResumeAck().hashCode();
+          break;
+        case 29:
+          hash = (37 * hash) + INPUT_ACK_FIELD_NUMBER;
+          hash = (53 * hash) + getInputAck().hashCode();
           break;
         case 0:
         default:
@@ -2468,6 +2707,9 @@ public final class TerminalScreenProto {
         if (resumeAckBuilder_ != null) {
           resumeAckBuilder_.clear();
         }
+        if (inputAckBuilder_ != null) {
+          inputAckBuilder_.clear();
+        }
         payloadCase_ = 0;
         payload_ = null;
         return this;
@@ -2588,6 +2830,10 @@ public final class TerminalScreenProto {
             resumeAckBuilder_ != null) {
           result.payload_ = resumeAckBuilder_.build();
         }
+        if (payloadCase_ == 29 &&
+            inputAckBuilder_ != null) {
+          result.payload_ = inputAckBuilder_.build();
+        }
       }
 
       @java.lang.Override
@@ -2680,6 +2926,10 @@ public final class TerminalScreenProto {
           }
           case RESUME_ACK: {
             mergeResumeAck(other.getResumeAck());
+            break;
+          }
+          case INPUT_ACK: {
+            mergeInputAck(other.getInputAck());
             break;
           }
           case PAYLOAD_NOT_SET: {
@@ -2850,6 +3100,13 @@ public final class TerminalScreenProto {
                 payloadCase_ = 28;
                 break;
               } // case 226
+              case 234: {
+                input.readMessage(
+                    getInputAckFieldBuilder().getBuilder(),
+                    extensionRegistry);
+                payloadCase_ = 29;
+                break;
+              } // case 234
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -3050,7 +3307,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Hello hello = 10;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hello, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hello.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HelloOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hello, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hello.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HelloOrBuilder>
           getHelloFieldBuilder() {
         if (helloBuilder_ == null) {
           if (!(payloadCase_ == 10)) {
@@ -3192,7 +3449,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ScreenSnapshot snapshot = 11;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshot, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshot.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshotOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshot, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshot.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenSnapshotOrBuilder>
           getSnapshotFieldBuilder() {
         if (snapshotBuilder_ == null) {
           if (!(payloadCase_ == 11)) {
@@ -3334,7 +3591,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ScreenPatch patch = 12;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatch, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatch.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatchOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatch, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatch.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ScreenPatchOrBuilder>
           getPatchFieldBuilder() {
         if (patchBuilder_ == null) {
           if (!(payloadCase_ == 12)) {
@@ -3476,7 +3733,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.HistoryRequest history_request = 13;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequestOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryRequestOrBuilder>
           getHistoryRequestFieldBuilder() {
         if (historyRequestBuilder_ == null) {
           if (!(payloadCase_ == 13)) {
@@ -3618,7 +3875,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.HistoryPage history_page = 14;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPage, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPage.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPageOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPage, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPage.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPageOrBuilder>
           getHistoryPageFieldBuilder() {
         if (historyPageBuilder_ == null) {
           if (!(payloadCase_ == 14)) {
@@ -3760,7 +4017,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.HistoryTrim history_trim = 15;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrim, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrim.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrimOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrim, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrim.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryTrimOrBuilder>
           getHistoryTrimFieldBuilder() {
         if (historyTrimBuilder_ == null) {
           if (!(payloadCase_ == 15)) {
@@ -3902,7 +4159,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ResyncRequest resync = 16;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequestOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResyncRequestOrBuilder>
           getResyncFieldBuilder() {
         if (resyncBuilder_ == null) {
           if (!(payloadCase_ == 16)) {
@@ -4044,7 +4301,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.AcquireLayout acquire_layout = 17;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayout, com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayout.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayoutOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayout, com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayout.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.AcquireLayoutOrBuilder>
           getAcquireLayoutFieldBuilder() {
         if (acquireLayoutBuilder_ == null) {
           if (!(payloadCase_ == 17)) {
@@ -4186,7 +4443,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.LayoutLease layout_lease = 18;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLease, com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLease.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLeaseOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLease, com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLease.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.LayoutLeaseOrBuilder>
           getLayoutLeaseFieldBuilder() {
         if (layoutLeaseBuilder_ == null) {
           if (!(payloadCase_ == 18)) {
@@ -4328,7 +4585,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ReleaseLayout release_layout = 19;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayout, com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayout.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayoutOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayout, com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayout.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ReleaseLayoutOrBuilder>
           getReleaseLayoutFieldBuilder() {
         if (releaseLayoutBuilder_ == null) {
           if (!(payloadCase_ == 19)) {
@@ -4470,7 +4727,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Resize resize = 20;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Resize, com.webterm.terminal.protocol.generated.TerminalScreenProto.Resize.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResizeOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Resize, com.webterm.terminal.protocol.generated.TerminalScreenProto.Resize.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResizeOrBuilder>
           getResizeFieldBuilder() {
         if (resizeBuilder_ == null) {
           if (!(payloadCase_ == 20)) {
@@ -4612,7 +4869,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalInput input = 21;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInputOrBuilder>
           getInputFieldBuilder() {
         if (inputBuilder_ == null) {
           if (!(payloadCase_ == 21)) {
@@ -4754,7 +5011,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalEffect effect = 22;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffect, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffect.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffectOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffect, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffect.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalEffectOrBuilder>
           getEffectFieldBuilder() {
         if (effectBuilder_ == null) {
           if (!(payloadCase_ == 22)) {
@@ -4896,7 +5153,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ClipboardResponse clipboard_response = 23;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponse, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponse.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponseOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponse, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponse.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardResponseOrBuilder>
           getClipboardResponseFieldBuilder() {
         if (clipboardResponseBuilder_ == null) {
           if (!(payloadCase_ == 23)) {
@@ -5038,7 +5295,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalInfo info = 24;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfo, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfo.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfoOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfo, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfo.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInfoOrBuilder>
           getInfoFieldBuilder() {
         if (infoBuilder_ == null) {
           if (!(payloadCase_ == 24)) {
@@ -5180,7 +5437,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Exit exit = 25;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Exit, com.webterm.terminal.protocol.generated.TerminalScreenProto.Exit.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ExitOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Exit, com.webterm.terminal.protocol.generated.TerminalScreenProto.Exit.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ExitOrBuilder>
           getExitFieldBuilder() {
         if (exitBuilder_ == null) {
           if (!(payloadCase_ == 25)) {
@@ -5322,7 +5579,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Ping ping = 26;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Ping, com.webterm.terminal.protocol.generated.TerminalScreenProto.Ping.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PingOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Ping, com.webterm.terminal.protocol.generated.TerminalScreenProto.Ping.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PingOrBuilder>
           getPingFieldBuilder() {
         if (pingBuilder_ == null) {
           if (!(payloadCase_ == 26)) {
@@ -5464,7 +5721,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Pong pong = 27;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Pong, com.webterm.terminal.protocol.generated.TerminalScreenProto.Pong.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PongOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Pong, com.webterm.terminal.protocol.generated.TerminalScreenProto.Pong.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PongOrBuilder>
           getPongFieldBuilder() {
         if (pongBuilder_ == null) {
           if (!(payloadCase_ == 27)) {
@@ -5606,7 +5863,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ResumeAck resume_ack = 28;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAckOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ResumeAckOrBuilder>
           getResumeAckFieldBuilder() {
         if (resumeAckBuilder_ == null) {
           if (!(payloadCase_ == 28)) {
@@ -5622,6 +5879,148 @@ public final class TerminalScreenProto {
         payloadCase_ = 28;
         onChanged();
         return resumeAckBuilder_;
+      }
+
+      private com.google.protobuf.SingleFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder> inputAckBuilder_;
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       * @return Whether the inputAck field is set.
+       */
+      @java.lang.Override
+      public boolean hasInputAck() {
+        return payloadCase_ == 29;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       * @return The inputAck.
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getInputAck() {
+        if (inputAckBuilder_ == null) {
+          if (payloadCase_ == 29) {
+            return (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_;
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+        } else {
+          if (payloadCase_ == 29) {
+            return inputAckBuilder_.getMessage();
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+        }
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      public Builder setInputAck(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck value) {
+        if (inputAckBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          payload_ = value;
+          onChanged();
+        } else {
+          inputAckBuilder_.setMessage(value);
+        }
+        payloadCase_ = 29;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      public Builder setInputAck(
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder builderForValue) {
+        if (inputAckBuilder_ == null) {
+          payload_ = builderForValue.build();
+          onChanged();
+        } else {
+          inputAckBuilder_.setMessage(builderForValue.build());
+        }
+        payloadCase_ = 29;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      public Builder mergeInputAck(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck value) {
+        if (inputAckBuilder_ == null) {
+          if (payloadCase_ == 29 &&
+              payload_ != com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance()) {
+            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.newBuilder((com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_)
+                .mergeFrom(value).buildPartial();
+          } else {
+            payload_ = value;
+          }
+          onChanged();
+        } else {
+          if (payloadCase_ == 29) {
+            inputAckBuilder_.mergeFrom(value);
+          } else {
+            inputAckBuilder_.setMessage(value);
+          }
+        }
+        payloadCase_ = 29;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      public Builder clearInputAck() {
+        if (inputAckBuilder_ == null) {
+          if (payloadCase_ == 29) {
+            payloadCase_ = 0;
+            payload_ = null;
+            onChanged();
+          }
+        } else {
+          if (payloadCase_ == 29) {
+            payloadCase_ = 0;
+            payload_ = null;
+          }
+          inputAckBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder getInputAckBuilder() {
+        return getInputAckFieldBuilder().getBuilder();
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder getInputAckOrBuilder() {
+        if ((payloadCase_ == 29) && (inputAckBuilder_ != null)) {
+          return inputAckBuilder_.getMessageOrBuilder();
+        } else {
+          if (payloadCase_ == 29) {
+            return (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_;
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+        }
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAck input_ack = 29;</code>
+       */
+      private com.google.protobuf.SingleFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder>
+          getInputAckFieldBuilder() {
+        if (inputAckBuilder_ == null) {
+          if (!(payloadCase_ == 29)) {
+            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+          }
+          inputAckBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder>(
+                  (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) payload_,
+                  getParentForChildren(),
+                  isClean());
+          payload_ = null;
+        }
+        payloadCase_ = 29;
+        onChanged();
+        return inputAckBuilder_;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.ScreenEnvelope)
@@ -5812,6 +6211,26 @@ public final class TerminalScreenProto {
      * <code>.webterm.terminal.screen.v1.CapabilitySet capabilities = 9;</code>
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySetOrBuilder getCapabilitiesOrBuilder();
+
+    /**
+     * <pre>
+     * Android 终端通道实例，用于输入去重
+     * </pre>
+     *
+     * <code>string client_instance_id = 10;</code>
+     * @return The clientInstanceId.
+     */
+    java.lang.String getClientInstanceId();
+    /**
+     * <pre>
+     * Android 终端通道实例，用于输入去重
+     * </pre>
+     *
+     * <code>string client_instance_id = 10;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    com.google.protobuf.ByteString
+        getClientInstanceIdBytes();
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.Hello}
@@ -5836,6 +6255,7 @@ public final class TerminalScreenProto {
     }
     private Hello() {
       instanceId_ = "";
+      clientInstanceId_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -5914,7 +6334,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -5934,7 +6354,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -6065,6 +6485,53 @@ public final class TerminalScreenProto {
       return capabilities_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySet.getDefaultInstance() : capabilities_;
     }
 
+    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 10;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object clientInstanceId_ = "";
+    /**
+     * <pre>
+     * Android 终端通道实例，用于输入去重
+     * </pre>
+     *
+     * <code>string client_instance_id = 10;</code>
+     * @return The clientInstanceId.
+     */
+    @java.lang.Override
+    public java.lang.String getClientInstanceId() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        clientInstanceId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * Android 终端通道实例，用于输入去重
+     * </pre>
+     *
+     * <code>string client_instance_id = 10;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getClientInstanceIdBytes() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        clientInstanceId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -6105,6 +6572,9 @@ public final class TerminalScreenProto {
       }
       if (((bitField0_ & 0x00000002) != 0)) {
         output.writeMessage(9, getCapabilities());
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 10, clientInstanceId_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -6150,6 +6620,9 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(9, getCapabilities());
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(10, clientInstanceId_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -6189,6 +6662,8 @@ public final class TerminalScreenProto {
         if (!getCapabilities()
             .equals(other.getCapabilities())) return false;
       }
+      if (!getClientInstanceId()
+          .equals(other.getClientInstanceId())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -6225,6 +6700,8 @@ public final class TerminalScreenProto {
         hash = (37 * hash) + CAPABILITIES_FIELD_NUMBER;
         hash = (53 * hash) + getCapabilities().hashCode();
       }
+      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getClientInstanceId().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -6380,6 +6857,7 @@ public final class TerminalScreenProto {
           capabilitiesBuilder_.dispose();
           capabilitiesBuilder_ = null;
         }
+        clientInstanceId_ = "";
         return this;
       }
 
@@ -6447,6 +6925,9 @@ public final class TerminalScreenProto {
               : capabilitiesBuilder_.build();
           to_bitField0_ |= 0x00000002;
         }
+        if (((from_bitField0_ & 0x00000200) != 0)) {
+          result.clientInstanceId_ = clientInstanceId_;
+        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -6490,6 +6971,11 @@ public final class TerminalScreenProto {
         }
         if (other.hasCapabilities()) {
           mergeCapabilities(other.getCapabilities());
+        }
+        if (!other.getClientInstanceId().isEmpty()) {
+          clientInstanceId_ = other.clientInstanceId_;
+          bitField0_ |= 0x00000200;
+          onChanged();
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -6566,6 +7052,11 @@ public final class TerminalScreenProto {
                 bitField0_ |= 0x00000100;
                 break;
               } // case 74
+              case 82: {
+                clientInstanceId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000200;
+                break;
+              } // case 82
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -6748,7 +7239,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -7083,7 +7574,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.HistoryPreference history = 8;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreference, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreference.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreferenceOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreference, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreference.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryPreferenceOrBuilder>
           getHistoryFieldBuilder() {
         if (historyBuilder_ == null) {
           historyBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -7240,7 +7731,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.CapabilitySet capabilities = 9;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySet, com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySetOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySet, com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CapabilitySetOrBuilder>
           getCapabilitiesFieldBuilder() {
         if (capabilitiesBuilder_ == null) {
           capabilitiesBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -7251,6 +7742,98 @@ public final class TerminalScreenProto {
           capabilities_ = null;
         }
         return capabilitiesBuilder_;
+      }
+
+      private java.lang.Object clientInstanceId_ = "";
+      /**
+       * <pre>
+       * Android 终端通道实例，用于输入去重
+       * </pre>
+       *
+       * <code>string client_instance_id = 10;</code>
+       * @return The clientInstanceId.
+       */
+      public java.lang.String getClientInstanceId() {
+        java.lang.Object ref = clientInstanceId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          clientInstanceId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * Android 终端通道实例，用于输入去重
+       * </pre>
+       *
+       * <code>string client_instance_id = 10;</code>
+       * @return The bytes for clientInstanceId.
+       */
+      public com.google.protobuf.ByteString
+          getClientInstanceIdBytes() {
+        java.lang.Object ref = clientInstanceId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          clientInstanceId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * Android 终端通道实例，用于输入去重
+       * </pre>
+       *
+       * <code>string client_instance_id = 10;</code>
+       * @param value The clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000200;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * Android 终端通道实例，用于输入去重
+       * </pre>
+       *
+       * <code>string client_instance_id = 10;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearClientInstanceId() {
+        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
+        bitField0_ = (bitField0_ & ~0x00000200);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * Android 终端通道实例，用于输入去重
+       * </pre>
+       *
+       * <code>string client_instance_id = 10;</code>
+       * @param value The bytes for clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000200;
+        onChanged();
+        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.Hello)
@@ -9445,7 +10028,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -9461,7 +10044,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -9865,7 +10448,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -10156,7 +10739,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine>
         getScreenList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
@@ -10169,7 +10752,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
         getScreenOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
@@ -10184,7 +10767,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 12;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle>
         getStylesList();
     /**
      * <pre>
@@ -10209,7 +10792,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 12;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getStylesOrBuilderList();
     /**
      * <pre>
@@ -10228,7 +10811,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 13;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink>
         getLinksList();
     /**
      * <pre>
@@ -10253,7 +10836,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 13;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getLinksOrBuilderList();
     /**
      * <pre>
@@ -10348,7 +10931,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         sessionId_ = s;
@@ -10364,7 +10947,7 @@ public final class TerminalScreenProto {
         getSessionIdBytes() {
       java.lang.Object ref = sessionId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         sessionId_ = b;
@@ -10387,7 +10970,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -10403,7 +10986,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -10597,7 +11180,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
         getScreenOrBuilderList() {
       return screen_;
     }
@@ -10646,7 +11229,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 12;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getStylesOrBuilderList() {
       return styles_;
     }
@@ -10707,7 +11290,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 13;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getLinksOrBuilderList() {
       return links_;
     }
@@ -10759,7 +11342,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         title_ = s;
@@ -10775,7 +11358,7 @@ public final class TerminalScreenProto {
         getTitleBytes() {
       java.lang.Object ref = title_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
@@ -10798,7 +11381,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         workingDirectory_ = s;
@@ -10814,7 +11397,7 @@ public final class TerminalScreenProto {
         getWorkingDirectoryBytes() {
       java.lang.Object ref = workingDirectory_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         workingDirectory_ = b;
@@ -11446,7 +12029,7 @@ public final class TerminalScreenProto {
               screenBuilder_ = null;
               screen_ = other.screen_;
               bitField0_ = (bitField0_ & ~0x00000400);
-              screenBuilder_ = 
+              screenBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getScreenFieldBuilder() : null;
             } else {
@@ -11472,7 +12055,7 @@ public final class TerminalScreenProto {
               stylesBuilder_ = null;
               styles_ = other.styles_;
               bitField0_ = (bitField0_ & ~0x00000800);
-              stylesBuilder_ = 
+              stylesBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getStylesFieldBuilder() : null;
             } else {
@@ -11498,7 +12081,7 @@ public final class TerminalScreenProto {
               linksBuilder_ = null;
               links_ = other.links_;
               bitField0_ = (bitField0_ & ~0x00001000);
-              linksBuilder_ = 
+              linksBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getLinksFieldBuilder() : null;
             } else {
@@ -11693,7 +12276,7 @@ public final class TerminalScreenProto {
           getSessionIdBytes() {
         java.lang.Object ref = sessionId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           sessionId_ = b;
@@ -11765,7 +12348,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -11984,7 +12567,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Size geometry = 5;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Size, com.webterm.terminal.protocol.generated.TerminalScreenProto.Size.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.SizeOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Size, com.webterm.terminal.protocol.generated.TerminalScreenProto.Size.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.SizeOrBuilder>
           getGeometryFieldBuilder() {
         if (geometryBuilder_ == null) {
           geometryBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -12158,7 +12741,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Cursor cursor = 7;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CursorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CursorOrBuilder>
           getCursorFieldBuilder() {
         if (cursorBuilder_ == null) {
           cursorBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -12279,7 +12862,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Modes modes = 8;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes, com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModesOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes, com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModesOrBuilder>
           getModesFieldBuilder() {
         if (modesBuilder_ == null) {
           modesBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -12400,7 +12983,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalPalette palette = 9;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder>
           getPaletteFieldBuilder() {
         if (paletteBuilder_ == null) {
           paletteBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -12521,7 +13104,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.HistoryWindow history = 10;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindow, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindow.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindowOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindow, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindow.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryWindowOrBuilder>
           getHistoryFieldBuilder() {
         if (historyBuilder_ == null) {
           historyBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -12729,7 +13312,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
            getScreenOrBuilderList() {
         if (screenBuilder_ != null) {
           return screenBuilder_.getMessageOrBuilderList();
@@ -12755,12 +13338,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen = 11;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder>
            getScreenBuilderList() {
         return getScreenFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
           getScreenFieldBuilder() {
         if (screenBuilder_ == null) {
           screenBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -13029,7 +13612,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 12;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
            getStylesOrBuilderList() {
         if (stylesBuilder_ != null) {
           return stylesBuilder_.getMessageOrBuilderList();
@@ -13067,12 +13650,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 12;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder>
            getStylesBuilderList() {
         return getStylesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
           getStylesFieldBuilder() {
         if (stylesBuilder_ == null) {
           stylesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -13341,7 +13924,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 13;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
            getLinksOrBuilderList() {
         if (linksBuilder_ != null) {
           return linksBuilder_.getMessageOrBuilderList();
@@ -13379,12 +13962,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 13;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder>
            getLinksBuilderList() {
         return getLinksFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
           getLinksFieldBuilder() {
         if (linksBuilder_ == null) {
           linksBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -13423,7 +14006,7 @@ public final class TerminalScreenProto {
           getTitleBytes() {
         java.lang.Object ref = title_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           title_ = b;
@@ -13495,7 +14078,7 @@ public final class TerminalScreenProto {
           getWorkingDirectoryBytes() {
         java.lang.Object ref = workingDirectory_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           workingDirectory_ = b;
@@ -13630,7 +14213,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine history_append = 4;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine>
         getHistoryAppendList();
     /**
      * <pre>
@@ -13655,7 +14238,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine history_append = 4;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getHistoryAppendOrBuilderList();
     /**
      * <pre>
@@ -13674,7 +14257,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen_rows = 5;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine>
         getScreenRowsList();
     /**
      * <pre>
@@ -13699,7 +14282,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen_rows = 5;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
         getScreenRowsOrBuilderList();
     /**
      * <pre>
@@ -13787,7 +14370,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle new_styles = 9;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle>
         getNewStylesList();
     /**
      * <pre>
@@ -13812,7 +14395,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle new_styles = 9;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getNewStylesOrBuilderList();
     /**
      * <pre>
@@ -13831,7 +14414,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink new_links = 10;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink>
         getNewLinksList();
     /**
      * <pre>
@@ -13856,7 +14439,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink new_links = 10;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getNewLinksOrBuilderList();
     /**
      * <pre>
@@ -13933,7 +14516,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.PromotedRow promoted_rows = 13;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow>
         getPromotedRowsList();
     /**
      * <pre>
@@ -13958,7 +14541,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.PromotedRow promoted_rows = 13;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder>
         getPromotedRowsOrBuilderList();
     /**
      * <pre>
@@ -14118,7 +14701,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine history_append = 4;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getHistoryAppendOrBuilderList() {
       return historyAppend_;
     }
@@ -14179,7 +14762,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen_rows = 5;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
         getScreenRowsOrBuilderList() {
       return screenRows_;
     }
@@ -14342,7 +14925,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle new_styles = 9;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getNewStylesOrBuilderList() {
       return newStyles_;
     }
@@ -14403,7 +14986,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink new_links = 10;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getNewLinksOrBuilderList() {
       return newLinks_;
     }
@@ -14471,7 +15054,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         title_ = s;
@@ -14491,7 +15074,7 @@ public final class TerminalScreenProto {
         getTitleBytes() {
       java.lang.Object ref = title_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
@@ -14530,7 +15113,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         workingDirectory_ = s;
@@ -14550,7 +15133,7 @@ public final class TerminalScreenProto {
         getWorkingDirectoryBytes() {
       java.lang.Object ref = workingDirectory_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         workingDirectory_ = b;
@@ -14582,7 +15165,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.PromotedRow promoted_rows = 13;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder>
         getPromotedRowsOrBuilderList() {
       return promotedRows_;
     }
@@ -14638,7 +15221,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -14658,7 +15241,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -15318,7 +15901,7 @@ public final class TerminalScreenProto {
               historyAppendBuilder_ = null;
               historyAppend_ = other.historyAppend_;
               bitField0_ = (bitField0_ & ~0x00000008);
-              historyAppendBuilder_ = 
+              historyAppendBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getHistoryAppendFieldBuilder() : null;
             } else {
@@ -15344,7 +15927,7 @@ public final class TerminalScreenProto {
               screenRowsBuilder_ = null;
               screenRows_ = other.screenRows_;
               bitField0_ = (bitField0_ & ~0x00000010);
-              screenRowsBuilder_ = 
+              screenRowsBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getScreenRowsFieldBuilder() : null;
             } else {
@@ -15379,7 +15962,7 @@ public final class TerminalScreenProto {
               newStylesBuilder_ = null;
               newStyles_ = other.newStyles_;
               bitField0_ = (bitField0_ & ~0x00000100);
-              newStylesBuilder_ = 
+              newStylesBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getNewStylesFieldBuilder() : null;
             } else {
@@ -15405,7 +15988,7 @@ public final class TerminalScreenProto {
               newLinksBuilder_ = null;
               newLinks_ = other.newLinks_;
               bitField0_ = (bitField0_ & ~0x00000200);
-              newLinksBuilder_ = 
+              newLinksBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getNewLinksFieldBuilder() : null;
             } else {
@@ -15441,7 +16024,7 @@ public final class TerminalScreenProto {
               promotedRowsBuilder_ = null;
               promotedRows_ = other.promotedRows_;
               bitField0_ = (bitField0_ & ~0x00001000);
-              promotedRowsBuilder_ = 
+              promotedRowsBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getPromotedRowsFieldBuilder() : null;
             } else {
@@ -15996,7 +16579,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine history_append = 4;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
            getHistoryAppendOrBuilderList() {
         if (historyAppendBuilder_ != null) {
           return historyAppendBuilder_.getMessageOrBuilderList();
@@ -16034,12 +16617,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine history_append = 4;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder>
            getHistoryAppendBuilderList() {
         return getHistoryAppendFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
           getHistoryAppendFieldBuilder() {
         if (historyAppendBuilder_ == null) {
           historyAppendBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -16308,7 +16891,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen_rows = 5;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
            getScreenRowsOrBuilderList() {
         if (screenRowsBuilder_ != null) {
           return screenRowsBuilder_.getMessageOrBuilderList();
@@ -16346,12 +16929,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalLine screen_rows = 5;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder>
            getScreenRowsBuilderList() {
         return getScreenRowsFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLineOrBuilder>
           getScreenRowsFieldBuilder() {
         if (screenRowsBuilder_ == null) {
           screenRowsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -16473,7 +17056,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Cursor cursor = 6;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CursorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cursor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CursorOrBuilder>
           getCursorFieldBuilder() {
         if (cursorBuilder_ == null) {
           cursorBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -16630,7 +17213,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Modes modes = 7;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes, com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModesOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes, com.webterm.terminal.protocol.generated.TerminalScreenProto.Modes.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModesOrBuilder>
           getModesFieldBuilder() {
         if (modesBuilder_ == null) {
           modesBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -16787,7 +17370,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalPalette palette = 8;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder>
           getPaletteFieldBuilder() {
         if (paletteBuilder_ == null) {
           paletteBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -17055,7 +17638,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle new_styles = 9;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
            getNewStylesOrBuilderList() {
         if (newStylesBuilder_ != null) {
           return newStylesBuilder_.getMessageOrBuilderList();
@@ -17093,12 +17676,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle new_styles = 9;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder>
            getNewStylesBuilderList() {
         return getNewStylesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
           getNewStylesFieldBuilder() {
         if (newStylesBuilder_ == null) {
           newStylesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -17367,7 +17950,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink new_links = 10;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
            getNewLinksOrBuilderList() {
         if (newLinksBuilder_ != null) {
           return newLinksBuilder_.getMessageOrBuilderList();
@@ -17405,12 +17988,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink new_links = 10;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder>
            getNewLinksBuilderList() {
         return getNewLinksFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
           getNewLinksFieldBuilder() {
         if (newLinksBuilder_ == null) {
           newLinksBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -17468,7 +18051,7 @@ public final class TerminalScreenProto {
           getTitleBytes() {
         java.lang.Object ref = title_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           title_ = b;
@@ -17571,7 +18154,7 @@ public final class TerminalScreenProto {
           getWorkingDirectoryBytes() {
         java.lang.Object ref = workingDirectory_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           workingDirectory_ = b;
@@ -17885,7 +18468,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.PromotedRow promoted_rows = 13;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder>
            getPromotedRowsOrBuilderList() {
         if (promotedRowsBuilder_ != null) {
           return promotedRowsBuilder_.getMessageOrBuilderList();
@@ -17923,12 +18506,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.PromotedRow promoted_rows = 13;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow.Builder>
            getPromotedRowsBuilderList() {
         return getPromotedRowsFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow, com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow, com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRow.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PromotedRowOrBuilder>
           getPromotedRowsFieldBuilder() {
         if (promotedRowsBuilder_ == null) {
           promotedRowsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -17975,7 +18558,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -19231,7 +19814,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun>
         getRunsList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
@@ -19244,7 +19827,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
         getRunsOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
@@ -19349,7 +19932,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
         getRunsOrBuilderList() {
       return runs_;
     }
@@ -19710,7 +20293,7 @@ public final class TerminalScreenProto {
               runsBuilder_ = null;
               runs_ = other.runs_;
               bitField0_ = (bitField0_ & ~0x00000008);
-              runsBuilder_ = 
+              runsBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getRunsFieldBuilder() : null;
             } else {
@@ -20116,7 +20699,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
            getRunsOrBuilderList() {
         if (runsBuilder_ != null) {
           return runsBuilder_.getMessageOrBuilderList();
@@ -20142,12 +20725,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 4;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder>
            getRunsBuilderList() {
         return getRunsFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
           getRunsFieldBuilder() {
         if (runsBuilder_ == null) {
           runsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -20233,7 +20816,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Cell cells = 2;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell>
         getCellsList();
     /**
      * <pre>
@@ -20258,7 +20841,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.Cell cells = 2;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder>
         getCellsOrBuilderList();
     /**
      * <pre>
@@ -20345,7 +20928,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.Cell cells = 2;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder>
         getCellsOrBuilderList() {
       return cells_;
     }
@@ -20680,7 +21263,7 @@ public final class TerminalScreenProto {
               cellsBuilder_ = null;
               cells_ = other.cells_;
               bitField0_ = (bitField0_ & ~0x00000002);
-              cellsBuilder_ = 
+              cellsBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getCellsFieldBuilder() : null;
             } else {
@@ -21048,7 +21631,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Cell cells = 2;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder>
            getCellsOrBuilderList() {
         if (cellsBuilder_ != null) {
           return cellsBuilder_.getMessageOrBuilderList();
@@ -21086,12 +21669,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.Cell cells = 2;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell.Builder>
            getCellsBuilderList() {
         return getCellsFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell, com.webterm.terminal.protocol.generated.TerminalScreenProto.Cell.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellOrBuilder>
           getCellsFieldBuilder() {
         if (cellsBuilder_ == null) {
           cellsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -21265,7 +21848,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         text_ = s;
@@ -21285,7 +21868,7 @@ public final class TerminalScreenProto {
         getTextBytes() {
       java.lang.Object ref = text_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         text_ = b;
@@ -21736,7 +22319,7 @@ public final class TerminalScreenProto {
           getTextBytes() {
         java.lang.Object ref = text_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           text_ = b;
@@ -23444,7 +24027,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color fg = 2;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getFgFieldBuilder() {
         if (fgBuilder_ == null) {
           fgBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -23565,7 +24148,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color bg = 3;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getBgFieldBuilder() {
         if (bgBuilder_ == null) {
           bgBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -23686,7 +24269,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color underline_color = 4;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getUnderlineColorFieldBuilder() {
         if (underlineColorBuilder_ == null) {
           underlineColorBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -23807,7 +24390,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.CellAttrs attrs = 5;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrs, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrs.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrsOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrs, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrs.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellAttrsOrBuilder>
           getAttrsFieldBuilder() {
         if (attrsBuilder_ == null) {
           attrsBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -25287,7 +25870,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         uri_ = s;
@@ -25303,7 +25886,7 @@ public final class TerminalScreenProto {
         getUriBytes() {
       java.lang.Object ref = uri_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         uri_ = b;
@@ -25330,7 +25913,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         params_ = s;
@@ -25350,7 +25933,7 @@ public final class TerminalScreenProto {
         getParamsBytes() {
       java.lang.Object ref = params_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         params_ = b;
@@ -25758,7 +26341,7 @@ public final class TerminalScreenProto {
           getUriBytes() {
         java.lang.Object ref = uri_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           uri_ = b;
@@ -25838,7 +26421,7 @@ public final class TerminalScreenProto {
           getParamsBytes() {
         java.lang.Object ref = params_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           params_ = b;
@@ -28274,7 +28857,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color default_fg = 1;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getDefaultFgFieldBuilder() {
         if (defaultFgBuilder_ == null) {
           defaultFgBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -28395,7 +28978,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color default_bg = 2;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getDefaultBgFieldBuilder() {
         if (defaultBgBuilder_ == null) {
           defaultBgBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -28516,7 +29099,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Color cursor_color = 3;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Color, com.webterm.terminal.protocol.generated.TerminalScreenProto.Color.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ColorOrBuilder>
           getCursorColorFieldBuilder() {
         if (cursorColorBuilder_ == null) {
           cursorColorBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -28643,7 +29226,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine>
         getLinesList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
@@ -28656,7 +29239,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getLinesOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
@@ -28760,7 +29343,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getLinesOrBuilderList() {
       return lines_;
     }
@@ -29141,7 +29724,7 @@ public final class TerminalScreenProto {
               linesBuilder_ = null;
               lines_ = other.lines_;
               bitField0_ = (bitField0_ & ~0x00000010);
-              linesBuilder_ = 
+              linesBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getLinesFieldBuilder() : null;
             } else {
@@ -29548,7 +30131,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
            getLinesOrBuilderList() {
         if (linesBuilder_ != null) {
           return linesBuilder_.getMessageOrBuilderList();
@@ -29574,12 +30157,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 5;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder>
            getLinesBuilderList() {
         return getLinesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
           getLinesFieldBuilder() {
         if (linesBuilder_ == null) {
           linesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -29663,7 +30246,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun>
         getRunsList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
@@ -29676,7 +30259,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
         getRunsOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
@@ -29758,7 +30341,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
         getRunsOrBuilderList() {
       return runs_;
     }
@@ -30101,7 +30684,7 @@ public final class TerminalScreenProto {
               runsBuilder_ = null;
               runs_ = other.runs_;
               bitField0_ = (bitField0_ & ~0x00000004);
-              runsBuilder_ = 
+              runsBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getRunsFieldBuilder() : null;
             } else {
@@ -30434,7 +31017,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
            getRunsOrBuilderList() {
         if (runsBuilder_ != null) {
           return runsBuilder_.getMessageOrBuilderList();
@@ -30460,12 +31043,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.CellRun runs = 3;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder>
            getRunsBuilderList() {
         return getRunsFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRun.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder>
           getRunsFieldBuilder() {
         if (runsBuilder_ == null) {
           runsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -30619,7 +31202,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -30635,7 +31218,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -31072,7 +31655,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -31325,7 +31908,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 6;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine>
         getLinesList();
     /**
      * <pre>
@@ -31350,7 +31933,7 @@ public final class TerminalScreenProto {
      *
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 6;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getLinesOrBuilderList();
     /**
      * <pre>
@@ -31365,7 +31948,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle>
         getStylesList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
@@ -31378,7 +31961,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getStylesOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
@@ -31389,7 +31972,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
      */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink> 
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink>
         getLinksList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
@@ -31402,7 +31985,7 @@ public final class TerminalScreenProto {
     /**
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
      */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getLinksOrBuilderList();
     /**
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
@@ -31464,7 +32047,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -31480,7 +32063,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -31556,7 +32139,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 6;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
         getLinesOrBuilderList() {
       return lines_;
     }
@@ -31609,7 +32192,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
         getStylesOrBuilderList() {
       return styles_;
     }
@@ -31650,7 +32233,7 @@ public final class TerminalScreenProto {
      * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
      */
     @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
         getLinksOrBuilderList() {
       return links_;
     }
@@ -32108,7 +32691,7 @@ public final class TerminalScreenProto {
               linesBuilder_ = null;
               lines_ = other.lines_;
               bitField0_ = (bitField0_ & ~0x00000020);
-              linesBuilder_ = 
+              linesBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getLinesFieldBuilder() : null;
             } else {
@@ -32134,7 +32717,7 @@ public final class TerminalScreenProto {
               stylesBuilder_ = null;
               styles_ = other.styles_;
               bitField0_ = (bitField0_ & ~0x00000040);
-              stylesBuilder_ = 
+              stylesBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getStylesFieldBuilder() : null;
             } else {
@@ -32160,7 +32743,7 @@ public final class TerminalScreenProto {
               linksBuilder_ = null;
               links_ = other.links_;
               bitField0_ = (bitField0_ & ~0x00000080);
-              linksBuilder_ = 
+              linksBuilder_ =
                 com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
                    getLinksFieldBuilder() : null;
             } else {
@@ -32300,7 +32883,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -32730,7 +33313,7 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 6;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
            getLinesOrBuilderList() {
         if (linesBuilder_ != null) {
           return linesBuilder_.getMessageOrBuilderList();
@@ -32768,12 +33351,12 @@ public final class TerminalScreenProto {
        *
        * <code>repeated .webterm.terminal.screen.v1.HistoryLine lines = 6;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder>
            getLinesBuilderList() {
         return getLinesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLineOrBuilder>
           getLinesFieldBuilder() {
         if (linesBuilder_ == null) {
           linesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -32982,7 +33565,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
            getStylesOrBuilderList() {
         if (stylesBuilder_ != null) {
           return stylesBuilder_.getMessageOrBuilderList();
@@ -33008,12 +33591,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.TerminalStyle styles = 7;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder>
            getStylesBuilderList() {
         return getStylesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyle.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalStyleOrBuilder>
           getStylesFieldBuilder() {
         if (stylesBuilder_ == null) {
           stylesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -33222,7 +33805,7 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
            getLinksOrBuilderList() {
         if (linksBuilder_ != null) {
           return linksBuilder_.getMessageOrBuilderList();
@@ -33248,12 +33831,12 @@ public final class TerminalScreenProto {
       /**
        * <code>repeated .webterm.terminal.screen.v1.Hyperlink links = 8;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder> 
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder>
            getLinksBuilderList() {
         return getLinksFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink, com.webterm.terminal.protocol.generated.TerminalScreenProto.Hyperlink.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.HyperlinkOrBuilder>
           getLinksFieldBuilder() {
         if (linksBuilder_ == null) {
           linksBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
@@ -33947,7 +34530,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         reason_ = s;
@@ -33963,7 +34546,7 @@ public final class TerminalScreenProto {
         getReasonBytes() {
       java.lang.Object ref = reason_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         reason_ = b;
@@ -34404,7 +34987,7 @@ public final class TerminalScreenProto {
           getReasonBytes() {
         java.lang.Object ref = reason_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           reason_ = b;
@@ -34579,7 +35162,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -34595,7 +35178,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -34963,7 +35546,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -35223,7 +35806,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -35239,7 +35822,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -35262,7 +35845,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         leaseId_ = s;
@@ -35278,7 +35861,7 @@ public final class TerminalScreenProto {
         getLeaseIdBytes() {
       java.lang.Object ref = leaseId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         leaseId_ = b;
@@ -35811,7 +36394,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -35883,7 +36466,7 @@ public final class TerminalScreenProto {
           getLeaseIdBytes() {
         java.lang.Object ref = leaseId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           leaseId_ = b;
@@ -36102,7 +36685,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Size geometry = 5;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Size, com.webterm.terminal.protocol.generated.TerminalScreenProto.Size.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.SizeOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Size, com.webterm.terminal.protocol.generated.TerminalScreenProto.Size.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.SizeOrBuilder>
           getGeometryFieldBuilder() {
         if (geometryBuilder_ == null) {
           geometryBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -36277,7 +36860,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         leaseId_ = s;
@@ -36293,7 +36876,7 @@ public final class TerminalScreenProto {
         getLeaseIdBytes() {
       java.lang.Object ref = leaseId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         leaseId_ = b;
@@ -36622,7 +37205,7 @@ public final class TerminalScreenProto {
           getLeaseIdBytes() {
         java.lang.Object ref = leaseId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           leaseId_ = b;
@@ -36834,7 +37417,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         leaseId_ = s;
@@ -36850,7 +37433,7 @@ public final class TerminalScreenProto {
         getLeaseIdBytes() {
       java.lang.Object ref = leaseId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         leaseId_ = b;
@@ -36873,7 +37456,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -36889,7 +37472,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -37352,7 +37935,7 @@ public final class TerminalScreenProto {
           getLeaseIdBytes() {
         java.lang.Object ref = leaseId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           leaseId_ = b;
@@ -37424,7 +38007,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -37547,6 +38130,28 @@ public final class TerminalScreenProto {
         getLeaseIdBytes();
 
     /**
+     * <code>string client_instance_id = 2;</code>
+     * @return The clientInstanceId.
+     */
+    java.lang.String getClientInstanceId();
+    /**
+     * <code>string client_instance_id = 2;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    com.google.protobuf.ByteString
+        getClientInstanceIdBytes();
+
+    /**
+     * <pre>
+     * 在 client_instance_id 内严格递增
+     * </pre>
+     *
+     * <code>uint64 input_seq = 3;</code>
+     * @return The inputSeq.
+     */
+    long getInputSeq();
+
+    /**
      * <code>.webterm.terminal.screen.v1.TextInput text = 10;</code>
      * @return Whether the text field is set.
      */
@@ -37646,6 +38251,7 @@ public final class TerminalScreenProto {
     }
     private TerminalInput() {
       leaseId_ = "";
+      clientInstanceId_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -37726,7 +38332,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         leaseId_ = s;
@@ -37746,7 +38352,7 @@ public final class TerminalScreenProto {
         getLeaseIdBytes() {
       java.lang.Object ref = leaseId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         leaseId_ = b;
@@ -37754,6 +38360,60 @@ public final class TerminalScreenProto {
       } else {
         return (com.google.protobuf.ByteString) ref;
       }
+    }
+
+    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object clientInstanceId_ = "";
+    /**
+     * <code>string client_instance_id = 2;</code>
+     * @return The clientInstanceId.
+     */
+    @java.lang.Override
+    public java.lang.String getClientInstanceId() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        clientInstanceId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string client_instance_id = 2;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getClientInstanceIdBytes() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        clientInstanceId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int INPUT_SEQ_FIELD_NUMBER = 3;
+    private long inputSeq_ = 0L;
+    /**
+     * <pre>
+     * 在 client_instance_id 内严格递增
+     * </pre>
+     *
+     * <code>uint64 input_seq = 3;</code>
+     * @return The inputSeq.
+     */
+    @java.lang.Override
+    public long getInputSeq() {
+      return inputSeq_;
     }
 
     public static final int TEXT_FIELD_NUMBER = 10;
@@ -37928,6 +38588,12 @@ public final class TerminalScreenProto {
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(leaseId_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 1, leaseId_);
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 2, clientInstanceId_);
+      }
+      if (inputSeq_ != 0L) {
+        output.writeUInt64(3, inputSeq_);
+      }
       if (inputCase_ == 10) {
         output.writeMessage(10, (com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInput) input_);
       }
@@ -37954,6 +38620,13 @@ public final class TerminalScreenProto {
       size = 0;
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(leaseId_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(1, leaseId_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, clientInstanceId_);
+      }
+      if (inputSeq_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(3, inputSeq_);
       }
       if (inputCase_ == 10) {
         size += com.google.protobuf.CodedOutputStream
@@ -37992,6 +38665,10 @@ public final class TerminalScreenProto {
 
       if (!getLeaseId()
           .equals(other.getLeaseId())) return false;
+      if (!getClientInstanceId()
+          .equals(other.getClientInstanceId())) return false;
+      if (getInputSeq()
+          != other.getInputSeq()) return false;
       if (!getInputCase().equals(other.getInputCase())) return false;
       switch (inputCase_) {
         case 10:
@@ -38030,6 +38707,11 @@ public final class TerminalScreenProto {
       hash = (19 * hash) + getDescriptor().hashCode();
       hash = (37 * hash) + LEASE_ID_FIELD_NUMBER;
       hash = (53 * hash) + getLeaseId().hashCode();
+      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getClientInstanceId().hashCode();
+      hash = (37 * hash) + INPUT_SEQ_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getInputSeq());
       switch (inputCase_) {
         case 10:
           hash = (37 * hash) + TEXT_FIELD_NUMBER;
@@ -38186,6 +38868,8 @@ public final class TerminalScreenProto {
         super.clear();
         bitField0_ = 0;
         leaseId_ = "";
+        clientInstanceId_ = "";
+        inputSeq_ = 0L;
         if (textBuilder_ != null) {
           textBuilder_.clear();
         }
@@ -38240,6 +38924,12 @@ public final class TerminalScreenProto {
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.leaseId_ = leaseId_;
         }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.clientInstanceId_ = clientInstanceId_;
+        }
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.inputSeq_ = inputSeq_;
+        }
       }
 
       private void buildPartialOneofs(com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput result) {
@@ -38283,6 +38973,14 @@ public final class TerminalScreenProto {
           leaseId_ = other.leaseId_;
           bitField0_ |= 0x00000001;
           onChanged();
+        }
+        if (!other.getClientInstanceId().isEmpty()) {
+          clientInstanceId_ = other.clientInstanceId_;
+          bitField0_ |= 0x00000002;
+          onChanged();
+        }
+        if (other.getInputSeq() != 0L) {
+          setInputSeq(other.getInputSeq());
         }
         switch (other.getInputCase()) {
           case TEXT: {
@@ -38340,6 +39038,16 @@ public final class TerminalScreenProto {
                 bitField0_ |= 0x00000001;
                 break;
               } // case 10
+              case 18: {
+                clientInstanceId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 18
+              case 24: {
+                inputSeq_ = input.readUInt64();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 24
               case 82: {
                 input.readMessage(
                     getTextFieldBuilder().getBuilder(),
@@ -38440,7 +39148,7 @@ public final class TerminalScreenProto {
           getLeaseIdBytes() {
         java.lang.Object ref = leaseId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           leaseId_ = b;
@@ -38495,6 +39203,122 @@ public final class TerminalScreenProto {
         checkByteStringIsUtf8(value);
         leaseId_ = value;
         bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object clientInstanceId_ = "";
+      /**
+       * <code>string client_instance_id = 2;</code>
+       * @return The clientInstanceId.
+       */
+      public java.lang.String getClientInstanceId() {
+        java.lang.Object ref = clientInstanceId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          clientInstanceId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string client_instance_id = 2;</code>
+       * @return The bytes for clientInstanceId.
+       */
+      public com.google.protobuf.ByteString
+          getClientInstanceIdBytes() {
+        java.lang.Object ref = clientInstanceId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          clientInstanceId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string client_instance_id = 2;</code>
+       * @param value The clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string client_instance_id = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearClientInstanceId() {
+        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
+        bitField0_ = (bitField0_ & ~0x00000002);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string client_instance_id = 2;</code>
+       * @param value The bytes for clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+
+      private long inputSeq_ ;
+      /**
+       * <pre>
+       * 在 client_instance_id 内严格递增
+       * </pre>
+       *
+       * <code>uint64 input_seq = 3;</code>
+       * @return The inputSeq.
+       */
+      @java.lang.Override
+      public long getInputSeq() {
+        return inputSeq_;
+      }
+      /**
+       * <pre>
+       * 在 client_instance_id 内严格递增
+       * </pre>
+       *
+       * <code>uint64 input_seq = 3;</code>
+       * @param value The inputSeq to set.
+       * @return This builder for chaining.
+       */
+      public Builder setInputSeq(long value) {
+
+        inputSeq_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 在 client_instance_id 内严格递增
+       * </pre>
+       *
+       * <code>uint64 input_seq = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearInputSeq() {
+        bitField0_ = (bitField0_ & ~0x00000004);
+        inputSeq_ = 0L;
         onChanged();
         return this;
       }
@@ -38623,7 +39447,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TextInput text = 10;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TextInputOrBuilder>
           getTextFieldBuilder() {
         if (textBuilder_ == null) {
           if (!(inputCase_ == 10)) {
@@ -38765,7 +39589,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.KeyInput key = 11;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.KeyInputOrBuilder>
           getKeyFieldBuilder() {
         if (keyBuilder_ == null) {
           if (!(inputCase_ == 11)) {
@@ -38907,7 +39731,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.PasteInput paste = 12;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PasteInputOrBuilder>
           getPasteFieldBuilder() {
         if (pasteBuilder_ == null) {
           if (!(inputCase_ == 12)) {
@@ -39049,7 +39873,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.MouseInput mouse = 13;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.MouseInputOrBuilder>
           getMouseFieldBuilder() {
         if (mouseBuilder_ == null) {
           if (!(inputCase_ == 13)) {
@@ -39191,7 +40015,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.FocusInput focus = 14;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInputOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInput, com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInput.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.FocusInputOrBuilder>
           getFocusFieldBuilder() {
         if (focusBuilder_ == null) {
           if (!(inputCase_ == 14)) {
@@ -39255,6 +40079,878 @@ public final class TerminalScreenProto {
 
     @java.lang.Override
     public com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalInput getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface InputAckOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v1.InputAck)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>string client_instance_id = 1;</code>
+     * @return The clientInstanceId.
+     */
+    java.lang.String getClientInstanceId();
+    /**
+     * <code>string client_instance_id = 1;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    com.google.protobuf.ByteString
+        getClientInstanceIdBytes();
+
+    /**
+     * <code>uint64 input_seq = 2;</code>
+     * @return The inputSeq.
+     */
+    long getInputSeq();
+
+    /**
+     * <pre>
+     * 用于判断断线后是否可安全重发
+     * </pre>
+     *
+     * <code>string terminal_instance_id = 3;</code>
+     * @return The terminalInstanceId.
+     */
+    java.lang.String getTerminalInstanceId();
+    /**
+     * <pre>
+     * 用于判断断线后是否可安全重发
+     * </pre>
+     *
+     * <code>string terminal_instance_id = 3;</code>
+     * @return The bytes for terminalInstanceId.
+     */
+    com.google.protobuf.ByteString
+        getTerminalInstanceIdBytes();
+
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+     * @return The enum numeric value on the wire for status.
+     */
+    int getStatusValue();
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+     * @return The status.
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus getStatus();
+  }
+  /**
+   * Protobuf type {@code webterm.terminal.screen.v1.InputAck}
+   */
+  public static final class InputAck extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v1.InputAck)
+      InputAckOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        InputAck.class.getName());
+    }
+    // Use InputAck.newBuilder() to construct.
+    private InputAck(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private InputAck() {
+      clientInstanceId_ = "";
+      terminalInstanceId_ = "";
+      status_ = 0;
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_InputAck_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder.class);
+    }
+
+    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object clientInstanceId_ = "";
+    /**
+     * <code>string client_instance_id = 1;</code>
+     * @return The clientInstanceId.
+     */
+    @java.lang.Override
+    public java.lang.String getClientInstanceId() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        clientInstanceId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string client_instance_id = 1;</code>
+     * @return The bytes for clientInstanceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getClientInstanceIdBytes() {
+      java.lang.Object ref = clientInstanceId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        clientInstanceId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int INPUT_SEQ_FIELD_NUMBER = 2;
+    private long inputSeq_ = 0L;
+    /**
+     * <code>uint64 input_seq = 2;</code>
+     * @return The inputSeq.
+     */
+    @java.lang.Override
+    public long getInputSeq() {
+      return inputSeq_;
+    }
+
+    public static final int TERMINAL_INSTANCE_ID_FIELD_NUMBER = 3;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object terminalInstanceId_ = "";
+    /**
+     * <pre>
+     * 用于判断断线后是否可安全重发
+     * </pre>
+     *
+     * <code>string terminal_instance_id = 3;</code>
+     * @return The terminalInstanceId.
+     */
+    @java.lang.Override
+    public java.lang.String getTerminalInstanceId() {
+      java.lang.Object ref = terminalInstanceId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        terminalInstanceId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * 用于判断断线后是否可安全重发
+     * </pre>
+     *
+     * <code>string terminal_instance_id = 3;</code>
+     * @return The bytes for terminalInstanceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTerminalInstanceIdBytes() {
+      java.lang.Object ref = terminalInstanceId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        terminalInstanceId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int STATUS_FIELD_NUMBER = 4;
+    private int status_ = 0;
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+     * @return The enum numeric value on the wire for status.
+     */
+    @java.lang.Override public int getStatusValue() {
+      return status_;
+    }
+    /**
+     * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+     * @return The status.
+     */
+    @java.lang.Override public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus getStatus() {
+      com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus result = com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.forNumber(status_);
+      return result == null ? com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.UNRECOGNIZED : result;
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, clientInstanceId_);
+      }
+      if (inputSeq_ != 0L) {
+        output.writeUInt64(2, inputSeq_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(terminalInstanceId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 3, terminalInstanceId_);
+      }
+      if (status_ != com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.INPUT_ACK_STATUS_UNSPECIFIED.getNumber()) {
+        output.writeEnum(4, status_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, clientInstanceId_);
+      }
+      if (inputSeq_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(2, inputSeq_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(terminalInstanceId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(3, terminalInstanceId_);
+      }
+      if (status_ != com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.INPUT_ACK_STATUS_UNSPECIFIED.getNumber()) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeEnumSize(4, status_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck)) {
+        return super.equals(obj);
+      }
+      com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck other = (com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) obj;
+
+      if (!getClientInstanceId()
+          .equals(other.getClientInstanceId())) return false;
+      if (getInputSeq()
+          != other.getInputSeq()) return false;
+      if (!getTerminalInstanceId()
+          .equals(other.getTerminalInstanceId())) return false;
+      if (status_ != other.status_) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getClientInstanceId().hashCode();
+      hash = (37 * hash) + INPUT_SEQ_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getInputSeq());
+      hash = (37 * hash) + TERMINAL_INSTANCE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getTerminalInstanceId().hashCode();
+      hash = (37 * hash) + STATUS_FIELD_NUMBER;
+      hash = (53 * hash) + status_;
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code webterm.terminal.screen.v1.InputAck}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v1.InputAck)
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_InputAck_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.Builder.class);
+      }
+
+      // Construct using com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        clientInstanceId_ = "";
+        inputSeq_ = 0L;
+        terminalInstanceId_ = "";
+        status_ = 0;
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_InputAck_descriptor;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck build() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck result = new com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.clientInstanceId_ = clientInstanceId_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.inputSeq_ = inputSeq_;
+        }
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.terminalInstanceId_ = terminalInstanceId_;
+        }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.status_ = status_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck.getDefaultInstance()) return this;
+        if (!other.getClientInstanceId().isEmpty()) {
+          clientInstanceId_ = other.clientInstanceId_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (other.getInputSeq() != 0L) {
+          setInputSeq(other.getInputSeq());
+        }
+        if (!other.getTerminalInstanceId().isEmpty()) {
+          terminalInstanceId_ = other.terminalInstanceId_;
+          bitField0_ |= 0x00000004;
+          onChanged();
+        }
+        if (other.status_ != 0) {
+          setStatusValue(other.getStatusValue());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 10: {
+                clientInstanceId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
+              case 16: {
+                inputSeq_ = input.readUInt64();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 16
+              case 26: {
+                terminalInstanceId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 26
+              case 32: {
+                status_ = input.readEnum();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 32
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object clientInstanceId_ = "";
+      /**
+       * <code>string client_instance_id = 1;</code>
+       * @return The clientInstanceId.
+       */
+      public java.lang.String getClientInstanceId() {
+        java.lang.Object ref = clientInstanceId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          clientInstanceId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string client_instance_id = 1;</code>
+       * @return The bytes for clientInstanceId.
+       */
+      public com.google.protobuf.ByteString
+          getClientInstanceIdBytes() {
+        java.lang.Object ref = clientInstanceId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          clientInstanceId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string client_instance_id = 1;</code>
+       * @param value The clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string client_instance_id = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearClientInstanceId() {
+        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string client_instance_id = 1;</code>
+       * @param value The bytes for clientInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setClientInstanceIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        clientInstanceId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private long inputSeq_ ;
+      /**
+       * <code>uint64 input_seq = 2;</code>
+       * @return The inputSeq.
+       */
+      @java.lang.Override
+      public long getInputSeq() {
+        return inputSeq_;
+      }
+      /**
+       * <code>uint64 input_seq = 2;</code>
+       * @param value The inputSeq to set.
+       * @return This builder for chaining.
+       */
+      public Builder setInputSeq(long value) {
+
+        inputSeq_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint64 input_seq = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearInputSeq() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        inputSeq_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object terminalInstanceId_ = "";
+      /**
+       * <pre>
+       * 用于判断断线后是否可安全重发
+       * </pre>
+       *
+       * <code>string terminal_instance_id = 3;</code>
+       * @return The terminalInstanceId.
+       */
+      public java.lang.String getTerminalInstanceId() {
+        java.lang.Object ref = terminalInstanceId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          terminalInstanceId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * 用于判断断线后是否可安全重发
+       * </pre>
+       *
+       * <code>string terminal_instance_id = 3;</code>
+       * @return The bytes for terminalInstanceId.
+       */
+      public com.google.protobuf.ByteString
+          getTerminalInstanceIdBytes() {
+        java.lang.Object ref = terminalInstanceId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          terminalInstanceId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * 用于判断断线后是否可安全重发
+       * </pre>
+       *
+       * <code>string terminal_instance_id = 3;</code>
+       * @param value The terminalInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTerminalInstanceId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        terminalInstanceId_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 用于判断断线后是否可安全重发
+       * </pre>
+       *
+       * <code>string terminal_instance_id = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearTerminalInstanceId() {
+        terminalInstanceId_ = getDefaultInstance().getTerminalInstanceId();
+        bitField0_ = (bitField0_ & ~0x00000004);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 用于判断断线后是否可安全重发
+       * </pre>
+       *
+       * <code>string terminal_instance_id = 3;</code>
+       * @param value The bytes for terminalInstanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTerminalInstanceIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        terminalInstanceId_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+
+      private int status_ = 0;
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+       * @return The enum numeric value on the wire for status.
+       */
+      @java.lang.Override public int getStatusValue() {
+        return status_;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+       * @param value The enum numeric value on the wire for status to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStatusValue(int value) {
+        status_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+       * @return The status.
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus getStatus() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus result = com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.forNumber(status_);
+        return result == null ? com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus.UNRECOGNIZED : result;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+       * @param value The status to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStatus(com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAckStatus value) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        bitField0_ |= 0x00000008;
+        status_ = value.getNumber();
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v1.InputAckStatus status = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearStatus() {
+        bitField0_ = (bitField0_ & ~0x00000008);
+        status_ = 0;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.InputAck)
+    }
+
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v1.InputAck)
+    private static final com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck();
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<InputAck>
+        PARSER = new com.google.protobuf.AbstractParser<InputAck>() {
+      @java.lang.Override
+      public InputAck parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<InputAck> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<InputAck> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.InputAck getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -39339,7 +41035,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         data_ = s;
@@ -39359,7 +41055,7 @@ public final class TerminalScreenProto {
         getDataBytes() {
       java.lang.Object ref = data_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         data_ = b;
@@ -39696,7 +41392,7 @@ public final class TerminalScreenProto {
           getDataBytes() {
         java.lang.Object ref = data_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           data_ = b;
@@ -39911,7 +41607,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         key_ = s;
@@ -39931,7 +41627,7 @@ public final class TerminalScreenProto {
         getKeyBytes() {
       java.lang.Object ref = key_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         key_ = b;
@@ -40378,7 +42074,7 @@ public final class TerminalScreenProto {
           getKeyBytes() {
         java.lang.Object ref = key_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           key_ = b;
@@ -40545,7 +42241,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ModifierSet modifiers = 2;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSetOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSetOrBuilder>
           getModifiersFieldBuilder() {
         if (modifiersBuilder_ == null) {
           modifiersBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -40732,7 +42428,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         data_ = s;
@@ -40752,7 +42448,7 @@ public final class TerminalScreenProto {
         getDataBytes() {
       java.lang.Object ref = data_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         data_ = b;
@@ -41089,7 +42785,7 @@ public final class TerminalScreenProto {
           getDataBytes() {
         java.lang.Object ref = data_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           data_ = b;
@@ -42087,7 +43783,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ModifierSet modifiers = 5;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSetOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSet.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ModifierSetOrBuilder>
           getModifiersFieldBuilder() {
         if (modifiersBuilder_ == null) {
           modifiersBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -43541,7 +45237,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -43557,7 +45253,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -44470,7 +46166,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -44673,7 +46369,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.Bell bell = 10;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.Bell, com.webterm.terminal.protocol.generated.TerminalScreenProto.Bell.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.BellOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.Bell, com.webterm.terminal.protocol.generated.TerminalScreenProto.Bell.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.BellOrBuilder>
           getBellFieldBuilder() {
         if (bellBuilder_ == null) {
           if (!(effectCase_ == 10)) {
@@ -44815,7 +46511,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TitleChanged title = 11;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChangedOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TitleChangedOrBuilder>
           getTitleFieldBuilder() {
         if (titleBuilder_ == null) {
           if (!(effectCase_ == 11)) {
@@ -44957,7 +46653,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.WorkingDirectoryChanged cwd = 12;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChangedOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.WorkingDirectoryChangedOrBuilder>
           getCwdFieldBuilder() {
         if (cwdBuilder_ == null) {
           if (!(effectCase_ == 12)) {
@@ -45099,7 +46795,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ClipboardReadRequest clipboard_read = 13;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequestOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardReadRequestOrBuilder>
           getClipboardReadFieldBuilder() {
         if (clipboardReadBuilder_ == null) {
           if (!(effectCase_ == 13)) {
@@ -45241,7 +46937,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ClipboardWriteRequest clipboard_write = 14;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequestOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequest, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ClipboardWriteRequestOrBuilder>
           getClipboardWriteFieldBuilder() {
         if (clipboardWriteBuilder_ == null) {
           if (!(effectCase_ == 14)) {
@@ -45383,7 +47079,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.DesktopNotification notification = 15;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotification, com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotification.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotificationOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotification, com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotification.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.DesktopNotificationOrBuilder>
           getNotificationFieldBuilder() {
         if (notificationBuilder_ == null) {
           if (!(effectCase_ == 15)) {
@@ -45525,7 +47221,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.PaletteChanged palette = 16;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChangedOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChanged, com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChanged.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.PaletteChangedOrBuilder>
           getPaletteFieldBuilder() {
         if (paletteBuilder_ == null) {
           if (!(effectCase_ == 16)) {
@@ -45667,7 +47363,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.ShellIntegrationMark shell_mark = 17;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMark, com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMark.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMarkOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMark, com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMark.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.ShellIntegrationMarkOrBuilder>
           getShellMarkFieldBuilder() {
         if (shellMarkBuilder_ == null) {
           if (!(effectCase_ == 17)) {
@@ -46158,7 +47854,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         title_ = s;
@@ -46174,7 +47870,7 @@ public final class TerminalScreenProto {
         getTitleBytes() {
       java.lang.Object ref = title_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
@@ -46503,7 +48199,7 @@ public final class TerminalScreenProto {
           getTitleBytes() {
         java.lang.Object ref = title_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           title_ = b;
@@ -46668,7 +48364,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         path_ = s;
@@ -46684,7 +48380,7 @@ public final class TerminalScreenProto {
         getPathBytes() {
       java.lang.Object ref = path_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         path_ = b;
@@ -47013,7 +48709,7 @@ public final class TerminalScreenProto {
           getPathBytes() {
         java.lang.Object ref = path_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           path_ = b;
@@ -47199,7 +48895,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -47215,7 +48911,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -47242,7 +48938,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         clipboard_ = s;
@@ -47262,7 +48958,7 @@ public final class TerminalScreenProto {
         getClipboardBytes() {
       java.lang.Object ref = clipboard_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         clipboard_ = b;
@@ -47615,7 +49311,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -47695,7 +49391,7 @@ public final class TerminalScreenProto {
           getClipboardBytes() {
         java.lang.Object ref = clipboard_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           clipboard_ = b;
@@ -47892,7 +49588,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -47908,7 +49604,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -47931,7 +49627,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         clipboard_ = s;
@@ -47947,7 +49643,7 @@ public final class TerminalScreenProto {
         getClipboardBytes() {
       java.lang.Object ref = clipboard_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         clipboard_ = b;
@@ -48334,7 +50030,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -48406,7 +50102,7 @@ public final class TerminalScreenProto {
           getClipboardBytes() {
         java.lang.Object ref = clipboard_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           clipboard_ = b;
@@ -48616,7 +50312,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         title_ = s;
@@ -48632,7 +50328,7 @@ public final class TerminalScreenProto {
         getTitleBytes() {
       java.lang.Object ref = title_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
@@ -48655,7 +50351,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         body_ = s;
@@ -48671,7 +50367,7 @@ public final class TerminalScreenProto {
         getBodyBytes() {
       java.lang.Object ref = body_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         body_ = b;
@@ -49024,7 +50720,7 @@ public final class TerminalScreenProto {
           getTitleBytes() {
         java.lang.Object ref = title_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           title_ = b;
@@ -49096,7 +50792,7 @@ public final class TerminalScreenProto {
           getBodyBytes() {
         java.lang.Object ref = body_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           body_ = b;
@@ -49700,7 +51396,7 @@ public final class TerminalScreenProto {
        * <code>.webterm.terminal.screen.v1.TerminalPalette palette = 1;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder> 
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPaletteOrBuilder>
           getPaletteFieldBuilder() {
         if (paletteBuilder_ == null) {
           paletteBuilder_ = new com.google.protobuf.SingleFieldBuilder<
@@ -49856,7 +51552,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         type_ = s;
@@ -49876,7 +51572,7 @@ public final class TerminalScreenProto {
         getTypeBytes() {
       java.lang.Object ref = type_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         type_ = b;
@@ -49899,7 +51595,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         data_ = s;
@@ -49915,7 +51611,7 @@ public final class TerminalScreenProto {
         getDataBytes() {
       java.lang.Object ref = data_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         data_ = b;
@@ -50276,7 +51972,7 @@ public final class TerminalScreenProto {
           getTypeBytes() {
         java.lang.Object ref = type_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           type_ = b;
@@ -50360,7 +52056,7 @@ public final class TerminalScreenProto {
           getDataBytes() {
         java.lang.Object ref = data_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           data_ = b;
@@ -50556,7 +52252,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         requestId_ = s;
@@ -50572,7 +52268,7 @@ public final class TerminalScreenProto {
         getRequestIdBytes() {
       java.lang.Object ref = requestId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         requestId_ = b;
@@ -51017,7 +52713,7 @@ public final class TerminalScreenProto {
           getRequestIdBytes() {
         java.lang.Object ref = requestId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           requestId_ = b;
@@ -51403,7 +53099,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         sessionId_ = s;
@@ -51419,7 +53115,7 @@ public final class TerminalScreenProto {
         getSessionIdBytes() {
       java.lang.Object ref = sessionId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         sessionId_ = b;
@@ -51442,7 +53138,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         instanceId_ = s;
@@ -51458,7 +53154,7 @@ public final class TerminalScreenProto {
         getInstanceIdBytes() {
       java.lang.Object ref = instanceId_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         instanceId_ = b;
@@ -51481,7 +53177,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         title_ = s;
@@ -51497,7 +53193,7 @@ public final class TerminalScreenProto {
         getTitleBytes() {
       java.lang.Object ref = title_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         title_ = b;
@@ -51520,7 +53216,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         cwd_ = s;
@@ -51536,7 +53232,7 @@ public final class TerminalScreenProto {
         getCwdBytes() {
       java.lang.Object ref = cwd_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         cwd_ = b;
@@ -51559,7 +53255,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         command_ = s;
@@ -51575,7 +53271,7 @@ public final class TerminalScreenProto {
         getCommandBytes() {
       java.lang.Object ref = command_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         command_ = b;
@@ -51598,7 +53294,7 @@ public final class TerminalScreenProto {
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         status_ = s;
@@ -51614,7 +53310,7 @@ public final class TerminalScreenProto {
         getStatusBytes() {
       java.lang.Object ref = status_;
       if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
         status_ = b;
@@ -52201,7 +53897,7 @@ public final class TerminalScreenProto {
           getSessionIdBytes() {
         java.lang.Object ref = sessionId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           sessionId_ = b;
@@ -52273,7 +53969,7 @@ public final class TerminalScreenProto {
           getInstanceIdBytes() {
         java.lang.Object ref = instanceId_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           instanceId_ = b;
@@ -52345,7 +54041,7 @@ public final class TerminalScreenProto {
           getTitleBytes() {
         java.lang.Object ref = title_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           title_ = b;
@@ -52417,7 +54113,7 @@ public final class TerminalScreenProto {
           getCwdBytes() {
         java.lang.Object ref = cwd_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           cwd_ = b;
@@ -52489,7 +54185,7 @@ public final class TerminalScreenProto {
           getCommandBytes() {
         java.lang.Object ref = command_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           command_ = b;
@@ -52561,7 +54257,7 @@ public final class TerminalScreenProto {
           getStatusBytes() {
         java.lang.Object ref = status_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
           status_ = b;
@@ -53223,252 +54919,257 @@ public final class TerminalScreenProto {
 
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ScreenEnvelope_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ScreenEnvelope_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Hello_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Hello_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryPreference_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryPreference_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_CapabilitySet_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_CapabilitySet_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Ping_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Ping_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Pong_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Pong_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ResumeAck_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ResumeAck_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ScreenSnapshot_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ScreenSnapshot_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ScreenPatch_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ScreenPatch_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_PromotedRow_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_PromotedRow_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Size_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Size_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalLine_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalLine_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_CellRun_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_CellRun_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Cell_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Cell_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Color_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Color_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalStyle_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalStyle_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_CellAttrs_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_CellAttrs_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Hyperlink_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Hyperlink_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Cursor_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Cursor_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Modes_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Modes_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalPalette_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalPalette_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryWindow_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryLine_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryLine_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryRequest_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryPage_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_HistoryTrim_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ResyncRequest_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_AcquireLayout_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_AcquireLayout_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_LayoutLease_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_LayoutLease_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ReleaseLayout_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ReleaseLayout_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Resize_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Resize_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_webterm_terminal_screen_v1_InputAck_descriptor;
+  private static final
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TextInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TextInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_KeyInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_KeyInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_PasteInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_PasteInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_MouseInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_MouseInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_FocusInput_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_FocusInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ModifierSet_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalEffect_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Bell_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Bell_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TitleChanged_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_DesktopNotification_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_PaletteChanged_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_ClipboardResponse_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalInfo_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_Exit_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_Exit_fieldAccessorTable;
 
@@ -53481,7 +55182,7 @@ public final class TerminalScreenProto {
   static {
     java.lang.String[] descriptorData = {
       "\n\"shared/proto/terminal_screen.proto\022\032we" +
-      "bterm.terminal.screen.v1\"\276\t\n\016ScreenEnvel" +
+      "bterm.terminal.screen.v1\"\371\t\n\016ScreenEnvel" +
       "ope\022\030\n\020protocol_version\030\001 \001(\r\0222\n\005hello\030\n" +
       " \001(\0132!.webterm.terminal.screen.v1.HelloH" +
       "\000\022>\n\010snapshot\030\013 \001(\0132*.webterm.terminal.s" +
@@ -53511,206 +55212,217 @@ public final class TerminalScreenProto {
       "\001(\0132 .webterm.terminal.screen.v1.PingH\000\022" +
       "0\n\004pong\030\033 \001(\0132 .webterm.terminal.screen." +
       "v1.PongH\000\022;\n\nresume_ack\030\034 \001(\0132%.webterm." +
-      "terminal.screen.v1.ResumeAckH\000B\t\n\007payloa" +
-      "d\"\221\002\n\005Hello\022\017\n\007version\030\001 \001(\r\022\014\n\004cols\030\002 \001" +
-      "(\005\022\014\n\004rows\030\003 \001(\005\022\023\n\013instance_id\030\004 \001(\t\022\024\n" +
-      "\014layout_epoch\030\005 \001(\004\022\027\n\017screen_revision\030\006" +
-      " \001(\004\022\026\n\016has_projection\030\007 \001(\010\022>\n\007history\030" +
-      "\010 \001(\0132-.webterm.terminal.screen.v1.Histo" +
-      "ryPreference\022?\n\014capabilities\030\t \001(\0132).web" +
-      "term.terminal.screen.v1.CapabilitySet\":\n" +
-      "\021HistoryPreference\022\022\n\ntail_lines\030\001 \001(\005\022\021" +
-      "\n\tpage_size\030\002 \001(\005\"H\n\rCapabilitySet\022\023\n\013ro" +
-      "w_patches\030\001 \001(\010\022\022\n\nscroll_ops\030\002 \001(\010\022\016\n\006i" +
-      "mages\030\003 \001(\010\"\037\n\004Ping\022\027\n\017screen_revision\030\001" +
-      " \001(\004\"\037\n\004Pong\022\027\n\017screen_revision\030\001 \001(\004\"O\n" +
-      "\tResumeAck\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layou" +
-      "t_epoch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\"\220" +
-      "\005\n\016ScreenSnapshot\022\022\n\nsession_id\030\001 \001(\t\022\023\n" +
-      "\013instance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004" +
-      "\022\027\n\017screen_revision\030\004 \001(\004\0222\n\010geometry\030\005 " +
-      "\001(\0132 .webterm.terminal.screen.v1.Size\022=\n" +
-      "\ractive_buffer\030\006 \001(\0162&.webterm.terminal." +
-      "screen.v1.BufferKind\0222\n\006cursor\030\007 \001(\0132\".w" +
-      "ebterm.terminal.screen.v1.Cursor\0220\n\005mode" +
-      "s\030\010 \001(\0132!.webterm.terminal.screen.v1.Mod" +
-      "es\022<\n\007palette\030\t \001(\0132+.webterm.terminal.s" +
-      "creen.v1.TerminalPalette\022:\n\007history\030\n \001(" +
-      "\0132).webterm.terminal.screen.v1.HistoryWi" +
-      "ndow\0228\n\006screen\030\013 \003(\0132(.webterm.terminal." +
-      "screen.v1.TerminalLine\0229\n\006styles\030\014 \003(\0132)" +
-      ".webterm.terminal.screen.v1.TerminalStyl" +
-      "e\0224\n\005links\030\r \003(\0132%.webterm.terminal.scre" +
-      "en.v1.Hyperlink\022\r\n\005title\030\016 \001(\t\022\031\n\021workin" +
-      "g_directory\030\017 \001(\t\"\353\005\n\013ScreenPatch\022\024\n\014lay" +
-      "out_epoch\030\001 \001(\004\022\025\n\rbase_revision\030\002 \001(\004\022\027" +
-      "\n\017screen_revision\030\003 \001(\004\022?\n\016history_appen" +
-      "d\030\004 \003(\0132\'.webterm.terminal.screen.v1.His" +
-      "toryLine\022=\n\013screen_rows\030\005 \003(\0132(.webterm." +
-      "terminal.screen.v1.TerminalLine\0222\n\006curso" +
-      "r\030\006 \001(\0132\".webterm.terminal.screen.v1.Cur" +
-      "sor\0220\n\005modes\030\007 \001(\0132!.webterm.terminal.sc" +
-      "reen.v1.Modes\022<\n\007palette\030\010 \001(\0132+.webterm" +
-      ".terminal.screen.v1.TerminalPalette\022=\n\nn" +
-      "ew_styles\030\t \003(\0132).webterm.terminal.scree" +
-      "n.v1.TerminalStyle\0228\n\tnew_links\030\n \003(\0132%." +
-      "webterm.terminal.screen.v1.Hyperlink\022\022\n\005" +
-      "title\030\013 \001(\tH\000\210\001\001\022\036\n\021working_directory\030\014 " +
-      "\001(\tH\001\210\001\001\022>\n\rpromoted_rows\030\r \003(\0132\'.webter" +
-      "m.terminal.screen.v1.PromotedRow\022\023\n\013inst" +
-      "ance_id\030\016 \001(\t\022,\n\037first_available_history" +
-      "_line_id\030\017 \001(\004H\002\210\001\001B\010\n\006_titleB\024\n\022_workin" +
-      "g_directoryB\"\n _first_available_history_" +
-      "line_id\":\n\013PromotedRow\022\022\n\nscreen_row\030\001 \001" +
-      "(\005\022\027\n\017history_line_id\030\002 \001(\004\"\"\n\004Size\022\014\n\004r" +
-      "ows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"p\n\014TerminalLine\022" +
-      "\013\n\003row\030\001 \001(\005\022\017\n\007line_id\030\002 \001(\004\022\017\n\007wrapped" +
-      "\030\003 \001(\010\0221\n\004runs\030\004 \003(\0132#.webterm.terminal." +
-      "screen.v1.CellRun\"G\n\007CellRun\022\013\n\003col\030\001 \001(" +
-      "\005\022/\n\005cells\030\002 \003(\0132 .webterm.terminal.scre" +
-      "en.v1.Cell\"F\n\004Cell\022\014\n\004text\030\001 \001(\t\022\r\n\005widt" +
-      "h\030\002 \001(\r\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link_id\030\004 \001" +
-      "(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webterm.term" +
-      "inal.screen.v1.ColorKind\022\r\n\005index\030\002 \001(\005\022" +
-      "\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002id\030\001 \001" +
-      "(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal.screen" +
-      ".v1.Color\022-\n\002bg\030\003 \001(\0132!.webterm.terminal" +
-      ".screen.v1.Color\022:\n\017underline_color\030\004 \001(" +
-      "\0132!.webterm.terminal.screen.v1.Color\0224\n\005" +
-      "attrs\030\005 \001(\0132%.webterm.terminal.screen.v1" +
-      ".CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001 \001(\010\022\013" +
-      "\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tunderline" +
-      "\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022\027\n\017curl" +
-      "y_underline\030\006 \001(\010\022\030\n\020dotted_underline\030\007 " +
-      "\001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\nblink_s" +
-      "low\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007reverse" +
-      "\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"4" +
-      "\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n\006" +
-      "params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003c" +
-      "ol\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shape\030\004 \001(\016" +
-      "2\'.webterm.terminal.screen.v1.CursorShap" +
-      "e\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022applicatio" +
-      "n_cursor\030\001 \001(\010\022\032\n\022application_keypad\030\002 \001" +
-      "(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mouse_tra" +
-      "cking\030\004 \001(\0162).webterm.terminal.screen.v1" +
-      ".MouseTracking\022A\n\016mouse_encoding\030\005 \001(\0162)" +
-      ".webterm.terminal.screen.v1.MouseEncodin" +
-      "g\022\027\n\017focus_reporting\030\006 \001(\010\"\317\001\n\017TerminalP" +
-      "alette\0225\n\ndefault_fg\030\001 \001(\0132!.webterm.ter" +
-      "minal.screen.v1.Color\0225\n\ndefault_bg\030\002 \001(" +
-      "\0132!.webterm.terminal.screen.v1.Color\0227\n\014" +
-      "cursor_color\030\003 \001(\0132!.webterm.terminal.sc" +
-      "reen.v1.Color\022\025\n\rreverse_video\030\004 \001(\010\"\300\001\n" +
-      "\rHistoryWindow\022\037\n\027first_available_line_i" +
-      "d\030\001 \001(\004\022\036\n\026first_included_line_id\030\002 \001(\004\022" +
-      "\035\n\025last_included_line_id\030\003 \001(\004\022\027\n\017has_mo" +
-      "re_before\030\004 \001(\010\0226\n\005lines\030\005 \003(\0132\'.webterm" +
-      ".terminal.screen.v1.HistoryLine\"]\n\013Histo" +
-      "ryLine\022\n\n\002id\030\001 \001(\004\022\017\n\007wrapped\030\002 \001(\010\0221\n\004r" +
-      "uns\030\003 \003(\0132#.webterm.terminal.screen.v1.C" +
-      "ellRun\"a\n\016HistoryRequest\022\022\n\nrequest_id\030\001" +
-      " \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016before_lin" +
-      "e_id\030\003 \001(\004\022\r\n\005limit\030\004 \001(\005\"\262\002\n\013HistoryPag" +
-      "e\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 " +
-      "\001(\004\022\026\n\016as_of_revision\030\003 \001(\004\022\037\n\027first_ava" +
-      "ilable_line_id\030\004 \001(\004\022\027\n\017has_more_before\030" +
-      "\005 \001(\010\0226\n\005lines\030\006 \003(\0132\'.webterm.terminal." +
-      "screen.v1.HistoryLine\0229\n\006styles\030\007 \003(\0132)." +
-      "webterm.terminal.screen.v1.TerminalStyle" +
-      "\0224\n\005links\030\010 \003(\0132%.webterm.terminal.scree" +
-      "n.v1.Hyperlink\"D\n\013HistoryTrim\022\024\n\014layout_" +
-      "epoch\030\001 \001(\004\022\037\n\027first_available_line_id\030\002" +
-      " \001(\004\"N\n\rResyncRequest\022\024\n\014layout_epoch\030\001 " +
-      "\001(\004\022\027\n\017screen_revision\030\002 \001(\004\022\016\n\006reason\030\003" +
-      " \001(\t\"8\n\rAcquireLayout\022\022\n\nrequest_id\030\001 \001(" +
-      "\t\022\023\n\013interactive\030\002 \001(\010\"\244\001\n\013LayoutLease\022\022" +
-      "\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n\007" +
-      "granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001(\010\0222\n\010ge" +
-      "ometry\030\005 \001(\0132 .webterm.terminal.screen.v" +
-      "1.Size\022\025\n\rexpires_at_ms\030\006 \001(\004\"!\n\rRelease" +
-      "Layout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006Resize\022\014\n\004co" +
-      "ls\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t" +
-      "\022\022\n\nrequest_id\030\004 \001(\t\"\301\002\n\rTerminalInput\022\020" +
-      "\n\010lease_id\030\001 \001(\t\0225\n\004text\030\n \001(\0132%.webterm" +
-      ".terminal.screen.v1.TextInputH\000\0223\n\003key\030\013" +
-      " \001(\0132$.webterm.terminal.screen.v1.KeyInp" +
-      "utH\000\0227\n\005paste\030\014 \001(\0132&.webterm.terminal.s" +
-      "creen.v1.PasteInputH\000\0227\n\005mouse\030\r \001(\0132&.w" +
-      "ebterm.terminal.screen.v1.MouseInputH\000\0227" +
-      "\n\005focus\030\016 \001(\0132&.webterm.terminal.screen." +
-      "v1.FocusInputH\000B\007\n\005input\"\031\n\tTextInput\022\014\n" +
-      "\004data\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key\030\001 \001(\t\022:\n\t" +
-      "modifiers\030\002 \001(\0132\'.webterm.terminal.scree" +
-      "n.v1.ModifierSet\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPas" +
-      "teInput\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003" +
-      "row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'" +
-      ".webterm.terminal.screen.v1.MouseButton\022" +
-      "\023\n\013wheel_delta\030\004 \001(\005\022:\n\tmodifiers\030\005 \001(\0132" +
-      "\'.webterm.terminal.screen.v1.ModifierSet" +
-      "\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFocusInput\022\017\n\007focus" +
-      "ed\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005shift\030\001 \001(\010\022\013" +
-      "\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"" +
-      "\343\004\n\016TerminalEffect\022\023\n\013instance_id\030\001 \001(\t\022" +
-      "\027\n\017screen_revision\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 " +
-      ".webterm.terminal.screen.v1.BellH\000\0229\n\005ti" +
-      "tle\030\013 \001(\0132(.webterm.terminal.screen.v1.T" +
-      "itleChangedH\000\022B\n\003cwd\030\014 \001(\01323.webterm.ter" +
-      "minal.screen.v1.WorkingDirectoryChangedH" +
-      "\000\022J\n\016clipboard_read\030\r \001(\01320.webterm.term" +
-      "inal.screen.v1.ClipboardReadRequestH\000\022L\n" +
-      "\017clipboard_write\030\016 \001(\01321.webterm.termina" +
-      "l.screen.v1.ClipboardWriteRequestH\000\022G\n\014n" +
-      "otification\030\017 \001(\0132/.webterm.terminal.scr" +
-      "een.v1.DesktopNotificationH\000\022=\n\007palette\030" +
-      "\020 \001(\0132*.webterm.terminal.screen.v1.Palet" +
-      "teChangedH\000\022F\n\nshell_mark\030\021 \001(\01320.webter" +
-      "m.terminal.screen.v1.ShellIntegrationMar" +
-      "kH\000B\010\n\006effect\"\006\n\004Bell\"\035\n\014TitleChanged\022\r\n" +
-      "\005title\030\001 \001(\t\"\'\n\027WorkingDirectoryChanged\022" +
-      "\014\n\004path\030\001 \001(\t\"=\n\024ClipboardReadRequest\022\022\n" +
-      "\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025" +
-      "ClipboardWriteRequest\022\022\n\nrequest_id\030\001 \001(" +
-      "\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023De" +
-      "sktopNotification\022\r\n\005title\030\001 \001(\t\022\014\n\004body" +
-      "\030\002 \001(\t\"N\n\016PaletteChanged\022<\n\007palette\030\001 \001(" +
-      "\0132+.webterm.terminal.screen.v1.TerminalP" +
-      "alette\"2\n\024ShellIntegrationMark\022\014\n\004type\030\001" +
-      " \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021ClipboardResponse\022" +
-      "\022\n\nrequest_id\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007" +
-      "timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\316\001\n\014Terminal" +
-      "Info\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance_id\030" +
-      "\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n\007com" +
-      "mand\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022\014\n\004cols\030\t \001(\005" +
-      "\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_at_ms\030\013 \001(\003\022\031\n" +
-      "\021last_active_at_ms\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006\"\024\n\004" +
-      "Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027BUFF" +
-      "ER_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND_MAI" +
-      "N\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tColor" +
-      "Kind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025COLO" +
-      "R_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DEFAUL" +
-      "T_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COLOR_K" +
-      "IND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013Cur" +
-      "sorShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED\020\000\022\026" +
-      "\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_B" +
-      "AR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n\rMou" +
-      "seTracking\022\036\n\032MOUSE_TRACKING_UNSPECIFIED" +
-      "\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE_TRA" +
-      "CKING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n" +
-      "\036MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n\033MOU" +
-      "SE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRAC" +
-      "KING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_SGR_P" +
-      "IXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_ENCOD" +
-      "ING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_X10\020" +
-      "\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_ENCO" +
-      "DING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004*\242\001\n" +
-      "\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIED" +
-      "\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTO" +
-      "N_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MO" +
-      "USE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020" +
-      "\005Bq\n\'com.webterm.terminal.protocol.gener" +
-      "atedB\023TerminalScreenProtoZ1webterm/go-co" +
-      "re/internal/screenprotocol/generatedb\006pr" +
-      "oto3"
+      "terminal.screen.v1.ResumeAckH\000\0229\n\tinput_" +
+      "ack\030\035 \001(\0132$.webterm.terminal.screen.v1.I" +
+      "nputAckH\000B\t\n\007payload\"\255\002\n\005Hello\022\017\n\007versio" +
+      "n\030\001 \001(\r\022\014\n\004cols\030\002 \001(\005\022\014\n\004rows\030\003 \001(\005\022\023\n\013i" +
+      "nstance_id\030\004 \001(\t\022\024\n\014layout_epoch\030\005 \001(\004\022\027" +
+      "\n\017screen_revision\030\006 \001(\004\022\026\n\016has_projectio" +
+      "n\030\007 \001(\010\022>\n\007history\030\010 \001(\0132-.webterm.termi" +
+      "nal.screen.v1.HistoryPreference\022?\n\014capab" +
+      "ilities\030\t \001(\0132).webterm.terminal.screen." +
+      "v1.CapabilitySet\022\032\n\022client_instance_id\030\n" +
+      " \001(\t\":\n\021HistoryPreference\022\022\n\ntail_lines\030" +
+      "\001 \001(\005\022\021\n\tpage_size\030\002 \001(\005\"H\n\rCapabilitySe" +
+      "t\022\023\n\013row_patches\030\001 \001(\010\022\022\n\nscroll_ops\030\002 \001" +
+      "(\010\022\016\n\006images\030\003 \001(\010\"\037\n\004Ping\022\027\n\017screen_rev" +
+      "ision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017screen_revision\030\001" +
+      " \001(\004\"O\n\tResumeAck\022\023\n\013instance_id\030\001 \001(\t\022\024" +
+      "\n\014layout_epoch\030\002 \001(\004\022\027\n\017screen_revision\030" +
+      "\003 \001(\004\"\220\005\n\016ScreenSnapshot\022\022\n\nsession_id\030\001" +
+      " \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoc" +
+      "h\030\003 \001(\004\022\027\n\017screen_revision\030\004 \001(\004\0222\n\010geom" +
+      "etry\030\005 \001(\0132 .webterm.terminal.screen.v1." +
+      "Size\022=\n\ractive_buffer\030\006 \001(\0162&.webterm.te" +
+      "rminal.screen.v1.BufferKind\0222\n\006cursor\030\007 " +
+      "\001(\0132\".webterm.terminal.screen.v1.Cursor\022" +
+      "0\n\005modes\030\010 \001(\0132!.webterm.terminal.screen" +
+      ".v1.Modes\022<\n\007palette\030\t \001(\0132+.webterm.ter" +
+      "minal.screen.v1.TerminalPalette\022:\n\007histo" +
+      "ry\030\n \001(\0132).webterm.terminal.screen.v1.Hi" +
+      "storyWindow\0228\n\006screen\030\013 \003(\0132(.webterm.te" +
+      "rminal.screen.v1.TerminalLine\0229\n\006styles\030" +
+      "\014 \003(\0132).webterm.terminal.screen.v1.Termi" +
+      "nalStyle\0224\n\005links\030\r \003(\0132%.webterm.termin" +
+      "al.screen.v1.Hyperlink\022\r\n\005title\030\016 \001(\t\022\031\n" +
+      "\021working_directory\030\017 \001(\t\"\353\005\n\013ScreenPatch" +
+      "\022\024\n\014layout_epoch\030\001 \001(\004\022\025\n\rbase_revision\030" +
+      "\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\022?\n\016histor" +
+      "y_append\030\004 \003(\0132\'.webterm.terminal.screen" +
+      ".v1.HistoryLine\022=\n\013screen_rows\030\005 \003(\0132(.w" +
+      "ebterm.terminal.screen.v1.TerminalLine\0222" +
+      "\n\006cursor\030\006 \001(\0132\".webterm.terminal.screen" +
+      ".v1.Cursor\0220\n\005modes\030\007 \001(\0132!.webterm.term" +
+      "inal.screen.v1.Modes\022<\n\007palette\030\010 \001(\0132+." +
+      "webterm.terminal.screen.v1.TerminalPalet" +
+      "te\022=\n\nnew_styles\030\t \003(\0132).webterm.termina" +
+      "l.screen.v1.TerminalStyle\0228\n\tnew_links\030\n" +
+      " \003(\0132%.webterm.terminal.screen.v1.Hyperl" +
+      "ink\022\022\n\005title\030\013 \001(\tH\000\210\001\001\022\036\n\021working_direc" +
+      "tory\030\014 \001(\tH\001\210\001\001\022>\n\rpromoted_rows\030\r \003(\0132\'" +
+      ".webterm.terminal.screen.v1.PromotedRow\022" +
+      "\023\n\013instance_id\030\016 \001(\t\022,\n\037first_available_" +
+      "history_line_id\030\017 \001(\004H\002\210\001\001B\010\n\006_titleB\024\n\022" +
+      "_working_directoryB\"\n _first_available_h" +
+      "istory_line_id\":\n\013PromotedRow\022\022\n\nscreen_" +
+      "row\030\001 \001(\005\022\027\n\017history_line_id\030\002 \001(\004\"\"\n\004Si" +
+      "ze\022\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"p\n\014Termin" +
+      "alLine\022\013\n\003row\030\001 \001(\005\022\017\n\007line_id\030\002 \001(\004\022\017\n\007" +
+      "wrapped\030\003 \001(\010\0221\n\004runs\030\004 \003(\0132#.webterm.te" +
+      "rminal.screen.v1.CellRun\"G\n\007CellRun\022\013\n\003c" +
+      "ol\030\001 \001(\005\022/\n\005cells\030\002 \003(\0132 .webterm.termin" +
+      "al.screen.v1.Cell\"F\n\004Cell\022\014\n\004text\030\001 \001(\t\022" +
+      "\r\n\005width\030\002 \001(\r\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link" +
+      "_id\030\004 \001(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webte" +
+      "rm.terminal.screen.v1.ColorKind\022\r\n\005index" +
+      "\030\002 \001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n" +
+      "\002id\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal" +
+      ".screen.v1.Color\022-\n\002bg\030\003 \001(\0132!.webterm.t" +
+      "erminal.screen.v1.Color\022:\n\017underline_col" +
+      "or\030\004 \001(\0132!.webterm.terminal.screen.v1.Co" +
+      "lor\0224\n\005attrs\030\005 \001(\0132%.webterm.terminal.sc" +
+      "reen.v1.CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030" +
+      "\001 \001(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tun" +
+      "derline\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022" +
+      "\027\n\017curly_underline\030\006 \001(\010\022\030\n\020dotted_under" +
+      "line\030\007 \001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\n" +
+      "blink_slow\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007" +
+      "reverse\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030" +
+      "\r \001(\010\"4\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 " +
+      "\001(\t\022\016\n\006params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001" +
+      "(\005\022\013\n\003col\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shap" +
+      "e\030\004 \001(\0162\'.webterm.terminal.screen.v1.Cur" +
+      "sorShape\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022app" +
+      "lication_cursor\030\001 \001(\010\022\032\n\022application_key" +
+      "pad\030\002 \001(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mo" +
+      "use_tracking\030\004 \001(\0162).webterm.terminal.sc" +
+      "reen.v1.MouseTracking\022A\n\016mouse_encoding\030" +
+      "\005 \001(\0162).webterm.terminal.screen.v1.Mouse" +
+      "Encoding\022\027\n\017focus_reporting\030\006 \001(\010\"\317\001\n\017Te" +
+      "rminalPalette\0225\n\ndefault_fg\030\001 \001(\0132!.webt" +
+      "erm.terminal.screen.v1.Color\0225\n\ndefault_" +
+      "bg\030\002 \001(\0132!.webterm.terminal.screen.v1.Co" +
+      "lor\0227\n\014cursor_color\030\003 \001(\0132!.webterm.term" +
+      "inal.screen.v1.Color\022\025\n\rreverse_video\030\004 " +
+      "\001(\010\"\300\001\n\rHistoryWindow\022\037\n\027first_available" +
+      "_line_id\030\001 \001(\004\022\036\n\026first_included_line_id" +
+      "\030\002 \001(\004\022\035\n\025last_included_line_id\030\003 \001(\004\022\027\n" +
+      "\017has_more_before\030\004 \001(\010\0226\n\005lines\030\005 \003(\0132\'." +
+      "webterm.terminal.screen.v1.HistoryLine\"]" +
+      "\n\013HistoryLine\022\n\n\002id\030\001 \001(\004\022\017\n\007wrapped\030\002 \001" +
+      "(\010\0221\n\004runs\030\003 \003(\0132#.webterm.terminal.scre" +
+      "en.v1.CellRun\"a\n\016HistoryRequest\022\022\n\nreque" +
+      "st_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016bef" +
+      "ore_line_id\030\003 \001(\004\022\r\n\005limit\030\004 \001(\005\"\262\002\n\013His" +
+      "toryPage\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014layout_e" +
+      "poch\030\002 \001(\004\022\026\n\016as_of_revision\030\003 \001(\004\022\037\n\027fi" +
+      "rst_available_line_id\030\004 \001(\004\022\027\n\017has_more_" +
+      "before\030\005 \001(\010\0226\n\005lines\030\006 \003(\0132\'.webterm.te" +
+      "rminal.screen.v1.HistoryLine\0229\n\006styles\030\007" +
+      " \003(\0132).webterm.terminal.screen.v1.Termin" +
+      "alStyle\0224\n\005links\030\010 \003(\0132%.webterm.termina" +
+      "l.screen.v1.Hyperlink\"D\n\013HistoryTrim\022\024\n\014" +
+      "layout_epoch\030\001 \001(\004\022\037\n\027first_available_li" +
+      "ne_id\030\002 \001(\004\"N\n\rResyncRequest\022\024\n\014layout_e" +
+      "poch\030\001 \001(\004\022\027\n\017screen_revision\030\002 \001(\004\022\016\n\006r" +
+      "eason\030\003 \001(\t\"8\n\rAcquireLayout\022\022\n\nrequest_" +
+      "id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"\244\001\n\013Layout" +
+      "Lease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002 " +
+      "\001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001(" +
+      "\010\0222\n\010geometry\030\005 \001(\0132 .webterm.terminal.s" +
+      "creen.v1.Size\022\025\n\rexpires_at_ms\030\006 \001(\004\"!\n\r" +
+      "ReleaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006Resiz" +
+      "e\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010lease_i" +
+      "d\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\360\002\n\rTerminal" +
+      "Input\022\020\n\010lease_id\030\001 \001(\t\022\032\n\022client_instan" +
+      "ce_id\030\002 \001(\t\022\021\n\tinput_seq\030\003 \001(\004\0225\n\004text\030\n" +
+      " \001(\0132%.webterm.terminal.screen.v1.TextIn" +
+      "putH\000\0223\n\003key\030\013 \001(\0132$.webterm.terminal.sc" +
+      "reen.v1.KeyInputH\000\0227\n\005paste\030\014 \001(\0132&.webt" +
+      "erm.terminal.screen.v1.PasteInputH\000\0227\n\005m" +
+      "ouse\030\r \001(\0132&.webterm.terminal.screen.v1." +
+      "MouseInputH\000\0227\n\005focus\030\016 \001(\0132&.webterm.te" +
+      "rminal.screen.v1.FocusInputH\000B\007\n\005input\"\223" +
+      "\001\n\010InputAck\022\032\n\022client_instance_id\030\001 \001(\t\022" +
+      "\021\n\tinput_seq\030\002 \001(\004\022\034\n\024terminal_instance_" +
+      "id\030\003 \001(\t\022:\n\006status\030\004 \001(\0162*.webterm.termi" +
+      "nal.screen.v1.InputAckStatus\"\031\n\tTextInpu" +
+      "t\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key\030\001 \001(\t" +
+      "\022:\n\tmodifiers\030\002 \001(\0132\'.webterm.terminal.s" +
+      "creen.v1.ModifierSet\022\017\n\007pressed\030\003 \001(\010\"\032\n" +
+      "\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMouseInput" +
+      "\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006button\030\003 \001" +
+      "(\0162\'.webterm.terminal.screen.v1.MouseBut" +
+      "ton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n\tmodifiers\030\005 " +
+      "\001(\0132\'.webterm.terminal.screen.v1.Modifie" +
+      "rSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFocusInput\022\017\n\007f" +
+      "ocused\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005shift\030\001 \001" +
+      "(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 " +
+      "\001(\010\"\343\004\n\016TerminalEffect\022\023\n\013instance_id\030\001 " +
+      "\001(\t\022\027\n\017screen_revision\030\002 \001(\004\0220\n\004bell\030\n \001" +
+      "(\0132 .webterm.terminal.screen.v1.BellH\000\0229" +
+      "\n\005title\030\013 \001(\0132(.webterm.terminal.screen." +
+      "v1.TitleChangedH\000\022B\n\003cwd\030\014 \001(\01323.webterm" +
+      ".terminal.screen.v1.WorkingDirectoryChan" +
+      "gedH\000\022J\n\016clipboard_read\030\r \001(\01320.webterm." +
+      "terminal.screen.v1.ClipboardReadRequestH" +
+      "\000\022L\n\017clipboard_write\030\016 \001(\01321.webterm.ter" +
+      "minal.screen.v1.ClipboardWriteRequestH\000\022" +
+      "G\n\014notification\030\017 \001(\0132/.webterm.terminal" +
+      ".screen.v1.DesktopNotificationH\000\022=\n\007pale" +
+      "tte\030\020 \001(\0132*.webterm.terminal.screen.v1.P" +
+      "aletteChangedH\000\022F\n\nshell_mark\030\021 \001(\01320.we" +
+      "bterm.terminal.screen.v1.ShellIntegratio" +
+      "nMarkH\000B\010\n\006effect\"\006\n\004Bell\"\035\n\014TitleChange" +
+      "d\022\r\n\005title\030\001 \001(\t\"\'\n\027WorkingDirectoryChan" +
+      "ged\022\014\n\004path\030\001 \001(\t\"=\n\024ClipboardReadReques" +
+      "t\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t" +
+      "\"L\n\025ClipboardWriteRequest\022\022\n\nrequest_id\030" +
+      "\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2" +
+      "\n\023DesktopNotification\022\r\n\005title\030\001 \001(\t\022\014\n\004" +
+      "body\030\002 \001(\t\"N\n\016PaletteChanged\022<\n\007palette\030" +
+      "\001 \001(\0132+.webterm.terminal.screen.v1.Termi" +
+      "nalPalette\"2\n\024ShellIntegrationMark\022\014\n\004ty" +
+      "pe\030\001 \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021ClipboardRespo" +
+      "nse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010" +
+      "\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\316\001\n\014Term" +
+      "inalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance" +
+      "_id\030\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n" +
+      "\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022\014\n\004cols\030\t" +
+      " \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_at_ms\030\013 \001(" +
+      "\003\022\031\n\021last_active_at_ms\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006" +
+      "\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027" +
+      "BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND" +
+      "_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tC" +
+      "olorKind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025" +
+      "COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DE" +
+      "FAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COL" +
+      "OR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n" +
+      "\013CursorShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED" +
+      "\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHA" +
+      "PE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n" +
+      "\rMouseTracking\022\036\n\032MOUSE_TRACKING_UNSPECI" +
+      "FIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE" +
+      "_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020" +
+      "\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n" +
+      "\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_" +
+      "TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_S" +
+      "GR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_E" +
+      "NCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_" +
+      "X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_" +
+      "ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004" +
+      "*\255\001\n\016InputAckStatus\022 \n\034INPUT_ACK_STATUS_" +
+      "UNSPECIFIED\020\000\022\034\n\030INPUT_ACK_STATUS_WRITTE" +
+      "N\020\001\022\034\n\030INPUT_ACK_STATUS_IGNORED\020\002\022\035\n\031INP" +
+      "UT_ACK_STATUS_REJECTED\020\003\022\036\n\032INPUT_ACK_ST" +
+      "ATUS_UNCERTAIN\020\004*\242\001\n\013MouseButton\022\034\n\030MOUS" +
+      "E_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUTTON_L" +
+      "EFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022MOUSE_" +
+      "BUTTON_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_WHEEL\020\004\022\025" +
+      "\n\021MOUSE_BUTTON_MOVE\020\005Bq\n\'com.webterm.ter" +
+      "minal.protocol.generatedB\023TerminalScreen" +
+      "ProtoZ1webterm/go-core/internal/screenpr" +
+      "otocol/generatedb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -53721,13 +55433,13 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_ScreenEnvelope_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ScreenEnvelope_descriptor,
-        new java.lang.String[] { "ProtocolVersion", "Hello", "Snapshot", "Patch", "HistoryRequest", "HistoryPage", "HistoryTrim", "Resync", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "Effect", "ClipboardResponse", "Info", "Exit", "Ping", "Pong", "ResumeAck", "Payload", });
+        new java.lang.String[] { "ProtocolVersion", "Hello", "Snapshot", "Patch", "HistoryRequest", "HistoryPage", "HistoryTrim", "Resync", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "Effect", "ClipboardResponse", "Info", "Exit", "Ping", "Pong", "ResumeAck", "InputAck", "Payload", });
     internal_static_webterm_terminal_screen_v1_Hello_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_webterm_terminal_screen_v1_Hello_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Hello_descriptor,
-        new java.lang.String[] { "Version", "Cols", "Rows", "InstanceId", "LayoutEpoch", "ScreenRevision", "HasProjection", "History", "Capabilities", });
+        new java.lang.String[] { "Version", "Cols", "Rows", "InstanceId", "LayoutEpoch", "ScreenRevision", "HasProjection", "History", "Capabilities", "ClientInstanceId", });
     internal_static_webterm_terminal_screen_v1_HistoryPreference_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_webterm_terminal_screen_v1_HistoryPreference_fieldAccessorTable = new
@@ -53907,111 +55619,117 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_TerminalInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor,
-        new java.lang.String[] { "LeaseId", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
-    internal_static_webterm_terminal_screen_v1_TextInput_descriptor =
+        new java.lang.String[] { "LeaseId", "ClientInstanceId", "InputSeq", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
+    internal_static_webterm_terminal_screen_v1_InputAck_descriptor =
       getDescriptor().getMessageTypes().get(32);
+    internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_webterm_terminal_screen_v1_InputAck_descriptor,
+        new java.lang.String[] { "ClientInstanceId", "InputSeq", "TerminalInstanceId", "Status", });
+    internal_static_webterm_terminal_screen_v1_TextInput_descriptor =
+      getDescriptor().getMessageTypes().get(33);
     internal_static_webterm_terminal_screen_v1_TextInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TextInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_KeyInput_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_webterm_terminal_screen_v1_KeyInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_KeyInput_descriptor,
         new java.lang.String[] { "Key", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_PasteInput_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_webterm_terminal_screen_v1_PasteInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PasteInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_MouseInput_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_webterm_terminal_screen_v1_MouseInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_MouseInput_descriptor,
         new java.lang.String[] { "Row", "Col", "Button", "WheelDelta", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_FocusInput_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_webterm_terminal_screen_v1_FocusInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_FocusInput_descriptor,
         new java.lang.String[] { "Focused", });
     internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_webterm_terminal_screen_v1_ModifierSet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor,
         new java.lang.String[] { "Shift", "Alt", "Ctrl", "Meta", });
     internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_webterm_terminal_screen_v1_TerminalEffect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor,
         new java.lang.String[] { "InstanceId", "ScreenRevision", "Bell", "Title", "Cwd", "ClipboardRead", "ClipboardWrite", "Notification", "Palette", "ShellMark", "Effect", });
     internal_static_webterm_terminal_screen_v1_Bell_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_webterm_terminal_screen_v1_Bell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Bell_descriptor,
         new java.lang.String[] { });
     internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_webterm_terminal_screen_v1_TitleChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor,
         new java.lang.String[] { "Title", });
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor,
         new java.lang.String[] { "Path", });
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", });
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", "Data", });
     internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_webterm_terminal_screen_v1_DesktopNotification_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor,
         new java.lang.String[] { "Title", "Body", });
     internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_webterm_terminal_screen_v1_PaletteChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor,
         new java.lang.String[] { "Palette", });
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(47);
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor,
         new java.lang.String[] { "Type", "Data", });
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(48);
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor,
         new java.lang.String[] { "RequestId", "Allowed", "Timeout", "Data", });
     internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor =
-      getDescriptor().getMessageTypes().get(48);
+      getDescriptor().getMessageTypes().get(49);
     internal_static_webterm_terminal_screen_v1_TerminalInfo_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor,
         new java.lang.String[] { "SessionId", "InstanceId", "Title", "Cwd", "Command", "Status", "Cols", "Rows", "CreatedAtMs", "LastActiveAtMs", });
     internal_static_webterm_terminal_screen_v1_Exit_descriptor =
-      getDescriptor().getMessageTypes().get(49);
+      getDescriptor().getMessageTypes().get(50);
     internal_static_webterm_terminal_screen_v1_Exit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Exit_descriptor,

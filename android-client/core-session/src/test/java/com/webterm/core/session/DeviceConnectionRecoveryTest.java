@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class RelayMuxSessionManagerRecoveryTest {
+public class DeviceConnectionRecoveryTest {
 
     private static final class CapturingHandler {
         final Handler handler = mock(Handler.class);
@@ -71,7 +71,7 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     /** 只关心连接事件的 listener；失败回调记录最近一次 ChannelFailure。 */
-    private static final class SimpleListener implements RelayMuxSessionManager.ChannelListener {
+    private static final class SimpleListener implements DeviceConnection.ChannelListener {
         final AtomicBoolean connected = new AtomicBoolean();
         final AtomicReference<ChannelFailure> failure = new AtomicReference<>();
 
@@ -83,8 +83,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void reopenChannelReusesExisting() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener1 = new SimpleListener();
@@ -105,10 +105,84 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
+    public void newRuntimeOwnerReplacesOpenScreenChannelBeforeConnecting() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        SimpleListener oldRuntime = new SimpleListener();
+        SimpleListener newRuntime = new SimpleListener();
+        String oldChannelId = manager.openScreenChannel("s1", "runtime-a", oldRuntime);
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(oldChannelId));
+        assertTrue(oldRuntime.connected.get());
+
+        String newChannelId = manager.openScreenChannel("s1", "runtime-b", newRuntime);
+        assertFalse("different runtime owners require different logical channel ids",
+            oldChannelId.equals(newChannelId));
+        assertEquals("old screen handler must be closed before replacement", 1,
+            transport.wsCloseCount(oldChannelId));
+        assertTrue("superseded runtime must be told that its channel is no longer owned",
+            oldRuntime.failure.get() != null);
+        assertEquals(ChannelFailure.Kind.CLIENT_CLOSED, oldRuntime.failure.get().kind);
+        assertEquals("new owner must open a fresh server-side screen handler", 1,
+            transport.wsConnectCount(newChannelId));
+        assertFalse("new runtime cannot send Hello before its own ws-connected ACK",
+            newRuntime.connected.get());
+
+        transport.simulateText(wsConnected(newChannelId));
+        assertTrue(newRuntime.connected.get());
+    }
+
+    @Test
+    public void sameRuntimeOwnerWhileOpeningReusesSingleHandshake() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener first = new SimpleListener();
+        SimpleListener replacement = new SimpleListener();
+
+        String channelId = manager.openScreenChannel("s1", "runtime-a", first);
+        transport.simulateOpen();
+        String sameChannelId = manager.openScreenChannel("s1", "runtime-a", replacement);
+
+        assertEquals(channelId, sameChannelId);
+        assertEquals("same owner must keep the only in-flight ws-connect", 1,
+            transport.wsConnectCount(channelId));
+        assertFalse(replacement.connected.get());
+
+        transport.simulateText(wsConnected(channelId));
+        assertTrue(replacement.connected.get());
+    }
+
+    @Test
+    public void staleAckForSupersededOwnerCannotConnectNewRuntime() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener oldRuntime = new SimpleListener();
+        SimpleListener newRuntime = new SimpleListener();
+
+        String oldChannelId = manager.openScreenChannel("s1", "runtime-a", oldRuntime);
+        transport.simulateOpen();
+        String newChannelId = manager.openScreenChannel("s1", "runtime-b", newRuntime);
+
+        transport.simulateText(wsConnected(oldChannelId));
+        assertFalse("old owner ACK must not be routed into the replacement runtime",
+            newRuntime.connected.get());
+
+        transport.simulateText(wsConnected(newChannelId));
+        assertTrue(newRuntime.connected.get());
+    }
+
+    @Test
     public void reattachWhileConnectingWaitsForWsConnected() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener1 = new SimpleListener();
@@ -130,8 +204,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void reattachAfterDetachRehandshakesToReplaceStaleServerClient() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener1 = new SimpleListener();
@@ -164,8 +238,8 @@ public class RelayMuxSessionManagerRecoveryTest {
         // detached. Reattaching replaces the listener but must keep the single
         // in-flight ws-connect; sending another request creates two valid ACKs.
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener1 = new SimpleListener();
@@ -202,12 +276,12 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void supersededWsConnectedAckCannotNotifyCurrentListenerTwice() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
         SimpleListener first = new SimpleListener();
         AtomicInteger currentConnectedCount = new AtomicInteger();
-        RelayMuxSessionManager.ChannelListener current = new RelayMuxSessionManager.ChannelListener() {
+        DeviceConnection.ChannelListener current = new DeviceConnection.ChannelListener() {
             @Override public void onConnected(String channelId) { currentConnectedCount.incrementAndGet(); }
             @Override public void onData(String channelId, byte[] payload, boolean binary) {}
             @Override public void onFailure(String channelId, ChannelFailure failure) {}
@@ -239,8 +313,8 @@ public class RelayMuxSessionManagerRecoveryTest {
         // reattach is recognized as wasDetached=true. The re-handshake ws-connect
         // is sent once the mux is back up, and the new listener connects after ack.
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener1 = new SimpleListener();
@@ -277,10 +351,11 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
-    public void wsClose1001KeepsChannelAndReopens() {
+    public void wsClose1001KeepsChannelAndReopensAfterBackoff() {
+        CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -300,14 +375,19 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(ChannelFailure.Kind.MUX_TEMPORARY, failure.kind);
         assertEquals(1001, failure.code);
         assertEquals("going away", failure.message);
-        assertEquals("ws-connect should be resent after recoverable close", 2, transport.wsConnectCount(channelId));
+        assertEquals("error callback must not recursively reopen the channel",
+            1, transport.wsConnectCount(channelId));
+
+        handler.runDelayed();
+        assertEquals("retry timer should reconcile the desired-open channel",
+            2, transport.wsConnectCount(channelId));
     }
 
     @Test
     public void wsClose1000RemovesChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -333,8 +413,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void wsError404RemovesChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -360,8 +440,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void wsError401RemovesChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -386,9 +466,10 @@ public class RelayMuxSessionManagerRecoveryTest {
 
     @Test
     public void recoverableWsCloseWhileMuxDisconnectedBuffersReconnect() {
+        CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -411,14 +492,15 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertFalse("channel should remain in channels", manager.isIdle());
 
         transport.simulateOpen();
-        assertEquals("ws-connect resent via reopenChannels after mux reconnect", 2, transport.wsConnectCount(channelId));
+        assertEquals("physical recovery reconciles every desired-open channel once",
+            2, transport.wsConnectCount(channelId));
     }
 
     @Test
     public void muxHandshake401IsReportedAsAuthenticationRequired() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "old", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "old", "device1",
                 new FakeTransportFactory(transport));
         SimpleListener listener = new SimpleListener();
 
@@ -431,10 +513,11 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
-    public void wsError500ReopensChannel() {
+    public void wsError500ReopensChannelAfterBackoff() {
+        CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -453,14 +536,19 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(ChannelFailure.Kind.SERVER_TEMPORARY, failure.kind);
         assertEquals(500, failure.code);
         assertFalse("channel should remain in channels", manager.isIdle());
-        assertEquals("ws-connect should be resent after 5xx error", 2, transport.wsConnectCount(channelId));
+        assertEquals("5xx callback must not immediately resend ws-connect",
+            1, transport.wsConnectCount(channelId));
+        handler.runDelayed();
+        assertEquals("5xx channel retries after the backoff expires",
+            2, transport.wsConnectCount(channelId));
     }
 
     @Test
-    public void wsError400ReportsMuxTemporaryFailureAndReopensChannel() {
+    public void wsError400ReportsMuxTemporaryFailureAndUsesBackoff() {
+        CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         SimpleListener listener = new SimpleListener();
@@ -480,15 +568,18 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(400, failure.code);
         assertEquals("bad request", failure.message);
         assertFalse("channel should remain in channels", manager.isIdle());
-        assertEquals("temporary channel error must re-open the logical channel",
+        assertEquals("temporary error callback must not immediately re-open",
+            1, transport.wsConnectCount(channelId));
+        handler.runDelayed();
+        assertEquals("temporary channel error retries after backoff",
             2, transport.wsConnectCount(channelId));
     }
 
     @Test
     public void forceReconnectMovesLiveChannelsBackToWaitingAndReopensThem() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
         String channelId = manager.openScreenChannel("s1", new SimpleListener());
         transport.simulateOpen();
@@ -506,8 +597,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     public void channelOpenTimeoutRetriesInsteadOfRemainingOpeningForever() {
         CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, handler.handler, "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
         SimpleListener listener = new SimpleListener();
         String channelId = manager.openScreenChannel("s1", listener);
@@ -518,6 +609,9 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         assertTrue("open timeout must surface a recoverable failure", listener.failure.get() != null);
         assertEquals(ChannelFailure.Kind.MUX_TEMPORARY, listener.failure.get().kind);
+        assertEquals("open timeout callback must not immediately retry", 1,
+            transport.wsConnectCount(channelId));
+        handler.runDelayed();
         assertEquals("timed out channel must retry ws-connect", 2,
             transport.wsConnectCount(channelId));
     }
@@ -525,14 +619,14 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void recoverableWsCloseWithSynchronousCloseDoesNotReopen() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         AtomicBoolean failed = new AtomicBoolean();
         AtomicReference<String> channelIdRef = new AtomicReference<>();
 
-        String channelId = manager.openScreenChannel("s1", new RelayMuxSessionManager.ChannelListener() {
+        String channelId = manager.openScreenChannel("s1", new DeviceConnection.ChannelListener() {
             @Override public void onConnected(String id) { channelIdRef.set(id); }
             @Override public void onData(String id, byte[] payload, boolean binary) {}
             @Override public void onFailure(String id, ChannelFailure failure) {
@@ -556,8 +650,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void controlFramesForUnknownChannelAreIgnored() {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
 
         manager.start();
@@ -588,8 +682,8 @@ public class RelayMuxSessionManagerRecoveryTest {
     @Test
     public void muxOpenRegistersAndroidBeforeOpeningTerminalChannels() throws Exception {
         FakeMuxTransport transport = new FakeMuxTransport();
-        RelayMuxSessionManager manager = new RelayMuxSessionManager(
-                null, synchronousHandler(), "http://example.com", "", "device1",
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
                 new FakeTransportFactory(transport));
         manager.setClientRegistration("android_1234", "Pixel 9");
         manager.openScreenChannel("s1", new SimpleListener());
@@ -605,14 +699,101 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals("ws-connect", channelOpen.getString("type"));
     }
 
+    @Test
+    public void routesDeviceLevelControlMessageOutsideTerminalChannels() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        AtomicReference<String> type = new AtomicReference<>();
+        connection.setControlListener(msg -> type.set(msg.optString("type")));
+
+        connection.start();
+        transport.simulateOpen();
+        transport.simulateText("{\"type\":\"agent_notification\",\"event_id\":\"e1\"}");
+
+        assertEquals("agent_notification", type.get());
+    }
+
+    @Test
+    public void controlListenerKeepsConnectionOwnedWithoutLogicalChannels() {
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(new FakeMuxTransport()));
+
+        connection.setControlListener(msg -> {});
+        assertFalse("control plane owner must keep the device connection alive", connection.isIdle());
+
+        connection.setControlListener(null);
+        assertTrue("connection becomes idle after the control owner releases it", connection.isIdle());
+    }
+
+    @Test
+    public void sendControlUsesPhysicalConnectionTextFrame() throws Exception {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        connection.start();
+        transport.simulateOpen();
+
+        assertTrue(connection.sendControl(new JSONObject().put("type", "file_send.accepted")));
+        JSONObject sent = new JSONObject(transport.sentTexts.get(transport.sentTexts.size() - 1));
+        assertEquals("file_send.accepted", sent.getString("type"));
+    }
+
+    @Test
+    public void binaryTunnelFrameRoutesDirectlyOnDeviceEventLoop() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        AtomicReference<byte[]> received = new AtomicReference<>();
+        String channelId = connection.openScreenChannel("s1", new DeviceConnection.ChannelListener() {
+            @Override public void onConnected(String id) {}
+            @Override public void onData(String id, byte[] payload, boolean binary) {
+                if (binary) received.set(payload);
+            }
+            @Override public void onFailure(String id, ChannelFailure failure) {}
+        });
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        byte[] payload = new byte[]{0x02, 0x03};
+        transport.simulateBinary(WebTermProtocol.encodeTunnelFrame(channelId, payload, true));
+
+        assertTrue("binary payload must reach the logical channel", received.get() != null);
+        assertEquals(2, received.get().length);
+    }
+
+    @Test
+    public void physicalConnectTimeoutUsesBackoffBeforeRestart() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        connection.openScreenChannel("s1", new SimpleListener());
+        assertEquals(1, transport.startCount);
+
+        handler.runDelayed();
+        assertEquals("timeout closes the stale physical attempt", 1, transport.closeCount);
+        assertEquals("retry is delayed instead of recursive", 1, transport.startCount);
+
+        handler.runDelayed();
+        assertEquals("backoff expiry starts a fresh physical attempt", 2, transport.startCount);
+    }
+
     private static class FakeMuxTransport implements MuxTransport {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
         private int closeCount;
+        private int startCount;
 
         @Override public void start(Listener listener) {
             this.listener = listener;
+            startCount++;
         }
 
         public void simulateOpen() {
@@ -627,6 +808,10 @@ public class RelayMuxSessionManagerRecoveryTest {
 
         public void simulateText(String text) {
             if (listener != null) listener.onText(text);
+        }
+
+        public void simulateBinary(byte[] data) {
+            if (listener != null) listener.onBinary(data);
         }
 
         public void simulateFailure(int code, String reason) {

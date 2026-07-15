@@ -20,7 +20,14 @@ const (
 	AgentRegisteredMessage = "agent.registered"
 	AgentErrorMessage      = "agent.error"
 	webSocketReadLimit     = 8 << 20 // 8 MiB per message
+	agentPlaneRealtime     = "realtime"
+	agentPlaneBulk         = "bulk"
 )
+
+type agentDataRegistry interface {
+	RegisterAgentDataConnection(deviceID string, sender relayrouter.AgentSender) bool
+	RemoveAgentDataConnection(deviceID string, sender relayrouter.AgentSender)
+}
 
 type AgentGateway struct {
 	store             relaystore.GatewayStore
@@ -83,6 +90,27 @@ func (gateway *AgentGateway) handleConnection(ctx context.Context, conn *websock
 	defer stopSender()
 	defer sender.Close()
 	go sender.Run(senderCtx)
+	if req.Plane == agentPlaneBulk {
+		dataRegistry, ok := gateway.registry.(agentDataRegistry)
+		if !ok || !dataRegistry.RegisterAgentDataConnection(device.ID, sender) {
+			_ = writeAgentJSON(ctx, conn, map[string]any{
+				"type": AgentErrorMessage, "message": "realtime agent connection is required",
+			})
+			return
+		}
+		defer dataRegistry.RemoveAgentDataConnection(device.ID, sender)
+		if err := writeAgentJSON(ctx, conn, map[string]any{
+			"type": AgentRegisteredMessage, "deviceId": device.ID,
+			"deviceName": firstNonEmpty(req.DeviceName, device.Name), "plane": agentPlaneBulk,
+		}); err != nil {
+			return
+		}
+		heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+		defer stopHeartbeat()
+		go gateway.runHeartbeat(heartbeatCtx, conn)
+		gateway.readAgentFrames(ctx, conn)
+		return
+	}
 	presence := relaycore.DevicePresence{
 		UserID:            device.UserID,
 		DeviceID:          device.ID,
@@ -129,6 +157,10 @@ func (gateway *AgentGateway) handleConnection(ctx context.Context, conn *websock
 	defer stopHeartbeat()
 	go gateway.runHeartbeat(heartbeatCtx, conn)
 
+	gateway.readAgentFrames(ctx, conn)
+}
+
+func (gateway *AgentGateway) readAgentFrames(ctx context.Context, conn *websocket.Conn) {
 	for {
 		messageType, data, err := conn.Read(ctx)
 		if err != nil {
@@ -232,6 +264,7 @@ type registerRequest struct {
 	Type       string `json:"type"`
 	Credential string `json:"credential"`
 	DeviceName string `json:"deviceName"`
+	Plane      string `json:"plane"`
 }
 
 func (gateway *AgentGateway) readRegister(ctx context.Context, conn *websocket.Conn) (relaystore.Device, registerRequest, error) {
@@ -251,6 +284,12 @@ func (gateway *AgentGateway) readRegister(ctx context.Context, conn *websocket.C
 	}
 	if req.Credential == "" {
 		return relaystore.Device{}, registerRequest{}, errors.New("agent credential is required")
+	}
+	if req.Plane == "" {
+		req.Plane = agentPlaneRealtime
+	}
+	if req.Plane != agentPlaneRealtime && req.Plane != agentPlaneBulk {
+		return relaystore.Device{}, registerRequest{}, errors.New("invalid agent plane")
 	}
 	device, err := gateway.store.FindDeviceByCredential(req.Credential)
 	if err != nil {

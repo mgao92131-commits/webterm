@@ -83,6 +83,12 @@ func ValidateInput(in *pb.TerminalInput) error {
 	if in.LeaseId == "" {
 		return fmt.Errorf("input requires layout lease")
 	}
+	if in.ClientInstanceId == "" {
+		return fmt.Errorf("input requires client instance id")
+	}
+	if in.InputSeq == 0 {
+		return fmt.Errorf("input requires positive sequence")
+	}
 	switch in.Input.(type) {
 	case *pb.TerminalInput_Text, *pb.TerminalInput_Key, *pb.TerminalInput_Paste, *pb.TerminalInput_Mouse, *pb.TerminalInput_Focus:
 		return nil

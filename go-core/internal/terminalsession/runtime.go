@@ -46,6 +46,8 @@ type Runtime struct {
 	pendingClipboard map[string]byte
 	engineSignals    engineSignals
 	inputTrace       []InputTrace
+	inputDedupe      map[string]*inputDedupeWindow
+	inputDedupeOrder []string
 	capturePTYOutput bool
 	rawPTYOutput     []byte
 	rawPTYTruncated  bool
@@ -94,6 +96,27 @@ type LayoutLeaseEvent struct {
 	Granted     bool
 	Interactive bool
 	ExpiresAt   time.Time
+}
+
+type InputDeliveryStatus int
+
+const (
+	InputDeliveryWritten InputDeliveryStatus = iota + 1
+	InputDeliveryIgnored
+	InputDeliveryRejected
+	InputDeliveryUncertain
+)
+
+type InputDeliveryResult struct {
+	ClientInstanceID   string
+	InputSeq           uint64
+	TerminalInstanceID string
+	Status             InputDeliveryStatus
+}
+
+type inputDedupeWindow struct {
+	results map[uint64]InputDeliveryResult
+	order   []uint64
 }
 
 // ResumeToken 是客户端投影的原子版本锚点。
@@ -155,6 +178,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
+		inputDedupe:      make(map[string]*inputDedupeWindow),
 		capturePTYOutput: os.Getenv("WEBTERM_CAPTURE_PTY_OUTPUT") == "1",
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
@@ -238,6 +262,16 @@ func (r *Runtime) WriteInput(clientID string, data []byte) {
 // WriteSemanticInput 由权威引擎按当前模式编码输入。
 func (r *Runtime) WriteSemanticInput(clientID, leaseID string, input terminalengine.SemanticInput) {
 	r.postEvent(semanticInputEvent{clientID: clientID, leaseID: leaseID, input: input})
+}
+
+// WriteReliableSemanticInput 把去重、PTY 写入和结果回调放在同一 actor 事件内。
+// done 只在已得到确定结果后调用；重复 seq 不再写 PTY，直接重放原结果。
+func (r *Runtime) WriteReliableSemanticInput(clientID, leaseID, clientInstanceID string,
+	inputSeq uint64, input terminalengine.SemanticInput, done func(InputDeliveryResult)) {
+	r.postEvent(semanticInputEvent{
+		clientID: clientID, leaseID: leaseID, clientInstanceID: clientInstanceID,
+		inputSeq: inputSeq, input: input, done: done,
+	})
 }
 
 // Resize 处理 resize 请求。
@@ -511,21 +545,84 @@ func (r *Runtime) handleEffect(effect terminalengine.Effect) {
 }
 
 func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
+	if e.clientInstanceID != "" && e.inputSeq != 0 {
+		if previous, ok := r.previousInputResult(e.clientInstanceID, e.inputSeq); ok {
+			if e.done != nil {
+				e.done(previous)
+			}
+			return
+		}
+	}
+	result := InputDeliveryResult{
+		ClientInstanceID:   e.clientInstanceID,
+		InputSeq:           e.inputSeq,
+		TerminalInstanceID: r.instanceID,
+		Status:             InputDeliveryRejected,
+	}
 	client := r.clients[e.clientID]
 	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID {
 		r.recordInputTrace("rejected", e, 0, false)
+		r.completeReliableInput(e, result)
 		return
 	}
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
 		r.revokeInvalidLayoutLease(client)
 		r.recordInputTrace("rejected", e, 0, false)
+		r.completeReliableInput(e, result)
 		return
 	}
 	data := r.engine.EncodeInput(e.input)
 	r.recordInputTrace("encoded", e, len(data), true)
 	if len(data) > 0 {
-		_, _ = r.pty.Write(data)
-		r.recordInputTrace("pty-write", e, len(data), true)
+		written, err := r.pty.Write(data)
+		if err == nil && written == len(data) {
+			result.Status = InputDeliveryWritten
+			r.recordInputTrace("pty-write", e, len(data), true)
+		} else {
+			result.Status = InputDeliveryUncertain
+			r.recordInputTrace("pty-write-uncertain", e, written, false)
+		}
+	} else {
+		result.Status = InputDeliveryIgnored
+	}
+	r.completeReliableInput(e, result)
+}
+
+func (r *Runtime) previousInputResult(clientInstanceID string, inputSeq uint64) (InputDeliveryResult, bool) {
+	window := r.inputDedupe[clientInstanceID]
+	if window == nil {
+		return InputDeliveryResult{}, false
+	}
+	result, ok := window.results[inputSeq]
+	return result, ok
+}
+
+func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDeliveryResult) {
+	if e.clientInstanceID == "" || e.inputSeq == 0 {
+		return
+	}
+	window := r.inputDedupe[e.clientInstanceID]
+	if window == nil {
+		window = &inputDedupeWindow{results: make(map[uint64]InputDeliveryResult)}
+		r.inputDedupe[e.clientInstanceID] = window
+		r.inputDedupeOrder = append(r.inputDedupeOrder, e.clientInstanceID)
+		const maxClientInstances = 64
+		if len(r.inputDedupeOrder) > maxClientInstances {
+			oldestClient := r.inputDedupeOrder[0]
+			r.inputDedupeOrder = r.inputDedupeOrder[1:]
+			delete(r.inputDedupe, oldestClient)
+		}
+	}
+	const maxRememberedInputs = 256
+	window.results[e.inputSeq] = result
+	window.order = append(window.order, e.inputSeq)
+	if len(window.order) > maxRememberedInputs {
+		oldest := window.order[0]
+		window.order = window.order[1:]
+		delete(window.results, oldest)
+	}
+	if e.done != nil {
+		e.done(result)
 	}
 }
 
@@ -906,9 +1003,12 @@ type inputEvent struct {
 }
 
 type semanticInputEvent struct {
-	clientID string
-	leaseID  string
-	input    terminalengine.SemanticInput
+	clientID         string
+	leaseID          string
+	clientInstanceID string
+	inputSeq         uint64
+	input            terminalengine.SemanticInput
+	done             func(InputDeliveryResult)
 }
 
 type resizeEvent struct {
