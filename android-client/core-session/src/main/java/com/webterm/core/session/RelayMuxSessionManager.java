@@ -8,6 +8,7 @@ import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -44,13 +45,13 @@ public final class RelayMuxSessionManager {
     };
 
     private static final class Channel {
-        enum State { CONNECTING, LIVE }
+        enum State { WAITING_FOR_MUX, OPENING, LIVE }
 
         final String id;
         final String path;
         final String[] protocols;
         ChannelListener listener;
-        State state = State.CONNECTING;
+        State state = State.WAITING_FOR_MUX;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
             this.id = id;
@@ -70,6 +71,8 @@ public final class RelayMuxSessionManager {
     private int muxGeneration;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
     private volatile ControlListener controlListener;
+    private volatile String clientId = "";
+    private volatile String clientName = "Android";
 
     RelayMuxSessionManager(OkHttpClient http, Handler mainHandler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this.http = http;
@@ -93,6 +96,7 @@ public final class RelayMuxSessionManager {
         MuxSession session = new MuxSession(transport, mainHandler, new MuxSession.Listener() {
             @Override public void onMuxConnected() {
                 if (generation != muxGeneration) return;
+                sendClientRegistration();
                 reopenChannels();
             }
 
@@ -102,7 +106,7 @@ public final class RelayMuxSessionManager {
                     ? ChannelFailure.authRequired(code, reason)
                     : ChannelFailure.muxTemporary(code, reason);
                 for (Channel channel : snapshotChannels()) {
-                    channel.state = Channel.State.CONNECTING;
+                    channel.state = Channel.State.WAITING_FOR_MUX;
                     channel.listener.onFailure(channel.id, failure);
                 }
                 // Authentication cannot recover through transport backoff with the
@@ -129,7 +133,7 @@ public final class RelayMuxSessionManager {
             @Override public void onTunnelConnected(String tunnelId) {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
-                if (channel != null) {
+                if (channel != null && channel.state == Channel.State.OPENING) {
                     channel.state = Channel.State.LIVE;
                     channel.listener.onConnected(tunnelId);
                 }
@@ -147,11 +151,9 @@ public final class RelayMuxSessionManager {
                     channel.listener.onFailure(tunnelId, ChannelFailure.authRequired(code, message));
                 } else if (code >= 500 && code < 600) {
                     // recoverable server-side error: reopen the channel
-                    channel.state = Channel.State.CONNECTING;
+                    channel.state = Channel.State.WAITING_FOR_MUX;
                     channel.listener.onFailure(tunnelId, ChannelFailure.serverTemporary(code, message));
-                    if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
-                        muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
-                    }
+                    if (channels.containsKey(tunnelId)) openChannelIfReady(channel);
                 } else {
                     channel.listener.onFailure(tunnelId, ChannelFailure.muxTemporary(code, message));
                 }
@@ -178,14 +180,12 @@ public final class RelayMuxSessionManager {
                     channel.listener.onFailure(tunnelId, ChannelFailure.remoteClosed(code, reason));
                 } else {
                     // recoverable: network/backpressure; keep channel alive and reopen after reconnect
-                    channel.state = Channel.State.CONNECTING;
+                    channel.state = Channel.State.WAITING_FOR_MUX;
                     ChannelFailure failure = code >= 500 && code < 600
                         ? ChannelFailure.serverTemporary(code, reason)
                         : ChannelFailure.muxTemporary(code, reason);
                     channel.listener.onFailure(tunnelId, failure);
-                    if (channels.containsKey(tunnelId) && muxSession.isConnected()) {
-                        muxSession.sendWsConnect(tunnelId, channel.path, channel.protocols);
-                    }
+                    if (channels.containsKey(tunnelId)) openChannelIfReady(channel);
                 }
             }
         });
@@ -237,14 +237,16 @@ public final class RelayMuxSessionManager {
         if (existing != null) {
             boolean wasDetached = existing.listener == NO_OP_LISTENER;
             existing.listener = listener;
-            if (wasDetached || existing.state == Channel.State.CONNECTING) {
-                existing.state = Channel.State.CONNECTING;
-                if (muxSession.isConnected()) {
-                    muxSession.sendWsConnect(channelId, existing.path, existing.protocols);
-                }
-            } else if (muxSession.isConnected() && existing.state == Channel.State.LIVE) {
+            if (wasDetached && existing.state == Channel.State.LIVE) {
+                // 新连接对象接管仍存活的 logical id 时，显式替换服务端 VirtualSocket。
+                existing.state = Channel.State.WAITING_FOR_MUX;
+                openChannelIfReady(existing);
+            } else if (existing.state == Channel.State.WAITING_FOR_MUX) {
+                openChannelIfReady(existing);
+            } else if (!wasDetached && existing.state == Channel.State.LIVE) {
                 listener.onConnected(channelId);
             }
+            // OPENING 只替换 listener，等待唯一在途 ws-connect 的 ACK。
             return channelId;
         }
         String path = "/ws/sessions/" + WebTermUrls.encodePath(localSessionId);
@@ -262,9 +264,7 @@ public final class RelayMuxSessionManager {
     public void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {
         channels.put(channelId, new Channel(channelId, path, protocols, listener));
         start();
-        if (muxSession.isConnected()) {
-            muxSession.sendWsConnect(channelId, path, protocols);
-        }
+        openChannelIfReady(channels.get(channelId));
     }
 
     public void closeChannel(String channelId) {
@@ -308,6 +308,38 @@ public final class RelayMuxSessionManager {
         return muxSession.sendControl(msg);
     }
 
+    /** 配置当前 Android 安装实例身份；每次 mux 重连成功后都会重新注册。 */
+    public void setClientRegistration(String clientId, String clientName) {
+        this.clientId = clientId == null ? "" : clientId;
+        this.clientName = clientName == null || clientName.trim().isEmpty() ? "Android" : clientName.trim();
+        if (muxSession.isConnected()) sendClientRegistration();
+    }
+
+    /** 上报真实用户活跃；心跳与自动重连不调用此方法。 */
+    public void markClientActive() {
+        if (clientId.isEmpty()) return;
+        JSONObject msg = new JSONObject();
+        try {
+            msg.put("type", "client.active");
+            msg.put("client_id", clientId);
+        } catch (Exception ignored) { return; }
+        muxSession.sendControl(msg);
+    }
+
+    private void sendClientRegistration() {
+        if (clientId.isEmpty()) return;
+        JSONObject msg = new JSONObject();
+        try {
+            msg.put("type", "client.register");
+            msg.put("protocol_version", 1);
+            msg.put("client_id", clientId);
+            msg.put("client_kind", "android");
+            msg.put("client_name", clientName);
+            msg.put("capabilities", new JSONArray().put("file_receive").put("agent_notification"));
+        } catch (Exception ignored) { return; }
+        muxSession.sendControl(msg);
+    }
+
     void stop() {
         for (Channel channel : snapshotChannels()) {
             muxSession.sendWsClose(channel.id);
@@ -337,7 +369,15 @@ public final class RelayMuxSessionManager {
 
     private void reopenChannels() {
         for (Channel channel : snapshotChannels()) {
-            muxSession.sendWsConnect(channel.id, channel.path, channel.protocols);
+            openChannelIfReady(channel);
+        }
+    }
+
+    private void openChannelIfReady(Channel channel) {
+        if (channel == null || channel.state != Channel.State.WAITING_FOR_MUX
+                || !muxSession.isConnected()) return;
+        if (muxSession.sendWsConnect(channel.id, channel.path, channel.protocols)) {
+            channel.state = Channel.State.OPENING;
         }
     }
 

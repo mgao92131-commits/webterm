@@ -1,9 +1,10 @@
 package com.webterm.core.cache;
 
 import android.util.Log;
+import com.webterm.core.api.SessionIds;
+import com.webterm.core.api.SessionIdentity;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.core.api.SessionIdentity;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -83,6 +84,33 @@ public final class TerminalDiskCache {
     void clearAsync(String baseUrl, String sessionId) {
         String normalized = WebTermUrls.normalizeBaseUrl(baseUrl);
         executor.execute(() -> clearMatching(normalized, sessionId));
+    }
+
+    void updateCwdAsync(ServerConfig server, String sessionId, String cwd) {
+        executor.execute(() -> updateCwdBlocking(server, sessionId, cwd));
+    }
+
+    void updateCwdBlocking(ServerConfig server, String sessionId, String cwd) {
+        if (server == null || sessionId == null || sessionId.isEmpty()) return;
+        String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+        String localSessionId = SessionIds.local(sessionId, deviceId);
+        File[] files = cacheDir.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (!file.getName().endsWith(".json")) continue;
+            Metadata metadata = readMetadata(file);
+            if (metadata == null
+                || !TerminalCacheScope.matches(server, metadata.baseUrl, metadata.sessionId)
+                || !localSessionId.equals(SessionIds.local(metadata.sessionId, deviceId))) {
+                continue;
+            }
+            metadata.cwd = cwd == null ? "" : cwd;
+            try {
+                writeMetadata(file, metadata);
+            } catch (IOException | JSONException e) {
+                Log.w(TAG, "Failed to update terminal cwd metadata", e);
+            }
+        }
     }
 
     void clearServerAsync(ServerConfig server) {

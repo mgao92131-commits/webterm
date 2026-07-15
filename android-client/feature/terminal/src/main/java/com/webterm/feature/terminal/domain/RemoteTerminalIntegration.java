@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.Button;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -64,6 +65,10 @@ public final class RemoteTerminalIntegration {
   private View terminalViewport;
   private View quickBar;
   private Button ctrlButton;
+  private TextView titleView;
+  private TextView subtitleView;
+  private String latestTitle = "Terminal";
+  private String latestCwd = "";
   private boolean ctrlArmed;
   private TitleListener titleListener;
   private AuthenticationListener authenticationListener;
@@ -84,6 +89,8 @@ public final class RemoteTerminalIntegration {
     this.currentArgs = args;
     this.activeFragment = fragment;
     this.clipboardPolicy = new TerminalClipboardPolicy(activity);
+    this.latestTitle = displayTermTitle(args.termTitle);
+    this.latestCwd = displayCwd(args.cwd);
 
     runtimeKey = new TerminalRuntimeKey(args.serverConfigId, args.authIdentity, args.baseUrl,
         args.relayDeviceId, args.sessionId);
@@ -94,16 +101,14 @@ public final class RemoteTerminalIntegration {
       if (listener != null) listener.onAuthenticationRequired(reason);
     });
 
-    // The relay mux may already be live when a terminal page is reopened. Install
-    // the runtime listener before connect(), otherwise its synchronous HELLO /
-    // initial SNAPSHOT round trip can be dropped while ScreenMuxConnection has no
-    // listener yet. That snapshot is the only authoritative restoration of the
-    // local history window.
+    // The relay mux may already be live when a terminal page is reopened. Attach
+    // the connection now, but defer connect() until the controller/effect listener
+    // and header views are all bound. A synchronous HELLO / initial SNAPSHOT must
+    // not be delivered before the page can consume its model and metadata effects.
     if (!runtime.hasConnection()) {
       connection = screenConnectionFactory.create(
           args.baseUrl, args.cookie, args.sessionId, args.relayDeviceId);
       runtime.attachConnection(connection);
-      connection.connect(80, 24);
     } else {
       connection = null; // live channel is retained and owned by runtime
     }
@@ -122,13 +127,17 @@ public final class RemoteTerminalIntegration {
     controller.setEffectListener(effect -> {
       switch (effect.type()) {
         case TITLE:
+          latestTitle = displayTermTitle(effect.asTitle());
+          if (titleView != null) titleView.setText(latestTitle);
           if (titleListener != null) {
-            titleListener.onTitleChanged(effect.asTitle());
+            titleListener.onTitleChanged(latestTitle);
           }
           break;
         case WORKING_DIRECTORY:
+          latestCwd = displayCwd(effect.asWorkingDirectory());
+          if (subtitleView != null) subtitleView.setText(latestCwd);
           if (titleListener != null) {
-            titleListener.onWorkingDirectoryChanged(effect.asWorkingDirectory());
+            titleListener.onWorkingDirectoryChanged(latestCwd);
           }
           break;
         case CLIPBOARD_READ:
@@ -142,11 +151,10 @@ public final class RemoteTerminalIntegration {
       }
     });
 
-    String subtitle = args.cwd == null ? "" : args.cwd;
-        TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
+    TerminalScreenBuilder.Result shell = TerminalScreenBuilder.build(
             activity,
-            displayTermTitle(args.termTitle),
-            subtitle == null ? "" : subtitle,
+            latestTitle,
+            latestCwd,
             activity::onBackPressed,
         () -> reconnectFresh(null),
         fragment::requestFileUpload,
@@ -171,11 +179,20 @@ public final class RemoteTerminalIntegration {
     terminalViewport = viewport;
     quickBar = shell.quickBar;
     ctrlButton = shell.ctrlButton;
+    titleView = shell.title;
+    subtitleView = shell.subtitle;
+    // Effect delivery may race with view construction during a synchronous
+    // initial snapshot, so bind the latest values once the header exists.
+    titleView.setText(latestTitle);
+    subtitleView.setText(latestCwd);
     connectionStatusView.bind(shell.statusIndicator, shell.retryButton, shell.reconnectOverlay);
     connectionStatusView.updateRemote(runtime.state());
 
     installInsets(activity);
     fragment.setTerminalContent(root);
+    if (connection != null) {
+      connection.connect(80, 24);
+    }
   }
 
   public void stop() {
@@ -203,6 +220,8 @@ public final class RemoteTerminalIntegration {
     terminalViewport = null;
     quickBar = null;
     ctrlButton = null;
+    titleView = null;
+    subtitleView = null;
     connectionStatusView.clear();
     ctrlArmed = false;
     currentArgs = null;
@@ -314,6 +333,10 @@ public final class RemoteTerminalIntegration {
 
   public void setTitleListener(@Nullable TitleListener listener) {
     this.titleListener = listener;
+  }
+
+  public static String displayCwd(@Nullable String cwd) {
+    return cwd == null ? "" : cwd;
   }
 
   public void setAuthenticationListener(@Nullable AuthenticationListener listener) {

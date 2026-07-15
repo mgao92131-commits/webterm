@@ -45,6 +45,7 @@ import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
 import com.webterm.feature.home.DeviceSessionsFragment;
 import com.webterm.feature.home.HomeFragment;
+import com.webterm.feature.home.repository.SessionRepository;
 import com.webterm.feature.relay.RelayDevicesScreenBuilder;
 import com.webterm.feature.relay.RelayLoginScreenBuilder;
 import com.webterm.feature.relay.RelayUiState;
@@ -77,6 +78,7 @@ public final class AppFlowCoordinator implements
     private final Handler mainHandler;
     private final OkHttpClient http;
     private final TerminalFocusStore terminalFocus;
+    private final SessionRepository sessionRepository;
 
     private final RemoteTerminalIntegration remoteTerminalIntegration;
     private final RelayService mRelayService;
@@ -121,6 +123,7 @@ public final class AppFlowCoordinator implements
         Handler mainHandler,
         OkHttpClient http,
         TerminalFocusStore terminalFocus,
+        SessionRepository sessionRepository,
         RemoteTerminalIntegration remoteTerminalIntegration,
         RelayService relayService
     ) {
@@ -133,6 +136,7 @@ public final class AppFlowCoordinator implements
         this.mainHandler = mainHandler;
         this.http = http;
         this.terminalFocus = terminalFocus;
+        this.sessionRepository = sessionRepository;
         this.remoteTerminalIntegration = remoteTerminalIntegration;
         this.mRelayService = relayService;
     }
@@ -519,18 +523,19 @@ public final class AppFlowCoordinator implements
         terminalAuthRecoveryGeneration++;
         terminalAuthRecoveryInFlight = false;
         remoteTerminalIntegration.setAuthenticationListener(this::recoverTerminalAuthentication);
-        remoteTerminalIntegration.start(activity, fragment, args,
-            configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
         remoteTerminalIntegration.setTitleListener(new RemoteTerminalIntegration.TitleListener() {
             @Override public void onTitleChanged(String title) {
-                // TODO: 更新 Activity/Fragment 标题
+                // 顶栏由 RemoteTerminalIntegration 直接更新；这里保留应用层通知入口。
             }
             @Override public void onWorkingDirectoryChanged(String cwd) {
-                if (mSelectedServer != null && remoteTerminalIntegration.sessionId() != null) {
-                    updateCurrentSessionCwd(mSelectedServer, remoteTerminalIntegration.sessionId(), cwd);
+                ServerConfig server = findServerForRemoteTerminal();
+                if (server != null && remoteTerminalIntegration.sessionId() != null) {
+                    updateCurrentSessionCwd(server, remoteTerminalIntegration.sessionId(), cwd);
                 }
             }
         });
+        remoteTerminalIntegration.start(activity, fragment, args,
+            configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
     }
 
     public void detachTerminalFragment(TerminalFragment fragment) {
@@ -620,7 +625,7 @@ public final class AppFlowCoordinator implements
         if (!isRemoteTerminalActive()) return;
         if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) return;
         if (!sameTerminalSessionId(sessionId, remoteTerminalIntegration.sessionId(), server.getDeviceId())) return;
-        // cwd 由 screen effect 驱动；此处只确认事件属于当前远程会话。
+        sessionRepository.updateSessionCwd(server, sessionId, cwd);
     }
 
     private void requestTerminalFreshReconnect() {
@@ -684,6 +689,14 @@ public final class AppFlowCoordinator implements
         String baseUrl = WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl());
         String terminalDeviceId = remoteTerminalIntegration.relayDeviceId() == null
             ? "" : remoteTerminalIntegration.relayDeviceId();
+        if (mSelectedServer != null) {
+            String selectedDeviceId = mSelectedServer.getDeviceId() == null
+                ? "" : mSelectedServer.getDeviceId();
+            if (WebTermUrls.normalizeBaseUrl(mSelectedServer.getUrl()).equals(baseUrl)
+                && selectedDeviceId.equals(terminalDeviceId)) {
+                return mSelectedServer;
+            }
+        }
         // 同一 relay URL 下可能配置多个设备。优先匹配 URL + deviceId，避免
         // 401 恢复时刷新并保存到同 URL 的另一个设备配置。
         for (ServerConfig server : serverConfigs.servers()) {

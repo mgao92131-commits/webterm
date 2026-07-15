@@ -18,6 +18,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class RelayMuxSessionManagerRecoveryTest {
@@ -135,11 +136,11 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
-    public void reattachWithoutDetachWhileChannelConnectingRehandshakes() {
+    public void reattachWithoutDetachWhileChannelOpeningReusesPendingHandshake() {
         // Regression test for the yellow-indicator stuck scenario. A physical mux
-        // reconnect can put a channel into CONNECTING before the old Fragment has
-        // detached. Reattaching must explicitly re-handshake instead of waiting
-        // forever for a stale ws-connected acknowledgement.
+        // reconnect can put a channel into OPENING before the old Fragment has
+        // detached. Reattaching replaces the listener but must keep the single
+        // in-flight ws-connect; sending another request creates two valid ACKs.
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(
                 null, synchronousHandler(), "http://example.com", "", "device1",
@@ -169,11 +170,45 @@ public class RelayMuxSessionManagerRecoveryTest {
         manager.openScreenChannel("s1", listener2);
         assertFalse("new listener should NOT be connected while channel is CONNECTING",
             listener2.connected.get());
-        assertEquals("reattach must replace the stale pending handshake",
-            3, transport.wsConnectCount(channelId));
+        assertEquals("reattach must reuse the pending handshake",
+            2, transport.wsConnectCount(channelId));
 
         transport.simulateText(wsConnected(channelId));
         assertTrue("new listener should connect after the replacement handshake", listener2.connected.get());
+    }
+
+    @Test
+    public void supersededWsConnectedAckCannotNotifyCurrentListenerTwice() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener first = new SimpleListener();
+        AtomicInteger currentConnectedCount = new AtomicInteger();
+        RelayMuxSessionManager.ChannelListener current = new RelayMuxSessionManager.ChannelListener() {
+            @Override public void onConnected(String channelId) { currentConnectedCount.incrementAndGet(); }
+            @Override public void onData(String channelId, byte[] payload, boolean binary) {}
+            @Override public void onFailure(String channelId, ChannelFailure failure) {}
+        };
+
+        String channelId = manager.openScreenChannel("s1", first);
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        // 物理 mux 恢复会发 ws-connect #2；页面同时重挂到仍为 OPENING 的
+        // channel 时只能替换 listener，不能再发 #3。
+        transport.simulateClose(1001, "going away");
+        transport.simulateOpen();
+        manager.openScreenChannel("s1", current);
+        assertEquals(2, transport.wsConnectCount(channelId));
+
+        transport.simulateText(wsConnected(channelId)); // 当前 #2 ACK
+        transport.simulateText(wsConnected(channelId)); // 迟到/重复 ACK
+
+        // 每次 onConnected 都会让 TerminalSessionRuntime.beginSync() 发 Hello。
+        // 若通知两次，Go 会记录 duplicate screen hello 并关闭当前 screen client。
+        assertEquals("superseded ACK must not trigger a second screen Hello",
+            1, currentConnectedCount.get());
     }
 
     @Test
@@ -487,6 +522,26 @@ public class RelayMuxSessionManagerRecoveryTest {
         @Override public MuxTransport create(String url, String cookie, String protocol) {
             return transport;
         }
+    }
+
+    @Test
+    public void muxOpenRegistersAndroidBeforeOpeningTerminalChannels() throws Exception {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        manager.setClientRegistration("android_1234", "Pixel 9");
+        manager.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+
+        assertTrue("registration and terminal open should both be sent", transport.sentTexts.size() >= 2);
+        JSONObject registration = new JSONObject(transport.sentTexts.get(0));
+        assertEquals("client.register", registration.getString("type"));
+        assertEquals("android_1234", registration.getString("client_id"));
+        assertEquals("Pixel 9", registration.getString("client_name"));
+        assertEquals("file_receive", registration.getJSONArray("capabilities").getString(0));
+        JSONObject channelOpen = new JSONObject(transport.sentTexts.get(1));
+        assertEquals("ws-connect", channelOpen.getString("type"));
     }
 
     private static class FakeMuxTransport implements MuxTransport {

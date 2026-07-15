@@ -1,8 +1,10 @@
 package com.webterm.transport.websocket;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -94,5 +96,115 @@ public class WebSocketMuxTransportTest {
         captor.getValue().onFailure(socket, new IOException("handshake failed"), response);
 
         assertEquals(401, codeRef.get());
+    }
+
+    @Test
+    public void staleClosedCallbackCannotClearNewSocket() {
+        WebSocket first = mock(WebSocket.class);
+        WebSocket second = mock(WebSocket.class);
+        when(http.newWebSocket(any(Request.class), any(WebSocketListener.class)))
+            .thenReturn(first, second);
+        when(second.send(any(okio.ByteString.class))).thenReturn(true);
+
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(
+            http, "ws://example.com/ws", "", "proto");
+        MuxTransport.Listener listener = new MuxTransport.Listener() {
+            @Override public void onOpen() {}
+            @Override public void onText(String text) {}
+            @Override public void onBinary(byte[] data) {}
+            @Override public void onClosed(int code, String reason) {}
+            @Override public void onError(String message) {}
+        };
+
+        transport.start(listener);
+        transport.close();
+        transport.start(listener);
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http, times(2)).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener oldListener = captor.getAllValues().get(0);
+        WebSocketListener newListener = captor.getAllValues().get(1);
+
+        newListener.onOpen(second, mock(Response.class));
+        assertTrue("new socket should be connected", transport.isConnected());
+
+        // OkHttp 对 close() 的回调可以晚于下一次 start()。旧 socket 的终态回调
+        // 不得把新 socket 的 connected/reference 清空。
+        oldListener.onClosed(first, 1000, "old socket closed late");
+
+        assertTrue("stale callback must not disconnect the new socket", transport.isConnected());
+        assertTrue("new socket must remain writable", transport.sendBinary(new byte[]{1}));
+        verify(second).send(any(okio.ByteString.class));
+    }
+
+    @Test
+    public void staleClosedCallbackCannotSpawnParallelSocket() {
+        WebSocket first = mock(WebSocket.class);
+        WebSocket second = mock(WebSocket.class);
+        WebSocket third = mock(WebSocket.class);
+        when(http.newWebSocket(any(Request.class), any(WebSocketListener.class)))
+            .thenReturn(first, second, third);
+
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(
+            http, "ws://example.com/ws", "", "proto");
+        MuxTransport.Listener listener = new MuxTransport.Listener() {
+            @Override public void onOpen() {}
+            @Override public void onText(String text) {}
+            @Override public void onBinary(byte[] data) {}
+            @Override public void onClosed(int code, String reason) {}
+            @Override public void onError(String message) {}
+        };
+
+        transport.start(listener);
+        transport.close();
+        transport.start(listener);
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http, times(2)).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener oldListener = captor.getAllValues().get(0);
+        WebSocketListener newListener = captor.getAllValues().get(1);
+        newListener.onOpen(second, mock(Response.class));
+
+        // 旧连接迟到的 onClosed 若清空当前 socket，下一次幂等 start() 会误建第三条
+        // 物理连接，而第二条仍然存活；这正是服务端 clients 递增所需的机制。
+        oldListener.onClosed(first, 1000, "old socket closed late");
+        transport.start(listener);
+
+        verify(http, times(2)).newWebSocket(any(Request.class), any(WebSocketListener.class));
+    }
+
+    @Test
+    public void staleFailureCallbackCannotClearNewSocket() {
+        WebSocket first = mock(WebSocket.class);
+        WebSocket second = mock(WebSocket.class);
+        when(http.newWebSocket(any(Request.class), any(WebSocketListener.class)))
+            .thenReturn(first, second);
+        when(second.send(any(okio.ByteString.class))).thenReturn(true);
+
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(
+            http, "ws://example.com/ws", "", "proto");
+        MuxTransport.Listener listener = new MuxTransport.Listener() {
+            @Override public void onOpen() {}
+            @Override public void onText(String text) {}
+            @Override public void onBinary(byte[] data) {}
+            @Override public void onClosed(int code, String reason) {}
+            @Override public void onError(String message) {}
+        };
+
+        transport.start(listener);
+        transport.close();
+        transport.start(listener);
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http, times(2)).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener oldListener = captor.getAllValues().get(0);
+        WebSocketListener newListener = captor.getAllValues().get(1);
+        newListener.onOpen(second, mock(Response.class));
+
+        oldListener.onFailure(first, new IOException("old socket failed late"), null);
+
+        assertTrue("stale failure must not disconnect the new socket", transport.isConnected());
+        assertTrue("new socket must remain writable", transport.sendBinary(new byte[]{1}));
+        verify(second).send(any(okio.ByteString.class));
     }
 }

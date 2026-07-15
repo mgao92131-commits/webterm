@@ -27,6 +27,10 @@ public final class TerminalCacheCoordinator {
         diskCache.saveMetadataBlocking(metadata);
     }
 
+    public void updateSessionCwdAsync(ServerConfig server, String sessionId, String cwd) {
+        diskCache.updateCwdAsync(server, sessionId, cwd);
+    }
+
     public void removeTerminal(String baseUrl, String sessionId) {
         diskCache.clearAsync(baseUrl, sessionId);
     }

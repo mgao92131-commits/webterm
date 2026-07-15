@@ -214,6 +214,10 @@ public final class TerminalSessionRuntime {
       @Override
       public void onConnected() {
         if (TerminalSessionRuntime.this.connection != connection) return;
+        // 同一连接阶段只允许启动一次初始同步。重复 ws-connected 不能重复 Hello；
+        // 合法重连会先经 onDisconnected() 进入 RECONNECTING。
+        State currentState = state;
+        if (currentState != State.CONNECTING && currentState != State.RECONNECTING) return;
         updateState(State.TRANSPORT_CONNECTED);
         modelExecutor.execute(() -> beginSynchronization(connection));
       }

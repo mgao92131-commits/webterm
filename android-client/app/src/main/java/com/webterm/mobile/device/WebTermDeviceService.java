@@ -54,6 +54,7 @@ import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
@@ -87,6 +88,8 @@ public final class WebTermDeviceService extends Service {
 
     private static final String PREFS = "webterm.device_service";
     private static final String KEY_CONNECTIONS_ENABLED = "connections_enabled";
+    private static final String KEY_CLIENT_ID = "client_id";
+    private static final String KEY_CLIENT_NAME = "client_name";
 
     @Inject RelayMuxSessionRegistry registry;
     @Inject OkHttpClient http;
@@ -115,6 +118,13 @@ public final class WebTermDeviceService extends Service {
     public static FileUploadController uploadController() {
         WebTermDeviceService instance = activeInstance;
         return instance == null ? null : instance.uploadController;
+    }
+
+    /** App 进入前台或发生真实用户操作时，更新所有在线远端连接的接收端活跃时间。 */
+    public static void markActive() {
+        WebTermDeviceService instance = activeInstance;
+        if (instance == null) return;
+        for (RelayMuxSessionManager manager : instance.managers.values()) manager.markClientActive();
     }
 
     public static void start(Context context) {
@@ -385,6 +395,7 @@ public final class WebTermDeviceService extends Service {
         }
         String key = connectionKey(url, deviceId);
         RelayMuxSessionManager manager = registry.forDevice(url, config.getCookie(), deviceId);
+        manager.setClientRegistration(receiverClientId(this), receiverClientName(this));
         managers.put(key, manager);
         configs.put(key, config);
         manager.setControlListener(msg -> routeControl(key, msg));
@@ -444,6 +455,24 @@ public final class WebTermDeviceService extends Service {
 
     private static SharedPreferences preferences(Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private static String receiverClientId(Context context) {
+        SharedPreferences prefs = preferences(context);
+        String id = prefs.getString(KEY_CLIENT_ID, "");
+        if (id != null && !id.isEmpty()) return id;
+        id = "android_" + UUID.randomUUID().toString().replace("-", "");
+        prefs.edit().putString(KEY_CLIENT_ID, id).apply();
+        return id;
+    }
+
+    private static String receiverClientName(Context context) {
+        String saved = preferences(context).getString(KEY_CLIENT_NAME, "");
+        if (saved != null && !saved.trim().isEmpty()) return saved.trim();
+        String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
+        String model = Build.MODEL == null ? "" : Build.MODEL;
+        String name = (manufacturer + " " + model).replaceAll("\\s+", " ").trim();
+        return name.isEmpty() ? "Android" : name;
     }
 
     private static boolean connectionsEnabled(Context context) {

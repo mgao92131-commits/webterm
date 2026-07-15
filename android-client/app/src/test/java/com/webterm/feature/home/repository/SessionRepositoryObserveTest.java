@@ -128,6 +128,55 @@ public class SessionRepositoryObserveTest {
     }
 
     @Test
+    public void updateSessionCwd_updatesLiveListAndPreservesSessionFields() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"s1\",\"termTitle\":\"zsh\",\"instanceId\":\"i1\",\"createdAt\":\"t1\",\"cwd\":\"/old\"}]"));
+
+        repository.updateSessionCwd(server, "s1", "/new path");
+
+        JSONObject updated = observer.latest().sessions.optJSONObject(0);
+        assertEquals("/new path", updated.optString("cwd"));
+        assertEquals("zsh", updated.optString("termTitle"));
+        assertEquals("i1", updated.optString("instanceId"));
+        assertEquals("t1", updated.optString("createdAt"));
+        verify(terminalCache).updateSessionCwdAsync(server, "s1", "/new path");
+    }
+
+    @Test
+    public void updateSessionCwd_matchesRelayCanonicalAndLocalSessionIds() throws JSONException {
+        ServerConfig server = new ServerConfig(
+            "relay-device", "Mac", "http://relay.test", "cookie", "", "",
+            false, true, "mac");
+        RecordingObserver observer = new RecordingObserver();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"mac:s1\",\"termTitle\":\"zsh\",\"cwd\":\"/old\"}]"));
+
+        repository.updateSessionCwd(server, "s1", "/new");
+
+        assertEquals("/new", observer.latest().sessions.optJSONObject(0).optString("cwd"));
+    }
+
+    @Test
+    public void updateSessionCwd_ignoresDifferentSession() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"s1\",\"termTitle\":\"zsh\",\"cwd\":\"/old\"}]"));
+
+        repository.updateSessionCwd(server, "s2", "/wrong");
+
+        assertEquals("/old", observer.latest().sessions.optJSONObject(0).optString("cwd"));
+    }
+
+    @Test
     public void observeSessions_removesClosedSession() throws JSONException {
         ServerConfig server = server();
         RecordingObserver observer = new RecordingObserver();

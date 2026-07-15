@@ -130,6 +130,20 @@ public final class ScreenResumeContractTest {
   }
 
   @Test
+  public void duplicateConnectedCallbackCannotSendSecondHello() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onConnected();
+    connection.listener.onConnected();
+
+    assertEquals("one logical channel generation must send one screen Hello",
+        1, connection.syncRequests);
+  }
+
+  @Test
   public void validationFailureRejectsWholeFrameAndSendsSingleResyncRequest() {
     RuntimeFixture fixture = runtimeWithSnapshot(snapshot(1));
     TerminalSessionRuntime runtime = fixture.runtime;
@@ -302,6 +316,7 @@ public final class ScreenResumeContractTest {
     int resyncRequests;
     int reconnectRequests;
     int acquireRequests;
+    int syncRequests;
     ResumeToken resumeToken = ResumeToken.cold(0);
     Listener listener;
 
@@ -312,6 +327,7 @@ public final class ScreenResumeContractTest {
 
     @Override
     public boolean beginSync(@NonNull ResumeToken resumeToken) {
+      syncRequests++;
       this.resumeToken = resumeToken;
       return false;
     }

@@ -72,6 +72,7 @@ public final class MuxSession {
         connected = false;
         connecting = false;
         mainHandler.removeCallbacks(connectTimeoutRunnable);
+        clearPendingConnects();
         if (transport != null) transport.close();
     }
 
@@ -97,7 +98,13 @@ public final class MuxSession {
         synchronized (pendingConnects) {
             pendingConnects.put(tunnelId, true);
         }
-        return sendText(msg.toString());
+        if (!sendText(msg.toString())) {
+            synchronized (pendingConnects) {
+                pendingConnects.remove(tunnelId);
+            }
+            return false;
+        }
+        return true;
     }
 
     boolean sendWsClose(String tunnelId) {
@@ -175,6 +182,7 @@ public final class MuxSession {
                     mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
+                    clearPendingConnects();
                     Log.e(TAG, "mux failure: " + message);
                     listener.onMuxDisconnected(code, message);
                     scheduleReconnect();
@@ -188,6 +196,7 @@ public final class MuxSession {
                     mainHandler.removeCallbacks(connectTimeoutRunnable);
                     connected = false;
                     connecting = false;
+                    clearPendingConnects();
                     listener.onMuxDisconnected(code, reason);
                     scheduleReconnect();
                 });
@@ -202,6 +211,7 @@ public final class MuxSession {
         if (transport != null) {
             transport.close();
         }
+        clearPendingConnects();
         listener.onMuxDisconnected(0, "connect timeout");
         scheduleReconnect();
     }
@@ -216,9 +226,11 @@ public final class MuxSession {
         String type = msg.optString("type");
         String tunnelId = msg.optString("tunnelConnectionId");
         if ("ws-connected".equals(type)) {
+            boolean pending;
             synchronized (pendingConnects) {
-                pendingConnects.remove(tunnelId);
+                pending = pendingConnects.remove(tunnelId) != null;
             }
+            if (!pending) return;
             mainHandler.post(() -> listener.onTunnelConnected(tunnelId));
         } else if ("ws-error".equals(type)) {
             synchronized (pendingConnects) {
@@ -256,5 +268,11 @@ public final class MuxSession {
         mainHandler.postDelayed(() -> {
             if (enabled && !transport.isConnected()) connectNow();
         }, delayMs);
+    }
+
+    private void clearPendingConnects() {
+        synchronized (pendingConnects) {
+            pendingConnects.clear();
+        }
     }
 }

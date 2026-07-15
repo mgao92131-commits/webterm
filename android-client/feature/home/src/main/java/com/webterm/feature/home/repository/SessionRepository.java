@@ -125,6 +125,65 @@ public final class SessionRepository {
     }
 
     /**
+     * Optimistically mirrors a screen-protocol cwd effect into the session list.
+     * The next manager WS/HTTP update remains authoritative and may overwrite it.
+     */
+    public void updateSessionCwd(ServerConfig server, String sessionId, String cwd) {
+        if (server == null || sessionId == null || sessionId.isEmpty()) return;
+        String value = cwd == null ? "" : cwd;
+        if (terminalCache != null) {
+            terminalCache.updateSessionCwdAsync(server, sessionId, value);
+        }
+        mainHandler.post(() -> updateSessionCwdInMemory(server, sessionId, value));
+    }
+
+    private void updateSessionCwdInMemory(ServerConfig server, String sessionId, String cwd) {
+        SessionListCache.Snapshot snapshot = sessionCache.get(server);
+        if (snapshot == null || snapshot.sessions == null) return;
+        String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
+        String localSessionId = SessionIds.local(sessionId, deviceId);
+        JSONArray next = new JSONArray();
+        boolean changed = false;
+        for (int i = 0; i < snapshot.sessions.length(); i++) {
+            JSONObject session = snapshot.sessions.optJSONObject(i);
+            if (session == null) continue;
+            if (!localSessionId.equals(SessionIds.local(session.optString("id"), deviceId))) {
+                next.put(session);
+                continue;
+            }
+            if (cwd.equals(session.optString("cwd", ""))) {
+                next.put(session);
+                continue;
+            }
+            try {
+                JSONObject updated = new JSONObject(session.toString());
+                updated.put("cwd", cwd);
+                next.put(updated);
+                changed = true;
+            } catch (JSONException e) {
+                next.put(session);
+            }
+        }
+        if (!changed) return;
+
+        sessionCache.put(server, new SessionListCache.Snapshot(
+            copySessions(next),
+            System.currentTimeMillis(),
+            snapshot.state,
+            snapshot.errorMessage
+        ));
+        ServerSubscription sub = subscriptions.get(key(server));
+        if (sub != null) {
+            SessionListResult current = sub.liveData.getValue();
+            SessionListResult.State state = current != null && current.state != null
+                ? current.state : toResultState(snapshot.state);
+            String error = current != null ? current.errorMessage : snapshot.errorMessage;
+            boolean loading = current != null && current.isLoading;
+            sub.liveData.setValue(new SessionListResult(next, state, error, loading));
+        }
+    }
+
+    /**
      * Legacy callback-based load. Kept for one-shot HTTP loads during migration.
      */
     public void loadSessions(ServerConfig server, Callback callback) {

@@ -17,4 +17,10 @@ public class TerminalLifecycleTitleTest {
     public void displayTermTitleTrimsReportedTitle() {
         assertEquals("Codex", RemoteTerminalIntegration.displayTermTitle("  Codex  "));
     }
+
+    @Test
+    public void displayCwdPreservesPathAndHandlesNull() {
+        assertEquals("", RemoteTerminalIntegration.displayCwd(null));
+        assertEquals("/Users/gao/My Project", RemoteTerminalIntegration.displayCwd("/Users/gao/My Project"));
+    }
 }

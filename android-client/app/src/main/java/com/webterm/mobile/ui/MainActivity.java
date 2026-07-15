@@ -88,7 +88,11 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         intent.removeExtra(AndroidNotificationRenderer.EXTRA_SESSION_ID);
     }
 
-    @Override protected void onResume() { super.onResume(); coordinator.onResume(); }
+    @Override protected void onResume() {
+        super.onResume();
+        coordinator.onResume();
+        WebTermDeviceService.markActive();
+    }
     @Override protected void onPause() { coordinator.onPause(); super.onPause(); }
     @Override protected void onDestroy() { coordinator.onDestroy(); super.onDestroy(); }
     @Override public void onTrimMemory(int level) {
