@@ -118,7 +118,6 @@ public final class TerminalSessionRuntime {
 
   private volatile State state = State.CONNECTING;
   private volatile String layoutLeaseId = "";
-  private volatile boolean layoutLeaseGranted;
   private enum LayoutLeaseState { DETACHED, ACQUIRING, HELD }
   private volatile LayoutLeaseState layoutLeaseState = LayoutLeaseState.DETACHED;
   private volatile boolean pageAttached = true;
@@ -322,7 +321,7 @@ public final class TerminalSessionRuntime {
     pageAttached = false;
     ScreenConnection current = connection;
     if (current != null) {
-      if (layoutLeaseGranted) current.sendFocusInput(false);
+      if (hasLayoutLease()) current.sendFocusInput(false);
       current.releaseLayout();
     }
     invalidateLayoutLease();
@@ -342,7 +341,7 @@ public final class TerminalSessionRuntime {
     if (listeners.addIfAbsent(listener)) {
       callbackExecutor.execute(() -> {
         listener.onConnectionStateChange(state);
-        listener.onLayoutLeaseStateChange(layoutLeaseGranted);
+        listener.onLayoutLeaseStateChange(hasLayoutLease());
       });
     }
   }
@@ -360,7 +359,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendTextInput(@NonNull String text) {
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendTextInput(text);
@@ -368,7 +367,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendPasteInput(@NonNull String text) {
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendPasteInput(text);
@@ -377,7 +376,7 @@ public final class TerminalSessionRuntime {
 
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
@@ -387,7 +386,7 @@ public final class TerminalSessionRuntime {
   public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
@@ -395,7 +394,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendFocusInput(boolean focused) {
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.sendFocusInput(focused);
@@ -408,7 +407,7 @@ public final class TerminalSessionRuntime {
     // 否则首次连接（租约往返慢于 View 首帧）或断线重连期间的尺寸请求会静默丢失。
     lastRequestedCols = cols;
     lastRequestedRows = rows;
-    if (state != State.CONNECTED || !layoutLeaseGranted) return;
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) {
       c.requestResize(cols, rows);
@@ -738,7 +737,7 @@ public final class TerminalSessionRuntime {
   }
 
   public boolean hasLayoutLease() {
-    return layoutLeaseGranted;
+    return layoutLeaseState == LayoutLeaseState.HELD;
   }
 
   private void handleLayoutLease(TerminalScreenProto.LayoutLease lease) {
@@ -764,7 +763,6 @@ public final class TerminalSessionRuntime {
         return;
       }
       layoutLeaseId = lease.getLeaseId();
-      layoutLeaseGranted = true;
       layoutLeaseState = LayoutLeaseState.HELD;
       layoutLeaseExpiresAtMs = lease.getExpiresAtMs();
       layoutLeaseRetryAttempt = 0;
@@ -781,12 +779,12 @@ public final class TerminalSessionRuntime {
       c.setLayoutLeaseId(layoutLeaseId);
       // 租约到手后补发一次最新尺寸：覆盖连接时的占位 hello 尺寸，
       // 以及租约往返期间/断线期间被缓存下来的 resize 请求。
-      if (layoutLeaseGranted && lastRequestedCols > 0 && lastRequestedRows > 0) {
+      if (hasLayoutLease() && lastRequestedCols > 0 && lastRequestedRows > 0) {
         c.requestResize(lastRequestedCols, lastRequestedRows);
       }
     }
     long generation = layoutLeaseGeneration.get();
-    if (layoutLeaseGranted) {
+    if (hasLayoutLease()) {
       scheduleLayoutLeaseRenewal(generation, layoutLeaseId, layoutLeaseExpiresAtMs);
     } else {
       scheduleLayoutLeaseRetry(generation);
@@ -798,11 +796,11 @@ public final class TerminalSessionRuntime {
     if (generation != layoutLeaseGeneration.get() || !pageAttached
         || state != State.CONNECTED || connection == null) return;
     if (!pendingLayoutRequestId.isEmpty()) return;
-    if (!renewal && layoutLeaseGranted) return;
+    if (!renewal && hasLayoutLease()) return;
 
     String requestId = "layout-" + generation + "-" + nextLayoutRequestId.incrementAndGet();
     pendingLayoutRequestId = requestId;
-    if (!layoutLeaseGranted) {
+    if (!hasLayoutLease()) {
       layoutLeaseState = LayoutLeaseState.ACQUIRING;
       notifyLayoutLeaseState();
     }
@@ -818,7 +816,7 @@ public final class TerminalSessionRuntime {
       return;
     }
     pendingLayoutRequestId = "";
-    if (layoutLeaseGranted) {
+    if (hasLayoutLease()) {
       TerminalResumeMetrics.leaseRetry();
       leaseScheduler.schedule(
           () -> modelExecutor.execute(() -> ensureLayoutLease(generation, true)),
@@ -830,7 +828,7 @@ public final class TerminalSessionRuntime {
 
   private void scheduleLayoutLeaseRetry(long generation) {
     if (generation != layoutLeaseGeneration.get() || !pageAttached
-        || state != State.CONNECTED || layoutLeaseGranted) return;
+        || state != State.CONNECTED || hasLayoutLease()) return;
     int index = Math.min(layoutLeaseRetryAttempt, LEASE_RETRY_BACKOFF_MS.length - 1);
     long delayMs = LEASE_RETRY_BACKOFF_MS[index];
     layoutLeaseRetryAttempt++;
@@ -856,7 +854,7 @@ public final class TerminalSessionRuntime {
     }
     leaseScheduler.schedule(() -> modelExecutor.execute(() -> {
       if (generation != layoutLeaseGeneration.get() || !pageAttached
-          || !layoutLeaseGranted || !expectedLeaseId.equals(layoutLeaseId)) return;
+          || !hasLayoutLease() || !expectedLeaseId.equals(layoutLeaseId)) return;
       ensureLayoutLease(generation, true);
     }), delayMs);
     if (expiresAtMs > 0L) {
@@ -887,13 +885,12 @@ public final class TerminalSessionRuntime {
 
   private void clearLayoutLeaseState() {
     layoutLeaseId = "";
-    layoutLeaseGranted = false;
     layoutLeaseExpiresAtMs = 0L;
     layoutLeaseState = LayoutLeaseState.DETACHED;
   }
 
   private void notifyLayoutLeaseState() {
-    boolean ready = layoutLeaseGranted;
+    boolean ready = hasLayoutLease();
     callbackExecutor.execute(() -> {
       for (Listener listener : listeners) listener.onLayoutLeaseStateChange(ready);
     });

@@ -1,7 +1,7 @@
 # Android 终端输入租约自愈修复计划
 
 **日期：** 2026-07-15  
-**状态：** 待实施  
+**状态：** 核心修复完成，等待长期真机观察
 **范围：** Go terminal runtime、screen protocol 响应、Android terminal runtime、回归脚本与诊断接口  
 **目标：** 消除“单个终端仍能收到输出/标题，但输入永久无效；反复退出重开仍无效，稍后又自行恢复”的 Layout Lease 生命周期故障。
 
@@ -209,14 +209,14 @@ ACQUIRING ── granted(current request) ──► HELD
 
 ## 8. 实施顺序
 
-- [ ] Task 1：先补 Go fake-clock LeaseManager 测试和 Android fake-scheduler 失败复现，证明现有代码会永久停在无 Lease 状态。
-- [ ] Task 2：实现 Go LeaseManager 幂等续租、过期清理和结构化结果。
-- [ ] Task 3：贯通 request ID、expiresAt 和主动失效通知，补 session/runtime 测试。
-- [ ] Task 4：实现 Android 代次化 Lease 状态机、拒绝重试和提前续租。
-- [ ] Task 5：收紧 ScreenMuxConnection 空 Lease 防线并增加非阻塞 UI 状态提示。
+- [x] Task 1：先补 Go fake-clock LeaseManager 测试和 Android fake-scheduler 失败复现，证明现有代码会永久停在无 Lease 状态。
+- [x] Task 2：实现 Go LeaseManager 幂等续租、过期清理和结构化结果。
+- [x] Task 3：贯通 request ID、expiresAt 和主动失效通知，补 session/runtime 测试。
+- [x] Task 4：实现 Android 代次化 Lease 状态机、拒绝重试和提前续租。
+- [x] Task 5：收紧 ScreenMuxConnection 空 Lease 防线并增加非阻塞 UI 状态提示。
 - [ ] Task 6：扩展真机复现脚本和本地控制诊断，完成竞态与 TTL 自动化验收。
-- [ ] Task 7：运行 Go 全量测试、Android 全量单测、release 构建、物理手机安装及中转 Agent 重启回归。
-- [ ] Task 8：审查协议兼容、日志隐私、scheduler 取消语义和零残留布尔旧路径，记录完成证据。
+- [x] Task 7：运行 Go 全量测试、Android 全量单测、release 构建、物理手机安装及中转 Agent 重启回归。
+- [x] Task 8：审查协议兼容、日志隐私、scheduler 取消语义和零残留布尔旧路径，记录完成证据。
 
 ## 9. 验证命令
 
@@ -236,7 +236,19 @@ git diff --check
 
 真机安装和 Agent 重启沿用仓库现有中转脚本；运行时以控制端点显示 Relay 已连接、目标 session client 数收敛、input trace 出现 PTY 写入为最终证据，不能只以构建成功作为完成信号。
 
-## 10. 非目标
+## 10. 本轮完成记录
+
+2026-07-15 完成核心修复与交付：
+
+- `go test ./...` 在正常主机权限下全部通过；
+- Android `./gradlew test --no-daemon` 全部通过；
+- Android clean release 构建通过；
+- 发布版已覆盖安装到实体设备 `V2507A` 并启动；
+- relay 模式 Go Agent 已重建重启，控制端显示 `relay.connected=true`、`deviceId=d2`；
+- 本次没有修改 Relay 服务端路由或帧协议，不需要重新部署服务器 Relay；
+- Task 6 的自动化双 client/短 TTL 真机脚本仍待补充，当前交付需要继续观察原偶发场景是否彻底消失。
+
+## 11. 非目标
 
 - 不改变“一次只有一个交互 controller”的产品语义；
 - 不允许新页面无条件抢占另一台活跃设备；
