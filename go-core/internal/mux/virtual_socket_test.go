@@ -57,7 +57,7 @@ func (s *recordingSocket) textWrites() []map[string]any {
 func TestVirtualSocketBackpressureCloseCode(t *testing.T) {
 	fake := &recordingSocket{}
 	sess := Serve(fake, &ServeOpts{})
-	vs := sess.newSocket("s1", protocol.BinarySubprotocol)
+	vs := sess.newSocket("s1", "")
 
 	// Fill the 256-slot incoming buffer.
 	for i := 0; i < 256; i++ {

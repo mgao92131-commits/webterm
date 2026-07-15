@@ -11,9 +11,13 @@ public final class ServerConfigManager {
         this.store = store;
     }
 
-    public synchronized void load() {
-        servers.clear();
-        servers.addAll(store.loadServers());
+	public synchronized void load() {
+		servers.clear();
+		for (ServerConfig server : store.loadServers()) {
+			if (server != null && server.isRelayMaster()) {
+				servers.add(server);
+			}
+		}
     }
 
     public synchronized void save() {
@@ -85,27 +89,4 @@ public final class ServerConfigManager {
         return value == null ? "" : value;
     }
 
-    public void addOrUpdate(ServerConfig existingServer, String name, String url, String cookie, String username, String password) {
-        if (existingServer == null) {
-            servers.add(new ServerConfig(
-                "srv_" + System.currentTimeMillis(),
-                name,
-                url,
-                cookie,
-                username,
-                password
-            ));
-            return;
-        }
-
-        existingServer.setName(name);
-        existingServer.setUrl(url);
-        existingServer.setCookie(cookie);
-        existingServer.setUsername(username);
-        existingServer.setPassword(password);
-    }
-
-    public void remove(ServerConfig server) {
-        servers.remove(server);
-    }
 }

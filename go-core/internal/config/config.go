@@ -9,15 +9,7 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
-const (
-	ModeDirect      = "direct"
-	ModeRelay       = "relay"
-	ModeLegacyAgent = "agent"
-)
-
-const (
-	RelayProtocolV2 = "v2"
-)
+const RelayProtocolV2 = "v2"
 
 const RedactedSecret = "********"
 
@@ -31,14 +23,12 @@ const (
 )
 
 type Options struct {
-	Mode       string
 	ConfigPath string
 }
 
+// Config 是 relay-only PC Agent 的完整配置。
 type Config struct {
-	Mode       string           `json:"mode"`
 	SocketPath string           `json:"socketPath,omitempty"`
-	Direct     DirectConfig     `json:"direct"`
 	Relay      RelayConfig      `json:"relay"`
 	Control    ControlConfig    `json:"control"`
 	Shell      ShellConfig      `json:"shell"`
@@ -46,24 +36,13 @@ type Config struct {
 	Upload     UploadConfig     `json:"upload"`
 }
 
-// ScrollbackConfig 是终端历史（scrollback）的双上限配置。
-// MaxLines 是行数安全上限，MaxBytes 是近似内存预算；实际保留量以先达到者为准，
-// 不承诺保留任何固定行数。非正值在 Load 时回退到默认值。
 type ScrollbackConfig struct {
 	MaxLines int `json:"maxLines,omitempty"`
 	MaxBytes int `json:"maxBytes,omitempty"`
 }
 
-// UploadConfig 是客户端上传到 Agent 的单文件限制。
 type UploadConfig struct {
 	MaxBytes int64 `json:"maxBytes"`
-}
-
-type DirectConfig struct {
-	Addr     string `json:"addr"`
-	User     string `json:"user"`
-	Password string `json:"password,omitempty"`
-	WebRoot  string `json:"webRoot,omitempty"`
 }
 
 type RelayConfig struct {
@@ -84,9 +63,6 @@ type ShellConfig struct {
 
 func (cfg Config) Redacted() Config {
 	copy := cfg
-	if copy.Direct.Password != "" {
-		copy.Direct.Password = RedactedSecret
-	}
 	if copy.Relay.Secret != "" {
 		copy.Relay.Secret = RedactedSecret
 	}
@@ -120,23 +96,8 @@ func Save(path string, cfg Config) error {
 }
 
 func MergeEditable(current Config, next Config) Config {
-	if next.Mode != "" {
-		current.Mode = NormalizeMode(next.Mode)
-	}
 	if next.SocketPath != "" {
 		current.SocketPath = next.SocketPath
-	}
-	if next.Direct.Addr != "" {
-		current.Direct.Addr = next.Direct.Addr
-	}
-	if next.Direct.User != "" {
-		current.Direct.User = next.Direct.User
-	}
-	if next.Direct.Password != "" && next.Direct.Password != RedactedSecret {
-		current.Direct.Password = next.Direct.Password
-	}
-	if next.Direct.WebRoot != "" {
-		current.Direct.WebRoot = next.Direct.WebRoot
 	}
 	if next.Relay.URL != "" {
 		current.Relay.URL = next.Relay.URL
@@ -168,20 +129,10 @@ func MergeEditable(current Config, next Config) Config {
 	if next.Upload.MaxBytes > 0 {
 		current.Upload.MaxBytes = next.Upload.MaxBytes
 	}
-	if current.Mode == "" {
-		current.Mode = ModeDirect
-	}
 	return current
 }
 
-func NormalizeMode(mode string) string {
-	if mode == ModeLegacyAgent {
-		return ModeRelay
-	}
-	return mode
-}
-
-func NormalizeRelayProtocol(protocol string) string {
+func NormalizeRelayProtocol(string) string {
 	return RelayProtocolV2
 }
 
@@ -191,15 +142,7 @@ func Load(options Options) Config {
 		cfg = mergeConfig(cfg, readConfigFile(options.ConfigPath))
 	}
 	cfg = mergeConfig(cfg, envConfig())
-	if options.Mode != "" {
-		cfg.Mode = options.Mode
-	}
-	cfg.Mode = NormalizeMode(cfg.Mode)
-	if cfg.Mode == "" {
-		cfg.Mode = ModeDirect
-	}
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
-	// 非法值兜底：行数上限与字节预算必须为正，否则回退默认（保持现行为不变）。
 	if cfg.Scrollback.MaxLines <= 0 {
 		cfg.Scrollback.MaxLines = DefaultScrollbackMaxLines
 	}
@@ -213,21 +156,12 @@ func defaultConfig() Config {
 	cwd, _ := os.Getwd()
 	hostname, _ := os.Hostname()
 	return Config{
-		Mode: ModeDirect,
-		Direct: DirectConfig{
-			Addr: "127.0.0.1:8080",
-			User: "admin",
-		},
 		Relay: RelayConfig{
 			DeviceName: hostname,
 			Protocol:   RelayProtocolV2,
 		},
-		Control: ControlConfig{
-			Addr: "127.0.0.1:18081",
-		},
-		Shell: ShellConfig{
-			CWD: cwd,
-		},
+		Control: ControlConfig{Addr: "127.0.0.1:18081"},
+		Shell:   ShellConfig{CWD: cwd},
 		Scrollback: ScrollbackConfig{
 			MaxLines: DefaultScrollbackMaxLines,
 			MaxBytes: DefaultScrollbackMaxBytes,
@@ -250,50 +184,22 @@ func readConfigFile(path string) Config {
 
 func envConfig() Config {
 	return Config{
-		Mode:       env("WEBTERM_MODE"),
 		SocketPath: env("WEBTERM_SOCKET_PATH"),
-		Direct: DirectConfig{
-			Addr:     env("WEBTERM_ADDR"),
-			User:     env("WEBTERM_USER"),
-			Password: env("WEBTERM_PASSWORD"),
-			WebRoot:  env("WEBTERM_WEB_ROOT"),
-		},
 		Relay: RelayConfig{
 			URL:        env("RELAY_URL"),
 			Secret:     env("RELAY_SECRET"),
 			DeviceName: env("DEVICE_NAME"),
 			Protocol:   env("WEBTERM_RELAY_PROTOCOL"),
 		},
-		Control: ControlConfig{
-			Addr: env("WEBTERM_CONTROL_ADDR"),
-		},
-		Shell: ShellConfig{
-			Command: env("WEBTERM_SHELL"),
-		},
-		Upload: UploadConfig{
-			MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES"),
-		},
+		Control: ControlConfig{Addr: env("WEBTERM_CONTROL_ADDR")},
+		Shell:   ShellConfig{Command: env("WEBTERM_SHELL")},
+		Upload:  UploadConfig{MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES")},
 	}
 }
 
 func mergeConfig(base Config, override Config) Config {
-	if override.Mode != "" {
-		base.Mode = override.Mode
-	}
 	if override.SocketPath != "" {
 		base.SocketPath = override.SocketPath
-	}
-	if override.Direct.Addr != "" {
-		base.Direct.Addr = override.Direct.Addr
-	}
-	if override.Direct.User != "" {
-		base.Direct.User = override.Direct.User
-	}
-	if override.Direct.Password != "" {
-		base.Direct.Password = override.Direct.Password
-	}
-	if override.Direct.WebRoot != "" {
-		base.Direct.WebRoot = override.Direct.WebRoot
 	}
 	if override.Relay.URL != "" {
 		base.Relay.URL = override.Relay.URL

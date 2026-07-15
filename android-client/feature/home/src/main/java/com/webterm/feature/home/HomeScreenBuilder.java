@@ -19,11 +19,11 @@ import com.webterm.ui.common.UIUtils;
 public final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-    public static HomeResult buildHome(Activity activity, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
-        return buildTopLevel(activity, "WebTerm", "设备列表", onAddServer, onSettings, onRefresh, onRelaySettings, onCrashLogs);
-    }
+	public static HomeResult buildHome(Activity activity, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
+		return buildTopLevel(activity, "WebTerm", "中转设备", onSettings, onRefresh, onRelaySettings, onCrashLogs);
+	}
 
-    private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onAddServer, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
+	private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(DesignTokens.BG_PRIMARY);
@@ -76,25 +76,21 @@ public final class HomeScreenBuilder {
         moreBtn.setPadding(0, 0, 0, 0);
         moreBtn.setOnClickListener((v) -> {
             PopupMenu popup = new PopupMenu(activity, moreBtn);
-            popup.getMenu().add(0, 1, 0, "添加电脑");
-            popup.getMenu().add(0, 2, 0, "终端设置");
-            popup.getMenu().add(0, 3, 0, "中转服务");
-            popup.getMenu().add(0, 4, 0, "刷新设备");
-            popup.getMenu().add(0, 5, 0, "导出崩溃日志");
-            popup.setOnMenuItemClickListener((item) -> {
-                if (item.getItemId() == 1) {
-                    onAddServer.run();
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    onSettings.run();
-                    return true;
-                } else if (item.getItemId() == 3) {
-                    onRelaySettings.run();
-                    return true;
-                } else if (item.getItemId() == 4) {
-                    onRefresh.run();
-                    return true;
-                } else if (item.getItemId() == 5) {
+			popup.getMenu().add(0, 1, 0, "终端设置");
+			popup.getMenu().add(0, 2, 1, "中转服务");
+			popup.getMenu().add(0, 3, 2, "刷新设备");
+			popup.getMenu().add(0, 4, 3, "导出崩溃日志");
+			popup.setOnMenuItemClickListener((item) -> {
+				if (item.getItemId() == 1) {
+					onSettings.run();
+					return true;
+				} else if (item.getItemId() == 2) {
+					onRelaySettings.run();
+					return true;
+				} else if (item.getItemId() == 3) {
+					onRefresh.run();
+					return true;
+				} else if (item.getItemId() == 4) {
                     onCrashLogs.run();
                     return true;
                 }
@@ -128,7 +124,7 @@ public final class HomeScreenBuilder {
 
     public static TextView emptyState(Activity activity) {
         TextView empty = new TextView(activity);
-        empty.setText("暂无保存的电脑\n点击右上角按钮添加电脑");
+		empty.setText("暂无在线设备\n请先配置中转服务并启动 PC Agent");
         empty.setTextColor(DesignTokens.TEXT_TERTIARY);
         empty.setTextSize(DesignTokens.TEXT_BODY_SIZE);
         empty.setGravity(Gravity.CENTER);
@@ -136,7 +132,7 @@ public final class HomeScreenBuilder {
         return empty;
     }
 
-    public static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick, Runnable onEditServer, Runnable onRemoveServer) {
+	public static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
@@ -150,17 +146,15 @@ public final class HomeScreenBuilder {
         card.setOnClickListener(onClick);
 
         TextView badge = new TextView(activity);
-        badge.setText(server.isRelayDevice() ? "R" : "PC");
-        int badgeTextColor = server.isRelayDevice() ? DesignTokens.INFO : DesignTokens.ACCENT;
+		badge.setText("R");
+		int badgeTextColor = DesignTokens.INFO;
         badge.setTextColor(badgeTextColor);
         badge.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
         badge.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
         badge.setGravity(Gravity.CENTER);
         GradientDrawable badgeBg = new GradientDrawable();
         badgeBg.setShape(GradientDrawable.RECTANGLE);
-        int badgeBgColor = server.isRelayDevice()
-            ? DesignTokens.withAlpha(DesignTokens.INFO, 0x4D)
-            : DesignTokens.accentBgStrong();
+		int badgeBgColor = DesignTokens.withAlpha(DesignTokens.INFO, 0x4D);
         badgeBg.setColor(badgeBgColor);
         badgeBg.setCornerRadius(UIUtils.dp(activity, DesignTokens.RADIUS_SM));
         badge.setBackground(badgeBg);
@@ -178,11 +172,7 @@ public final class HomeScreenBuilder {
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView detail = new TextView(activity);
-        if (server.isRelayDevice()) {
-            detail.setText("中转设备 · Relay");
-        } else {
-            detail.setText(server.getUrl());
-        }
+		detail.setText("中转设备 · Relay");
         detail.setTextColor(DesignTokens.TEXT_SECONDARY);
         detail.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
         detail.setSingleLine(true);
@@ -190,32 +180,6 @@ public final class HomeScreenBuilder {
         textArea.addView(name, new LinearLayout.LayoutParams(-1, -2));
         textArea.addView(detail, new LinearLayout.LayoutParams(-1, -2));
         card.addView(textArea, new LinearLayout.LayoutParams(0, -2, 1));
-
-        if (!server.isRelayDevice()) {
-            TextView menuBtn = new TextView(activity);
-            menuBtn.setText("⋮");
-            menuBtn.setTextColor(DesignTokens.TEXT_SECONDARY);
-            menuBtn.setTextSize(DesignTokens.TEXT_BODY_SIZE + 2);
-            menuBtn.setGravity(Gravity.CENTER);
-            menuBtn.setPadding(UIUtils.dp(activity, DesignTokens.SPACE_2), UIUtils.dp(activity, DesignTokens.SPACE_1), UIUtils.dp(activity, DesignTokens.SPACE_2), UIUtils.dp(activity, DesignTokens.SPACE_1));
-            menuBtn.setOnClickListener((v) -> {
-                PopupMenu popup = new PopupMenu(activity, menuBtn);
-                popup.getMenu().add(0, 1, 0, "修改配置");
-                popup.getMenu().add(0, 2, 1, "移除电脑");
-                popup.setOnMenuItemClickListener((item) -> {
-                    if (item.getItemId() == 1) {
-                        onEditServer.run();
-                        return true;
-                    } else if (item.getItemId() == 2) {
-                        onRemoveServer.run();
-                        return true;
-                    }
-                    return false;
-                });
-                popup.show();
-            });
-            card.addView(menuBtn, new LinearLayout.LayoutParams(UIUtils.dp(activity, 36), UIUtils.dp(activity, 36)));
-        }
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_3));

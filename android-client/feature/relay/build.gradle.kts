@@ -22,7 +22,6 @@ dependencies {
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
     implementation(libs.fragment.ktx)
-    implementation(libs.lifecycle.viewmodel)
     implementation(libs.lifecycle.livedata)
     implementation("androidx.annotation:annotation:1.9.0")
 }

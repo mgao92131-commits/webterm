@@ -84,7 +84,6 @@ public final class WebTermDeviceService extends Service {
 
     /** 前台通知「全部停止」action：释放所有设备在线租约并退出前台。 */
     public static final String ACTION_STOP_ALL = "webterm.action.STOP_ALL_DEVICES";
-    public static final String ACTION_START_ALL = "webterm.action.START_ALL_DEVICES";
 
     private static final String PREFS = "webterm.device_service";
     private static final String KEY_CONNECTIONS_ENABLED = "connections_enabled";
@@ -130,14 +129,6 @@ public final class WebTermDeviceService extends Service {
     public static void start(Context context) {
         if (!connectionsEnabled(context)) return;
         Intent intent = new Intent(context, WebTermDeviceService.class);
-        androidx.core.content.ContextCompat.startForegroundService(context, intent);
-    }
-
-    /** 用户显式恢复所有设备连接时调用。 */
-    public static void startAll(Context context) {
-        preferences(context).edit().putBoolean(KEY_CONNECTIONS_ENABLED, true).apply();
-        Intent intent = new Intent(context, WebTermDeviceService.class);
-        intent.setAction(ACTION_START_ALL);
         androidx.core.content.ContextCompat.startForegroundService(context, intent);
     }
 
@@ -290,9 +281,6 @@ public final class WebTermDeviceService extends Service {
             stopAllDevices();
             return START_NOT_STICKY;
         }
-        if (intent != null && ACTION_START_ALL.equals(intent.getAction())) {
-            preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, true).apply();
-        }
         startForeground(NOTIFICATION_ID, buildNotification(managers.size()));
         refreshConnections();
         return START_STICKY;
@@ -387,10 +375,7 @@ public final class WebTermDeviceService extends Service {
         if (url == null || url.isEmpty()) {
             return null;
         }
-        if ((deviceId == null || deviceId.isEmpty()) && !config.isRelayDevice()) {
-            deviceId = DeviceConnectionKeys.DIRECT_DEVICE_ID;
-        }
-        if (deviceId == null || deviceId.isEmpty()) {
+		if (deviceId == null || deviceId.isEmpty()) {
             return null;
         }
         String key = connectionKey(url, deviceId);
@@ -441,8 +426,7 @@ public final class WebTermDeviceService extends Service {
     }
 
     private static String connectionKey(String baseUrl, String deviceId) {
-        // deviceId 已在 connectDevice 中按 DeviceConnectionKeys 规则归一（直连为 "direct"）；
-        // cookie 不参与设备身份，必须与 RelayMuxSessionRegistry.key() 保持一致。
+		// cookie 不参与设备身份，必须与 RelayMuxSessionRegistry.key() 保持一致。
         return DeviceConnectionKeys.relay(baseUrl, deviceId);
     }
 

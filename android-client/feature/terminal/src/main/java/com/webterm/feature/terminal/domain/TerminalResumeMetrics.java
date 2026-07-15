@@ -63,31 +63,4 @@ public final class TerminalResumeMetrics {
     return reason.replaceAll("[^a-zA-Z0-9_.:-]", "_");
   }
 
-  public static Snapshot snapshot() {
-    return new Snapshot(PAGE_REATTACH.get(), EXACT.get(), PATCH.get(), SNAPSHOT.get(),
-        RESYNC.get(), SYNC_TIMEOUT.get(), HOT_TO_WARM.get(), WARM_TO_COLD.get());
-  }
-
-  public static final class Snapshot {
-    public final long pageReattach;
-    public final long exactResume;
-    public final long cumulativePatch;
-    public final long snapshotFallback;
-    public final long resync;
-    public final long syncTimeout;
-    public final long hotToWarm;
-    public final long warmToCold;
-
-    Snapshot(long pageReattach, long exactResume, long cumulativePatch, long snapshotFallback,
-             long resync, long syncTimeout, long hotToWarm, long warmToCold) {
-      this.pageReattach = pageReattach;
-      this.exactResume = exactResume;
-      this.cumulativePatch = cumulativePatch;
-      this.snapshotFallback = snapshotFallback;
-      this.resync = resync;
-      this.syncTimeout = syncTimeout;
-      this.hotToWarm = hotToWarm;
-      this.warmToCold = warmToCold;
-    }
-  }
 }

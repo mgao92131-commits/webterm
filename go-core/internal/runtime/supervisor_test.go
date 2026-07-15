@@ -13,9 +13,7 @@ import (
 
 func TestSupervisorStartRestartAndStop(t *testing.T) {
 	application := app.New(config.Config{
-		Mode:   config.ModeDirect,
-		Direct: config.DirectConfig{Addr: "127.0.0.1:8080"},
-		Relay:  config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
+		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
 	}, "test")
 	factory := &recordingFactory{}
 	supervisor := NewWithFactory(application, factory.NewRunner)
@@ -23,12 +21,8 @@ func TestSupervisorStartRestartAndStop(t *testing.T) {
 	if err := supervisor.Start(context.Background()); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	if application.Status().Mode != config.ModeDirect {
-		t.Fatalf("mode after start = %q, want direct", application.Status().Mode)
-	}
-
 	next := application.Config()
-	next.Mode = config.ModeRelay
+	next.Relay.URL = "ws://new-relay.example"
 	application.UpdateConfig(next)
 	if !application.Status().RestartRequired {
 		t.Fatalf("RestartRequired = false after config update")
@@ -37,7 +31,7 @@ func TestSupervisorStartRestartAndStop(t *testing.T) {
 		t.Fatalf("Restart returned error: %v", err)
 	}
 	status := application.Status()
-	if status.Mode != config.ModeRelay || status.ConfigMode != config.ModeRelay || status.RestartRequired {
+	if status.RestartRequired {
 		t.Fatalf("status after restart = %#v", status)
 	}
 
@@ -50,7 +44,7 @@ func TestSupervisorStartRestartAndStop(t *testing.T) {
 }
 
 func TestSupervisorReturnsImmediateStartError(t *testing.T) {
-	application := app.New(config.Config{Mode: config.ModeDirect}, "test")
+	application := app.New(config.Config{}, "test")
 	want := errors.New("bind failed")
 	supervisor := NewWithFactory(application, func(config.Config, *app.App) (Runner, error) {
 		return RunnerFunc(func(context.Context) error {

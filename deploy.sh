@@ -48,13 +48,6 @@ SERVER_IP="120.46.85.237"
 SERVER_USER="root"
 SERVER_PORT="22"
 
-# 检查前端构建产物是否存在
-if [ ! -f "web/index.html" ]; then
-    echo "❌ 错误: web/ 目录下没有找到前端构建产物。"
-    echo "请先运行: npm run build"
-    exit 1
-fi
-
 if [ -z "${RELAY_BOOTSTRAP_PASSWORD:-}" ]; then
     echo "❌ 错误: 请先设置 RELAY_BOOTSTRAP_PASSWORD，不能使用默认管理员密码部署。"
     echo "示例: RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD='你的强密码' ./deploy.sh"
@@ -92,7 +85,15 @@ if [ "$SERVER_IP" = "您的服务器IP" ]; then
 fi
 
 echo "🔎 正在校验 Go Relay 部署配置..."
-npm run validate:deploy
+for required in Dockerfile.go-relay docker-compose.yml nginx.conf go-core/go.mod; do
+    if [ ! -f "$required" ]; then
+        echo "❌ 缺少部署文件: $required"
+        exit 1
+    fi
+done
+grep -q 'location /api/' nginx.conf
+grep -q 'location /ws/' nginx.conf
+grep -q 'proxy_pass http://go-relay:19090' nginx.conf
 
 REMOTE_COMMAND="
     cd ${REMOTE_DIR} && \
@@ -136,15 +137,11 @@ fi
 echo "📦 [1/3] 正在本地打包项目文件..."
 # 创建临时包，排除不需要传输的大目录
 TEMP_TAR="/tmp/webterm_deploy_temp.tar.gz"
-tar --exclude='node_modules' \
-    --exclude='data' \
+tar --exclude='data' \
     --exclude='.git' \
-    --exclude='.npm-cache' \
     --exclude='test-results' \
     --exclude='tests' \
     --exclude='go-core/webterm-agent' \
-    --exclude='go-core/webterm-flow-smoke' \
-    --exclude='go-core/webterm-relay-flow-smoke' \
     --exclude='android-client' \
     --exclude='go-core/.gocache' \
     --exclude='*.zip' \
@@ -166,7 +163,7 @@ ssh -p "${SERVER_PORT}" -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}
 
 echo "=========================================="
 echo "🎉 部署完成！"
-echo "您可以尝试访问: http://${SERVER_IP}:9001"
+echo "Relay API 地址: http://${SERVER_IP}:9001"
 echo ""
 echo "⚠️  重要：请立即修改默认管理员密码！"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP}"
@@ -176,6 +173,5 @@ echo ""
 echo "查看容器日志:"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"
 echo ""
-echo "部署后建议在本机执行外部 smoke:"
-echo "  WEBTERM_SMOKE_EMAIL=${RELAY_BOOTSTRAP_USER} WEBTERM_SMOKE_PASSWORD='你的密码' npm run smoke:web-go-relay-pc-agent -- --relay-url http://${SERVER_IP}:9001 --register false --timeout 120000"
+echo "部署后建议运行 Android Relay smoke 或 Go relay e2e smoke。"
 echo "=========================================="

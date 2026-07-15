@@ -1,6 +1,5 @@
 package com.webterm.feature.home;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -77,8 +76,6 @@ public final class HomeFragment extends Fragment {
             if (mHost != null) mHost.navigateToDeviceSessions(server);
         });
         mViewModel.getNavigateToRelay().observe(getViewLifecycleOwner(), v -> navigateToRelay());
-        mViewModel.getNavigateToHome().observe(getViewLifecycleOwner(), v -> showHomeScreen());
-
         showHomeScreen();
     }
 
@@ -90,12 +87,9 @@ public final class HomeFragment extends Fragment {
         mViewModel.loadDevices();
         mViewModel.getRelayService().start();
 
-        HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
-            requireActivity(),
-            () -> {
-                if (mHost != null) mHost.showAddServerDialog(null);
-            },
-            () -> {
+		HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
+			requireActivity(),
+			() -> {
                 if (mHost != null) mHost.showSettingsDialog();
             },
             () -> {
@@ -129,14 +123,10 @@ public final class HomeFragment extends Fragment {
             return;
         }
         for (ServerConfig server : allDevices) {
-            mSessionList.addView(HomeScreenBuilder.deviceCard(
-                requireActivity(), server,
-                (v) -> mViewModel.selectServer(server),
-                () -> {
-                    if (mHost != null) mHost.showAddServerDialog(server);
-                },
-                () -> confirmRemoveServer(server)
-            ));
+			mSessionList.addView(HomeScreenBuilder.deviceCard(
+				requireActivity(), server,
+				(v) -> mViewModel.selectServer(server)
+			));
         }
     }
 
@@ -155,18 +145,6 @@ public final class HomeFragment extends Fragment {
     }
 
     // ── Dialogs ──────────────────────────────────────────────────
-
-    private void confirmRemoveServer(ServerConfig server) {
-        if (server == null) return;
-        new AlertDialog.Builder(requireContext(), AlertDialog.THEME_DEVICE_DEFAULT_DARK)
-            .setTitle("确认移除电脑")
-            .setMessage("确定要从列表中移除该服务器吗？")
-            .setPositiveButton("移除", (d, which) -> {
-                mViewModel.removeServer(server);
-            })
-            .setNegativeButton("取消", null)
-            .create().show();
-    }
 
     private void shareCrashLog() {
         if (mHost != null) mHost.shareCrashLog();

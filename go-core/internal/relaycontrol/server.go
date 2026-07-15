@@ -41,16 +41,11 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
 	mux.HandleFunc("/api/auth/register", server.handleRegister)
 	mux.HandleFunc("/api/auth/refresh", server.handleRefresh)
-	mux.HandleFunc("/api/auth/verify-email", server.handleVerifyEmail)
 	mux.HandleFunc("/api/auth/verify-otp", server.handleVerifyOTP)
-	mux.HandleFunc("/api/auth/resend-otp", server.handleResendOTP)
-	mux.HandleFunc("/api/auth/me", server.handleMe)
-	mux.HandleFunc("/api/auth/logout", server.handleLogout)
 	mux.HandleFunc("/api/auth/devices", server.handleTrustedDevices)
 	mux.HandleFunc("/api/auth/devices/", server.handleTrustedDevice)
 	mux.HandleFunc("/api/devices", server.handleDevices)
 	mux.HandleFunc("/api/devices/", server.handleDevice)
-	mux.HandleFunc("/api/presence", server.handlePresence)
 	return mux
 }
 

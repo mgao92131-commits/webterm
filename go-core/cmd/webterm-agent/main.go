@@ -21,7 +21,6 @@ import (
 const version = "0.1.0-dev"
 
 func main() {
-	modeFlag := flag.String("mode", "", "agent mode: direct or relay")
 	configPathFlag := flag.String("config", "", "optional config file path")
 	socketPathFlag := flag.String("socket", "", "override unix socket path")
 	dryRunFlag := flag.Bool("dry-run", false, "load configuration and exit")
@@ -35,7 +34,6 @@ func main() {
 
 	configPath := config.ResolvePath(*configPathFlag)
 	cfg := config.Load(config.Options{
-		Mode:       *modeFlag,
 		ConfigPath: configPath,
 	})
 
@@ -51,11 +49,6 @@ func main() {
 		return
 	}
 
-	if cfg.Mode != config.ModeDirect && cfg.Mode != config.ModeRelay {
-		fmt.Fprintf(os.Stderr, "unsupported mode %q\n", cfg.Mode)
-		os.Exit(2)
-	}
-
 	application := app.New(cfg, version)
 	supervisor := agentruntime.New(application)
 	controlServer := control.NewWithRuntime(cfg.Control.Addr, application, configPath, supervisor)
@@ -63,12 +56,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Printf("webterm-agent %s starting mode=%s control=http://%s hook-socket=%s\n", version, cfg.Mode, cfg.Control.Addr, application.SocketPath())
-	if cfg.Mode == config.ModeDirect {
-		fmt.Printf("direct runtime scaffold configured for %s\n", cfg.Direct.Addr)
-	} else {
-		fmt.Printf("relay runtime scaffold configured for %s protocol=%s\n", cfg.Relay.URL, cfg.Relay.Protocol)
-	}
+	fmt.Printf("webterm-agent %s starting relay=%s protocol=%s control=http://%s hook-socket=%s\n",
+		version, cfg.Relay.URL, cfg.Relay.Protocol, cfg.Control.Addr, application.SocketPath())
 
 	errCh := make(chan error, 3)
 	go func() {

@@ -29,7 +29,6 @@ sync state。两端均不记录终端文本、剪贴板正文或通知正文。
 - Go 目标包、race 与 `go test ./...` 全部通过。
 - Android `terminal-model`、`terminal-protocol`、`feature:terminal`、`core-session`
   单测、App Java 编译和 Debug APK 构建全部通过。
-- 前端 typecheck、60 个 Vitest 单测和生产构建通过（用于确认共享仓库无编译回归）。
 - 兼容路径由 cold Hello→Snapshot、exact→ResumeAck、累计 Patch、Snapshot 降级、
   Android Snapshot 完成 SYNCING、两端 kill switch 契约测试覆盖。
 - 50 次 A/B HOT 切换测试确认不新建 Runtime、不关闭 channel。
@@ -46,7 +45,7 @@ sync state。两端均不记录终端文本、剪贴板正文或通知正文。
 
 ## 设备回归
 
-Android 模拟器安装 Debug APK 后连接本机 direct Agent，端到端创建并打开终端：
+Android 模拟器安装 Debug APK 后经 Relay 连接本机 Agent，端到端创建并打开终端：
 
 - 首次连接收到 Snapshot；
 - 返回会话列表后在 HOT grace 内重开，只出现 `page_reattach`，没有新 Snapshot，
@@ -56,11 +55,3 @@ Android 模拟器安装 Debug APK 后连接本机 direct Agent，端到端创建
 
 实体设备的流量、电量和生产 Patch/Snapshot 比例属于发布阶段运营验收，需要在真实
 网络与电池环境持续采样，不作为代码合并时可伪造的结果。
-
-## 已知的仓库级非本计划门禁
-
-`npm run test:e2e` 当前 9 个用例均在终端 ready 检查失败。原因是 Web 前端仍以
-`webterm.binary.v1` 打开 terminal mux channel，而 Go c1 已只接受
-`webterm.screen.v1`；服务端拒绝后调试探针的 `readyState` 为 `null`。本计划范围明确
-为 Go screen 协议与 Android runtime，因此没有通过放宽 E2E 断言掩盖该问题；Web
-screen 客户端迁移应单独实施。

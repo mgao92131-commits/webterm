@@ -146,19 +146,19 @@ func TestMemoryStoreTrustedDeviceLifecycle(t *testing.T) {
 		t.Fatalf("CreateUser returned error: %v", err)
 	}
 	firstSeen := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	device, err := store.UpsertTrustedDevice(user.ID, "browser-1", "Safari", firstSeen)
+	device, err := store.UpsertTrustedDevice(user.ID, "client-1", "Android", firstSeen)
 	if err != nil {
 		t.Fatalf("UpsertTrustedDevice returned error: %v", err)
 	}
-	if device.ID == "" || device.DeviceID != "browser-1" || device.DeviceName != "Safari" || !device.LastSeenAt.Equal(firstSeen) {
+	if device.ID == "" || device.DeviceID != "client-1" || device.DeviceName != "Android" || !device.LastSeenAt.Equal(firstSeen) {
 		t.Fatalf("trusted device = %#v", device)
 	}
 	nextSeen := firstSeen.Add(time.Hour)
-	updated, err := store.UpsertTrustedDevice(user.ID, "browser-1", "Chrome", nextSeen)
+	updated, err := store.UpsertTrustedDevice(user.ID, "client-1", "Android 2", nextSeen)
 	if err != nil {
 		t.Fatalf("second UpsertTrustedDevice returned error: %v", err)
 	}
-	if updated.ID != device.ID || updated.DeviceName != "Chrome" || !updated.CreatedAt.Equal(firstSeen) || !updated.LastSeenAt.Equal(nextSeen) {
+	if updated.ID != device.ID || updated.DeviceName != "Android 2" || !updated.CreatedAt.Equal(firstSeen) || !updated.LastSeenAt.Equal(nextSeen) {
 		t.Fatalf("updated trusted device = %#v, original %#v", updated, device)
 	}
 	devices := store.ListTrustedDevices(user.ID)
@@ -201,20 +201,20 @@ func TestMemoryStoreVerificationCodeLifecycle(t *testing.T) {
 		t.Fatalf("reused code error = %v, want ErrUnauthorized", err)
 	}
 
-	deviceCode, err := store.CreateVerificationCode(user.ID, "new_device", "654321", "browser-1", time.Minute)
+	deviceCode, err := store.CreateVerificationCode(user.ID, "new_device", "654321", "client-1", time.Minute)
 	if err != nil {
 		t.Fatalf("CreateVerificationCode device returned error: %v", err)
 	}
-	if _, err := store.ConsumeVerificationCode(user.ID, "new_device", "654321", "browser-2", time.Now()); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.ConsumeVerificationCode(user.ID, "new_device", "654321", "client-2", time.Now()); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("wrong target device error = %v, want ErrUnauthorized for %#v", err, deviceCode)
 	}
-	if !store.HasRecentVerificationCode(user.ID, "new_device", "browser-1", time.Now().Add(-time.Minute)) {
-		t.Fatalf("HasRecentVerificationCode did not find browser-1 code")
+	if !store.HasRecentVerificationCode(user.ID, "new_device", "client-1", time.Now().Add(-time.Minute)) {
+		t.Fatalf("HasRecentVerificationCode did not find client-1 code")
 	}
-	if store.HasRecentVerificationCode(user.ID, "new_device", "browser-2", time.Now().Add(-time.Minute)) {
+	if store.HasRecentVerificationCode(user.ID, "new_device", "client-2", time.Now().Add(-time.Minute)) {
 		t.Fatalf("HasRecentVerificationCode matched wrong target device")
 	}
-	if _, err := store.ConsumeVerificationCode(user.ID, "new_device", "654321", "browser-1", time.Now().Add(2*time.Minute)); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.ConsumeVerificationCode(user.ID, "new_device", "654321", "client-1", time.Now().Add(2*time.Minute)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expired code error = %v, want ErrUnauthorized", err)
 	}
 }
@@ -240,7 +240,7 @@ func TestPersistentStoreReloadsUsersTokensAndDevices(t *testing.T) {
 	if err := store.TouchDevice(device.ID, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("TouchDevice returned error: %v", err)
 	}
-	trusted, err := store.UpsertTrustedDevice(user.ID, "browser-1", "Safari", time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC))
+	trusted, err := store.UpsertTrustedDevice(user.ID, "client-1", "Android", time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("UpsertTrustedDevice returned error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPersistentStoreReloadsUsersTokensAndDevices(t *testing.T) {
 		t.Fatalf("reloaded device = %#v, want id %s with last seen", found, device.ID)
 	}
 	trustedDevices := reloaded.ListTrustedDevices(user.ID)
-	if len(trustedDevices) != 1 || trustedDevices[0].ID != trusted.ID || trustedDevices[0].DeviceID != "browser-1" {
+	if len(trustedDevices) != 1 || trustedDevices[0].ID != trusted.ID || trustedDevices[0].DeviceID != "client-1" {
 		t.Fatalf("reloaded trusted devices = %#v, want %#v", trustedDevices, trusted)
 	}
 	if consumed, err := reloaded.ConsumeVerificationCode(user.ID, "email_verify", "123456", "", time.Now()); err != nil || consumed.ID != verification.ID {

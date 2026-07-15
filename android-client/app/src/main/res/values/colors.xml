@@ -1,34 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    WebTerm 设计系统色板（与 docs/design-system.md 一一对应，与 DesignTokens.java 同步）。
-    themes.xml 引用这些 color 资源，避免 XML 里直接写 hex。
--->
 <resources>
-    <!-- 背景层 -->
     <color name="bg_primary">#0A0A0B</color>
     <color name="bg_secondary">#111113</color>
-    <color name="bg_tertiary">#18181B</color>
-
-    <!-- 边框层 -->
-    <color name="border_primary">#27272A</color>
-    <color name="border_hover">#3F3F46</color>
-
-    <!-- 文字层 -->
-    <color name="text_primary">#FAFAFA</color>
-    <color name="text_secondary">#A1A1AA</color>
-    <color name="text_tertiary">#71717A</color>
-    <color name="text_disabled">#52525B</color>
-
-    <!-- 强调色 -->
     <color name="accent">#10B981</color>
-    <color name="accent_hover">#34D399</color>
-
-    <!-- 状态色 -->
-    <color name="success">#10B981</color>
-    <color name="warning">#F59E0B</color>
-    <color name="danger">#EF4444</color>
-    <color name="info">#3B82F6</color>
-
-    <!-- 终端 -->
-    <color name="terminal_bg">#000000</color>
 </resources>

@@ -43,7 +43,7 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	// 在 SetControlHandler 之后注入，使 file_send.* 优先分发到 FileSendService，
 	// 其余控制消息继续落到上面的 debug logger。
 	router.SetFileSendService(appInstance.FileSendService())
-	// Relay 与 direct 模式共用同一个上传服务；缺少该注入时上传路由会返回 503。
+	// 注入 Relay 上传服务；缺少该注入时上传路由会返回 503。
 	router.SetFileUploadService(appInstance.FileUploadService())
 	// agent_notification.ack 链到 Dispatcher（清 pending），顺序在 file_send 之后无冲突。
 	router.SetAgentNotificationDispatcher(appInstance.AgentNotificationDispatcher())

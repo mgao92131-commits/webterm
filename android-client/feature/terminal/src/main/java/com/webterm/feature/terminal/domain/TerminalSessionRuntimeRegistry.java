@@ -189,20 +189,6 @@ public final class TerminalSessionRuntimeRegistry {
     entries.clear();
   }
 
-  // 兼容少量尚未迁移的调用/测试；身份隔离的新代码必须使用 acquire(key)。
-  @Deprecated
-  @NonNull
-  public TerminalSessionRuntime getOrCreate(@NonNull String sessionId) {
-    return getOrCreate(sessionId, HistoryBudget.defaults());
-  }
-
-  @Deprecated
-  @NonNull
-  public TerminalSessionRuntime getOrCreate(@NonNull String sessionId,
-                                            @NonNull HistoryBudget historyBudget) {
-    return acquire(new TerminalRuntimeKey("legacy", "legacy", "", "", sessionId), historyBudget);
-  }
-
   private synchronized void expireHot(TerminalRuntimeKey key, long generation) {
     Entry entry = entries.get(key);
     if (entry == null || (entry.visible && appVisible) || entry.state != LifecycleState.HOT

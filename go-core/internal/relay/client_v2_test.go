@@ -45,7 +45,6 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Config{
-		Mode:  config.ModeRelay,
 		Relay: config.RelayConfig{URL: server.URL, Secret: credential, DeviceName: "Go Agent"},
 		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
 	}

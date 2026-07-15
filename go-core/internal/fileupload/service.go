@@ -1,4 +1,4 @@
-// Package fileupload 实现 Android/浏览器 -> Agent 的终端文件上传落盘服务。
+// Package fileupload 实现 Android -> Agent 的终端文件上传落盘服务。
 //
 // 与 filesend（Agent -> Android）平行但完全独立：上传没有 token/offer/ack
 // 控制面，HTTP 响应成功即落盘成功。详见 docs/android-terminal-upload-plan.md。

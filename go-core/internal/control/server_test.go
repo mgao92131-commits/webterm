@@ -16,7 +16,7 @@ import (
 )
 
 func TestControlStatus(t *testing.T) {
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	application := app.New(cfg, "test-version")
 	server := New("127.0.0.1:0", application)
 
@@ -34,15 +34,10 @@ func TestControlStatus(t *testing.T) {
 	if body.Version != "test-version" {
 		t.Fatalf("version = %q, want test-version", body.Version)
 	}
-	if body.Mode != config.ModeDirect {
-		t.Fatalf("mode = %q, want direct", body.Mode)
-	}
 }
 
 func TestControlConfigRedactsSecrets(t *testing.T) {
 	cfg := config.Config{
-		Mode:    config.ModeRelay,
-		Direct:  config.DirectConfig{Password: "secret"},
 		Relay:   config.RelayConfig{Secret: "relay-secret"},
 		Control: config.ControlConfig{Addr: "127.0.0.1:0"},
 	}
@@ -61,9 +56,6 @@ func TestControlConfigRedactsSecrets(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("failed to decode body: %v", err)
 	}
-	if decoded.Direct.Password != "********" {
-		t.Fatalf("direct password = %q, want redacted", decoded.Direct.Password)
-	}
 	if decoded.Relay.Secret != "********" {
 		t.Fatalf("relay secret = %q, want redacted", decoded.Relay.Secret)
 	}
@@ -72,8 +64,6 @@ func TestControlConfigRedactsSecrets(t *testing.T) {
 func TestControlPutConfigPersistsAndMarksRestartRequired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.Config{
-		Mode:    config.ModeDirect,
-		Direct:  config.DirectConfig{Addr: "127.0.0.1:8080", User: "admin", Password: "direct-secret"},
 		Relay:   config.RelayConfig{Secret: "relay-secret", DeviceName: "mac"},
 		Control: config.ControlConfig{Addr: "127.0.0.1:0"},
 	}
@@ -81,8 +71,6 @@ func TestControlPutConfigPersistsAndMarksRestartRequired(t *testing.T) {
 	server := NewWithConfigPath("127.0.0.1:0", application, path)
 
 	body := bytes.NewBufferString(`{
-		"mode":"relay",
-		"direct":{"password":"********"},
 		"relay":{"url":"https://relay.example","secret":"********"}
 	}`)
 	request := httptest.NewRequest(http.MethodPut, "/control/config", body)
@@ -100,18 +88,15 @@ func TestControlPutConfigPersistsAndMarksRestartRequired(t *testing.T) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatalf("decode saved config: %v", err)
 	}
-	if saved.Mode != config.ModeRelay || saved.Relay.URL != "https://relay.example" {
+	if saved.Relay.URL != "https://relay.example" {
 		t.Fatalf("saved config = %#v", saved)
 	}
-	if saved.Direct.Password != "direct-secret" || saved.Relay.Secret != "relay-secret" {
+	if saved.Relay.Secret != "relay-secret" {
 		t.Fatalf("secrets were not preserved: %#v", saved)
 	}
 	status := application.Status()
 	if !status.RestartRequired {
 		t.Fatalf("RestartRequired = false, want true")
-	}
-	if status.Mode != config.ModeDirect || status.ConfigMode != config.ModeRelay {
-		t.Fatalf("status modes = runtime %q config %q", status.Mode, status.ConfigMode)
 	}
 	var decoded struct {
 		Config config.Config `json:"config"`
@@ -131,15 +116,13 @@ func TestControlPutConfigPersistsAndMarksRestartRequired(t *testing.T) {
 func TestControlPutConfigRestartsRuntimeWhenConfigured(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.Config{
-		Mode:    config.ModeDirect,
-		Direct:  config.DirectConfig{Addr: "127.0.0.1:8080", User: "admin"},
 		Control: config.ControlConfig{Addr: "127.0.0.1:0"},
 	}
 	application := app.New(cfg, "test-version")
 	runtime := &fakeRuntimeController{}
 	server := NewWithRuntime("127.0.0.1:0", application, path, runtime)
 
-	body := bytes.NewBufferString(`{"mode":"relay","relay":{"url":"https://relay.example"}}`)
+	body := bytes.NewBufferString(`{"relay":{"url":"https://relay.example"}}`)
 	request := httptest.NewRequest(http.MethodPut, "/control/config", body)
 	response := httptest.NewRecorder()
 	server.handleConfig(response, request)
@@ -162,43 +145,8 @@ func TestControlPutConfigRestartsRuntimeWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestControlModeShortcutPersistsTargetMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	cfg := config.Config{
-		Mode:    config.ModeDirect,
-		Direct:  config.DirectConfig{Addr: "127.0.0.1:8080", User: "admin"},
-		Control: config.ControlConfig{Addr: "127.0.0.1:0"},
-	}
-	application := app.New(cfg, "test-version")
-	server := NewWithConfigPath("127.0.0.1:0", application, path)
-
-	request := httptest.NewRequest(http.MethodPost, "/control/mode/relay", nil)
-	response := httptest.NewRecorder()
-	server.handleMode(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want 200; body=%s", response.Code, response.Body.String())
-	}
-	var saved config.Config
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile saved config: %v", err)
-	}
-	if err := json.Unmarshal(data, &saved); err != nil {
-		t.Fatalf("decode saved config: %v", err)
-	}
-	if saved.Mode != config.ModeRelay {
-		t.Fatalf("saved mode = %q, want relay", saved.Mode)
-	}
-	if !application.Status().RestartRequired {
-		t.Fatalf("RestartRequired = false, want true")
-	}
-}
-
 func TestControlRestartAndStopEndpoints(t *testing.T) {
 	cfg := config.Config{
-		Mode:    config.ModeDirect,
-		Direct:  config.DirectConfig{Addr: "127.0.0.1:8080", User: "admin"},
 		Control: config.ControlConfig{Addr: "127.0.0.1:0"},
 	}
 	application := app.New(cfg, "test-version")
@@ -225,7 +173,7 @@ func TestControlRestartAndStopEndpoints(t *testing.T) {
 }
 
 func TestControlLogsReturnsRecentEntries(t *testing.T) {
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	application := app.New(cfg, "test-version")
 	application.Log("info", "test", "first")
 	application.Log("warn", "test", "second")
@@ -250,7 +198,7 @@ func TestControlLogsReturnsRecentEntries(t *testing.T) {
 }
 
 func TestControlLogsStreamWritesExistingEntries(t *testing.T) {
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	application := app.New(cfg, "test-version")
 	application.Log("info", "test", "stream-entry")
 	server := New("127.0.0.1:0", application)
@@ -289,7 +237,7 @@ func (runtime *fakeRuntimeController) Stop(context.Context) error {
 }
 
 func TestControlScreenSnapshot(t *testing.T) {
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	cfg.Shell.Command = "/bin/sh"
 	application := app.New(cfg, "test-version")
 	server := New("127.0.0.1:0", application)
@@ -319,7 +267,7 @@ func TestControlScreenSnapshot(t *testing.T) {
 }
 
 func TestControlLegacyScreenDeltaEndpointNotFound(t *testing.T) {
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	application := app.New(cfg, "test-version")
 	server := New("127.0.0.1:0", application)
 

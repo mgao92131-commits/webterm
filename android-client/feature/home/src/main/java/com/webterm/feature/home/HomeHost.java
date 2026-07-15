@@ -9,12 +9,9 @@ import java.util.Set;
  * for operations that require Activity context (dialogs, terminal navigation).
  */
 public interface HomeHost {
-    void showAddServerDialog(ServerConfig existingServer);
-    void showSettingsDialog();
+	void showSettingsDialog();
     void showTerminal(ServerConfig server, String sessionId, String termTitle,
                       String createdAt, String instanceId, String cwd);
-    void onServerAuthenticated(ServerConfig existingServer, String name, String url,
-                               String cookie, String username, String password);
 
     /** Navigate to the device sessions destination. */
     void navigateToDeviceSessions(ServerConfig server);
@@ -28,9 +25,6 @@ public interface HomeHost {
     /** Close a terminal session and run a UI callback after the server confirms it. */
     void closeSession(ServerConfig server, String sessionId, Runnable onClosed);
 
-
-    /** Remove a saved server. */
-    void removeServer(ServerConfig server);
 
     /** Persist server configuration changes such as refreshed cookies. */
     void saveServers();

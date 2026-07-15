@@ -17,7 +17,6 @@ import com.webterm.feature.home.HomeHost;
 import com.webterm.feature.home.SessionRowActions;
 import com.webterm.feature.relay.RelayHost;
 import com.webterm.feature.relay.RelayUiState;
-import com.webterm.feature.settings.SettingsHost;
 import com.webterm.feature.terminal.TerminalFragment;
 import com.webterm.feature.terminal.TerminalHost;
 import com.webterm.feature.terminal.TerminalViewModel;
@@ -30,7 +29,7 @@ import dagger.hilt.android.AndroidEntryPoint;
 import javax.inject.Inject;
 
 @AndroidEntryPoint
-public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SettingsHost, SessionRowActions, NotificationOpenHost {
+public final class MainActivity extends FragmentActivity implements HomeHost, TerminalHost, RelayHost, SessionRowActions, NotificationOpenHost {
 
     private static final int REQUEST_POST_NOTIFICATIONS = 1001;
 
@@ -118,15 +117,12 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     // ── HomeHost ─────────────────────────────────────────────────
 
-    @Override public void showAddServerDialog(ServerConfig existingServer) { coordinator.showAddServerDialog(this, existingServer); }
-    @Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
+	@Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
     @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
-    @Override public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie, String username, String password) { coordinator.onServerAuthenticated(existingServer, name, url, cookie, username, password); }
     @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
     @Override public void navigateHome() { coordinator.navigateToHome(); }
     @Override public void createSession(ServerConfig server) { coordinator.createSession(server); }
     @Override public void closeSession(ServerConfig server, String sessionId, Runnable onClosed) { coordinator.closeSession(server, sessionId, onClosed); }
-    @Override public void removeServer(ServerConfig server) { coordinator.removeServer(server); }
     @Override public void saveServers() { coordinator.saveServers(); }
     @Override public void removeCachedTerminal(String baseUrl, String sessionId) { coordinator.removeCachedTerminal(baseUrl, sessionId); }
     @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) { coordinator.onSessionCwdChanged(server, sessionId, cwd); }
@@ -143,11 +139,6 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     // ── RelayHost ─────────────────────────────────────────────────
 
     @Override public View buildRelayView(RelayUiState relayUiState) { return coordinator.buildRelayView(this); }
-    @Override public void navigateRelayToHome() { coordinator.navigateRelayToHome(); }
-
-    // ── SettingsHost ─────────────────────────────────────────────
-
-    // showSettingsDialog() already covered by HomeHost
 
     // ── SessionRowActions ────────────────────────────────────────
 

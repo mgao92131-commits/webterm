@@ -80,13 +80,4 @@ public final class NetworkRecoveryController {
         networkCallback = null;
     }
 
-    // ── Deprecated Host interface (kept for backward compat) ────
-
-    /**
-     * @deprecated Use {@link #getOnNetworkAvailable()} LiveData instead.
-     */
-    @Deprecated
-    public interface Host {
-        void onNetworkAvailableForRecovery();
-    }
 }

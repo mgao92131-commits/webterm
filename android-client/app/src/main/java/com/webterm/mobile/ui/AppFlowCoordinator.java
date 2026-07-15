@@ -13,7 +13,6 @@ import android.util.Log;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.view.View;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.documentfile.provider.DocumentFile;
@@ -40,8 +39,6 @@ import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.mobile.device.NotificationTerminalResolver;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
-import com.webterm.mobile.download.FileDownloadHelper;
-import com.webterm.mobile.ui.dialog.ServerConfigDialogHelper;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
 import com.webterm.feature.home.DeviceSessionsFragment;
 import com.webterm.feature.home.HomeFragment;
@@ -56,7 +53,6 @@ import com.webterm.ui.common.WindowInsetsController;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.NavController;
 
-import okhttp3.OkHttpClient;
 
 import javax.inject.Inject;
 
@@ -64,7 +60,7 @@ import dagger.hilt.android.scopes.ActivityScoped;
 
 @ActivityScoped
 public final class AppFlowCoordinator implements
-    ServerConfigDialogHelper.Host, SettingsDialogHelper.Host, RelayService.Host {
+	SettingsDialogHelper.Host, RelayService.Host {
 
     private static final String TAG = "AppFlowCoordinator";
     public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
@@ -76,15 +72,12 @@ public final class AppFlowCoordinator implements
     private final ServerConfigStore configStore;
     private final ServerConfigManager serverConfigs;
     private final Handler mainHandler;
-    private final OkHttpClient http;
     private final TerminalFocusStore terminalFocus;
     private final SessionRepository sessionRepository;
 
     private final RemoteTerminalIntegration remoteTerminalIntegration;
     private final RelayService mRelayService;
-    private FileDownloadHelper downloadHelper;
 
-    private boolean mInForeground = true;
     private boolean activityResumed;
     private boolean terminalAuthRecoveryInFlight;
     private int terminalAuthRecoveryGeneration;
@@ -96,7 +89,6 @@ public final class AppFlowCoordinator implements
     private int mImeOverlap;
     private RelayUiState mRelayUiState;
     private NetworkRecoveryController mNetworkRecoveryController;
-    private TextView mHomeSubtitle;
     private NavController mNavController;
     private HomeFragment mHomeFragment;
     private MainActivity mActivity;
@@ -121,7 +113,6 @@ public final class AppFlowCoordinator implements
         ServerConfigStore configStore,
         ServerConfigManager serverConfigs,
         Handler mainHandler,
-        OkHttpClient http,
         TerminalFocusStore terminalFocus,
         SessionRepository sessionRepository,
         RemoteTerminalIntegration remoteTerminalIntegration,
@@ -134,7 +125,6 @@ public final class AppFlowCoordinator implements
         this.configStore = configStore;
         this.serverConfigs = serverConfigs;
         this.mainHandler = mainHandler;
-        this.http = http;
         this.terminalFocus = terminalFocus;
         this.sessionRepository = sessionRepository;
         this.remoteTerminalIntegration = remoteTerminalIntegration;
@@ -143,9 +133,6 @@ public final class AppFlowCoordinator implements
 
     public void attachActivity(MainActivity activity) {
         this.mActivity = activity;
-        if (this.downloadHelper == null) {
-            this.downloadHelper = new FileDownloadHelper(activity, api, configStore);
-        }
         androidx.navigation.fragment.NavHostFragment navHost = (androidx.navigation.fragment.NavHostFragment) activity.getSupportFragmentManager().findFragmentById(R.id.nav_host_fragment);
         this.mNavController = navHost != null ? navHost.getNavController() : null;
     }
@@ -181,7 +168,6 @@ public final class AppFlowCoordinator implements
     }
 
     public void onResume() {
-        mInForeground = true;
         activityResumed = true;
         remoteTerminalIntegration.setAppVisible(true);
         if (!currentTerminalConnectionKey.isEmpty() && !currentTerminalSessionId.isEmpty()) {
@@ -209,7 +195,6 @@ public final class AppFlowCoordinator implements
 
     public void onPause() {
         if (mNetworkRecoveryController != null) mNetworkRecoveryController.unregister();
-        mInForeground = false;
         activityResumed = false;
         remoteTerminalIntegration.setAppVisible(false);
         terminalFocus.clear();
@@ -251,26 +236,6 @@ public final class AppFlowCoordinator implements
         }
         return false;
     }
-
-    // ── Public accessors ─────────────────────────────────────────────
-
-    public RelayService getRelayService() { return mRelayService; }
-    public RelayUiState getRelayUiState() { return mRelayUiState; }
-    public ServerConfigManager getServerConfigs() { return serverConfigs; }
-    public ServerConfigStore getConfigStore() { return configStore; }
-    public WebTermApi getApi() { return api; }
-    public Handler getMainHandler() { return mainHandler; }
-    public SessionCommandController getSessionCommands() { return mSessionCommands; }
-    public RelayMuxSessionRegistry getRelayMuxRegistry() { return relayMuxRegistry; }
-    public TerminalCacheCoordinator getTerminalCache() { return terminalCache; }
-    public OkHttpClient getHttpClient() { return http; }
-    public void setHomeSubtitle(TextView subtitle) { mHomeSubtitle = subtitle; }
-    public ServerConfig getSelectedServer() { return mSelectedServer; }
-    public void setSelectedServer(ServerConfig server) { mSelectedServer = server; }
-    public ScreenMode getScreenMode() { return mScreenMode; }
-    public void setScreenMode(ScreenMode mode) { mScreenMode = mode; }
-    public boolean isInForeground() { return mInForeground; }
-    public NetworkRecoveryController getNetworkRecoveryController() { return mNetworkRecoveryController; }
 
     // ── Navigation methods ─────────────────────────────────────────
 
@@ -375,12 +340,6 @@ public final class AppFlowCoordinator implements
         }
     }
 
-    public void navigateRelayToHome() {
-        if (mNavController != null) {
-            mNavController.popBackStack(R.id.homeFragment, false);
-        }
-    }
-
     private View buildRelayLoginView(Activity activity) {
         String savedEmail = mRelayService.masterConfig() != null
             ? mRelayService.masterConfig().getUsername() : "";
@@ -464,50 +423,11 @@ public final class AppFlowCoordinator implements
         }
     }
 
-    public void showAddServerDialog(Activity activity, final ServerConfig existingServer) {
-        ServerConfigDialogHelper.show(this, existingServer);
-    }
+	// ── Terminal ─────────────────────────────────────────────────────
 
-    public void confirmRemoveServer(Activity activity, ServerConfig server) {
-        AlertDialog dialog = new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
-            .setTitle("确认移除电脑")
-            .setMessage("确定要从列表中移除该服务器吗？")
-            .setPositiveButton("移除", (d, which) -> {
-                removeCachedTerminalsForServer(server);
-                serverConfigs.remove(server);
-                saveServers();
-                if (server == mSelectedServer) {
-                    showSessionHome();
-                } else {
-                    if (mHomeFragment != null) {
-                        mHomeFragment.showHomeScreen();
-                    }
-                }
-            })
-            .setNegativeButton("取消", null)
-            .create();
-        dialog.setCanceledOnTouchOutside(false);
-        dialog.show();
-    }
-
-    // ── Terminal ─────────────────────────────────────────────────────
-
-    void showTerminal(String baseUrl, String cookie, String sessionId) {
-        showTerminal(baseUrl, cookie, sessionId, "Terminal", "", "", false, "", "");
-    }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", false, "", "");
-    }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle, String createdAt) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, "", false, "", "");
-    }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
-                      String createdAt, String instanceId, boolean relayDevice) {
-        showTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId, relayDevice, "", "");
-    }
-    void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
+	void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
-        currentTerminalConnectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDevice, relayDeviceId);
+		currentTerminalConnectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDeviceId);
         currentTerminalSessionId = sessionId == null ? "" : sessionId;
         if (activityResumed) terminalFocus.setVisible(currentTerminalConnectionKey, currentTerminalSessionId);
         navigateToTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
@@ -610,14 +530,6 @@ public final class AppFlowCoordinator implements
             this.connectionKey = connectionKey;
             this.sessionId = sessionId;
         }
-    }
-
-    private void startFileDownload(String downloadId, String fileName, long fileSize, String sessionId) {
-        if (mSelectedServer == null) {
-            Toast.makeText(mActivity, "下载失败：未选择服务器", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        downloadHelper.startDownload(mSelectedServer, downloadId, fileName, fileSize, sessionId);
     }
 
     private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
@@ -763,52 +675,7 @@ public final class AppFlowCoordinator implements
         if (mSessionCommands != null && server != null) mSessionCommands.createSessionOnServer(server);
     }
 
-    public void removeServer(ServerConfig server) {
-        if (server == null) return;
-        if (isRemoteTerminalActive()
-            && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {
-            remoteTerminalIntegration.closeSession();
-        }
-        remoteTerminalIntegration.closeServer(server.getId());
-        removeCachedTerminalsForServer(server);
-        serverConfigs.remove(server);
-        saveServers();
-        if (server == mSelectedServer) {
-            mSelectedServer = null;
-            mScreenMode = ScreenMode.DEVICES;
-        }
-        mHomeFragment = findHomeFragment();
-        if (mHomeFragment != null) mHomeFragment.refreshDevices();
-    }
-
-    // ── ServerConfigDialogHelper.Host ──────────────────────────────
-
-    @Override
-    public Activity activity() { return mActivity; }
-
-    @Override
-    public void login(String baseUrl, String username, String password, ServerConfigDialogHelper.LoginCallback callback) {
-        api.login(baseUrl, "", username, password, new WebTermApi.LoginCallback() {
-            @Override
-            public void onReady(String readyBaseUrl, String cookie) { callback.onReady(readyBaseUrl, cookie); }
-            @Override
-            public void onError(String message) { callback.onError(message); }
-        });
-    }
-
-    @Override
-    public void onServerAuthenticated(ServerConfig existingServer, String name, String url, String cookie,
-                                      String username, String password) {
-        serverConfigs.addOrUpdate(existingServer, name, url, cookie, username, password);
-        saveServers();
-        if (existingServer != null && existingServer == mSelectedServer) {
-            navigateToDeviceSessions(existingServer);
-        } else {
-            showSessionHome();
-        }
-    }
-
-    // ── RelayService.Host ──────────────────────────────────────
+	// ── RelayService.Host ──────────────────────────────────────
 
     @Override
     public void onRelayDevicesChanged() {
@@ -848,7 +715,10 @@ public final class AppFlowCoordinator implements
     @Override
     public ServerConfigManager serverConfigs() { return serverConfigs; }
 
-    // ── SettingsDialogHelper.Host ──────────────────────────────────
+	// ── SettingsDialogHelper.Host ──────────────────────────────────
+
+	@Override
+	public Activity activity() { return mActivity; }
 
     @Override
     public String getFontDisplayName(String fontType) {

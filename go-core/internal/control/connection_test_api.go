@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,7 +24,6 @@ const (
 )
 
 type connectionTestRequest struct {
-	Mode   string        `json:"mode"`
 	Config config.Config `json:"config"`
 	Live   bool          `json:"live"`
 }
@@ -52,9 +50,6 @@ func (control *Server) handleConnectionTest(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	cfg := config.MergeEditable(control.app.Config(), req.Config)
-	if req.Mode != "" {
-		cfg.Mode = config.NormalizeMode(req.Mode)
-	}
 	result := testConnection(r.Context(), control.app.Status(), cfg, req.Live)
 	status := http.StatusOK
 	if !result.OK {
@@ -63,51 +58,29 @@ func (control *Server) handleConnectionTest(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, status, result)
 }
 
-func testConnection(ctx context.Context, status app.Status, cfg config.Config, live bool) connectionTestResult {
-	switch cfg.Mode {
-	case config.ModeDirect:
-		return testDirectConnection(status, cfg.Direct)
-	case config.ModeRelay:
-		return testRelayConnection(ctx, cfg.Relay, live)
-	default:
-		return connectionTestResult{OK: false, Mode: cfg.Mode, Live: live, Error: "unsupported mode"}
-	}
-}
-
-func testDirectConnection(status app.Status, direct config.DirectConfig) connectionTestResult {
-	if direct.Addr == "" {
-		return connectionTestResult{OK: false, Mode: config.ModeDirect, Error: "direct addr is required"}
-	}
-	if status.Direct.Listening && status.Direct.Addr == direct.Addr {
-		return connectionTestResult{OK: true, Mode: config.ModeDirect, Message: "direct addr is already listening"}
-	}
-	listener, err := net.Listen("tcp", direct.Addr)
-	if err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeDirect, Error: err.Error()}
-	}
-	_ = listener.Close()
-	return connectionTestResult{OK: true, Mode: config.ModeDirect, Message: "direct addr is available"}
+func testConnection(ctx context.Context, _ app.Status, cfg config.Config, live bool) connectionTestResult {
+	return testRelayConnection(ctx, cfg.Relay, live)
 }
 
 func testRelayConnection(ctx context.Context, relay config.RelayConfig, live bool) connectionTestResult {
 	if relay.URL == "" {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: live, Error: "relay url is required"}
+		return connectionTestResult{OK: false, Mode: "relay", Live: live, Error: "relay url is required"}
 	}
 	if relay.Secret == "" {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: live, Error: "relay secret is required"}
+		return connectionTestResult{OK: false, Mode: "relay", Live: live, Error: "relay secret is required"}
 	}
 	wsURL, err := relayAgentWebSocketURL(relay.URL)
 	if err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: live, Error: err.Error()}
+		return connectionTestResult{OK: false, Mode: "relay", Live: live, Error: err.Error()}
 	}
 	if !live {
-		return connectionTestResult{OK: true, Mode: config.ModeRelay, Live: false, Message: "relay config is valid"}
+		return connectionTestResult{OK: true, Mode: "relay", Live: false, Message: "relay config is valid"}
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(dialCtx, wsURL, nil)
 	if err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: err.Error()}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: err.Error()}
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
@@ -118,26 +91,26 @@ func testRelayConnection(ctx context.Context, relay config.RelayConfig, live boo
 		"test":       true,
 	}
 	if err := wsWriteJSON(dialCtx, conn, register); err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: err.Error()}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: err.Error()}
 	}
 	msgType, data, err := conn.Read(dialCtx)
 	if err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: err.Error()}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: err.Error()}
 	}
 	if msgType != websocket.MessageText {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: "relay returned non-text response"}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: "relay returned non-text response"}
 	}
 	var response map[string]any
 	if err := json.Unmarshal(data, &response); err != nil {
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: err.Error()}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: err.Error()}
 	}
 	switch fmt.Sprint(response["type"]) {
 	case agentRegisteredMessage:
-		return connectionTestResult{OK: true, Mode: config.ModeRelay, Live: true, Message: "relay registration succeeded"}
+		return connectionTestResult{OK: true, Mode: "relay", Live: true, Message: "relay registration succeeded"}
 	case agentErrorMessage:
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: fmt.Sprint(response["message"])}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: fmt.Sprint(response["message"])}
 	default:
-		return connectionTestResult{OK: false, Mode: config.ModeRelay, Live: true, Error: fmt.Sprintf("unexpected relay response type %q", response["type"])}
+		return connectionTestResult{OK: false, Mode: "relay", Live: true, Error: fmt.Sprintf("unexpected relay response type %q", response["type"])}
 	}
 }
 

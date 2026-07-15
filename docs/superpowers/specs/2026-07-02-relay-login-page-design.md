@@ -2,15 +2,14 @@
 
 ## 概述
 
-将中转服务（relay）的登录从弹窗（Dialog）模式改为独立全屏页面模式，
-对标网页端 `LoginView.vue` 和 `DevicesView.vue` 的体验。
+将中转服务（relay）的登录从弹窗（Dialog）模式改为 Android 独立全屏页面模式。
 
 ## 动机
 
 当前中转服务登录使用 `AlertDialog` 弹窗，存在以下问题：
 1. 点击弹窗外部区域会导致弹窗消失，OTP 验证流程中断，用户需重新登录
 2. 弹窗空间局促，不适合展示设备管理列表等复杂内容
-3. 与网页端的登录→设备管理体验不一致
+3. 登录与设备管理缺少连贯的全屏体验
 
 ## 页面流程
 
@@ -33,7 +32,7 @@
 
 ### 页面 1：登录/注册页（RelayLoginScreenBuilder）
 
-对标 `frontend/src/views/LoginView.vue`
+提供适合 Android 的完整登录、OTP 与注册流程。
 
 **默认模式（密码登录）：**
 - 标题区：WebTerm 品牌 + "登录到远程终端"
@@ -57,7 +56,7 @@
 
 ### 页面 2：设备管理页（RelayDevicesScreenBuilder）
 
-对标 `frontend/src/views/DevicesView.vue`
+提供适合 Android 的 Agent 与信任设备管理页面。
 
 **顶部栏：**
 - 返回按钮（回到主界面）
@@ -70,7 +69,7 @@
 - Secret 展示区（一次性显示，支持复制）
 - 设备列表（每项显示：在线状态指示灯、设备名、最后在线时间、删除按钮）
 
-**Section B：信任的浏览器/移动设备**
+**Section B：信任的移动设备**
 - 区域标题
 - 信任设备列表（每项显示：设备名、最后活跃时间、撤销信任按钮）
 
@@ -80,10 +79,10 @@
 
 ## 登录状态判断
 
-通过 `RelayAuthStateManager` 管理：
-- 检查是否有有效的 relay cookie/token
-- 可选：调用 `/api/auth/me` 确认登录态有效性
-- 状态持久化到 `ServerConfigStore` 或 `SharedPreferences`
+通过 Android RelayService 管理：
+- 使用本地保存的 relay cookie/token
+- 认证失效时调用 `/api/auth/refresh`，失败后回退到密码登录
+- 状态持久化到 `ServerConfigStore`
 
 ## 文件变更
 
@@ -148,7 +147,6 @@ WebTermApi (HTTP 层)
 
 ## 不做的事项
 
-- 不改变现有的终端连接流程（P2P、Mux 等保持不变）
-- 不改变现有的直连（direct）模式流程
-- 不改变现有的服务器配置管理（ServerConfigDialogHelper 保留）
+- 不改变现有的 Relay mux 终端连接流程
+- 不在本次页面改造中调整终端屏幕协议
 - 不在设备管理页面内嵌入终端（保持终端为独立页面）

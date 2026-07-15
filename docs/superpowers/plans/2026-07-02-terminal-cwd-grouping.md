@@ -771,7 +771,7 @@ interface SessionRowActions {
             this, mTerminalSessionClient,
             this::showSessionListOrDeviceHome
         );
-        startP2PIfRelayDevice(baseUrl, cookie, relayDevice, relayDeviceId);
+        startRelayDeviceConnection(baseUrl, cookie, relayDeviceId);
     }
 ```
 

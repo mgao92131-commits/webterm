@@ -16,9 +16,8 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-/** 基于 OkHttp 的上传执行器：构建 POST /api/sessions/{sessionId}/upload 请求、
- * 流式发送 body 并解析成功/错误 JSON。直连与 Relay 走同一接口，鉴权与文件接收一致
- * （按 connectionKey 解析 baseUrl + Cookie）。
+/** 基于 OkHttp 的 Relay 上传执行器：构建 POST /api/sessions/{sessionId}/upload 请求、
+	* 流式发送 body 并解析成功/错误 JSON（按 connectionKey 解析 baseUrl + Cookie）。
  *
  * X-File-Name 编码决策：服务端 routeUpload（go-core/internal/application/session_router.go）
  * 目前直接取 X-File-Name header 原值、不做任何解码，而 OkHttp 4.12 拒绝 header 值中的
@@ -31,7 +30,7 @@ public final class UploadRequestExecutor implements UploadExecutor {
     public interface EndpointResolver {
         String baseUrl(String connectionKey);
         String cookie(String connectionKey);
-        /** Relay 设备 ID；直连时返回空，避免向直连 Agent 发送无意义路由头。 */
+		/** Relay 目标设备 ID。 */
         String deviceId(String connectionKey);
     }
 

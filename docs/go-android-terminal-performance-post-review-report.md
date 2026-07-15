@@ -1,7 +1,7 @@
 # Go Agent + Android 终端性能优化复审修正报告
 
 > 日期：2026-07-13  
-> 范围：Go 权威终端链路与 Android 原生终端；不包含网页端与 Legacy Termux 优化
+> 范围：Go 权威终端链路与 Android 原生终端；不包含 Legacy Termux 优化
 
 ## 1. 复审结论
 

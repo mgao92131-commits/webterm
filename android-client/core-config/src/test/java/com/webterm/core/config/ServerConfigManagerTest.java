@@ -12,21 +12,14 @@ import java.util.Arrays;
 
 public class ServerConfigManagerTest {
     @Test
-    public void updateCookieFromNavigationCopyUpdatesCanonicalAndPersists() {
-        ServerConfigStore store = mock(ServerConfigStore.class);
-        ServerConfig canonical = new ServerConfig("srv", "Mac", "http://example.test", "old", "u", "p");
-        when(store.loadServers()).thenReturn(Arrays.asList(canonical));
-        ServerConfigManager manager = new ServerConfigManager(store);
-        manager.load();
-        ServerConfig copy = new ServerConfig("srv", "Mac", "http://example.test", "old", "u", "p");
-
-        ServerConfig owner = manager.updateCookie(copy, "fresh");
-
-        assertSame(canonical, owner);
-        assertEquals("fresh", canonical.getCookie());
-        assertEquals("fresh", copy.getCookie());
-        verify(store).saveServers(manager.servers());
-    }
+	public void loadDropsNonRelayConfigs() {
+		ServerConfigStore store = mock(ServerConfigStore.class);
+		ServerConfig legacy = new ServerConfig("srv", "Mac", "http://example.test", "old", "u", "p");
+		when(store.loadServers()).thenReturn(Arrays.asList(legacy));
+		ServerConfigManager manager = new ServerConfigManager(store);
+		manager.load();
+		assertEquals(0, manager.servers().size());
+	}
 
     @Test
     public void relayDeviceUsesRelayMasterCredentials() {

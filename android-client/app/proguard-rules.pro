@@ -32,7 +32,6 @@
 
 # Keep WebTerm model classes that are serialized to/from JSON on disk.
 -keep class com.webterm.core.config.ServerConfig { *; }
--keep class com.webterm.mobile.ui.dialog.ServerConfigDialogHelper$* { *; }
 -keep class com.webterm.core.cache.TerminalDiskCache$* { *; }
 -keep class com.webterm.core.cache.CachedSessionMapper$* { *; }
 
@@ -55,4 +54,3 @@
     public static final ** CREATOR;
 }
 -keep class * implements java.io.Serializable { *; }
-

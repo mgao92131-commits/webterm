@@ -25,10 +25,8 @@ type App struct {
 	agentNotify     *agentnotify.Dispatcher
 	logger          *logs.Logger
 	mu              sync.RWMutex
-	runtimeMode     string
 	restartRequired bool
 	socketPath      string
-	direct          DirectStatus
 	relay           RelayStatus
 }
 
@@ -80,23 +78,18 @@ func New(cfg config.Config, version string) *App {
 		cfg:         cfg,
 		version:     version,
 		logger:      logger,
-		runtimeMode: cfg.Mode,
 		socketPath:  socketPath,
 		sessions:    manager,
 		fileSend:    fileSendSvc,
 		fileUpload:  fileUploadSvc,
 		agentNotify: notificationDispatcher,
-		direct: DirectStatus{
-			Listening: false,
-			Addr:      cfg.Direct.Addr,
-		},
 		relay: RelayStatus{
 			Configured: cfg.Relay.URL != "",
 			Connected:  false,
 			URL:        cfg.Relay.URL,
 		},
 	}
-	application.Log("info", "core", fmt.Sprintf("app initialized mode=%s socket=%s", cfg.Mode, socketPath))
+	application.Log("info", "core", fmt.Sprintf("relay-only app initialized socket=%s", socketPath))
 	return application
 }
 
@@ -142,25 +135,18 @@ func (app *App) UpdateConfig(cfg config.Config) {
 		app.restartRequired = true
 	}
 	app.cfg = cfg
-	app.direct.Addr = cfg.Direct.Addr
 	app.relay.Configured = cfg.Relay.URL != ""
 	app.relay.URL = cfg.Relay.URL
-	app.Log("info", "config", fmt.Sprintf("configuration updated targetMode=%s", cfg.Mode))
+	app.Log("info", "config", "relay configuration updated")
 }
 
 func (app *App) ApplyRuntimeConfig(cfg config.Config) {
 	app.mu.Lock()
 	app.cfg = cfg
-	app.runtimeMode = cfg.Mode
 	app.restartRequired = false
-	app.direct.Addr = cfg.Direct.Addr
 	app.relay.Configured = cfg.Relay.URL != ""
 	app.relay.URL = cfg.Relay.URL
 	app.relay.LastError = ""
-	if cfg.Mode != config.ModeRelay {
-		app.relay.Connected = false
-		app.relay.DeviceID = ""
-	}
 	app.mu.Unlock()
 
 	app.sessions.SetDefaults(session.TerminalDefaults{
@@ -172,13 +158,12 @@ func (app *App) ApplyRuntimeConfig(cfg config.Config) {
 	if app.fileUpload != nil {
 		app.fileUpload.SetMaxUploadSize(cfg.Upload.MaxBytes)
 	}
-	app.Log("info", "runtime", fmt.Sprintf("runtime applied mode=%s", cfg.Mode))
+	app.Log("info", "runtime", "relay runtime configuration applied")
 }
 
 func (app *App) SetRuntimeStopped() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	app.direct.Listening = false
 	app.relay.Connected = false
 	app.relay.DeviceID = ""
 	app.relay.LastError = ""
@@ -203,34 +188,17 @@ func (app *App) SocketPath() string {
 
 func (app *App) Status() Status {
 	app.mu.RLock()
-	directStatus := app.direct
 	relayStatus := app.relay
-	mode := app.runtimeMode
-	configMode := app.cfg.Mode
 	restartRequired := app.restartRequired
 	app.mu.RUnlock()
 	return Status{
 		Running:         true,
-		Mode:            mode,
-		ConfigMode:      configMode,
 		RestartRequired: restartRequired,
 		Version:         app.version,
-		Direct:          directStatus,
 		Relay:           relayStatus,
 		Sessions: SessionStatus{
 			Count: app.sessions.Count(),
 		},
-	}
-}
-
-func (app *App) SetDirectListening(listening bool) {
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	app.direct.Listening = listening
-	if listening {
-		app.Log("info", "direct", fmt.Sprintf("direct listening addr=%s", app.direct.Addr))
-	} else {
-		app.Log("info", "direct", "direct stopped")
 	}
 }
 
@@ -256,18 +224,10 @@ func (app *App) Run(ctx context.Context) error {
 
 type Status struct {
 	Running         bool          `json:"running"`
-	Mode            string        `json:"mode"`
-	ConfigMode      string        `json:"configMode"`
 	RestartRequired bool          `json:"restartRequired"`
 	Version         string        `json:"version"`
-	Direct          DirectStatus  `json:"direct"`
 	Relay           RelayStatus   `json:"relay"`
 	Sessions        SessionStatus `json:"sessions"`
-}
-
-type DirectStatus struct {
-	Listening bool   `json:"listening"`
-	Addr      string `json:"addr"`
 }
 
 type RelayStatus struct {

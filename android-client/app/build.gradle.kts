@@ -59,7 +59,6 @@ dependencies {
   implementation(project(":core-session"))
   implementation(project(":core-relay"))
   implementation(project(":ui-common"))
-  implementation(project(":feature:settings"))
   implementation(project(":feature:relay"))
   implementation(project(":feature:terminal"))
   implementation(project(":feature:home"))

@@ -26,10 +26,6 @@ public final class ProjectionHealthTest {
     assertEquals(7, token.layoutEpoch);
     assertEquals(11, token.screenRevision);
     assertEquals(RemoteTerminalModel.SCHEMA_GENERATION, token.schemaGeneration);
-
-    model.resetForReconnect();
-    assertFalse(model.projectionHealth().complete);
-    assertFalse(model.resumeToken().hasProjection);
   }
 
   private static ScreenSnapshot snapshot() {

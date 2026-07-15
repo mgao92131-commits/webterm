@@ -1,1 +1,0 @@
-[    7424ms] [ERROR] Blocked script execution in 'https://raw.githubusercontent.com/openai/codex/main/docs/example-config.md' because the document's frame is sandboxed and the 'allow-scripts' permission is not set. @ https://raw.githubusercontent.com/openai/codex/main/docs/example-config.md:0

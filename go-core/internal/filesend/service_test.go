@@ -257,10 +257,10 @@ func TestUnregisterSenderOnlyRemovesSameInstance(t *testing.T) {
 func TestClientRegisterSelectsOnlyFileReceiver(t *testing.T) {
 	svc := New(0)
 	android := &fakeSender{}
-	browser := &fakeSender{}
-	svc.HandleControlFrom(context.Background(), browser, map[string]any{
+	unsupportedClient := &fakeSender{}
+	svc.HandleControlFrom(context.Background(), unsupportedClient, map[string]any{
 		"type": "client.register", "client_id": "web-1", "client_kind": "web",
-		"client_name": "Chrome", "capabilities": []any{},
+		"client_name": "unsupported", "capabilities": []any{},
 	})
 	svc.HandleControlFrom(context.Background(), android, map[string]any{
 		"type": "client.register", "client_id": "android_12345678", "client_kind": "android",
@@ -273,8 +273,8 @@ func TestClientRegisterSelectsOnlyFileReceiver(t *testing.T) {
 	if len(android.msgs) != 1 || android.msgs[0]["type"] != "client.registered" {
 		t.Fatalf("registration ack = %+v", android.msgs)
 	}
-	if _, err := svc.SelectClient("Chrome", "file_receive"); err == nil || err.Error() != "receiver_not_found" {
-		t.Fatalf("browser selection error = %v", err)
+	if _, err := svc.SelectClient("unsupported", "file_receive"); err == nil || err.Error() != "receiver_not_found" {
+		t.Fatalf("unsupported client selection error = %v", err)
 	}
 }
 

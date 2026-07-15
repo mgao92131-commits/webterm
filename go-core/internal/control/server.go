@@ -47,7 +47,6 @@ func NewWithRuntime(addr string, app *app.App, configPath string, runtime Runtim
 	mux := http.NewServeMux()
 	mux.HandleFunc("/control/status", control.handleStatus)
 	mux.HandleFunc("/control/config", control.handleConfig)
-	mux.HandleFunc("/control/mode/", control.handleMode)
 	mux.HandleFunc("/control/restart", control.handleRestart)
 	mux.HandleFunc("/control/stop", control.handleStop)
 	mux.HandleFunc("/control/logs", control.handleLogs)
@@ -117,26 +116,7 @@ func (control *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (control *Server) handleMode(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	mode := strings.TrimPrefix(r.URL.Path, "/control/mode/")
-	if mode != config.ModeDirect && mode != config.ModeRelay {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	next := control.app.Config()
-	next.Mode = mode
-	control.applyConfig(w, next)
-}
-
 func (control *Server) applyConfig(w http.ResponseWriter, cfg config.Config) {
-	if cfg.Mode != config.ModeDirect && cfg.Mode != config.ModeRelay {
-		writeError(w, http.StatusBadRequest, "unsupported mode")
-		return
-	}
 	if err := config.Save(control.configPath, cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

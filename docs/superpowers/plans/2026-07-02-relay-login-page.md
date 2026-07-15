@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将中转服务登录从弹窗模式改为全屏页面，对标网页端实现登录/注册页面和设备管理页面
+**Goal:** 将中转服务登录从弹窗模式改为 Android 全屏登录/注册与设备管理页面
 
 **Architecture:** 沿用单 Activity 多 View 切换模式。新增 `RelayLoginScreenBuilder`（登录/注册）和 `RelayDevicesScreenBuilder`（设备管理）两个页面构建器，通过 `RelayCoordinator` 统一管理中转业务逻辑，使用 `PageTransitionAnimator` 做页面过渡
 
@@ -872,7 +872,7 @@ public final class RelayDevicesScreenBuilder {
 
         // === Section B: 信任设备 ===
         TextView trustedTitle = new TextView(activity);
-        trustedTitle.setText("信任的浏览器/移动设备");
+        trustedTitle.setText("信任的移动设备");
         trustedTitle.setTextColor(DesignTokens.TEXT_PRIMARY);
         trustedTitle.setTextSize(DesignTokens.TEXT_BODY_SIZE);
         trustedTitle.setTypeface(DesignTokens.fontGeistSansSemibold(activity));

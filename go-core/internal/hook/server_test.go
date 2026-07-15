@@ -45,7 +45,7 @@ func TestServerDispatchResolvesPID(t *testing.T) {
 
 	// macOS Unix socket 路径长度受限，使用短路径
 	socketPath := filepath.Join("/tmp", "webterm-hook-test-"+strconv.Itoa(os.Getpid())+".sock")
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	cfg.Shell.Command = "/bin/sh"
 	application := app.New(cfg, "test")
 
@@ -108,7 +108,7 @@ func startHookServer(t *testing.T) (*app.App, string, context.CancelFunc) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	socketPath := filepath.Join("/tmp", "webterm-hook-send-"+strconv.Itoa(os.Getpid())+"-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	cfg.Shell.Command = "/bin/sh"
 	application := app.New(cfg, "test")
 	server := New(socketPath, application)
@@ -343,7 +343,7 @@ func TestDispatchHookEventWithoutImportanceSkipsAgentNotification(t *testing.T) 
 func TestDispatchHookEventWithQuietImportanceUpdatesSessionWithoutAgentNotification(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
-	cfg := config.Load(config.Options{Mode: config.ModeDirect})
+	cfg := config.Load(config.Options{})
 	cfg.Shell.Command = "/bin/sh"
 	application := app.New(cfg, "test")
 

@@ -47,8 +47,7 @@ Android RemoteTerminalView
 4. Android 用户浏览位置属于 UI 状态，不属于终端状态，必须与远端屏幕模型分离。
 5. 历史不一次性下发全部 10000 行；首次下发最近窗口，向上滚动时按需分页。
 6. Android 只有一个正式协议 `webterm.screen.v1`，直接按最终形态定义。
-7. Web 如继续使用 xterm.js，可保留原始字节流作为另一种正式 projection；它不是 Android 的兼容或回退路径。
-8. 屏幕协议从第一版开始使用共享 Protobuf，不采用临时 JSON 生产协议。
+7. 屏幕协议从第一版开始使用共享 Protobuf，不采用临时 JSON 生产协议。
 
 ---
 
@@ -73,7 +72,7 @@ Android RemoteTerminalView
 
 - `TerminalSession.createExternalSession(...)` 已把本地 PTY 与远程 I/O 分开。
 - `TerminalRuntimeRegistry` 已按逻辑终端维护运行时实例。
-- `TerminalProjection` 已把恢复状态从 Fragment/View 生命周期中分离。
+- `RemoteTerminalModel` 与 `TerminalSessionRuntimeRegistry` 已把恢复状态从 Fragment/View 生命周期中分离。
 - `TerminalView` / `TerminalRenderer` 已具备：
   - Canvas 字符网格渲染；
   - 字体测量与宽字符缩放；
@@ -1163,7 +1162,7 @@ resize 等待期间：
 - [ ] 接入Protobuf binary subprotocol。
 - [ ] 实现hello/snapshot/patch/history/resync/layout/resize/input/effect/info/exit/ping。
 - [ ] 所有消息先做资源和结构校验。
-- [ ] direct与relay mux使用同一个handler，不复制协议逻辑。
+- [ ] Relay mux 使用唯一的 screen handler，不复制协议逻辑。
 - [ ] 建立恶意/超大/越界消息测试。
 
 ### Task 5：建立 Android terminal-model 与 terminal-protocol
@@ -1215,7 +1214,7 @@ resize 等待期间：
 ### Task 10：直接切换并删除旧 Android 终端链路
 
 - [ ] Android正式入口只协商新的 `webterm.screen.v1`。
-- [ ] 删除 `TerminalProjection` 的ANSI state/output逻辑。
+- [x] 删除零引用的旧 `TerminalProjection`。
 - [ ] 删除缓存 `TerminalSession` 和旧屏幕磁盘文件读取路径。
 - [ ] 删除 feature-terminal 对 `terminal-emulator/terminal-view` 的依赖。
 - [ ] 删除旧 Android TerminalSession/TerminalEmulator显示代码和无用模块。

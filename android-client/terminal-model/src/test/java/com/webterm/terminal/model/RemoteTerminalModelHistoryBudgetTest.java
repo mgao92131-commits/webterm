@@ -39,7 +39,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
 
     assertEquals("evict down to the soft line target", 10, model.historySize());
     assertEquals("oldest lines are evicted first", 16L, model.firstCachedHistoryId());
-    assertEquals("newest tail lines stay", 25L, model.lastCachedHistoryId());
+    assertEquals("newest tail lines stay", 25L, lastHistoryId(model));
   }
 
   // ---- §8.3：prepend 超预算从较新端驱逐，新页与可见锚点保留 ----
@@ -61,7 +61,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     assertTrue("the visible anchor survives", containsHistoryId(model, 201L));
     assertFalse("the newest, screen-side history is evicted instead",
         containsHistoryId(model, 220L));
-    assertEquals(205L, model.lastCachedHistoryId());
+    assertEquals(205L, lastHistoryId(model));
   }
 
   @Test
@@ -101,7 +101,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     assertTrue(model.historySize() < 20);
     assertTrue("the page's oldest lines are dropped first",
         model.firstCachedHistoryId() > 1);
-    assertEquals("the screen-side end of the page survives", 20L, model.lastCachedHistoryId());
+    assertEquals("the screen-side end of the page survives", 20L, lastHistoryId(model));
   }
 
   // ---- §8.3：连续分页在行数/字节上限附近不停滞、不循环 ----
@@ -265,6 +265,10 @@ public final class RemoteTerminalModelHistoryBudgetTest {
 
   private static boolean containsHistoryId(RemoteTerminalModel model, long lineId) {
     return model.renderSnapshot().history.findLineIndex(lineId) >= 0;
+  }
+
+  private static long lastHistoryId(RemoteTerminalModel model) {
+    return model.renderSnapshot().history.lastLineId();
   }
 
   // ---- fixtures ----

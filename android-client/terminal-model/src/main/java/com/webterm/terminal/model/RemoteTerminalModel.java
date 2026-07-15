@@ -283,24 +283,6 @@ public final class RemoteTerminalModel {
     return new ModelChange(false, null, true, false, false, false);
   }
 
-  public synchronized void resetForReconnect() {
-    instanceId = null;
-    layoutEpoch = 0;
-    screenRevision = 0;
-    screen = null;
-    history.clear();
-    historyBytes = 0;
-    styles.clear();
-    links.clear();
-    cursor = TerminalCursor.hidden();
-    modes = TerminalModes.defaults();
-    palette = TerminalPalette.defaults();
-    title = "";
-    workingDirectory = "";
-    publishRenderSnapshot(true, true, true);
-    projectionHealth = ProjectionHealth.incomplete(SCHEMA_GENERATION);
-  }
-
   /** 只能在 model executor 的完整事务边界读取，返回不可变快照。 */
   public synchronized ProjectionHealth projectionHealth() {
     return projectionHealth;
@@ -423,11 +405,6 @@ public final class RemoteTerminalModel {
   /** 本地缓存最旧行 id；缓存为空时返回 -1。分页请求用它作 beforeId。 */
   public synchronized long firstCachedHistoryId() {
     return history.firstLineId();
-  }
-
-  /** 本地缓存最新行 id；缓存为空时返回 -1。 */
-  public synchronized long lastCachedHistoryId() {
-    return history.lastLineId();
   }
 
   /** Approximate bytes retained by the Android-side history cache. */

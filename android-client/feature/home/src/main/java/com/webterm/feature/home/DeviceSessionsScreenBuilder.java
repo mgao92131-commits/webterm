@@ -21,12 +21,10 @@ public final class DeviceSessionsScreenBuilder {
 
     public static Result build(
         Activity activity,
-        ServerConfig server,
-        Runnable onBack,
-        Runnable onCreateSession,
-        Runnable onRefresh,
-        Runnable onEditServer,
-        Runnable onRemoveServer
+		ServerConfig server,
+		Runnable onBack,
+		Runnable onCreateSession,
+		Runnable onRefresh
     ) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -71,7 +69,7 @@ public final class DeviceSessionsScreenBuilder {
         subtitleContainer.addView(status, statusLp);
 
         TextView subtitle = new TextView(activity);
-        subtitle.setText(server.isRelayDevice() ? "中转设备" : server.getUrl());
+		subtitle.setText("中转设备");
         subtitle.setTextColor(DesignTokens.TEXT_SECONDARY);
         subtitle.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
         subtitle.setSingleLine(true);

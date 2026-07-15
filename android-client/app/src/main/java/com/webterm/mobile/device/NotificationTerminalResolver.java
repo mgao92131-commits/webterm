@@ -38,18 +38,7 @@ public final class NotificationTerminalResolver {
         if (connectionKey == null || connectionKey.isEmpty()) {
             return new Result(ResolveStatus.NOT_FOUND, null);
         }
-        // 1. 持久化配置中的设备；2. 跳过 Relay Master（它只是中转入口，不是具体设备）。
-        if (savedServers != null) {
-            for (ServerConfig server : savedServers) {
-                if (server == null || server.isRelayMaster()) continue;
-                String key = DeviceConnectionKeys.forDevice(
-                    server.getUrl(), server.isRelayDevice(), server.getDeviceId());
-                if (connectionKey.equals(key)) {
-                    return new Result(ResolveStatus.RESOLVED, server);
-                }
-            }
-        }
-        // 3. RelayService 内存中的在线 Relay 设备。
+		// RelayService 内存中的在线 Relay 设备。
         if (relayDevices != null) {
             for (ServerConfig device : relayDevices) {
                 if (device == null) continue;
@@ -59,7 +48,7 @@ public final class NotificationTerminalResolver {
                 }
             }
         }
-        // 4. baseUrl 与某个 Relay Master 一致：仅在设备列表尚未完成首次加载时等待。
+		// baseUrl 与某个 Relay Master 一致：仅在设备列表尚未完成首次加载时等待。
         // 已成功加载但未命中，说明目标当前离线或已删除，应明确 NOT_FOUND，避免刷新循环。
         String baseUrl = baseUrlPart(connectionKey);
         if (!baseUrl.isEmpty() && savedServers != null) {

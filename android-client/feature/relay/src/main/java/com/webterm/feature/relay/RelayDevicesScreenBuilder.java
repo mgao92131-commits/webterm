@@ -181,7 +181,7 @@ public final class RelayDevicesScreenBuilder {
 
         // === Section B: 信任设备 ===
         LinearLayout trustedHeader = buildSectionHeader(activity, fonts,
-            "信任的浏览器/移动设备",
+            "信任的移动设备",
             "已通过邮箱验证的设备。撤销信任后，该设备下次登录需重新输入验证码");
         content.addView(trustedHeader, new LinearLayout.LayoutParams(-1, -2));
 

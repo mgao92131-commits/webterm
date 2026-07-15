@@ -29,36 +29,6 @@ type otpSender interface {
 	SendOTP(toEmail string, purpose string, code string) error
 }
 
-func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		Email string `json:"email"`
-		Code  string `json:"code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	user, ok := server.store.FindUserByUsername(strings.TrimSpace(req.Email))
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "invalid verification code")
-		return
-	}
-	if _, err := server.store.ConsumeVerificationCode(user.ID, verifyEmailPurpose, strings.TrimSpace(req.Code), "", time.Now()); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid verification code")
-		return
-	}
-	user, err := server.store.MarkEmailVerified(user.ID, time.Now())
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	server.issueLoginResponse(w, r, user)
-}
-
 func (server *Server) handleVerifyOTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -80,49 +50,17 @@ func (server *Server) handleVerifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	targetDeviceID := strings.TrimSpace(req.TargetDeviceID)
 	if targetDeviceID == "" {
-		targetDeviceID = browserDeviceID(r)
+		targetDeviceID = clientDeviceID(r)
 	}
 	if _, err := server.store.ConsumeVerificationCode(user.ID, newDevicePurpose, strings.TrimSpace(req.Code), targetDeviceID, time.Now()); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid verification code")
 		return
 	}
 	if targetDeviceID != "" {
-		http.SetCookie(w, server.browserDeviceCookie(targetDeviceID))
-		_, _ = server.store.UpsertTrustedDevice(user.ID, targetDeviceID, browserDeviceName(r), time.Now())
+		http.SetCookie(w, server.clientDeviceCookie(targetDeviceID))
+		_, _ = server.store.UpsertTrustedDevice(user.ID, targetDeviceID, clientDeviceName(r), time.Now())
 	}
 	server.issueLoginResponseForDevice(w, r, user, targetDeviceID)
-}
-
-func (server *Server) handleResendOTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		Email string `json:"email"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	user, ok := server.store.FindUserByUsername(strings.TrimSpace(req.Email))
-	if ok {
-		purpose := verifyEmailPurpose
-		targetDeviceID := ""
-		if !user.EmailVerifiedAt.IsZero() {
-			purpose = newDevicePurpose
-			targetDeviceID = browserDeviceID(r)
-		}
-		if err := server.sendVerificationCode(user, purpose, targetDeviceID, true); err != nil {
-			if errors.Is(err, relaystore.ErrConflict) {
-				writeError(w, http.StatusTooManyRequests, "otp recently sent")
-				return
-			}
-			writeStoreError(w, err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"sent": true})
 }
 
 func (server *Server) sendVerificationCode(user relaystore.User, purpose, targetDeviceID string, enforceRateLimit bool) error {
@@ -142,22 +80,22 @@ func (server *Server) sendVerificationCode(user relaystore.User, purpose, target
 	return server.otpSender.SendOTP(user.Username, purpose, code)
 }
 
-func (server *Server) rememberBrowserDevice(w http.ResponseWriter, r *http.Request, user relaystore.User) {
-	server.rememberBrowserDeviceID(w, r, user, "")
+func (server *Server) rememberClientDevice(w http.ResponseWriter, r *http.Request, user relaystore.User) {
+	server.rememberClientDeviceID(w, r, user, "")
 }
 
-func (server *Server) rememberBrowserDeviceID(w http.ResponseWriter, r *http.Request, user relaystore.User, deviceID string) {
+func (server *Server) rememberClientDeviceID(w http.ResponseWriter, r *http.Request, user relaystore.User, deviceID string) {
 	if deviceID == "" {
-		deviceID = browserDeviceID(r)
+		deviceID = clientDeviceID(r)
 	}
 	if deviceID == "" {
-		deviceID = newBrowserDeviceID()
+		deviceID = newClientDeviceID()
 	}
 	if deviceID == "" {
 		return
 	}
-	http.SetCookie(w, server.browserDeviceCookie(deviceID))
-	_, _ = server.store.UpsertTrustedDevice(user.ID, deviceID, browserDeviceName(r), time.Now())
+	http.SetCookie(w, server.clientDeviceCookie(deviceID))
+	_, _ = server.store.UpsertTrustedDevice(user.ID, deviceID, clientDeviceName(r), time.Now())
 }
 
 func (server *Server) isTrustedDevice(userID, deviceID string) bool {
@@ -172,9 +110,9 @@ func (server *Server) isTrustedDevice(userID, deviceID string) bool {
 	return false
 }
 
-func (server *Server) browserDeviceCookie(deviceID string) *http.Cookie {
+func (server *Server) clientDeviceCookie(deviceID string) *http.Cookie {
 	return &http.Cookie{
-		Name:     relaycore.BrowserDeviceCookieName,
+		Name:     relaycore.ClientDeviceCookieName,
 		Value:    deviceID,
 		Path:     "/",
 		HttpOnly: true,
@@ -183,23 +121,23 @@ func (server *Server) browserDeviceCookie(deviceID string) *http.Cookie {
 	}
 }
 
-func browserDeviceID(r *http.Request) string {
-	if cookie, err := r.Cookie(relaycore.BrowserDeviceCookieName); err == nil {
+func clientDeviceID(r *http.Request) string {
+	if cookie, err := r.Cookie(relaycore.ClientDeviceCookieName); err == nil {
 		return strings.TrimSpace(cookie.Value)
 	}
 	return strings.TrimSpace(r.Header.Get("x-client-id"))
 }
 
-func browserDeviceName(r *http.Request) string {
+func clientDeviceName(r *http.Request) string {
 	// 1. 优先使用客户端主动上报的友好设备名（Android 端会带真实机型）
 	if name := strings.TrimSpace(r.Header.Get("X-Device-Name")); name != "" {
 		return truncateDeviceName(name)
 	}
 
-	// 2. 解析 User-Agent，生成 "Browser / OS" 格式
+	// 2. 解析 User-Agent，生成客户端与系统信息。
 	ua := r.UserAgent()
 	if ua == "" {
-		return "Browser"
+		return "Android 客户端"
 	}
 	parsed := useragent.Parse(ua)
 	parts := make([]string, 0, 2)
@@ -222,12 +160,12 @@ func truncateDeviceName(name string) string {
 	return name
 }
 
-func newBrowserDeviceID() string {
+func newClientDeviceID() string {
 	var data [18]byte
 	if _, err := rand.Read(data[:]); err != nil {
 		return ""
 	}
-	return "b_" + base64.RawURLEncoding.EncodeToString(data[:])
+	return "c_" + base64.RawURLEncoding.EncodeToString(data[:])
 }
 
 func requireEmailOTP() bool {

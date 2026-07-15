@@ -3,9 +3,9 @@ package relaycore
 import "strings"
 
 const (
-	AuthCookieName          = "webterm_relay_token"
-	RefreshCookieName       = "webterm_relay_refresh"
-	BrowserDeviceCookieName = "webterm_device_id"
+	AuthCookieName         = "webterm_relay_token"
+	RefreshCookieName      = "webterm_relay_refresh"
+	ClientDeviceCookieName = "webterm_device_id"
 )
 
 // BearerToken extracts a Bearer token value from an Authorization header.

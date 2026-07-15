@@ -2,7 +2,7 @@
 
 ## 目标
 
-`webterm send` 必须只把文件发送给明确注册、支持 `file_receive` 的 Android 客户端，并允许用户查询和选择设备。浏览器 mux、Relay 临时 stream ID 和被控电脑的 Agent Device ID 都不能充当 Android 接收端身份。
+`webterm send` 必须只把文件发送给明确注册、支持 `file_receive` 的 Android 客户端，并允许用户查询和选择设备。Relay 临时 stream ID 和被控电脑的 Agent Device ID 都不能充当 Android 接收端身份。
 
 ## 身份模型
 

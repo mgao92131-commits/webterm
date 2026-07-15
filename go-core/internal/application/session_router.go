@@ -21,7 +21,7 @@ import (
 )
 
 // MuxServeFunc 是 mux.Serve 的函数签名，用于避免 application → mux 的循环依赖。
-// 调用方（direct server / relay agent）负责传入 mux.Serve 的实际实现。
+// Relay Agent 负责传入 mux.Serve 的实际实现。
 type MuxServeFunc func(conn session.Socket, opts *MuxServeOpts) MuxSession
 
 // MuxSession 是 mux.Session 的接口抽象。
@@ -48,7 +48,7 @@ type MuxVirtualSocket interface {
 }
 
 // SessionRouter 统一 session 路径分发和 CRUD 逻辑，
-// 供 direct server 和 relay agent 共用，消除重复。
+// 供 Relay Agent 统一处理 mux channel。
 type SessionRouter struct {
 	manager    *session.Manager
 	muxServe   MuxServeFunc // 可选：用于 mux 子协议包装
@@ -286,7 +286,7 @@ func (r *SessionRouter) routeUpload(header http.Header, body io.Reader, sessionI
 		return uploadErrorResult(http.StatusServiceUnavailable, fileupload.CodeInternalError, "上传服务不可用")
 	}
 	// Android 端 OkHttp 拒绝非 ASCII header 值，统一改用 X-File-Name-B64
-	//（文件名字节数组的 URL-safe Base64，带填充）；直连 curl 等场景仍兼容原始 X-File-Name。
+	//（文件名字节数组的 URL-safe Base64，带填充）；同时兼容原始 X-File-Name。
 	fileName := header.Get("X-File-Name")
 	if fileName == "" {
 		if encoded := header.Get("X-File-Name-B64"); encoded != "" {
@@ -309,7 +309,7 @@ func (r *SessionRouter) routeUpload(header http.Header, body io.Reader, sessionI
 		declaredSize = size
 	} else if contentLength := header.Get("Content-Length"); contentLength != "" {
 		// 注意：net/http 服务端请求中 Content-Length 不在 Header map 里，
-		// 调用方（direct server / relay gateway）需要显式转发 r.ContentLength。
+		// Relay gateway 需要显式转发 r.ContentLength。
 		if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil && size >= 0 {
 			declaredSize = size
 		}
@@ -387,25 +387,6 @@ func hasProtocol(protocols []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func selectProtocol(protocols []string) string {
-	for _, p := range protocols {
-		if p == protocol.ScreenSubprotocol {
-			return protocol.ScreenSubprotocol
-		}
-	}
-	for _, p := range protocols {
-		if p == protocol.BinarySubprotocol {
-			return protocol.BinarySubprotocol
-		}
-	}
-	for _, p := range protocols {
-		if p == protocol.JSONSubprotocol {
-			return protocol.JSONSubprotocol
-		}
-	}
-	return protocol.JSONSubprotocol
 }
 
 func cleanPath(raw string) string {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaystore"
@@ -38,13 +37,13 @@ func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "email not verified")
 		return
 	}
-	deviceID := browserDeviceID(r)
+	deviceID := clientDeviceID(r)
 	if requireEmailOTP() && !server.isTrustedDevice(user.ID, deviceID) {
 		if deviceID == "" {
-			deviceID = newBrowserDeviceID()
+			deviceID = newClientDeviceID()
 		}
 		if deviceID != "" {
-			http.SetCookie(w, server.browserDeviceCookie(deviceID))
+			http.SetCookie(w, server.clientDeviceCookie(deviceID))
 		}
 		if err := server.sendVerificationCode(user, newDevicePurpose, deviceID, true); err != nil {
 			if errors.Is(err, relaystore.ErrConflict) {
@@ -74,7 +73,7 @@ func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.setAuthCookies(w, token, refreshToken)
-	server.rememberBrowserDevice(w, r, user)
+	server.rememberClientDevice(w, r, user)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":       user.ID,
 		"username": user.Username,
@@ -148,41 +147,11 @@ func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	server.setAuthCookies(w, access, refresh)
 	if user, ok := server.store.FindUser(access.UserID); ok {
-		server.rememberBrowserDevice(w, r, user)
+		server.rememberClientDevice(w, r, user)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode": "relay",
 	})
-}
-
-func (server *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	user, ok := server.authenticateRequest(w, r)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
-		"mode":     "relay",
-	})
-}
-
-func (server *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	server.clearAuthCookies(w)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (server *Server) issueLoginResponse(w http.ResponseWriter, r *http.Request, user relaystore.User) {
-	server.issueLoginResponseForDevice(w, r, user, "")
 }
 
 func (server *Server) issueLoginResponseForDevice(w http.ResponseWriter, r *http.Request, user relaystore.User, deviceID string) {
@@ -197,7 +166,7 @@ func (server *Server) issueLoginResponseForDevice(w http.ResponseWriter, r *http
 		return
 	}
 	server.setAuthCookies(w, token, refreshToken)
-	server.rememberBrowserDeviceID(w, r, user, deviceID)
+	server.rememberClientDeviceID(w, r, user, deviceID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":       user.ID,
 		"email":    user.Username,
@@ -223,27 +192,5 @@ func (server *Server) setAuthCookies(w http.ResponseWriter, access relaystore.To
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  refresh.ExpiresAt,
-	})
-}
-
-func (server *Server) clearAuthCookies(w http.ResponseWriter) {
-	expired := time.Unix(0, 0).UTC()
-	http.SetCookie(w, &http.Cookie{
-		Name:     relaycore.AuthCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  expired,
-		MaxAge:   -1,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     relaycore.RefreshCookieName,
-		Value:    "",
-		Path:     "/api/auth/refresh",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  expired,
-		MaxAge:   -1,
 	})
 }

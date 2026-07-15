@@ -52,7 +52,7 @@
 
 ### 0.3 依赖与配置卫生
 
-- 删 `core-api/build.gradle.kts:16` 未使用的 transport-api 依赖；`app/build.gradle.kts:66` 的 okhttp 直连依赖改经 core 层传递。
+- 删 `core-api/build.gradle.kts:16` 未使用的 transport-api 依赖；`app/build.gradle.kts:66` 的 okhttp 依赖改经 core 层传递。
 - 硬编码依赖版本（okhttp 4.12.0 ×5 模块、annotation 1.9.0 ×9 模块等）迁入 `gradle/libs.versions.toml`；删除 catalog 中无模块使用的死条目（compose-bom / navigation3 / coroutines 待 Phase 4 评估后决定）。
 - 删 terminal-model / protocol / renderer 中冗余的 `sourceSets` 默认配置。
 - 移除 `core-config/ServerConfigStore.java:16-17` 的 `DEFAULT_URL`（私有 IP）与 `DEFAULT_USER`：未配置时走首次启动引导输入，不再内置默认值。

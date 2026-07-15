@@ -40,7 +40,6 @@ public class ServerConfig {
     public boolean isRelayDevice() { return relayDevice; }
     public String getDeviceId() { return deviceId; }
 
-    public void setName(String name) { this.name = name; }
     public void setUrl(String url) { this.url = url; }
     public void setCookie(String cookie) { this.cookie = cookie; }
     public void setUsername(String username) { this.username = username; }

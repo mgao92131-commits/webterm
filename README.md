@@ -1,74 +1,52 @@
 # WebTerm
 
-个人自用的 WebTerm。当前服务端能力由 `go-core/` 提供：`webterm-agent` 负责本机终端会话，`webterm-relay` 负责多设备中转；仓库根目录保留 Vue 前端、部署脚本和 smoke 测试入口。
+WebTerm 是个人使用的 Android 远程终端系统，只包含三个正式组件：
 
-## 前端
+- Go PC Agent：管理 PTY、权威终端屏幕、文件传输和 Agent hook。
+- Go Relay：负责认证、设备注册以及 Android 与 PC Agent 之间的流量中转。
+- Android 客户端：设备管理、终端显示与输入、文件上传/接收和任务通知。
 
-首次运行前安装依赖：
+## 正式链路
 
-```sh
-npm install
+```text
+Android -- HTTPS + /ws/sessions --> Go Relay -- /ws/agent --> Go PC Agent --> PTY
 ```
 
-开发模式：
+终端使用 `webterm.mux.v1` 复用通道，具体终端通道只接受
+`webterm.screen.v1` Protobuf。所有远程终端访问统一经 Relay。
 
-```sh
-npm run dev
-```
-
-构建静态资源到 `web/`：
-
-```sh
-npm run build
-```
-
-## Go Agent
-
-Direct 模式：
+## 构建与测试
 
 ```sh
 cd go-core
-go run ./cmd/webterm-agent --mode direct
+go test ./...
+go build ./cmd/webterm-agent
+go build ./cmd/webterm-relay
+go run ./cmd/webterm-relay-e2e-smoke
+
+cd ../android-client
+./gradlew testDebugUnitTest
+./gradlew :app:assembleRelease
 ```
 
-Relay 模式：
+## 启动
 
 ```sh
 cd go-core
-RELAY_URL=http://127.0.0.1:19090 \
-RELAY_SECRET=your-device-secret \
-DEVICE_NAME="My Mac" \
-go run ./cmd/webterm-agent --mode relay
+RELAY_URL=http://relay.example:9001 \
+RELAY_SECRET='agent-secret' \
+DEVICE_NAME='my-mac' \
+go run ./cmd/webterm-agent
 ```
 
-## Go Relay
+Relay 默认监听 `127.0.0.1:19090`。部署时由 Nginx 只代理 `/api/` 和
+`/ws/`，不托管静态页面。
 
-本地启动：
+## 部署
 
 ```sh
-cd go-core
-WEBTERM_RELAY_ADDR=127.0.0.1:19090 \
-WEBTERM_RELAY_STORE_PATH=../data/relay-store.json \
-WEBTERM_RELAY_ALLOW_REGISTRATION=1 \
-go run ./cmd/webterm-relay
+RELAY_BOOTSTRAP_PASSWORD='强密码' ./deploy.sh --dry-run
+RELAY_BOOTSTRAP_PASSWORD='强密码' ./deploy.sh
 ```
 
-Docker 部署使用 `Dockerfile.go-relay` 和 `docker-compose.yml`。部署前先构建前端并设置管理员初始密码：
-
-```sh
-npm run build
-RELAY_BOOTSTRAP_PASSWORD='your-secure-password' ./deploy.sh
-```
-
-## Agent Hook 配置
-
-Claude Code / Kimi Code / Codex 等 Agent 可以通过 hook 调用 `webterm notify` 上报状态。配置方法见 [docs/agent-hooks.md](docs/agent-hooks.md)。
-
-## 验证
-
-```sh
-npm run typecheck
-npm run test:unit
-npm run smoke:go-relay-server
-npm run smoke:web-go-relay-pc-agent
-```
+敏感信息只通过环境变量或被忽略的本地配置注入，不得提交到仓库。

@@ -1,6 +1,5 @@
 package com.webterm.feature.home;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -112,11 +111,7 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             () -> {
                 if (mHost != null) mHost.createSession(server);
             },
-            () -> mViewModel.refresh(),
-            () -> {
-                if (mHost != null) mHost.showAddServerDialog(server);
-            },
-            () -> confirmRemoveServer(server)
+			() -> mViewModel.refresh()
         );
 
         installRootInsets(mScreen.root, 0, 0, 0, dp(16), true, true);
@@ -197,23 +192,6 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
                 if (mSessionAdapter != null) mSessionAdapter.removeSession(sessionId);
             });
         }
-    }
-
-    private void confirmRemoveServer(ServerConfig server) {
-        if (server == null) return;
-        AlertDialog dialog = new AlertDialog.Builder(requireContext(), AlertDialog.THEME_DEVICE_DEFAULT_DARK)
-            .setTitle("确认移除电脑")
-            .setMessage("确定要从列表中移除该服务器吗？")
-            .setPositiveButton("移除", (d, which) -> {
-                if (mHost != null) {
-                    mHost.removeServer(server);
-                    mHost.navigateHome();
-                }
-            })
-            .setNegativeButton("取消", null)
-            .create();
-        dialog.setCanceledOnTouchOutside(false);
-        dialog.show();
     }
 
     private void installRootInsets(View root, int baseLeft, int baseTop, int baseRight,

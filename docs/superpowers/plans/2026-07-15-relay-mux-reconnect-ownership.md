@@ -15,7 +15,7 @@
 4. 重复 `onConnected` 让 screen runtime 对同一 channel 发送两个 Hello；Go 按协议关闭重复 Hello 的 channel。
 5. Android 等不到权威 Snapshot/ResumeAck，进入 `sync_timeout`；并行物理 mux 使 Agent 的 terminal `clients` 持续增长。
 
-同一 Codex resume 会话通过 direct Agent 可正常使用，说明会话历史内容不是触发条件。
+同一 Codex resume 会话经 Relay Agent 可正常使用，说明会话历史内容不是触发条件。
 
 ## 2. 设计边界
 

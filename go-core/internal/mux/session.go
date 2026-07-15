@@ -41,7 +41,7 @@ type Session struct {
 }
 
 // Serve 包装一个已建立的 WebSocket 连接，启动多路复用。
-// 调用方负责 conn 的建立（direct 用 websocket.Accept；relay 用 websocket.Dial + register）。
+// Relay Agent 负责建立 websocket 连接并完成注册。
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 	return &Session{
 		conn:      conn,
@@ -238,17 +238,7 @@ func selectProtocol(protocols []string) string {
 			return protocol.ScreenSubprotocol
 		}
 	}
-	for _, item := range protocols {
-		if item == protocol.BinarySubprotocol {
-			return protocol.BinarySubprotocol
-		}
-	}
-	for _, item := range protocols {
-		if item == protocol.JSONSubprotocol {
-			return protocol.JSONSubprotocol
-		}
-	}
-	return protocol.JSONSubprotocol
+	return ""
 }
 
 func protocolsValue(value any) []string {

@@ -36,7 +36,7 @@ type TokenStore interface {
 	AuthenticateToken(value string) (User, error)
 }
 
-// TrustedDeviceStore manages browser trusted device records.
+// TrustedDeviceStore manages trusted client device records.
 type TrustedDeviceStore interface {
 	UpsertTrustedDevice(userID, deviceID, deviceName string, at time.Time) (TrustedDevice, error)
 	ListTrustedDevices(userID string) []TrustedDevice

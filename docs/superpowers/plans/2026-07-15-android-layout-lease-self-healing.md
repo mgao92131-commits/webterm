@@ -229,7 +229,7 @@ cd android-client
 ./gradlew test --no-daemon
 ./gradlew :app:assembleRelease --no-daemon
 
-npm run smoke:web-go-relay-pc-agent
+(cd go-core && go run ./cmd/webterm-relay-e2e-smoke)
 scripts/repro-relay-android-resume-stuck.sh
 git diff --check
 ```

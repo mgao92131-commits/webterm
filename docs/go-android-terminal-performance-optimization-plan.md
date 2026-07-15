@@ -4,7 +4,7 @@
 > 制定日期：2026-07-13  
 > 修订记录：2026-07-13 对照代码完成实施前审查；实施后复审补正 Android 历史快照不可变性、Go benchmark 口径，并完成阶段 4 的低风险项（见复审报告）
 > 范围：`go-core` 与 `android-client` 远程终端主链路  
-> 不包含：网页端、Legacy Termux 模拟器性能优化、协议无关的 UI 重构
+> 不包含：Legacy Termux 模拟器性能优化、协议无关的 UI 重构
 >
 > 实施状态：阶段 2/3 已完成并经过 2026-07-13 复审修正；阶段 4 中 Handler 复用、
 > Android styled ASCII run 合批和 mouse MOVE 合并已实施，Go printable span 批处理

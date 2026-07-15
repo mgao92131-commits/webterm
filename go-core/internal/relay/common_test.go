@@ -31,7 +31,6 @@ func TestAgentWebSocketURL(t *testing.T) {
 
 func TestNewV2InjectsFileUploadService(t *testing.T) {
 	cfg := config.Config{
-		Mode:  config.ModeRelay,
 		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
 		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
 	}
@@ -66,7 +65,6 @@ func TestNewV2InjectsFileUploadService(t *testing.T) {
 
 func TestV2RouteMemoryAPISessionCRUD(t *testing.T) {
 	cfg := config.Config{
-		Mode:  config.ModeRelay,
 		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
 		Shell: config.ShellConfig{Command: "/bin/sh", CWD: "."},
 	}
