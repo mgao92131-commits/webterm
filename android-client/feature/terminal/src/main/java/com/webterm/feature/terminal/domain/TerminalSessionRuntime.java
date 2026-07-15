@@ -39,11 +39,16 @@ public final class TerminalSessionRuntime {
   private static final long RESYNC_SNAPSHOT_TIMEOUT_MS = 2000L;
   /** 第 1/2/3 次重发 resync 前的退避延迟。 */
   private static final long[] RETRY_BACKOFF_MS = {1000L, 2000L, 4000L};
+  private static final long[] LEASE_RETRY_BACKOFF_MS = {250L, 500L, 1000L, 2000L};
+  private static final long LEASE_REQUEST_TIMEOUT_MS = 3000L;
+  private static final long LEASE_FALLBACK_RENEW_MS = 120_000L;
+  private static final long LEASE_MIN_RENEW_DELAY_MS = 1000L;
 
   public interface Listener {
     void onModelChange(@NonNull ModelChange change);
     void onEffect(@NonNull TerminalScreenEffect effect);
     void onConnectionStateChange(@NonNull State state);
+    default void onLayoutLeaseStateChange(boolean ready) {}
   }
 
   /** 不依赖 Activity/View 的副作用处理器；页面不存在时仍必须持续存在。 */
@@ -86,6 +91,9 @@ public final class TerminalSessionRuntime {
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
     void acquireLayout(boolean interactive);
+    default void acquireLayout(@NonNull String requestId, boolean interactive) {
+      acquireLayout(interactive);
+    }
     void releaseLayout();
     void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data);
     void close();
@@ -111,6 +119,14 @@ public final class TerminalSessionRuntime {
   private volatile State state = State.CONNECTING;
   private volatile String layoutLeaseId = "";
   private volatile boolean layoutLeaseGranted;
+  private enum LayoutLeaseState { DETACHED, ACQUIRING, HELD }
+  private volatile LayoutLeaseState layoutLeaseState = LayoutLeaseState.DETACHED;
+  private volatile boolean pageAttached = true;
+  private final AtomicLong layoutLeaseGeneration = new AtomicLong(1L);
+  private final AtomicLong nextLayoutRequestId = new AtomicLong();
+  private volatile String pendingLayoutRequestId = "";
+  private long layoutLeaseExpiresAtMs;
+  private int layoutLeaseRetryAttempt;
   private volatile int lastRequestedCols;
   private volatile int lastRequestedRows;
 
@@ -134,6 +150,7 @@ public final class TerminalSessionRuntime {
   @Nullable private volatile AuthenticationListener authenticationListener;
   @Nullable private volatile EffectSink effectSink;
   private final TimeoutScheduler timeoutScheduler;
+  private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
@@ -174,11 +191,21 @@ public final class TerminalSessionRuntime {
                                 @NonNull Executor modelExecutor,
                                 @NonNull Executor callbackExecutor,
                                 @NonNull TimeoutScheduler timeoutScheduler) {
+    this(sessionId, model, modelExecutor, callbackExecutor, timeoutScheduler, timeoutScheduler);
+  }
+
+  TerminalSessionRuntime(@NonNull String sessionId,
+                         @NonNull RemoteTerminalModel model,
+                         @NonNull Executor modelExecutor,
+                         @NonNull Executor callbackExecutor,
+                         @NonNull TimeoutScheduler timeoutScheduler,
+                         @NonNull TimeoutScheduler leaseScheduler) {
     this.sessionId = sessionId;
     this.model = model;
     this.modelExecutor = modelExecutor;
     this.callbackExecutor = callbackExecutor;
     this.timeoutScheduler = timeoutScheduler;
+    this.leaseScheduler = leaseScheduler;
   }
 
   @NonNull
@@ -227,8 +254,7 @@ public final class TerminalSessionRuntime {
         if (TerminalSessionRuntime.this.connection != connection) return;
         // 断线后 Go 侧会释放租约；本地同步失效，避免 resize 丢进死通道，
         // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
-        layoutLeaseGranted = false;
-        layoutLeaseId = "";
+        invalidateLayoutLease();
         connectionRequiresReplacement = false;
         // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
         modelExecutor.execute(() -> {
@@ -241,8 +267,7 @@ public final class TerminalSessionRuntime {
       @Override
       public void onAuthenticationRequired(@Nullable String reason) {
         if (TerminalSessionRuntime.this.connection != connection) return;
-        layoutLeaseGranted = false;
-        layoutLeaseId = "";
+        invalidateLayoutLease();
         connectionRequiresReplacement = true;
         // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
         // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
@@ -265,6 +290,7 @@ public final class TerminalSessionRuntime {
         if (TerminalSessionRuntime.this.connection != connection) return;
         TerminalSessionRuntime.this.connection = null;
         connectionRequiresReplacement = false;
+        invalidateLayoutLease();
         updateState(State.CLOSED);
       }
     });
@@ -279,8 +305,6 @@ public final class TerminalSessionRuntime {
     ScreenConnection current = connection;
     connection = null;
     connectionRequiresReplacement = false;
-    layoutLeaseGranted = false;
-    layoutLeaseId = "";
     modelExecutor.execute(() -> {
       syncGeneration++;
       resetResyncRecovery();
@@ -289,29 +313,37 @@ public final class TerminalSessionRuntime {
       current.releaseLayout();
       current.close();
     }
+    invalidateLayoutLease();
     if (state != State.CLOSED) updateState(State.RECONNECTING);
   }
 
   /** View detach 只释放焦点与交互租约，不关闭 channel。 */
   public void detachPage() {
+    pageAttached = false;
     ScreenConnection current = connection;
     if (current != null) {
-      current.sendFocusInput(false);
+      if (layoutLeaseGranted) current.sendFocusInput(false);
       current.releaseLayout();
     }
-    layoutLeaseGranted = false;
-    layoutLeaseId = "";
+    invalidateLayoutLease();
   }
 
   /** HOT reattach 不需要网络恢复，只重新申请交互租约。 */
   public void attachPage() {
-    ScreenConnection current = connection;
-    if (current != null && state == State.CONNECTED) current.acquireLayout(true);
+    boolean wasAttached = pageAttached;
+    pageAttached = true;
+    long generation = wasAttached
+        ? layoutLeaseGeneration.get()
+        : layoutLeaseGeneration.incrementAndGet();
+    modelExecutor.execute(() -> ensureLayoutLease(generation, false));
   }
 
   public void addListener(@NonNull Listener listener) {
     if (listeners.addIfAbsent(listener)) {
-      callbackExecutor.execute(() -> listener.onConnectionStateChange(state));
+      callbackExecutor.execute(() -> {
+        listener.onConnectionStateChange(state);
+        listener.onLayoutLeaseStateChange(layoutLeaseGranted);
+      });
     }
   }
 
@@ -416,8 +448,8 @@ public final class TerminalSessionRuntime {
       c.releaseLayout();
       c.close();
     }
-    layoutLeaseId = "";
-    layoutLeaseGranted = false;
+    pageAttached = false;
+    invalidateLayoutLease();
     modelExecutor.execute(() -> syncGeneration++);
   }
 
@@ -447,8 +479,7 @@ public final class TerminalSessionRuntime {
     if (state != State.SYNCING && state != State.TRANSPORT_CONNECTED) return;
     syncGeneration++;
     updateState(State.CONNECTED);
-    ScreenConnection c = connection;
-    if (c != null) c.acquireLayout(true);
+    ensureLayoutLease(layoutLeaseGeneration.get(), false);
   }
 
   private void handleScreenMessage(byte[] payload) {
@@ -711,13 +742,39 @@ public final class TerminalSessionRuntime {
   }
 
   private void handleLayoutLease(TerminalScreenProto.LayoutLease lease) {
-    if (state != State.CONNECTED) return;
+    if (state != State.CONNECTED || !pageAttached) return;
+    String responseRequestId = lease.getRequestId();
+    boolean unsolicitedRevocation = !lease.getGranted() && responseRequestId.isEmpty();
+    if (!unsolicitedRevocation) {
+      if (pendingLayoutRequestId.isEmpty()) return;
+      // 旧服务端响应不带 request_id；仅在确实存在一个在途请求时兼容接受。
+      if (!responseRequestId.isEmpty() && !responseRequestId.equals(pendingLayoutRequestId)) {
+        TerminalResumeMetrics.leaseStaleResponse();
+        return;
+      }
+    }
+    pendingLayoutRequestId = "";
     if (lease.getGranted()) {
+      if (lease.getLeaseId().isEmpty()) {
+        clearLayoutLeaseState();
+        ScreenConnection current = connection;
+        if (current != null) current.setLayoutLeaseId("");
+        notifyLayoutLeaseState();
+        scheduleLayoutLeaseRetry(layoutLeaseGeneration.get());
+        return;
+      }
       layoutLeaseId = lease.getLeaseId();
       layoutLeaseGranted = true;
+      layoutLeaseState = LayoutLeaseState.HELD;
+      layoutLeaseExpiresAtMs = lease.getExpiresAtMs();
+      layoutLeaseRetryAttempt = 0;
     } else {
-      layoutLeaseId = "";
-      layoutLeaseGranted = false;
+      if (unsolicitedRevocation) {
+        TerminalResumeMetrics.leaseRevoked();
+      } else {
+        TerminalResumeMetrics.leaseDenied();
+      }
+      clearLayoutLeaseState();
     }
     ScreenConnection c = connection;
     if (c != null) {
@@ -728,6 +785,118 @@ public final class TerminalSessionRuntime {
         c.requestResize(lastRequestedCols, lastRequestedRows);
       }
     }
+    long generation = layoutLeaseGeneration.get();
+    if (layoutLeaseGranted) {
+      scheduleLayoutLeaseRenewal(generation, layoutLeaseId, layoutLeaseExpiresAtMs);
+    } else {
+      scheduleLayoutLeaseRetry(generation);
+    }
+    notifyLayoutLeaseState();
+  }
+
+  private void ensureLayoutLease(long generation, boolean renewal) {
+    if (generation != layoutLeaseGeneration.get() || !pageAttached
+        || state != State.CONNECTED || connection == null) return;
+    if (!pendingLayoutRequestId.isEmpty()) return;
+    if (!renewal && layoutLeaseGranted) return;
+
+    String requestId = "layout-" + generation + "-" + nextLayoutRequestId.incrementAndGet();
+    pendingLayoutRequestId = requestId;
+    if (!layoutLeaseGranted) {
+      layoutLeaseState = LayoutLeaseState.ACQUIRING;
+      notifyLayoutLeaseState();
+    }
+    TerminalResumeMetrics.leaseAcquire(renewal);
+    connection.acquireLayout(requestId, true);
+    leaseScheduler.schedule(
+        () -> modelExecutor.execute(() -> onLayoutLeaseRequestTimeout(generation, requestId)),
+        LEASE_REQUEST_TIMEOUT_MS);
+  }
+
+  private void onLayoutLeaseRequestTimeout(long generation, @NonNull String requestId) {
+    if (generation != layoutLeaseGeneration.get() || !requestId.equals(pendingLayoutRequestId)) {
+      return;
+    }
+    pendingLayoutRequestId = "";
+    if (layoutLeaseGranted) {
+      TerminalResumeMetrics.leaseRetry();
+      leaseScheduler.schedule(
+          () -> modelExecutor.execute(() -> ensureLayoutLease(generation, true)),
+          LEASE_MIN_RENEW_DELAY_MS);
+    } else {
+      scheduleLayoutLeaseRetry(generation);
+    }
+  }
+
+  private void scheduleLayoutLeaseRetry(long generation) {
+    if (generation != layoutLeaseGeneration.get() || !pageAttached
+        || state != State.CONNECTED || layoutLeaseGranted) return;
+    int index = Math.min(layoutLeaseRetryAttempt, LEASE_RETRY_BACKOFF_MS.length - 1);
+    long delayMs = LEASE_RETRY_BACKOFF_MS[index];
+    layoutLeaseRetryAttempt++;
+    TerminalResumeMetrics.leaseRetry();
+    leaseScheduler.schedule(
+        () -> modelExecutor.execute(() -> ensureLayoutLease(generation, false)), delayMs);
+  }
+
+  private void scheduleLayoutLeaseRenewal(long generation, @NonNull String expectedLeaseId,
+                                          long expiresAtMs) {
+    long nowMs = System.currentTimeMillis();
+    long delayMs = LEASE_FALLBACK_RENEW_MS;
+    if (expiresAtMs > 0L) {
+      long remainingMs = expiresAtMs - nowMs;
+      if (remainingMs <= 0L) {
+        clearLayoutLeaseState();
+        scheduleLayoutLeaseRetry(generation);
+        return;
+      }
+      long halfTtl = remainingMs / 2L;
+      long beforeExpiry = Math.max(LEASE_MIN_RENEW_DELAY_MS, remainingMs - 60_000L);
+      delayMs = Math.max(LEASE_MIN_RENEW_DELAY_MS, Math.min(halfTtl, beforeExpiry));
+    }
+    leaseScheduler.schedule(() -> modelExecutor.execute(() -> {
+      if (generation != layoutLeaseGeneration.get() || !pageAttached
+          || !layoutLeaseGranted || !expectedLeaseId.equals(layoutLeaseId)) return;
+      ensureLayoutLease(generation, true);
+    }), delayMs);
+    if (expiresAtMs > 0L) {
+      long expiryDelay = Math.max(LEASE_MIN_RENEW_DELAY_MS, expiresAtMs - nowMs);
+      leaseScheduler.schedule(() -> modelExecutor.execute(() -> {
+        if (generation != layoutLeaseGeneration.get() || expiresAtMs != layoutLeaseExpiresAtMs
+            || !expectedLeaseId.equals(layoutLeaseId) || System.currentTimeMillis() < expiresAtMs) {
+          return;
+        }
+        clearLayoutLeaseState();
+        ScreenConnection current = connection;
+        if (current != null) current.setLayoutLeaseId("");
+        notifyLayoutLeaseState();
+        scheduleLayoutLeaseRetry(generation);
+      }), expiryDelay);
+    }
+  }
+
+  private void invalidateLayoutLease() {
+    layoutLeaseGeneration.incrementAndGet();
+    pendingLayoutRequestId = "";
+    layoutLeaseRetryAttempt = 0;
+    clearLayoutLeaseState();
+    ScreenConnection current = connection;
+    if (current != null) current.setLayoutLeaseId("");
+    notifyLayoutLeaseState();
+  }
+
+  private void clearLayoutLeaseState() {
+    layoutLeaseId = "";
+    layoutLeaseGranted = false;
+    layoutLeaseExpiresAtMs = 0L;
+    layoutLeaseState = LayoutLeaseState.DETACHED;
+  }
+
+  private void notifyLayoutLeaseState() {
+    boolean ready = layoutLeaseGranted;
+    callbackExecutor.execute(() -> {
+      for (Listener listener : listeners) listener.onLayoutLeaseStateChange(ready);
+    });
   }
 
   private void handleEffect(TerminalScreenProto.TerminalEffect effect) {

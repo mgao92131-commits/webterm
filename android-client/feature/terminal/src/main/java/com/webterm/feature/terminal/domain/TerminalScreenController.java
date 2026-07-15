@@ -27,6 +27,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     /** Only invoked for tail appends while the user is not following the tail. */
     default void onHistoryAppended(int lineCount) {}
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
+    default void onLayoutLeaseStateChanged(boolean ready) {}
   }
 
   public interface EffectListener {
@@ -224,6 +225,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     View v = view;
     if (v != null) v.onConnectionStateChanged(state);
     requestRender();
+  }
+
+  @Override
+  public void onLayoutLeaseStateChange(boolean ready) {
+    View v = view;
+    if (v != null) v.onLayoutLeaseStateChanged(ready);
   }
 
   private void requestRender() {

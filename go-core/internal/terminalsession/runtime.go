@@ -78,11 +78,22 @@ type ScreenClient struct {
 	SendHistory     func(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData)
 	SendHistoryTrim func(epoch, firstAvailableID uint64)
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
+	SendLayoutLease func(LayoutLeaseEvent)
 
 	// 以下字段仅由 Runtime actor 访问。
 	synced            bool
 	initialGeneration uint64
 	pendingState      terminalengine.ScreenFrame
+}
+
+// LayoutLeaseEvent 是 runtime 发给 screen client 的租约状态。
+// RequestID 为空且 Granted=false 表示服务端主动撤销已失效的租约。
+type LayoutLeaseEvent struct {
+	RequestID   string
+	LeaseID     string
+	Granted     bool
+	Interactive bool
+	ExpiresAt   time.Time
 }
 
 // ResumeToken 是客户端投影的原子版本锚点。
@@ -245,13 +256,22 @@ func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, da
 
 // AcquireLayout 申请布局租约。
 func (r *Runtime) AcquireLayout(clientID string, interactive bool) (leaseID string, granted bool) {
+	result := r.AcquireLayoutRequest(clientID, "", interactive)
+	return result.LeaseID, result.Granted
+}
+
+// AcquireLayoutRequest 申请布局租约，并保留协议请求身份与过期时间。
+func (r *Runtime) AcquireLayoutRequest(clientID, requestID string, interactive bool) LayoutLeaseEvent {
 	reply := make(chan layoutLeaseResult, 1)
-	r.postEvent(acquireLayoutEvent{clientID: clientID, interactive: interactive, reply: reply})
+	r.postEvent(acquireLayoutEvent{clientID: clientID, requestID: requestID, interactive: interactive, reply: reply})
 	select {
 	case result := <-reply:
-		return result.leaseID, result.granted
+		return LayoutLeaseEvent{
+			RequestID: result.requestID, LeaseID: result.leaseID, Granted: result.granted,
+			Interactive: result.interactive, ExpiresAt: result.expiresAt,
+		}
 	case <-r.stopCh:
-		return "", false
+		return LayoutLeaseEvent{RequestID: requestID}
 	}
 }
 
@@ -440,7 +460,11 @@ func (r *Runtime) handleEvent(ev event) {
 func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 	client := r.clients[e.clientID]
 	clipboard, ok := r.pendingClipboard[e.requestID]
-	if !ok || client == nil || client.LayoutLeaseID == "" || !r.leaseManager.Validate(e.clientID, client.LayoutLeaseID) {
+	if !ok || client == nil || client.LayoutLeaseID == "" {
+		return
+	}
+	if !r.leaseManager.Validate(e.clientID, client.LayoutLeaseID) {
+		r.revokeInvalidLayoutLease(client)
 		return
 	}
 	delete(r.pendingClipboard, e.requestID)
@@ -475,7 +499,12 @@ func (r *Runtime) handleEffect(effect terminalengine.Effect) {
 
 func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 	client := r.clients[e.clientID]
-	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID || !r.leaseManager.Validate(e.clientID, e.leaseID) {
+	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID {
+		r.recordInputTrace("rejected", e, 0, false)
+		return
+	}
+	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
+		r.revokeInvalidLayoutLease(client)
 		r.recordInputTrace("rejected", e, 0, false)
 		return
 	}
@@ -570,6 +599,7 @@ func (r *Runtime) handleInput(e inputEvent) {
 		return
 	}
 	if !r.leaseManager.Validate(e.clientID, client.LayoutLeaseID) {
+		r.revokeInvalidLayoutLease(client)
 		return
 	}
 	// 仅保留给旧的内部 raw-input 调用；screen protocol 使用 handleSemanticInput。
@@ -582,6 +612,7 @@ func (r *Runtime) handleResize(e resizeEvent) {
 		return
 	}
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
+		r.revokeInvalidLayoutLease(client)
 		return
 	}
 	// Android may recreate a View during background return and send the same
@@ -623,15 +654,29 @@ func (r *Runtime) handleClientDetach(clientID string) {
 func (r *Runtime) handleAcquireLayout(e acquireLayoutEvent) {
 	client := r.clients[e.clientID]
 	if client == nil {
-		e.reply <- layoutLeaseResult{}
+		e.reply <- layoutLeaseResult{requestID: e.requestID}
 		return
 	}
-	leaseID, granted := r.leaseManager.Acquire(e.clientID, e.interactive)
-	if granted {
-		client.LayoutLeaseID = leaseID
+	result := r.leaseManager.Acquire(e.clientID, e.interactive)
+	if result.Granted {
+		client.LayoutLeaseID = result.LeaseID
 		client.Interactive = e.interactive
 	}
-	e.reply <- layoutLeaseResult{leaseID: leaseID, granted: granted}
+	e.reply <- layoutLeaseResult{
+		requestID: e.requestID, leaseID: result.LeaseID, granted: result.Granted,
+		interactive: result.Interactive, expiresAt: result.ExpiresAt,
+	}
+}
+
+func (r *Runtime) revokeInvalidLayoutLease(client *ScreenClient) {
+	if client == nil || client.LayoutLeaseID == "" {
+		return
+	}
+	client.LayoutLeaseID = ""
+	client.Interactive = false
+	if client.SendLayoutLease != nil {
+		client.SendLayoutLease(LayoutLeaseEvent{})
+	}
 }
 
 func (r *Runtime) handleReleaseLayout(e releaseLayoutEvent) {
@@ -909,6 +954,7 @@ type rawPTYOutputSnapshotEvent struct {
 
 type acquireLayoutEvent struct {
 	clientID    string
+	requestID   string
 	interactive bool
 	reply       chan layoutLeaseResult
 }
@@ -920,8 +966,11 @@ type releaseLayoutEvent struct {
 }
 
 type layoutLeaseResult struct {
-	leaseID string
-	granted bool
+	requestID   string
+	leaseID     string
+	granted     bool
+	interactive bool
+	expiresAt   time.Time
 }
 
 type clipboardResponseEvent struct {

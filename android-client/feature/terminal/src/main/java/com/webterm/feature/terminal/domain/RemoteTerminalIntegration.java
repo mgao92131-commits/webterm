@@ -118,7 +118,17 @@ public final class RemoteTerminalIntegration {
     view.setTypeface(typeface);
     controller = new TerminalScreenController(runtime, registry.viewport(runtimeKey));
     RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(view, controller,
-        connectionStatusView::updateRemote);
+        new RemoteTerminalScreenView.ConnectionStateListener() {
+          @Override
+          public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
+            connectionStatusView.updateRemote(state);
+          }
+
+          @Override
+          public void onLayoutLeaseStateChanged(boolean ready) {
+            connectionStatusView.updateInputReady(ready);
+          }
+        });
     // 键盘弹出期间内容刷新（光标移动/新输出）时重算避让平移，
     // 对应旧流程 onTerminalTextChanged → updateKeyboardAvoidance。
     screenView.setAfterRender(this::updateKeyboardAvoidance);

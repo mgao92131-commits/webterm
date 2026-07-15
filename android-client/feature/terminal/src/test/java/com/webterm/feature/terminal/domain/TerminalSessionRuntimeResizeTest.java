@@ -29,14 +29,16 @@ public final class TerminalSessionRuntimeResizeTest {
   private TerminalSessionRuntime runtime;
   private FakeScreenConnection connection;
   private FakeTimeoutScheduler scheduler;
+  private FakeTimeoutScheduler leaseScheduler;
 
   @Before
   public void setUp() {
     // 同步 executor：handleScreenMessage 直接在当前线程执行，断言无需等待。
     // timeout 用可注入的假调度器，测试手动推进，不做真实 sleep。
     scheduler = new FakeTimeoutScheduler();
+    leaseScheduler = new FakeTimeoutScheduler();
     runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
-        Runnable::run, Runnable::run, scheduler);
+        Runnable::run, Runnable::run, scheduler, leaseScheduler);
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
     connection.listener.onConnected();
@@ -77,6 +79,59 @@ public final class TerminalSessionRuntimeResizeTest {
     assertEquals("拿到新租约后应补发最新尺寸", 2, connection.resizes.size());
     assertEquals(130, connection.resizes.get(1)[0]);
     assertEquals(50, connection.resizes.get(1)[1]);
+  }
+
+  @Test
+  public void deniedLayoutLease_retriesAndRecoversWithoutReconnect() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertEquals(1, connection.layoutRequestIds.size());
+    String firstRequest = connection.layoutRequestIds.get(0);
+
+    respondLease(firstRequest, "", false, 0L);
+    assertFalse(runtime.hasLayoutLease());
+
+    // 初始请求 timeout 已经排队但会因 request id 不再 pending 而失效；随后重试。
+    leaseScheduler.runNext();
+    leaseScheduler.runNext();
+    assertEquals(2, connection.layoutRequestIds.size());
+    String retryRequest = connection.layoutRequestIds.get(1);
+
+    respondLease(retryRequest, "lease-recovered", true,
+        System.currentTimeMillis() + 300_000L);
+    assertTrue(runtime.hasLayoutLease());
+    assertEquals("lease-recovered", connection.leaseId);
+    assertEquals("Lease 恢复不应重建 screen channel", 0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void staleLayoutLeaseResponse_cannotOverrideCurrentRequest() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    String firstRequest = connection.layoutRequestIds.get(0);
+    respondLease(firstRequest, "", false, 0L);
+    leaseScheduler.runNext();
+    leaseScheduler.runNext();
+    String secondRequest = connection.layoutRequestIds.get(1);
+
+    respondLease(firstRequest, "lease-stale", true,
+        System.currentTimeMillis() + 300_000L);
+    assertFalse("迟到的旧响应不能授予租约", runtime.hasLayoutLease());
+
+    respondLease(secondRequest, "lease-current", true,
+        System.currentTimeMillis() + 300_000L);
+    assertTrue(runtime.hasLayoutLease());
+    assertEquals("lease-current", connection.leaseId);
+  }
+
+  @Test
+  public void detachCancelsPendingLayoutLeaseRetry() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    respondLease(connection.layoutRequestIds.get(0), "", false, 0L);
+    runtime.detachPage();
+
+    leaseScheduler.runNext();
+    leaseScheduler.runNext();
+    assertEquals("页面离开后不得继续申请交互租约", 1, connection.layoutRequestIds.size());
+    assertFalse(runtime.hasLayoutLease());
   }
 
   @Test
@@ -390,11 +445,18 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   private void grantLease(@NonNull String leaseId) {
+    respondLease("", leaseId, true, 0L);
+  }
+
+  private void respondLease(@NonNull String requestId, @NonNull String leaseId,
+                            boolean granted, long expiresAtMs) {
     TerminalScreenProto.ScreenEnvelope envelope = TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setLayoutLease(TerminalScreenProto.LayoutLease.newBuilder()
+            .setRequestId(requestId)
             .setLeaseId(leaseId)
-            .setGranted(true)
+            .setGranted(granted)
+            .setExpiresAtMs(expiresAtMs)
             .build())
         .build();
     connection.listener.onScreenMessage(envelope.toByteArray());
@@ -406,6 +468,7 @@ public final class TerminalSessionRuntimeResizeTest {
     int reconnectRequests;
     String historyRequestId = "";
     String leaseId = "";
+    final List<String> layoutRequestIds = new ArrayList<>();
     boolean historyRequestAccepted = true;
     Listener listener;
 
@@ -460,6 +523,11 @@ public final class TerminalSessionRuntimeResizeTest {
 
     @Override
     public void acquireLayout(boolean interactive) {}
+
+    @Override
+    public void acquireLayout(@NonNull String requestId, boolean interactive) {
+      layoutRequestIds.add(requestId);
+    }
 
     @Override
     public void releaseLayout() {}

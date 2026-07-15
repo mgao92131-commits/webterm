@@ -98,7 +98,9 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 
 	acquireBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 1,
-		Payload:         &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{Interactive: true}},
+		Payload: &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{
+			RequestId: "layout-request-1", Interactive: true,
+		}},
 	})
 	client.handleBinary(acquireBytes)
 
@@ -112,6 +114,12 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 			continue
 		}
 		if lease := env.GetLayoutLease(); lease != nil && lease.GetGranted() {
+			if lease.GetRequestId() != "layout-request-1" {
+				t.Fatalf("layout request id=%q", lease.GetRequestId())
+			}
+			if lease.GetExpiresAtMs() <= uint64(time.Now().UnixMilli()) {
+				t.Fatalf("layout lease missing future expiry: %d", lease.GetExpiresAtMs())
+			}
 			leaseID = lease.GetLeaseId()
 		}
 	}

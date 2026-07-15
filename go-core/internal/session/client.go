@@ -114,8 +114,8 @@ func (client *Client) newScreenHandler() *screenprotocol.Handler {
 			if rt == nil {
 				return
 			}
-			leaseID, granted := rt.AcquireLayout(client.screenClientID, req.Interactive)
-			client.sendLayoutLease(leaseID, granted)
+			result := rt.AcquireLayoutRequest(client.screenClientID, req.RequestId, req.Interactive)
+			client.sendLayoutLease(result)
 		}),
 		screenprotocol.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
 			if rt != nil {
@@ -379,13 +379,20 @@ func (client *Client) handleBinary(frame []byte) {
 	client.handleScreenBinary(frame)
 }
 
-func (client *Client) sendLayoutLease(leaseID string, granted bool) {
+func (client *Client) sendLayoutLease(result terminalsession.LayoutLeaseEvent) {
+	expiresAtMs := uint64(0)
+	if !result.ExpiresAt.IsZero() && result.ExpiresAt.UnixMilli() > 0 {
+		expiresAtMs = uint64(result.ExpiresAt.UnixMilli())
+	}
 	envelope := &pb.ScreenEnvelope{
 		ProtocolVersion: 1,
 		Payload: &pb.ScreenEnvelope_LayoutLease{
 			LayoutLease: &pb.LayoutLease{
-				LeaseId: leaseID,
-				Granted: granted,
+				RequestId:   result.RequestID,
+				LeaseId:     result.LeaseID,
+				Granted:     result.Granted,
+				Interactive: result.Interactive,
+				ExpiresAtMs: expiresAtMs,
 			},
 		},
 	}
@@ -449,6 +456,7 @@ func (client *Client) attachScreenClient(hello *pb.Hello) {
 		SendHistory:     client.sendScreenHistory,
 		SendHistoryTrim: client.sendScreenHistoryTrim,
 		SendEffect:      client.sendScreenEffect,
+		SendLayoutLease: client.sendLayoutLease,
 	})
 }
 

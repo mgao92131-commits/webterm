@@ -19,6 +19,7 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
 
   interface ConnectionStateListener {
     void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state);
+    default void onLayoutLeaseStateChanged(boolean ready) {}
   }
 
   private final RemoteTerminalView view;
@@ -74,6 +75,11 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   @Override
   public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
     if (connectionStateListener != null) connectionStateListener.onConnectionStateChanged(state);
+  }
+
+  @Override
+  public void onLayoutLeaseStateChanged(boolean ready) {
+    if (connectionStateListener != null) connectionStateListener.onLayoutLeaseStateChanged(ready);
   }
 
   @Override

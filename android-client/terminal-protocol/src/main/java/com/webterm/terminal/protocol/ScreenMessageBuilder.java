@@ -168,7 +168,13 @@ public final class ScreenMessageBuilder {
 
   @NonNull
   public static byte[] acquireLayout(boolean interactive) {
+    return acquireLayout("", interactive);
+  }
+
+  @NonNull
+  public static byte[] acquireLayout(@NonNull String requestId, boolean interactive) {
     TerminalScreenProto.AcquireLayout req = TerminalScreenProto.AcquireLayout.newBuilder()
+        .setRequestId(requestId)
         .setInteractive(interactive)
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.ACQUIRE_LAYOUT,

@@ -15,6 +15,12 @@ public final class TerminalResumeMetrics {
   private static final AtomicLong SYNC_TIMEOUT = new AtomicLong();
   private static final AtomicLong HOT_TO_WARM = new AtomicLong();
   private static final AtomicLong WARM_TO_COLD = new AtomicLong();
+  private static final AtomicLong LEASE_ACQUIRE = new AtomicLong();
+  private static final AtomicLong LEASE_DENIED = new AtomicLong();
+  private static final AtomicLong LEASE_RETRY = new AtomicLong();
+  private static final AtomicLong LEASE_RENEW = new AtomicLong();
+  private static final AtomicLong LEASE_REVOKED = new AtomicLong();
+  private static final AtomicLong LEASE_STALE_RESPONSE = new AtomicLong();
 
   private TerminalResumeMetrics() {}
 
@@ -35,6 +41,16 @@ public final class TerminalResumeMetrics {
   static void syncTimeout() { record(SYNC_TIMEOUT, "sync_timeout sync_state=syncing"); }
   static void hotToWarm() { record(HOT_TO_WARM, "runtime_transition from=hot to=warm runtime_state=warm"); }
   static void warmToCold() { record(WARM_TO_COLD, "runtime_transition from=warm to=cold runtime_state=cold"); }
+  static void leaseAcquire(boolean renewal) {
+    record(renewal ? LEASE_RENEW : LEASE_ACQUIRE,
+        renewal ? "layout_lease action=renew" : "layout_lease action=acquire");
+  }
+  static void leaseDenied() { record(LEASE_DENIED, "layout_lease action=denied"); }
+  static void leaseRetry() { record(LEASE_RETRY, "layout_lease action=retry"); }
+  static void leaseRevoked() { record(LEASE_REVOKED, "layout_lease action=revoked"); }
+  static void leaseStaleResponse() {
+    record(LEASE_STALE_RESPONSE, "layout_lease action=stale_response");
+  }
 
   private static void record(AtomicLong counter, String fields) {
     long count = counter.incrementAndGet();

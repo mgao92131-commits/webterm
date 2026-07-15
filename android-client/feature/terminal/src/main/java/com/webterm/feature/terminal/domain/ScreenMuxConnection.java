@@ -86,20 +86,20 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public void sendTextInput(@NonNull String text) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.textInput(layoutLeaseId, text), true);
   }
 
   @Override
   public void sendPasteInput(@NonNull String text) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.pasteInput(layoutLeaseId, text), true);
   }
 
   @Override
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     relayMuxSession.sendTunnelFrame(relayChannelId,
         ScreenMessageBuilder.keyInput(layoutLeaseId, key, shift, alt, ctrl, meta, pressed), true);
   }
@@ -108,7 +108,7 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
   public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     TerminalScreenProto.MouseButton protoButton = mouseButtonFromString(button);
     relayMuxSession.sendTunnelFrame(relayChannelId,
         ScreenMessageBuilder.mouseInput(layoutLeaseId, row, col, protoButton, wheelDelta,
@@ -117,7 +117,7 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
 
   @Override
   public void sendFocusInput(boolean focused) {
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     relayMuxSession.sendTunnelFrame(relayChannelId,
         ScreenMessageBuilder.focusInput(layoutLeaseId, focused), true);
   }
@@ -127,22 +127,32 @@ public final class ScreenMuxConnection implements TerminalSessionRuntime.ScreenC
     // 先记录最新尺寸（重连后 hello 也会用到），通道不可用时不发但状态保持真实。
     this.columns = clamp(cols, 10, 500);
     this.rows = clamp(rows, 5, 200);
-    if (relayMuxSession == null || relayChannelId == null) return;
+    if (relayMuxSession == null || relayChannelId == null || layoutLeaseId.isEmpty()) return;
     relayMuxSession.sendTunnelFrame(relayChannelId,
         ScreenMessageBuilder.resize(layoutLeaseId, this.columns, this.rows), true);
   }
 
   @Override
   public void acquireLayout(boolean interactive) {
+    acquireLayout("", interactive);
+  }
+
+  @Override
+  public void acquireLayout(@NonNull String requestId, boolean interactive) {
     if (relayMuxSession == null || relayChannelId == null) return;
-    relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.acquireLayout(interactive), true);
+    relayMuxSession.sendTunnelFrame(
+        relayChannelId, ScreenMessageBuilder.acquireLayout(requestId, interactive), true);
   }
 
   @Override
   public void releaseLayout() {
-    if (relayMuxSession == null || relayChannelId == null) return;
-    relayMuxSession.sendTunnelFrame(relayChannelId, ScreenMessageBuilder.releaseLayout(layoutLeaseId), true);
+    String releasedLeaseId = layoutLeaseId;
     layoutLeaseId = "";
+    if (relayMuxSession == null || relayChannelId == null) return;
+    if (!releasedLeaseId.isEmpty()) {
+      relayMuxSession.sendTunnelFrame(
+          relayChannelId, ScreenMessageBuilder.releaseLayout(releasedLeaseId), true);
+    }
   }
 
   @Override

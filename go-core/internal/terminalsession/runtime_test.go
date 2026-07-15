@@ -88,6 +88,63 @@ func TestRuntimeEngineEffectFloodDoesNotSelfDeadlock(t *testing.T) {
 	}
 }
 
+func TestRuntimeExpiredInputRevokesLeaseOnce(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newRuntimeTestHarness(t)
+	r.leaseManager = newLeaseManager(func() time.Time { return now }, time.Minute)
+
+	revoked := make(chan LayoutLeaseEvent, 2)
+	r.AttachClient(&ScreenClient{
+		ID:              "screen-1",
+		Send:            func(terminalengine.ScreenFrame) {},
+		SendLayoutLease: func(event LayoutLeaseEvent) { revoked <- event },
+	})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	now = now.Add(time.Minute + time.Millisecond)
+	r.WriteSemanticInput("screen-1", leaseID, terminalengine.SemanticInput{
+		Kind: terminalengine.InputText, Data: "must-not-reach-pty",
+	})
+	select {
+	case event := <-revoked:
+		if event.Granted || event.RequestID != "" {
+			t.Fatalf("unexpected revocation event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expired input did not notify the screen client")
+	}
+
+	// client 的失效代次已经被清空；后续旧输入不能放大成通知风暴。
+	r.WriteSemanticInput("screen-1", leaseID, terminalengine.SemanticInput{
+		Kind: terminalengine.InputText, Data: "still-invalid",
+	})
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case event := <-revoked:
+		t.Fatalf("duplicate revocation event: %+v", event)
+	default:
+	}
+}
+
+func TestRuntimeDeniedClientCanAcquireAfterOldOwnerDetaches(t *testing.T) {
+	r := newRuntimeTestHarness(t)
+	r.AttachClient(&ScreenClient{ID: "screen-a", Send: func(terminalengine.ScreenFrame) {}})
+	r.AttachClient(&ScreenClient{ID: "screen-b", Send: func(terminalengine.ScreenFrame) {}})
+	if _, granted := r.AcquireLayout("screen-a", true); !granted {
+		t.Fatal("screen-a must acquire the first lease")
+	}
+	if _, granted := r.AcquireLayout("screen-b", true); granted {
+		t.Fatal("screen-b must not steal the live lease")
+	}
+	r.DetachClient("screen-a")
+	if leaseID, granted := r.AcquireLayout("screen-b", true); !granted || leaseID == "" {
+		t.Fatal("screen-b must acquire after screen-a detach")
+	}
+}
+
 func newRuntimeTestHarness(t *testing.T, options ...Option) *Runtime {
 	t.Helper()
 	outR, outW := io.Pipe()
