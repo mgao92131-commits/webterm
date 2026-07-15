@@ -36,7 +36,8 @@ func New(cfg config.Config, version string) *App {
 	if socketPath == "" {
 		socketPath = defaultSocketPath()
 	}
-	installShellHook(logger)
+	runtimeHookDir := agenthooks.RuntimeBaseDir(socketPath)
+	installShellHook(logger, runtimeHookDir)
 
 	manager := session.NewManager(session.TerminalDefaults{
 		CWD:                cfg.Shell.CWD,
@@ -50,7 +51,7 @@ func New(cfg config.Config, version string) *App {
 		"WEBTERM_INTEGRATION":    "1",
 		"WEBTERM_SOCKET_PATH":    socketPath,
 		"WEBTERM_CONTROL_ADDR":   cfg.Control.Addr,
-		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDir(),
+		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDirAt(runtimeHookDir),
 	}
 
 	if webtermBin, err := agenthooks.ResolveWebtermBinary(); err == nil && webtermBin != "" {
@@ -93,13 +94,13 @@ func New(cfg config.Config, version string) *App {
 	return application
 }
 
-func installShellHook(logger *logs.Logger) {
+func installShellHook(logger *logs.Logger, runtimeHookDir string) {
 	webtermBin, err := agenthooks.ResolveWebtermBinary()
 	if err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("webterm binary not found: %v", err))
 		return
 	}
-	if _, _, err := agenthooks.InstallShellHook(webtermBin); err != nil {
+	if _, _, err := agenthooks.InstallShellHookAt(runtimeHookDir, webtermBin); err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("install shell hook failed: %v", err))
 	}
 }

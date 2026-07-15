@@ -297,6 +297,11 @@ func (r *Runtime) ResizeEngine(rows, cols int) {
 	r.postEvent(resizeEngineEvent{rows: rows, cols: cols})
 }
 
+// SetWorkingDirectory 将 shell hook 元数据按 actor 顺序合并进权威屏幕状态。
+func (r *Runtime) SetWorkingDirectory(path string) {
+	r.postEvent(workingDirectoryEvent{path: path})
+}
+
 // ProjectedSnapshot returns the exact screen frame used by screen-protocol
 // clients. It is intentionally served by the actor so diagnostic readers never
 // race PTY output while inspecting the terminal state.
@@ -435,6 +440,14 @@ func (r *Runtime) handleEvent(ev event) {
 	case resizeEngineEvent:
 		r.engine.Resize(e.rows, e.cols)
 		r.commitEngineSignals()
+	case workingDirectoryEvent:
+		if e.path == "" || e.path == r.engine.WorkingDirectory() {
+			return
+		}
+		r.engine.SetWorkingDirectory(e.path)
+		r.bumpScreenRevision()
+		r.commitEngineSignals()
+		r.scheduleProjectionFlush()
 	case projectedSnapshotEvent:
 		info := r.Info()
 		e.reply <- screenprojection.ExportSnapshot(
@@ -938,6 +951,10 @@ type projectionFlushEvent struct {
 type resizeEngineEvent struct {
 	rows int
 	cols int
+}
+
+type workingDirectoryEvent struct {
+	path string
 }
 
 type projectedSnapshotEvent struct {

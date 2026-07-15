@@ -298,6 +298,12 @@ public final class TerminalSessionRuntimeResizeTest {
     scheduler.runNext(); // final wait timeout -> retries exhausted
     assertEquals("retries exhausted: escalate to channel rebuild", 1, connection.reconnectRequests);
     assertEquals(4, connection.resyncRequests);
+    assertEquals("channel rebuild must enter reconnecting before the new ACK",
+        TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+
+    connection.listener.onConnected();
+    assertEquals("new channel ACK must be allowed to start a fresh synchronization",
+        TerminalSessionRuntime.State.SYNCING, runtime.state());
 
     // Once escalated, further gaps or invalid snapshots must not amplify.
     connection.listener.onScreenMessage(patch(0, 2).toByteArray());

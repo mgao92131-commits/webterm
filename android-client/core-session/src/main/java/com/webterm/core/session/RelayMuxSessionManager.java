@@ -19,6 +19,7 @@ public final class RelayMuxSessionManager {
     private static final String TAG = "RelayMuxSessionManager";
     private static final String SCREEN_SUBPROTOCOL = "webterm.screen.v1";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
+    private static final long CHANNEL_OPEN_TIMEOUT_MS = 10_000L;
 
     public interface ChannelListener {
         void onConnected(String channelId);
@@ -52,6 +53,7 @@ public final class RelayMuxSessionManager {
         final String[] protocols;
         ChannelListener listener;
         State state = State.WAITING_FOR_MUX;
+        long openGeneration;
 
         Channel(String id, String path, String[] protocols, ChannelListener listener) {
             this.id = id;
@@ -106,7 +108,7 @@ public final class RelayMuxSessionManager {
                     ? ChannelFailure.authRequired(code, reason)
                     : ChannelFailure.muxTemporary(code, reason);
                 for (Channel channel : snapshotChannels()) {
-                    channel.state = Channel.State.WAITING_FOR_MUX;
+                    markWaiting(channel);
                     channel.listener.onFailure(channel.id, failure);
                 }
                 // Authentication cannot recover through transport backoff with the
@@ -134,6 +136,7 @@ public final class RelayMuxSessionManager {
                 if (generation != muxGeneration) return;
                 Channel channel = channels.get(tunnelId);
                 if (channel != null && channel.state == Channel.State.OPENING) {
+                    channel.openGeneration++;
                     channel.state = Channel.State.LIVE;
                     channel.listener.onConnected(tunnelId);
                 }
@@ -151,11 +154,11 @@ public final class RelayMuxSessionManager {
                     channel.listener.onFailure(tunnelId, ChannelFailure.authRequired(code, message));
                 } else if (code >= 500 && code < 600) {
                     // recoverable server-side error: reopen the channel
-                    channel.state = Channel.State.WAITING_FOR_MUX;
-                    channel.listener.onFailure(tunnelId, ChannelFailure.serverTemporary(code, message));
-                    if (channels.containsKey(tunnelId)) openChannelIfReady(channel);
+                    reopenAfterFailure(channel, ChannelFailure.serverTemporary(code, message));
                 } else {
-                    channel.listener.onFailure(tunnelId, ChannelFailure.muxTemporary(code, message));
+                    // 既然上层把它归类为可恢复的 mux 临时错误，就必须推进 channel
+                    // 状态并真正重开；只通知 Runtime 会让它永远停在 RECONNECTING。
+                    reopenAfterFailure(channel, ChannelFailure.muxTemporary(code, message));
                 }
             }
 
@@ -180,12 +183,10 @@ public final class RelayMuxSessionManager {
                     channel.listener.onFailure(tunnelId, ChannelFailure.remoteClosed(code, reason));
                 } else {
                     // recoverable: network/backpressure; keep channel alive and reopen after reconnect
-                    channel.state = Channel.State.WAITING_FOR_MUX;
                     ChannelFailure failure = code >= 500 && code < 600
                         ? ChannelFailure.serverTemporary(code, reason)
                         : ChannelFailure.muxTemporary(code, reason);
-                    channel.listener.onFailure(tunnelId, failure);
-                    if (channels.containsKey(tunnelId)) openChannelIfReady(channel);
+                    reopenAfterFailure(channel, failure);
                 }
             }
         });
@@ -281,6 +282,11 @@ public final class RelayMuxSessionManager {
         MuxSession oldSession = muxSession;
         muxGeneration++;
         Log.i(TAG, "reconnect transport for " + deviceId + " reason=" + reason + " channels=" + channels.size() + " generation=" + muxGeneration);
+        ChannelFailure failure = ChannelFailure.muxTemporary(0, reason);
+        for (Channel channel : snapshotChannels()) {
+            markWaiting(channel);
+            channel.listener.onFailure(channel.id, failure);
+        }
         muxSession = createMuxSession(muxGeneration);
         if (oldSession != null) {
             oldSession.stop();
@@ -378,7 +384,30 @@ public final class RelayMuxSessionManager {
                 || !muxSession.isConnected()) return;
         if (muxSession.sendWsConnect(channel.id, channel.path, channel.protocols)) {
             channel.state = Channel.State.OPENING;
+            long generation = ++channel.openGeneration;
+            mainHandler.postDelayed(
+                () -> onChannelOpenTimeout(channel.id, generation),
+                CHANNEL_OPEN_TIMEOUT_MS);
         }
+    }
+
+    private void onChannelOpenTimeout(String channelId, long generation) {
+        Channel channel = channels.get(channelId);
+        if (channel == null || channel.state != Channel.State.OPENING
+                || channel.openGeneration != generation) return;
+        reopenAfterFailure(channel,
+            ChannelFailure.muxTemporary(0, "channel open timeout"));
+    }
+
+    private void reopenAfterFailure(Channel channel, ChannelFailure failure) {
+        markWaiting(channel);
+        channel.listener.onFailure(channel.id, failure);
+        if (channels.get(channel.id) == channel) openChannelIfReady(channel);
+    }
+
+    private static void markWaiting(Channel channel) {
+        channel.openGeneration++;
+        channel.state = Channel.State.WAITING_FOR_MUX;
     }
 
     private Channel[] snapshotChannels() {

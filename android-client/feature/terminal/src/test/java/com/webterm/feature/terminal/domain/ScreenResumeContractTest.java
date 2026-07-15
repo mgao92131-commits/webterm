@@ -144,6 +144,51 @@ public final class ScreenResumeContractTest {
   }
 
   @Test
+  public void staleQueuedSynchronizationCannotSendHelloAfterReconnect() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    // 首次 connected 只把同步任务排入 model executor；任务尚未真正发送 Hello。
+    connection.listener.onConnected();
+    // 在旧同步任务执行前物理 mux 断开并恢复。旧任务必须被连接代际作废，
+    // 只能由新一代 connected 对应的同步任务发送一次 Hello。
+    connection.listener.onDisconnected("mux reconnect");
+    connection.listener.onConnected();
+    modelExecutor.runAll();
+
+    assertEquals("only the current connection epoch may send screen Hello",
+        1, connection.syncRequests);
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+  }
+
+  @Test
+  public void staleQueuedScreenFrameCannotCompleteNewConnection() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    connection.listener.onDisconnected("mux reconnect");
+    connection.listener.onConnected();
+    modelExecutor.runAll();
+
+    assertEquals("old snapshot must not complete the new connection", 0,
+        runtime.model().screenRevision);
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+
+    connection.listener.onScreenMessage(snapshot(2).toByteArray());
+    modelExecutor.runAll();
+    assertEquals(2, runtime.model().screenRevision);
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+  }
+
+  @Test
   public void validationFailureRejectsWholeFrameAndSendsSingleResyncRequest() {
     RuntimeFixture fixture = runtimeWithSnapshot(snapshot(1));
     TerminalSessionRuntime runtime = fixture.runtime;

@@ -88,6 +88,16 @@ func TestRuntimeEngineEffectFloodDoesNotSelfDeadlock(t *testing.T) {
 	}
 }
 
+func TestRuntimeWorkingDirectoryMetadataUpdatesProjection(t *testing.T) {
+	r := newRuntimeTestHarness(t)
+	r.SetWorkingDirectory("/Users/test/project with spaces")
+
+	snapshot := r.ProjectedSnapshot()
+	if got, want := snapshot.WorkingDir, "/Users/test/project with spaces"; got != want {
+		t.Fatalf("projected cwd=%q, want %q", got, want)
+	}
+}
+
 func TestRuntimeExpiredInputRevokesLeaseOnce(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	r := newRuntimeTestHarness(t)

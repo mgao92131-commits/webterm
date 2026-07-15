@@ -60,6 +60,30 @@ func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
 	}
 }
 
+func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
+	terminal, err := NewTerminalSession(TerminalOptions{
+		ID:      "s1",
+		CWD:     ".",
+		Command: "/bin/sh",
+	})
+	if err != nil {
+		t.Fatalf("NewTerminalSession returned error: %v", err)
+	}
+	defer terminal.Close()
+
+	terminal.ApplyHookEvent(protocol.HookEvent{
+		Type:      "meta",
+		SessionID: "s1",
+		CWD:       "/tmp/project with spaces",
+	})
+	if got := terminal.Info().CWD; got != "/tmp/project with spaces" {
+		t.Fatalf("session cwd=%q", got)
+	}
+	if got := terminal.runtime.ProjectedSnapshot().WorkingDir; got != "/tmp/project with spaces" {
+		t.Fatalf("projected cwd=%q", got)
+	}
+}
+
 func TestTerminalSessionNotificationOverride(t *testing.T) {
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",

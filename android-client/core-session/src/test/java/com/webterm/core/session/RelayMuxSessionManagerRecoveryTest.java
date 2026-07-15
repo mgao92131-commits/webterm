@@ -23,6 +23,28 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class RelayMuxSessionManagerRecoveryTest {
 
+    private static final class CapturingHandler {
+        final Handler handler = mock(Handler.class);
+        Runnable delayed;
+
+        CapturingHandler() {
+            when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return true;
+            });
+            when(handler.postDelayed(any(Runnable.class), any(long.class))).thenAnswer(invocation -> {
+                delayed = invocation.getArgument(0);
+                return true;
+            });
+        }
+
+        void runDelayed() {
+            Runnable task = delayed;
+            delayed = null;
+            if (task != null) task.run();
+        }
+    }
+
     private static Handler synchronousHandler() {
         Handler handler = mock(Handler.class);
         when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {
@@ -435,7 +457,7 @@ public class RelayMuxSessionManagerRecoveryTest {
     }
 
     @Test
-    public void wsError400ReportsMuxTemporaryFailure() {
+    public void wsError400ReportsMuxTemporaryFailureAndReopensChannel() {
         FakeMuxTransport transport = new FakeMuxTransport();
         RelayMuxSessionManager manager = new RelayMuxSessionManager(
                 null, synchronousHandler(), "http://example.com", "", "device1",
@@ -458,7 +480,46 @@ public class RelayMuxSessionManagerRecoveryTest {
         assertEquals(400, failure.code);
         assertEquals("bad request", failure.message);
         assertFalse("channel should remain in channels", manager.isIdle());
-        assertEquals("ws-connect should not be resent after 4xx error", 1, transport.wsConnectCount(channelId));
+        assertEquals("temporary channel error must re-open the logical channel",
+            2, transport.wsConnectCount(channelId));
+    }
+
+    @Test
+    public void forceReconnectMovesLiveChannelsBackToWaitingAndReopensThem() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelId = manager.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+        assertEquals(1, transport.wsConnectCount(channelId));
+
+        manager.forceReconnect("test");
+        transport.simulateOpen();
+
+        assertEquals("new physical mux must reopen every retained logical channel",
+            2, transport.wsConnectCount(channelId));
+    }
+
+    @Test
+    public void channelOpenTimeoutRetriesInsteadOfRemainingOpeningForever() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport transport = new FakeMuxTransport();
+        RelayMuxSessionManager manager = new RelayMuxSessionManager(
+                null, handler.handler, "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener listener = new SimpleListener();
+        String channelId = manager.openScreenChannel("s1", listener);
+        transport.simulateOpen();
+        assertEquals(1, transport.wsConnectCount(channelId));
+
+        handler.runDelayed();
+
+        assertTrue("open timeout must surface a recoverable failure", listener.failure.get() != null);
+        assertEquals(ChannelFailure.Kind.MUX_TEMPORARY, listener.failure.get().kind);
+        assertEquals("timed out channel must retry ws-connect", 2,
+            transport.wsConnectCount(channelId));
     }
 
     @Test

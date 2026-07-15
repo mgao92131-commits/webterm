@@ -69,7 +69,13 @@ const zshRcTemplate = `# WebTerm zsh 初始化文件
 // InstallShellHook 安装 shell hook 脚本和 bash 初始化文件。
 // webtermBin 是 webterm 二进制路径；为空时使用 PATH 中的 webterm。
 func InstallShellHook(webtermBin string) (string, string, error) {
-	binDir := hookBinDir()
+	return InstallShellHookAt(baseDir(), webtermBin)
+}
+
+// InstallShellHookAt 在 runtimeBaseDir 下安装生成的 shell integration。
+// 按 runtime 隔离后，并行运行的 Agent checkout 不会互相覆盖 CLI 路径和初始化文件。
+func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, error) {
+	binDir := hookBinDirAt(runtimeBaseDir)
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create hook bin dir: %w", err)
 	}
@@ -79,7 +85,7 @@ func InstallShellHook(webtermBin string) (string, string, error) {
 		return "", "", fmt.Errorf("write shell hook: %w", err)
 	}
 
-	initDir := ShellInitDir()
+	initDir := ShellInitDirAt(runtimeBaseDir)
 	if err := os.MkdirAll(initDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create shell init dir: %w", err)
 	}

@@ -113,7 +113,17 @@ public final class TerminalSessionRuntime {
   private final Executor callbackExecutor;
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
   private final Object screenMailboxLock = new Object();
-  private final ArrayDeque<byte[]> pendingScreenMessages = new ArrayDeque<>();
+  private static final class PendingScreenMessage {
+    final long connectionEpoch;
+    final byte[] payload;
+
+    PendingScreenMessage(long connectionEpoch, @NonNull byte[] payload) {
+      this.connectionEpoch = connectionEpoch;
+      this.payload = payload;
+    }
+  }
+
+  private final ArrayDeque<PendingScreenMessage> pendingScreenMessages = new ArrayDeque<>();
   private boolean screenDrainScheduled;
 
   private volatile State state = State.CONNECTING;
@@ -122,6 +132,11 @@ public final class TerminalSessionRuntime {
   private volatile LayoutLeaseState layoutLeaseState = LayoutLeaseState.DETACHED;
   private volatile boolean pageAttached = true;
   private final AtomicLong layoutLeaseGeneration = new AtomicLong(1L);
+  /**
+   * Screen 连接代际。网络回调可以早于 modelExecutor 中的任务完成；任何断线、替换或
+   * 关闭都必须同步推进代际，让旧连接排队的 Hello/同步任务在执行时自行失效。
+   */
+  private final AtomicLong connectionEpoch = new AtomicLong();
   private final AtomicLong nextLayoutRequestId = new AtomicLong();
   private volatile String pendingLayoutRequestId = "";
   private long layoutLeaseExpiresAtMs;
@@ -228,13 +243,14 @@ public final class TerminalSessionRuntime {
       previous.releaseLayout();
       previous.close();
     }
+    connectionEpoch.incrementAndGet();
     this.connection = connection;
     this.connectionRequiresReplacement = false;
     connection.setListener(new ScreenConnection.Listener() {
       @Override
       public void onScreenMessage(@NonNull byte[] payload) {
         if (TerminalSessionRuntime.this.connection != connection) return;
-        handleScreenMessage(payload);
+        handleScreenMessage(connectionEpoch.get(), payload);
       }
 
       @Override
@@ -244,13 +260,17 @@ public final class TerminalSessionRuntime {
         // 合法重连会先经 onDisconnected() 进入 RECONNECTING。
         State currentState = state;
         if (currentState != State.CONNECTING && currentState != State.RECONNECTING) return;
+        long epoch = connectionEpoch.get();
         updateState(State.TRANSPORT_CONNECTED);
-        modelExecutor.execute(() -> beginSynchronization(connection));
+        modelExecutor.execute(() -> beginSynchronization(connection, epoch));
       }
 
       @Override
       public void onDisconnected(@Nullable String reason) {
         if (TerminalSessionRuntime.this.connection != connection) return;
+        // 必须在投递 modelExecutor 清理任务前同步作废旧代际。否则旧 beginSync 可能
+        // 先执行，并通过已经重连的同一 logical channel 发出第二个 Hello。
+        connectionEpoch.incrementAndGet();
         // 断线后 Go 侧会释放租约；本地同步失效，避免 resize 丢进死通道，
         // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
         invalidateLayoutLease();
@@ -266,6 +286,7 @@ public final class TerminalSessionRuntime {
       @Override
       public void onAuthenticationRequired(@Nullable String reason) {
         if (TerminalSessionRuntime.this.connection != connection) return;
+        connectionEpoch.incrementAndGet();
         invalidateLayoutLease();
         connectionRequiresReplacement = true;
         // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
@@ -287,6 +308,7 @@ public final class TerminalSessionRuntime {
       @Override
       public void onClosed() {
         if (TerminalSessionRuntime.this.connection != connection) return;
+        connectionEpoch.incrementAndGet();
         TerminalSessionRuntime.this.connection = null;
         connectionRequiresReplacement = false;
         invalidateLayoutLease();
@@ -302,6 +324,7 @@ public final class TerminalSessionRuntime {
   /** HOT→WARM：关闭 screen channel，但保留完整 model 与 resume token。 */
   public void suspendConnection() {
     ScreenConnection current = connection;
+    connectionEpoch.incrementAndGet();
     connection = null;
     connectionRequiresReplacement = false;
     modelExecutor.execute(() -> {
@@ -436,6 +459,7 @@ public final class TerminalSessionRuntime {
   }
 
   public void close() {
+    connectionEpoch.incrementAndGet();
     updateState(State.CLOSED);
     synchronized (screenMailboxLock) {
       pendingScreenMessages.clear();
@@ -454,8 +478,11 @@ public final class TerminalSessionRuntime {
 
   // ---- transport/screen 同步状态机（modelExecutor 唯一推进） ----
 
-  private void beginSynchronization(@NonNull ScreenConnection expectedConnection) {
-    if (state == State.CLOSED || connection != expectedConnection) return;
+  private void beginSynchronization(@NonNull ScreenConnection expectedConnection,
+                                    long expectedEpoch) {
+    if (connection != expectedConnection
+        || connectionEpoch.get() != expectedEpoch
+        || state != State.TRANSPORT_CONNECTED) return;
     ResumeToken token = resyncState == ResyncState.IDLE
         ? model.resumeToken()
         : ResumeToken.cold(RemoteTerminalModel.SCHEMA_GENERATION);
@@ -481,7 +508,7 @@ public final class TerminalSessionRuntime {
     ensureLayoutLease(layoutLeaseGeneration.get(), false);
   }
 
-  private void handleScreenMessage(byte[] payload) {
+  private void handleScreenMessage(long messageEpoch, byte[] payload) {
     boolean scheduleDrain = false;
     boolean overflow = false;
     synchronized (screenMailboxLock) {
@@ -496,7 +523,7 @@ public final class TerminalSessionRuntime {
         pendingScreenMessages.clear();
         overflow = true;
       }
-      pendingScreenMessages.addLast(payload);
+      pendingScreenMessages.addLast(new PendingScreenMessage(messageEpoch, payload));
       if (!screenDrainScheduled) {
         screenDrainScheduled = true;
         scheduleDrain = true;
@@ -508,15 +535,17 @@ public final class TerminalSessionRuntime {
 
   private void drainScreenMailbox() {
     while (true) {
-      byte[] payload;
+      PendingScreenMessage message;
       synchronized (screenMailboxLock) {
-        payload = pendingScreenMessages.pollFirst();
-        if (payload == null) {
+        message = pendingScreenMessages.pollFirst();
+        if (message == null) {
           screenDrainScheduled = false;
           return;
         }
       }
-      processScreenMessage(payload);
+      // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
+      if (message.connectionEpoch != connectionEpoch.get()) continue;
+      processScreenMessage(message.payload);
     }
   }
 
@@ -576,6 +605,11 @@ public final class TerminalSessionRuntime {
       resyncGeneration++;
       ScreenConnection c = connection;
       if (c != null) {
+        // 重建 logical channel 前先作废当前连接代际。新的 onConnected 只有从
+        // RECONNECTING 才能启动同步，旧 timeout/Hello 也无法污染新 channel。
+        connectionEpoch.incrementAndGet();
+        invalidateLayoutLease();
+        updateState(State.RECONNECTING);
         c.requestReconnect("resync retries exhausted after " + MAX_RESYNC_RETRIES
             + " attempts: " + reason);
       }

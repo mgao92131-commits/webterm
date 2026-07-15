@@ -461,6 +461,7 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 		terminal.mu.Unlock()
 		return
 	}
+	var runtimeCWD string
 	switch ev.Type {
 	case "notify", "agent_event":
 		terminal.notification = &Notification{
@@ -479,6 +480,7 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 	case "meta":
 		if ev.CWD != "" {
 			terminal.liveCwd = ev.CWD
+			runtimeCWD = ev.CWD
 		}
 		if ev.LastCommand != "" {
 			kind := ev.InputKind
@@ -494,7 +496,11 @@ func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
 		terminal.touchLocked()
 	}
 	onInfoChanged := terminal.onInfoChanged
+	runtime := terminal.runtime
 	terminal.mu.Unlock()
+	if runtimeCWD != "" && runtime != nil {
+		runtime.SetWorkingDirectory(runtimeCWD)
+	}
 
 	if onInfoChanged != nil {
 		onInfoChanged()

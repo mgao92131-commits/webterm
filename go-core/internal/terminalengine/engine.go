@@ -145,6 +145,13 @@ func (e *Engine) WorkingDirectory() string {
 	return e.terminal.WorkingDirectoryPath()
 }
 
+// SetWorkingDirectory 将 shell hook 上报的目录写入权威终端状态。
+// headless terminal 以 OSC 7 URI 保存目录，这里与 PTY 的 OSC 7 路径使用同一入口，
+// 从而让快照、patch 和会话列表读取到同一个值。
+func (e *Engine) SetWorkingDirectory(path string) {
+	e.terminal.SetWorkingDirectory("file://localhost" + path)
+}
+
 // Cell 返回指定位置的 cell。
 func (e *Engine) Cell(row, col int) *headlessterm.Cell {
 	return e.terminal.Cell(row, col)
