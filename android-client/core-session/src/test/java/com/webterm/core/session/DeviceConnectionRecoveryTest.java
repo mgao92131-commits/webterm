@@ -787,6 +787,39 @@ public class DeviceConnectionRecoveryTest {
     }
 
     @Test
+    public void localQueueFullDoesNotReconnectSharedPhysicalMux() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelA = connection.openScreenChannel("s1", new SimpleListener());
+        String channelB = connection.openScreenChannel("s2", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelA));
+        transport.simulateText(wsConnected(channelB));
+        AtomicReference<DeviceConnection.TunnelSendResult> rejected = new AtomicReference<>();
+
+        // 单帧超过 8 MiB 预算会在本地立即被拒绝；这只是当前输入的背压事实，
+        // 不能关闭一设备共享的物理 Mux。
+        assertFalse(connection.tryEnqueueTunnelFrame(
+                channelA, new byte[8 * 1024 * 1024 + 1], true, rejected::set));
+        assertEquals(DeviceConnection.TunnelSendResult.LOCAL_QUEUE_FULL, rejected.get());
+        assertEquals("queue pressure on A must not close the shared transport",
+                0, transport.closeCount);
+        assertEquals("queue pressure must not start a replacement transport",
+                1, transport.startCount);
+        assertTrue(connection.isConnected());
+
+        AtomicReference<DeviceConnection.TunnelSendResult> channelBResult =
+                new AtomicReference<>();
+        assertTrue("unrelated channel B remains writable",
+                connection.tryEnqueueTunnelFrame(
+                        channelB, new byte[] {1, 2, 3}, true, channelBResult::set));
+        assertEquals(DeviceConnection.TunnelSendResult.WEBSOCKET_ENQUEUED,
+                channelBResult.get());
+    }
+
+    @Test
     public void binaryTunnelFrameRoutesDirectlyOnDeviceEventLoop() {
         FakeMuxTransport transport = new FakeMuxTransport();
         DeviceConnection connection = new DeviceConnection(

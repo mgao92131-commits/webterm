@@ -21,11 +21,12 @@ type Runtime struct {
 	id         string
 	instanceID string
 
-	engine     *terminalengine.Engine
-	scrollback *terminalengine.TrackedScrollback
-	projector  *screenprojection.Projector
-	pty        io.ReadWriteCloser
-	ptyResizer func(cols, rows int) error
+	engine      *terminalengine.Engine
+	scrollback  *terminalengine.TrackedScrollback
+	projector   *screenprojection.Projector
+	pty         io.ReadWriteCloser
+	inputWriter *InputWriter
+	ptyResizer  func(cols, rows int) error
 
 	scrollbackMaxLines int
 	scrollbackMaxBytes int
@@ -48,6 +49,7 @@ type Runtime struct {
 	inputTrace       []InputTrace
 	inputDedupe      map[string]*inputDedupeWindow
 	inputDedupeOrder []string
+	inputInflight    map[inputDeliveryKey][]func(InputDeliveryResult)
 	capturePTYOutput bool
 	rawPTYOutput     []byte
 	rawPTYTruncated  bool
@@ -118,6 +120,11 @@ type inputDedupeWindow struct {
 	order   []uint64
 }
 
+type inputDeliveryKey struct {
+	clientInstanceID string
+	inputSeq         uint64
+}
+
 // ResumeToken 是客户端投影的原子版本锚点。
 type ResumeToken struct {
 	HasProjection  bool
@@ -178,6 +185,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
 		inputDedupe:      make(map[string]*inputDedupeWindow),
+		inputInflight:    make(map[inputDeliveryKey][]func(InputDeliveryResult)),
 		capturePTYOutput: os.Getenv("WEBTERM_CAPTURE_PTY_OUTPUT") == "1",
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
@@ -218,6 +226,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		}),
 	)
 	r.projector = screenprojection.NewProjector(r.engine, r.scrollback, id, r.instanceID)
+	r.inputWriter = newDefaultInputWriter(pty)
 
 	go r.readLoop()
 	go r.actorLoop()
@@ -263,8 +272,8 @@ func (r *Runtime) WriteSemanticInput(clientID, leaseID string, input terminaleng
 	r.postEvent(semanticInputEvent{clientID: clientID, leaseID: leaseID, input: input})
 }
 
-// WriteReliableSemanticInput 把去重、PTY 写入和结果回调放在同一 actor 事件内。
-// done 只在已得到确定结果后调用；重复 seq 不再写 PTY，直接重放原结果。
+// WriteReliableSemanticInput 在 actor 内完成校验和去重，再交给终端独占的
+// InputWriter。done 只在完整 PTY 写入结束后调用；重复 seq 不会重复写入。
 func (r *Runtime) WriteReliableSemanticInput(clientID, leaseID, clientInstanceID string,
 	inputSeq uint64, input terminalengine.SemanticInput, done func(InputDeliveryResult)) {
 	r.postEvent(semanticInputEvent{
@@ -399,6 +408,9 @@ func (r *Runtime) RawPTYOutputSnapshot() RawPTYOutputSnapshot {
 func (r *Runtime) Close() error {
 	r.stopOnce.Do(func() {
 		close(r.stopCh)
+		if r.inputWriter != nil {
+			r.inputWriter.Close()
+		}
 		if r.pty != nil {
 			_ = r.pty.Close()
 		}
@@ -456,6 +468,8 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleInput(e)
 	case semanticInputEvent:
 		r.handleSemanticInput(e)
+	case semanticInputWriteCompletedEvent:
+		r.handleSemanticInputWriteCompleted(e)
 	case resizeEvent:
 		r.handleResize(e)
 	case clientAttachEvent:
@@ -551,6 +565,14 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 			}
 			return
 		}
+		key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
+		if callbacks, ok := r.inputInflight[key]; ok {
+			if e.done != nil {
+				r.inputInflight[key] = append(callbacks, e.done)
+			}
+			r.recordInputTrace("duplicate-inflight", e, 0, true)
+			return
+		}
 	}
 	result := InputDeliveryResult{
 		ClientInstanceID:   e.clientInstanceID,
@@ -572,19 +594,44 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 	}
 	data := r.engine.EncodeInput(e.input)
 	r.recordInputTrace("encoded", e, len(data), true)
-	if len(data) > 0 {
-		written, err := r.pty.Write(data)
-		if err == nil && written == len(data) {
-			result.Status = InputDeliveryWritten
-			r.recordInputTrace("pty-write", e, len(data), true)
-		} else {
-			result.Status = InputDeliveryUncertain
-			r.recordInputTrace("pty-write-uncertain", e, written, false)
-		}
-	} else {
+	if len(data) == 0 {
 		result.Status = InputDeliveryIgnored
+		r.completeReliableInput(e, result)
+		return
 	}
-	r.completeReliableInput(e, result)
+	accepted := r.inputWriter.Submit(data, func(writeResult inputWriteResult) {
+		r.postEvent(semanticInputWriteCompletedEvent{input: e, result: writeResult})
+	})
+	if !accepted {
+		r.recordInputTrace("input-queue-full", e, len(data), false)
+		r.completeReliableInput(e, result)
+		return
+	}
+	if e.clientInstanceID != "" && e.inputSeq != 0 {
+		key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
+		callbacks := []func(InputDeliveryResult){}
+		if e.done != nil {
+			callbacks = append(callbacks, e.done)
+		}
+		r.inputInflight[key] = callbacks
+	}
+	r.recordInputTrace("input-queued", e, len(data), true)
+}
+
+func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteCompletedEvent) {
+	result := InputDeliveryResult{
+		ClientInstanceID:   e.input.clientInstanceID,
+		InputSeq:           e.input.inputSeq,
+		TerminalInstanceID: r.instanceID,
+		Status:             InputDeliveryUncertain,
+	}
+	if e.result.err == nil {
+		result.Status = InputDeliveryWritten
+		r.recordInputTrace("pty-write", e.input, e.result.written, true)
+	} else {
+		r.recordInputTrace("pty-write-uncertain", e.input, e.result.written, false)
+	}
+	r.completeReliableInput(e.input, result)
 }
 
 func (r *Runtime) previousInputResult(clientInstanceID string, inputSeq uint64) (InputDeliveryResult, bool) {
@@ -619,6 +666,14 @@ func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDelive
 		oldest := window.order[0]
 		window.order = window.order[1:]
 		delete(window.results, oldest)
+	}
+	key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
+	if callbacks, ok := r.inputInflight[key]; ok {
+		delete(r.inputInflight, key)
+		for _, callback := range callbacks {
+			callback(result)
+		}
+		return
 	}
 	if e.done != nil {
 		e.done(result)
@@ -709,7 +764,7 @@ func (r *Runtime) handleInput(e inputEvent) {
 		return
 	}
 	// 仅保留给旧的内部 raw-input 调用；screen protocol 使用 handleSemanticInput。
-	_, _ = r.pty.Write(e.data)
+	r.inputWriter.Submit(append([]byte(nil), e.data...), nil)
 }
 
 func (r *Runtime) handleResize(e resizeEvent) {
@@ -1005,6 +1060,11 @@ type semanticInputEvent struct {
 	inputSeq         uint64
 	input            terminalengine.SemanticInput
 	done             func(InputDeliveryResult)
+}
+
+type semanticInputWriteCompletedEvent struct {
+	input  semanticInputEvent
+	result inputWriteResult
 }
 
 type resizeEvent struct {

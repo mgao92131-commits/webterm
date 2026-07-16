@@ -59,6 +59,7 @@ public final class RemoteTerminalIntegration {
   private TerminalSessionRuntime runtime;
   private TerminalRuntimeKey runtimeKey;
   private TerminalScreenController controller;
+  private TerminalInputCoordinator inputCoordinator;
   private LifecycleOwner controllerOwner;
   private TerminalChannel connection;
   private RemoteTerminalView view;
@@ -70,7 +71,6 @@ public final class RemoteTerminalIntegration {
   private TextView subtitleView;
   private String latestTitle = "Terminal";
   private String latestCwd = "";
-  private boolean ctrlArmed;
   private TitleListener titleListener;
   private AuthenticationListener authenticationListener;
   private int imeOverlap;
@@ -118,16 +118,37 @@ public final class RemoteTerminalIntegration {
     view.setTextSize(fontSize);
     view.setTypeface(typeface);
     controller = new TerminalScreenController(runtime, registry.viewport(runtimeKey));
-    RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(view, controller,
+    inputCoordinator = new TerminalInputCoordinator(new TerminalInputCoordinator.Sink() {
+      @Override public void sendText(@NonNull String text) {
+        if (controller != null) controller.sendText(text);
+      }
+
+      @Override public void sendPaste(@NonNull String text) {
+        if (controller != null) controller.sendPaste(text);
+      }
+
+      @Override public void sendKey(@NonNull String key, boolean shift, boolean alt,
+                                    boolean ctrl, boolean meta, boolean pressed) {
+        if (controller != null) {
+          controller.sendKey(key, shift, alt, ctrl, meta, pressed);
+        }
+      }
+    }, armed -> TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, armed));
+    RemoteTerminalScreenView screenView = new RemoteTerminalScreenView(
+        view, controller, inputCoordinator,
         new RemoteTerminalScreenView.ConnectionStateListener() {
           @Override
           public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
             connectionStatusView.updateRemote(state);
+            if (state != TerminalSessionRuntime.State.CONNECTED && inputCoordinator != null) {
+              inputCoordinator.clearModifiers();
+            }
           }
 
           @Override
           public void onLayoutLeaseStateChanged(boolean ready) {
             connectionStatusView.updateInputReady(ready);
+            if (!ready && inputCoordinator != null) inputCoordinator.clearModifiers();
           }
 
           @Override
@@ -175,18 +196,10 @@ public final class RemoteTerminalIntegration {
         () -> reconnectFresh(null),
         fragment::requestFileUpload,
         () -> {
-          ctrlArmed = !ctrlArmed;
-          TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, ctrlArmed);
+          if (inputCoordinator != null) inputCoordinator.toggleCtrl();
         },
         text -> {
-          if (controller == null) return;
-          if (ctrlArmed && text.codePointCount(0, text.length()) == 1) {
-            controller.sendKey(text, false, false, true, false, true);
-            ctrlArmed = false;
-            TerminalScreenBuilder.updateCtrlButtonState(activity, ctrlButton, false);
-          } else {
-            controller.sendText(text);
-          }
+          if (inputCoordinator != null) inputCoordinator.submitText(text, "quickbar");
         }
     );
     FrameLayout viewport = (FrameLayout) shell.terminalViewport;
@@ -216,6 +229,7 @@ public final class RemoteTerminalIntegration {
   }
 
   private void clearViewBindings(boolean releaseRuntime) {
+    if (inputCoordinator != null) inputCoordinator.clearModifiers();
     if (controller != null) {
       controller.setEffectListener(null);
       if (controllerOwner != null) {
@@ -231,6 +245,7 @@ public final class RemoteTerminalIntegration {
     connection = null;
     runtime = null;
     runtimeKey = null;
+    inputCoordinator = null;
     view = null;
     root = null;
     terminalViewport = null;
@@ -239,7 +254,6 @@ public final class RemoteTerminalIntegration {
     titleView = null;
     subtitleView = null;
     connectionStatusView.clear();
-    ctrlArmed = false;
     currentArgs = null;
     activeFragment = null;
   }
@@ -306,6 +320,7 @@ public final class RemoteTerminalIntegration {
 
   public void reconnectFresh(@Nullable String cookie) {
     if (currentArgs == null) return;
+    if (inputCoordinator != null) inputCoordinator.clearModifiers();
     if (cookie != null) {
       currentArgs = new TerminalViewModel.TerminalSessionArgs(
           currentArgs.baseUrl, cookie, currentArgs.sessionId,
@@ -342,8 +357,8 @@ public final class RemoteTerminalIntegration {
         view.getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
     if (clipboard == null || !clipboard.hasPrimaryClip()) return;
     CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(view.getContext());
-    if (text != null && controller != null) {
-      controller.sendPaste(text.toString());
+    if (text != null && inputCoordinator != null) {
+      inputCoordinator.submitPaste(text.toString(), "toolbar_paste");
     }
   }
 

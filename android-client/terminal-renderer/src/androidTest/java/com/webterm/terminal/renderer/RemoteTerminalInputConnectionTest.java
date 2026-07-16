@@ -1,11 +1,14 @@
 package com.webterm.terminal.renderer;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -35,6 +38,7 @@ public final class RemoteTerminalInputConnectionTest {
     });
 
     assertEquals(java.util.Collections.singletonList("测试甲"), host.text);
+    assertTrue(host.paste.isEmpty());
     assertEquals(0, host.keys.size());
   }
 
@@ -87,6 +91,75 @@ public final class RemoteTerminalInputConnectionTest {
     });
 
     assertEquals(java.util.Collections.singletonList("你好"), host.text);
+    assertTrue(host.paste.isEmpty());
+  }
+
+  @Test public void multilineCommitIsOnePasteInput() {
+    Context context = ApplicationProvider.getApplicationContext();
+    RecordingHost host = new RecordingHost();
+    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+      RemoteTerminalView view = new RemoteTerminalView(context);
+      view.setHost(host);
+      InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+      connection.commitText("line1\nline2", 1);
+    });
+
+    assertTrue(host.text.isEmpty());
+    assertEquals(java.util.Collections.singletonList("line1\nline2"), host.paste);
+  }
+
+  @Test public void crlfCommitIsOnePasteInput() {
+    Context context = ApplicationProvider.getApplicationContext();
+    RecordingHost host = new RecordingHost();
+    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+      RemoteTerminalView view = new RemoteTerminalView(context);
+      view.setHost(host);
+      InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+      connection.commitText("line1\r\nline2", 1);
+    });
+
+    assertTrue(host.text.isEmpty());
+    assertEquals(java.util.Collections.singletonList("line1\r\nline2"), host.paste);
+  }
+
+  @Test public void contextMenuPasteUsesPasteInput() {
+    RecordingHost host = new RecordingHost();
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      scenario.onActivity(activity -> {
+        ClipboardManager clipboard = (ClipboardManager)
+            activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("terminal", "single line paste"));
+        RemoteTerminalView view = new RemoteTerminalView(activity);
+        activity.setContentView(view);
+        view.setHost(host);
+        InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+        assertTrue(connection.performContextMenuAction(android.R.id.paste));
+      });
+    }
+
+    assertTrue(host.text.isEmpty());
+    assertEquals(java.util.Collections.singletonList("single line paste"), host.paste);
+  }
+
+  @Test public void contextMenuPasteAsPlainTextUsesPasteInput() {
+    RecordingHost host = new RecordingHost();
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      scenario.onActivity(activity -> {
+        ClipboardManager clipboard = (ClipboardManager)
+            activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("terminal", "plain\ntext"));
+        RemoteTerminalView view = new RemoteTerminalView(activity);
+        activity.setContentView(view);
+        view.setHost(host);
+        InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+        assertTrue(connection.performContextMenuAction(android.R.id.pasteAsPlainText));
+      });
+    }
+
+    assertTrue(host.text.isEmpty());
+    assertEquals(java.util.Collections.singletonList("plain\ntext"), host.paste);
   }
 
   @Test public void deleteDuringComposing_sendsZeroRemoteDel() {
@@ -187,9 +260,10 @@ public final class RemoteTerminalInputConnectionTest {
 
   private static final class RecordingHost implements RemoteTerminalView.Host {
     final List<String> text = new ArrayList<>();
+    final List<String> paste = new ArrayList<>();
     final List<KeyEvent> keys = new ArrayList<>();
     @Override public void onTextInput(String value) { text.add(value); }
-    @Override public void onPasteInput(String value) {}
+    @Override public void onPasteInput(String value) { paste.add(value); }
     @Override public void onKeyEvent(KeyEvent event) { keys.add(event); }
     @Override public void onRequestResize(int cols, int rows) {}
     @Override public void onRequestShowKeyboard() {}

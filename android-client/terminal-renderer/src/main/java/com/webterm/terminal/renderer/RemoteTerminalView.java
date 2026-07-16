@@ -830,7 +830,11 @@ public final class RemoteTerminalView extends View {
           ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
           if (clipboard != null && clipboard.hasPrimaryClip() && host != null) {
             CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(getContext());
-            if (text != null) host.onPasteInput(text.toString());
+            if (text != null) {
+              String paste = text.toString();
+              traceDispatch("selection_paste", "paste", paste);
+              host.onPasteInput(paste);
+            }
           }
           stopSelection();
           return true;
@@ -1118,10 +1122,12 @@ public final class RemoteTerminalView extends View {
   private static final class RemoteTerminalInputConnection extends BaseInputConnection {
 
     private final Host host;
+    private final Context context;
 
     RemoteTerminalInputConnection(View targetView, Host host) {
       super(targetView, true);
       this.host = host;
+      this.context = targetView.getContext();
     }
 
     @Override
@@ -1133,7 +1139,7 @@ public final class RemoteTerminalView extends View {
     @Override
     public boolean commitText(CharSequence text, int newCursorPosition) {
       boolean result = super.commitText(text, newCursorPosition);
-      sendTextToTerminal();
+      dispatchEditableToTerminal();
       return result;
     }
 
@@ -1145,9 +1151,32 @@ public final class RemoteTerminalView extends View {
       boolean hasPendingComposing = hasComposingText();
       boolean result = super.finishComposingText();
       if (hasPendingComposing) {
-        sendTextToTerminal();
+        dispatchEditableToTerminal();
       }
       return result;
+    }
+
+    @Override
+    public boolean performContextMenuAction(int id) {
+      if (id != android.R.id.paste && id != android.R.id.pasteAsPlainText) {
+        return super.performContextMenuAction(id);
+      }
+      ClipboardManager clipboard = (ClipboardManager)
+          context.getSystemService(Context.CLIPBOARD_SERVICE);
+      if (clipboard == null || !clipboard.hasPrimaryClip()) return false;
+      ClipData clip = clipboard.getPrimaryClip();
+      if (clip == null || clip.getItemCount() == 0) return false;
+      CharSequence value = clip.getItemAt(0).coerceToText(context);
+      if (value == null) return false;
+
+      android.text.Editable content = getEditable();
+      if (content != null) content.clear();
+      String paste = value.toString();
+      if (!paste.isEmpty() && host != null) {
+        traceDispatch("context_paste", "paste", paste);
+        host.onPasteInput(paste);
+      }
+      return true;
     }
 
     @Override
@@ -1197,14 +1226,23 @@ public final class RemoteTerminalView extends View {
       return true;
     }
 
-    private void sendTextToTerminal() {
+    private void dispatchEditableToTerminal() {
       android.text.Editable content = getEditable();
       if (host != null && content != null && content.length() > 0) {
         String text = content.toString();
-        traceInput("ime-send", "len=" + text.length());
-        host.onTextInput(text);
         content.clear();
+        if (containsLineBreak(text)) {
+          traceDispatch("ime_multiline", "paste", text);
+          host.onPasteInput(text);
+        } else {
+          traceDispatch("ime_text", "text", text);
+          host.onTextInput(text);
+        }
       }
+    }
+
+    private static boolean containsLineBreak(String text) {
+      return text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0;
     }
 
     /** True when the local editable holds a non-empty, un-sent composing span. */
@@ -1276,6 +1314,19 @@ public final class RemoteTerminalView extends View {
     if (Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) {
       Log.d(INPUT_TRACE_TAG, stage + " " + detail);
     }
+  }
+
+  private static void traceDispatch(String source, String kind, String text) {
+    if (!Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) return;
+    int lineBreaks = 0;
+    for (int i = 0; i < text.length(); i++) {
+      char value = text.charAt(i);
+      if (value == '\n' || value == '\r') lineBreaks++;
+    }
+    traceInput("dispatch", "source=" + source + " kind=" + kind
+        + " chars=" + text.length()
+        + " codepoints=" + text.codePointCount(0, text.length())
+        + " line_breaks=" + lineBreaks);
   }
 
   private static String eventSummary(KeyEvent event) {

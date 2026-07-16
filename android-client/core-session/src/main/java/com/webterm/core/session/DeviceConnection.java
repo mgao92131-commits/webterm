@@ -492,9 +492,7 @@ public final class DeviceConnection {
 
     public boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
         return tryEnqueueTunnelFrame(channelId, payload, binary, result -> {
-            if (result == TunnelSendResult.LOCAL_QUEUE_FULL) {
-                recoverDroppedTunnelFrame(channelId, "tunnel outbound queue overflow");
-            } else if (result == TunnelSendResult.CHANNEL_NOT_OPEN) {
+            if (result == TunnelSendResult.CHANNEL_NOT_OPEN) {
                 recoverDroppedTunnelFrame(channelId,
                     "tunnel frame reached a closed logical channel");
             }
@@ -529,9 +527,6 @@ public final class DeviceConnection {
             result -> notifySendResult(callback, mapSendResult(result)));
         if (offer.result != MuxOutboundQueue.Result.LOCAL_ACCEPTED) {
             notifySendResult(callback, mapSendResult(offer.result));
-            if (offer.result == MuxOutboundQueue.Result.QUEUE_FULL) {
-                recoverDroppedTunnelFrame(channelId, "tunnel outbound queue overflow");
-            }
             return false;
         }
         if (offer.scheduleDrain && !stateHandler.post(this::drainTunnelFrames)) {

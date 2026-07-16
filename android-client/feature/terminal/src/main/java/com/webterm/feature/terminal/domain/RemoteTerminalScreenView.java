@@ -25,19 +25,17 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
 
   private final RemoteTerminalView view;
   private final TerminalScreenController controller;
+  private final TerminalInputCoordinator inputCoordinator;
   @Nullable private final ConnectionStateListener connectionStateListener;
   @Nullable private Runnable afterRender;
 
   RemoteTerminalScreenView(@NonNull RemoteTerminalView view,
-                           @NonNull TerminalScreenController controller) {
-    this(view, controller, null);
-  }
-
-  RemoteTerminalScreenView(@NonNull RemoteTerminalView view,
                            @NonNull TerminalScreenController controller,
+                           @NonNull TerminalInputCoordinator inputCoordinator,
                            @Nullable ConnectionStateListener connectionStateListener) {
     this.view = view;
     this.controller = controller;
+    this.inputCoordinator = inputCoordinator;
     this.connectionStateListener = connectionStateListener;
     this.view.setHost(this);
   }
@@ -90,27 +88,29 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
 
   @Override
   public void onTextInput(@NonNull String text) {
-    controller.sendText(text);
+    inputCoordinator.submitText(text, "renderer_text");
   }
 
   @Override
   public void onPasteInput(@NonNull String text) {
-    controller.sendPaste(text);
+    inputCoordinator.submitPaste(text, "renderer_paste");
   }
 
   @Override
   public void onKeyEvent(@NonNull KeyEvent event) {
     TerminalKeyEncoder.KeyDescriptor desc = TerminalKeyEncoder.describe(event);
     if (desc.isFunctional()) {
-      controller.sendKey(desc.key, desc.shift, desc.alt, desc.ctrl, desc.meta, desc.pressed);
+      inputCoordinator.submitHardwareKey(
+          desc.key, desc.shift, desc.alt, desc.ctrl, desc.meta, desc.pressed);
       return;
     }
     if (desc.unicodeChar != null && event.getAction() == KeyEvent.ACTION_DOWN) {
       // 普通字符作为文本输入；KEYCODE_NUMPAD 等带 modifiers 时也可发送 key。
       if (event.isCtrlPressed() || event.isAltPressed() || event.isMetaPressed()) {
-        controller.sendKey(desc.unicodeChar, desc.shift, desc.alt, desc.ctrl, desc.meta, true);
+        inputCoordinator.submitHardwareKey(
+            desc.unicodeChar, desc.shift, desc.alt, desc.ctrl, desc.meta, true);
       } else {
-        controller.sendText(desc.unicodeChar);
+        inputCoordinator.submitText(desc.unicodeChar);
       }
     }
   }
@@ -155,7 +155,7 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
     if (rowsDown == 0) return;
     String key = rowsDown < 0 ? "ArrowUp" : "ArrowDown";
     for (int i = 0; i < Math.abs(rowsDown); i++) {
-      controller.sendKey(key, false, false, false, false, true);
+      inputCoordinator.submitFunctionalKey(key, false, false, false);
     }
   }
 }

@@ -203,6 +203,135 @@ func TestReliableSemanticInputDeduplicatesAfterPTYWrite(t *testing.T) {
 	}
 }
 
+func TestChunkedReliablePasteKeepsSingleBracketedPasteTransaction(t *testing.T) {
+	pty := newReliableInputPTY()
+	r := NewRuntime("bracketed-paste", pty, 2, 80)
+	t.Cleanup(func() { _ = r.Close() })
+	r.AttachClient(&ScreenClient{ID: "screen-1", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	// 由终端输出打开 bracketed-paste 模式，确保分段发生在编码之后，而不是
+	// 把一次粘贴重编码为多个独立 paste transaction。
+	r.postEvent(ptyOutputEvent{data: []byte("\x1b[?2004h")})
+	waitRuntimeSnapshot(t, r)
+	paste := strings.Repeat("粘贴内容", 40)
+	resultCh := make(chan InputDeliveryResult, 1)
+	r.WriteReliableSemanticInput("screen-1", leaseID, "android-1", 10,
+		terminalengine.SemanticInput{Kind: terminalengine.InputPaste, Data: paste},
+		func(result InputDeliveryResult) { resultCh <- result })
+	select {
+	case result := <-resultCh:
+		if result.Status != InputDeliveryWritten {
+			t.Fatalf("status=%v, want written", result.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("chunked bracketed paste did not complete")
+	}
+
+	got := pty.data.String()
+	want := "\x1b[200~" + paste + "\x1b[201~"
+	if got != want {
+		t.Fatalf("PTY paste transaction changed: got %q want %q", got, want)
+	}
+	if strings.Count(got, "\x1b[200~") != 1 || strings.Count(got, "\x1b[201~") != 1 {
+		t.Fatal("chunking created more than one bracketed-paste transaction")
+	}
+}
+
+func TestBlockedReliableInputDoesNotBlockRuntimeActor(t *testing.T) {
+	pty := newBlockingInputPTY()
+	r := NewRuntime("blocked-input", pty, 2, 80)
+	t.Cleanup(func() {
+		pty.unblock()
+		_ = r.Close()
+	})
+	r.AttachClient(&ScreenClient{ID: "screen-1", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	resultCh := make(chan InputDeliveryResult, 1)
+	r.WriteReliableSemanticInput("screen-1", leaseID, "android-1", 8,
+		terminalengine.SemanticInput{Kind: terminalengine.InputPaste, Data: "blocked paste"},
+		func(result InputDeliveryResult) { resultCh <- result })
+	select {
+	case <-pty.started:
+	case <-time.After(time.Second):
+		t.Fatal("PTY write did not start")
+	}
+
+	// 旧实现会卡在 actor 内的 pty.Write，连诊断快照都无法返回。
+	waitRuntimeSnapshot(t, r)
+	traceDone := make(chan struct{})
+	go func() {
+		_ = r.InputTraceSnapshot()
+		close(traceDone)
+	}()
+	select {
+	case <-traceDone:
+	case <-time.After(time.Second):
+		t.Fatal("runtime actor was blocked by PTY input")
+	}
+
+	pty.unblock()
+	select {
+	case result := <-resultCh:
+		if result.Status != InputDeliveryWritten {
+			t.Fatalf("status=%v, want written", result.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reliable input did not ACK after PTY resumed")
+	}
+}
+
+func TestReliableSemanticInputDeduplicatesWhileWriteIsInflight(t *testing.T) {
+	pty := newBlockingInputPTY()
+	r := NewRuntime("inflight-dedupe", pty, 2, 80)
+	t.Cleanup(func() {
+		pty.unblock()
+		_ = r.Close()
+	})
+	r.AttachClient(&ScreenClient{ID: "screen-1", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	results := make(chan InputDeliveryResult, 2)
+	write := func() {
+		r.WriteReliableSemanticInput("screen-1", leaseID, "android-1", 9,
+			terminalengine.SemanticInput{Kind: terminalengine.InputText, Data: "once"},
+			func(result InputDeliveryResult) { results <- result })
+	}
+	write()
+	select {
+	case <-pty.started:
+	case <-time.After(time.Second):
+		t.Fatal("PTY write did not start")
+	}
+	write()
+	waitRuntimeSnapshot(t, r)
+	pty.unblock()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case result := <-results:
+			if result.Status != InputDeliveryWritten {
+				t.Fatalf("status=%v, want written", result.Status)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("in-flight duplicate did not receive the original result")
+		}
+	}
+	if got := pty.writes.Load(); got != 1 {
+		t.Fatalf("PTY writes=%d, want one in-flight write", got)
+	}
+}
+
 func TestRuntimeDeniedClientCanAcquireAfterOldOwnerDetaches(t *testing.T) {
 	r := newRuntimeTestHarness(t)
 	r.AttachClient(&ScreenClient{ID: "screen-a", Send: func(terminalengine.ScreenFrame) {}})
