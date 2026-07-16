@@ -14,6 +14,7 @@ import org.json.JSONException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -83,6 +84,8 @@ public final class DeviceConnection {
     private final String baseUrl;
     private volatile String cookie;
     private final String deviceId;
+    /** 跨物理 Mux 重连保持稳定；不同 Android 连接实例互不抢占。 */
+    private final String screenOwnerId = UUID.randomUUID().toString();
     private MuxTransport transport;
     private int transportGeneration;
     private boolean physicalDesired;
@@ -311,6 +314,12 @@ public final class DeviceConnection {
             msg.put("type", "ws-connect");
             msg.put("tunnelConnectionId", channel.id);
             msg.put("path", channel.path);
+            if (channel.screenRouteKey != null && !channel.screenRouteKey.isEmpty()) {
+                // tunnel ID 按 runtime 隔离迟到 ACK；route key 让 Go 在同一物理 Mux 内
+                // 原子接管旧 screen handler，即使之前的 ws-close 丢失也不会泄漏 client。
+                msg.put("channelRouteKey", channel.screenRouteKey);
+                msg.put("channelOwnerKey", screenOwnerId + ":" + channel.screenRouteKey);
+            }
             if (channel.protocols != null && channel.protocols.length > 0) {
                 JSONArray protocols = new JSONArray();
                 for (String protocol : channel.protocols) protocols.put(protocol);
@@ -450,9 +459,14 @@ public final class DeviceConnection {
         previous.retryGeneration++;
         previous.openGeneration++;
         previous.state = Channel.State.CLOSED;
-        sendChannelClose(previous.id);
+        boolean closeSent = sendChannelClose(previous.id);
         notifyFailure(previous,
             ChannelFailure.clientClosed(0, "screen channel superseded by a new runtime owner"));
+        if (physicalConnected && !closeSent) {
+            // 本地已经放弃旧 channel，不能再重试该 ws-close。强制重建物理 Mux，
+            // 让 Go 的 closeAllChannels 释放旧 handler，再在新连接上打开当前 owner。
+            reconnectTransport("failed to close superseded screen channel", true);
+        }
     }
 
     public void detachChannelListener(String channelId) {
@@ -494,7 +508,11 @@ public final class DeviceConnection {
             channel.openGeneration++;
             channel.state = Channel.State.CLOSED;
         }
-        sendChannelClose(channelId);
+        boolean closeSent = sendChannelClose(channelId);
+        if (channel != null && channel.screenRouteKey != null
+                && physicalConnected && !closeSent) {
+            reconnectTransport("failed to close screen channel", true);
+        }
     }
 
     void reconnectTransport(String reason) {

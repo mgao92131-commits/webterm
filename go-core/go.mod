@@ -20,3 +20,5 @@ require (
 )
 
 replace github.com/danielgatis/go-headless-term => ./internal/headlessterm
+
+replace github.com/danielgatis/go-vte => ./third_party/go-vte

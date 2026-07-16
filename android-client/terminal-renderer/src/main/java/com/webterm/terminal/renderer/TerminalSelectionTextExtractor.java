@@ -23,28 +23,36 @@ final class TerminalSelectionTextExtractor {
    * @param screen    活动屏幕行数组；可能为 null
    */
   static String extract(TerminalSelection selection, TerminalHistorySnapshot history, TerminalLine[] screen) {
-    StringBuilder sb = new StringBuilder();
+    SelectionTextBuilder output = new SelectionTextBuilder(screenColumns(screen));
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
 
     if (start.historyLineId != 0) {
       if (end.historyLineId != 0) {
         // 历史内部选择。
-        appendHistoryRange(sb, start.historyLineId, end.historyLineId, start.col, end.col, history);
+        appendHistoryRange(output, start.historyLineId, end.historyLineId, start.col, end.col, history);
       } else {
         // 起点在历史、终点在屏幕：先取到历史末尾，再取屏幕开头到终点。
-        appendHistoryRange(sb, start.historyLineId, Long.MAX_VALUE, start.col, -1, history);
-        appendScreenRange(sb, new TerminalSelection.Anchor(0, 0, 0), end, screen, /* prependNewline */ sb.length() > 0);
+        appendHistoryRange(output, start.historyLineId, Long.MAX_VALUE, start.col, -1, history);
+        appendScreenRange(output, new TerminalSelection.Anchor(0, 0, 0), end, screen);
       }
     } else if (end.historyLineId == 0 && start.screenRow == end.screenRow) {
-      appendScreenRow(sb, screen, start.screenRow, start.col, end.col);
+      appendScreenRow(output, screen, start.screenRow, start.col, end.col);
     } else {
-      appendScreenRange(sb, start, end, screen, /* prependNewline */ false);
+      appendScreenRange(output, start, end, screen);
     }
-    return sb.toString();
+    return output.build();
   }
 
-  private static void appendHistoryRange(StringBuilder sb, long startLineId, long endLineId,
+  private static int screenColumns(TerminalLine[] screen) {
+    if (screen == null) return 0;
+    for (TerminalLine line : screen) {
+      if (line != null && line.length() > 0) return line.length();
+    }
+    return 0;
+  }
+
+  private static void appendHistoryRange(SelectionTextBuilder output, long startLineId, long endLineId,
                                          int startCol, int endCol, TerminalHistorySnapshot history) {
     if (history == null || history.isEmpty()) return;
     int startIndex = history.findLineIndex(startLineId);
@@ -52,37 +60,31 @@ final class TerminalSelectionTextExtractor {
     int endIndex = endCol >= 0 ? history.findLineIndex(endLineId) : history.size() - 1;
     if (endIndex < 0) endIndex = history.size() - 1;
 
-    boolean first = true;
     for (int i = startIndex; i <= endIndex && i < history.size(); i++) {
       TerminalLine line = history.lineAt(i);
       long lineId = line.id;
       if (lineId < startLineId) continue;
       if (lineId > endLineId) break;
-      if (!first) sb.append('\n');
-      first = false;
       int c0 = lineId == startLineId ? startCol : 0;
       int c1 = lineId == endLineId ? (endCol >= 0 ? endCol : line.length()) : line.length();
-      appendLineText(sb, line, c0, c1);
+      output.append(line, c0, c1, /* inferVisualWrap */ false);
     }
   }
 
-  private static void appendScreenRange(StringBuilder sb, TerminalSelection.Anchor start,
-                                        TerminalSelection.Anchor end, TerminalLine[] screen,
-                                        boolean prependNewline) {
+  private static void appendScreenRange(SelectionTextBuilder output, TerminalSelection.Anchor start,
+                                        TerminalSelection.Anchor end, TerminalLine[] screen) {
     if (screen == null) return;
-    boolean first = !prependNewline;
     for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
-      if (!first) sb.append('\n');
-      first = false;
       int c0 = row == start.screenRow ? start.col : 0;
       int c1 = row == end.screenRow ? end.col : (row < screen.length ? screen[row].length() : 0);
-      appendScreenRow(sb, screen, row, c0, c1);
+      appendScreenRow(output, screen, row, c0, c1);
     }
   }
 
-  private static void appendScreenRow(StringBuilder sb, TerminalLine[] screen, int row, int colStart, int colEnd) {
+  private static void appendScreenRow(SelectionTextBuilder output, TerminalLine[] screen,
+                                      int row, int colStart, int colEnd) {
     if (screen == null || row < 0 || row >= screen.length) return;
-    appendLineText(sb, screen[row], colStart, colEnd);
+    output.append(screen[row], colStart, colEnd, /* inferVisualWrap */ true);
   }
 
   private static void appendLineText(StringBuilder sb, TerminalLine line, int colStart, int colEnd) {
@@ -94,6 +96,55 @@ final class TerminalSelectionTextExtractor {
       if (cell == null || cell.isSpacer()) continue;
       String text = cell.text;
       sb.append(text == null || text.isEmpty() ? " " : text);
+    }
+  }
+
+  /**
+   * 按终端的逻辑行语义组装经过美化的复制文本：跳过空白物理行，
+   * 软换行的下一个物理行不加换行符，硬换行则去掉行尾填充。
+   * 对于少数丢失 wrapped 标记的行，内容顶到屏幕右边界时也视为视觉折行。
+   */
+  private static final class SelectionTextBuilder {
+    private final StringBuilder text = new StringBuilder();
+    private final int terminalColumns;
+    private boolean hasLine;
+    private boolean previousContinues;
+
+    SelectionTextBuilder(int terminalColumns) {
+      this.terminalColumns = terminalColumns;
+    }
+
+    void append(TerminalLine line, int colStart, int colEnd, boolean inferVisualWrap) {
+      if (line == null) return;
+
+      StringBuilder fragment = new StringBuilder();
+      appendLineText(fragment, line, colStart, colEnd);
+      boolean reachesRightEdge = inferVisualWrap
+          && terminalColumns > 0
+          && line.length() >= terminalColumns
+          && colEnd >= terminalColumns
+          && fragment.length() > 0
+          && fragment.charAt(fragment.length() - 1) != ' ';
+      if (!line.wrapped) trimTrailingSpaces(fragment, 0);
+
+      // 终端缓冲区的空白行不携带可复制内容，直接忽略。
+      if (fragment.length() == 0) return;
+
+      if (hasLine && !previousContinues) text.append('\n');
+      text.append(fragment);
+
+      hasLine = true;
+      previousContinues = line.wrapped || reachesRightEdge;
+    }
+
+    String build() {
+      return text.toString();
+    }
+
+    private static void trimTrailingSpaces(StringBuilder value, int contentStart) {
+      while (value.length() > contentStart && value.charAt(value.length() - 1) == ' ') {
+        value.setLength(value.length() - 1);
+      }
     }
   }
 }

@@ -29,8 +29,13 @@ type TerminalChannelHandler struct {
 }
 
 func NewTerminalChannelHandler(terminal *TerminalSession, sink ChannelFrameSink, logger ...*logs.Logger) *TerminalChannelHandler {
+	return NewOwnedTerminalChannelHandler(terminal, sink, "", logger...)
+}
+
+func NewOwnedTerminalChannelHandler(terminal *TerminalSession, sink ChannelFrameSink,
+	ownerKey string, logger ...*logs.Logger) *TerminalChannelHandler {
 	return &TerminalChannelHandler{
-		runtime: newTerminalChannelRuntime(terminal, sink, logger...),
+		runtime: newOwnedTerminalChannelRuntime(terminal, sink, ownerKey, logger...),
 	}
 }
 

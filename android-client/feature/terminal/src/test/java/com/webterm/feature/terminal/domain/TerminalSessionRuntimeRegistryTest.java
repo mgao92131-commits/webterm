@@ -85,6 +85,25 @@ public final class TerminalSessionRuntimeRegistryTest {
   }
 
   @Test
+  public void invisibleSyncingRuntimeCannotRemainHotForever() {
+    Fixture fixture = new Fixture();
+    TerminalRuntimeKey key = key("server-1", "account-1", "s1");
+    TerminalSessionRuntime runtime = fixture.registry.acquire(key, HistoryBudget.defaults());
+    FakeConnection connection = new FakeConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+
+    fixture.registry.releaseView(key);
+    fixture.clock.now += TerminalSessionRuntimeRegistry.HOT_GRACE_MS;
+    fixture.scheduler.runAll();
+
+    assertEquals(TerminalSessionRuntimeRegistry.LifecycleState.WARM,
+        fixture.registry.lifecycleState(key));
+    assertEquals(1, connection.closeCalls);
+  }
+
+  @Test
   public void fullIdentityPreventsCrossAccountOrServerReuse() {
     Fixture fixture = new Fixture();
     TerminalRuntimeKey a = key("server-1", "account-1", "same-session");
@@ -148,8 +167,9 @@ public final class TerminalSessionRuntimeRegistryTest {
 
   private static final class FakeConnection implements TerminalSessionRuntime.ScreenConnection {
     int closeCalls;
-    @Override public void setListener(@NonNull Listener listener) {}
-    @Override public boolean beginSync(@NonNull ResumeToken resumeToken) { return false; }
+    Listener listener;
+    @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
+    @Override public boolean beginSync(@NonNull ResumeToken resumeToken) { return true; }
     @Override public void setLayoutLeaseId(@NonNull String leaseId) {}
     @Override public void sendTextInput(@NonNull String text) {}
     @Override public void sendPasteInput(@NonNull String text) {}

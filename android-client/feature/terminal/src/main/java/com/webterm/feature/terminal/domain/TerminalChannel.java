@@ -102,8 +102,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
   @Override
   public boolean beginSync(@NonNull ResumeToken resumeToken) {
-    sendHello(TerminalResumePolicy.effectiveToken(resumeToken));
-    return deviceConnection != null && channelId != null;
+    return sendHello(TerminalResumePolicy.effectiveToken(resumeToken));
   }
 
   @Override
@@ -253,8 +252,12 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
       deviceConnection.updateCookie(cookie);
     }
     String localSessionId = DeviceConnection.localSessionId(sessionId, relayDeviceId);
+    // 每次显式重建都使用新的 logical tunnel owner。ws-connected 不携带本地代际，
+    // 若复用旧 tunnel id，旧握手的迟到 ACK 可能被误认成新连接；稳定的
+    // clientInstanceId 仍单独用于输入去重，不受通道代际轮换影响。
+    String logicalChannelOwnerId = UUID.randomUUID().toString();
     channelId = deviceConnection.openScreenChannel(
-        localSessionId, clientInstanceId, new DeviceConnection.ChannelListener() {
+        localSessionId, logicalChannelOwnerId, new DeviceConnection.ChannelListener() {
       @Override
       public void onConnected(String channelId) {
         if (listener != null) listener.onConnected();
@@ -301,9 +304,9 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     });
   }
 
-  private void sendHello(@NonNull ResumeToken resumeToken) {
-    if (deviceConnection == null || channelId == null) return;
-    deviceConnection.sendTunnelFrame(
+  private boolean sendHello(@NonNull ResumeToken resumeToken) {
+    if (deviceConnection == null || channelId == null) return false;
+    return deviceConnection.sendTunnelFrame(
         channelId, ScreenMessageBuilder.hello(columns, rows, resumeToken, clientInstanceId), true);
   }
 

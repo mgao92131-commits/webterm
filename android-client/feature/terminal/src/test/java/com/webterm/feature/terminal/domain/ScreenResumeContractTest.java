@@ -144,6 +144,55 @@ public final class ScreenResumeContractTest {
   }
 
   @Test
+  public void failedHelloSendImmediatelyRequestsFreshChannel() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    connection.syncSucceeds = false;
+    runtime.attachConnection(connection);
+
+    connection.listener.onConnected();
+
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+    assertEquals(1, connection.syncRequests);
+    assertEquals(1, connection.reconnectRequests);
+  }
+
+  @Test
+  public void hotPageReattachRefreshesUnhealthyConnectionImmediately() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+
+    runtime.detachPage();
+    runtime.attachPage();
+
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+    assertEquals("reattach must not wait for the stale sync timeout", 1,
+        connection.reconnectRequests);
+  }
+
+  @Test
+  public void hotPageReattachKeepsHealthyConnection() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeScreenConnection connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+
+    runtime.detachPage();
+    runtime.attachPage();
+
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+    assertEquals("healthy HOT reuse must remain seamless", 0, connection.reconnectRequests);
+  }
+
+  @Test
   public void staleQueuedSynchronizationCannotSendHelloAfterReconnect() {
     QueuingExecutor modelExecutor = new QueuingExecutor();
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
@@ -344,6 +393,7 @@ public final class ScreenResumeContractTest {
     int reconnectRequests;
     int acquireRequests;
     int syncRequests;
+    boolean syncSucceeds = true;
     ResumeToken resumeToken = ResumeToken.cold(0);
     Listener listener;
 
@@ -356,7 +406,7 @@ public final class ScreenResumeContractTest {
     public boolean beginSync(@NonNull ResumeToken resumeToken) {
       syncRequests++;
       this.resumeToken = resumeToken;
-      return false;
+      return syncSucceeds;
     }
 
     @Override

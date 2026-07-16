@@ -192,8 +192,7 @@ public final class TerminalSessionRuntimeRegistry {
   private synchronized void expireHot(TerminalRuntimeKey key, long generation) {
     Entry entry = entries.get(key);
     if (entry == null || (entry.visible && appVisible) || entry.state != LifecycleState.HOT
-        || entry.transitionGeneration != generation || entry.runtime.hasLayoutLease()
-        || entry.runtime.state() == TerminalSessionRuntime.State.SYNCING) return;
+        || entry.transitionGeneration != generation || entry.runtime.hasLayoutLease()) return;
     warmLocked(entry);
     enforceLimitsLocked();
   }
@@ -229,8 +228,8 @@ public final class TerminalSessionRuntimeRegistry {
   private Entry oldestDemotableHotLocked() {
     Entry oldest = null;
     for (Entry entry : entries.values()) {
-      if (entry.state != LifecycleState.HOT || entry.visible || entry.runtime.hasLayoutLease()
-          || entry.runtime.state() == TerminalSessionRuntime.State.SYNCING) continue;
+      if (entry.state != LifecycleState.HOT || entry.visible
+          || entry.runtime.hasLayoutLease()) continue;
       if (oldest == null || entry.lastUsedMs < oldest.lastUsedMs) oldest = entry;
     }
     return oldest;

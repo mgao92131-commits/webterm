@@ -8,6 +8,8 @@ require (
 	github.com/unilibs/uniwidth v0.1.0
 )
 
+replace github.com/danielgatis/go-vte => ../../third_party/go-vte
+
 require (
 	github.com/danielgatis/go-iterator v0.0.1 // indirect
 	github.com/danielgatis/go-utf8 v1.0.1 // indirect

@@ -26,6 +26,7 @@ type terminalChannelRuntime struct {
 	doneOnce         chan struct{}
 	logger           *logs.Logger
 	screenClientID   string
+	ownerKey         string
 	clientInstanceID string
 	screenAttached   atomic.Bool
 	writerStarted    atomic.Bool
@@ -49,6 +50,11 @@ type initialScreenMessage struct {
 }
 
 func newTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrameSink, logger ...*logs.Logger) *terminalChannelRuntime {
+	return newOwnedTerminalChannelRuntime(terminal, sink, "", logger...)
+}
+
+func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrameSink,
+	ownerKey string, logger ...*logs.Logger) *terminalChannelRuntime {
 	var log *logs.Logger
 	if len(logger) > 0 {
 		log = logger[0]
@@ -61,6 +67,7 @@ func newTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrameSink,
 		doneOnce:       make(chan struct{}, 1),
 		logger:         log,
 		screenClientID: randomID(),
+		ownerKey:       ownerKey,
 		screenWake:     make(chan struct{}, 1),
 		screenInitial:  make(chan initialScreenMessage, 1),
 	}

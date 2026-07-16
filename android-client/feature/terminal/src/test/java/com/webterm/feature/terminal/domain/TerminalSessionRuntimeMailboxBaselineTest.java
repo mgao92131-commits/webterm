@@ -7,6 +7,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Test;
@@ -95,6 +96,11 @@ public final class TerminalSessionRuntimeMailboxBaselineTest {
     @Override
     public void setListener(@NonNull Listener listener) {
       this.listener = listener;
+    }
+
+    @Override
+    public boolean beginSync(@NonNull ResumeToken resumeToken) {
+      return true;
     }
 
     @Override

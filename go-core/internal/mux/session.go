@@ -24,6 +24,7 @@ type OpenHandler func(
 	sink termsession.ChannelFrameSink,
 	path string,
 	protocols []string,
+	ownerKey string,
 ) (termsession.LogicalChannelHandler, error)
 
 // ControlHandler 处理 mux 不识别的设备级控制消息。
@@ -36,9 +37,10 @@ type ServeOpts struct {
 }
 
 type channelEntry struct {
-	id      string
-	handler termsession.LogicalChannelHandler
-	sink    *channelSink
+	id       string
+	routeKey string
+	handler  termsession.LogicalChannelHandler
+	sink     *channelSink
 }
 
 // Session 是一条 Android 设备连接的 actor。它解析 webterm.mux.v1 外层，
@@ -47,6 +49,7 @@ type Session struct {
 	conn       termsession.Socket
 	writeMu    sync.Mutex
 	channels   map[string]*channelEntry
+	routes     map[string]*channelEntry
 	channelsMu sync.RWMutex
 	onOpen     OpenHandler
 	onControl  ControlHandler
@@ -57,6 +60,7 @@ func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 	return &Session{
 		conn:      conn,
 		channels:  make(map[string]*channelEntry),
+		routes:    make(map[string]*channelEntry),
 		onOpen:    opts.OnOpen,
 		onControl: opts.OnControl,
 		logger:    opts.Logger,
@@ -104,14 +108,22 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 
 func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 	tunnelID := stringValue(msg["tunnelConnectionId"])
+	routeKey := stringValue(msg["channelRouteKey"])
+	ownerKey := stringValue(msg["channelOwnerKey"])
 	path := stringValue(msg["path"])
 	protocols := protocolsValue(msg["protocols"])
 	if tunnelID == "" || s.onOpen == nil {
 		return
 	}
+	if len(routeKey) > 1024 {
+		routeKey = ""
+	}
+	if len(ownerKey) > 2048 {
+		ownerKey = ""
+	}
 
 	sink := &channelSink{id: tunnelID, session: s}
-	handler, err := s.onOpen(ctx, sink, cleanPath(path), protocols)
+	handler, err := s.onOpen(ctx, sink, cleanPath(path), protocols, ownerKey)
 	if err != nil {
 		_ = s.sendJSON(ctx, map[string]any{
 			"type":               protocol.WSError,
@@ -121,15 +133,31 @@ func (s *Session) handleWSConnect(ctx context.Context, msg map[string]any) {
 		})
 		return
 	}
-	entry := &channelEntry{id: tunnelID, handler: handler, sink: sink}
+	entry := &channelEntry{id: tunnelID, routeKey: routeKey, handler: handler, sink: sink}
 	sink.entry = entry
 
 	s.channelsMu.Lock()
-	old := s.channels[tunnelID]
+	oldByID := s.channels[tunnelID]
+	oldByRoute := s.routes[routeKey]
+	if routeKey == "" {
+		oldByRoute = nil
+	}
+	if oldByID != nil && oldByID.routeKey != "" && s.routes[oldByID.routeKey] == oldByID {
+		delete(s.routes, oldByID.routeKey)
+	}
+	if oldByRoute != nil && s.channels[oldByRoute.id] == oldByRoute {
+		delete(s.channels, oldByRoute.id)
+	}
 	s.channels[tunnelID] = entry
+	if routeKey != "" {
+		s.routes[routeKey] = entry
+	}
 	s.channelsMu.Unlock()
-	if old != nil {
-		old.handler.Close()
+	if oldByID != nil {
+		oldByID.handler.Close()
+	}
+	if oldByRoute != nil && oldByRoute != oldByID {
+		oldByRoute.handler.Close()
 	}
 
 	if err := s.sendJSON(ctx, map[string]any{
@@ -174,6 +202,9 @@ func (s *Session) closeChannel(id string) {
 	entry := s.channels[id]
 	if entry != nil {
 		delete(s.channels, id)
+		if entry.routeKey != "" && s.routes[entry.routeKey] == entry {
+			delete(s.routes, entry.routeKey)
+		}
 	}
 	s.channelsMu.Unlock()
 	if entry != nil {
@@ -188,6 +219,9 @@ func (s *Session) removeChannelIfCurrent(expected *channelEntry) bool {
 		return false
 	}
 	delete(s.channels, expected.id)
+	if expected.routeKey != "" && s.routes[expected.routeKey] == expected {
+		delete(s.routes, expected.routeKey)
+	}
 	return true
 }
 
@@ -198,6 +232,7 @@ func (s *Session) closeAllChannels() {
 		entries = append(entries, entry)
 	}
 	clear(s.channels)
+	clear(s.routes)
 	s.channelsMu.Unlock()
 	for _, entry := range entries {
 		entry.handler.Close()

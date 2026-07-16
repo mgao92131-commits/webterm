@@ -59,6 +59,7 @@ type TerminalSession struct {
 	shellPid       int
 	ttyPath        string
 	clients        map[*terminalChannelRuntime]struct{}
+	screenOwners   map[string]*terminalChannelRuntime
 	onTitleChanged func()
 	onInfoChanged  func()
 	titleChanged   bool
@@ -111,6 +112,7 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		shellPid:       process.PID(),
 		ttyPath:        process.TTYPath(),
 		clients:        make(map[*terminalChannelRuntime]struct{}),
+		screenOwners:   make(map[string]*terminalChannelRuntime),
 		onTitleChanged: options.OnTitle,
 		onInfoChanged:  options.OnInfoChanged,
 	}
@@ -341,14 +343,25 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 
 func (terminal *TerminalSession) Attach(client *terminalChannelRuntime) {
 	terminal.mu.Lock()
+	var replaced *terminalChannelRuntime
+	if client.ownerKey != "" {
+		replaced = terminal.screenOwners[client.ownerKey]
+		terminal.screenOwners[client.ownerKey] = client
+	}
 	terminal.clients[client] = struct{}{}
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+	if replaced != nil && replaced != client {
+		replaced.Close()
+	}
 }
 
 func (terminal *TerminalSession) Detach(client *terminalChannelRuntime) {
 	terminal.mu.Lock()
 	delete(terminal.clients, client)
+	if client.ownerKey != "" && terminal.screenOwners[client.ownerKey] == client {
+		delete(terminal.screenOwners, client.ownerKey)
+	}
 	terminal.touchLocked()
 	terminal.mu.Unlock()
 }

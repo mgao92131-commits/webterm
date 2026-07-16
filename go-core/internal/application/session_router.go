@@ -36,7 +36,7 @@ type MuxSession interface {
 // MuxServeOpts 是 mux.ServeOpts 的类型投影。logical channel 直接交付
 // frame sink 和 handler，不再投影虚拟 WebSocket。
 type MuxServeOpts struct {
-	OnOpen    func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string) (session.LogicalChannelHandler, error)
+	OnOpen    func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string, ownerKey string) (session.LogicalChannelHandler, error)
 	OnControl func(ctx context.Context, source MuxSession, msg map[string]any)
 	Logger    *logs.Logger
 }
@@ -130,7 +130,7 @@ func (r *SessionRouter) RouteOpenWithControl(
 	case clean == "/ws/sessions":
 		if r.muxServe != nil && hasProtocol(protocols, protocol.MuxSubprotocol) {
 			muxSession := r.muxServe(socket, &MuxServeOpts{
-				OnOpen:    r.OpenLogicalChannel,
+				OnOpen:    r.OpenOwnedLogicalChannel,
 				OnControl: r.onControl,
 				Logger:    r.logger,
 			})
@@ -154,10 +154,22 @@ func (r *SessionRouter) RouteOpenWithControl(
 // sink 只能向当前 channel 写帧，因此这里不需要构造虚拟请求、
 // 虚拟响应、Socket.Read 队列或任何 WebSocket 对象。
 func (r *SessionRouter) OpenLogicalChannel(
+	ctx context.Context,
+	sink session.ChannelFrameSink,
+	path string,
+	protocols []string,
+) (session.LogicalChannelHandler, error) {
+	return r.OpenOwnedLogicalChannel(ctx, sink, path, protocols, "")
+}
+
+// OpenOwnedLogicalChannel 与 OpenLogicalChannel 相同，但 screen channel 会携带
+// Android DeviceConnection 生命周期内稳定的 owner key，用于跨物理 Mux 原子接管旧 handler。
+func (r *SessionRouter) OpenOwnedLogicalChannel(
 	_ context.Context,
 	sink session.ChannelFrameSink,
 	path string,
 	protocols []string,
+	ownerKey string,
 ) (session.LogicalChannelHandler, error) {
 	clean := cleanPath(path)
 	switch {
@@ -174,7 +186,7 @@ func (r *SessionRouter) OpenLogicalChannel(
 		if !ok {
 			return nil, fmt.Errorf("session %s not found", id)
 		}
-		return session.NewTerminalChannelHandler(terminal, sink, r.logger), nil
+		return session.NewOwnedTerminalChannelHandler(terminal, sink, ownerKey, r.logger), nil
 
 	default:
 		return nil, fmt.Errorf("unknown path: %s", path)

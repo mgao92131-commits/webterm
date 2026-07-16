@@ -101,8 +101,8 @@ func startMuxServer(t *testing.T, ctx context.Context, manager *session.Manager)
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		sess := Serve(session.NewWebSocketAdapter(conn), &ServeOpts{
-			OnOpen: func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string) (session.LogicalChannelHandler, error) {
-				return OpenSessionOrManager(ctx, router, sink, path, protocols)
+			OnOpen: func(ctx context.Context, sink session.ChannelFrameSink, path string, protocols []string, ownerKey string) (session.LogicalChannelHandler, error) {
+				return OpenSessionOrManager(ctx, router, sink, path, protocols, ownerKey)
 			},
 		})
 		_ = sess.Run(ctx)
@@ -232,6 +232,97 @@ func TestMuxDuplicateTerminalChannelReleasesReplacedClient(t *testing.T) {
 
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	waitTerminalClients(t, terminal, 0)
+}
+
+func TestMuxScreenRouteReplacesDifferentTunnelID(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	terminal, err := manager.Create(".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	wsURL, cleanup := startMuxServer(t, ctx, manager)
+	defer cleanup()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{protocol.MuxSubprotocol},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	openTerminal := func(tunnelID string) {
+		writeJSONMsg(t, ctx, conn, map[string]any{
+			"type":               protocol.WSConnect,
+			"tunnelConnectionId": tunnelID,
+			"channelRouteKey":    "term:" + terminal.ID() + ":" + protocol.ScreenSubprotocol,
+			"path":               "/ws/sessions/" + terminal.ID(),
+			"protocols":          []string{protocol.ScreenSubprotocol},
+		})
+		connected := readJSON(t, ctx, conn)
+		if connected["type"] != protocol.WSConnected || connected["tunnelConnectionId"] != tunnelID {
+			t.Fatalf("ws-connected = %#v", connected)
+		}
+	}
+
+	openTerminal("term-owner-a")
+	waitTerminalClients(t, terminal, 1)
+	openTerminal("term-owner-b")
+	// owner-b 使用不同 tunnel ID，仍须按稳定 route 原子接管 owner-a。
+	waitTerminalClients(t, terminal, 1)
+}
+
+func TestMuxScreenOwnerReplacesHandlerAcrossPhysicalConnections(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	manager := newManagerWithShell(t)
+	terminal, err := manager.Create(".")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	wsURL, cleanup := startMuxServer(t, ctx, manager)
+	defer cleanup()
+
+	dial := func() *websocket.Conn {
+		conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			Subprotocols: []string{protocol.MuxSubprotocol},
+		})
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		return conn
+	}
+	first := dial()
+	defer first.Close(websocket.StatusNormalClosure, "")
+	second := dial()
+	defer second.Close(websocket.StatusNormalClosure, "")
+
+	openTerminal := func(conn *websocket.Conn, tunnelID string) {
+		writeJSONMsg(t, ctx, conn, map[string]any{
+			"type":               protocol.WSConnect,
+			"tunnelConnectionId": tunnelID,
+			"channelRouteKey":    "term:" + terminal.ID() + ":" + protocol.ScreenSubprotocol,
+			"channelOwnerKey":    "android-connection-a:term:" + terminal.ID(),
+			"path":               "/ws/sessions/" + terminal.ID(),
+			"protocols":          []string{protocol.ScreenSubprotocol},
+		})
+		connected := readJSON(t, ctx, conn)
+		if connected["type"] != protocol.WSConnected || connected["tunnelConnectionId"] != tunnelID {
+			t.Fatalf("ws-connected = %#v", connected)
+		}
+	}
+
+	openTerminal(first, "term-physical-a")
+	waitTerminalClients(t, terminal, 1)
+	openTerminal(second, "term-physical-b")
+	// 同一 Android DeviceConnection 的旧物理 Mux 即使仍半开，也只能保留新 handler。
+	waitTerminalClients(t, terminal, 1)
 }
 
 func waitTerminalClients(t *testing.T, terminal interface{ Info() session.Info }, want int) {

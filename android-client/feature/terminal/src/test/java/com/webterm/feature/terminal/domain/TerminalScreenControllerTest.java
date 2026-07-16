@@ -13,6 +13,7 @@ import androidx.lifecycle.LifecycleOwner;
 
 import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Before;
@@ -221,6 +222,11 @@ public final class TerminalScreenControllerTest {
     @Override
     public void setListener(@NonNull Listener listener) {
       this.listener = listener;
+    }
+
+    @Override
+    public boolean beginSync(@NonNull ResumeToken resumeToken) {
+      return true;
     }
 
     @Override

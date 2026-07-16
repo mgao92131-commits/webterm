@@ -35,8 +35,16 @@ public class TerminalSelectionTextExtractorTest {
     return new TerminalLine(id, false, cells(text));
   }
 
+  private static TerminalLine historyLine(long id, boolean wrapped, String text) {
+    return new TerminalLine(id, wrapped, cells(text));
+  }
+
   private static TerminalLine screenRow(int row, String text) {
     return new TerminalLine(0, false, cells(text));
+  }
+
+  private static TerminalLine screenRow(int row, boolean wrapped, String text) {
+    return new TerminalLine(0, wrapped, cells(text));
   }
 
   private static TerminalSelection.Anchor hist(long lineId, int col) {
@@ -73,12 +81,76 @@ public class TerminalSelectionTextExtractorTest {
   @Test
   public void screenOnlyMultiRow() {
     TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "abcd"),
-        screenRow(1, "efgh"),
-        screenRow(2, "ijkl")
+        screenRow(0, "abcd  "),
+        screenRow(1, "efgh  "),
+        screenRow(2, "ijkl  ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 2), scr(2, 2)).normalized();
     assertEquals("cd\nefgh\nij", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void trimsTerminalPaddingButPreservesIndentationAndInternalSpaces() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, "  alpha  beta    "),
+        screenRow(1, "    gamma       ")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 16)).normalized();
+    assertEquals("  alpha  beta\n    gamma", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void joinsSoftWrappedRowsAndPreservesWrappingSpace() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, true, "long "),
+        screenRow(1, false, "command   ")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
+    assertEquals("long command", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void dropsBlankRowsInsideAndAfterSelection() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, "first     "),
+        screenRow(1, "          "),
+        screenRow(2, "second    "),
+        screenRow(3, "          "),
+        screenRow(4, "          ")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(4, 10)).normalized();
+    assertEquals("first\nsecond", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void joinsVisualWrapAtRightEdgeWhenWrappedFlagIsMissing() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, false, "1234567890"),
+        screenRow(1, false, "continued ")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
+    assertEquals("1234567890continued", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void doesNotGuessVisualWrapWithoutKnownScreenWidth() {
+    List<TerminalLine> history = Arrays.asList(
+        historyLine(1, false, "first"),
+        historyLine(2, false, "second"));
+    TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(2, 6)).normalized();
+    assertEquals("first\nsecond", extract(sel, history, null));
+  }
+
+  @Test
+  public void joinsSoftWrapAcrossHistoryAndScreenBoundary() {
+    List<TerminalLine> history = Arrays.asList(
+        historyLine(1, false, "prompt$ "),
+        historyLine(2, true, "very long "));
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, false, "command   ")
+    };
+    TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 10)).normalized();
+    assertEquals("prompt$\nvery long command", extract(sel, history, screen));
   }
 
   @Test
@@ -88,8 +160,8 @@ public class TerminalSelectionTextExtractorTest {
         historyLine(2, "bbbb"),
         historyLine(3, "cccc"));
     TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "dddd"),
-        screenRow(1, "eeee")
+        screenRow(0, "dddd    "),
+        screenRow(1, "eeee    ")
     };
     // 选择：从历史第 2 行第 1 列，到屏幕第 0 行第 3 列。
     TerminalSelection sel = new TerminalSelection(hist(2, 1), scr(0, 3)).normalized();
@@ -101,7 +173,7 @@ public class TerminalSelectionTextExtractorTest {
     List<TerminalLine> history = Arrays.asList(
         historyLine(1, "aaaa"),
         historyLine(2, "bbbb"));
-    TerminalLine[] screen = new TerminalLine[] { screenRow(0, "cccc") };
+    TerminalLine[] screen = new TerminalLine[] { screenRow(0, "cccc    ") };
     TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 2)).normalized();
     assertEquals("aaaa\nbbbb\ncc", extract(sel, history, screen));
   }

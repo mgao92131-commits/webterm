@@ -8,6 +8,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Before;
@@ -42,6 +43,10 @@ public final class TerminalSessionRuntimeResizeTest {
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
     connection.listener.onConnected();
+    // 本测试类手动注入 snapshot，关注的是 snapshot 之后的 resize/resync 时序；
+    // 初始同步超时由 ScreenResumeContractTest 单独覆盖，避免它占用这里的队首任务。
+    scheduler.tasks.clear();
+    scheduler.delays.clear();
   }
 
   @Test
@@ -481,6 +486,11 @@ public final class TerminalSessionRuntimeResizeTest {
     @Override
     public void setListener(@NonNull Listener listener) {
       this.listener = listener;
+    }
+
+    @Override
+    public boolean beginSync(@NonNull ResumeToken resumeToken) {
+      return true;
     }
 
     @Override

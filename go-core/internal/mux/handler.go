@@ -14,8 +14,9 @@ func OpenSessionOrManager(
 	sink session.ChannelFrameSink,
 	path string,
 	protocols []string,
+	ownerKey string,
 ) (session.LogicalChannelHandler, error) {
-	return router.OpenLogicalChannel(ctx, sink, path, protocols)
+	return router.OpenOwnedLogicalChannel(ctx, sink, path, protocols, ownerKey)
 }
 
 // MuxServeAdapter 将 mux.Serve 适配为 application.MuxServeFunc，
@@ -25,8 +26,8 @@ func MuxServeAdapter(conn session.Socket, opts *application.MuxServeOpts) applic
 		Logger: opts.Logger,
 	}
 	if opts.OnOpen != nil {
-		muxOpts.OnOpen = func(ctx context.Context, sink session.ChannelFrameSink, p string, protos []string) (session.LogicalChannelHandler, error) {
-			return opts.OnOpen(ctx, sink, p, protos)
+		muxOpts.OnOpen = func(ctx context.Context, sink session.ChannelFrameSink, p string, protos []string, ownerKey string) (session.LogicalChannelHandler, error) {
+			return opts.OnOpen(ctx, sink, p, protos, ownerKey)
 		}
 	}
 	if opts.OnControl != nil {

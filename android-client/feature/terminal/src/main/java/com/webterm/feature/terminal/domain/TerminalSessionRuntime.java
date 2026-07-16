@@ -368,6 +368,27 @@ public final class TerminalSessionRuntime {
         ? layoutLeaseGeneration.get()
         : layoutLeaseGeneration.incrementAndGet();
     modelExecutor.execute(() -> ensureLayoutLease(generation, false));
+    if (!wasAttached && state != State.CONNECTED && state != State.CLOSED) {
+      recoverUnhealthyConnectionOnPageReattach();
+    }
+  }
+
+  /**
+   * HOT runtime 在页面不可见期间可能停在 transport open、retry 或 screen sync。
+   * 页面重新可见是明确的恢复边界：已连接会话继续零开销复用，其余状态立即换用
+   * 新 logical tunnel，避免用户等待旧握手超时或指数退避。
+   */
+  private void recoverUnhealthyConnectionOnPageReattach() {
+    ScreenConnection current = connection;
+    if (current == null || state == State.CLOSED || state == State.CONNECTED) return;
+    connectionEpoch.incrementAndGet();
+    invalidateLayoutLease();
+    updateState(State.RECONNECTING);
+    modelExecutor.execute(() -> {
+      syncGeneration++;
+      resetResyncRecovery();
+    });
+    current.requestReconnect("page reattached while terminal connection was not ready");
   }
 
   public void addListener(@NonNull Listener listener) {
@@ -498,11 +519,18 @@ public final class TerminalSessionRuntime {
         : ResumeToken.cold(RemoteTerminalModel.SCHEMA_GENERATION);
     updateState(State.SYNCING);
     long generation = ++syncGeneration;
-    if (expectedConnection.beginSync(token)) {
-      timeoutScheduler.schedule(
-          () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
-          RESYNC_SNAPSHOT_TIMEOUT_MS);
+    if (!expectedConnection.beginSync(token)) {
+      // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
+      // Snapshot 只会让页面永久闪烁；立即换 channel，并作废当前代际的迟到帧。
+      connectionEpoch.incrementAndGet();
+      invalidateLayoutLease();
+      updateState(State.RECONNECTING);
+      expectedConnection.requestReconnect("screen Hello send failed");
+      return;
     }
+    timeoutScheduler.schedule(
+        () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
+        RESYNC_SNAPSHOT_TIMEOUT_MS);
   }
 
   private void onSynchronizationTimeout(long generation) {

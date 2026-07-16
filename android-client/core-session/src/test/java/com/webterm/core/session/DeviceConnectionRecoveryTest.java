@@ -128,6 +128,9 @@ public class DeviceConnectionRecoveryTest {
         assertEquals(ChannelFailure.Kind.CLIENT_CLOSED, oldRuntime.failure.get().kind);
         assertEquals("new owner must open a fresh server-side screen handler", 1,
             transport.wsConnectCount(newChannelId));
+        assertEquals("both runtime tunnel IDs must share one stable replacement route",
+            transport.wsConnectRouteKey(oldChannelId),
+            transport.wsConnectRouteKey(newChannelId));
         assertFalse("new runtime cannot send Hello before its own ws-connected ACK",
             newRuntime.connected.get());
 
@@ -176,6 +179,25 @@ public class DeviceConnectionRecoveryTest {
 
         transport.simulateText(wsConnected(newChannelId));
         assertTrue(newRuntime.connected.get());
+    }
+
+    @Test
+    public void failedSupersededCloseForcesPhysicalMuxReconnect() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+
+        String oldChannelId = manager.openScreenChannel("s1", "runtime-a", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(oldChannelId));
+        transport.sendTextResult = false;
+
+        manager.openScreenChannel("s1", "runtime-b", new SimpleListener());
+
+        assertEquals("failed close must tear down the physical mux", 1, transport.closeCount);
+        assertEquals("failed close must immediately start a fresh physical attempt",
+            2, transport.startCount);
     }
 
     @Test
@@ -697,6 +719,9 @@ public class DeviceConnectionRecoveryTest {
         assertEquals("file_receive", registration.getJSONArray("capabilities").getString(0));
         JSONObject channelOpen = new JSONObject(transport.sentTexts.get(1));
         assertEquals("ws-connect", channelOpen.getString("type"));
+        assertEquals("term:s1:webterm.screen.v1", channelOpen.getString("channelRouteKey"));
+        assertTrue(channelOpen.getString("channelOwnerKey")
+            .endsWith(":term:s1:webterm.screen.v1"));
     }
 
     @Test
@@ -788,6 +813,7 @@ public class DeviceConnectionRecoveryTest {
         private Listener listener;
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
+        private boolean sendTextResult = true;
         private int closeCount;
         private int startCount;
 
@@ -824,7 +850,7 @@ public class DeviceConnectionRecoveryTest {
 
         @Override public boolean sendText(String text) {
             sentTexts.add(text);
-            return true;
+            return sendTextResult;
         }
 
         @Override public boolean sendBinary(byte[] data) { return true; }
@@ -859,6 +885,21 @@ public class DeviceConnectionRecoveryTest {
                 }
             }
             return count;
+        }
+
+        String wsConnectRouteKey(String tunnelId) {
+            for (String text : sentTexts) {
+                try {
+                    JSONObject msg = new JSONObject(text);
+                    if ("ws-connect".equals(msg.optString("type"))
+                            && tunnelId.equals(msg.optString("tunnelConnectionId"))) {
+                        return msg.optString("channelRouteKey");
+                    }
+                } catch (JSONException e) {
+                    // ignore non-JSON
+                }
+            }
+            return "";
         }
     }
 }
