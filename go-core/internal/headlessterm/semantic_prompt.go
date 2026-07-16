@@ -44,6 +44,7 @@ func (t *Terminal) ShellIntegrationMark(mark ansicode.ShellIntegrationMark, exit
 }
 
 func (t *Terminal) semanticPromptMarkInternal(mark ansicode.ShellIntegrationMark, exitCode int) {
+	t.flushPendingInput()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

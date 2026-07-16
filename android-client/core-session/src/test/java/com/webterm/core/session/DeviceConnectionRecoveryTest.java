@@ -768,6 +768,25 @@ public class DeviceConnectionRecoveryTest {
     }
 
     @Test
+    public void tunnelSendSeparatesLocalAcceptanceFromWebSocketRejection() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+        transport.sendBinaryResult = false;
+        AtomicReference<DeviceConnection.TunnelSendResult> result = new AtomicReference<>();
+
+        assertTrue("call only waits for bounded local queue acceptance",
+                connection.tryEnqueueTunnelFrame(channelId, new byte[] {1, 2, 3}, true,
+                        result::set));
+        assertEquals(DeviceConnection.TunnelSendResult.TRANSPORT_REJECTED, result.get());
+        assertTrue("transport rejection must trigger recovery", transport.closeCount > 0);
+    }
+
+    @Test
     public void binaryTunnelFrameRoutesDirectlyOnDeviceEventLoop() {
         FakeMuxTransport transport = new FakeMuxTransport();
         DeviceConnection connection = new DeviceConnection(
@@ -814,6 +833,7 @@ public class DeviceConnectionRecoveryTest {
         private final List<String> sentTexts = new ArrayList<>();
         private boolean open = false;
         private boolean sendTextResult = true;
+        private boolean sendBinaryResult = true;
         private int closeCount;
         private int startCount;
 
@@ -853,7 +873,7 @@ public class DeviceConnectionRecoveryTest {
             return sendTextResult;
         }
 
-        @Override public boolean sendBinary(byte[] data) { return true; }
+        @Override public boolean sendBinary(byte[] data) { return sendBinaryResult; }
 
         int wsConnectCount(String tunnelId) {
             int count = 0;

@@ -47,27 +47,45 @@ type channelEntry struct {
 // 再把 channel payload 直接交给 handler，Agent 内不再伪造第二层 Socket。
 type Session struct {
 	conn       termsession.Socket
-	writeMu    sync.Mutex
 	channels   map[string]*channelEntry
 	routes     map[string]*channelEntry
 	channelsMu sync.RWMutex
 	onOpen     OpenHandler
 	onControl  ControlHandler
 	logger     *logs.Logger
+	highWrites chan physicalWrite
+	dataWrites chan physicalWrite
+	writerDone chan struct{}
+}
+
+type physicalWrite struct {
+	ctx     context.Context
+	msgType termsession.MessageType
+	data    []byte
+	result  chan error
 }
 
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 	return &Session{
-		conn:      conn,
-		channels:  make(map[string]*channelEntry),
-		routes:    make(map[string]*channelEntry),
-		onOpen:    opts.OnOpen,
-		onControl: opts.OnControl,
-		logger:    opts.Logger,
+		conn:       conn,
+		channels:   make(map[string]*channelEntry),
+		routes:     make(map[string]*channelEntry),
+		onOpen:     opts.OnOpen,
+		onControl:  opts.OnControl,
+		logger:     opts.Logger,
+		highWrites: make(chan physicalWrite, 128),
+		dataWrites: make(chan physicalWrite, 128),
+		writerDone: make(chan struct{}),
 	}
 }
 
 func (s *Session) Run(ctx context.Context) error {
+	writerCtx, cancelWriter := context.WithCancel(ctx)
+	go s.writeLoop(writerCtx)
+	defer func() {
+		cancelWriter()
+		<-s.writerDone
+	}()
 	defer s.closeAllChannels()
 	return s.readLoop(ctx)
 }
@@ -245,6 +263,11 @@ func (s *Session) SendControl(ctx context.Context, msg map[string]any) error {
 }
 
 func (s *Session) writeChannelFrame(ctx context.Context, id string, payload []byte, binary bool) error {
+	return s.writeChannelFramePriority(ctx, id, payload, binary, termsession.FramePriorityNormal)
+}
+
+func (s *Session) writeChannelFramePriority(ctx context.Context, id string, payload []byte,
+	binary bool, priority termsession.FramePriority) error {
 	extra := protocol.WSDataText
 	if binary {
 		extra = protocol.WSDataBinary
@@ -253,15 +276,12 @@ func (s *Session) writeChannelFrame(ctx context.Context, id string, payload []by
 	if err != nil {
 		return err
 	}
-	return s.writeBinary(ctx, frame)
+	return s.submitWrite(ctx, termsession.MessageBinary, frame,
+		priority == termsession.FramePriorityHigh)
 }
 
 func (s *Session) writeBinary(ctx context.Context, data []byte) error {
-	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.conn.Write(writeCtx, termsession.MessageBinary, data)
+	return s.submitWrite(ctx, termsession.MessageBinary, data, false)
 }
 
 func (s *Session) sendJSON(ctx context.Context, value any) error {
@@ -269,11 +289,55 @@ func (s *Session) sendJSON(ctx context.Context, value any) error {
 	if err != nil {
 		return err
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.conn.Write(writeCtx, termsession.MessageText, bytes)
+	return s.submitWrite(ctx, termsession.MessageText, bytes, true)
+}
+
+func (s *Session) submitWrite(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
+	request := physicalWrite{ctx: ctx, msgType: msgType, data: data, result: make(chan error, 1)}
+	queue := s.dataWrites
+	if high {
+		queue = s.highWrites
+	}
+	select {
+	case queue <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Session) writeLoop(ctx context.Context) {
+	defer close(s.writerDone)
+	for {
+		// 已排队控制/InputAck/LayoutLease 总是先于其他 logical channel 的
+		// screen state；单个 channel 的生产者仍同步等待结果，因此 FIFO 不变。
+		select {
+		case request := <-s.highWrites:
+			s.performWrite(request)
+			continue
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case request := <-s.highWrites:
+			s.performWrite(request)
+		case request := <-s.dataWrites:
+			s.performWrite(request)
+		}
+	}
+}
+
+func (s *Session) performWrite(request physicalWrite) {
+	writeCtx, cancel := context.WithTimeout(request.ctx, 10*time.Second)
+	err := s.conn.Write(writeCtx, request.msgType, request.data)
+	cancel()
+	request.result <- err
 }
 
 type channelSink struct {
@@ -283,13 +347,18 @@ type channelSink struct {
 }
 
 func (sink *channelSink) WriteFrame(ctx context.Context, payload []byte, binary bool) error {
+	return sink.WriteFramePriority(ctx, payload, binary, termsession.FramePriorityNormal)
+}
+
+func (sink *channelSink) WriteFramePriority(ctx context.Context, payload []byte, binary bool,
+	priority termsession.FramePriority) error {
 	sink.session.channelsMu.RLock()
 	current := sink.session.channels[sink.id] == sink.entry
 	sink.session.channelsMu.RUnlock()
 	if !current {
 		return fmt.Errorf("channel %s closed", sink.id)
 	}
-	return sink.session.writeChannelFrame(ctx, sink.id, payload, binary)
+	return sink.session.writeChannelFramePriority(ctx, sink.id, payload, binary, priority)
 }
 
 func cleanPath(raw string) string {

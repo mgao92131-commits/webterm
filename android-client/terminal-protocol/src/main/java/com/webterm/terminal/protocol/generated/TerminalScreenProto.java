@@ -28206,6 +28206,36 @@ public final class TerminalScreenProto {
      * @return The reverseVideo.
      */
     boolean getReverseVideo();
+
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor>
+        getIndexedColorsList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getIndexedColors(int index);
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    int getIndexedColorsCount();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder>
+        getIndexedColorsOrBuilderList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder getIndexedColorsOrBuilder(
+        int index);
+
+    /**
+     * <code>uint64 generation = 6;</code>
+     * @return The generation.
+     */
+    long getGeneration();
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.TerminalPalette}
@@ -28229,6 +28259,7 @@ public final class TerminalScreenProto {
       super(builder);
     }
     private TerminalPalette() {
+      indexedColors_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -28334,6 +28365,58 @@ public final class TerminalScreenProto {
       return reverseVideo_;
     }
 
+    public static final int INDEXED_COLORS_FIELD_NUMBER = 5;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor> indexedColors_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor> getIndexedColorsList() {
+      return indexedColors_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder>
+        getIndexedColorsOrBuilderList() {
+      return indexedColors_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    @java.lang.Override
+    public int getIndexedColorsCount() {
+      return indexedColors_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getIndexedColors(int index) {
+      return indexedColors_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder getIndexedColorsOrBuilder(
+        int index) {
+      return indexedColors_.get(index);
+    }
+
+    public static final int GENERATION_FIELD_NUMBER = 6;
+    private long generation_ = 0L;
+    /**
+     * <code>uint64 generation = 6;</code>
+     * @return The generation.
+     */
+    @java.lang.Override
+    public long getGeneration() {
+      return generation_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -28360,6 +28443,12 @@ public final class TerminalScreenProto {
       if (reverseVideo_ != false) {
         output.writeBool(4, reverseVideo_);
       }
+      for (int i = 0; i < indexedColors_.size(); i++) {
+        output.writeMessage(5, indexedColors_.get(i));
+      }
+      if (generation_ != 0L) {
+        output.writeUInt64(6, generation_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -28384,6 +28473,14 @@ public final class TerminalScreenProto {
       if (reverseVideo_ != false) {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(4, reverseVideo_);
+      }
+      for (int i = 0; i < indexedColors_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(5, indexedColors_.get(i));
+      }
+      if (generation_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(6, generation_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -28417,6 +28514,10 @@ public final class TerminalScreenProto {
       }
       if (getReverseVideo()
           != other.getReverseVideo()) return false;
+      if (!getIndexedColorsList()
+          .equals(other.getIndexedColorsList())) return false;
+      if (getGeneration()
+          != other.getGeneration()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -28443,6 +28544,13 @@ public final class TerminalScreenProto {
       hash = (37 * hash) + REVERSE_VIDEO_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
           getReverseVideo());
+      if (getIndexedColorsCount() > 0) {
+        hash = (37 * hash) + INDEXED_COLORS_FIELD_NUMBER;
+        hash = (53 * hash) + getIndexedColorsList().hashCode();
+      }
+      hash = (37 * hash) + GENERATION_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getGeneration());
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -28576,6 +28684,7 @@ public final class TerminalScreenProto {
           getDefaultFgFieldBuilder();
           getDefaultBgFieldBuilder();
           getCursorColorFieldBuilder();
+          getIndexedColorsFieldBuilder();
         }
       }
       @java.lang.Override
@@ -28598,6 +28707,14 @@ public final class TerminalScreenProto {
           cursorColorBuilder_ = null;
         }
         reverseVideo_ = false;
+        if (indexedColorsBuilder_ == null) {
+          indexedColors_ = java.util.Collections.emptyList();
+        } else {
+          indexedColors_ = null;
+          indexedColorsBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000010);
+        generation_ = 0L;
         return this;
       }
 
@@ -28624,9 +28741,22 @@ public final class TerminalScreenProto {
       @java.lang.Override
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette buildPartial() {
         com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette result = new com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette(this);
+        buildPartialRepeatedFields(result);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
+      }
+
+      private void buildPartialRepeatedFields(com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette result) {
+        if (indexedColorsBuilder_ == null) {
+          if (((bitField0_ & 0x00000010) != 0)) {
+            indexedColors_ = java.util.Collections.unmodifiableList(indexedColors_);
+            bitField0_ = (bitField0_ & ~0x00000010);
+          }
+          result.indexedColors_ = indexedColors_;
+        } else {
+          result.indexedColors_ = indexedColorsBuilder_.build();
+        }
       }
 
       private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette result) {
@@ -28652,6 +28782,9 @@ public final class TerminalScreenProto {
         }
         if (((from_bitField0_ & 0x00000008) != 0)) {
           result.reverseVideo_ = reverseVideo_;
+        }
+        if (((from_bitField0_ & 0x00000020) != 0)) {
+          result.generation_ = generation_;
         }
         result.bitField0_ |= to_bitField0_;
       }
@@ -28679,6 +28812,35 @@ public final class TerminalScreenProto {
         }
         if (other.getReverseVideo() != false) {
           setReverseVideo(other.getReverseVideo());
+        }
+        if (indexedColorsBuilder_ == null) {
+          if (!other.indexedColors_.isEmpty()) {
+            if (indexedColors_.isEmpty()) {
+              indexedColors_ = other.indexedColors_;
+              bitField0_ = (bitField0_ & ~0x00000010);
+            } else {
+              ensureIndexedColorsIsMutable();
+              indexedColors_.addAll(other.indexedColors_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.indexedColors_.isEmpty()) {
+            if (indexedColorsBuilder_.isEmpty()) {
+              indexedColorsBuilder_.dispose();
+              indexedColorsBuilder_ = null;
+              indexedColors_ = other.indexedColors_;
+              bitField0_ = (bitField0_ & ~0x00000010);
+              indexedColorsBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getIndexedColorsFieldBuilder() : null;
+            } else {
+              indexedColorsBuilder_.addAllMessages(other.indexedColors_);
+            }
+          }
+        }
+        if (other.getGeneration() != 0L) {
+          setGeneration(other.getGeneration());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -28732,6 +28894,24 @@ public final class TerminalScreenProto {
                 bitField0_ |= 0x00000008;
                 break;
               } // case 32
+              case 42: {
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.parser(),
+                        extensionRegistry);
+                if (indexedColorsBuilder_ == null) {
+                  ensureIndexedColorsIsMutable();
+                  indexedColors_.add(m);
+                } else {
+                  indexedColorsBuilder_.addMessage(m);
+                }
+                break;
+              } // case 42
+              case 48: {
+                generation_ = input.readUInt64();
+                bitField0_ |= 0x00000020;
+                break;
+              } // case 48
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -29144,6 +29324,278 @@ public final class TerminalScreenProto {
         return this;
       }
 
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor> indexedColors_ =
+        java.util.Collections.emptyList();
+      private void ensureIndexedColorsIsMutable() {
+        if (!((bitField0_ & 0x00000010) != 0)) {
+          indexedColors_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor>(indexedColors_);
+          bitField0_ |= 0x00000010;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder> indexedColorsBuilder_;
+
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor> getIndexedColorsList() {
+        if (indexedColorsBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(indexedColors_);
+        } else {
+          return indexedColorsBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public int getIndexedColorsCount() {
+        if (indexedColorsBuilder_ == null) {
+          return indexedColors_.size();
+        } else {
+          return indexedColorsBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getIndexedColors(int index) {
+        if (indexedColorsBuilder_ == null) {
+          return indexedColors_.get(index);
+        } else {
+          return indexedColorsBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder setIndexedColors(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor value) {
+        if (indexedColorsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureIndexedColorsIsMutable();
+          indexedColors_.set(index, value);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder setIndexedColors(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder builderForValue) {
+        if (indexedColorsBuilder_ == null) {
+          ensureIndexedColorsIsMutable();
+          indexedColors_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          indexedColorsBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder addIndexedColors(com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor value) {
+        if (indexedColorsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureIndexedColorsIsMutable();
+          indexedColors_.add(value);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder addIndexedColors(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor value) {
+        if (indexedColorsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureIndexedColorsIsMutable();
+          indexedColors_.add(index, value);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder addIndexedColors(
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder builderForValue) {
+        if (indexedColorsBuilder_ == null) {
+          ensureIndexedColorsIsMutable();
+          indexedColors_.add(builderForValue.build());
+          onChanged();
+        } else {
+          indexedColorsBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder addIndexedColors(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder builderForValue) {
+        if (indexedColorsBuilder_ == null) {
+          ensureIndexedColorsIsMutable();
+          indexedColors_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          indexedColorsBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder addAllIndexedColors(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor> values) {
+        if (indexedColorsBuilder_ == null) {
+          ensureIndexedColorsIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, indexedColors_);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder clearIndexedColors() {
+        if (indexedColorsBuilder_ == null) {
+          indexedColors_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000010);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public Builder removeIndexedColors(int index) {
+        if (indexedColorsBuilder_ == null) {
+          ensureIndexedColorsIsMutable();
+          indexedColors_.remove(index);
+          onChanged();
+        } else {
+          indexedColorsBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder getIndexedColorsBuilder(
+          int index) {
+        return getIndexedColorsFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder getIndexedColorsOrBuilder(
+          int index) {
+        if (indexedColorsBuilder_ == null) {
+          return indexedColors_.get(index);  } else {
+          return indexedColorsBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder>
+           getIndexedColorsOrBuilderList() {
+        if (indexedColorsBuilder_ != null) {
+          return indexedColorsBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(indexedColors_);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder addIndexedColorsBuilder() {
+        return getIndexedColorsFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder addIndexedColorsBuilder(
+          int index) {
+        return getIndexedColorsFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.IndexedPaletteColor indexed_colors = 5;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder>
+           getIndexedColorsBuilderList() {
+        return getIndexedColorsFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder>
+          getIndexedColorsFieldBuilder() {
+        if (indexedColorsBuilder_ == null) {
+          indexedColorsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder>(
+                  indexedColors_,
+                  ((bitField0_ & 0x00000010) != 0),
+                  getParentForChildren(),
+                  isClean());
+          indexedColors_ = null;
+        }
+        return indexedColorsBuilder_;
+      }
+
+      private long generation_ ;
+      /**
+       * <code>uint64 generation = 6;</code>
+       * @return The generation.
+       */
+      @java.lang.Override
+      public long getGeneration() {
+        return generation_;
+      }
+      /**
+       * <code>uint64 generation = 6;</code>
+       * @param value The generation to set.
+       * @return This builder for chaining.
+       */
+      public Builder setGeneration(long value) {
+
+        generation_ = value;
+        bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint64 generation = 6;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearGeneration() {
+        bitField0_ = (bitField0_ & ~0x00000020);
+        generation_ = 0L;
+        onChanged();
+        return this;
+      }
+
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.TerminalPalette)
     }
 
@@ -29190,6 +29642,512 @@ public final class TerminalScreenProto {
 
     @java.lang.Override
     public com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalPalette getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface IndexedPaletteColorOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v1.IndexedPaletteColor)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>int32 index = 1;</code>
+     * @return The index.
+     */
+    int getIndex();
+
+    /**
+     * <code>uint32 rgb = 2;</code>
+     * @return The rgb.
+     */
+    int getRgb();
+  }
+  /**
+   * Protobuf type {@code webterm.terminal.screen.v1.IndexedPaletteColor}
+   */
+  public static final class IndexedPaletteColor extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v1.IndexedPaletteColor)
+      IndexedPaletteColorOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        IndexedPaletteColor.class.getName());
+    }
+    // Use IndexedPaletteColor.newBuilder() to construct.
+    private IndexedPaletteColor(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private IndexedPaletteColor() {
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder.class);
+    }
+
+    public static final int INDEX_FIELD_NUMBER = 1;
+    private int index_ = 0;
+    /**
+     * <code>int32 index = 1;</code>
+     * @return The index.
+     */
+    @java.lang.Override
+    public int getIndex() {
+      return index_;
+    }
+
+    public static final int RGB_FIELD_NUMBER = 2;
+    private int rgb_ = 0;
+    /**
+     * <code>uint32 rgb = 2;</code>
+     * @return The rgb.
+     */
+    @java.lang.Override
+    public int getRgb() {
+      return rgb_;
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (index_ != 0) {
+        output.writeInt32(1, index_);
+      }
+      if (rgb_ != 0) {
+        output.writeUInt32(2, rgb_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (index_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt32Size(1, index_);
+      }
+      if (rgb_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt32Size(2, rgb_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor)) {
+        return super.equals(obj);
+      }
+      com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor other = (com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor) obj;
+
+      if (getIndex()
+          != other.getIndex()) return false;
+      if (getRgb()
+          != other.getRgb()) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + INDEX_FIELD_NUMBER;
+      hash = (53 * hash) + getIndex();
+      hash = (37 * hash) + RGB_FIELD_NUMBER;
+      hash = (53 * hash) + getRgb();
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code webterm.terminal.screen.v1.IndexedPaletteColor}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v1.IndexedPaletteColor)
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColorOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.Builder.class);
+      }
+
+      // Construct using com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        index_ = 0;
+        rgb_ = 0;
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor build() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor result = new com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.index_ = index_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.rgb_ = rgb_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor.getDefaultInstance()) return this;
+        if (other.getIndex() != 0) {
+          setIndex(other.getIndex());
+        }
+        if (other.getRgb() != 0) {
+          setRgb(other.getRgb());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 8: {
+                index_ = input.readInt32();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 8
+              case 16: {
+                rgb_ = input.readUInt32();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 16
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private int index_ ;
+      /**
+       * <code>int32 index = 1;</code>
+       * @return The index.
+       */
+      @java.lang.Override
+      public int getIndex() {
+        return index_;
+      }
+      /**
+       * <code>int32 index = 1;</code>
+       * @param value The index to set.
+       * @return This builder for chaining.
+       */
+      public Builder setIndex(int value) {
+
+        index_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>int32 index = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearIndex() {
+        bitField0_ = (bitField0_ & ~0x00000001);
+        index_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private int rgb_ ;
+      /**
+       * <code>uint32 rgb = 2;</code>
+       * @return The rgb.
+       */
+      @java.lang.Override
+      public int getRgb() {
+        return rgb_;
+      }
+      /**
+       * <code>uint32 rgb = 2;</code>
+       * @param value The rgb to set.
+       * @return This builder for chaining.
+       */
+      public Builder setRgb(int value) {
+
+        rgb_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint32 rgb = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearRgb() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        rgb_ = 0;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.IndexedPaletteColor)
+    }
+
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v1.IndexedPaletteColor)
+    private static final com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor();
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<IndexedPaletteColor>
+        PARSER = new com.google.protobuf.AbstractParser<IndexedPaletteColor>() {
+      @java.lang.Override
+      public IndexedPaletteColor parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<IndexedPaletteColor> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<IndexedPaletteColor> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.IndexedPaletteColor getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -55023,6 +55981,11 @@ public final class TerminalScreenProto {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalPalette_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor;
+  private static final
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor;
   private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -55298,131 +56261,135 @@ public final class TerminalScreenProto {
       "use_tracking\030\004 \001(\0162).webterm.terminal.sc" +
       "reen.v1.MouseTracking\022A\n\016mouse_encoding\030" +
       "\005 \001(\0162).webterm.terminal.screen.v1.Mouse" +
-      "Encoding\022\027\n\017focus_reporting\030\006 \001(\010\"\317\001\n\017Te" +
+      "Encoding\022\027\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017Te" +
       "rminalPalette\0225\n\ndefault_fg\030\001 \001(\0132!.webt" +
       "erm.terminal.screen.v1.Color\0225\n\ndefault_" +
       "bg\030\002 \001(\0132!.webterm.terminal.screen.v1.Co" +
       "lor\0227\n\014cursor_color\030\003 \001(\0132!.webterm.term" +
       "inal.screen.v1.Color\022\025\n\rreverse_video\030\004 " +
-      "\001(\010\"\300\001\n\rHistoryWindow\022\037\n\027first_available" +
-      "_line_id\030\001 \001(\004\022\036\n\026first_included_line_id" +
-      "\030\002 \001(\004\022\035\n\025last_included_line_id\030\003 \001(\004\022\027\n" +
-      "\017has_more_before\030\004 \001(\010\0226\n\005lines\030\005 \003(\0132\'." +
-      "webterm.terminal.screen.v1.HistoryLine\"]" +
-      "\n\013HistoryLine\022\n\n\002id\030\001 \001(\004\022\017\n\007wrapped\030\002 \001" +
-      "(\010\0221\n\004runs\030\003 \003(\0132#.webterm.terminal.scre" +
-      "en.v1.CellRun\"a\n\016HistoryRequest\022\022\n\nreque" +
-      "st_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016bef" +
-      "ore_line_id\030\003 \001(\004\022\r\n\005limit\030\004 \001(\005\"\262\002\n\013His" +
-      "toryPage\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014layout_e" +
-      "poch\030\002 \001(\004\022\026\n\016as_of_revision\030\003 \001(\004\022\037\n\027fi" +
-      "rst_available_line_id\030\004 \001(\004\022\027\n\017has_more_" +
-      "before\030\005 \001(\010\0226\n\005lines\030\006 \003(\0132\'.webterm.te" +
-      "rminal.screen.v1.HistoryLine\0229\n\006styles\030\007" +
-      " \003(\0132).webterm.terminal.screen.v1.Termin" +
-      "alStyle\0224\n\005links\030\010 \003(\0132%.webterm.termina" +
-      "l.screen.v1.Hyperlink\"D\n\013HistoryTrim\022\024\n\014" +
-      "layout_epoch\030\001 \001(\004\022\037\n\027first_available_li" +
-      "ne_id\030\002 \001(\004\"N\n\rResyncRequest\022\024\n\014layout_e" +
-      "poch\030\001 \001(\004\022\027\n\017screen_revision\030\002 \001(\004\022\016\n\006r" +
-      "eason\030\003 \001(\t\"8\n\rAcquireLayout\022\022\n\nrequest_" +
-      "id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"\244\001\n\013Layout" +
-      "Lease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002 " +
-      "\001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001(" +
-      "\010\0222\n\010geometry\030\005 \001(\0132 .webterm.terminal.s" +
-      "creen.v1.Size\022\025\n\rexpires_at_ms\030\006 \001(\004\"!\n\r" +
-      "ReleaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006Resiz" +
-      "e\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010lease_i" +
-      "d\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\360\002\n\rTerminal" +
-      "Input\022\020\n\010lease_id\030\001 \001(\t\022\032\n\022client_instan" +
-      "ce_id\030\002 \001(\t\022\021\n\tinput_seq\030\003 \001(\004\0225\n\004text\030\n" +
-      " \001(\0132%.webterm.terminal.screen.v1.TextIn" +
-      "putH\000\0223\n\003key\030\013 \001(\0132$.webterm.terminal.sc" +
-      "reen.v1.KeyInputH\000\0227\n\005paste\030\014 \001(\0132&.webt" +
-      "erm.terminal.screen.v1.PasteInputH\000\0227\n\005m" +
-      "ouse\030\r \001(\0132&.webterm.terminal.screen.v1." +
-      "MouseInputH\000\0227\n\005focus\030\016 \001(\0132&.webterm.te" +
-      "rminal.screen.v1.FocusInputH\000B\007\n\005input\"\223" +
-      "\001\n\010InputAck\022\032\n\022client_instance_id\030\001 \001(\t\022" +
-      "\021\n\tinput_seq\030\002 \001(\004\022\034\n\024terminal_instance_" +
-      "id\030\003 \001(\t\022:\n\006status\030\004 \001(\0162*.webterm.termi" +
-      "nal.screen.v1.InputAckStatus\"\031\n\tTextInpu" +
-      "t\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key\030\001 \001(\t" +
-      "\022:\n\tmodifiers\030\002 \001(\0132\'.webterm.terminal.s" +
-      "creen.v1.ModifierSet\022\017\n\007pressed\030\003 \001(\010\"\032\n" +
-      "\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMouseInput" +
-      "\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006button\030\003 \001" +
-      "(\0162\'.webterm.terminal.screen.v1.MouseBut" +
-      "ton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n\tmodifiers\030\005 " +
+      "\001(\010\022G\n\016indexed_colors\030\005 \003(\0132/.webterm.te" +
+      "rminal.screen.v1.IndexedPaletteColor\022\022\n\n" +
+      "generation\030\006 \001(\004\"1\n\023IndexedPaletteColor\022" +
+      "\r\n\005index\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"\300\001\n\rHistoryW" +
+      "indow\022\037\n\027first_available_line_id\030\001 \001(\004\022\036" +
+      "\n\026first_included_line_id\030\002 \001(\004\022\035\n\025last_i" +
+      "ncluded_line_id\030\003 \001(\004\022\027\n\017has_more_before" +
+      "\030\004 \001(\010\0226\n\005lines\030\005 \003(\0132\'.webterm.terminal" +
+      ".screen.v1.HistoryLine\"]\n\013HistoryLine\022\n\n" +
+      "\002id\030\001 \001(\004\022\017\n\007wrapped\030\002 \001(\010\0221\n\004runs\030\003 \003(\013" +
+      "2#.webterm.terminal.screen.v1.CellRun\"a\n" +
+      "\016HistoryRequest\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014l" +
+      "ayout_epoch\030\002 \001(\004\022\026\n\016before_line_id\030\003 \001(" +
+      "\004\022\r\n\005limit\030\004 \001(\005\"\262\002\n\013HistoryPage\022\022\n\nrequ" +
+      "est_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016as" +
+      "_of_revision\030\003 \001(\004\022\037\n\027first_available_li" +
+      "ne_id\030\004 \001(\004\022\027\n\017has_more_before\030\005 \001(\010\0226\n\005" +
+      "lines\030\006 \003(\0132\'.webterm.terminal.screen.v1" +
+      ".HistoryLine\0229\n\006styles\030\007 \003(\0132).webterm.t" +
+      "erminal.screen.v1.TerminalStyle\0224\n\005links" +
+      "\030\010 \003(\0132%.webterm.terminal.screen.v1.Hype" +
+      "rlink\"D\n\013HistoryTrim\022\024\n\014layout_epoch\030\001 \001" +
+      "(\004\022\037\n\027first_available_line_id\030\002 \001(\004\"N\n\rR" +
+      "esyncRequest\022\024\n\014layout_epoch\030\001 \001(\004\022\027\n\017sc" +
+      "reen_revision\030\002 \001(\004\022\016\n\006reason\030\003 \001(\t\"8\n\rA" +
+      "cquireLayout\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013inte" +
+      "ractive\030\002 \001(\010\"\244\001\n\013LayoutLease\022\022\n\nrequest" +
+      "_id\030\001 \001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n\007granted\030\003" +
+      " \001(\010\022\023\n\013interactive\030\004 \001(\010\0222\n\010geometry\030\005 " +
+      "\001(\0132 .webterm.terminal.screen.v1.Size\022\025\n" +
+      "\rexpires_at_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n" +
+      "\010lease_id\030\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022" +
+      "\014\n\004rows\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nreque" +
+      "st_id\030\004 \001(\t\"\360\002\n\rTerminalInput\022\020\n\010lease_i" +
+      "d\030\001 \001(\t\022\032\n\022client_instance_id\030\002 \001(\t\022\021\n\ti" +
+      "nput_seq\030\003 \001(\004\0225\n\004text\030\n \001(\0132%.webterm.t" +
+      "erminal.screen.v1.TextInputH\000\0223\n\003key\030\013 \001" +
+      "(\0132$.webterm.terminal.screen.v1.KeyInput" +
+      "H\000\0227\n\005paste\030\014 \001(\0132&.webterm.terminal.scr" +
+      "een.v1.PasteInputH\000\0227\n\005mouse\030\r \001(\0132&.web" +
+      "term.terminal.screen.v1.MouseInputH\000\0227\n\005" +
+      "focus\030\016 \001(\0132&.webterm.terminal.screen.v1" +
+      ".FocusInputH\000B\007\n\005input\"\223\001\n\010InputAck\022\032\n\022c" +
+      "lient_instance_id\030\001 \001(\t\022\021\n\tinput_seq\030\002 \001" +
+      "(\004\022\034\n\024terminal_instance_id\030\003 \001(\t\022:\n\006stat" +
+      "us\030\004 \001(\0162*.webterm.terminal.screen.v1.In" +
+      "putAckStatus\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"" +
+      "d\n\010KeyInput\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 " +
       "\001(\0132\'.webterm.terminal.screen.v1.Modifie" +
-      "rSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFocusInput\022\017\n\007f" +
-      "ocused\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005shift\030\001 \001" +
-      "(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 " +
-      "\001(\010\"\343\004\n\016TerminalEffect\022\023\n\013instance_id\030\001 " +
-      "\001(\t\022\027\n\017screen_revision\030\002 \001(\004\0220\n\004bell\030\n \001" +
-      "(\0132 .webterm.terminal.screen.v1.BellH\000\0229" +
-      "\n\005title\030\013 \001(\0132(.webterm.terminal.screen." +
-      "v1.TitleChangedH\000\022B\n\003cwd\030\014 \001(\01323.webterm" +
-      ".terminal.screen.v1.WorkingDirectoryChan" +
-      "gedH\000\022J\n\016clipboard_read\030\r \001(\01320.webterm." +
-      "terminal.screen.v1.ClipboardReadRequestH" +
-      "\000\022L\n\017clipboard_write\030\016 \001(\01321.webterm.ter" +
-      "minal.screen.v1.ClipboardWriteRequestH\000\022" +
-      "G\n\014notification\030\017 \001(\0132/.webterm.terminal" +
-      ".screen.v1.DesktopNotificationH\000\022=\n\007pale" +
-      "tte\030\020 \001(\0132*.webterm.terminal.screen.v1.P" +
-      "aletteChangedH\000\022F\n\nshell_mark\030\021 \001(\01320.we" +
-      "bterm.terminal.screen.v1.ShellIntegratio" +
-      "nMarkH\000B\010\n\006effect\"\006\n\004Bell\"\035\n\014TitleChange" +
-      "d\022\r\n\005title\030\001 \001(\t\"\'\n\027WorkingDirectoryChan" +
-      "ged\022\014\n\004path\030\001 \001(\t\"=\n\024ClipboardReadReques" +
-      "t\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t" +
-      "\"L\n\025ClipboardWriteRequest\022\022\n\nrequest_id\030" +
-      "\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2" +
-      "\n\023DesktopNotification\022\r\n\005title\030\001 \001(\t\022\014\n\004" +
-      "body\030\002 \001(\t\"N\n\016PaletteChanged\022<\n\007palette\030" +
-      "\001 \001(\0132+.webterm.terminal.screen.v1.Termi" +
-      "nalPalette\"2\n\024ShellIntegrationMark\022\014\n\004ty" +
-      "pe\030\001 \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021ClipboardRespo" +
-      "nse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010" +
-      "\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\316\001\n\014Term" +
-      "inalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance" +
-      "_id\030\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n" +
-      "\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022\014\n\004cols\030\t" +
-      " \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_at_ms\030\013 \001(" +
-      "\003\022\031\n\021last_active_at_ms\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006" +
-      "\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027" +
-      "BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND" +
-      "_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tC" +
-      "olorKind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025" +
-      "COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DE" +
-      "FAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COL" +
-      "OR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n" +
-      "\013CursorShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED" +
-      "\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHA" +
-      "PE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n" +
-      "\rMouseTracking\022\036\n\032MOUSE_TRACKING_UNSPECI" +
-      "FIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE" +
-      "_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020" +
-      "\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n" +
-      "\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_" +
-      "TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_S" +
-      "GR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_E" +
-      "NCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_" +
-      "X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_" +
-      "ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004" +
-      "*\255\001\n\016InputAckStatus\022 \n\034INPUT_ACK_STATUS_" +
-      "UNSPECIFIED\020\000\022\034\n\030INPUT_ACK_STATUS_WRITTE" +
-      "N\020\001\022\034\n\030INPUT_ACK_STATUS_IGNORED\020\002\022\035\n\031INP" +
-      "UT_ACK_STATUS_REJECTED\020\003\022\036\n\032INPUT_ACK_ST" +
-      "ATUS_UNCERTAIN\020\004*\242\001\n\013MouseButton\022\034\n\030MOUS" +
-      "E_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUTTON_L" +
-      "EFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022MOUSE_" +
-      "BUTTON_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_WHEEL\020\004\022\025" +
-      "\n\021MOUSE_BUTTON_MOVE\020\005Bq\n\'com.webterm.ter" +
-      "minal.protocol.generatedB\023TerminalScreen" +
-      "ProtoZ1webterm/go-core/internal/screenpr" +
-      "otocol/generatedb\006proto3"
+      "rSet\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004d" +
+      "ata\030\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n" +
+      "\003col\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'.webterm.ter" +
+      "minal.screen.v1.MouseButton\022\023\n\013wheel_del" +
+      "ta\030\004 \001(\005\022:\n\tmodifiers\030\005 \001(\0132\'.webterm.te" +
+      "rminal.screen.v1.ModifierSet\022\017\n\007pressed\030" +
+      "\006 \001(\010\"\035\n\nFocusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013" +
+      "ModifierSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022" +
+      "\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\343\004\n\016Terminal" +
+      "Effect\022\023\n\013instance_id\030\001 \001(\t\022\027\n\017screen_re" +
+      "vision\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .webterm.ter" +
+      "minal.screen.v1.BellH\000\0229\n\005title\030\013 \001(\0132(." +
+      "webterm.terminal.screen.v1.TitleChangedH" +
+      "\000\022B\n\003cwd\030\014 \001(\01323.webterm.terminal.screen" +
+      ".v1.WorkingDirectoryChangedH\000\022J\n\016clipboa" +
+      "rd_read\030\r \001(\01320.webterm.terminal.screen." +
+      "v1.ClipboardReadRequestH\000\022L\n\017clipboard_w" +
+      "rite\030\016 \001(\01321.webterm.terminal.screen.v1." +
+      "ClipboardWriteRequestH\000\022G\n\014notification\030" +
+      "\017 \001(\0132/.webterm.terminal.screen.v1.Deskt" +
+      "opNotificationH\000\022=\n\007palette\030\020 \001(\0132*.webt" +
+      "erm.terminal.screen.v1.PaletteChangedH\000\022" +
+      "F\n\nshell_mark\030\021 \001(\01320.webterm.terminal.s" +
+      "creen.v1.ShellIntegrationMarkH\000B\010\n\006effec" +
+      "t\"\006\n\004Bell\"\035\n\014TitleChanged\022\r\n\005title\030\001 \001(\t" +
+      "\"\'\n\027WorkingDirectoryChanged\022\014\n\004path\030\001 \001(" +
+      "\t\"=\n\024ClipboardReadRequest\022\022\n\nrequest_id\030" +
+      "\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWri" +
+      "teRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboa" +
+      "rd\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotific" +
+      "ation\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"N\n\016Pa" +
+      "letteChanged\022<\n\007palette\030\001 \001(\0132+.webterm." +
+      "terminal.screen.v1.TerminalPalette\"2\n\024Sh" +
+      "ellIntegrationMark\022\014\n\004type\030\001 \001(\t\022\014\n\004data" +
+      "\030\002 \001(\t\"W\n\021ClipboardResponse\022\022\n\nrequest_i" +
+      "d\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(" +
+      "\010\022\014\n\004data\030\004 \001(\014\"\316\001\n\014TerminalInfo\022\022\n\nsess" +
+      "ion_id\030\001 \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\r\n\005tit" +
+      "le\030\004 \001(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n\007command\030\007 \001(\t\022\016" +
+      "\n\006status\030\010 \001(\t\022\014\n\004cols\030\t \001(\005\022\014\n\004rows\030\n \001" +
+      "(\005\022\025\n\rcreated_at_ms\030\013 \001(\003\022\031\n\021last_active" +
+      "_at_ms\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code" +
+      "\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027BUFFER_KIND_UNSP" +
+      "ECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001\022\031\n\025BUFFE" +
+      "R_KIND_ALTERNATE\020\002*\240\001\n\tColorKind\022\032\n\026COLO" +
+      "R_KIND_UNSPECIFIED\020\000\022\031\n\025COLOR_KIND_DEFAU" +
+      "LT_FG\020\001\022\031\n\025COLOR_KIND_DEFAULT_BG\020\002\022\025\n\021CO" +
+      "LOR_KIND_CURSOR\020\003\022\026\n\022COLOR_KIND_INDEXED\020" +
+      "\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013CursorShape\022\034\n\030" +
+      "CURSOR_SHAPE_UNSPECIFIED\020\000\022\026\n\022CURSOR_SHA" +
+      "PE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020\002\022\032\n\026CURS" +
+      "OR_SHAPE_UNDERLINE\020\003*\374\001\n\rMouseTracking\022\036" +
+      "\n\032MOUSE_TRACKING_UNSPECIFIED\020\000\022\027\n\023MOUSE_" +
+      "TRACKING_NONE\020\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022" +
+      "\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n\036MOUSE_TRACK" +
+      "ING_VT200_HIGHLIGHT\020\004\022\037\n\033MOUSE_TRACKING_" +
+      "BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRACKING_ANY_EVE" +
+      "NT\020\006\022\035\n\031MOUSE_TRACKING_SGR_PIXELS\020\007*\222\001\n\r" +
+      "MouseEncoding\022\036\n\032MOUSE_ENCODING_UNSPECIF" +
+      "IED\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001\022\027\n\023MOUSE_E" +
+      "NCODING_UTF8\020\002\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030" +
+      "\n\024MOUSE_ENCODING_URXVT\020\004*\255\001\n\016InputAckSta" +
+      "tus\022 \n\034INPUT_ACK_STATUS_UNSPECIFIED\020\000\022\034\n" +
+      "\030INPUT_ACK_STATUS_WRITTEN\020\001\022\034\n\030INPUT_ACK" +
+      "_STATUS_IGNORED\020\002\022\035\n\031INPUT_ACK_STATUS_RE" +
+      "JECTED\020\003\022\036\n\032INPUT_ACK_STATUS_UNCERTAIN\020\004" +
+      "*\242\001\n\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECI" +
+      "FIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_B" +
+      "UTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026" +
+      "\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_M" +
+      "OVE\020\005Bq\n\'com.webterm.terminal.protocol.g" +
+      "eneratedB\023TerminalScreenProtoZ1webterm/g" +
+      "o-core/internal/screenprotocol/generated" +
+      "b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -55553,183 +56520,189 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_TerminalPalette_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalPalette_descriptor,
-        new java.lang.String[] { "DefaultFg", "DefaultBg", "CursorColor", "ReverseVideo", });
-    internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor =
+        new java.lang.String[] { "DefaultFg", "DefaultBg", "CursorColor", "ReverseVideo", "IndexedColors", "Generation", });
+    internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor =
       getDescriptor().getMessageTypes().get(21);
+    internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor,
+        new java.lang.String[] { "Index", "Rgb", });
+    internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor =
+      getDescriptor().getMessageTypes().get(22);
     internal_static_webterm_terminal_screen_v1_HistoryWindow_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor,
         new java.lang.String[] { "FirstAvailableLineId", "FirstIncludedLineId", "LastIncludedLineId", "HasMoreBefore", "Lines", });
     internal_static_webterm_terminal_screen_v1_HistoryLine_descriptor =
-      getDescriptor().getMessageTypes().get(22);
+      getDescriptor().getMessageTypes().get(23);
     internal_static_webterm_terminal_screen_v1_HistoryLine_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryLine_descriptor,
         new java.lang.String[] { "Id", "Wrapped", "Runs", });
     internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor =
-      getDescriptor().getMessageTypes().get(23);
+      getDescriptor().getMessageTypes().get(24);
     internal_static_webterm_terminal_screen_v1_HistoryRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor,
         new java.lang.String[] { "RequestId", "LayoutEpoch", "BeforeLineId", "Limit", });
     internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor =
-      getDescriptor().getMessageTypes().get(24);
+      getDescriptor().getMessageTypes().get(25);
     internal_static_webterm_terminal_screen_v1_HistoryPage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor,
         new java.lang.String[] { "RequestId", "LayoutEpoch", "AsOfRevision", "FirstAvailableLineId", "HasMoreBefore", "Lines", "Styles", "Links", });
     internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_webterm_terminal_screen_v1_HistoryTrim_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor,
         new java.lang.String[] { "LayoutEpoch", "FirstAvailableLineId", });
     internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_webterm_terminal_screen_v1_ResyncRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor,
         new java.lang.String[] { "LayoutEpoch", "ScreenRevision", "Reason", });
     internal_static_webterm_terminal_screen_v1_AcquireLayout_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_webterm_terminal_screen_v1_AcquireLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_AcquireLayout_descriptor,
         new java.lang.String[] { "RequestId", "Interactive", });
     internal_static_webterm_terminal_screen_v1_LayoutLease_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_webterm_terminal_screen_v1_LayoutLease_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_LayoutLease_descriptor,
         new java.lang.String[] { "RequestId", "LeaseId", "Granted", "Interactive", "Geometry", "ExpiresAtMs", });
     internal_static_webterm_terminal_screen_v1_ReleaseLayout_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_webterm_terminal_screen_v1_ReleaseLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ReleaseLayout_descriptor,
         new java.lang.String[] { "LeaseId", });
     internal_static_webterm_terminal_screen_v1_Resize_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_webterm_terminal_screen_v1_Resize_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Resize_descriptor,
         new java.lang.String[] { "Cols", "Rows", "LeaseId", "RequestId", });
     internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_webterm_terminal_screen_v1_TerminalInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor,
         new java.lang.String[] { "LeaseId", "ClientInstanceId", "InputSeq", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
     internal_static_webterm_terminal_screen_v1_InputAck_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_InputAck_descriptor,
         new java.lang.String[] { "ClientInstanceId", "InputSeq", "TerminalInstanceId", "Status", });
     internal_static_webterm_terminal_screen_v1_TextInput_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_webterm_terminal_screen_v1_TextInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TextInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_KeyInput_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_webterm_terminal_screen_v1_KeyInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_KeyInput_descriptor,
         new java.lang.String[] { "Key", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_PasteInput_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_webterm_terminal_screen_v1_PasteInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PasteInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_MouseInput_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_webterm_terminal_screen_v1_MouseInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_MouseInput_descriptor,
         new java.lang.String[] { "Row", "Col", "Button", "WheelDelta", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_FocusInput_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_webterm_terminal_screen_v1_FocusInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_FocusInput_descriptor,
         new java.lang.String[] { "Focused", });
     internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_webterm_terminal_screen_v1_ModifierSet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor,
         new java.lang.String[] { "Shift", "Alt", "Ctrl", "Meta", });
     internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_webterm_terminal_screen_v1_TerminalEffect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor,
         new java.lang.String[] { "InstanceId", "ScreenRevision", "Bell", "Title", "Cwd", "ClipboardRead", "ClipboardWrite", "Notification", "Palette", "ShellMark", "Effect", });
     internal_static_webterm_terminal_screen_v1_Bell_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_webterm_terminal_screen_v1_Bell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Bell_descriptor,
         new java.lang.String[] { });
     internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_webterm_terminal_screen_v1_TitleChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor,
         new java.lang.String[] { "Title", });
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor,
         new java.lang.String[] { "Path", });
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", });
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", "Data", });
     internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_webterm_terminal_screen_v1_DesktopNotification_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor,
         new java.lang.String[] { "Title", "Body", });
     internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(47);
     internal_static_webterm_terminal_screen_v1_PaletteChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor,
         new java.lang.String[] { "Palette", });
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(48);
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor,
         new java.lang.String[] { "Type", "Data", });
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor =
-      getDescriptor().getMessageTypes().get(48);
+      getDescriptor().getMessageTypes().get(49);
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor,
         new java.lang.String[] { "RequestId", "Allowed", "Timeout", "Data", });
     internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor =
-      getDescriptor().getMessageTypes().get(49);
+      getDescriptor().getMessageTypes().get(50);
     internal_static_webterm_terminal_screen_v1_TerminalInfo_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor,
         new java.lang.String[] { "SessionId", "InstanceId", "Title", "Cwd", "Command", "Status", "Cols", "Rows", "CreatedAtMs", "LastActiveAtMs", });
     internal_static_webterm_terminal_screen_v1_Exit_descriptor =
-      getDescriptor().getMessageTypes().get(50);
+      getDescriptor().getMessageTypes().get(51);
     internal_static_webterm_terminal_screen_v1_Exit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Exit_descriptor,

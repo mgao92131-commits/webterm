@@ -76,7 +76,7 @@ func encodeSnapshot(frame terminalengine.ScreenFrame) *pb.ScreenSnapshot {
 		ActiveBuffer:     encodeBufferKind(frame.ActiveBuffer),
 		Cursor:           encodeCursor(frame.Cursor),
 		Modes:            encodeModes(frame.Modes),
-		Palette:          encodePalette(frame.DefaultFG, frame.DefaultBG, frame.CursorColor, frame.ReverseVideo),
+		Palette:          encodePalette(frame),
 		History:          encodeHistoryWindow(frame.History),
 		Screen:           encodeScreenLines(frame.Screen),
 		Styles:           encodeStyles(frame.Styles),
@@ -96,7 +96,7 @@ func encodePatch(frame terminalengine.ScreenFrame) *pb.ScreenPatch {
 		ScreenRows:     encodeScreenLines(frame.Screen),
 		Cursor:         encodeCursor(frame.Cursor),
 		Modes:          encodeModes(frame.Modes),
-		Palette:        encodePalette(frame.DefaultFG, frame.DefaultBG, frame.CursorColor, frame.ReverseVideo),
+		Palette:        encodePalette(frame),
 		NewStyles:      encodeStyles(frame.Styles),
 		NewLinks:       encodeLinks(frame.Links),
 		PromotedRows:   encodePromotedRows(frame.PromotedRows),
@@ -192,13 +192,23 @@ func encodeMouseEncoding(e terminalengine.MouseEncoding) pb.MouseEncoding {
 	}
 }
 
-func encodePalette(defaultFG, defaultBG, cursorColor terminalengine.Color, reverseVideo bool) *pb.TerminalPalette {
-	return &pb.TerminalPalette{
-		DefaultFg:    encodeColor(defaultFG),
-		DefaultBg:    encodeColor(defaultBG),
-		CursorColor:  encodeColor(cursorColor),
-		ReverseVideo: reverseVideo,
+func encodePalette(frame terminalengine.ScreenFrame) *pb.TerminalPalette {
+	palette := &pb.TerminalPalette{
+		DefaultFg:    encodeColor(frame.DefaultFG),
+		DefaultBg:    encodeColor(frame.DefaultBG),
+		CursorColor:  encodeColor(frame.CursorColor),
+		ReverseVideo: frame.ReverseVideo,
+		Generation:   frame.PaletteGeneration,
 	}
+	for index, rgb := range frame.IndexedPalette {
+		if frame.IndexedPaletteSet[index/64]&(uint64(1)<<uint(index%64)) == 0 {
+			continue
+		}
+		palette.IndexedColors = append(palette.IndexedColors, &pb.IndexedPaletteColor{
+			Index: int32(index), Rgb: rgb,
+		})
+	}
+	return palette
 }
 
 func encodeColor(c terminalengine.Color) *pb.Color {

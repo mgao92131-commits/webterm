@@ -1,20 +1,23 @@
 package screenprojection
 
 import (
+	"image/color"
 	"sync"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
 	"webterm/go-core/internal/terminalengine"
 )
 
-// paletteState 是投影的调色板分量（ReverseVideo/DefaultFG/DefaultBG/CursorColor）。
-// 当前导出恒为默认值（OSC 调色板覆盖 ProjectionRead.Colors 尚未接入投影），
-// 接入后 ChangeIndex.PaletteChangedRevision 会自动开始推进。
+// paletteState 是完整且可比较的动态调色板分量。固定数组避免 map 破坏
+// canonical state 的不可变/可比较语义，presence bitmap 区分默认表与 OSC 4 覆盖。
 type paletteState struct {
 	reverseVideo bool
 	defaultFG    terminalengine.Color
 	defaultBG    terminalengine.Color
 	cursorColor  terminalengine.Color
+	indexed      [256]uint32
+	indexedSet   [4]uint64
+	generation   uint64
 }
 
 // projectedState 缓存最近一次完整权威投影。它只在导出侧（ExportState 持
@@ -75,14 +78,35 @@ func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
 	s.activeBuffer = activeBuffer
 	s.cursor = exportProjectionCursor(proj.Cursor)
 	s.modes = exportProjectionModes(proj.Modes)
-	// palette 当前常量导出（见 paletteState 注释）；集中在这里赋值，
-	// 一旦接入动态调色板，ChangeIndex 的 palette 比较无需改动。
-	s.palette = paletteState{
+	nextPalette := paletteState{
 		reverseVideo: false,
 		defaultFG:    terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
 		defaultBG:    terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
 		cursorColor:  terminalengine.Color{Kind: terminalengine.ColorCursor},
 	}
+	for index, value := range proj.Colors {
+		rgb := projectionColorRGB(value)
+		switch {
+		case index >= 0 && index < 256:
+			nextPalette.indexed[index] = rgb
+			nextPalette.indexedSet[index/64] |= uint64(1) << uint(index%64)
+		case index == headlessterm.NamedColorForeground:
+			nextPalette.defaultFG = terminalengine.Color{Kind: terminalengine.ColorRGB, RGB: rgb}
+		case index == headlessterm.NamedColorBackground:
+			nextPalette.defaultBG = terminalengine.Color{Kind: terminalengine.ColorRGB, RGB: rgb}
+		case index == headlessterm.NamedColorCursor:
+			nextPalette.cursorColor = terminalengine.Color{Kind: terminalengine.ColorRGB, RGB: rgb}
+		}
+	}
+	previousGeneration := s.palette.generation
+	nextPalette.generation = previousGeneration
+	if !paletteValuesEqual(s.palette, nextPalette) {
+		nextPalette.generation++
+		if nextPalette.generation == 0 {
+			nextPalette.generation = 1
+		}
+	}
+	s.palette = nextPalette
 	s.title = proj.Title
 	s.workingDir = proj.WorkingDir
 }
@@ -299,28 +323,45 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	}
 
 	return terminalengine.ScreenFrame{
-		Version:      1,
-		Kind:         terminalengine.FrameSnapshot,
-		SessionID:    p.sessionID,
-		InstanceID:   p.instanceID,
-		Epoch:        epoch,
-		Seq:          seq,
-		Rows:         s.rows,
-		Cols:         s.cols,
-		ActiveBuffer: s.activeBuffer,
-		ReverseVideo: s.palette.reverseVideo,
-		DefaultFG:    s.palette.defaultFG,
-		DefaultBG:    s.palette.defaultBG,
-		CursorColor:  s.palette.cursorColor,
-		Cursor:       s.cursor,
-		Modes:        s.modes,
-		History:      history,
-		Screen:       screen,
-		Styles:       p.exporter.styleTable.Styles(),
-		Links:        p.exporter.linkTable.Links(),
-		Title:        s.title,
-		WorkingDir:   s.workingDir,
+		Version:           1,
+		Kind:              terminalengine.FrameSnapshot,
+		SessionID:         p.sessionID,
+		InstanceID:        p.instanceID,
+		Epoch:             epoch,
+		Seq:               seq,
+		Rows:              s.rows,
+		Cols:              s.cols,
+		ActiveBuffer:      s.activeBuffer,
+		ReverseVideo:      s.palette.reverseVideo,
+		DefaultFG:         s.palette.defaultFG,
+		DefaultBG:         s.palette.defaultBG,
+		CursorColor:       s.palette.cursorColor,
+		IndexedPalette:    s.palette.indexed,
+		IndexedPaletteSet: s.palette.indexedSet,
+		PaletteGeneration: s.palette.generation,
+		Cursor:            s.cursor,
+		Modes:             s.modes,
+		History:           history,
+		Screen:            screen,
+		Styles:            p.exporter.styleTable.Styles(),
+		Links:             p.exporter.linkTable.Links(),
+		Title:             s.title,
+		WorkingDir:        s.workingDir,
 	}
+}
+
+func paletteValuesEqual(a, b paletteState) bool {
+	return a.reverseVideo == b.reverseVideo && a.defaultFG == b.defaultFG &&
+		a.defaultBG == b.defaultBG && a.cursorColor == b.cursorColor &&
+		a.indexed == b.indexed && a.indexedSet == b.indexedSet
+}
+
+func projectionColorRGB(c color.Color) uint32 {
+	if c == nil {
+		return 0
+	}
+	r, g, b, _ := c.RGBA()
+	return uint32(r>>8)<<16 | uint32(g>>8)<<8 | uint32(b>>8)
 }
 
 // syncHistoryWindow 增量维护历史窗口缓存并返回当前完整窗口（持 p.mu 调用）。
@@ -423,7 +464,10 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 		patch.ReverseVideo == baseline.ReverseVideo &&
 		patch.DefaultFG == baseline.DefaultFG &&
 		patch.DefaultBG == baseline.DefaultBG &&
-		patch.CursorColor == baseline.CursorColor
+		patch.CursorColor == baseline.CursorColor &&
+		patch.IndexedPalette == baseline.IndexedPalette &&
+		patch.IndexedPaletteSet == baseline.IndexedPaletteSet &&
+		patch.PaletteGeneration == baseline.PaletteGeneration
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
@@ -465,22 +509,25 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	}
 
 	return terminalengine.ScreenFrame{
-		Version:      1,
-		Kind:         terminalengine.FramePatch,
-		SessionID:    new.SessionID,
-		InstanceID:   new.InstanceID,
-		Epoch:        new.Epoch,
-		Seq:          new.Seq,
-		BaseRevision: old.Seq,
-		Rows:         new.Rows,
-		Cols:         new.Cols,
-		ActiveBuffer: new.ActiveBuffer,
-		ReverseVideo: new.ReverseVideo,
-		DefaultFG:    new.DefaultFG,
-		DefaultBG:    new.DefaultBG,
-		CursorColor:  new.CursorColor,
-		Cursor:       new.Cursor,
-		Modes:        new.Modes,
+		Version:           1,
+		Kind:              terminalengine.FramePatch,
+		SessionID:         new.SessionID,
+		InstanceID:        new.InstanceID,
+		Epoch:             new.Epoch,
+		Seq:               new.Seq,
+		BaseRevision:      old.Seq,
+		Rows:              new.Rows,
+		Cols:              new.Cols,
+		ActiveBuffer:      new.ActiveBuffer,
+		ReverseVideo:      new.ReverseVideo,
+		DefaultFG:         new.DefaultFG,
+		DefaultBG:         new.DefaultBG,
+		CursorColor:       new.CursorColor,
+		IndexedPalette:    new.IndexedPalette,
+		IndexedPaletteSet: new.IndexedPaletteSet,
+		PaletteGeneration: new.PaletteGeneration,
+		Cursor:            new.Cursor,
+		Modes:             new.Modes,
 		History: terminalengine.HistoryWindow{
 			FirstAvailableLineID: new.History.FirstAvailableLineID,
 			FirstIncludedLineID:  new.History.FirstIncludedLineID,

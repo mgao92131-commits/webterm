@@ -92,4 +92,27 @@ public final class ScreenMessageMapperTest {
     assertEquals(Long.valueOf(42), patch.firstAvailableHistoryLineId);
     assertNull(patch.title);
   }
+
+  @Test
+  public void patchMapsDynamicPaletteGenerationAndIndexedOverrides() {
+    TerminalScreenProto.TerminalPalette palette = TerminalScreenProto.TerminalPalette.newBuilder()
+        .setDefaultFg(TerminalScreenProto.Color.newBuilder()
+            .setKind(TerminalScreenProto.ColorKind.COLOR_KIND_RGB).setRgb(0x112233))
+        .setDefaultBg(TerminalScreenProto.Color.newBuilder()
+            .setKind(TerminalScreenProto.ColorKind.COLOR_KIND_RGB).setRgb(0x223344))
+        .setCursorColor(TerminalScreenProto.Color.newBuilder()
+            .setKind(TerminalScreenProto.ColorKind.COLOR_KIND_RGB).setRgb(0x334455))
+        .addIndexedColors(TerminalScreenProto.IndexedPaletteColor.newBuilder()
+            .setIndex(42).setRgb(0x010203))
+        .setGeneration(9)
+        .build();
+    ScreenPatch patch = ScreenMessageMapper.mapPatch(
+        TerminalScreenProto.ScreenPatch.newBuilder()
+            .setInstanceId("i").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+            .setPalette(palette).build());
+
+    assertEquals(9, patch.palette.generation);
+    assertEquals(Integer.valueOf(0x010203), patch.palette.indexedColors.get(42));
+    assertEquals(0x112233, patch.palette.defaultFg.rgb);
+  }
 }

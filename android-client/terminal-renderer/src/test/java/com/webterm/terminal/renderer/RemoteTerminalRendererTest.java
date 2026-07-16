@@ -1,6 +1,8 @@
 package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalColor;
+import com.webterm.terminal.model.TerminalPalette;
+import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -13,6 +15,21 @@ public final class RemoteTerminalRendererTest {
     assertEquals(0xFF080808, RemoteTerminalRenderer.resolveColor(TerminalColor.indexed(232)));
     // 旧 Termux 默认蓝，不是通用 ANSI 的 0x0000ee。
     assertEquals(0xFF6495ED, RemoteTerminalRenderer.resolveColor(TerminalColor.indexed(4)));
+  }
+
+  @Test public void dynamicPaletteOverridesIndexedAndSemanticColors() {
+    TerminalPalette palette = new TerminalPalette(
+        TerminalColor.rgb(0x112233), TerminalColor.rgb(0x223344),
+        TerminalColor.rgb(0x334455), false,
+        Collections.singletonMap(42, 0x010203), 7L);
+    assertEquals(0xFF010203,
+        RemoteTerminalRenderer.resolveColor(palette, TerminalColor.indexed(42)));
+    assertEquals(0xFF112233,
+        RemoteTerminalRenderer.resolveColor(palette, TerminalColor.DEFAULT_FG));
+    assertEquals(0xFF223344,
+        RemoteTerminalRenderer.resolveColor(palette, TerminalColor.DEFAULT_BG));
+    assertEquals(0xFF334455,
+        RemoteTerminalRenderer.resolveColor(palette, TerminalColor.CURSOR));
   }
 
   @Test public void sharesLegacyDimAndGlyphAspectRules() {

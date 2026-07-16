@@ -33,6 +33,8 @@ public final class TerminalSessionRuntime {
 
   /** Bound retained wire data per session when a remote PTY outpaces model parsing. */
   private static final int MAX_PENDING_SCREEN_MESSAGES = 64;
+  /** 单会话待解析屏幕帧的总内存预算；不能只限制条数，因为单帧上限接近 2 MiB。 */
+  private static final long MAX_PENDING_SCREEN_BYTES = 4L * 1024L * 1024L;
   /** resync 最多重发次数；耗尽后升级为 channel 重建。 */
   private static final int MAX_RESYNC_RETRIES = 3;
   /** 发送 resync 后等待权威 snapshot 的时间，超时按有界退避重发。 */
@@ -99,6 +101,13 @@ public final class TerminalSessionRuntime {
     void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data);
     void close();
 
+    /**
+     * envelope 已在 screen channel 的串行 model executor 上完成唯一一次解析与版本校验。
+     * 返回 true 表示该连接层消息已消费，上层模型不得再次分发。
+     */
+    default boolean handleInboundEnvelope(
+        @NonNull TerminalScreenProto.ScreenEnvelope envelope) { return false; }
+
     interface Listener {
       void onScreenMessage(@NonNull byte[] payload);
       void onConnected();
@@ -117,16 +126,30 @@ public final class TerminalSessionRuntime {
   private final Object screenMailboxLock = new Object();
   private static final class PendingScreenMessage {
     final long connectionEpoch;
+    final long mailboxGeneration;
+    final ScreenConnection sourceConnection;
     final byte[] payload;
 
-    PendingScreenMessage(long connectionEpoch, @NonNull byte[] payload) {
+    PendingScreenMessage(long connectionEpoch,
+                         long mailboxGeneration,
+                         @NonNull ScreenConnection sourceConnection,
+                         @NonNull byte[] payload) {
       this.connectionEpoch = connectionEpoch;
+      this.mailboxGeneration = mailboxGeneration;
+      this.sourceConnection = sourceConnection;
       this.payload = payload;
     }
   }
 
   private final ArrayDeque<PendingScreenMessage> pendingScreenMessages = new ArrayDeque<>();
   private boolean screenDrainScheduled;
+  private long pendingScreenBytes;
+  /** 锁内推进、锁外复核；volatile 保证 overflow fence 对 drain 立即可见。 */
+  private volatile long screenMailboxGeneration;
+  private boolean screenMailboxFencePending;
+  private String screenMailboxFenceReason = "";
+  private long screenMailboxFenceBytes;
+  private long screenMailboxFenceOverflows;
 
   private volatile State state = State.CONNECTING;
   private volatile String layoutLeaseId = "";
@@ -252,7 +275,7 @@ public final class TerminalSessionRuntime {
       @Override
       public void onScreenMessage(@NonNull byte[] payload) {
         if (TerminalSessionRuntime.this.connection != connection) return;
-        handleScreenMessage(connectionEpoch.get(), payload);
+        handleScreenMessage(connectionEpoch.get(), connection, payload);
       }
 
       @Override
@@ -494,6 +517,11 @@ public final class TerminalSessionRuntime {
     updateState(State.CLOSED);
     synchronized (screenMailboxLock) {
       pendingScreenMessages.clear();
+      pendingScreenBytes = 0L;
+      screenMailboxFencePending = false;
+      screenMailboxFenceReason = "";
+      screenMailboxFenceBytes = 0L;
+      screenMailboxFenceOverflows = 0L;
     }
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
     modelExecutor.execute(this::resetResyncRecovery);
@@ -546,44 +574,80 @@ public final class TerminalSessionRuntime {
     ensureLayoutLease(layoutLeaseGeneration.get(), false);
   }
 
-  private void handleScreenMessage(long messageEpoch, byte[] payload) {
+  private void handleScreenMessage(long messageEpoch,
+                                   @NonNull ScreenConnection sourceConnection,
+                                   @NonNull byte[] payload) {
+    ScreenMessageValidator.ValidationResult frameSize =
+        ScreenMessageValidator.validateEnvelopeSize(payload);
     boolean scheduleDrain = false;
-    boolean overflow = false;
     synchronized (screenMailboxLock) {
       if (state == State.CLOSED) return;
-      if (pendingScreenMessages.size() >= MAX_PENDING_SCREEN_MESSAGES) {
-        // Patches are sequential and cannot be safely coalesced. Drop the
-        // stale backlog and converge through one authoritative snapshot
-        // instead of retaining an unbounded queue of byte arrays. The resync
-        // state machine is owned by modelExecutor, so escalate there even
-        // when a fence is already up: the just-cleared queue may have held
-        // the in-flight snapshot, and the old wait must not go silent.
+      long nextBytes = pendingScreenBytes + payload.length;
+      if (!frameSize.ok
+          || pendingScreenMessages.size() >= MAX_PENDING_SCREEN_MESSAGES
+          || nextBytes > MAX_PENDING_SCREEN_BYTES) {
+        // Patch 链一旦丢失就不能继续应用。清空整个旧队列并丢弃触发帧，在 drain
+        // 的同一串行序列中先立 resync fence，再接受后续权威 Snapshot。
+        long discardedBytes = pendingScreenBytes + payload.length;
         pendingScreenMessages.clear();
-        overflow = true;
+        pendingScreenBytes = 0L;
+        screenMailboxGeneration++;
+        screenMailboxFencePending = true;
+        screenMailboxFenceOverflows++;
+        screenMailboxFenceBytes = Math.max(screenMailboxFenceBytes, discardedBytes);
+        screenMailboxFenceReason = !frameSize.ok
+            ? "screen mailbox rejected oversized frame"
+            : (nextBytes > MAX_PENDING_SCREEN_BYTES
+                ? "screen mailbox exceeded byte budget"
+                : "screen mailbox exceeded frame budget");
+      } else {
+        pendingScreenMessages.addLast(new PendingScreenMessage(
+            messageEpoch, screenMailboxGeneration, sourceConnection, payload));
+        pendingScreenBytes = nextBytes;
+        TerminalResumeMetrics.screenMailboxHighWater(pendingScreenBytes);
       }
-      pendingScreenMessages.addLast(new PendingScreenMessage(messageEpoch, payload));
       if (!screenDrainScheduled) {
         screenDrainScheduled = true;
         scheduleDrain = true;
       }
     }
-    if (overflow) modelExecutor.execute(this::onMailboxOverflow);
     if (scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
   }
 
   private void drainScreenMailbox() {
     while (true) {
       PendingScreenMessage message;
+      String fenceReason = null;
+      long fenceBytes = 0L;
+      long fenceOverflows = 0L;
       synchronized (screenMailboxLock) {
-        message = pendingScreenMessages.pollFirst();
-        if (message == null) {
+        if (screenMailboxFencePending) {
+          screenMailboxFencePending = false;
+          fenceReason = screenMailboxFenceReason;
+          fenceBytes = screenMailboxFenceBytes;
+          fenceOverflows = screenMailboxFenceOverflows;
+          screenMailboxFenceReason = "";
+          screenMailboxFenceBytes = 0L;
+          screenMailboxFenceOverflows = 0L;
+          message = null;
+        } else {
+          message = pendingScreenMessages.pollFirst();
+          if (message != null) pendingScreenBytes -= message.payload.length;
+        }
+        if (message == null && fenceReason == null) {
           screenDrainScheduled = false;
           return;
         }
       }
+      if (fenceReason != null) {
+        onMailboxOverflow(fenceReason, fenceBytes, fenceOverflows);
+        continue;
+      }
       // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
-      if (message.connectionEpoch != connectionEpoch.get()) continue;
-      processScreenMessage(message.payload);
+      if (message.connectionEpoch != connectionEpoch.get()
+          || message.mailboxGeneration != screenMailboxGeneration
+          || message.sourceConnection != connection) continue;
+      processScreenMessage(message);
     }
   }
 
@@ -600,8 +664,10 @@ public final class TerminalSessionRuntime {
     armResyncWaitTimeout();
   }
 
-  private void onMailboxOverflow() {
-    String reason = "screen model backlog exceeded " + MAX_PENDING_SCREEN_MESSAGES + " frames";
+  private void onMailboxOverflow(@NonNull String reason,
+                                 long discardedBytes,
+                                 long overflowCount) {
+    TerminalResumeMetrics.screenMailboxOverflow(reason, discardedBytes, overflowCount);
     if (resyncState == ResyncState.IDLE) {
       startResyncRecovery(reason);
       return;
@@ -628,6 +694,9 @@ public final class TerminalSessionRuntime {
   }
 
   private void onAuthoritativeSnapshot() {
+    if (resyncReason.startsWith("screen mailbox")) {
+      TerminalResumeMetrics.screenMailboxRecovered("snapshot");
+    }
     resyncState = ResyncState.IDLE;
     resyncAttempt = 0;
     resyncGeneration++;
@@ -688,6 +757,12 @@ public final class TerminalSessionRuntime {
     pendingHistoryRequestId = null;
     synchronized (screenMailboxLock) {
       pendingScreenMessages.clear();
+      pendingScreenBytes = 0L;
+      screenMailboxGeneration++;
+      screenMailboxFencePending = false;
+      screenMailboxFenceReason = "";
+      screenMailboxFenceBytes = 0L;
+      screenMailboxFenceOverflows = 0L;
     }
   }
 
@@ -698,17 +773,18 @@ public final class TerminalSessionRuntime {
     }
   }
 
-  private void processScreenMessage(byte[] payload) {
+  private void processScreenMessage(@NonNull PendingScreenMessage message) {
       try {
-        // envelope 2 MiB 上限（proto 头部契约 / 计划 §10.1）必须在解码前校验，
-        // 避免超大帧直接触发内存分配。
-        ScreenMessageValidator.ValidationResult size = ScreenMessageValidator.validateEnvelopeSize(payload);
-        if (!size.ok) throw new IllegalArgumentException(size.reason);
         TerminalScreenProto.ScreenEnvelope envelope =
-            TerminalScreenProto.ScreenEnvelope.parseFrom(payload);
+            TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
         if (envelope.getProtocolVersion() != 1) {
           throw new IllegalArgumentException("unsupported protocol version");
         }
+        // InputAck 与 instance identity 同样消费这一次 typed parse；TerminalChannel
+        // 不再在 DeviceConnection event loop 上重复解析原始 protobuf。
+        if (message.connectionEpoch != connectionEpoch.get()
+            || message.sourceConnection != connection) return;
+        if (message.sourceConnection.handleInboundEnvelope(envelope)) return;
         ModelChange change;
         switch (envelope.getPayloadCase()) {
           case SNAPSHOT: {

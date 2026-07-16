@@ -38,10 +38,12 @@ type terminalChannelRuntime struct {
 	screenWake    chan struct{}
 	screenInitial chan initialScreenMessage
 	screenDeriver screenprojection.FrameDeriver
+	encodeFrame   func(terminalengine.ScreenFrame) ([]byte, error)
 }
 
 type outboundMessage struct {
-	binary []byte
+	binary   []byte
+	priority FramePriority
 }
 
 type initialScreenMessage struct {
@@ -70,6 +72,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 		ownerKey:       ownerKey,
 		screenWake:     make(chan struct{}, 1),
 		screenInitial:  make(chan initialScreenMessage, 1),
+		encodeFrame:    screenprotocol.EncodeFrame,
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
@@ -161,7 +164,7 @@ func (client *terminalChannelRuntime) SendInfo() {
 	info := client.session.Info()
 	payload, err := encodeTerminalInfo(info)
 	if err == nil {
-		client.enqueueBinary(payload)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh)
 	}
 }
 
@@ -207,7 +210,7 @@ func (client *terminalChannelRuntime) SendExit(code int) {
 		Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
 	})
 	if err == nil {
-		client.enqueueBinary(payload)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh)
 	}
 }
 
@@ -322,23 +325,54 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		// 空 patch 被抑制：无可观察变化，不写出；deriver baseline 未推进。
 		return true
 	}
-	payload, err := screenprotocol.EncodeFrame(frame)
+	payload, err := client.encodeFrame(frame)
 	if err != nil {
-		client.screenMu.Lock()
-		client.screenDeriver.Reset()
-		client.screenMu.Unlock()
-		if client.logger != nil {
-			client.logger.Add("error", "session", fmt.Sprintf("encode screen frame failed: %v", err))
+		client.logScreenEncodeFailure("frame", state, err)
+		// A failed Patch must not leave the logical channel alive with an old
+		// baseline. Immediately encode the current canonical state as a complete
+		// Snapshot; only a successful physical write commits the new baseline.
+		snapshot := state
+		snapshot.Kind = terminalengine.FrameSnapshot
+		snapshot.BaseRevision = 0
+		snapshot.TitleChanged = false
+		snapshot.WorkingDirChanged = false
+		snapshot.FirstAvailableHistoryLineIDChanged = false
+		payload, err = client.encodeFrame(snapshot)
+		if err != nil {
+			client.logScreenEncodeFailure("snapshot_fallback", state, err)
+			client.Close()
+			return false
 		}
+		if !client.writeMessage(ctx, outboundMessage{binary: payload}) {
+			return false
+		}
+		client.screenMu.Lock()
+		client.screenDeriver.Seed(state)
+		client.screenMu.Unlock()
 		return true
 	}
 	return client.writeMessage(ctx, outboundMessage{binary: payload})
 }
 
+func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
+	state terminalengine.ScreenFrame, err error) {
+	if client.logger == nil {
+		return
+	}
+	client.logger.Add("error", "session", fmt.Sprintf(
+		"screen_encode_failure stage=%s revision=%d rows=%d cols=%d styles=%d links=%d history_lines=%d error=%v",
+		stage, state.Seq, state.Rows, state.Cols, len(state.Styles), len(state.Links),
+		len(state.History.Lines), err))
+}
+
 func (client *terminalChannelRuntime) writeMessage(ctx context.Context, message outboundMessage) bool {
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	var err error
-	err = client.sink.WriteFrame(writeCtx, message.binary, true)
+	if prioritized, ok := client.sink.(PrioritizedChannelFrameSink); ok {
+		err = prioritized.WriteFramePriority(writeCtx, message.binary, true, message.priority)
+	} else {
+		err = client.sink.WriteFrame(writeCtx, message.binary, true)
+	}
 	cancel()
 	if err != nil {
 		client.Close()
@@ -385,7 +419,7 @@ func (client *terminalChannelRuntime) sendLayoutLease(result terminalsession.Lay
 	}
 	payload, err := proto.Marshal(envelope)
 	if err == nil {
-		client.enqueueBinary(payload)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh)
 	}
 }
 
@@ -427,7 +461,7 @@ func (client *terminalChannelRuntime) sendInputAck(result terminalsession.InputD
 		}},
 	})
 	if err == nil {
-		client.enqueueBinary(payload)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh)
 	}
 }
 
@@ -554,7 +588,7 @@ func (client *terminalChannelRuntime) sendScreenState(state terminalengine.Scree
 	if !client.writerStarted.Load() {
 		frame := client.screenDeriver.FrameForState(state)
 		if frame.Kind != 0 { // Kind==0：空 patch 被抑制，不发送
-			client.sendScreenFrameNow(frame)
+			client.sendScreenFrameNow(frame, state)
 		}
 		return
 	}
@@ -575,19 +609,30 @@ func (client *terminalChannelRuntime) resetScreenProjection() {
 	client.hasScreenData = false
 }
 
-func (client *terminalChannelRuntime) sendScreenFrameNow(frame terminalengine.ScreenFrame) {
-	payload, err := screenprotocol.EncodeFrame(frame)
+func (client *terminalChannelRuntime) sendScreenFrameNow(frame, state terminalengine.ScreenFrame) {
+	payload, err := client.encodeFrame(frame)
 	if err != nil {
-		if client.logger != nil {
-			client.logger.Add("error", "session", fmt.Sprintf("encode screen frame failed: %v", err))
+		client.logScreenEncodeFailure("frame_immediate", state, err)
+		snapshot := state
+		snapshot.Kind = terminalengine.FrameSnapshot
+		snapshot.BaseRevision = 0
+		payload, err = client.encodeFrame(snapshot)
+		if err != nil {
+			client.logScreenEncodeFailure("snapshot_fallback_immediate", state, err)
+			client.Close()
+			return
 		}
-		return
+		client.screenDeriver.Seed(state)
 	}
 	client.enqueueBinary(payload)
 }
 
 func (client *terminalChannelRuntime) enqueueBinary(bytes []byte) {
 	client.enqueue(outboundMessage{binary: bytes})
+}
+
+func (client *terminalChannelRuntime) enqueueBinaryPriority(bytes []byte, priority FramePriority) {
+	client.enqueue(outboundMessage{binary: bytes, priority: priority})
 }
 
 func (client *terminalChannelRuntime) enqueue(message outboundMessage) {

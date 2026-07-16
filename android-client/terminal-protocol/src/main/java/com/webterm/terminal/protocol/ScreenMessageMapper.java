@@ -185,11 +185,19 @@ public final class ScreenMessageMapper {
   }
 
   private static TerminalPalette mapPalette(TerminalScreenProto.TerminalPalette pb) {
+    java.util.Map<Integer, Integer> indexedColors = new java.util.HashMap<>();
+    for (TerminalScreenProto.IndexedPaletteColor entry : pb.getIndexedColorsList()) {
+      if (entry.getIndex() >= 0 && entry.getIndex() < 256) {
+        indexedColors.put(entry.getIndex(), entry.getRgb());
+      }
+    }
     return new TerminalPalette(
         mapColor(pb.getDefaultFg()),
         mapColor(pb.getDefaultBg()),
         mapColor(pb.getCursorColor()),
-        pb.getReverseVideo()
+        pb.getReverseVideo(),
+        indexedColors,
+        pb.getGeneration()
     );
   }
 

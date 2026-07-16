@@ -269,6 +269,13 @@ message TerminalPalette {
   Color default_bg = 2;
   Color cursor_color = 3;
   bool reverse_video = 4;
+  repeated IndexedPaletteColor indexed_colors = 5;
+  uint64 generation = 6;
+}
+
+message IndexedPaletteColor {
+  int32 index = 1;
+  uint32 rgb = 2;
 }
 
 // ---------------------------------------------------------------------------

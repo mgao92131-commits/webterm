@@ -108,7 +108,8 @@ public final class RemoteTerminalRenderer {
 
     TerminalPalette palette = model.palette;
     Map<Integer, TerminalStyle> styles = model.styles;
-    int canvasBackground = resolveColor(palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
+    int canvasBackground = resolveColor(palette,
+        palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
     canvas.drawColor(canvasBackground);
 
     TerminalSelection selection = viewport.selection;
@@ -221,11 +222,11 @@ public final class RemoteTerminalRenderer {
       bgColor = swap;
     }
 
-    int fg = resolveColor(fgColor);
+    int fg = resolveColor(palette, fgColor);
     boolean bold = style != null && (style.bold() || style.blinkSlow() || style.blinkFast());
     if (bold && fgColor.kind == TerminalColor.Kind.INDEXED
         && fgColor.index >= 0 && fgColor.index < 8) {
-      fg = TerminalVisualRules.ansiColor(fgColor.index + 8);
+      fg = resolveIndexedColor(palette, fgColor.index + 8);
     }
     if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
 
@@ -243,7 +244,7 @@ public final class RemoteTerminalRenderer {
       // draw batching while real Android Canvas uses the strict no-scaling check below.
       if (measuredWidth > 0 && Math.abs(measuredWidth - width) > 0.01f) return false;
     }
-    int bg = resolveColor(bgColor);
+    int bg = resolveColor(palette, bgColor);
     if (bg != canvasBackground) {
       bgPaint.setColor(bg);
       canvas.drawRect(x, rowY, x + width, rowY + lineHeight, bgPaint);
@@ -254,7 +255,8 @@ public final class RemoteTerminalRenderer {
     }
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor != null ? resolveColor(style.underlineColor) : fg);
+      textPaint.setColor(style.underlineColor != null
+          ? resolveColor(palette, style.underlineColor) : fg);
       float underlineY = rowY + lineHeight - 2;
       canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
       if (style.doubleUnderline()) {
@@ -287,14 +289,14 @@ public final class RemoteTerminalRenderer {
       bgColor = swap;
     }
 
-    int fg = resolveColor(fgColor);
+    int fg = resolveColor(palette, fgColor);
     boolean bold = style != null && (style.bold() || style.blinkSlow() || style.blinkFast());
     if (bold && fgColor.kind == TerminalColor.Kind.INDEXED
         && fgColor.index >= 0 && fgColor.index < 8) {
-      fg = TerminalVisualRules.ansiColor(fgColor.index + 8);
+      fg = resolveIndexedColor(palette, fgColor.index + 8);
     }
     if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
-    int bg = resolveColor(bgColor);
+    int bg = resolveColor(palette, bgColor);
 
     float x = col * cellWidth;
     float width = cell.isWideStart() ? cellWidth * 2 : cellWidth;
@@ -304,7 +306,7 @@ public final class RemoteTerminalRenderer {
     }
 
     if (insideCursor) {
-      bgPaint.setColor(resolveColor(palette.cursorColor));
+      bgPaint.setColor(resolveColor(palette, palette.cursorColor));
       if (cursor.shape == TerminalCursor.Shape.BAR) {
         canvas.drawRect(x, rowY, x + width / 4f, rowY + lineHeight, bgPaint);
       } else if (cursor.shape == TerminalCursor.Shape.UNDERLINE) {
@@ -342,7 +344,8 @@ public final class RemoteTerminalRenderer {
     }
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor != null ? resolveColor(style.underlineColor) : fg);
+      textPaint.setColor(style.underlineColor != null
+          ? resolveColor(palette, style.underlineColor) : fg);
       float underlineY = rowY + lineHeight - 2;
       canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
       if (style.doubleUnderline()) {
@@ -390,15 +393,30 @@ public final class RemoteTerminalRenderer {
   }
 
   static int resolveColor(TerminalColor color) {
+    return resolveColor(TerminalPalette.defaults(), color);
+  }
+
+  static int resolveColor(TerminalPalette palette, TerminalColor color) {
     if (color == null) return 0xFF000000;
     switch (color.kind) {
       case RGB: return 0xFF000000 | color.rgb;
-      case DEFAULT_FG: return 0xFFFFFFFF;
-      case DEFAULT_BG: return 0xFF000000;
-      case CURSOR: return 0xFFFFFFFF;
-      case INDEXED: return TerminalVisualRules.ansiColor(color.index);
+      case DEFAULT_FG:
+        return palette.defaultFg != null && palette.defaultFg.kind != TerminalColor.Kind.DEFAULT_FG
+            ? resolveColor(palette, palette.defaultFg) : 0xFFFFFFFF;
+      case DEFAULT_BG:
+        return palette.defaultBg != null && palette.defaultBg.kind != TerminalColor.Kind.DEFAULT_BG
+            ? resolveColor(palette, palette.defaultBg) : 0xFF000000;
+      case CURSOR:
+        return palette.cursorColor != null && palette.cursorColor.kind != TerminalColor.Kind.CURSOR
+            ? resolveColor(palette, palette.cursorColor) : 0xFFFFFFFF;
+      case INDEXED: return resolveIndexedColor(palette, color.index);
       default: return 0xFF000000;
     }
+  }
+
+  private static int resolveIndexedColor(TerminalPalette palette, int index) {
+    Integer override = palette.indexedColors.get(index);
+    return override != null ? 0xFF000000 | override : TerminalVisualRules.ansiColor(index);
   }
 
   /** Shared geometry for drawing, hit-testing and selection handles. */

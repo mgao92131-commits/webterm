@@ -151,28 +151,31 @@ type HistoryPageData struct {
 // Kind 显式区分 snapshot 与 patch；BaseRevision 只表达 patch 基线，
 // snapshot 的 base 不参与语义。
 type ScreenFrame struct {
-	Version      int
-	Kind         FrameKind
-	SessionID    string
-	InstanceID   string
-	Epoch        uint64
-	Seq          uint64
-	BaseRevision uint64 // patch 使用，snapshot 为 0
-	Rows         int
-	Cols         int
-	ActiveBuffer BufferKind
-	ReverseVideo bool
-	DefaultFG    Color
-	DefaultBG    Color
-	CursorColor  Color
-	Cursor       Cursor
-	Modes        Modes
-	History      HistoryWindow
-	Screen       []Line
-	Styles       []TerminalStyle
-	Links        []Hyperlink
-	Title        string
-	WorkingDir   string
+	Version           int
+	Kind              FrameKind
+	SessionID         string
+	InstanceID        string
+	Epoch             uint64
+	Seq               uint64
+	BaseRevision      uint64 // patch 使用，snapshot 为 0
+	Rows              int
+	Cols              int
+	ActiveBuffer      BufferKind
+	ReverseVideo      bool
+	DefaultFG         Color
+	DefaultBG         Color
+	CursorColor       Color
+	IndexedPalette    [256]uint32
+	IndexedPaletteSet [4]uint64
+	PaletteGeneration uint64
+	Cursor            Cursor
+	Modes             Modes
+	History           HistoryWindow
+	Screen            []Line
+	Styles            []TerminalStyle
+	Links             []Hyperlink
+	Title             string
+	WorkingDir        string
 	// TitleChanged/WorkingDirChanged 只在 patch 帧上有意义：标记 title/cwd 相对
 	// 基线是否变化（变为空串也必须显式标记，与“未变化”区分）。snapshot 必须
 	// 可独立显示，总是携带 title/cwd，不需要标志。

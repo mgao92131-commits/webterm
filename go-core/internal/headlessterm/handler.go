@@ -692,7 +692,7 @@ func (t *Terminal) inputInternal(r rune) {
 		}
 
 		clusterString := string(cluster)
-		t.writeCluster(clusterString, clusterWidth(clusterString))
+		t.commitCluster(clusterString)
 		t.pendingInput = rest
 	}
 }

@@ -59,8 +59,8 @@ public final class TerminalSessionRuntimeMailboxBaselineTest {
     int expectedOverflows = (BURST_FRAMES - 1) / MAILBOX_CAPACITY;
     assertEquals("mailbox depth must stay within the 64-frame bound",
         MAILBOX_CAPACITY, maxDepth);
-    assertEquals("each overflow escalates to exactly one resync while waiting",
-        expectedOverflows, connection.resyncRequests);
+    assertEquals("a burst coalesces its overflow fence into one resync",
+        1, connection.resyncRequests);
     assertEquals("overflow must not escalate to channel rebuild",
         0, connection.reconnectRequests);
     assertEquals("all queued snapshots are applied by the drain before recovery runs",

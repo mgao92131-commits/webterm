@@ -1,6 +1,7 @@
 package com.webterm.feature.terminal.domain;
 
 import android.os.Handler;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -27,19 +28,32 @@ import java.util.UUID;
  */
 public final class TerminalChannel implements TerminalSessionRuntime.ScreenConnection {
 
+  private static final String TAG = "ReliableInput";
   private static final int MAX_UNACKED_INPUTS = 256;
+  private static final long MAX_UNACKED_INPUT_BYTES = 4L * 1024L * 1024L;
+  private static final long MAX_UNACKED_INPUT_AGE_MS = 60_000L;
+
+  private enum InputDeliveryState {
+    UNSENT,
+    LOCAL_QUEUED,
+    WEBSOCKET_ENQUEUED
+  }
 
   private static final class PendingInput {
     final long seq;
     final byte[] payload;
     final String terminalInstanceId;
+    final long createdAtMs;
     long lastSentGeneration;
+    long queuedGeneration;
+    InputDeliveryState state;
 
-    PendingInput(long seq, byte[] payload, String terminalInstanceId, long lastSentGeneration) {
+    PendingInput(long seq, byte[] payload, String terminalInstanceId) {
       this.seq = seq;
       this.payload = payload;
       this.terminalInstanceId = terminalInstanceId;
-      this.lastSentGeneration = lastSentGeneration;
+      this.createdAtMs = android.os.SystemClock.elapsedRealtime();
+      this.state = InputDeliveryState.UNSENT;
     }
   }
 
@@ -59,6 +73,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   private final Object inputLock = new Object();
   private final String clientInstanceId = UUID.randomUUID().toString();
   private final LinkedHashMap<Long, PendingInput> unackedInputs = new LinkedHashMap<>();
+  private long unackedInputBytes;
+  private boolean inputExpiryScheduled;
   private long nextInputSeq = 1L;
   private String terminalInstanceId = "";
   private boolean identityConfirmedForConnection;
@@ -239,8 +255,11 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     channelId = null;
     synchronized (inputLock) {
       unackedInputs.clear();
+      unackedInputBytes = 0L;
+      inputExpiryScheduled = false;
       identityConfirmedForConnection = false;
     }
+    mainHandler.removeCallbacks(inputExpiryRunnable);
   }
 
   private void connectNow() {
@@ -265,7 +284,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
       @Override
       public void onData(String channelId, byte[] payload, boolean binary) {
-        if (binary && handleReliabilityEnvelope(payload)) return;
         if (listener != null) listener.onScreenMessage(payload);
       }
 
@@ -317,34 +335,78 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   private void sendReliableInput(long seq, @NonNull byte[] payload) {
-    PendingInput dropped = null;
+    PendingInput pending;
     synchronized (inputLock) {
-      if (unackedInputs.size() >= MAX_UNACKED_INPUTS) {
-        Map.Entry<Long, PendingInput> oldest = unackedInputs.entrySet().iterator().next();
-        dropped = oldest.getValue();
-        unackedInputs.remove(oldest.getKey());
+      if (!identityConfirmedForConnection || terminalInstanceId.isEmpty()) {
+        notifyInputUncertain("终端实例尚未确认，输入未发送");
+        return;
       }
-      unackedInputs.put(seq,
-          new PendingInput(seq, payload, terminalInstanceId, inputConnectionGeneration));
+      if (unackedInputs.size() >= MAX_UNACKED_INPUTS
+          || unackedInputBytes + payload.length > MAX_UNACKED_INPUT_BYTES) {
+        notifyInputUncertain("未确认输入队列已满，本次输入未发送");
+        return;
+      }
+      pending = new PendingInput(seq, payload, terminalInstanceId);
+      unackedInputs.put(seq, pending);
+      unackedInputBytes += payload.length;
+      scheduleInputExpiryLocked();
     }
-    if (dropped != null) {
-      notifyInputUncertain("未确认的输入过多，最早一条的投递状态不确定");
-    }
-    DeviceConnection connection = deviceConnection;
-    String id = channelId;
-    if (connection != null && id != null) {
-      connection.sendTunnelFrame(id, payload, true);
-    }
+    enqueuePendingInput(pending, payload, inputConnectionGeneration);
   }
 
-  private boolean handleReliabilityEnvelope(@NonNull byte[] payload) {
-    if (payload.length > 2 * 1024 * 1024) return false;
-    final TerminalScreenProto.ScreenEnvelope envelope;
-    try {
-      envelope = TerminalScreenProto.ScreenEnvelope.parseFrom(payload);
-    } catch (Exception ignored) {
-      return false;
+  private void enqueuePendingInput(@NonNull PendingInput pending,
+                                   @NonNull byte[] payload,
+                                   long generation) {
+    DeviceConnection connection = deviceConnection;
+    String id = channelId;
+    if (connection == null || id == null) {
+      onInputSendResult(pending.seq, generation,
+          DeviceConnection.TunnelSendResult.CHANNEL_NOT_OPEN);
+      return;
     }
+    synchronized (inputLock) {
+      if (unackedInputs.get(pending.seq) != pending) return;
+      if (pending.lastSentGeneration == generation
+          || (pending.state == InputDeliveryState.LOCAL_QUEUED
+              && pending.queuedGeneration == generation)) return;
+      pending.state = InputDeliveryState.LOCAL_QUEUED;
+      pending.queuedGeneration = generation;
+    }
+    connection.tryEnqueueTunnelFrame(id, payload, true,
+        result -> onInputSendResult(pending.seq, generation, result));
+  }
+
+  private void onInputSendResult(long seq, long generation,
+                                 @NonNull DeviceConnection.TunnelSendResult result) {
+    boolean recoverChannel = false;
+    boolean recoverTransport = false;
+    synchronized (inputLock) {
+      PendingInput pending = unackedInputs.get(seq);
+      if (pending == null || pending.queuedGeneration != generation) return;
+      if (result == DeviceConnection.TunnelSendResult.WEBSOCKET_ENQUEUED) {
+        pending.lastSentGeneration = generation;
+        pending.state = InputDeliveryState.WEBSOCKET_ENQUEUED;
+        return;
+      }
+      pending.state = InputDeliveryState.UNSENT;
+      pending.queuedGeneration = 0L;
+      recoverChannel = result == DeviceConnection.TunnelSendResult.CHANNEL_NOT_OPEN;
+      recoverTransport = result == DeviceConnection.TunnelSendResult.LOCAL_QUEUE_FULL;
+    }
+    notifyInputUncertain("输入未进入网络发送队列（" + result.name() + "），已启动恢复");
+    if (recoverTransport) {
+      DeviceConnection current = deviceConnection;
+      if (current != null) current.forceReconnect("reliable input local queue overflow");
+    } else if (recoverChannel) {
+      requestReconnect("reliable input channel was not open");
+    }
+    // TRANSPORT_REJECTED 已由 DeviceConnection 原子触发物理连接重建；
+    // CONNECTION_STOPPED 只保留明确未发送状态，不在 close 后复活 channel。
+  }
+
+  @Override
+  public boolean handleInboundEnvelope(
+      @NonNull TerminalScreenProto.ScreenEnvelope envelope) {
     switch (envelope.getPayloadCase()) {
       case INPUT_ACK:
         handleInputAck(envelope.getInputAck());
@@ -371,6 +433,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     PendingInput pending;
     synchronized (inputLock) {
       pending = unackedInputs.remove(ack.getInputSeq());
+      if (pending != null) unackedInputBytes -= pending.payload.length;
     }
     if (pending == null) return;
     if (!pending.terminalInstanceId.isEmpty()
@@ -405,6 +468,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
         if (!pending.terminalInstanceId.isEmpty()
             && !instanceId.equals(pending.terminalInstanceId)) {
           iterator.remove();
+          unackedInputBytes -= pending.payload.length;
           uncertainCount++;
         }
       }
@@ -427,21 +491,56 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     String id = channelId;
     String leaseId = layoutLeaseId;
     if (connection == null || id == null || leaseId.isEmpty()) return;
-    List<byte[]> resend = new ArrayList<>();
+    List<PendingInput> resend = new ArrayList<>();
+    List<byte[]> resendPayloads = new ArrayList<>();
+    long generation;
     synchronized (inputLock) {
       if (!identityConfirmedForConnection) return;
+      generation = inputConnectionGeneration;
       for (PendingInput pending : unackedInputs.values()) {
-        if (pending.lastSentGeneration == inputConnectionGeneration) continue;
+        if (pending.lastSentGeneration == generation
+            || (pending.state == InputDeliveryState.LOCAL_QUEUED
+                && pending.queuedGeneration == generation)) continue;
         byte[] payload = withCurrentLease(pending.payload, leaseId);
         if (payload == null) continue;
-        pending.lastSentGeneration = inputConnectionGeneration;
-        resend.add(payload);
+        resend.add(pending);
+        resendPayloads.add(payload);
       }
     }
-    for (byte[] payload : resend) {
-      connection.sendTunnelFrame(id, payload, true);
+    for (int i = 0; i < resend.size(); i++) {
+      enqueuePendingInput(resend.get(i), resendPayloads.get(i), generation);
     }
   }
+
+  private void scheduleInputExpiryLocked() {
+    if (inputExpiryScheduled) return;
+    Map.Entry<Long, PendingInput> oldest = unackedInputs.entrySet().iterator().next();
+    long ageMs = android.os.SystemClock.elapsedRealtime() - oldest.getValue().createdAtMs;
+    long delayMs = Math.max(1L, MAX_UNACKED_INPUT_AGE_MS - ageMs);
+    inputExpiryScheduled = true;
+    mainHandler.postDelayed(inputExpiryRunnable, delayMs);
+  }
+
+  private final Runnable inputExpiryRunnable = () -> {
+    int expired = 0;
+    long now = android.os.SystemClock.elapsedRealtime();
+    synchronized (inputLock) {
+      java.util.Iterator<Map.Entry<Long, PendingInput>> iterator =
+          unackedInputs.entrySet().iterator();
+      while (iterator.hasNext()) {
+        PendingInput pending = iterator.next().getValue();
+        if (now - pending.createdAtMs < MAX_UNACKED_INPUT_AGE_MS) break;
+        iterator.remove();
+        unackedInputBytes -= pending.payload.length;
+        expired++;
+      }
+      inputExpiryScheduled = false;
+      if (!unackedInputs.isEmpty()) scheduleInputExpiryLocked();
+    }
+    if (expired > 0) {
+      notifyInputUncertain(expired + " 条输入超过确认时限，PTY 写入结果不确定");
+    }
+  };
 
   @Nullable
   private static byte[] withCurrentLease(@NonNull byte[] payload, @NonNull String leaseId) {
@@ -459,6 +558,35 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   private void notifyInputUncertain(@NonNull String message) {
+    int unsent = 0;
+    int localQueued = 0;
+    int websocketQueued = 0;
+    int count;
+    long bytes;
+    long oldestAgeMs = 0L;
+    synchronized (inputLock) {
+      count = unackedInputs.size();
+      bytes = unackedInputBytes;
+      long now = android.os.SystemClock.elapsedRealtime();
+      for (PendingInput pending : unackedInputs.values()) {
+        oldestAgeMs = Math.max(oldestAgeMs, now - pending.createdAtMs);
+        switch (pending.state) {
+          case UNSENT:
+            unsent++;
+            break;
+          case LOCAL_QUEUED:
+            localQueued++;
+            break;
+          case WEBSOCKET_ENQUEUED:
+            websocketQueued++;
+            break;
+        }
+      }
+    }
+    Log.w(TAG, "event=input_delivery_uncertain pending_count=" + count
+        + " pending_bytes=" + bytes + " oldest_age_ms=" + oldestAgeMs
+        + " unsent=" + unsent + " local_queued=" + localQueued
+        + " websocket_enqueued=" + websocketQueued + " reason=" + message);
     Listener current = listener;
     if (current != null) current.onInputDeliveryUncertain(message);
   }

@@ -12,6 +12,19 @@ type ChannelFrameSink interface {
 	WriteFrame(ctx context.Context, payload []byte, binary bool) error
 }
 
+type FramePriority uint8
+
+const (
+	FramePriorityNormal FramePriority = iota
+	FramePriorityHigh
+)
+
+// PrioritizedChannelFrameSink 是物理 Mux writer 的可选能力。协议层在知道
+// InputAck/LayoutLease 语义时标注优先级，Mux 本身无需反向解析 protobuf。
+type PrioritizedChannelFrameSink interface {
+	WriteFramePriority(ctx context.Context, payload []byte, binary bool, priority FramePriority) error
+}
+
 // LogicalChannelHandler 直接承接 mux logical channel 帧。
 // Run 在 channel 存活期内阻塞；HandleFrame 由外层连接 actor 串行调用。
 type LogicalChannelHandler interface {

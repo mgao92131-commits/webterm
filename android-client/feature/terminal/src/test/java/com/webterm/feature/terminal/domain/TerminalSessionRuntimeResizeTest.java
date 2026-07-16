@@ -252,12 +252,57 @@ public final class TerminalSessionRuntimeResizeTest {
     }
 
     assertEquals("resync decisions belong to the model executor", 0, connection.resyncRequests);
-    assertEquals("one drain runnable plus one overflow escalation serve the whole burst",
-        2, modelExecutor.tasks.size());
+    assertEquals("the drain owns the overflow fence ordering",
+        1, modelExecutor.tasks.size());
 
     modelExecutor.runAll();
-    assertEquals(65, runtime.model().screenRevision);
+    assertEquals("the frame that broke the patch chain must not be applied",
+        0, runtime.model().screenRevision);
     assertEquals("overflow must converge through one resync", 1, connection.resyncRequests);
+
+    connection.listener.onScreenMessage(snapshot(66).toByteArray());
+    modelExecutor.runAll();
+    assertEquals("a fresh authoritative snapshot releases the fence",
+        66, runtime.model().screenRevision);
+  }
+
+  @Test
+  public void oversizedFrameIsRejectedBeforeMailboxRetention() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, scheduler);
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onScreenMessage(new byte[2 * 1024 * 1024 + 1]);
+    assertEquals(1, modelExecutor.tasks.size());
+    modelExecutor.runAll();
+    assertEquals(0, runtime.model().screenRevision);
+    assertEquals(1, connection.resyncRequests);
+  }
+
+  @Test
+  public void byteBudgetOverflowDropsBrokenChainUntilFreshSnapshot() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, scheduler);
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+    String largeTitle = new String(new char[1536 * 1024]).replace('\0', 'x');
+    for (int revision = 1; revision <= 3; revision++) {
+      TerminalScreenProto.ScreenEnvelope large = snapshot(revision).toBuilder()
+          .setSnapshot(snapshot(revision).getSnapshot().toBuilder().setTitle(largeTitle))
+          .build();
+      connection.listener.onScreenMessage(large.toByteArray());
+    }
+
+    modelExecutor.runAll();
+    assertEquals("overflow-triggering state is not authoritative", 0,
+        runtime.model().screenRevision);
+    assertEquals(1, connection.resyncRequests);
+    connection.listener.onScreenMessage(snapshot(4).toByteArray());
+    modelExecutor.runAll();
+    assertEquals(4, runtime.model().screenRevision);
   }
 
   @Test

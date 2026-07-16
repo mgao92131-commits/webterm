@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"webterm/go-core/internal/screenprotocol"
 	pb "webterm/go-core/internal/screenprotocol/generated"
 	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
@@ -291,6 +293,61 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 	if patch.GetBaseRevision() != 1 || patch.GetScreenRevision() != 3 {
 		t.Fatalf("coalesced patch base=%d revision=%d, want 1 -> 3",
 			patch.GetBaseRevision(), patch.GetScreenRevision())
+	}
+}
+
+func TestScreenWriter_EncodeFailureImmediatelyFallsBackToSnapshot(t *testing.T) {
+	sink := &recordingChannelSink{frames: make(chan []byte, 2)}
+	client := newOwnedTerminalChannelRuntime(nil, sink, "")
+	baseline := testScreenState(1, "one")
+	state := testScreenState(2, "two")
+	client.screenDeriver.Seed(baseline)
+	client.screenPending = state
+	client.hasScreenData = true
+	calls := 0
+	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("injected patch encode failure")
+		}
+		return screenprotocol.EncodeFrame(frame)
+	}
+
+	if !client.writeLatestScreenState(context.Background()) {
+		t.Fatal("snapshot fallback should keep the logical channel alive")
+	}
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(<-sink.frames, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := envelope.GetSnapshot(); snapshot == nil || snapshot.GetScreenRevision() != 2 {
+		t.Fatalf("fallback payload=%T revision=%d, want snapshot revision 2",
+			envelope.Payload, snapshot.GetScreenRevision())
+	}
+}
+
+func TestScreenWriter_ClosesChannelWhenSnapshotFallbackAlsoFails(t *testing.T) {
+	sink := &recordingChannelSink{frames: make(chan []byte, 2)}
+	client := newOwnedTerminalChannelRuntime(nil, sink, "")
+	client.screenDeriver.Seed(testScreenState(1, "one"))
+	client.screenPending = testScreenState(2, "two")
+	client.hasScreenData = true
+	client.encodeFrame = func(terminalengine.ScreenFrame) ([]byte, error) {
+		return nil, errors.New("injected encode failure")
+	}
+
+	if client.writeLatestScreenState(context.Background()) {
+		t.Fatal("double encode failure must terminate the logical channel")
+	}
+	select {
+	case <-client.done:
+	default:
+		t.Fatal("logical channel was not closed")
+	}
+	select {
+	case <-sink.frames:
+		t.Fatal("invalid frame must not be written")
+	default:
 	}
 }
 

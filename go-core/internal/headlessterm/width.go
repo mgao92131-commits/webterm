@@ -32,12 +32,27 @@ func StringWidth(s string) int {
 // It uses the maximum rune width within the cluster so that combining marks
 // (e.g. Devanagari vowel signs) do not incorrectly add extra columns.
 func clusterWidth(cluster string) int {
+	// Most combining clusters occupy the maximum width of one constituent;
+	// summing the whole string would incorrectly make Indic vowel signs wide.
+	// Emoji presentation, ZWJ sequences and regional-indicator pairs are the
+	// exceptions whose width is only known from the complete grapheme.
 	width := 0
+	regionalIndicators := 0
+	wholeClusterWidth := false
 	for _, r := range cluster {
 		w := runeWidth(r)
 		if w > width {
 			width = w
 		}
+		if r == '\u200d' || r == '\ufe0f' {
+			wholeClusterWidth = true
+		}
+		if r >= 0x1f1e6 && r <= 0x1f1ff {
+			regionalIndicators++
+		}
+	}
+	if wholeClusterWidth || regionalIndicators >= 2 {
+		return uniseg.StringWidth(cluster)
 	}
 	return width
 }

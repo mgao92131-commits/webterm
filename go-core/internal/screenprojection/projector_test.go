@@ -37,6 +37,54 @@ func TestProjector_PatchAfterBaseline(t *testing.T) {
 	}
 }
 
+func TestProjector_DynamicPaletteProducesMetadataOnlyPatch(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(5, 10, sb)
+	p := NewProjector(engine, sb, "s1", "i1")
+	var deriver FrameDeriver
+	initial := deriver.FrameForState(p.ExportState(1, 1))
+
+	if err := engine.Write([]byte("\x1b]4;42;#010203\x07" +
+		"\x1b]10;#112233\x07\x1b]11;#223344\x07\x1b]12;#334455\x07")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(1, 2))
+	if patch.Kind != terminalengine.FramePatch || len(patch.Screen) != 0 {
+		t.Fatalf("palette-only update kind=%d rows=%d, want metadata patch", patch.Kind, len(patch.Screen))
+	}
+	if patch.IndexedPaletteSet[0]&(uint64(1)<<42) == 0 || patch.IndexedPalette[42] != 0x010203 {
+		t.Fatalf("indexed palette[42]=%06x set=%x", patch.IndexedPalette[42], patch.IndexedPaletteSet[0])
+	}
+	if patch.DefaultFG.RGB != 0x112233 || patch.DefaultBG.RGB != 0x223344 ||
+		patch.CursorColor.RGB != 0x334455 {
+		t.Fatalf("dynamic defaults fg=%06x bg=%06x cursor=%06x",
+			patch.DefaultFG.RGB, patch.DefaultBG.RGB, patch.CursorColor.RGB)
+	}
+	if patch.PaletteGeneration <= initial.PaletteGeneration {
+		t.Fatalf("palette generation=%d, initial=%d", patch.PaletteGeneration, initial.PaletteGeneration)
+	}
+
+	if err := engine.Write([]byte("\x1b]104;42\x07\x1b]110\x07\x1b]111\x07\x1b]112\x07")); err != nil {
+		t.Fatal(err)
+	}
+	reset := deriver.FrameForState(p.ExportState(1, 3))
+	if reset.Kind != terminalengine.FramePatch || len(reset.Screen) != 0 {
+		t.Fatalf("palette reset kind=%d rows=%d, want metadata patch", reset.Kind, len(reset.Screen))
+	}
+	if reset.IndexedPaletteSet[0]&(uint64(1)<<42) != 0 {
+		t.Fatal("OSC 104 did not remove indexed palette override")
+	}
+	if reset.DefaultFG.Kind != terminalengine.ColorDefaultFG ||
+		reset.DefaultBG.Kind != terminalengine.ColorDefaultBG ||
+		reset.CursorColor.Kind != terminalengine.ColorCursor {
+		t.Fatalf("OSC palette reset did not restore semantic defaults: fg=%v bg=%v cursor=%v",
+			reset.DefaultFG.Kind, reset.DefaultBG.Kind, reset.CursorColor.Kind)
+	}
+	if reset.PaletteGeneration <= patch.PaletteGeneration {
+		t.Fatalf("reset generation=%d, set generation=%d", reset.PaletteGeneration, patch.PaletteGeneration)
+	}
+}
+
 // FrameDeriver 的所有产出路径都必须打上正确的 Kind；patch 以显式标志表达
 // title/cwd 三态（未变化不置标志）。
 func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {

@@ -12,12 +12,10 @@ import org.json.JSONObject;
 import org.json.JSONArray;
 import org.json.JSONException;
 
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 
 public final class DeviceConnection {
     private static final String TAG = "DeviceConnection";
@@ -25,6 +23,8 @@ public final class DeviceConnection {
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
     private static final long CHANNEL_OPEN_TIMEOUT_MS = 10_000L;
     private static final long PHYSICAL_CONNECT_TIMEOUT_MS = 10_000L;
+    private static final int MAX_PENDING_TUNNEL_FRAMES = 256;
+    private static final long MAX_PENDING_TUNNEL_BYTES = 8L * 1024L * 1024L;
     private static final long[] CHANNEL_RETRY_BACKOFF_MS = {
         1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L
     };
@@ -45,6 +45,33 @@ public final class DeviceConnection {
 
     public interface ControlListener {
         void onControlMessage(JSONObject msg);
+    }
+
+    public enum TunnelSendResult {
+        WEBSOCKET_ENQUEUED,
+        LOCAL_QUEUE_FULL,
+        CHANNEL_NOT_OPEN,
+        TRANSPORT_REJECTED,
+        CONNECTION_STOPPED
+    }
+
+    public interface TunnelSendCallback {
+        void onResult(TunnelSendResult result);
+    }
+
+    private static final class PendingTunnelFrame {
+        final String channelId;
+        final byte[] payload;
+        final boolean binary;
+        final TunnelSendCallback callback;
+
+        PendingTunnelFrame(String channelId, byte[] payload, boolean binary,
+                           TunnelSendCallback callback) {
+            this.channelId = channelId;
+            this.payload = payload;
+            this.binary = binary;
+            this.callback = callback;
+        }
     }
 
     private static final ChannelListener NO_OP_LISTENER = new ChannelListener() {
@@ -89,10 +116,16 @@ public final class DeviceConnection {
     private MuxTransport transport;
     private int transportGeneration;
     private boolean physicalDesired;
-    private boolean physicalConnected;
+    private volatile boolean physicalConnected;
     private boolean physicalConnecting;
     private int physicalReconnectAttempts;
     private final Map<String, Channel> channels = new LinkedHashMap<>();
+    private final Object outboundLock = new Object();
+    private final ArrayDeque<PendingTunnelFrame> pendingTunnelFrames = new ArrayDeque<>();
+    private long pendingTunnelBytes;
+    private boolean tunnelDrainScheduled;
+    private volatile boolean outboundAccepting = true;
+    private volatile int activeChannelCount;
     /** 每个 terminal screen route 当前唯一的 runtime owner channel。 */
     private final Map<String, String> screenChannelOwners = new LinkedHashMap<>();
     private volatile ControlListener controlListener;
@@ -377,13 +410,13 @@ public final class DeviceConnection {
     }
 
     public boolean isConnected() {
-        return callOnState(() -> physicalConnected, false);
+        return physicalConnected;
     }
 
     boolean isIdle() {
         // 设备后台服务可以只占用 control plane，没有 logical channel。
         // 只要仍有 control listener，registry 就不能回收物理连接。
-        return callOnState(() -> channels.isEmpty() && controlListener == null, true);
+        return activeChannelCount == 0 && controlListener == null;
     }
 
     String deviceId() {
@@ -409,10 +442,10 @@ public final class DeviceConnection {
         if (normalizedOwner.isEmpty()) {
             throw new IllegalArgumentException("screen channel ownerId is required");
         }
-        return callOnState(
-            () -> openProtocolChannel(localSessionId, SCREEN_SUBPROTOCOL,
-                normalizedOwner, listener),
-            terminalChannelId(localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner));
+        String channelId = terminalChannelId(localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner);
+        runOnState(() -> openProtocolChannel(
+            localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner, listener));
+        return channelId;
     }
 
     /** 仅保留给 core-session 包内的旧行为测试；产品代码必须显式提供 runtime owner。 */
@@ -484,6 +517,7 @@ public final class DeviceConnection {
                                      String screenRouteKey, ChannelListener listener) {
         Channel previous = channels.put(channelId,
             new Channel(channelId, path, protocols, screenRouteKey, listener));
+        activeChannelCount = channels.size();
         if (previous != null) {
             clearScreenOwnerIfCurrent(previous);
             previous.desiredOpen = false;
@@ -534,11 +568,64 @@ public final class DeviceConnection {
     }
 
     public boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
-        return callOnState(() -> {
+        return tryEnqueueTunnelFrame(channelId, payload, binary, result -> {
+            if (result == TunnelSendResult.LOCAL_QUEUE_FULL) {
+                recoverDroppedTunnelFrame(channelId, "tunnel outbound queue overflow");
+            } else if (result == TunnelSendResult.CHANNEL_NOT_OPEN) {
+                recoverDroppedTunnelFrame(channelId,
+                    "tunnel frame reached a closed logical channel");
+            }
+            // TRANSPORT_REJECTED 已在唯一 event loop 中原子触发重连；
+            // CONNECTION_STOPPED 是显式生命周期终点，不允许重新拉起连接。
+        });
+    }
+
+    private void recoverDroppedTunnelFrame(String channelId, String reason) {
+        runOnState(() -> {
             Channel channel = channels.get(channelId);
-            return channel != null && channel.state == Channel.State.OPEN
-                && sendTunnelFrameInternal(channelId, payload, binary);
-        }, false);
+            // A frame drained after an intentional logical-channel close belongs to
+            // the old lifecycle and must not reconnect the shared physical socket.
+            if (channel != null && channel.desiredOpen) {
+                reconnectTransport(reason, true);
+            }
+        });
+    }
+
+    /**
+     * 非阻塞地进入设备级有界发送队列。true 仅表示本地队列已接受；最终是否进入
+     * OkHttp/WebSocket 队列通过 callback 报告。所有 channel 状态检查和物理写入仍由
+     * DeviceConnection 的唯一 event loop 串行执行。
+     */
+    public boolean tryEnqueueTunnelFrame(String channelId, byte[] payload, boolean binary,
+                                         TunnelSendCallback callback) {
+        if (channelId == null || channelId.isEmpty() || payload == null) {
+            notifySendResult(callback, TunnelSendResult.CHANNEL_NOT_OPEN);
+            return false;
+        }
+        boolean scheduleDrain = false;
+        synchronized (outboundLock) {
+            if (!outboundAccepting) {
+                notifySendResult(callback, TunnelSendResult.CONNECTION_STOPPED);
+                return false;
+            }
+            if (pendingTunnelFrames.size() >= MAX_PENDING_TUNNEL_FRAMES
+                    || pendingTunnelBytes + payload.length > MAX_PENDING_TUNNEL_BYTES) {
+                notifySendResult(callback, TunnelSendResult.LOCAL_QUEUE_FULL);
+                return false;
+            }
+            pendingTunnelFrames.addLast(
+                new PendingTunnelFrame(channelId, payload, binary, callback));
+            pendingTunnelBytes += payload.length;
+            if (!tunnelDrainScheduled) {
+                tunnelDrainScheduled = true;
+                scheduleDrain = true;
+            }
+        }
+        if (scheduleDrain && !stateHandler.post(this::drainTunnelFrames)) {
+            failPendingTunnelFrames(TunnelSendResult.CONNECTION_STOPPED);
+            return false;
+        }
+        return true;
     }
 
     /** 注册设备级控制消息监听，不改变 screen channel 的所有权。 */
@@ -547,7 +634,12 @@ public final class DeviceConnection {
     }
 
     public boolean sendControl(JSONObject msg) {
-        return callOnState(() -> sendControlInternal(msg), false);
+        if (msg == null) return false;
+        return stateHandler.post(() -> {
+            if (!sendControlInternal(msg)) {
+                reconnectTransport("control frame enqueue rejected", true);
+            }
+        });
     }
 
     /** 配置当前 Android 安装实例身份；每次 mux 重连成功后都会重新注册。 */
@@ -596,7 +688,10 @@ public final class DeviceConnection {
             sendChannelClose(channel.id);
         }
         channels.clear();
+        activeChannelCount = 0;
         screenChannelOwners.clear();
+        outboundAccepting = false;
+        failPendingTunnelFrames(TunnelSendResult.CONNECTION_STOPPED);
         stopPhysical();
     }
 
@@ -684,6 +779,7 @@ public final class DeviceConnection {
     private boolean removeChannelIfCurrent(Channel channel) {
         if (channel == null || channels.get(channel.id) != channel) return false;
         channels.remove(channel.id);
+        activeChannelCount = channels.size();
         clearScreenOwnerIfCurrent(channel);
         return true;
     }
@@ -713,23 +809,44 @@ public final class DeviceConnection {
         stateHandler.post(task);
     }
 
-    private <T> T callOnState(Callable<T> task, T fallback) {
-        if (isOnStateThread()) {
-            try {
-                return task.call();
-            } catch (Exception e) {
-                Log.e(TAG, "device connection event loop task failed", e);
-                return fallback;
+    private void drainTunnelFrames() {
+        while (true) {
+            PendingTunnelFrame frame;
+            synchronized (outboundLock) {
+                frame = pendingTunnelFrames.pollFirst();
+                if (frame == null) {
+                    tunnelDrainScheduled = false;
+                    return;
+                }
+                pendingTunnelBytes -= frame.payload.length;
             }
+            Channel channel = channels.get(frame.channelId);
+            if (channel == null || channel.state != Channel.State.OPEN) {
+                notifySendResult(frame.callback, TunnelSendResult.CHANNEL_NOT_OPEN);
+                continue;
+            }
+            if (sendTunnelFrameInternal(frame.channelId, frame.payload, frame.binary)) {
+                notifySendResult(frame.callback, TunnelSendResult.WEBSOCKET_ENQUEUED);
+                continue;
+            }
+            notifySendResult(frame.callback, TunnelSendResult.TRANSPORT_REJECTED);
+            reconnectTransport("tunnel frame enqueue rejected", true);
         }
-        FutureTask<T> future = new FutureTask<>(task);
-        if (!stateHandler.post(future)) return fallback;
-        try {
-            return future.get(5, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            Log.e(TAG, "device connection event loop did not respond", e);
-            return fallback;
+    }
+
+    private void failPendingTunnelFrames(TunnelSendResult result) {
+        PendingTunnelFrame[] failed;
+        synchronized (outboundLock) {
+            failed = pendingTunnelFrames.toArray(new PendingTunnelFrame[0]);
+            pendingTunnelFrames.clear();
+            pendingTunnelBytes = 0L;
+            tunnelDrainScheduled = false;
         }
+        for (PendingTunnelFrame frame : failed) notifySendResult(frame.callback, result);
+    }
+
+    private void notifySendResult(TunnelSendCallback callback, TunnelSendResult result) {
+        if (callback != null) callbackHandler.post(() -> callback.onResult(result));
     }
 
     private boolean isOnStateThread() {

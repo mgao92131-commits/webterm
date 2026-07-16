@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/danielgatis/go-ansicode"
+	"github.com/rivo/uniseg"
 )
 
 // PTYWriter writes terminal responses (e.g., cursor position reports) back to the PTY.
@@ -149,7 +150,7 @@ type Terminal struct {
 	middleware *Middleware
 
 	// Providers for external data/actions
-	ptyWriter PTYWriter
+	ptyWriter         PTYWriter
 	bellProvider      BellProvider
 	titleProvider     TitleProvider
 	apcProvider       APCProvider
@@ -579,8 +580,9 @@ func (t *Terminal) Resize(rows, cols int) {
 func (t *Terminal) Write(data []byte) (int, error) {
 	t.recordingProvider.Record(data)
 	n, err := t.decoder.Write(data)
-	// The decoder calls Input one rune at a time; any incomplete trailing
-	// grapheme cluster is flushed now that this batch of bytes is complete.
+	// PTY reads are arbitrary transport chunks, not grapheme boundaries. We do
+	// publish the trailing cluster for low-latency projection, but a later Write
+	// may reopen and extend that last visible cell (combining/VS/ZWJ/RI).
 	t.flushPendingInput()
 	return n, err
 }
@@ -603,15 +605,106 @@ func (t *Terminal) flushPendingInput() {
 
 	cluster := string(t.pendingInput)
 	t.pendingInput = t.pendingInput[:0]
+	t.commitCluster(cluster)
+}
 
-	// Determine the cluster width using the same segmentation state we used while
-	// buffering. Falling back to clusterWidth covers any residual pending text.
-	width := clusterWidth(cluster)
-	if width == 0 {
+// commitCluster publishes a segmenter-emitted cluster. A cluster that begins
+// with a combining continuation may be emitted immediately before a following
+// base rune in the same decoder call, so extension must happen here as well as
+// at the end-of-Write low-latency flush.
+// Caller must hold t.mu.
+func (t *Terminal) commitCluster(cluster string) {
+	if t.extendPreviousCluster(cluster) {
 		return
 	}
+	width := clusterWidth(cluster)
+	if width != 0 {
+		t.writeCluster(cluster, width)
+	}
+}
 
-	t.writeCluster(cluster, width)
+// extendPreviousCluster reopens the visible cell immediately before the
+// cursor when a later PTY chunk continues the same Unicode grapheme. This
+// decouples segmentation from Terminal.Write boundaries while retaining
+// immediate display of ordinary trailing text.
+// Caller must hold t.mu.
+func (t *Terminal) extendPreviousCluster(suffix string) bool {
+	if suffix == "" || t.cursor.Row < 0 || t.cursor.Row >= t.rows {
+		return false
+	}
+	col := t.cursor.Col - 1
+	if col >= t.cols {
+		col = t.cols - 1
+	}
+	if col < 0 {
+		return false
+	}
+	cell := t.activeBuffer.Cell(t.cursor.Row, col)
+	if cell != nil && cell.IsWideSpacer() {
+		col--
+		cell = t.activeBuffer.Cell(t.cursor.Row, col)
+	}
+	if cell == nil || cell.Char == "" || cell.Char == " " {
+		return false
+	}
+	combined := cell.Char + suffix
+	_, rest, _, _ := uniseg.Step([]byte(combined), -1)
+	if len(rest) != 0 {
+		return false
+	}
+
+	oldWidth := 1
+	if cell.IsWide() {
+		oldWidth = 2
+	}
+	newWidth := clusterWidth(combined)
+	if newWidth == 0 || newWidth > 2 {
+		return false
+	}
+	if oldWidth == 1 && newWidth == 2 {
+		spacerCol := col + 1
+		if spacerCol >= t.cols {
+			// A width-changing continuation at the right edge must behave like
+			// the unsplit grapheme: remove the provisional narrow glyph and let
+			// writeCluster perform normal wrap/scroll handling.
+			provisional := cell.Copy()
+			cell.Reset()
+			t.activeBuffer.MarkDirty(t.cursor.Row, col)
+			t.cursor.Col = col
+			originalTemplate := t.template
+			t.template.Cell = provisional
+			t.writeCluster(combined, newWidth)
+			t.template = originalTemplate
+			return true
+		}
+		if t.modes&ModeInsert != 0 {
+			t.activeBuffer.InsertBlanks(t.cursor.Row, spacerCol, 1)
+		}
+		spacer := t.activeBuffer.Cell(t.cursor.Row, spacerCol)
+		if spacer != nil {
+			spacer.Reset()
+			spacer.Char = ""
+			spacer.Fg = cell.Fg
+			spacer.Bg = cell.Bg
+			spacer.SetFlag(CellFlagWideCharSpacer)
+			t.activeBuffer.MarkDirty(t.cursor.Row, spacerCol)
+		}
+		cell.SetFlag(CellFlagWideChar)
+		t.cursor.Col++
+	} else if oldWidth == 2 && newWidth == 1 {
+		spacer := t.activeBuffer.Cell(t.cursor.Row, col+1)
+		if spacer != nil && spacer.IsWideSpacer() {
+			spacer.Reset()
+			t.activeBuffer.MarkDirty(t.cursor.Row, col+1)
+		}
+		cell.ClearFlag(CellFlagWideChar)
+		if t.cursor.Col > 0 {
+			t.cursor.Col--
+		}
+	}
+	cell.Char = combined
+	t.activeBuffer.MarkDirty(t.cursor.Row, col)
+	return true
 }
 
 // writeCluster writes a complete grapheme cluster to the active buffer at the

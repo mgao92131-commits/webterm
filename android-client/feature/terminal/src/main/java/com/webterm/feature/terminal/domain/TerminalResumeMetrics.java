@@ -21,6 +21,9 @@ public final class TerminalResumeMetrics {
   private static final AtomicLong LEASE_RENEW = new AtomicLong();
   private static final AtomicLong LEASE_REVOKED = new AtomicLong();
   private static final AtomicLong LEASE_STALE_RESPONSE = new AtomicLong();
+  private static final AtomicLong MAILBOX_OVERFLOW = new AtomicLong();
+  private static final AtomicLong MAILBOX_MAX_PENDING_BYTES = new AtomicLong();
+  private static final AtomicLong MAILBOX_RECOVERED = new AtomicLong();
 
   private TerminalResumeMetrics() {}
 
@@ -50,6 +53,25 @@ public final class TerminalResumeMetrics {
   static void leaseRevoked() { record(LEASE_REVOKED, "layout_lease action=revoked"); }
   static void leaseStaleResponse() {
     record(LEASE_STALE_RESPONSE, "layout_lease action=stale_response");
+  }
+  static void screenMailboxOverflow(String reason, long discardedBytes, long occurrences) {
+    long count = MAILBOX_OVERFLOW.addAndGet(Math.max(1L, occurrences));
+    Log.i(TAG, "event=screen_mailbox action=overflow reason=" + safeReason(reason)
+        + " discarded_bytes=" + discardedBytes + " occurrences=" + occurrences
+        + " count=" + count);
+  }
+  static void screenMailboxHighWater(long pendingBytes) {
+    long current = MAILBOX_MAX_PENDING_BYTES.get();
+    while (pendingBytes > current) {
+      if (MAILBOX_MAX_PENDING_BYTES.compareAndSet(current, pendingBytes)) {
+        Log.i(TAG, "event=screen_mailbox action=high_water pending_bytes=" + pendingBytes);
+        return;
+      }
+      current = MAILBOX_MAX_PENDING_BYTES.get();
+    }
+  }
+  static void screenMailboxRecovered(String result) {
+    record(MAILBOX_RECOVERED, "screen_mailbox action=recovered result=" + safeReason(result));
   }
 
   private static void record(AtomicLong counter, String fields) {

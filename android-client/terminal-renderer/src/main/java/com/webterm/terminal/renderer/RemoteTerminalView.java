@@ -112,6 +112,17 @@ public final class RemoteTerminalView extends View {
   private long autoScrollLastFrameNanos;
   private boolean autoScrollScheduled;
   private final Runnable selectionAutoScrollRunnable = this::runSelectionAutoScrollFrame;
+  private boolean cursorBlinkScheduled;
+  private final Runnable cursorBlinkRunnable = new Runnable() {
+    @Override public void run() {
+      if (!shouldBlinkCursor()) {
+        cursorBlinkScheduled = false;
+        return;
+      }
+      postInvalidateOnAnimation();
+      postOnAnimationDelayed(this, 500L);
+    }
+  };
 
   public RemoteTerminalView(Context context) {
     this(context, null);
@@ -149,12 +160,14 @@ public final class RemoteTerminalView extends View {
       this.viewport = viewport;
     }
     requestLayoutIfSizeChanged();
+    updateCursorBlinkSchedule();
     invalidate();
   }
 
   public void updateModel(@NonNull RemoteTerminalModel model) {
     this.model = model;
     requestLayoutIfSizeChanged();
+    updateCursorBlinkSchedule();
     invalidate();
   }
 
@@ -192,8 +205,16 @@ public final class RemoteTerminalView extends View {
   }
 
   @Override
+  protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+    updateCursorBlinkSchedule();
+  }
+
+  @Override
   protected void onDetachedFromWindow() {
     clearPendingMouseMove();
+    removeCallbacks(cursorBlinkRunnable);
+    cursorBlinkScheduled = false;
     stopSelectionAutoScroll();
     stopSelection();
     super.onDetachedFromWindow();
@@ -203,13 +224,9 @@ public final class RemoteTerminalView extends View {
   protected void onDraw(Canvas canvas) {
     super.onDraw(canvas);
     if (model == null) return;
-    computeScrollOffset();
-    renderer.render(canvas, model.renderSnapshot(), viewport);
-    drawSelectionHandles(canvas);
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
-    if (viewport.followTail && snapshot.cursor.visible && snapshot.cursor.blink) {
-      postInvalidateDelayed(500L);
-    }
+    renderer.render(canvas, snapshot, viewport);
+    drawSelectionHandles(canvas, snapshot);
   }
 
   @Override
@@ -285,15 +302,7 @@ public final class RemoteTerminalView extends View {
       int delta = (int) (scroller.getCurrY() - lastFlingY);
       lastFlingY = scroller.getCurrY();
       applyScrollDelta(delta);
-      invalidate();
-    }
-  }
-
-  private void computeScrollOffset() {
-    if (scroller.computeScrollOffset()) {
-      int delta = (int) (scroller.getCurrY() - lastFlingY);
-      lastFlingY = scroller.getCurrY();
-      applyScrollDelta(delta);
+      postInvalidateOnAnimation();
     }
   }
 
@@ -314,6 +323,7 @@ public final class RemoteTerminalView extends View {
       host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
       requestOlderHistoryAtHardTop(deltaPixels);
     }
+    updateCursorBlinkSchedule();
   }
 
   /**
@@ -903,12 +913,13 @@ public final class RemoteTerminalView extends View {
     return dx * dx + dy * dy;
   }
 
-  private void drawSelectionHandles(Canvas canvas) {
+  private void drawSelectionHandles(Canvas canvas,
+                                    @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
     if (!selecting) return;
     selectionHandlePaint.setColor(0xFF3B82F6);
     float radius = handleRadius();
-    float[] start = anchorToHandleCenter(selectionStart);
-    float[] end = anchorToHandleCenter(selectionEnd);
+    float[] start = anchorToHandleCenter(selectionStart, snapshot);
+    float[] end = anchorToHandleCenter(selectionEnd, snapshot);
     if (start != null) canvas.drawCircle(start[0], start[1], radius, selectionHandlePaint);
     if (end != null) canvas.drawCircle(end[0], end[1], radius, selectionHandlePaint);
   }
@@ -919,7 +930,14 @@ public final class RemoteTerminalView extends View {
 
   @Nullable
   private float[] anchorToHandleCenter(@Nullable TerminalSelection.Anchor anchor) {
-    float[] point = anchorToPoint(anchor, false);
+    if (model == null) return null;
+    return anchorToHandleCenter(anchor, model.renderSnapshot());
+  }
+
+  @Nullable
+  private float[] anchorToHandleCenter(@Nullable TerminalSelection.Anchor anchor,
+                                       @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    float[] point = anchorToPoint(anchor, false, snapshot);
     if (point == null) return null;
     point[1] += lineHeight();
     return point;
@@ -928,9 +946,15 @@ public final class RemoteTerminalView extends View {
   @Nullable
   private float[] anchorToPoint(@Nullable TerminalSelection.Anchor anchor, boolean end) {
     if (anchor == null || model == null) return null;
+    return anchorToPoint(anchor, end, model.renderSnapshot());
+  }
+
+  @Nullable
+  private float[] anchorToPoint(@Nullable TerminalSelection.Anchor anchor, boolean end,
+                                @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    if (anchor == null) return null;
     int col = anchor.col;
-    float contentTop = contentTopY();
-    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    float contentTop = contentTopY(snapshot);
     TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     if (anchor.historyLineId != 0) {
@@ -943,12 +967,32 @@ public final class RemoteTerminalView extends View {
 
   private float contentTopY() {
     if (model == null) return 0;
-    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    return contentTopY(model.renderSnapshot());
+  }
+
+  private float contentTopY(@NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
     int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
     int historyRows = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
         ? 0 : snapshot.history.size();
     return RemoteTerminalRenderer.contentTopY(getHeight(), historyRows, screenRows,
         lineHeight(), renderer.getTopInset(), viewport.followTail ? 0 : viewport.scrollOffsetPixels);
+  }
+
+  private boolean shouldBlinkCursor() {
+    if (model == null || !isAttachedToWindow() || !viewport.followTail) return false;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    return snapshot.cursor.visible && snapshot.cursor.blink;
+  }
+
+  private void updateCursorBlinkSchedule() {
+    boolean shouldBlink = shouldBlinkCursor();
+    if (!shouldBlink) {
+      removeCallbacks(cursorBlinkRunnable);
+      cursorBlinkScheduled = false;
+    } else if (!cursorBlinkScheduled) {
+      cursorBlinkScheduled = true;
+      postOnAnimationDelayed(cursorBlinkRunnable, 500L);
+    }
   }
 
   /**
