@@ -1,5 +1,8 @@
 package com.webterm.feature.home.repository;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.DeviceConnection;
@@ -23,12 +26,16 @@ import javax.inject.Singleton;
 public final class ServerSessionDataSource {
 
     private final DeviceConnectionRegistry deviceConnectionRegistry;
+    private final Handler mainHandler;
 
     @Inject
-    public ServerSessionDataSource(DeviceConnectionRegistry deviceConnectionRegistry) {
+    public ServerSessionDataSource(DeviceConnectionRegistry deviceConnectionRegistry,
+                                   Handler mainHandler) {
         this.deviceConnectionRegistry = deviceConnectionRegistry;
+        this.mainHandler = mainHandler;
     }
 
+    /** Listener callbacks always run on the Android main thread. */
     public interface Listener {
         void onConnected();
         void onConnecting();
@@ -45,7 +52,7 @@ public final class ServerSessionDataSource {
             @Override
             public void onConnected(String id) {
                 if (!channelId.equals(id)) return;
-                listener.onConnected();
+                dispatchOnMain(listener::onConnected);
             }
 
             @Override
@@ -57,12 +64,12 @@ public final class ServerSessionDataSource {
             @Override
             public void onFailure(String id, ChannelFailure failure) {
                 if (!channelId.equals(id)) return;
-                listener.onDisconnected(failure);
+                dispatchOnMain(() -> listener.onDisconnected(failure));
             }
 
             @Override
             public void onReconnectAttempt(int attempt) {
-                listener.onConnecting();
+                dispatchOnMain(listener::onConnecting);
             }
         });
         connection.start();
@@ -82,7 +89,7 @@ public final class ServerSessionDataSource {
         );
     }
 
-    private void dispatch(String text, Listener listener, String relayDeviceId) {
+    void dispatch(String text, Listener listener, String relayDeviceId) {
         ServerSessionMonitor.dispatchMessage(text, new ServerSessionMonitor.Listener() {
             @Override
             public void onMonitorConnected() {
@@ -96,17 +103,17 @@ public final class ServerSessionDataSource {
 
             @Override
             public void onMonitorSessions(JSONArray sessions) {
-                listener.onSessions(sessions);
+                dispatchOnMain(() -> listener.onSessions(sessions));
             }
 
             @Override
             public void onMonitorSession(JSONObject session) {
-                listener.onSession(session);
+                dispatchOnMain(() -> listener.onSession(session));
             }
 
             @Override
             public void onMonitorSessionClosed(String sessionId) {
-                listener.onSessionClosed(sessionId);
+                dispatchOnMain(() -> listener.onSessionClosed(sessionId));
             }
 
             @Override
@@ -116,9 +123,18 @@ public final class ServerSessionDataSource {
 
             @Override
             public void onMonitorError(String errorMsg) {
-                listener.onDisconnected(ChannelFailure.muxTemporary(0, errorMsg));
+                dispatchOnMain(() -> listener.onDisconnected(
+                    ChannelFailure.muxTemporary(0, errorMsg)));
             }
         }, relayDeviceId);
+    }
+
+    void dispatchOnMain(Runnable callback) {
+        if (Looper.myLooper() == mainHandler.getLooper()) {
+            callback.run();
+        } else {
+            mainHandler.post(callback);
+        }
     }
 
     private static String managerChannelId(ServerConfig server) {
