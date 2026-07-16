@@ -103,16 +103,7 @@ public final class TerminalScreenBuilder {
         buttonGroup.setOrientation(LinearLayout.HORIZONTAL);
         buttonGroup.setGravity(Gravity.CENTER_VERTICAL);
 
-        ImageButton retryButton = new ImageButton(activity);
-        retryButton.setImageResource(com.webterm.ui.common.R.drawable.ic_refresh);
-        retryButton.setColorFilter(DesignTokens.TEXT_PRIMARY);
-        retryButton.setVisibility(View.GONE);
-        retryButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
-        retryButton.setPadding(0, 0, 0, 0);
-        retryButton.setOnClickListener((v) -> onRetry.run());
-
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE), UIUtils.dp(activity, DesignTokens.TOPBAR_ICON_SIZE));
-        buttonGroup.addView(retryButton, btnLp);
 
         ImageButton moreButton = new ImageButton(activity);
         moreButton.setImageResource(com.webterm.ui.common.R.drawable.ic_more_vert);
@@ -196,7 +187,6 @@ public final class TerminalScreenBuilder {
         result.quickBar = quickBar;
         result.title = title;
         result.subtitle = subtitle;
-        result.retryButton = retryButton;
         result.statusIndicator = statusIndicator;
         result.ctrlButton = outCtrlButton[0];
         result.reconnectOverlay = reconnectOverlay;
