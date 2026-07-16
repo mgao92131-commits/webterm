@@ -2,7 +2,7 @@ package com.webterm.feature.home.repository;
 
 import android.os.Handler;
 
-import com.webterm.core.api.WebTermApi;
+import com.webterm.data.http.WebTermApi;
 import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.cache.CachedSessionMapper;

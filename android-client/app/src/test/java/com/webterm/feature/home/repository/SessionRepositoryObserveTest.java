@@ -20,7 +20,7 @@ import androidx.arch.core.executor.testing.InstantTaskExecutorRule;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.Observer;
 
-import com.webterm.core.api.WebTermApi;
+import com.webterm.data.http.WebTermApi;
 import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;

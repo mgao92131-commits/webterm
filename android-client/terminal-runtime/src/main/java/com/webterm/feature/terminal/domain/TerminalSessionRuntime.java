@@ -1,0 +1,796 @@
+package com.webterm.feature.terminal.domain;
+
+import android.os.Handler;
+import android.os.Looper;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.webterm.terminal.model.HistoryBudget;
+import com.webterm.terminal.model.ModelChange;
+import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ResumeToken;
+import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.protocol.ScreenMessageMapper;
+import com.webterm.terminal.protocol.ScreenMessageValidator;
+import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * 无 Activity 的终端会话运行时。持有连接、远端模型和模型执行器。
+ * View detach 不关闭连接；只有显式 close 或进程销毁才结束。
+ */
+public final class TerminalSessionRuntime {
+
+  public interface AuthenticationListener {
+    void onAuthenticationRequired(@Nullable String reason);
+  }
+
+  /** Bound retained wire data per session when a remote PTY outpaces model parsing. */
+  private static final int MAX_PENDING_SCREEN_MESSAGES = 64;
+  /** 单会话待解析屏幕帧的总内存预算；不能只限制条数，因为单帧上限接近 2 MiB。 */
+  private static final long MAX_PENDING_SCREEN_BYTES = 4L * 1024L * 1024L;
+  /** resync 最多重发次数；耗尽后升级为 channel 重建。 */
+  private static final int MAX_RESYNC_RETRIES = 3;
+  /** 发送 resync 后等待权威 snapshot 的时间，超时按有界退避重发。 */
+  private static final long RESYNC_SNAPSHOT_TIMEOUT_MS = 2000L;
+  /** 第 1/2/3 次重发 resync 前的退避延迟。 */
+  private static final long[] RETRY_BACKOFF_MS = {1000L, 2000L, 4000L};
+  private static final long[] LEASE_RETRY_BACKOFF_MS = {250L, 500L, 1000L, 2000L};
+  private static final long LEASE_REQUEST_TIMEOUT_MS = 3000L;
+  private static final long LEASE_FALLBACK_RENEW_MS = 120_000L;
+  private static final long LEASE_MIN_RENEW_DELAY_MS = 1000L;
+
+  public interface Listener {
+    void onModelChange(@NonNull ModelChange change);
+    void onEffect(@NonNull TerminalScreenEffect effect);
+    void onConnectionStateChange(@NonNull State state);
+    default void onLayoutLeaseStateChange(boolean ready) {}
+    default void onInputDeliveryUncertain(@NonNull String message) {}
+  }
+
+  /** 不依赖 Activity/View 的副作用处理器；页面不存在时仍必须持续存在。 */
+  public interface EffectSink {
+    void onEffect(@NonNull TerminalSessionRuntime runtime,
+                  @NonNull TerminalScreenEffect effect,
+                  boolean hasPageListener);
+  }
+
+  public enum State {
+    CONNECTING,
+    TRANSPORT_CONNECTED,
+    SYNCING,
+    CONNECTED,
+    RECONNECTING,
+    CLOSED
+  }
+
+  /** 可注入的延迟调度器；回调内部必须重新投递到 modelExecutor 并校验 generation。 */
+  public interface TimeoutScheduler {
+    void schedule(@NonNull Runnable task, long delayMs);
+  }
+
+  /** 屏幕协议连接抽象。 */
+  public interface ScreenConnection {
+    void setListener(@NonNull Listener listener);
+    /** transport 建立后由 model executor 提供原子 resume token 并开始 Hello。 */
+    default boolean beginSync(@NonNull ResumeToken resumeToken) { return false; }
+    void setLayoutLeaseId(@NonNull String leaseId);
+    void sendTextInput(@NonNull String text);
+    void sendPasteInput(@NonNull String text);
+    void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
+    void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+                        boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
+    void sendFocusInput(boolean focused);
+    void requestResize(int cols, int rows);
+    /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
+    boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit);
+    default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
+    /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
+    default void requestReconnect(@NonNull String reason) {}
+    void acquireLayout(boolean interactive);
+    default void acquireLayout(@NonNull String requestId, boolean interactive) {
+      acquireLayout(interactive);
+    }
+    void releaseLayout();
+    void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data);
+    void close();
+
+    /** 可靠输入账本由 dispatcher 直接消费；transport adapter 不接收 typed envelope。 */
+    @Nullable default ReliableInputTracker reliableInputTracker() { return null; }
+
+    interface Listener {
+      void onScreenMessage(@NonNull byte[] payload);
+      void onConnected();
+      void onDisconnected(@Nullable String reason);
+      default void onAuthenticationRequired(@Nullable String reason) {}
+      default void onInputDeliveryUncertain(@NonNull String message) {}
+      default void onInputDeliveryEvent(@NonNull ReliableInputTracker.Event event) {}
+      void onClosed();
+    }
+  }
+
+  private final String sessionId;
+  private final RemoteTerminalModel model;
+  private final Executor modelExecutor;
+  private final Executor callbackExecutor;
+  private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
+  private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
+  private final ScreenMailbox screenMailbox =
+      new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
+
+  private volatile State state = State.CONNECTING;
+  private final LayoutLeaseCoordinator layoutLeaseCoordinator;
+  /**
+   * Screen 连接代际。网络回调可以早于 modelExecutor 中的任务完成；任何断线、替换或
+   * 关闭都必须同步推进代际，让旧连接排队的 Hello/同步任务在执行时自行失效。
+   */
+  private final AtomicLong connectionEpoch = new AtomicLong();
+
+  private final ResyncCoordinator resyncCoordinator;
+  private final HistoryRequestCoordinator historyRequests = new HistoryRequestCoordinator();
+  private volatile ScreenConnection connection;
+  private volatile boolean connectionRequiresReplacement;
+  @Nullable private volatile AuthenticationListener authenticationListener;
+  @Nullable private volatile EffectSink effectSink;
+  private final TimeoutScheduler timeoutScheduler;
+  private final TimeoutScheduler leaseScheduler;
+  private long syncGeneration;
+
+  public TerminalSessionRuntime(@NonNull String sessionId) {
+    this(sessionId, HistoryBudget.defaults());
+  }
+
+  public TerminalSessionRuntime(@NonNull String sessionId, @NonNull HistoryBudget historyBudget) {
+    this(sessionId, new RemoteTerminalModel(historyBudget), defaultModelExecutor(sessionId),
+        command -> new Handler(Looper.getMainLooper()).post(command));
+  }
+
+  private static Executor defaultModelExecutor(String sessionId) {
+    return Executors.newSingleThreadExecutor(r -> {
+      Thread t = new Thread(r, "TerminalModel-" + sessionId);
+      t.setUncaughtExceptionHandler((thread, ex) -> {
+        // TODO: 上报非致命错误
+      });
+      return t;
+    });
+  }
+
+  public TerminalSessionRuntime(@NonNull String sessionId,
+                                @NonNull RemoteTerminalModel model,
+                                @NonNull Executor modelExecutor) {
+    this(sessionId, model, modelExecutor, Runnable::run);
+  }
+
+  public TerminalSessionRuntime(@NonNull String sessionId,
+                                @NonNull RemoteTerminalModel model,
+                                @NonNull Executor modelExecutor,
+                                @NonNull Executor callbackExecutor) {
+    this(sessionId, model, modelExecutor, callbackExecutor,
+        (task, delayMs) -> new Handler(Looper.getMainLooper()).postDelayed(task, delayMs));
+  }
+
+  public TerminalSessionRuntime(@NonNull String sessionId,
+                                @NonNull RemoteTerminalModel model,
+                                @NonNull Executor modelExecutor,
+                                @NonNull Executor callbackExecutor,
+                                @NonNull TimeoutScheduler timeoutScheduler) {
+    this(sessionId, model, modelExecutor, callbackExecutor, timeoutScheduler, timeoutScheduler);
+  }
+
+  TerminalSessionRuntime(@NonNull String sessionId,
+                         @NonNull RemoteTerminalModel model,
+                         @NonNull Executor modelExecutor,
+                         @NonNull Executor callbackExecutor,
+                         @NonNull TimeoutScheduler timeoutScheduler,
+                         @NonNull TimeoutScheduler leaseScheduler) {
+    this.sessionId = sessionId;
+    this.model = model;
+    this.modelExecutor = modelExecutor;
+    this.callbackExecutor = callbackExecutor;
+    this.timeoutScheduler = timeoutScheduler;
+    this.leaseScheduler = leaseScheduler;
+    this.resyncCoordinator = new ResyncCoordinator(
+        timeoutScheduler, modelExecutor, new ResyncCoordinator.Actions() {
+          @Override
+          public void sendResync(@NonNull String reason) {
+            TerminalSessionRuntime.this.sendResync(reason);
+          }
+
+          @Override
+          public void rebuildScreenChannel(@NonNull String reason) {
+            ScreenConnection current = connection;
+            if (current == null) return;
+            connectionEpoch.incrementAndGet();
+            layoutLeaseCoordinator.invalidate();
+            updateState(State.RECONNECTING);
+            current.requestReconnect(reason);
+          }
+        }, MAX_RESYNC_RETRIES, RESYNC_SNAPSHOT_TIMEOUT_MS, RETRY_BACKOFF_MS);
+    this.layoutLeaseCoordinator = new LayoutLeaseCoordinator(
+        leaseScheduler, modelExecutor, new LayoutLeaseCoordinator.Environment() {
+          @Override public boolean isTerminalConnected() { return state == State.CONNECTED; }
+          @Override public ScreenConnection connection() {
+            return TerminalSessionRuntime.this.connection;
+          }
+          @Override public void onInputReadyChanged(boolean ready) {
+            notifyLayoutLeaseState(ready);
+          }
+        }, LEASE_RETRY_BACKOFF_MS, LEASE_REQUEST_TIMEOUT_MS,
+        LEASE_FALLBACK_RENEW_MS, LEASE_MIN_RENEW_DELAY_MS);
+  }
+
+  @NonNull
+  public String sessionId() {
+    return sessionId;
+  }
+
+  @NonNull
+  public RemoteTerminalModel model() {
+    return model;
+  }
+
+  @NonNull
+  public State state() {
+    return state;
+  }
+
+  public void attachConnection(@NonNull ScreenConnection connection) {
+    ScreenConnection previous = this.connection;
+    if (previous != null && previous != connection) {
+      previous.releaseLayout();
+      previous.close();
+    }
+    connectionEpoch.incrementAndGet();
+    this.connection = connection;
+    this.connectionRequiresReplacement = false;
+    connection.setListener(new ScreenConnection.Listener() {
+      @Override
+      public void onScreenMessage(@NonNull byte[] payload) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        handleScreenMessage(connectionEpoch.get(), connection, payload);
+      }
+
+      @Override
+      public void onConnected() {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        // 同一连接阶段只允许启动一次初始同步。重复 ws-connected 不能重复 Hello；
+        // 合法重连会先经 onDisconnected() 进入 RECONNECTING。
+        State currentState = state;
+        if (currentState != State.CONNECTING && currentState != State.RECONNECTING) return;
+        long epoch = connectionEpoch.get();
+        updateState(State.TRANSPORT_CONNECTED);
+        modelExecutor.execute(() -> beginSynchronization(connection, epoch));
+      }
+
+      @Override
+      public void onDisconnected(@Nullable String reason) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        // 必须在投递 modelExecutor 清理任务前同步作废旧代际。否则旧 beginSync 可能
+        // 先执行，并通过已经重连的同一 logical channel 发出第二个 Hello。
+        connectionEpoch.incrementAndGet();
+        // 断线后 Go 侧会释放租约；本地同步失效，避免 resize 丢进死通道，
+        // 重连拿到新租约后 handleLayoutLease 会用 lastRequested* 补发最新尺寸。
+        layoutLeaseCoordinator.invalidate();
+        connectionRequiresReplacement = false;
+        // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
+        modelExecutor.execute(() -> {
+          syncGeneration++;
+          resetResyncRecovery();
+        });
+        updateState(State.RECONNECTING);
+      }
+
+      @Override
+      public void onInputDeliveryUncertain(@NonNull String message) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        callbackExecutor.execute(() -> {
+          for (Listener listener : listeners) listener.onInputDeliveryUncertain(message);
+        });
+      }
+
+      @Override
+      public void onInputDeliveryEvent(@NonNull ReliableInputTracker.Event event) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        if (connectionPolicy.onInputDelivery(event)
+            == TerminalConnectionPolicy.Decision.REBUILD_SCREEN_CHANNEL) {
+          modelExecutor.execute(() -> {
+            if (TerminalSessionRuntime.this.connection != connection) return;
+            connectionEpoch.incrementAndGet();
+            layoutLeaseCoordinator.invalidate();
+            updateState(State.RECONNECTING);
+            connection.requestReconnect("input delivery: " + event.type.name());
+          });
+        }
+      }
+
+      @Override
+      public void onAuthenticationRequired(@Nullable String reason) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        connectionEpoch.incrementAndGet();
+        layoutLeaseCoordinator.invalidate();
+        connectionRequiresReplacement = true;
+        // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
+        // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
+        // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
+        modelExecutor.execute(() -> {
+          syncGeneration++;
+          resetResyncRecovery();
+        });
+        updateState(State.RECONNECTING);
+        if (authenticationListener != null) {
+          callbackExecutor.execute(() -> {
+            AuthenticationListener currentListener = authenticationListener;
+            if (currentListener != null) currentListener.onAuthenticationRequired(reason);
+          });
+        }
+      }
+
+      @Override
+      public void onClosed() {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        connectionEpoch.incrementAndGet();
+        TerminalSessionRuntime.this.connection = null;
+        connectionRequiresReplacement = false;
+        layoutLeaseCoordinator.invalidate();
+        updateState(State.CLOSED);
+      }
+    });
+  }
+
+  public boolean hasConnection() {
+    return connection != null && state != State.CLOSED && !connectionRequiresReplacement;
+  }
+
+  /** HOT→WARM：关闭 screen channel，但保留完整 model 与 resume token。 */
+  public void suspendConnection() {
+    ScreenConnection current = connection;
+    connectionEpoch.incrementAndGet();
+    connection = null;
+    connectionRequiresReplacement = false;
+    modelExecutor.execute(() -> {
+      syncGeneration++;
+      resetResyncRecovery();
+    });
+    if (current != null) {
+      current.releaseLayout();
+      current.close();
+    }
+    layoutLeaseCoordinator.invalidate();
+    if (state != State.CLOSED) updateState(State.RECONNECTING);
+  }
+
+  /** View detach 只释放焦点与交互租约，不关闭 channel。 */
+  public void detachPage() {
+    ScreenConnection current = connection;
+    if (current != null) {
+      if (hasLayoutLease()) current.sendFocusInput(false);
+    }
+    layoutLeaseCoordinator.detachPage();
+  }
+
+  /** HOT reattach 不需要网络恢复，只重新申请交互租约。 */
+  public void attachPage() {
+    boolean wasAttached = layoutLeaseCoordinator.isPageAttached();
+    layoutLeaseCoordinator.attachPage();
+    if (!wasAttached && state != State.CONNECTED && state != State.CLOSED) {
+      recoverUnhealthyConnectionOnPageReattach();
+    }
+  }
+
+  /**
+   * HOT runtime 在页面不可见期间可能停在 transport open、retry 或 screen sync。
+   * 页面重新可见是明确的恢复边界：已连接会话继续零开销复用，其余状态立即换用
+   * 新 logical tunnel，避免用户等待旧握手超时或指数退避。
+   */
+  private void recoverUnhealthyConnectionOnPageReattach() {
+    ScreenConnection current = connection;
+    if (current == null || state == State.CLOSED || state == State.CONNECTED) return;
+    connectionEpoch.incrementAndGet();
+    layoutLeaseCoordinator.invalidate();
+    updateState(State.RECONNECTING);
+    modelExecutor.execute(() -> {
+      syncGeneration++;
+      resetResyncRecovery();
+    });
+    current.requestReconnect("page reattached while terminal connection was not ready");
+  }
+
+  public void addListener(@NonNull Listener listener) {
+    if (listeners.addIfAbsent(listener)) {
+      callbackExecutor.execute(() -> {
+        listener.onConnectionStateChange(state);
+        listener.onLayoutLeaseStateChange(hasLayoutLease());
+      });
+    }
+  }
+
+  public void removeListener(@NonNull Listener listener) {
+    listeners.remove(listener);
+  }
+
+  public void setAuthenticationListener(@Nullable AuthenticationListener listener) {
+    authenticationListener = listener;
+  }
+
+  public void setEffectSink(@Nullable EffectSink sink) {
+    effectSink = sink;
+  }
+
+  public void sendTextInput(@NonNull String text) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendTextInput(text);
+    }
+  }
+
+  public void sendPasteInput(@NonNull String text) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendPasteInput(text);
+    }
+  }
+
+  public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
+                           boolean meta, boolean pressed) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
+    }
+  }
+
+  public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+                             boolean shift, boolean alt, boolean ctrl, boolean meta,
+                             boolean pressed) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
+    }
+  }
+
+  public void sendFocusInput(boolean focused) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendFocusInput(focused);
+    }
+  }
+
+  public void requestResize(int cols, int rows) {
+    layoutLeaseCoordinator.requestResize(cols, rows);
+  }
+
+  /**
+   * 只有连接可用且请求成功排队后才记录 pending 请求 id 并返回 true；
+   * 否则返回 false，调用方必须清除 loading 状态并允许之后重试。
+   */
+  public boolean requestHistoryPage(long beforeLineId, int limit) {
+    if (state != State.CONNECTED) return false;
+    ScreenConnection c = connection;
+    if (c == null) return false;
+    String requestId = historyRequests.nextRequestId();
+    if (!c.requestHistoryPage(requestId, beforeLineId, limit)) return false;
+    historyRequests.markPending(requestId);
+    return true;
+  }
+
+  public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.sendClipboardResponse(requestId, allowed, timeout, data);
+    }
+  }
+
+  public void close() {
+    connectionEpoch.incrementAndGet();
+    updateState(State.CLOSED);
+    screenMailbox.reset();
+    // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
+    modelExecutor.execute(this::resetResyncRecovery);
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.releaseLayout();
+      c.close();
+    }
+    layoutLeaseCoordinator.detachPage();
+    modelExecutor.execute(() -> syncGeneration++);
+  }
+
+  // ---- transport/screen 同步状态机（modelExecutor 唯一推进） ----
+
+  private void beginSynchronization(@NonNull ScreenConnection expectedConnection,
+                                    long expectedEpoch) {
+    if (connection != expectedConnection
+        || connectionEpoch.get() != expectedEpoch
+        || state != State.TRANSPORT_CONNECTED) return;
+    ResumeToken token = !resyncCoordinator.isRecovering()
+        ? model.resumeToken()
+        : ResumeToken.cold(RemoteTerminalModel.SCHEMA_GENERATION);
+    updateState(State.SYNCING);
+    long generation = ++syncGeneration;
+    if (!expectedConnection.beginSync(token)) {
+      // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
+      // Snapshot 只会让页面永久闪烁；立即换 channel，并作废当前代际的迟到帧。
+      connectionEpoch.incrementAndGet();
+      layoutLeaseCoordinator.invalidate();
+      updateState(State.RECONNECTING);
+      expectedConnection.requestReconnect("screen Hello send failed");
+      return;
+    }
+    timeoutScheduler.schedule(
+        () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
+        RESYNC_SNAPSHOT_TIMEOUT_MS);
+  }
+
+  private void onSynchronizationTimeout(long generation) {
+    if (generation != syncGeneration || state != State.SYNCING) return;
+    TerminalResumeMetrics.syncTimeout();
+    startResyncRecovery("initial synchronization timeout");
+  }
+
+  private void completeSynchronization() {
+    if (state != State.SYNCING && state != State.TRANSPORT_CONNECTED) return;
+    syncGeneration++;
+    updateState(State.CONNECTED);
+    layoutLeaseCoordinator.onSynchronizationComplete();
+  }
+
+  private void handleScreenMessage(long messageEpoch,
+                                   @NonNull ScreenConnection sourceConnection,
+                                   @NonNull byte[] payload) {
+    ScreenMessageValidator.ValidationResult frameSize =
+        ScreenMessageValidator.validateEnvelopeSize(payload);
+    if (state == State.CLOSED) return;
+    ScreenMailbox.Offer offer = screenMailbox.offer(
+        messageEpoch, sourceConnection, payload, frameSize.ok);
+    TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
+    if (offer.scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
+  }
+
+  private void drainScreenMailbox() {
+    while (true) {
+      ScreenMailbox.Drain drain = screenMailbox.poll();
+      if (drain == null) return;
+      if (drain.fence != null) {
+        onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
+            drain.fence.overflowCount);
+        continue;
+      }
+      ScreenMailbox.Message message = drain.message;
+      // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
+      if (message.connectionEpoch != connectionEpoch.get()
+          || message.mailboxGeneration != screenMailbox.generation()
+          || message.sourceConnection != connection) continue;
+      processScreenMessage(message);
+    }
+  }
+
+  // ---- resync 恢复状态机（以下方法只能在 modelExecutor 上调用） ----
+
+  private void startResyncRecovery(@NonNull String reason) {
+    if (resyncCoordinator.start(reason)) TerminalResumeMetrics.resync(reason);
+  }
+
+  private void onMailboxOverflow(@NonNull String reason,
+                                 long discardedBytes,
+                                 long overflowCount) {
+    TerminalResumeMetrics.screenMailboxOverflow(reason, discardedBytes, overflowCount);
+    boolean wasRecovering = resyncCoordinator.isRecovering();
+    resyncCoordinator.onMailboxOverflow(reason);
+    if (!wasRecovering) TerminalResumeMetrics.resync(reason);
+  }
+
+  private void onInvalidSnapshot(@NonNull String reason) {
+    boolean wasRecovering = resyncCoordinator.isRecovering();
+    resyncCoordinator.onInvalidSnapshot(reason);
+    if (!wasRecovering) TerminalResumeMetrics.resync(reason);
+  }
+
+  private void onAuthoritativeSnapshot() {
+    if (resyncCoordinator.reason().startsWith("screen mailbox")) {
+      TerminalResumeMetrics.screenMailboxRecovered("snapshot");
+    }
+    resyncCoordinator.onAuthoritativeSnapshot();
+    historyRequests.clear();
+  }
+
+  private void resetResyncRecovery() {
+    resyncCoordinator.reset();
+    historyRequests.clear();
+    screenMailbox.reset();
+  }
+
+  private void sendResync(@NonNull String reason) {
+    ScreenConnection c = connection;
+    if (c != null) {
+      c.requestResync(model.layoutEpoch, model.screenRevision, reason);
+    }
+  }
+
+  private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
+      try {
+        TerminalScreenProto.ScreenEnvelope envelope =
+            TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
+        if (envelope.getProtocolVersion() != 1) {
+          throw new IllegalArgumentException("unsupported protocol version");
+        }
+        // InputAck 与 instance identity 同样消费这一次 typed parse；TerminalChannel
+        // 不再在 DeviceConnection event loop 上重复解析原始 protobuf。
+        if (message.connectionEpoch != connectionEpoch.get()
+            || message.sourceConnection != connection) return;
+        if (ScreenEnvelopeDispatcher.dispatchReliableInput(
+            envelope, message.sourceConnection.reliableInputTracker())) return;
+        ModelChange change;
+        switch (envelope.getPayloadCase()) {
+          case SNAPSHOT: {
+            ScreenMessageValidator.ValidationResult validation =
+                ScreenMessageValidator.validateSnapshot(envelope.getSnapshot());
+            if (!validation.ok) {
+              // 无效 snapshot 不能解除围栏：等待期间按退避重发 resync，
+              // 空闲时启动一次恢复。不能静默丢弃，否则永远等不到权威帧。
+              onInvalidSnapshot(validation.reason != null ? validation.reason : "invalid snapshot");
+              return;
+            }
+            change = model.applySnapshot(ScreenMessageMapper.mapSnapshot(envelope.getSnapshot()));
+            TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
+            // A snapshot atomically replaces the local projection and is the
+            // only frame that may release a revision-gap recovery fence.
+            onAuthoritativeSnapshot();
+            completeSynchronization();
+            break;
+          }
+          case PATCH:
+            // A patch is relative to the state that failed validation. Applying
+            // queued patches while waiting for a snapshot only creates repeated
+            // revision gaps and a resync storm on slow links. The envelope is
+            // already parsed here on modelExecutor; drop without validating
+            // or touching the local revision.
+            if (resyncCoordinator.isRecovering()) return;
+            // rows 取当前模型 geometry：patch 自身不携带 geometry，
+            // 行索引上界只能相对本地投影校验（计划 §10.1）。
+            requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
+            boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
+            long patchBase = envelope.getPatch().getBaseRevision();
+            change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
+            if (resumePatch) {
+              TerminalResumeMetrics.cumulativePatch(patchBase,
+                  envelope.getPatch().getScreenRevision(),
+                  envelope.getPatch().getScreenRowsCount(),
+                  envelope.getPatch().getHistoryAppendCount());
+            }
+            completeSynchronization();
+            break;
+          case HISTORY_PAGE:
+            // A page is anchored to the cache window that requested it. A late
+            // response after reconnect/snapshot must not prepend rows into a
+            // different viewport.
+            if (!historyRequests.accept(envelope.getHistoryPage().getRequestId())) return;
+            requireValid(ScreenMessageValidator.validateHistoryPage(envelope.getHistoryPage()));
+            change = model.prependHistoryPage(ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage()));
+            historyRequests.complete(envelope.getHistoryPage().getRequestId());
+            break;
+          case HISTORY_TRIM:
+            change = model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
+                envelope.getHistoryTrim().getFirstAvailableLineId());
+            break;
+          case LAYOUT_LEASE:
+            layoutLeaseCoordinator.handle(envelope.getLayoutLease());
+            change = ModelChange.none();
+            break;
+          case EFFECT:
+            change = ModelChange.none();
+            if (model.instanceId != null && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
+              handleEffect(envelope.getEffect());
+            }
+            break;
+          case EXIT:
+            change = ModelChange.none();
+            updateState(State.CLOSED);
+            break;
+          case RESUME_ACK:
+            long ackBase = model.screenRevision;
+            model.applyResumeAck(
+                envelope.getResumeAck().getInstanceId(),
+                envelope.getResumeAck().getLayoutEpoch(),
+                envelope.getResumeAck().getScreenRevision());
+            TerminalResumeMetrics.exactResume(ackBase,
+                envelope.getResumeAck().getScreenRevision());
+            change = ModelChange.none();
+            completeSynchronization();
+            break;
+          default:
+            change = ModelChange.none();
+            break;
+        }
+        dispatchModelChange(change);
+      } catch (Exception e) {
+        // revision gap、校验失败、解析失败：空闲时启动一次恢复；
+        // 等待/重试期间的消息失败由等待超时兜底，这里直接丢弃。
+        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
+      }
+  }
+
+  private static void requireValid(ScreenMessageValidator.ValidationResult result) {
+    if (!result.ok) throw new IllegalArgumentException(result.reason);
+  }
+
+  @NonNull
+  public String layoutLeaseId() {
+    return layoutLeaseCoordinator.leaseId();
+  }
+
+  public boolean hasLayoutLease() {
+    return layoutLeaseCoordinator.hasLease();
+  }
+
+  private void notifyLayoutLeaseState(boolean ready) {
+    callbackExecutor.execute(() -> {
+      for (Listener listener : listeners) listener.onLayoutLeaseStateChange(ready);
+    });
+  }
+
+  private void handleEffect(TerminalScreenProto.TerminalEffect effect) {
+    TerminalScreenEffect screenEffect = null;
+    switch (effect.getEffectCase()) {
+      case BELL:
+        screenEffect = TerminalScreenEffect.bell();
+        break;
+      case TITLE:
+        screenEffect = TerminalScreenEffect.title(effect.getTitle().getTitle());
+        break;
+      case CWD:
+        screenEffect = TerminalScreenEffect.workingDirectory(effect.getCwd().getPath());
+        break;
+      case CLIPBOARD_READ:
+        screenEffect = TerminalScreenEffect.clipboardRead(
+            effect.getClipboardRead().getRequestId(),
+            effect.getClipboardRead().getClipboard());
+        break;
+      case CLIPBOARD_WRITE:
+        screenEffect = TerminalScreenEffect.clipboardWrite(
+            effect.getClipboardWrite().getRequestId(),
+            effect.getClipboardWrite().getClipboard(),
+            effect.getClipboardWrite().getData().toByteArray());
+        break;
+      case NOTIFICATION:
+        screenEffect = TerminalScreenEffect.notification(
+            effect.getNotification().getTitle(),
+            effect.getNotification().getBody());
+        break;
+      default:
+        break;
+    }
+    if (screenEffect != null) {
+      dispatchEffect(screenEffect);
+    }
+  }
+
+  private void dispatchEffect(@NonNull TerminalScreenEffect effect) {
+    callbackExecutor.execute(() -> {
+      EffectSink sink = effectSink;
+      if (sink != null) sink.onEffect(this, effect, !listeners.isEmpty());
+      for (Listener listener : listeners) listener.onEffect(effect);
+    });
+  }
+
+  private void dispatchModelChange(@NonNull ModelChange change) {
+    callbackExecutor.execute(() -> {
+      for (Listener listener : listeners) listener.onModelChange(change);
+    });
+  }
+
+  private void updateState(@NonNull State newState) {
+    state = newState;
+    callbackExecutor.execute(() -> {
+      for (Listener listener : listeners) listener.onConnectionStateChange(newState);
+    });
+  }
+}

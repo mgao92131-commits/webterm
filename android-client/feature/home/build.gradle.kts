@@ -16,13 +16,13 @@ android {
 
 dependencies {
     implementation(project(":core-api"))
+    implementation(project(":data-http"))
     implementation(project(":core-config"))
     implementation(project(":core-cache"))
     implementation(project(":core-session"))
     implementation(project(":core-relay"))
     implementation(project(":transport-api"))
-    implementation(project(":ui-common"))
-    implementation(project(":feature:relay"))
+    implementation(project(":ui-kit"))
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
     implementation(libs.fragment.ktx)

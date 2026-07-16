@@ -197,13 +197,6 @@ func (client *terminalChannelRuntime) SendHook(ev protocol.HookEvent) {
 	// terminal-native notifications through screen effects instead.
 }
 
-func (client *terminalChannelRuntime) SendOutput(frame EventFrame) {
-	if !client.ready.Load() {
-		return
-	}
-	// screen protocol 由 Runtime 通过 ScreenClient.Send 回调主动推送 frame。
-}
-
 func (client *terminalChannelRuntime) SendExit(code int) {
 	payload, err := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 1,

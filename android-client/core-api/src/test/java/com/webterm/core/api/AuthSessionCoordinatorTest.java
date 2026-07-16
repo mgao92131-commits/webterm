@@ -1,5 +1,7 @@
 package com.webterm.core.api;
 
+import com.webterm.data.http.WebTermApi;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;

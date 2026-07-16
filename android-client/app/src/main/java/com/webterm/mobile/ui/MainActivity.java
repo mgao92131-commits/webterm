@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.TextView;
 
 import com.webterm.mobile.R;
 import com.webterm.mobile.device.AndroidNotificationRenderer;
@@ -15,6 +16,8 @@ import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.feature.home.HomeHost;
 import com.webterm.feature.home.SessionRowActions;
+import com.webterm.core.relay.RelayService;
+import com.webterm.ui.common.StatusIndicatorView;
 import com.webterm.feature.relay.RelayHost;
 import com.webterm.feature.relay.RelayUiState;
 import com.webterm.feature.terminal.TerminalFragment;
@@ -128,6 +131,15 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) { coordinator.onSessionCwdChanged(server, sessionId, cwd); }
     @Override public void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) { coordinator.removeMissingCachedSessionsForServer(server, liveSessionIdentities); }
     @Override public void navigateToRelay() { coordinator.navigateToRelay(); }
+
+    @Override
+    public RelayStatusBinding bindRelayStatus(RelayService service, TextView subtitle,
+                                               StatusIndicatorView status) {
+        RelayUiState state = new RelayUiState(service, null);
+        state.attachSubtitle(subtitle);
+        state.attachStatusDot(status);
+        return state::destroy;
+    }
     @Override public void shareCrashLog() { coordinator.shareLatestCrashLog(this); }
 
     // ── TerminalHost ─────────────────────────────────────────────

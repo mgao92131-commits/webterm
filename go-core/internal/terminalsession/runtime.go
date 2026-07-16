@@ -55,7 +55,6 @@ type Runtime struct {
 	onTitle        func(string)
 	onBell         func()
 	onInfo         func()
-	onOutput       func([]byte)
 	onEffect       func(terminalEffect)
 	onResync       func(clientID string, reason string)
 	resumeExact    atomic.Uint64
@@ -667,9 +666,6 @@ func inputKindName(kind terminalengine.InputKind) string {
 func (r *Runtime) handlePTYOutput(data []byte) {
 	r.captureRawPTYOutput(data)
 	_ = r.engine.Write(data)
-	if r.onOutput != nil {
-		r.onOutput(data)
-	}
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	r.scheduleProjectionFlush()

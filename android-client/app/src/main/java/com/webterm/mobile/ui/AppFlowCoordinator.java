@@ -21,7 +21,7 @@ import org.json.JSONObject;
 
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
-import com.webterm.core.api.WebTermApi;
+import com.webterm.data.http.WebTermApi;
 import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.api.DeviceConnectionKeys;
@@ -29,7 +29,6 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
-import com.webterm.ui.common.command.SessionCommandController;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.api.SessionIds;
 import com.webterm.core.session.DeviceConnectionRegistry;

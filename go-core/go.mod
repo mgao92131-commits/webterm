@@ -19,6 +19,6 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 )
 
-replace github.com/danielgatis/go-headless-term => ./internal/headlessterm
+replace github.com/danielgatis/go-headless-term => ./third_party/go-headless-term
 
 replace github.com/danielgatis/go-vte => ./third_party/go-vte

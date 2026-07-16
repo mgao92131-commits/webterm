@@ -1,6 +1,10 @@
 package com.webterm.feature.home;
 
 import com.webterm.core.config.ServerConfig;
+import com.webterm.core.relay.RelayService;
+import com.webterm.ui.common.StatusIndicatorView;
+
+import android.widget.TextView;
 
 import java.util.Set;
 
@@ -8,7 +12,11 @@ import java.util.Set;
  * Simplified host interface for HomeFragment to communicate with its Activity
  * for operations that require Activity context (dialogs, terminal navigation).
  */
-public interface HomeHost {
+public interface HomeHost extends RelayNavigator {
+    interface RelayStatusBinding { void close(); }
+
+	RelayStatusBinding bindRelayStatus(RelayService service, TextView subtitle,
+	                                  StatusIndicatorView status);
 	void showSettingsDialog();
     void showTerminal(ServerConfig server, String sessionId, String termTitle,
                       String createdAt, String instanceId, String cwd);
@@ -37,9 +45,6 @@ public interface HomeHost {
 
     /** Prune stale cached sessions after a live session refresh. */
     void removeMissingCachedSessionsForServer(ServerConfig server, Set<String> liveSessionIdentities);
-
-    /** Navigate to the relay destination. */
-    void navigateToRelay();
 
     /** Export/share the latest crash log. */
     void shareCrashLog();

@@ -46,26 +46,26 @@ func TestPhysicalWriterPrioritizesControlBetweenChannelFrames(t *testing.T) {
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	session := Serve(socket, &ServeOpts{})
+	writer := NewPhysicalWriter(socket, 128)
 	ctx, cancel := context.WithCancel(context.Background())
-	go session.writeLoop(ctx)
+	go writer.Run(ctx)
 	defer func() {
 		cancel()
-		<-session.writerDone
+		<-writer.Done()
 	}()
 
 	results := make(chan error, 3)
-	go func() { results <- session.submitWrite(ctx, termsession.MessageBinary, []byte("screen-a"), false) }()
+	go func() { results <- writer.Submit(ctx, termsession.MessageBinary, []byte("screen-a"), false) }()
 	select {
 	case <-socket.firstStarted:
 	case <-time.After(time.Second):
 		t.Fatal("first screen write did not start")
 	}
-	go func() { results <- session.submitWrite(ctx, termsession.MessageBinary, []byte("screen-b"), false) }()
-	go func() { results <- session.submitWrite(ctx, termsession.MessageText, []byte("control"), true) }()
+	go func() { results <- writer.Submit(ctx, termsession.MessageBinary, []byte("screen-b"), false) }()
+	go func() { results <- writer.Submit(ctx, termsession.MessageText, []byte("control"), true) }()
 
 	deadline := time.Now().Add(time.Second)
-	for (len(session.dataWrites) == 0 || len(session.highWrites) == 0) && time.Now().Before(deadline) {
+	for (len(writer.dataWrites) == 0 || len(writer.highWrites) == 0) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	close(socket.releaseFirst)
@@ -92,20 +92,20 @@ func TestPhysicalWriterLetsAnotherTerminalRunBeforeNextFrame(t *testing.T) {
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	session := Serve(socket, &ServeOpts{})
+	writer := NewPhysicalWriter(socket, 128)
 	ctx, cancel := context.WithCancel(context.Background())
-	go session.writeLoop(ctx)
+	go writer.Run(ctx)
 	defer func() {
 		cancel()
-		<-session.writerDone
+		<-writer.Done()
 	}()
 
 	results := make(chan error, 3)
 	go func() {
-		results <- session.submitWrite(ctx, termsession.MessageBinary, []byte("terminal-a-1"), false)
+		results <- writer.Submit(ctx, termsession.MessageBinary, []byte("terminal-a-1"), false)
 		// A logical channel cannot submit its next screen state until the
 		// physical result for the previous state is known.
-		results <- session.submitWrite(ctx, termsession.MessageBinary, []byte("terminal-a-2"), false)
+		results <- writer.Submit(ctx, termsession.MessageBinary, []byte("terminal-a-2"), false)
 	}()
 	select {
 	case <-socket.firstStarted:
@@ -114,13 +114,13 @@ func TestPhysicalWriterLetsAnotherTerminalRunBeforeNextFrame(t *testing.T) {
 	}
 
 	go func() {
-		results <- session.submitWrite(ctx, termsession.MessageBinary, []byte("terminal-b-1"), false)
+		results <- writer.Submit(ctx, termsession.MessageBinary, []byte("terminal-b-1"), false)
 	}()
 	deadline := time.Now().Add(time.Second)
-	for len(session.dataWrites) == 0 && time.Now().Before(deadline) {
+	for len(writer.dataWrites) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if len(session.dataWrites) == 0 {
+	if len(writer.dataWrites) == 0 {
 		t.Fatal("second terminal did not enter the physical writer queue")
 	}
 	close(socket.releaseFirst)
@@ -139,5 +139,56 @@ func TestPhysicalWriterLetsAnotherTerminalRunBeforeNextFrame(t *testing.T) {
 		string(socket.writes[1]) != "terminal-b-1" ||
 		string(socket.writes[2]) != "terminal-a-2" {
 		t.Fatalf("write order=%q, want a-1, b-1, a-2", socket.writes)
+	}
+}
+
+func TestPhysicalWriterBoundsHighPriorityBurst(t *testing.T) {
+	socket := &blockingMuxSocket{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	writer := NewPhysicalWriter(socket, 128)
+	ctx, cancel := context.WithCancel(context.Background())
+	go writer.Run(ctx)
+	defer func() {
+		cancel()
+		<-writer.Done()
+	}()
+
+	results := make(chan error, 14)
+	go func() { results <- writer.Submit(ctx, termsession.MessageText, []byte("high-0"), true) }()
+	select {
+	case <-socket.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first high-priority write did not start")
+	}
+	for i := 1; i <= 12; i++ {
+		payload := []byte{byte(i)}
+		go func() { results <- writer.Submit(ctx, termsession.MessageText, payload, true) }()
+	}
+	go func() { results <- writer.Submit(ctx, termsession.MessageBinary, []byte("normal"), false) }()
+
+	deadline := time.Now().Add(time.Second)
+	for (len(writer.highWrites) < 12 || len(writer.dataWrites) < 1) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(socket.releaseFirst)
+	for range 14 {
+		if err := <-results; err != nil && err != io.EOF {
+			t.Fatal(err)
+		}
+	}
+
+	socket.mu.Lock()
+	defer socket.mu.Unlock()
+	normalIndex := -1
+	for i, payload := range socket.writes {
+		if string(payload) == "normal" {
+			normalIndex = i
+			break
+		}
+	}
+	if normalIndex < 0 || normalIndex > maxHighPriorityBurst {
+		t.Fatalf("normal write index=%d, want <= %d; writes=%q", normalIndex, maxHighPriorityBurst, socket.writes)
 	}
 }

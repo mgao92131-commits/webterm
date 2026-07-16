@@ -9,12 +9,7 @@ import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
 
 import org.json.JSONObject;
-import org.json.JSONArray;
-import org.json.JSONException;
 
-import java.util.ArrayDeque;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 
 public final class DeviceConnection {
@@ -59,50 +54,11 @@ public final class DeviceConnection {
         void onResult(TunnelSendResult result);
     }
 
-    private static final class PendingTunnelFrame {
-        final String channelId;
-        final byte[] payload;
-        final boolean binary;
-        final TunnelSendCallback callback;
-
-        PendingTunnelFrame(String channelId, byte[] payload, boolean binary,
-                           TunnelSendCallback callback) {
-            this.channelId = channelId;
-            this.payload = payload;
-            this.binary = binary;
-            this.callback = callback;
-        }
-    }
-
     private static final ChannelListener NO_OP_LISTENER = new ChannelListener() {
         @Override public void onConnected(String channelId) {}
         @Override public void onData(String channelId, byte[] payload, boolean binary) {}
         @Override public void onFailure(String channelId, ChannelFailure failure) {}
     };
-
-    private static final class Channel {
-        enum State { CLOSED, OPENING, OPEN, RETRY_WAIT }
-
-        final String id;
-        final String path;
-        final String[] protocols;
-        final String screenRouteKey;
-        ChannelListener listener;
-        boolean desiredOpen = true;
-        State state = State.CLOSED;
-        long openGeneration;
-        long retryGeneration;
-        int retryAttempt;
-
-        Channel(String id, String path, String[] protocols, String screenRouteKey,
-                ChannelListener listener) {
-            this.id = id;
-            this.path = path;
-            this.protocols = protocols;
-            this.screenRouteKey = screenRouteKey;
-            this.listener = listener;
-        }
-    }
 
     private final Handler stateHandler;
     private final Handler callbackHandler;
@@ -119,18 +75,12 @@ public final class DeviceConnection {
     private volatile boolean physicalConnected;
     private boolean physicalConnecting;
     private int physicalReconnectAttempts;
-    private final Map<String, Channel> channels = new LinkedHashMap<>();
-    private final Object outboundLock = new Object();
-    private final ArrayDeque<PendingTunnelFrame> pendingTunnelFrames = new ArrayDeque<>();
-    private long pendingTunnelBytes;
-    private boolean tunnelDrainScheduled;
-    private volatile boolean outboundAccepting = true;
+    private final LogicalChannelRegistry channelRegistry = new LogicalChannelRegistry();
+    private final MuxOutboundQueue outboundQueue =
+        new MuxOutboundQueue(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES);
+    private final MuxControlCodec controlCodec = new MuxControlCodec();
+    private final DeviceControlPlane controlPlane;
     private volatile int activeChannelCount;
-    /** 每个 terminal screen route 当前唯一的 runtime owner channel。 */
-    private final Map<String, String> screenChannelOwners = new LinkedHashMap<>();
-    private volatile ControlListener controlListener;
-    private volatile String clientId = "";
-    private volatile String clientName = "Android";
 
     DeviceConnection(Handler handler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this(handler, handler, baseUrl, cookie, deviceId, transportFactory, () -> {});
@@ -146,6 +96,7 @@ public final class DeviceConnection {
         this.baseUrl = WebTermUrls.normalizeBaseUrl(baseUrl);
         this.cookie = cookie;
         this.deviceId = deviceId == null ? "" : deviceId;
+        this.controlPlane = new DeviceControlPlane(this::sendControlInternal);
         installTransport();
     }
 
@@ -207,7 +158,7 @@ public final class DeviceConnection {
         physicalConnecting = false;
         physicalConnected = true;
         physicalReconnectAttempts = 0;
-        sendClientRegistration();
+        controlPlane.onConnected();
         reconcileChannels();
     }
 
@@ -238,7 +189,7 @@ public final class DeviceConnection {
     }
 
     private void notifyPhysicalFailure(ChannelFailure failure) {
-        for (Channel channel : snapshotChannels()) {
+        for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             markWaiting(channel);
             notifyFailure(channel, failure);
         }
@@ -247,7 +198,7 @@ public final class DeviceConnection {
     private void schedulePhysicalReconnect() {
         if (!physicalDesired) return;
         int attempt = ++physicalReconnectAttempts;
-        for (Channel channel : snapshotChannels()) {
+        for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             ChannelListener listener = channel.listener;
             callbackHandler.post(() -> listener.onReconnectAttempt(attempt));
         }
@@ -263,39 +214,35 @@ public final class DeviceConnection {
 
     private void handleControlMessage(int generation, String text) {
         if (generation != transportGeneration || !physicalConnected) return;
-        JSONObject msg;
-        try {
-            msg = new JSONObject(text);
-        } catch (JSONException ignored) {
-            return;
-        }
-        String type = msg.optString("type");
-        String tunnelId = msg.optString("tunnelConnectionId");
+        MuxControlCodec.Message msg = controlCodec.decode(text);
+        if (msg == null) return;
+        String type = msg.type;
+        String tunnelId = msg.channelId;
         if ("ws-connected".equals(type)) {
             onTunnelConnected(tunnelId);
         } else if ("ws-error".equals(type)) {
-            onTunnelError(tunnelId, msg.optInt("code", 0), msg.optString("message", ""));
+            onTunnelError(tunnelId, msg.code, msg.message);
         } else if ("ws-close".equals(type)) {
-            onTunnelClosed(tunnelId, msg.optInt("code", 1000), msg.optString("reason", ""));
+            onTunnelClosed(tunnelId, msg.code == 0 ? 1000 : msg.code, msg.reason);
         } else if (type != null && !type.isEmpty()) {
-            ControlListener listener = controlListener;
-            if (listener != null) callbackHandler.post(() -> listener.onControlMessage(msg));
+            ControlListener listener = controlPlane.listener();
+            if (listener != null) callbackHandler.post(() -> listener.onControlMessage(msg.raw));
         }
     }
 
     private void onTunnelConnected(String tunnelId) {
-        Channel channel = channels.get(tunnelId);
-        if (channel != null && channel.desiredOpen && channel.state == Channel.State.OPENING) {
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
+        if (channel != null && channel.desiredOpen && channel.state == LogicalChannelRegistry.Channel.State.OPENING) {
             channel.openGeneration++;
             channel.retryGeneration++;
             channel.retryAttempt = 0;
-            channel.state = Channel.State.OPEN;
+            channel.state = LogicalChannelRegistry.Channel.State.OPEN;
             notifyConnected(channel);
         }
     }
 
     private void onTunnelError(String tunnelId, int code, String message) {
-        Channel channel = channels.get(tunnelId);
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
         if (channel == null) return;
         if (code == 404) {
             removeChannelIfCurrent(channel);
@@ -311,7 +258,7 @@ public final class DeviceConnection {
     }
 
     private void onTunnelClosed(String tunnelId, int code, String reason) {
-        Channel channel = channels.get(tunnelId);
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
         if (channel == null) return;
         if (code == 404) {
             removeChannelIfCurrent(channel);
@@ -334,46 +281,23 @@ public final class DeviceConnection {
         if (generation != transportGeneration || !physicalConnected) return;
         WebTermProtocol.TunnelFrame frame = WebTermProtocol.decodeTunnelFrame(data);
         if (frame == null) return;
-        Channel channel = channels.get(frame.tunnelId);
-        if (channel == null || channel.state != Channel.State.OPEN) return;
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.tunnelId);
+        if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPEN) return;
         boolean binary = (frame.extraByte & 0xff) == WebTermProtocol.WS_DATA_BINARY;
         channel.listener.onData(frame.tunnelId, frame.payload, binary);
     }
 
-    private boolean sendChannelOpen(Channel channel) {
+    private boolean sendChannelOpen(LogicalChannelRegistry.Channel channel) {
         if (!physicalConnected || transport == null) return false;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "ws-connect");
-            msg.put("tunnelConnectionId", channel.id);
-            msg.put("path", channel.path);
-            if (channel.screenRouteKey != null && !channel.screenRouteKey.isEmpty()) {
-                // tunnel ID 按 runtime 隔离迟到 ACK；route key 让 Go 在同一物理 Mux 内
-                // 原子接管旧 screen handler，即使之前的 ws-close 丢失也不会泄漏 client。
-                msg.put("channelRouteKey", channel.screenRouteKey);
-                msg.put("channelOwnerKey", screenOwnerId + ":" + channel.screenRouteKey);
-            }
-            if (channel.protocols != null && channel.protocols.length > 0) {
-                JSONArray protocols = new JSONArray();
-                for (String protocol : channel.protocols) protocols.put(protocol);
-                msg.put("protocols", protocols);
-            }
-        } catch (JSONException ignored) {
-            return false;
-        }
-        return transport.sendText(msg.toString());
+        String message = controlCodec.connect(channel.id, channel.path, channel.screenRouteKey,
+            screenOwnerId + ":" + channel.screenRouteKey, channel.protocols);
+        return message != null && transport.sendText(message);
     }
 
     private boolean sendChannelClose(String channelId) {
         if (!physicalConnected || transport == null) return false;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "ws-close");
-            msg.put("tunnelConnectionId", channelId);
-        } catch (JSONException ignored) {
-            return false;
-        }
-        return transport.sendText(msg.toString());
+        String message = controlCodec.close(channelId);
+        return message != null && transport.sendText(message);
     }
 
     private boolean sendTunnelFrameInternal(String channelId, byte[] payload, boolean binary) {
@@ -416,7 +340,7 @@ public final class DeviceConnection {
     boolean isIdle() {
         // 设备后台服务可以只占用 control plane，没有 logical channel。
         // 只要仍有 control listener，registry 就不能回收物理连接。
-        return activeChannelCount == 0 && controlListener == null;
+        return activeChannelCount == 0 && !controlPlane.hasListener();
     }
 
     String deviceId() {
@@ -457,23 +381,21 @@ public final class DeviceConnection {
                                        String ownerId, ChannelListener listener) {
         String routeKey = terminalChannelRouteKey(localSessionId, subprotocol);
         String channelId = terminalChannelId(localSessionId, subprotocol, ownerId);
-        String previousChannelId = screenChannelOwners.get(routeKey);
+        String previousChannelId = channelRegistry.claimScreenOwner(routeKey, channelId);
         if (previousChannelId != null && !previousChannelId.equals(channelId)) {
             supersedeScreenChannel(previousChannelId);
         }
-        screenChannelOwners.put(routeKey, channelId);
-
-        Channel existing = channels.get(channelId);
+        LogicalChannelRegistry.Channel existing = channelRegistry.get(channelId);
         if (existing != null) {
             boolean wasDetached = existing.listener == NO_OP_LISTENER;
             existing.listener = listener;
-            if (wasDetached && existing.state == Channel.State.OPEN) {
+            if (wasDetached && existing.state == LogicalChannelRegistry.Channel.State.OPEN) {
                 // 新终端对象接管仍存活的 logical id 时，显式重建远端 channel。
                 markWaiting(existing);
                 reconcileChannel(existing);
-            } else if (existing.state == Channel.State.CLOSED) {
+            } else if (existing.state == LogicalChannelRegistry.Channel.State.CLOSED) {
                 reconcileChannel(existing);
-            } else if (!wasDetached && existing.state == Channel.State.OPEN) {
+            } else if (!wasDetached && existing.state == LogicalChannelRegistry.Channel.State.OPEN) {
                 notifyConnected(existing);
             }
             // OPENING 只替换 listener，等待唯一在途 ws-connect 的 ACK。
@@ -485,13 +407,13 @@ public final class DeviceConnection {
     }
 
     private void supersedeScreenChannel(String channelId) {
-        Channel previous = channels.get(channelId);
+        LogicalChannelRegistry.Channel previous = channelRegistry.get(channelId);
         if (previous == null) return;
         removeChannelIfCurrent(previous);
         previous.desiredOpen = false;
         previous.retryGeneration++;
         previous.openGeneration++;
-        previous.state = Channel.State.CLOSED;
+        previous.state = LogicalChannelRegistry.Channel.State.CLOSED;
         boolean closeSent = sendChannelClose(previous.id);
         notifyFailure(previous,
             ChannelFailure.clientClosed(0, "screen channel superseded by a new runtime owner"));
@@ -504,7 +426,7 @@ public final class DeviceConnection {
 
     public void detachChannelListener(String channelId) {
         runOnState(() -> {
-            Channel ch = channels.get(channelId);
+            LogicalChannelRegistry.Channel ch = channelRegistry.get(channelId);
             if (ch != null) ch.listener = NO_OP_LISTENER;
         });
     }
@@ -515,9 +437,10 @@ public final class DeviceConnection {
 
     private void openChannelInternal(String channelId, String path, String[] protocols,
                                      String screenRouteKey, ChannelListener listener) {
-        Channel previous = channels.put(channelId,
-            new Channel(channelId, path, protocols, screenRouteKey, listener));
-        activeChannelCount = channels.size();
+        LogicalChannelRegistry.Channel created =
+            new LogicalChannelRegistry.Channel(channelId, path, protocols, screenRouteKey, listener);
+        LogicalChannelRegistry.Channel previous = channelRegistry.put(created);
+        activeChannelCount = channelRegistry.size();
         if (previous != null) {
             clearScreenOwnerIfCurrent(previous);
             previous.desiredOpen = false;
@@ -525,7 +448,7 @@ public final class DeviceConnection {
             previous.openGeneration++;
         }
         start();
-        reconcileChannel(channels.get(channelId));
+        reconcileChannel(channelRegistry.get(channelId));
     }
 
     public void closeChannel(String channelId) {
@@ -534,13 +457,13 @@ public final class DeviceConnection {
     }
 
     private void closeChannelInternal(String channelId) {
-        Channel channel = channels.get(channelId);
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(channelId);
         if (channel != null) removeChannelIfCurrent(channel);
         if (channel != null) {
             channel.desiredOpen = false;
             channel.retryGeneration++;
             channel.openGeneration++;
-            channel.state = Channel.State.CLOSED;
+            channel.state = LogicalChannelRegistry.Channel.State.CLOSED;
         }
         boolean closeSent = sendChannelClose(channelId);
         if (channel != null && channel.screenRouteKey != null
@@ -556,15 +479,15 @@ public final class DeviceConnection {
     private void reconnectTransport(String reason, boolean autoStart) {
         boolean wasDesired = physicalDesired;
         Log.i(TAG, "reconnect transport for " + deviceId + " reason=" + reason
-            + " channels=" + channels.size() + " generation=" + (transportGeneration + 1));
+            + " channels=" + channelRegistry.size() + " generation=" + (transportGeneration + 1));
         ChannelFailure failure = ChannelFailure.muxTemporary(0, reason);
-        for (Channel channel : snapshotChannels()) {
+        for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             markWaiting(channel);
             notifyFailure(channel, failure);
         }
         stopPhysical();
         installTransport();
-        if (autoStart && (wasDesired || !channels.isEmpty())) connectPhysical();
+        if (autoStart && (wasDesired || channelRegistry.size() > 0)) connectPhysical();
     }
 
     public boolean sendTunnelFrame(String channelId, byte[] payload, boolean binary) {
@@ -582,7 +505,7 @@ public final class DeviceConnection {
 
     private void recoverDroppedTunnelFrame(String channelId, String reason) {
         runOnState(() -> {
-            Channel channel = channels.get(channelId);
+            LogicalChannelRegistry.Channel channel = channelRegistry.get(channelId);
             // A frame drained after an intentional logical-channel close belongs to
             // the old lifecycle and must not reconnect the shared physical socket.
             if (channel != null && channel.desiredOpen) {
@@ -602,26 +525,16 @@ public final class DeviceConnection {
             notifySendResult(callback, TunnelSendResult.CHANNEL_NOT_OPEN);
             return false;
         }
-        boolean scheduleDrain = false;
-        synchronized (outboundLock) {
-            if (!outboundAccepting) {
-                notifySendResult(callback, TunnelSendResult.CONNECTION_STOPPED);
-                return false;
+        MuxOutboundQueue.Offer offer = outboundQueue.offer(channelId, payload, binary,
+            result -> notifySendResult(callback, mapSendResult(result)));
+        if (offer.result != MuxOutboundQueue.Result.LOCAL_ACCEPTED) {
+            notifySendResult(callback, mapSendResult(offer.result));
+            if (offer.result == MuxOutboundQueue.Result.QUEUE_FULL) {
+                recoverDroppedTunnelFrame(channelId, "tunnel outbound queue overflow");
             }
-            if (pendingTunnelFrames.size() >= MAX_PENDING_TUNNEL_FRAMES
-                    || pendingTunnelBytes + payload.length > MAX_PENDING_TUNNEL_BYTES) {
-                notifySendResult(callback, TunnelSendResult.LOCAL_QUEUE_FULL);
-                return false;
-            }
-            pendingTunnelFrames.addLast(
-                new PendingTunnelFrame(channelId, payload, binary, callback));
-            pendingTunnelBytes += payload.length;
-            if (!tunnelDrainScheduled) {
-                tunnelDrainScheduled = true;
-                scheduleDrain = true;
-            }
+            return false;
         }
-        if (scheduleDrain && !stateHandler.post(this::drainTunnelFrames)) {
+        if (offer.scheduleDrain && !stateHandler.post(this::drainTunnelFrames)) {
             failPendingTunnelFrames(TunnelSendResult.CONNECTION_STOPPED);
             return false;
         }
@@ -630,7 +543,7 @@ public final class DeviceConnection {
 
     /** 注册设备级控制消息监听，不改变 screen channel 的所有权。 */
     public void setControlListener(ControlListener listener) {
-        controlListener = listener;
+        controlPlane.setListener(listener);
     }
 
     public boolean sendControl(JSONObject msg) {
@@ -644,36 +557,15 @@ public final class DeviceConnection {
 
     /** 配置当前 Android 安装实例身份；每次 mux 重连成功后都会重新注册。 */
     public void setClientRegistration(String clientId, String clientName) {
-        this.clientId = clientId == null ? "" : clientId;
-        this.clientName = clientName == null || clientName.trim().isEmpty() ? "Android" : clientName.trim();
+        controlPlane.setRegistration(clientId, clientName);
         runOnState(() -> {
-            if (physicalConnected) sendClientRegistration();
+            if (physicalConnected) controlPlane.onConnected();
         });
     }
 
     /** 上报真实用户活跃；心跳与自动重连不调用此方法。 */
     public void markClientActive() {
-        if (clientId.isEmpty()) return;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "client.active");
-            msg.put("client_id", clientId);
-        } catch (Exception ignored) { return; }
-        runOnState(() -> sendControlInternal(msg));
-    }
-
-    private void sendClientRegistration() {
-        if (clientId.isEmpty()) return;
-        JSONObject msg = new JSONObject();
-        try {
-            msg.put("type", "client.register");
-            msg.put("protocol_version", 1);
-            msg.put("client_id", clientId);
-            msg.put("client_kind", "android");
-            msg.put("client_name", clientName);
-            msg.put("capabilities", new JSONArray().put("file_receive").put("agent_notification"));
-        } catch (Exception ignored) { return; }
-        sendControlInternal(msg);
+        runOnState(controlPlane::markActive);
     }
 
     void stop() {
@@ -684,13 +576,11 @@ public final class DeviceConnection {
     }
 
     private void stopInternal() {
-        for (Channel channel : snapshotChannels()) {
+        for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             sendChannelClose(channel.id);
         }
-        channels.clear();
+        channelRegistry.clear();
         activeChannelCount = 0;
-        screenChannelOwners.clear();
-        outboundAccepting = false;
         failPendingTunnelFrames(TunnelSendResult.CONNECTION_STOPPED);
         stopPhysical();
     }
@@ -720,16 +610,16 @@ public final class DeviceConnection {
     }
 
     private void reconcileChannels() {
-        for (Channel channel : snapshotChannels()) {
+        for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             reconcileChannel(channel);
         }
     }
 
-    private void reconcileChannel(Channel channel) {
-        if (channel == null || !channel.desiredOpen || channel.state != Channel.State.CLOSED
+    private void reconcileChannel(LogicalChannelRegistry.Channel channel) {
+        if (channel == null || !channel.desiredOpen || channel.state != LogicalChannelRegistry.Channel.State.CLOSED
                 || !physicalConnected) return;
         if (sendChannelOpen(channel)) {
-            channel.state = Channel.State.OPENING;
+            channel.state = LogicalChannelRegistry.Channel.State.OPENING;
             long generation = ++channel.openGeneration;
                 stateHandler.postDelayed(
                 () -> onChannelOpenTimeout(channel.id, generation),
@@ -738,17 +628,17 @@ public final class DeviceConnection {
     }
 
     private void onChannelOpenTimeout(String channelId, long generation) {
-        Channel channel = channels.get(channelId);
-        if (channel == null || channel.state != Channel.State.OPENING
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(channelId);
+        if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPENING
                 || channel.openGeneration != generation) return;
         scheduleChannelRetry(channel,
             ChannelFailure.muxTemporary(0, "channel open timeout"));
     }
 
-    private void scheduleChannelRetry(Channel channel, ChannelFailure failure) {
-        if (channel == null || !channel.desiredOpen || channels.get(channel.id) != channel) return;
+    private void scheduleChannelRetry(LogicalChannelRegistry.Channel channel, ChannelFailure failure) {
+        if (channel == null || !channel.desiredOpen || channelRegistry.get(channel.id) != channel) return;
         channel.openGeneration++;
-        channel.state = Channel.State.RETRY_WAIT;
+        channel.state = LogicalChannelRegistry.Channel.State.RETRY_WAIT;
         notifyFailure(channel, failure);
         int index = Math.min(channel.retryAttempt, CHANNEL_RETRY_BACKOFF_MS.length - 1);
         long delayMs = CHANNEL_RETRY_BACKOFF_MS[index];
@@ -758,45 +648,40 @@ public final class DeviceConnection {
     }
 
     private void onChannelRetryDue(String channelId, long generation) {
-        Channel channel = channels.get(channelId);
+        LogicalChannelRegistry.Channel channel = channelRegistry.get(channelId);
         if (channel == null || !channel.desiredOpen
                 || channel.retryGeneration != generation
-                || channel.state != Channel.State.RETRY_WAIT) return;
-        channel.state = Channel.State.CLOSED;
+                || channel.state != LogicalChannelRegistry.Channel.State.RETRY_WAIT) return;
+        channel.state = LogicalChannelRegistry.Channel.State.CLOSED;
         reconcileChannel(channel);
     }
 
-    private static void markWaiting(Channel channel) {
+    private static void markWaiting(LogicalChannelRegistry.Channel channel) {
         channel.openGeneration++;
         channel.retryGeneration++;
-        channel.state = Channel.State.CLOSED;
+        channel.state = LogicalChannelRegistry.Channel.State.CLOSED;
     }
 
-    private Channel[] snapshotChannels() {
-        return channels.values().toArray(new Channel[0]);
+    private LogicalChannelRegistry.Channel[] snapshotChannels() {
+        return channelRegistry.snapshot();
     }
 
-    private boolean removeChannelIfCurrent(Channel channel) {
-        if (channel == null || channels.get(channel.id) != channel) return false;
-        channels.remove(channel.id);
-        activeChannelCount = channels.size();
-        clearScreenOwnerIfCurrent(channel);
-        return true;
+    private boolean removeChannelIfCurrent(LogicalChannelRegistry.Channel channel) {
+        boolean removed = channelRegistry.removeIfCurrent(channel);
+        if (removed) activeChannelCount = channelRegistry.size();
+        return removed;
     }
 
-    private void clearScreenOwnerIfCurrent(Channel channel) {
-        if (channel == null || channel.screenRouteKey == null) return;
-        if (channel.id.equals(screenChannelOwners.get(channel.screenRouteKey))) {
-            screenChannelOwners.remove(channel.screenRouteKey);
-        }
+    private void clearScreenOwnerIfCurrent(LogicalChannelRegistry.Channel channel) {
+        channelRegistry.clearScreenOwnerIfCurrent(channel);
     }
 
-    private void notifyConnected(Channel channel) {
+    private void notifyConnected(LogicalChannelRegistry.Channel channel) {
         ChannelListener listener = channel.listener;
         callbackHandler.post(() -> listener.onConnected(channel.id));
     }
 
-    private void notifyFailure(Channel channel, ChannelFailure failure) {
+    private void notifyFailure(LogicalChannelRegistry.Channel channel, ChannelFailure failure) {
         ChannelListener listener = channel.listener;
         callbackHandler.post(() -> listener.onFailure(channel.id, failure));
     }
@@ -811,38 +696,60 @@ public final class DeviceConnection {
 
     private void drainTunnelFrames() {
         while (true) {
-            PendingTunnelFrame frame;
-            synchronized (outboundLock) {
-                frame = pendingTunnelFrames.pollFirst();
-                if (frame == null) {
-                    tunnelDrainScheduled = false;
-                    return;
-                }
-                pendingTunnelBytes -= frame.payload.length;
-            }
-            Channel channel = channels.get(frame.channelId);
-            if (channel == null || channel.state != Channel.State.OPEN) {
-                notifySendResult(frame.callback, TunnelSendResult.CHANNEL_NOT_OPEN);
+            MuxOutboundQueue.Frame frame = outboundQueue.poll();
+            if (frame == null) return;
+            LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.channelId);
+            if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPEN) {
+                frame.completion.onResult(MuxOutboundQueue.Result.CHANNEL_NOT_OPEN);
                 continue;
             }
             if (sendTunnelFrameInternal(frame.channelId, frame.payload, frame.binary)) {
-                notifySendResult(frame.callback, TunnelSendResult.WEBSOCKET_ENQUEUED);
+                frame.completion.onResult(MuxOutboundQueue.Result.WEBSOCKET_ENQUEUED);
                 continue;
             }
-            notifySendResult(frame.callback, TunnelSendResult.TRANSPORT_REJECTED);
+            frame.completion.onResult(MuxOutboundQueue.Result.TRANSPORT_REJECTED);
             reconnectTransport("tunnel frame enqueue rejected", true);
         }
     }
 
     private void failPendingTunnelFrames(TunnelSendResult result) {
-        PendingTunnelFrame[] failed;
-        synchronized (outboundLock) {
-            failed = pendingTunnelFrames.toArray(new PendingTunnelFrame[0]);
-            pendingTunnelFrames.clear();
-            pendingTunnelBytes = 0L;
-            tunnelDrainScheduled = false;
+        for (MuxOutboundQueue.Frame frame : outboundQueue.stopAndDrain()) {
+            frame.completion.onResult(mapQueueResult(result));
         }
-        for (PendingTunnelFrame frame : failed) notifySendResult(frame.callback, result);
+    }
+
+    private static TunnelSendResult mapSendResult(MuxOutboundQueue.Result result) {
+        switch (result) {
+            case WEBSOCKET_ENQUEUED:
+                return TunnelSendResult.WEBSOCKET_ENQUEUED;
+            case QUEUE_FULL:
+                return TunnelSendResult.LOCAL_QUEUE_FULL;
+            case CHANNEL_NOT_OPEN:
+                return TunnelSendResult.CHANNEL_NOT_OPEN;
+            case TRANSPORT_REJECTED:
+                return TunnelSendResult.TRANSPORT_REJECTED;
+            case CONNECTION_STOPPED:
+                return TunnelSendResult.CONNECTION_STOPPED;
+            case LOCAL_ACCEPTED:
+            default:
+                throw new IllegalArgumentException("local acceptance is not a completion result");
+        }
+    }
+
+    private static MuxOutboundQueue.Result mapQueueResult(TunnelSendResult result) {
+        switch (result) {
+            case WEBSOCKET_ENQUEUED:
+                return MuxOutboundQueue.Result.WEBSOCKET_ENQUEUED;
+            case LOCAL_QUEUE_FULL:
+                return MuxOutboundQueue.Result.QUEUE_FULL;
+            case CHANNEL_NOT_OPEN:
+                return MuxOutboundQueue.Result.CHANNEL_NOT_OPEN;
+            case TRANSPORT_REJECTED:
+                return MuxOutboundQueue.Result.TRANSPORT_REJECTED;
+            case CONNECTION_STOPPED:
+            default:
+                return MuxOutboundQueue.Result.CONNECTION_STOPPED;
+        }
     }
 
     private void notifySendResult(TunnelSendCallback callback, TunnelSendResult result) {

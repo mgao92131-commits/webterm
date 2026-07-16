@@ -53,7 +53,6 @@ type TerminalSession struct {
 	rows           int
 	createdAt      time.Time
 	activeAt       time.Time
-	ring           *EventRing
 	runtime        *terminalsession.Runtime
 	process        *pty.Process
 	shellPid       int
@@ -107,7 +106,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		rows:           rows,
 		createdAt:      now,
 		activeAt:       now,
-		ring:           NewEventRing(0, 0),
 		process:        process,
 		shellPid:       process.PID(),
 		ttyPath:        process.TTYPath(),
@@ -121,10 +119,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 		process.PTY(),
 		rows,
 		cols,
-		terminalsession.WithOnOutput(func(data []byte) {
-			frame := terminal.PushOutput(data)
-			terminal.broadcastOutput(frame)
-		}),
 		terminalsession.WithOnTitle(func(title string) {
 			terminal.mu.Lock()
 			terminal.termTitle = title
@@ -270,42 +264,6 @@ func (terminal *TerminalSession) Close() {
 	}
 }
 
-func (terminal *TerminalSession) PushOutput(data []byte) EventFrame {
-	terminal.mu.Lock()
-	frame := terminal.pushOutputLocked(data)
-	changed := terminal.titleChanged
-	terminal.titleChanged = false
-	onTitleChanged := terminal.onTitleChanged
-	onInfoChanged := terminal.onInfoChanged
-	terminal.mu.Unlock()
-
-	if changed && onTitleChanged != nil {
-		onTitleChanged()
-	}
-	if changed && onInfoChanged != nil {
-		onInfoChanged()
-	}
-	return frame
-}
-
-func (terminal *TerminalSession) ReplayAfter(seq uint64) []EventFrame {
-	terminal.mu.RLock()
-	defer terminal.mu.RUnlock()
-	return terminal.ring.After(seq)
-}
-
-func (terminal *TerminalSession) CanReplayFrom(seq uint64) bool {
-	terminal.mu.RLock()
-	defer terminal.mu.RUnlock()
-	return terminal.ring.CanReplayFrom(seq)
-}
-
-func (terminal *TerminalSession) LatestSeq() uint64 {
-	terminal.mu.RLock()
-	defer terminal.mu.RUnlock()
-	return terminal.ring.LatestSeq()
-}
-
 func (terminal *TerminalSession) WriteInput(data []byte) error {
 	terminal.mu.Lock()
 	terminal.touchLocked()
@@ -433,29 +391,11 @@ func (terminal *TerminalSession) waitLoop() {
 	terminal.broadcastExit(code)
 }
 
-// Note: pushOutputLocked must only be called while terminal.mu is held.
-// Any caller invoking this method is responsible for checking and resetting
-// the terminal.titleChanged flag (as done in PushOutput) to ensure title updates
-// are properly broadcasted and titleChanged state does not leak.
-func (terminal *TerminalSession) pushOutputLocked(data []byte) EventFrame {
-	terminal.touchLocked()
-	return terminal.ring.Push(data)
-}
-
 func (terminal *TerminalSession) markClosed() {
 	terminal.mu.Lock()
 	terminal.status = StatusClosed
 	terminal.touchLocked()
 	terminal.mu.Unlock()
-}
-
-func (terminal *TerminalSession) broadcastOutput(frame EventFrame) {
-	terminal.mu.RLock()
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-	for _, client := range clients {
-		client.SendOutput(frame)
-	}
 }
 
 func (terminal *TerminalSession) broadcastExit(code int) {
@@ -727,12 +667,6 @@ func (terminal *TerminalSession) clientSnapshotLocked() []*terminalChannelRuntim
 
 func (terminal *TerminalSession) touchLocked() {
 	terminal.activeAt = time.Now().UTC()
-}
-
-func reverse(frames []EventFrame) {
-	for i, j := 0, len(frames)-1; i < j; i, j = i+1, j-1 {
-		frames[i], frames[j] = frames[j], frames[i]
-	}
 }
 
 func randomID() string {

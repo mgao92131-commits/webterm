@@ -16,7 +16,6 @@ import androidx.lifecycle.ViewModelProvider;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.PageTransitionAnimator;
-import com.webterm.feature.relay.RelayUiState;
 import com.webterm.ui.common.WindowInsetsController;
 
 import java.util.List;
@@ -37,6 +36,7 @@ public final class HomeFragment extends Fragment {
     // Home screen state
     private LinearLayout mSessionList;
     private int mImeOverlap;
+    private HomeHost.RelayStatusBinding mRelayStatusBinding;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -101,15 +101,25 @@ public final class HomeFragment extends Fragment {
         );
 
         // Attach relay state to subtitle/status
-        RelayUiState relayUiState = new RelayUiState(mViewModel.getRelayService(), null);
-        relayUiState.attachSubtitle(home.subtitle);
-        relayUiState.attachStatusDot(home.homeStatus);
+        if (mRelayStatusBinding != null) mRelayStatusBinding.close();
+        mRelayStatusBinding = mHost != null
+            ? mHost.bindRelayStatus(mViewModel.getRelayService(), home.subtitle, home.homeStatus)
+            : null;
 
         installRootInsets(home.root, 0, 0, 0, dp(16), true, true);
 
         mSessionList = home.sessionList;
         mContainer.addView(home.root);
         loadMultiSessions();
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (mRelayStatusBinding != null) {
+            mRelayStatusBinding.close();
+            mRelayStatusBinding = null;
+        }
+        super.onDestroyView();
     }
 
     // ── Internal ─────────────────────────────────────────────────

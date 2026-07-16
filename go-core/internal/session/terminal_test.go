@@ -24,14 +24,21 @@ func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, frame := range terminal.ReplayAfter(0) {
-			if stringContains(string(frame.Bytes), "WEBTERM_GO_OK") {
+		frame := terminal.runtime.ProjectedSnapshot()
+		for _, line := range frame.Screen {
+			lineText := ""
+			for _, run := range line.Runs {
+				for _, cell := range run.Cells {
+					lineText += cell.Text
+				}
+			}
+			if stringContains(lineText, "WEBTERM_GO_OK") {
 				return
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("terminal output did not contain WEBTERM_GO_OK; frames=%#v", terminal.ReplayAfter(0))
+	t.Fatal("authoritative screen snapshot did not contain WEBTERM_GO_OK")
 }
 
 func stringContains(value string, needle string) bool {

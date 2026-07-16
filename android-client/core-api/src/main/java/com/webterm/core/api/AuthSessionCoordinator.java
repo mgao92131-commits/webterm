@@ -2,6 +2,7 @@ package com.webterm.core.api;
 
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
+import com.webterm.data.http.WebTermApi;
 
 import java.util.ArrayList;
 import java.util.HashMap;

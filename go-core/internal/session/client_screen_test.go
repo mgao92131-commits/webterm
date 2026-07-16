@@ -430,15 +430,9 @@ func newScreenTestTerminalWithResizer(t *testing.T, resizer func(cols, rows int)
 		rows:      4,
 		createdAt: time.Now().UTC(),
 		activeAt:  time.Now().UTC(),
-		ring:      NewEventRing(0, 0),
 		clients:   make(map[*terminalChannelRuntime]struct{}),
 	}
-	opts := []terminalsession.Option{
-		terminalsession.WithOnOutput(func(data []byte) {
-			frame := terminal.PushOutput(data)
-			terminal.broadcastOutput(frame)
-		}),
-	}
+	opts := []terminalsession.Option{}
 	if resizer != nil {
 		opts = append(opts, terminalsession.WithPTYResizer(resizer))
 	}
