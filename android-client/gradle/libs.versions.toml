@@ -18,6 +18,7 @@ navigationView = "2.8.5"
 lifecycleView = "2.8.7"
 fragmentVersion = "1.8.6"
 protobufJava = "4.29.2"
+xlog = "1.11.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -53,6 +54,7 @@ lifecycle-livedata = { module = "androidx.lifecycle:lifecycle-livedata", version
 fragment-ktx = { module = "androidx.fragment:fragment", version.ref = "fragmentVersion" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobufJava" }
 protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobufJava" }
+xlog = { module = "com.elvishew:xlog", version.ref = "xlog" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

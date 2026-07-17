@@ -18,6 +18,19 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+        create("diag") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".diag"
+            versionNameSuffix = "-diag"
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            matchingFallbacks.add("release")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -26,6 +39,14 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+    sourceSets {
+        getByName("debug") {
+            java.srcDirs("src/debug/java", "src/diagnostics/java")
+        }
+        getByName("diag") {
+            java.srcDirs("src/diag/java", "src/diagnostics/java")
         }
     }
     compileOptions {
@@ -51,6 +72,9 @@ android {
 }
 
 dependencies {
+  implementation(project(":core-contract"))
+  "debugImplementation"(libs.xlog)
+  "diagImplementation"(libs.xlog)
   implementation(project(":transport-api"))
   implementation(project(":transport-websocket"))
   implementation(project(":core-api"))
