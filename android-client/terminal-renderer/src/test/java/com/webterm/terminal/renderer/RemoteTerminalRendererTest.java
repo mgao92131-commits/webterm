@@ -93,6 +93,14 @@ public final class RemoteTerminalRendererTest {
     assertEquals(before, after, 0.001f);
   }
 
+  @Test public void clipRowRangeVisitsOnlyRowsIntersectingDirtyRect() {
+    int[] range = RemoteTerminalRenderer.rowRangeIntersecting(45, 65, 4f, 20f, 40);
+    // Includes one guard row on both sides for anti-aliased glyph edges, not all 40 rows.
+    assertEquals(1, range[0]);
+    assertEquals(5, range[1]);
+  }
+
+
   @Test public void inputTypeDisablesImeTextMutation() {
     int type = RemoteTerminalView.TERMINAL_INPUT_TYPE;
     assertEquals(android.text.InputType.TYPE_CLASS_TEXT,

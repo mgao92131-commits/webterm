@@ -27,6 +27,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ModelChange;
+import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
@@ -39,6 +41,8 @@ import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.Collections;
 
 /**
  * 远程终端自定义 View。负责 Android View 生命周期、IME、触摸滚动、选择和触发渲染。
@@ -52,6 +56,7 @@ public final class RemoteTerminalView extends View {
   private static final float AUTO_SCROLL_EDGE_DP = 48f;
   private static final float AUTO_SCROLL_MIN_LINES_PER_SECOND = 3f;
   private static final float AUTO_SCROLL_MAX_LINES_PER_SECOND = 12f;
+  private static final int MAX_PARTIAL_DIRTY_SCREEN_ROWS = 8;
 
   /**
    * 使用系统普通文本输入类型，保留用户当前输入法及中英文状态；只关闭联想、
@@ -155,20 +160,29 @@ public final class RemoteTerminalView extends View {
   }
 
   public void setModel(@Nullable RemoteTerminalModel model, @Nullable TerminalViewportState viewport) {
+    setModel(model, viewport, ModelChange.full(false));
+  }
+
+  /**
+   * Applies the newest immutable model publication and invalidates only safe dirty screen rows.
+   * Any uncertainty falls back to a full invalidation; correctness is preferred over savings.
+   */
+  public void setModel(@Nullable RemoteTerminalModel model, @Nullable TerminalViewportState viewport,
+                       @NonNull ModelChange change) {
     this.model = model;
     if (viewport != null) {
       this.viewport = viewport;
     }
-    requestLayoutIfSizeChanged();
+    boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
-    invalidate();
+    if (geometryChanged || !invalidateChangedRows(change)) {
+      TerminalRenderMetrics.fullInvalidate();
+      invalidate();
+    }
   }
 
   public void updateModel(@NonNull RemoteTerminalModel model) {
-    this.model = model;
-    requestLayoutIfSizeChanged();
-    updateCursorBlinkSchedule();
-    invalidate();
+    setModel(model, viewport, ModelChange.full(false));
   }
 
   /**
@@ -617,10 +631,90 @@ public final class RemoteTerminalView extends View {
     invalidate();
   }
 
-  private void requestLayoutIfSizeChanged() {
+  private boolean requestLayoutIfSizeChanged() {
     if (getWidth() > 0 && getHeight() > 0) {
+      int effectiveTextSizeSp = userTextSizeSp > 0 ? userTextSizeSp : 14;
+      boolean changed = appliedGeometryWidth != getWidth() || appliedGeometryHeight != getHeight()
+          || appliedTextSizeSp != effectiveTextSizeSp || appliedTypeface != userTypeface;
       updateSize(getWidth(), getHeight());
+      return changed;
     }
+    return false;
+  }
+
+  private boolean invalidateChangedRows(@NonNull ModelChange change) {
+    if (model == null || getWidth() <= 0 || getHeight() <= 0
+        || change.fullInvalidate || change.geometryChanged || change.historyChanged
+        || change.paletteChanged || change.stylesChanged || change.linksChanged
+        || change.activeBufferChanged || change.modesChanged || viewport.selection != null) {
+      return false;
+    }
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    if (snapshot.screen == null || snapshot.activeBuffer == null) return false;
+    List<Integer> dirtyRows = new ArrayList<>(change.changedScreenRows);
+    if (change.cursorChanged) {
+      if (change.previousCursorRow < 0 || change.currentCursorRow < 0) return false;
+      dirtyRows.add(change.previousCursorRow);
+      dirtyRows.add(change.currentCursorRow);
+    }
+    if (dirtyRows.isEmpty() || dirtyRows.size() > MAX_PARTIAL_DIRTY_SCREEN_ROWS) return false;
+    Collections.sort(dirtyRows);
+    List<Integer> uniqueRows = new ArrayList<>();
+    for (int row : dirtyRows) {
+      if (row < 0 || row >= snapshot.screen.length) return false;
+      if (uniqueRows.isEmpty() || uniqueRows.get(uniqueRows.size() - 1) != row) uniqueRows.add(row);
+    }
+    if (uniqueRows.size() > MAX_PARTIAL_DIRTY_SCREEN_ROWS) return false;
+
+    TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    float lineHeight = renderer.getLineHeight();
+    if (lineHeight <= 0f) return false;
+    float screenTop = RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
+        snapshot.screen.length, lineHeight, renderer.getTopInset(),
+        viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+    List<Rect> dirtyRects = dirtyScreenRowRects(uniqueRows, screenTop, lineHeight,
+        getWidth(), getHeight());
+    int invalidatedRows = 0;
+    for (Rect dirtyRect : dirtyRects) {
+      invalidate(dirtyRect);
+    }
+    for (int row : uniqueRows) {
+      float top = screenTop + row * lineHeight;
+      float bottom = top + lineHeight;
+      if (bottom > 0 && top < getHeight()) invalidatedRows++;
+    }
+    if (invalidatedRows == 0) return true;
+    TerminalRenderMetrics.partialInvalidate(invalidatedRows);
+    return true;
+  }
+
+  /** Coalesces adjacent screen rows into minimal clipped dirty rectangles. */
+  static List<Rect> dirtyScreenRowRects(@NonNull List<Integer> sortedUniqueRows, float screenTop,
+                                        float lineHeight, int width, int height) {
+    List<Rect> result = new ArrayList<>();
+    if (sortedUniqueRows.isEmpty() || lineHeight <= 0f || width <= 0 || height <= 0) return result;
+    int start = sortedUniqueRows.get(0);
+    int previous = start;
+    for (int index = 1; index <= sortedUniqueRows.size(); index++) {
+      boolean continues = index < sortedUniqueRows.size()
+          && sortedUniqueRows.get(index) == previous + 1;
+      if (continues) {
+        previous = sortedUniqueRows.get(index);
+        continue;
+      }
+      float top = screenTop + start * lineHeight;
+      float bottom = screenTop + (previous + 1) * lineHeight;
+      if (bottom > 0 && top < height) {
+        result.add(new Rect(0, Math.max(0, (int) Math.floor(top) - 1), width,
+            Math.min(height, (int) Math.ceil(bottom) + 1)));
+      }
+      if (index < sortedUniqueRows.size()) {
+        start = sortedUniqueRows.get(index);
+        previous = start;
+      }
+    }
+    return result;
   }
 
   private void startSelectionAt(float x, float y) {

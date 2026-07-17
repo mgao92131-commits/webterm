@@ -20,7 +20,8 @@ import com.webterm.terminal.model.TerminalViewportState;
 public final class TerminalScreenController implements TerminalSessionRuntime.Listener {
 
   public interface View {
-    void render(@NonNull RemoteTerminalModel model, @NonNull TerminalViewportState viewport);
+    void render(@NonNull RemoteTerminalModel model, @NonNull TerminalViewportState viewport,
+                @NonNull ModelChange change);
     void onCursorChanged();
     void onTitleChanged(@Nullable String title);
     void requestInvalidate();
@@ -36,17 +37,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   private static final long RESIZE_DEBOUNCE_MS = 100L;
-  // A terminal can receive many PTY chunks before Android draws the next frame.
-  // Rendering the latest published model once per frame window prevents stale
-  // callback work from accumulating on the main thread.
-  private static final long RENDER_FRAME_WINDOW_MS = 16L;
-
   private final TerminalSessionRuntime runtime;
   private final TerminalViewportState viewport;
   private final LifecycleEventObserver lifecycleObserver;
+  private final FrameScheduler frameScheduler;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Runnable sendResizeRunnable = this::sendResizeNow;
-  private final Runnable renderRunnable = this::renderNow;
 
   private int pendingCols;
   private int pendingRows;
@@ -55,29 +51,38 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private EffectListener effectListener;
   private View view;
   private boolean renderScheduled;
+  @Nullable private Runnable scheduledRenderCallback;
+  private long renderGeneration;
+  @Nullable private ModelChange pendingRenderChange;
   /** 上一次成功排队的历史分页边界；用于保证 beforeId 严格向旧方向推进。 */
   private long lastRequestedHistoryBeforeId = -1;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
-    this(runtime, new TerminalViewportState());
+    this(runtime, new TerminalViewportState(), new ChoreographerFrameScheduler());
   }
 
   /** Registry 注入 session-scoped viewport，使普通 View 重建不丢失滚动锚点。 */
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime,
                                   @NonNull TerminalViewportState viewport) {
+    this(runtime, viewport, new ChoreographerFrameScheduler());
+  }
+
+  TerminalScreenController(@NonNull TerminalSessionRuntime runtime,
+                           @NonNull TerminalViewportState viewport,
+                           @NonNull FrameScheduler frameScheduler) {
     this.runtime = runtime;
     this.viewport = viewport;
+    this.frameScheduler = frameScheduler;
     this.lifecycleObserver = (source, event) -> {
       if (event == Lifecycle.Event.ON_RESUME) {
         runtime.addListener(this);
-        requestRender();
+        requestRender(ModelChange.full(false));
       } else if (event == Lifecycle.Event.ON_PAUSE) {
         runtime.removeListener(this);
         // 与 detach 一致地取消排队中的渲染：暂停期间不再需要绘制，
         // resume 时由 requestRender 统一请求一次最新快照。不置 view=null、
         // 不移除 observer，attach/detach 才负责完整解绑。
-        mainHandler.removeCallbacks(renderRunnable);
-        renderScheduled = false;
+        cancelPendingRender();
       }
     };
   }
@@ -86,15 +91,14 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     this.view = view;
     owner.getLifecycle().addObserver(lifecycleObserver);
     runtime.addListener(this);
-    requestRender();
+    requestRender(ModelChange.full(false));
   }
 
   public void detach(@NonNull LifecycleOwner owner) {
     runtime.removeListener(this);
     owner.getLifecycle().removeObserver(lifecycleObserver);
     view = null;
-    mainHandler.removeCallbacks(renderRunnable);
-    renderScheduled = false;
+    cancelPendingRender();
   }
 
   public void sendText(@NonNull String text) {
@@ -150,7 +154,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
     if (deltaPixels == 0) return;
     viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
-    requestRender();
+    requestRender(ModelChange.full(false));
   }
 
   public void requestOlderHistoryPage() {
@@ -198,7 +202,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
       view.onHistoryAppended(change.tailAppendedLines);
     }
     if (change.historyChanged) viewport.loadingOlderHistory = false;
-    requestRender();
+    requestRender(change);
   }
 
   @Override
@@ -225,7 +229,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {
     View v = view;
     if (v != null) v.onConnectionStateChanged(state);
-    requestRender();
+    requestRender(ModelChange.full(false));
   }
 
   @Override
@@ -240,17 +244,38 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     if (v != null) v.onInputDeliveryUncertain(message);
   }
 
-  private void requestRender() {
+  private void requestRender(@NonNull ModelChange change) {
+    pendingRenderChange = pendingRenderChange == null ? change : pendingRenderChange.merge(change);
     if (renderScheduled) return;
     renderScheduled = true;
-    mainHandler.postDelayed(renderRunnable, RENDER_FRAME_WINDOW_MS);
+    long generation = ++renderGeneration;
+    Runnable callback = () -> renderOnFrame(generation);
+    scheduledRenderCallback = callback;
+    frameScheduler.postFrame(callback);
+    com.webterm.terminal.model.TerminalRenderMetrics.renderRequested();
   }
 
-  private void renderNow() {
+  private void renderOnFrame(long callbackGeneration) {
+    if (!renderScheduled || callbackGeneration != renderGeneration) return;
     renderScheduled = false;
+    scheduledRenderCallback = null;
+    ModelChange change = pendingRenderChange;
+    pendingRenderChange = null;
     View v = view;
-    if (v != null) {
-      v.render(runtime.model(), viewport);
+    if (v != null && change != null) {
+      com.webterm.terminal.model.TerminalRenderMetrics.vsyncRender();
+      // Read the current immutable publication at frame time. Intermediate UI changes are
+      // intentionally skipped; protocol patches were already applied in model order.
+      v.render(runtime.model(), viewport, change);
     }
+  }
+
+  private void cancelPendingRender() {
+    renderGeneration++;
+    Runnable callback = scheduledRenderCallback;
+    if (callback != null) frameScheduler.cancelFrame(callback);
+    scheduledRenderCallback = null;
+    pendingRenderChange = null;
+    renderScheduled = false;
   }
 }

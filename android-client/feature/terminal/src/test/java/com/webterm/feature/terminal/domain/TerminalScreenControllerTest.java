@@ -34,6 +34,8 @@ public final class TerminalScreenControllerTest {
   private TerminalScreenController controller;
   private FakeScreenConnection connection;
   private RecordingView view;
+  private FakeFrameScheduler frameScheduler;
+  private LifecycleOwner owner;
 
   @Before
   public void setUp() {
@@ -43,9 +45,11 @@ public final class TerminalScreenControllerTest {
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
     connection.listener.onConnected();
-    controller = new TerminalScreenController(runtime);
+    frameScheduler = new FakeFrameScheduler();
+    controller = new TerminalScreenController(runtime, new com.webterm.terminal.model.TerminalViewportState(),
+        frameScheduler);
     view = new RecordingView();
-    LifecycleOwner owner = mock(LifecycleOwner.class);
+    owner = mock(LifecycleOwner.class);
     when(owner.getLifecycle()).thenReturn(mock(Lifecycle.class));
     controller.attach(owner, view);
   }
@@ -124,6 +128,35 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
+  public void sameVsyncWindow_rendersOnlyNewestModelChange() {
+    frameScheduler.runAll(); // attachment's initial full render
+    controller.onModelChange(new ModelChange(false, Collections.singleton(1), false,
+        false, false, false));
+    controller.onModelChange(new ModelChange(false, Collections.singleton(2), false,
+        false, false, false));
+
+    assertEquals(1, frameScheduler.pendingCount());
+    frameScheduler.runAll();
+
+    assertEquals(2, view.renderCount);
+    assertTrue(view.lastChange.changedScreenRows.contains(1));
+    assertTrue(view.lastChange.changedScreenRows.contains(2));
+  }
+
+  @Test
+  public void detachedOldFrameCallback_cannotRenderNewAttachment() {
+    Runnable old = frameScheduler.firstPending();
+    controller.detach(owner);
+    controller.attach(owner, view);
+
+    old.run();
+    assertEquals("cancelled callback must be inert", 0, view.renderCount);
+
+    frameScheduler.runAll();
+    assertEquals(1, view.renderCount);
+  }
+
+  @Test
   public void consecutiveHistoryPagesReachHardTopWithoutRepeatingRequest() {
     // History line ids are positive; id 0 is reserved for screen rows. The
     // server's hard top is firstAvailableLineId == 1.
@@ -193,10 +226,16 @@ public final class TerminalScreenControllerTest {
 
   private static final class RecordingView implements TerminalScreenController.View {
     final List<Integer> historyAppends = new ArrayList<>();
+    int renderCount;
+    ModelChange lastChange;
 
     @Override
     public void render(@NonNull RemoteTerminalModel model,
-                       @NonNull com.webterm.terminal.model.TerminalViewportState viewport) {}
+                       @NonNull com.webterm.terminal.model.TerminalViewportState viewport,
+                       @NonNull ModelChange change) {
+      renderCount++;
+      lastChange = change;
+    }
 
     @Override
     public void onCursorChanged() {}
@@ -210,6 +249,19 @@ public final class TerminalScreenControllerTest {
     @Override
     public void onHistoryAppended(int lineCount) {
       historyAppends.add(lineCount);
+    }
+  }
+
+  private static final class FakeFrameScheduler implements FrameScheduler {
+    final List<Runnable> callbacks = new ArrayList<>();
+
+    @Override public void postFrame(@NonNull Runnable callback) { callbacks.add(callback); }
+    @Override public void cancelFrame(@NonNull Runnable callback) { callbacks.remove(callback); }
+
+    int pendingCount() { return callbacks.size(); }
+    Runnable firstPending() { return callbacks.get(0); }
+    void runAll() {
+      while (!callbacks.isEmpty()) callbacks.remove(0).run();
     }
   }
 

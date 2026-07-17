@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.SystemClock;
 
@@ -18,6 +19,7 @@ import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.TerminalViewportState;
+import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.ScreenSnapshot;
 
 import java.util.Map;
@@ -93,6 +95,8 @@ public final class RemoteTerminalRenderer {
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport) {
+    long renderStartedNanos = System.nanoTime();
+    try {
     TerminalLine[] screen = model.screen;
     if (screen == null || lineHeight <= 0 || cellWidth <= 0) return;
 
@@ -118,23 +122,47 @@ public final class RemoteTerminalRenderer {
     boolean cursorVisible = viewport.followTail && cursor.visible
         && (!cursor.blink || ((SystemClock.uptimeMillis() / 500L) & 1L) == 0L);
 
-    for (int row = 0; row < screenRows; row++) {
+    Rect clip = new Rect();
+    if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
+    int[] screenRange = rowRangeIntersecting(clip.top, clip.bottom, screenTopY, lineHeight,
+        screenRows);
+    for (int row = screenRange[0]; row < screenRange[1]; row++) {
       float y = screenTopY + row * lineHeight;
-      if (y + lineHeight < 0 || y > canvas.getHeight()) continue;
       drawLine(canvas, model.columns, palette, styles, screen[row], y, 0, row, normalizedSelection,
           cursor, cursorVisible, canvasBackground);
     }
 
     float historyTopY = screenTopY - historyRows * lineHeight;
-    int firstHistoryRow = Math.max(0, (int) Math.floor(-historyTopY / lineHeight) - 1);
-    int lastHistoryRow = Math.min(historyRows,
-        (int) Math.ceil((canvas.getHeight() - historyTopY) / lineHeight) + 1);
-    for (int historyIndex = firstHistoryRow; historyIndex < lastHistoryRow; historyIndex++) {
+    int[] historyRange = rowRangeIntersecting(clip.top, clip.bottom, historyTopY, lineHeight,
+        historyRows);
+    for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
       drawLine(canvas, model.columns, palette, styles, line, y, line.id, -1,
           normalizedSelection, cursor, false, canvasBackground);
     }
+    } finally {
+      TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
+    }
+  }
+
+  /** Half-open row range whose cells can affect a Canvas clip, including one anti-aliasing guard. */
+  static int[] rowRangeIntersecting(int clipTop, int clipBottom, float rowsTop,
+                                    float rowHeight, int rowCount) {
+    if (rowCount <= 0 || rowHeight <= 0f || clipBottom <= clipTop) return new int[] {0, 0};
+    double firstRaw = Math.floor((clipTop - rowsTop) / rowHeight);
+    double lastRaw = Math.ceil((clipBottom - rowsTop) / rowHeight);
+    int first = clampRow(firstRaw, rowCount);
+    int last = clampRow(lastRaw, rowCount);
+    first = Math.max(0, first - 1);
+    last = Math.min(rowCount, last + 1);
+    return new int[] {Math.min(first, last), Math.max(first, last)};
+  }
+
+  private static int clampRow(double value, int rowCount) {
+    if (value <= 0d) return 0;
+    if (value >= rowCount) return rowCount;
+    return (int) value;
   }
 
   private void drawLine(Canvas canvas, int columns, TerminalPalette palette,

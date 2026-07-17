@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -145,6 +146,11 @@ public final class RemoteTerminalModel {
     }
     validatePatchAtomically(patch);
     boolean projectionWasComplete = projectionHealth.complete;
+    TerminalCursor previousCursor = cursor;
+    TerminalModes previousModes = modes;
+    TerminalPalette previousPalette = palette;
+    String previousTitle = title;
+    String previousWorkingDirectory = workingDirectory;
 
     Set<Integer> changedRows = new HashSet<>();
     int tailAppendedLines = 0;
@@ -205,6 +211,11 @@ public final class RemoteTerminalModel {
         || !patch.historyAppend.isEmpty() || !patch.promotedRows.isEmpty();
     boolean stylesChanged = !patch.newStyles.isEmpty();
     boolean linksChanged = !patch.newLinks.isEmpty();
+    boolean cursorChanged = !Objects.equals(previousCursor, cursor);
+    boolean modesChanged = !Objects.equals(previousModes, modes);
+    boolean paletteChanged = !Objects.equals(previousPalette, palette);
+    boolean titleChanged = !Objects.equals(previousTitle, title);
+    boolean workingDirectoryChanged = !Objects.equals(previousWorkingDirectory, workingDirectory);
     screenRevision = patch.screenRevision;
     evictHistoryIfNeeded();
     publishRenderSnapshot(historyChanged, stylesChanged, linksChanged);
@@ -216,11 +227,19 @@ public final class RemoteTerminalModel {
         false,
         changedRows,
         historyChanged,
-        patch.cursor != null,
-        patch.modes != null,
-        patch.title != null,
+        cursorChanged,
+        modesChanged,
+        titleChanged,
         tailAppendedLines,
-        0
+        0,
+        false,
+        paletteChanged,
+        stylesChanged,
+        linksChanged,
+        false,
+        workingDirectoryChanged,
+        cursorChanged ? previousCursor.row : -1,
+        cursorChanged ? cursor.row : -1
     );
   }
 

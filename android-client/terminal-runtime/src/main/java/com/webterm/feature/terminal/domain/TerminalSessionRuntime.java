@@ -11,6 +11,7 @@ import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageMapper;
 import com.webterm.terminal.protocol.ScreenMessageValidator;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
@@ -118,6 +119,7 @@ public final class TerminalSessionRuntime {
   private final RemoteTerminalModel model;
   private final Executor modelExecutor;
   private final Executor callbackExecutor;
+  private final ModelChangeDispatcher modelChangeDispatcher;
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
   private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
   private final ScreenMailbox screenMailbox =
@@ -192,6 +194,10 @@ public final class TerminalSessionRuntime {
     this.model = model;
     this.modelExecutor = modelExecutor;
     this.callbackExecutor = callbackExecutor;
+    this.modelChangeDispatcher = new ModelChangeDispatcher(callbackExecutor,
+        (change, callbackDelayNanos) -> {
+          for (Listener listener : listeners) listener.onModelChange(change);
+        });
     this.timeoutScheduler = timeoutScheduler;
     this.leaseScheduler = leaseScheduler;
     this.resyncCoordinator = new ResyncCoordinator(
@@ -491,6 +497,7 @@ public final class TerminalSessionRuntime {
 
   public void close() {
     connectionEpoch.incrementAndGet();
+    modelChangeDispatcher.cancel();
     updateState(State.CLOSED);
     screenMailbox.reset();
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
@@ -617,8 +624,10 @@ public final class TerminalSessionRuntime {
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
       try {
+        long parseStartedNanos = System.nanoTime();
         TerminalScreenProto.ScreenEnvelope envelope =
             TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
+        TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
         if (envelope.getProtocolVersion() != 1) {
           throw new IllegalArgumentException("unsupported protocol version");
         }
@@ -629,6 +638,7 @@ public final class TerminalSessionRuntime {
         if (ScreenEnvelopeDispatcher.dispatchReliableInput(
             envelope, message.sourceConnection.reliableInputTracker())) return;
         ModelChange change;
+        long modelApplyStartedNanos = System.nanoTime();
         switch (envelope.getPayloadCase()) {
           case SNAPSHOT: {
             ScreenMessageValidator.ValidationResult validation =
@@ -710,6 +720,7 @@ public final class TerminalSessionRuntime {
             change = ModelChange.none();
             break;
         }
+        TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
         dispatchModelChange(change);
       } catch (Exception e) {
         // revision gap、校验失败、解析失败：空闲时启动一次恢复；
@@ -782,9 +793,13 @@ public final class TerminalSessionRuntime {
   }
 
   private void dispatchModelChange(@NonNull ModelChange change) {
-    callbackExecutor.execute(() -> {
-      for (Listener listener : listeners) listener.onModelChange(change);
-    });
+    // No page is observing this session. The model remains current and a future attach explicitly
+    // requests one fresh render, so posting a main-thread no-op would only create background load.
+    if (listeners.isEmpty()) {
+      TerminalRenderMetrics.modelChange();
+      return;
+    }
+    modelChangeDispatcher.dispatch(change);
   }
 
   private void updateState(@NonNull State newState) {
