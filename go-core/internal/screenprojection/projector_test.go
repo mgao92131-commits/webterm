@@ -252,6 +252,55 @@ func TestProjector_ClearLineIsExportedAsScreenPatch(t *testing.T) {
 	}
 }
 
+// 复现截图对应的时序：旧行含 CJK 和 projected 尾巴，TUI 的一次重绘被拆成
+// “先擦除”与“再写短文本”两个 PTY/投影批次，而中间擦除状态被 mailbox 合并掉。
+// 最终 patch 必须直接从最后已发送 baseline 覆盖整行，不能留下 "ojected"。
+func TestFrameDeriver_CoalescedEraseAndRewriteClearsOldMixedWidthTail(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(4, 16, sb)
+	if err := engine.Write([]byte("中文projected")); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(engine, sb, "s1", "i1")
+	var deriver FrameDeriver
+	first := deriver.FrameForState(p.ExportState(0, 1))
+	if first.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("first frame kind=%d, want snapshot", first.Kind)
+	}
+
+	if err := engine.Write([]byte("\r\x1b[2K")); err != nil {
+		t.Fatal(err)
+	}
+	_ = p.ExportState(0, 2) // 单槽 mailbox 覆盖掉这次中间擦除状态。
+	if err := engine.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(0, 3))
+	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != 1 || patch.Seq != 3 {
+		t.Fatalf("coalesced frame kind=%d base=%d seq=%d, want patch 1->3",
+			patch.Kind, patch.BaseRevision, patch.Seq)
+	}
+	if len(patch.Screen) != 1 || patch.Screen[0].Row != 0 {
+		t.Fatalf("changed rows=%v, want only row 0", patch.Screen)
+	}
+	line := patch.Screen[0]
+	for _, run := range line.Runs {
+		col := run.Col
+		for _, cell := range run.Cells {
+			if col == 0 && cell.Text != "o" {
+				t.Fatalf("column 0=%q, want o", cell.Text)
+			}
+			if col == 1 && cell.Text != "k" {
+				t.Fatalf("column 1=%q, want k", cell.Text)
+			}
+			if col >= 2 && cell.Text != " " {
+				t.Fatalf("stale tail survived at column %d: %q", col, cell.Text)
+			}
+			col += int(cell.Width)
+		}
+	}
+}
+
 func TestProjector_LayoutEpochChangeIsSnapshot(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(5, 10, sb)

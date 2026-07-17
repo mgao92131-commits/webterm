@@ -115,6 +115,7 @@ func (exp *exporter) exportProjectionRow(row headlessterm.ProjectionRow, cursorR
 func (exp *exporter) exportCells(cells []headlessterm.Cell, row, cursorRow, cursorCol int) []terminalengine.CellRun {
 	var runs []terminalengine.CellRun
 	var current *terminalengine.CellRun
+	currentEnd := -1
 
 	for c := 0; c < len(cells); {
 		cell := cells[c]
@@ -124,25 +125,36 @@ func (exp *exporter) exportCells(cells []headlessterm.Cell, row, cursorRow, curs
 		// any other plain reverse-space would turn it into a permanent ghost block
 		// on remote clients.
 		if staleSoftCursor(cell, row, c, cursorRow, cursorCol) {
+			// 被过滤的物理格必须在 wire run 中保留为空洞。否则后续同样式
+			// cell 会被拼进当前 run，Android 只能按连续列展开，导致列压缩。
+			current = nil
+			currentEnd = -1
 			c++
 			continue
 		}
 
 		exported := exp.exportCell(cell)
 		if exported.Width == 0 {
-			// spacer cell：跳过，不绘制。
+			// spacer cell：跳过，不绘制；同样不能让后续 cell 跨过它继续
+			// 拼接到当前 run，否则会丢失原始网格中的列空洞。
+			current = nil
+			currentEnd = -1
 			c++
 			continue
 		}
 
-		if current != nil && cellsSameStyle(current.Cells[len(current.Cells)-1], exported) {
+		width := int(exported.Width)
+		if current != nil && currentEnd == c &&
+			cellsSameStyle(current.Cells[len(current.Cells)-1], exported) {
 			current.Cells = append(current.Cells, exported)
+			currentEnd += width
 		} else {
 			run := terminalengine.CellRun{Col: c, Cells: []terminalengine.Cell{exported}}
 			runs = append(runs, run)
 			current = &runs[len(runs)-1]
+			currentEnd = c + width
 		}
-		c += int(exported.Width)
+		c += width
 	}
 
 	return runs

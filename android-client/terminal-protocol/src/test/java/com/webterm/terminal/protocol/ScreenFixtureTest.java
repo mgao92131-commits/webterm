@@ -55,6 +55,24 @@ public final class ScreenFixtureTest {
     }
   }
 
+  @Test
+  public void canonicalGoWideFixturePreservesPhysicalColumns() throws Exception {
+    byte[] pbData = Files.readAllBytes(FIXTURE_ROOT.resolve("wide-chars/expected.pb"));
+    TerminalScreenProto.ScreenEnvelope envelope =
+        TerminalScreenProto.ScreenEnvelope.parseFrom(pbData);
+    ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
+
+    TerminalLine mixed = snapshot.screen.get(2); // A日本語B
+    assertEquals("A", mixed.at(0).text);
+    assertEquals("日", mixed.at(1).text);
+    assertTrue(mixed.at(2).isSpacer());
+    assertEquals("本", mixed.at(3).text);
+    assertTrue(mixed.at(4).isSpacer());
+    assertEquals("語", mixed.at(5).text);
+    assertTrue(mixed.at(6).isSpacer());
+    assertEquals("B", mixed.at(7).text);
+  }
+
   private void verifyFixture(String name, Path dir) throws Exception {
     byte[] pbData = Files.readAllBytes(dir.resolve("expected.pb"));
     TerminalScreenProto.ScreenEnvelope envelope =

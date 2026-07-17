@@ -58,6 +58,21 @@ public class RemoteTerminalModelTest {
     assertTrue(change.changedScreenRows.contains(0));
   }
 
+  @Test
+  public void applyPatch_shorterReplacementClearsOldRowTail() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(sampleSnapshot(2, 12, 1, "projected"));
+
+    model.applyPatch(samplePatch(1, 2, "ok"));
+
+    TerminalLine row = model.renderSnapshot().screen[0];
+    assertEquals("o", row.at(0).text);
+    assertEquals("k", row.at(1).text);
+    for (int col = 2; col < row.length(); col++) {
+      assertTrue("stale tail survived at column " + col, row.at(col).isDefault());
+    }
+  }
+
   @Test(expected = RemoteTerminalModel.RevisionGapException.class)
   public void applyPatch_wrongBaseRevision_throws() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();

@@ -8,7 +8,6 @@ import com.webterm.ui.common.StatusIndicatorView;
 
 public final class TerminalConnectionStatusView {
     private StatusIndicatorView indicator;
-    private ImageButton retryButton;
     private View reconnectOverlay;
     private TerminalSessionRuntime.State remoteState = TerminalSessionRuntime.State.CONNECTING;
     private boolean inputReady;
@@ -16,15 +15,13 @@ public final class TerminalConnectionStatusView {
     public TerminalConnectionStatusView() {
     }
 
-    public void bind(StatusIndicatorView indicator, ImageButton retryButton, View reconnectOverlay) {
+    public void bind(StatusIndicatorView indicator, View reconnectOverlay) {
         this.indicator = indicator;
-        this.retryButton = retryButton;
         this.reconnectOverlay = reconnectOverlay;
     }
 
     public void clear() {
         indicator = null;
-        retryButton = null;
         reconnectOverlay = null;
     }
 
@@ -47,22 +44,18 @@ public final class TerminalConnectionStatusView {
                 indicator.setStatus(inputReady
                     ? StatusIndicatorView.Status.CONNECTED
                     : StatusIndicatorView.Status.CONNECTING);
-                if (retryButton != null) retryButton.setVisibility(View.GONE);
                 if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
                 break;
             case CONNECTING:
                 indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
-                if (retryButton != null) retryButton.setVisibility(View.GONE);
                 if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
                 break;
             case RECONNECTING:
                 indicator.setStatus(StatusIndicatorView.Status.CONNECTING);
-                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
                 if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.GONE);
                 break;
             case CLOSED:
                 indicator.setStatus(StatusIndicatorView.Status.DISCONNECTED);
-                if (retryButton != null) retryButton.setVisibility(View.VISIBLE);
                 if (reconnectOverlay != null) reconnectOverlay.setVisibility(View.VISIBLE);
                 break;
         }

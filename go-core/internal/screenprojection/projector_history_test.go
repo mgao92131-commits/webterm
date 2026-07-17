@@ -317,6 +317,42 @@ func TestProjector_ResizeRebuildsHistoryOnEpochChange(t *testing.T) {
 	assertStateEquivalent(t, next, forceFullExportAt(p, 1, 5))
 }
 
+// 截图型残片的确定性复现：主屏上一条软折行的尾部是 "ojected"；键盘/视口
+// 让行数缩小时，为保持光标附近内容，headless terminal 会把顶部物理行推进
+// scrollback。之后 TUI 即使清空并重绘当前屏幕，也无法再修改已经进入历史的
+// 软折行尾部，因此 Android 在 history + screen 的交界处会看到孤立残片。
+func TestProjector_RowShrinkCanPromoteWrappedTailIntoHistory(t *testing.T) {
+	engine, _, p := newHistoryRig(t, 6, 10)
+	// 前 8 个字符占满首行前 8 列，projected 的 "pr" 落在行尾，
+	// "ojected" 软折到下一物理行，形态与截图一致。
+	payload := "xxxxxxxxprojected\r\nline2\r\nline3\r\nline4\r\nline5"
+	if err := engine.Write([]byte(payload)); err != nil {
+		t.Fatal(err)
+	}
+	before := p.ExportState(0, 1)
+	if len(before.History.Lines) != 0 {
+		t.Fatalf("history before resize=%d, want 0", len(before.History.Lines))
+	}
+
+	engine.Resize(4, 10)
+	afterShrink := p.ExportState(1, 2)
+	if len(afterShrink.History.Lines) < 2 {
+		t.Fatalf("history after row shrink=%d, want at least 2", len(afterShrink.History.Lines))
+	}
+	if got := strings.TrimSpace(exportLineText(afterShrink.History.Lines[1])); got != "ojected" {
+		t.Fatalf("promoted wrapped tail=%q, want ojected", got)
+	}
+
+	// ED 0 只能清当前可见屏；已经推进 scrollback 的残片仍会位于历史尾部。
+	if err := engine.Write([]byte("\x1b[H\x1b[Jredrawn")); err != nil {
+		t.Fatal(err)
+	}
+	afterRedraw := p.ExportState(1, 3)
+	if got := strings.TrimSpace(exportLineText(afterRedraw.History.Lines[1])); got != "ojected" {
+		t.Fatalf("redraw unexpectedly changed promoted history tail: %q", got)
+	}
+}
+
 // §6.4：主备屏切换——备用屏历史为空（不混主屏 scrollback），切回主屏时历史
 // 缓存失效并全量重建，内容与切换前一致。
 func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {

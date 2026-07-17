@@ -316,7 +316,6 @@ public final class TerminalScreenBuilder {
         public View quickBar;
         public TextView title;
         public TextView subtitle;
-        public ImageButton retryButton;
         public StatusIndicatorView statusIndicator;
         public Button ctrlButton;
         public View reconnectOverlay;

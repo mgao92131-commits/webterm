@@ -3,6 +3,7 @@ package screenprojection
 import (
 	"testing"
 
+	headlessterm "github.com/danielgatis/go-headless-term"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -46,6 +47,65 @@ func TestExportSnapshot_WideChars(t *testing.T) {
 	second := frame.Screen[0].Runs[0].Cells[1]
 	if second.Text != "文" || second.Width != 2 {
 		t.Fatalf("expected 文 width=2, got text=%q width=%d", second.Text, second.Width)
+	}
+}
+
+func TestExportCells_StaleSoftCursorPreservesFollowingColumn(t *testing.T) {
+	exporter := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	a := headlessterm.NewCell()
+	a.Char = "a"
+	staleCursor := headlessterm.NewCell()
+	staleCursor.SetFlag(headlessterm.CellFlagReverse)
+	b := headlessterm.NewCell()
+	b.Char = "b"
+
+	runs := exporter.exportCells([]headlessterm.Cell{a, staleCursor, b}, 0, 1, 0)
+	if len(runs) != 2 {
+		t.Fatalf("runs=%d, want 2; stale cursor gap must not compress columns: %#v", len(runs), runs)
+	}
+	if runs[0].Col != 0 || len(runs[0].Cells) != 1 || runs[0].Cells[0].Text != "a" {
+		t.Fatalf("first run=%#v, want col 0 containing a", runs[0])
+	}
+	if runs[1].Col != 2 || len(runs[1].Cells) != 1 || runs[1].Cells[0].Text != "b" {
+		t.Fatalf("second run=%#v, want col 2 containing b", runs[1])
+	}
+}
+
+func TestExportCells_SpacerPreservesFollowingColumn(t *testing.T) {
+	exporter := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	a := headlessterm.NewCell()
+	a.Char = "a"
+	spacer := headlessterm.NewCell()
+	spacer.Char = ""
+	spacer.SetFlag(headlessterm.CellFlagWideCharSpacer)
+	b := headlessterm.NewCell()
+	b.Char = "b"
+
+	runs := exporter.exportCells([]headlessterm.Cell{a, spacer, b}, 0, 1, 0)
+	if len(runs) != 2 || runs[0].Col != 0 || runs[1].Col != 2 {
+		t.Fatalf("runs=%#v, want independent runs at columns 0 and 2", runs)
+	}
+}
+
+func TestExportCells_ContiguousSameStyleCellsStayInOneRun(t *testing.T) {
+	exporter := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	a := headlessterm.NewCell()
+	a.Char = "a"
+	b := headlessterm.NewCell()
+	b.Char = "b"
+
+	runs := exporter.exportCells([]headlessterm.Cell{a, b}, 0, 1, 0)
+	if len(runs) != 1 || runs[0].Col != 0 || len(runs[0].Cells) != 2 {
+		t.Fatalf("runs=%#v, want one contiguous run at column 0", runs)
 	}
 }
 

@@ -214,7 +214,7 @@ public final class RemoteTerminalIntegration {
     // initial snapshot, so bind the latest values once the header exists.
     titleView.setText(latestTitle);
     subtitleView.setText(latestCwd);
-    connectionStatusView.bind(shell.statusIndicator, shell.retryButton, shell.reconnectOverlay);
+    connectionStatusView.bind(shell.statusIndicator, shell.reconnectOverlay);
     connectionStatusView.updateRemote(runtime.state());
 
     installInsets(activity);

@@ -36,6 +36,56 @@ public final class ScreenMessageMapperTest {
   }
 
   @Test
+  public void patchPreservesGapBetweenSameStyleRuns() {
+    TerminalScreenProto.Cell a = TerminalScreenProto.Cell.newBuilder().setText("a").setWidth(1).build();
+    TerminalScreenProto.Cell b = TerminalScreenProto.Cell.newBuilder().setText("b").setWidth(1).build();
+    TerminalScreenProto.TerminalLine line = TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(0)
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0).addCells(a))
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(2).addCells(b))
+        .build();
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .addScreenRows(line).build();
+
+    TerminalLine mapped = ScreenMessageMapper.mapPatch(pb).screenRows.get(0);
+
+    assertEquals("a", mapped.at(0).text);
+    assertTrue(mapped.at(1).isDefault());
+    assertEquals("b", mapped.at(2).text);
+  }
+
+  /**
+   * 诊断性复现：如果 wire 同时携带宽字符和显式 width=0 spacer，当前 mapper
+   * 会把 spacer 当成一列再次前进，导致后续 ASCII 右移一列。当前 Go exporter
+   * 使用 canonical 编码（只发送 width=2 宽字符，由 Android 本地补 spacer），
+   * 所以本测试刻画的是非 canonical payload 下的潜在偏移，不代表当前 Go 实际产物。
+   */
+  @Test
+  public void explicitSpacerPayloadReproducesOneColumnRightShift() {
+    TerminalScreenProto.Cell wide = TerminalScreenProto.Cell.newBuilder()
+        .setText("界").setWidth(2).build();
+    TerminalScreenProto.Cell spacer = TerminalScreenProto.Cell.newBuilder()
+        .setText("").setWidth(0).build();
+    TerminalScreenProto.Cell ascii = TerminalScreenProto.Cell.newBuilder()
+        .setText("x").setWidth(1).build();
+    TerminalScreenProto.TerminalLine line = TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(0)
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
+            .addCells(wide).addCells(spacer).addCells(ascii))
+        .build();
+    TerminalScreenProto.ScreenPatch pb = TerminalScreenProto.ScreenPatch.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+        .addScreenRows(line).build();
+
+    TerminalLine mapped = ScreenMessageMapper.mapPatch(pb).screenRows.get(0);
+
+    assertTrue(mapped.at(1).isSpacer());
+    assertTrue("explicit spacer is written at the canonical ASCII column", mapped.at(2).isSpacer());
+    assertEquals("current mapper shifts the following ASCII by one column", "x", mapped.at(3).text);
+  }
+
+  @Test
   public void snapshotRowsAreExpandedToDeclaredGeometry() {
     TerminalScreenProto.ScreenSnapshot pb = TerminalScreenProto.ScreenSnapshot.newBuilder()
         .setSessionId("s").setInstanceId("i").setLayoutEpoch(1).setScreenRevision(1)
