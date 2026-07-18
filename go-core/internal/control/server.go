@@ -252,10 +252,6 @@ func (control *Server) handleSessionDetail(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, terminal.ProjectedScreenSnapshot())
 		return
 	}
-	if len(parts) == 3 && parts[2] == "input-trace" {
-		writeJSON(w, http.StatusOK, terminal.ProjectedInputTrace())
-		return
-	}
 	writeError(w, http.StatusNotFound, "not found")
 }
 

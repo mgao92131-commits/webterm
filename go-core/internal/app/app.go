@@ -45,7 +45,6 @@ func New(cfg config.Config, version string) *App {
 		ScrollbackMaxLines: cfg.Scrollback.MaxLines,
 		ScrollbackMaxBytes: cfg.Scrollback.MaxBytes,
 	})
-	manager.SetLogger(logger)
 
 	sessionEnv := map[string]string{
 		"WEBTERM":                "1",

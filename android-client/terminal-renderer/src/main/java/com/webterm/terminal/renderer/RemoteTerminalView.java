@@ -8,7 +8,6 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.util.TypedValue;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
@@ -49,7 +48,6 @@ import java.util.Collections;
  */
 public final class RemoteTerminalView extends View {
 
-  private static final String INPUT_TRACE_TAG = "WebTermInputTrace";
   private static final int HANDLE_NONE = 0;
   private static final int HANDLE_START = 1;
   private static final int HANDLE_END = 2;
@@ -265,7 +263,6 @@ public final class RemoteTerminalView extends View {
       return super.onKeyDown(keyCode, event);
     }
     if (host != null) {
-      traceInput("view-key", eventSummary(event));
       host.onKeyEvent(event);
       return true;
     }
@@ -936,7 +933,6 @@ public final class RemoteTerminalView extends View {
             CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(getContext());
             if (text != null) {
               String paste = text.toString();
-              traceDispatch("selection_paste", "paste", paste);
               host.onPasteInput(paste);
             }
           }
@@ -1277,7 +1273,6 @@ public final class RemoteTerminalView extends View {
       if (content != null) content.clear();
       String paste = value.toString();
       if (!paste.isEmpty() && host != null) {
-        traceDispatch("context_paste", "paste", paste);
         host.onPasteInput(paste);
       }
       return true;
@@ -1285,7 +1280,6 @@ public final class RemoteTerminalView extends View {
 
     @Override
     public boolean deleteSurroundingText(int leftLength, int rightLength) {
-      traceInput("ime-delete", "left=" + leftLength + " right=" + rightLength);
       if (hasComposingText()) {
         // Deleting un-sent composing text is a local edit; the remote PTY has
         // never seen these characters and must receive zero DEL keys. This is
@@ -1336,10 +1330,8 @@ public final class RemoteTerminalView extends View {
         String text = content.toString();
         content.clear();
         if (containsLineBreak(text)) {
-          traceDispatch("ime_multiline", "paste", text);
           host.onPasteInput(text);
         } else {
-          traceDispatch("ime_text", "text", text);
           host.onTextInput(text);
         }
       }
@@ -1374,7 +1366,6 @@ public final class RemoteTerminalView extends View {
           }
           return true;
         }
-        traceInput("ime-key", eventSummary(event));
         if (host != null) {
           host.onKeyEvent(event);
         }
@@ -1387,7 +1378,6 @@ public final class RemoteTerminalView extends View {
       // Hardware keyboards bypass this InputConnection and still use the View
       // key callbacks above.
       boolean suppressText = isTextKeyFromIme(event);
-      traceInput("ime-key", eventSummary(event) + " suppressText=" + suppressText);
       if (host != null && !suppressText) {
         host.onKeyEvent(event);
       }
@@ -1410,32 +1400,4 @@ public final class RemoteTerminalView extends View {
     }
   }
 
-  /**
-   * 输入 trace 只记录阶段与长度/keyCode/action/deviceId 等元数据，绝不记录
-   * text、unicodeChar、文本 hash 或剪贴板内容。
-   */
-  private static void traceInput(String stage, String detail) {
-    if (Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) {
-      Log.d(INPUT_TRACE_TAG, stage + " " + detail);
-    }
-  }
-
-  private static void traceDispatch(String source, String kind, String text) {
-    if (!Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) return;
-    int lineBreaks = 0;
-    for (int i = 0; i < text.length(); i++) {
-      char value = text.charAt(i);
-      if (value == '\n' || value == '\r') lineBreaks++;
-    }
-    traceInput("dispatch", "source=" + source + " kind=" + kind
-        + " chars=" + text.length()
-        + " codepoints=" + text.codePointCount(0, text.length())
-        + " line_breaks=" + lineBreaks);
-  }
-
-  private static String eventSummary(KeyEvent event) {
-    if (event == null) return "null";
-    return "action=" + event.getAction() + " keyCode=" + event.getKeyCode()
-        + " device=" + event.getDeviceId();
-  }
 }

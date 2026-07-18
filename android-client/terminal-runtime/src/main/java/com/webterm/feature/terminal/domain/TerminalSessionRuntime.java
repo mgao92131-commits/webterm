@@ -146,9 +146,12 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
+  private long patchSummaryGeneration;
   private long patchSummaryStartedAtMs;
   private long patchSummaryFirstBaseRevision = -1;
   private long patchSummaryLastScreenRevision = -1;
+  private String patchSummaryInstanceId;
+  private long patchSummaryLayoutEpoch = -1;
   private int patchSummaryCount;
   private long patchSummaryBytes;
   private int patchSummaryChangedRows;
@@ -808,13 +811,21 @@ public final class TerminalSessionRuntime {
     patchSummaryHistoryAppend += patch.historyAppend.size();
     if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
     patchSummaryLastScreenRevision = patch.screenRevision;
-    long now = android.os.SystemClock.elapsedRealtime();
-    if (patchSummaryStartedAtMs == 0) patchSummaryStartedAtMs = now;
-    if (now - patchSummaryStartedAtMs < 1000L) return;
+    if (patchSummaryCount == 1) {
+      patchSummaryStartedAtMs = android.os.SystemClock.elapsedRealtime();
+      patchSummaryInstanceId = patch.instanceId;
+      patchSummaryLayoutEpoch = patch.layoutEpoch;
+      final long generation = patchSummaryGeneration;
+      timeoutScheduler.schedule(
+          () -> modelExecutor.execute(() -> flushPatchSummary(generation)), 1000L);
+    }
+  }
+
+  private void flushPatchSummary(long generation) {
+    if (generation != patchSummaryGeneration || patchSummaryCount == 0) return;
     Diagnostics.info("screen_protocol", "patch_applied_summary", diagnosticFields(
-        "sessionId", sessionId,
-        "instanceId", patch.instanceId,
-        "layoutEpoch", patch.layoutEpoch,
+        "instanceId", patchSummaryInstanceId,
+        "layoutEpoch", patchSummaryLayoutEpoch,
         "firstBaseRevision", patchSummaryFirstBaseRevision,
         "lastScreenRevision", patchSummaryLastScreenRevision,
         "patchCount", patchSummaryCount,
@@ -825,9 +836,12 @@ public final class TerminalSessionRuntime {
   }
 
   private void resetPatchSummary() {
+    patchSummaryGeneration++;
     patchSummaryStartedAtMs = 0;
     patchSummaryFirstBaseRevision = -1;
     patchSummaryLastScreenRevision = -1;
+    patchSummaryInstanceId = null;
+    patchSummaryLayoutEpoch = -1;
     patchSummaryCount = 0;
     patchSummaryBytes = 0;
     patchSummaryChangedRows = 0;

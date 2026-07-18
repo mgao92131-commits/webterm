@@ -264,15 +264,15 @@ func TestBlockedReliableInputDoesNotBlockRuntimeActor(t *testing.T) {
 		t.Fatal("PTY write did not start")
 	}
 
-	// 旧实现会卡在 actor 内的 pty.Write，连诊断快照都无法返回。
+	// 旧实现会卡在 actor 内的 pty.Write，连投影快照都无法返回。
 	waitRuntimeSnapshot(t, r)
-	traceDone := make(chan struct{})
+	snapshotDone := make(chan struct{})
 	go func() {
-		_ = r.InputTraceSnapshot()
-		close(traceDone)
+		_ = r.ProjectedSnapshot()
+		close(snapshotDone)
 	}()
 	select {
-	case <-traceDone:
+	case <-snapshotDone:
 	case <-time.After(time.Second):
 		t.Fatal("runtime actor was blocked by PTY input")
 	}

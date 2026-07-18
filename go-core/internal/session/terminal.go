@@ -13,7 +13,6 @@ import (
 
 	"webterm/go-core/internal/fsops"
 	"webterm/go-core/internal/infrastructure/pty"
-	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/terminalsession"
 )
@@ -34,9 +33,8 @@ type TerminalOptions struct {
 	// ScrollbackMaxLines/ScrollbackMaxBytes 是 scrollback 双上限；非正值使用默认。
 	ScrollbackMaxLines int
 	ScrollbackMaxBytes int
-	OnTitle            func()
-	OnInfoChanged      func()
-	Logger             *logs.Logger
+	OnTitle       func()
+	OnInfoChanged func()
 }
 
 type TerminalSession struct {
@@ -150,7 +148,6 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 			}
 		}),
 		terminalsession.WithPTYResizer(process.Resize),
-		terminalsession.WithLogger(options.Logger),
 		terminalsession.WithScrollbackLimits(options.ScrollbackMaxLines, options.ScrollbackMaxBytes),
 	)
 	go terminal.waitLoop()
@@ -364,18 +361,6 @@ func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 		return nil
 	}
 	return rt.ProjectedSnapshot()
-}
-
-// ProjectedInputTrace exposes metadata-only input diagnostics for the
-// authoritative screen runtime.
-func (terminal *TerminalSession) ProjectedInputTrace() []terminalsession.InputTrace {
-	terminal.mu.RLock()
-	rt := terminal.runtime
-	terminal.mu.RUnlock()
-	if rt == nil {
-		return nil
-	}
-	return rt.InputTraceSnapshot()
 }
 
 func (terminal *TerminalSession) waitLoop() {

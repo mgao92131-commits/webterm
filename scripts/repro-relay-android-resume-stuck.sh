@@ -228,7 +228,7 @@ capture_artifacts() {
   adb_cmd shell screencap -p /sdcard/webterm-resume-screen.png >/dev/null 2>&1 || true
   adb_cmd pull /sdcard/webterm-resume-screen.png "$dir/screenshot.png" >/dev/null 2>&1 || true
   curl -fsS --max-time 2 "$CONTROL_URL/control/sessions" >"$dir/sessions.json" 2>"$dir/sessions.error" || true
-  for endpoint in projected input-trace raw-pty-output; do
+  for endpoint in projected; do
     curl -fsS --max-time 2 \
       "$CONTROL_URL/control/sessions/$SESSION_ID/screen/$endpoint" \
       >"$dir/$endpoint.json" 2>"$dir/$endpoint.error" || true

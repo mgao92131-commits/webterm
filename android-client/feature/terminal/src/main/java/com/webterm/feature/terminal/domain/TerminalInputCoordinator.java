@@ -1,7 +1,5 @@
 package com.webterm.feature.terminal.domain;
 
-import android.util.Log;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -12,8 +10,6 @@ import androidx.annotation.Nullable;
  * <p>本类不读取剪贴板、不处理 IME composing，也不拥有连接或可靠输入队列。</p>
  */
 final class TerminalInputCoordinator {
-
-  private static final String INPUT_TRACE_TAG = "WebTermInputTrace";
 
   interface Sink {
     void sendText(@NonNull String text);
@@ -48,7 +44,6 @@ final class TerminalInputCoordinator {
     if (text.isEmpty()) return;
     boolean useCtrl = consumeCtrl();
     boolean ctrlKey = useCtrl && text.codePointCount(0, text.length()) == 1;
-    traceDispatch(source, ctrlKey ? "key" : "text", text, useCtrl, useCtrl);
     if (ctrlKey) {
       sink.sendKey(text, false, false, true, false, true);
       return;
@@ -62,14 +57,11 @@ final class TerminalInputCoordinator {
 
   void submitPaste(@NonNull String text, @NonNull String source) {
     if (text.isEmpty()) return;
-    boolean useCtrl = consumeCtrl();
-    traceDispatch(source, "paste", text, useCtrl, useCtrl);
     sink.sendPaste(text);
   }
 
   void submitFunctionalKey(@NonNull String key, boolean shift, boolean alt, boolean meta) {
     boolean useCtrl = consumeCtrl();
-    traceKey("functional_key", useCtrl, useCtrl);
     sink.sendKey(key, shift, alt, useCtrl, meta, true);
   }
 
@@ -91,7 +83,6 @@ final class TerminalInputCoordinator {
         ctrlConsumed = effectiveCtrl;
       }
     }
-    traceKey("hardware_key", ctrlBefore, ctrlConsumed);
     sink.sendKey(key, shift, alt, effectiveCtrl, meta, pressed);
   }
 
@@ -117,27 +108,4 @@ final class TerminalInputCoordinator {
     }
   }
 
-  private static void traceDispatch(String source, String kind, String text,
-                                    boolean ctrlBefore, boolean ctrlConsumed) {
-    if (!Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) return;
-    int lineBreaks = 0;
-    for (int i = 0; i < text.length(); i++) {
-      char value = text.charAt(i);
-      if (value == '\n' || value == '\r') lineBreaks++;
-    }
-    Log.d(INPUT_TRACE_TAG, "stage=dispatch source=" + source + " kind=" + kind
-        + " chars=" + text.length()
-        + " codepoints=" + text.codePointCount(0, text.length())
-        + " line_breaks=" + lineBreaks
-        + " ctrl_before=" + ctrlBefore
-        + " ctrl_consumed=" + ctrlConsumed);
-  }
-
-  private static void traceKey(String source, boolean ctrlBefore, boolean ctrlConsumed) {
-    if (!Log.isLoggable(INPUT_TRACE_TAG, Log.DEBUG)) return;
-    Log.d(INPUT_TRACE_TAG, "stage=dispatch source=" + source + " kind=key"
-        + " chars=0 codepoints=0 line_breaks=0"
-        + " ctrl_before=" + ctrlBefore
-        + " ctrl_consumed=" + ctrlConsumed);
-  }
 }

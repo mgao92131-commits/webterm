@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalengine"
 )
@@ -44,14 +43,12 @@ type Runtime struct {
 
 	clients map[string]*ScreenClient
 
-	leaseManager                *LeaseManager
-	pendingClipboard            map[string]byte
-	engineSignals               engineSignals
-	inputTrace                  []InputTrace
-	inputDedupe                 map[string]*inputDedupeWindow
-	inputDedupeOrder            []string
+	leaseManager     *LeaseManager
+	pendingClipboard map[string]byte
+	engineSignals    engineSignals
+	inputDedupe      map[string]*inputDedupeWindow
+	inputDedupeOrder []string
 	inputInflight map[inputDeliveryKey][]func(InputDeliveryResult)
-	logger        *logs.Logger
 
 	onTitle        func(string)
 	onBell         func()
@@ -356,32 +353,6 @@ func (r *Runtime) ProjectedSnapshot() terminalengine.ScreenFrame {
 	}
 }
 
-// InputTrace is a bounded, metadata-only diagnostic event. It never contains
-// terminal text, so it is safe to expose through the local control endpoint.
-type InputTrace struct {
-	At       time.Time `json:"at"`
-	Stage    string    `json:"stage"`
-	ClientID string    `json:"clientId"`
-	LeaseID  string    `json:"leaseId"`
-	Kind     string    `json:"kind"`
-	DataLen  int       `json:"dataLen"`
-	Key      string    `json:"key,omitempty"`
-	Bytes    int       `json:"bytes"`
-	Accepted bool      `json:"accepted"`
-}
-
-// InputTraceSnapshot returns the recent semantic-input path in actor order.
-func (r *Runtime) InputTraceSnapshot() []InputTrace {
-	reply := make(chan []InputTrace, 1)
-	r.postEvent(inputTraceSnapshotEvent{reply: reply})
-	select {
-	case trace := <-reply:
-		return trace
-	case <-r.stopCh:
-		return nil
-	}
-}
-
 // Close 关闭 runtime。
 func (r *Runtime) Close() error {
 	r.stopOnce.Do(func() {
@@ -478,9 +449,6 @@ func (r *Runtime) handleEvent(ev event) {
 		e.reply <- screenprojection.ExportSnapshot(
 			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
 		)
-	case inputTraceSnapshotEvent:
-		trace := append([]InputTrace(nil), r.inputTrace...)
-		e.reply <- trace
 	case acquireLayoutEvent:
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
@@ -543,7 +511,6 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 			if e.done != nil {
 				r.inputInflight[key] = append(callbacks, e.done)
 			}
-			r.recordInputTrace("duplicate-inflight", e, 0, true)
 			return
 		}
 	}
@@ -555,18 +522,15 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 	}
 	client := r.clients[e.clientID]
 	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID {
-		r.recordInputTrace("rejected", e, 0, false)
 		r.completeReliableInput(e, result)
 		return
 	}
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
 		r.revokeInvalidLayoutLease(client)
-		r.recordInputTrace("rejected", e, 0, false)
 		r.completeReliableInput(e, result)
 		return
 	}
 	data := r.engine.EncodeInput(e.input)
-	r.recordInputTrace("encoded", e, len(data), true)
 	if len(data) == 0 {
 		result.Status = InputDeliveryIgnored
 		r.completeReliableInput(e, result)
@@ -576,7 +540,6 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 		r.postEvent(semanticInputWriteCompletedEvent{input: e, result: writeResult})
 	})
 	if !accepted {
-		r.recordInputTrace("input-queue-full", e, len(data), false)
 		r.completeReliableInput(e, result)
 		return
 	}
@@ -588,7 +551,6 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 		}
 		r.inputInflight[key] = callbacks
 	}
-	r.recordInputTrace("input-queued", e, len(data), true)
 }
 
 func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteCompletedEvent) {
@@ -600,9 +562,8 @@ func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteComplete
 	}
 	if e.result.err == nil {
 		result.Status = InputDeliveryWritten
-		r.recordInputTrace("pty-write", e.input, e.result.written, true)
 	} else {
-		r.recordInputTrace("pty-write-uncertain", e.input, e.result.written, false)
+		result.Status = InputDeliveryUncertain
 	}
 	r.completeReliableInput(e.input, result)
 }
@@ -650,44 +611,6 @@ func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDelive
 	}
 	if e.done != nil {
 		e.done(result)
-	}
-}
-
-func (r *Runtime) recordInputTrace(stage string, e semanticInputEvent, bytes int, accepted bool) {
-	entry := InputTrace{
-		At:       time.Now().UTC(),
-		Stage:    stage,
-		ClientID: e.clientID,
-		LeaseID:  e.leaseID,
-		Kind:     inputKindName(e.input.Kind),
-		DataLen:  len(e.input.Data),
-		Key:      e.input.Key,
-		Bytes:    bytes,
-		Accepted: accepted,
-	}
-	const maxTraceEvents = 64
-	if len(r.inputTrace) == maxTraceEvents {
-		copy(r.inputTrace, r.inputTrace[1:])
-		r.inputTrace[len(r.inputTrace)-1] = entry
-		return
-	}
-	r.inputTrace = append(r.inputTrace, entry)
-}
-
-func inputKindName(kind terminalengine.InputKind) string {
-	switch kind {
-	case terminalengine.InputText:
-		return "text"
-	case terminalengine.InputKey:
-		return "key"
-	case terminalengine.InputPaste:
-		return "paste"
-	case terminalengine.InputMouse:
-		return "mouse"
-	case terminalengine.InputFocus:
-		return "focus"
-	default:
-		return "unknown"
 	}
 }
 
@@ -1069,10 +992,6 @@ type workingDirectoryEvent struct {
 
 type projectedSnapshotEvent struct {
 	reply chan terminalengine.ScreenFrame
-}
-
-type inputTraceSnapshotEvent struct {
-	reply chan []InputTrace
 }
 
 type acquireLayoutEvent struct {

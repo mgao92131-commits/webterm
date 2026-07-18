@@ -194,7 +194,7 @@ ACQUIRING ── granted(current request) ──► HELD
 3. 断开 A，不触发 Android 页面重建；
 4. 要求 B 在 3 秒内通过重试自动获得 Lease并成功写入唯一标记；
 5. 连续执行返回列表/重开、前后台切换、Relay 断开重连各 20 轮；
-6. 使用 `/control/sessions/{id}/screen/input-trace` 验证输入经过 `encoded → pty-write`；
+6. 通过运行日志验证输入路径按预期提交并收到回执；
 7. 观察目标 session client 数始终收敛到预期值，不持续增长；
 8. 用可配置的短测试 TTL 验证空闲跨 TTL 后仍可首次输入，生产 TTL 保持 5 分钟。
 

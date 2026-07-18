@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"webterm/go-core/internal/logs"
 )
 
 const (
@@ -49,7 +47,6 @@ type Manager struct {
 	defaults       TerminalDefaults
 	sessionEnv     map[string]string
 	downloadTasks  *DownloadTaskRegistry
-	logger         *logs.Logger
 }
 
 type TerminalDefaults struct {
@@ -99,12 +96,6 @@ func (manager *Manager) SetSessionEnv(env map[string]string) {
 	manager.sessionEnv = env
 }
 
-func (manager *Manager) SetLogger(logger *logs.Logger) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	manager.logger = logger
-}
-
 func (manager *Manager) buildSessionEnv(id string) map[string]string {
 	if len(manager.sessionEnv) == 0 {
 		return map[string]string{
@@ -142,7 +133,6 @@ func (manager *Manager) Create(cwd string) (*TerminalSession, error) {
 				manager.broadcastManager(ManagerMessage{Type: "session", Data: term.Info()})
 			}
 		},
-		Logger: manager.logger,
 	})
 	if err != nil {
 		manager.mu.Unlock()

@@ -1,7 +1,6 @@
 package com.webterm.feature.terminal;
 
 import android.view.View;
-import android.widget.ImageButton;
 
 import com.webterm.feature.terminal.domain.TerminalSessionRuntime;
 import com.webterm.ui.common.StatusIndicatorView;
