@@ -23106,7 +23106,8 @@ public final class TerminalScreenProto {
 
     /**
      * <pre>
-     * 0=spacer, 1=single, 2=wide
+     * 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+     * 0 是 proto 默认值，禁止作为 wire Cell 发送。
      * </pre>
      *
      * <code>uint32 width = 2;</code>
@@ -23223,7 +23224,8 @@ public final class TerminalScreenProto {
     private int width_ = 0;
     /**
      * <pre>
-     * 0=spacer, 1=single, 2=wide
+     * 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+     * 0 是 proto 默认值，禁止作为 wire Cell 发送。
      * </pre>
      *
      * <code>uint32 width = 2;</code>
@@ -23722,7 +23724,8 @@ public final class TerminalScreenProto {
       private int width_ ;
       /**
        * <pre>
-       * 0=spacer, 1=single, 2=wide
+       * 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+       * 0 是 proto 默认值，禁止作为 wire Cell 发送。
        * </pre>
        *
        * <code>uint32 width = 2;</code>
@@ -23734,7 +23737,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 0=spacer, 1=single, 2=wide
+       * 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+       * 0 是 proto 默认值，禁止作为 wire Cell 发送。
        * </pre>
        *
        * <code>uint32 width = 2;</code>
@@ -23750,7 +23754,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 0=spacer, 1=single, 2=wide
+       * 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+       * 0 是 proto 默认值，禁止作为 wire Cell 发送。
        * </pre>
        *
        * <code>uint32 width = 2;</code>

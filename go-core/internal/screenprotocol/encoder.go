@@ -350,11 +350,23 @@ func compactASCII(runs []terminalengine.CellRun, requestedColumns int) (string, 
 			col++
 		}
 	}
+	// 行尾默认空格在渲染、选择和布局上都等价于客户端补齐的 EMPTY；不把它们放上
+	// wire，避免大屏 Snapshot 为每一行重复传输整列空格。带 style/link 的空格仍是
+	// 可见/可交互状态，必须保留。
+	encodedColumns := columns
+	for encodedColumns > 0 {
+		last := encodedColumns - 1
+		if chars[last] != ' ' || styles[last] != 0 || links[last] != 0 {
+			break
+		}
+		encodedColumns--
+	}
+
 	spans := make([]*pb.StyleSpan, 0)
-	for start := 0; start < columns; {
+	for start := 0; start < encodedColumns; {
 		style, link := styles[start], links[start]
 		end := start + 1
-		for end < columns && styles[end] == style && links[end] == link {
+		for end < encodedColumns && styles[end] == style && links[end] == link {
 			end++
 		}
 		if style != 0 || link != 0 {
@@ -362,7 +374,7 @@ func compactASCII(runs []terminalengine.CellRun, requestedColumns int) (string, 
 		}
 		start = end
 	}
-	return string(chars), spans, true
+	return string(chars[:encodedColumns]), spans, true
 }
 
 func encodeCellRuns(runs []terminalengine.CellRun) []*pb.CellRun {

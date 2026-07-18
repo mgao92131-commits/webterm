@@ -64,6 +64,11 @@ android {
       unitTests.isReturnDefaultValues = true
     }
 
+    // 现存 lint 债务单独建档；CI 仍执行 lint，并从此基线起阻止新增问题。
+    lint {
+      baseline = file("lint-baseline.xml")
+    }
+
     packaging {
       resources {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"

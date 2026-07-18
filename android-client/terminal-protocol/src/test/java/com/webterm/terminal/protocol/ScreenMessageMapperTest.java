@@ -10,6 +10,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public final class ScreenMessageMapperTest {
@@ -75,17 +76,15 @@ public final class ScreenMessageMapperTest {
     assertEquals("b", mapped.at(1).text);
     assertEquals(7, mapped.at(1).styleId);
     assertEquals(9, mapped.at(2).linkId);
-    assertTrue(mapped.at(4).isDefault());
+    assertSame("default space in compact text must reuse the singleton", TerminalCell.EMPTY,
+        mapped.at(3));
+    assertSame("omitted trailing columns must reuse the same singleton", TerminalCell.EMPTY,
+        mapped.at(4));
   }
 
-  /**
-   * 诊断性复现：如果 wire 同时携带宽字符和显式 width=0 spacer，当前 mapper
-   * 会把 spacer 当成一列再次前进，导致后续 ASCII 右移一列。当前 Go exporter
-   * 使用 canonical 编码（只发送 width=2 宽字符，由 Android 本地补 spacer），
-   * 所以本测试刻画的是非 canonical payload 下的潜在偏移，不代表当前 Go 实际产物。
-   */
+  /** 非法 width=0 即使绕过 Validator 也不能让后续字符右移。 */
   @Test
-  public void explicitSpacerPayloadReproducesOneColumnRightShift() {
+  public void explicitSpacerPayloadIsIgnoredDefensively() {
     TerminalScreenProto.Cell wide = TerminalScreenProto.Cell.newBuilder()
         .setText("界").setWidth(2).build();
     TerminalScreenProto.Cell spacer = TerminalScreenProto.Cell.newBuilder()
@@ -104,8 +103,7 @@ public final class ScreenMessageMapperTest {
     TerminalLine mapped = ScreenMessageMapper.mapPatch(pb).screenRows.get(0);
 
     assertTrue(mapped.at(1).isSpacer());
-    assertTrue("explicit spacer is written at the canonical ASCII column", mapped.at(2).isSpacer());
-    assertEquals("current mapper shifts the following ASCII by one column", "x", mapped.at(3).text);
+    assertEquals("explicit spacer must not shift the following ASCII", "x", mapped.at(2).text);
   }
 
   @Test

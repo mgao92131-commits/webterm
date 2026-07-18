@@ -72,6 +72,40 @@ func TestNewRuntimeInitialVersions(t *testing.T) {
 	}
 }
 
+func TestPTYReadBudgetCapsPendingBuffersBeforeRead(t *testing.T) {
+	if got, want := ptyPendingByteLimit/ptyReadBufferSize, 256; got != want {
+		t.Fatalf("PTY read credits=%d, want %d", got, want)
+	}
+	r := &Runtime{
+		stopCh:         make(chan struct{}),
+		ptyReadCredits: make(chan struct{}, 2),
+	}
+	r.ptyReadCredits <- struct{}{}
+	r.ptyReadCredits <- struct{}{}
+	if !r.acquirePTYReadCredit() || !r.acquirePTYReadCredit() {
+		t.Fatal("initial PTY read credits were unavailable")
+	}
+
+	acquired := make(chan bool, 1)
+	go func() { acquired <- r.acquirePTYReadCredit() }()
+	select {
+	case <-acquired:
+		t.Fatal("a read acquired memory beyond its pending-output budget")
+	case <-time.After(20 * time.Millisecond):
+		// Expected: actor must consume an existing output before another Read starts.
+	}
+
+	r.releasePTYReadCredit()
+	select {
+	case ok := <-acquired:
+		if !ok {
+			t.Fatal("read credit acquisition stopped unexpectedly")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("released PTY output budget did not unblock the next read")
+	}
+}
+
 func TestProjectionBusyWindowFromEnv(t *testing.T) {
 	t.Setenv("WEBTERM_PROJECTION_ADAPTIVE_FLUSH", "")
 	if got := projectionBusyWindowFromEnv(); got != projectionFlushWindow {

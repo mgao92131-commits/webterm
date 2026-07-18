@@ -2,7 +2,6 @@ package com.webterm.core.fileupload;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.function.LongSupplier;
 
 import okhttp3.MediaType;
 import okhttp3.RequestBody;
@@ -22,10 +21,15 @@ public final class StreamingUploadRequestBody extends RequestBody {
         InputStream open() throws IOException;
     }
 
+    /** 不依赖 API 24 的 java.util.function.LongSupplier，供上传节流时钟注入。 */
+    public interface Clock {
+        long nowMillis();
+    }
+
     private final StreamSupplier supplier;
     private final long contentLength;
     private final UploadProgressListener progress;
-    private final LongSupplier clock;
+    private final Clock clock;
 
     public StreamingUploadRequestBody(StreamSupplier supplier, long contentLength, UploadProgressListener progress) {
         this(supplier, contentLength, progress, System::currentTimeMillis);
@@ -33,7 +37,7 @@ public final class StreamingUploadRequestBody extends RequestBody {
 
     /** 测试用构造：注入时钟以确定性验证节流行为。 */
     public StreamingUploadRequestBody(StreamSupplier supplier, long contentLength,
-                                      UploadProgressListener progress, LongSupplier clock) {
+                                      UploadProgressListener progress, Clock clock) {
         this.supplier = supplier;
         this.contentLength = contentLength;
         this.progress = progress;
@@ -55,7 +59,7 @@ public final class StreamingUploadRequestBody extends RequestBody {
     public void writeTo(BufferedSink sink) throws IOException {
         long sent = 0;
         // 初始化为“一个间隔之前”，保证写入第一个分块后立即上报一次起始进度。
-        long lastReport = clock.getAsLong() - PROGRESS_INTERVAL_MILLIS;
+        long lastReport = clock.nowMillis() - PROGRESS_INTERVAL_MILLIS;
         byte[] buffer = new byte[BUFFER_SIZE];
         try (InputStream in = supplier.open()) {
             if (in == null) {
@@ -65,7 +69,7 @@ public final class StreamingUploadRequestBody extends RequestBody {
             while ((n = in.read(buffer)) != -1) {
                 sink.write(buffer, 0, n);
                 sent += n;
-                long now = clock.getAsLong();
+                long now = clock.nowMillis();
                 if (now - lastReport >= PROGRESS_INTERVAL_MILLIS) {
                     lastReport = now;
                     report(sent);

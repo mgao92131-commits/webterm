@@ -24,6 +24,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 验证 ScreenMailbox drain 不会因为单条消息处理异常而永久卡死。
@@ -59,7 +60,9 @@ public final class TerminalSessionRuntimeMailboxRecoveryTest {
     connection = new FakeScreenConnection();
     runtime.attachConnection(connection);
     connection.listener.onConnected();
-    CountDownLatch healthyListenerCalled = new CountDownLatch(2);
+    CountDownLatch firstHealthyRender = new CountDownLatch(1);
+    CountDownLatch secondHealthyRender = new CountDownLatch(1);
+    AtomicInteger healthyRenderCalls = new AtomicInteger();
 
     // 第一条 render-needed 回调会抛异常，模拟真实主线程 callback executor。
     runtime.addListener(new TerminalSessionRuntime.Listener() {
@@ -80,16 +83,25 @@ public final class TerminalSessionRuntimeMailboxRecoveryTest {
       public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {}
     });
     runtime.addListener(new TerminalSessionRuntime.Listener() {
-      @Override public void onRenderNeeded() { healthyListenerCalled.countDown(); }
+      @Override public void onRenderNeeded() {
+        if (healthyRenderCalls.getAndIncrement() == 0) {
+          firstHealthyRender.countDown();
+        } else {
+          secondHealthyRender.countDown();
+        }
+      }
       @Override public void onEffect(@NonNull TerminalScreenEffect effect) {}
       @Override public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {}
     });
 
-    // 两个 callback 都必须执行：异常 Listener 不得影响主线程或后续 Listener。
+    // 同一未消费周期允许合并为一次 wake。先等第一轮实际回调完成，再验证后续
+    // 模型更新仍可重新唤醒，且异常 Listener 不影响同一轮的健康 Listener。
     connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertTrue("healthy listener should receive the first asynchronous callback",
+        firstHealthyRender.await(5, TimeUnit.SECONDS));
     connection.listener.onScreenMessage(snapshot(2).toByteArray());
-    assertTrue("healthy listener should receive both asynchronous callbacks",
-        healthyListenerCalled.await(5, TimeUnit.SECONDS));
+    assertTrue("healthy listener should receive a later asynchronous callback",
+        secondHealthyRender.await(5, TimeUnit.SECONDS));
     callbacks.shutdownNow();
 
     assertEquals("UI callback failures must not request a screen resync", 0, connection.resyncRequests);

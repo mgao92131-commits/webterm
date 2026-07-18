@@ -6,6 +6,7 @@ import android.os.HandlerThread;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.TransportFactory;
 
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -49,7 +50,13 @@ public final class DeviceConnectionRegistry {
     public synchronized void releaseIfIdle(DeviceConnection manager) {
         if (manager == null) return;
         if (!manager.isIdle()) return;
-        managers.values().removeIf(value -> value == manager);
+        // Collection.removeIf 是 API 24；项目 minSdk 为 23，使用显式迭代保持兼容。
+        Iterator<Map.Entry<String, DeviceConnection>> iterator = managers.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getValue() == manager) {
+                iterator.remove();
+            }
+        }
         manager.stop();
     }
 

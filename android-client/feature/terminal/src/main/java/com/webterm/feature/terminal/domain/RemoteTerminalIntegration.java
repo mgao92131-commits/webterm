@@ -164,18 +164,10 @@ public final class RemoteTerminalIntegration {
     controller.setEffectListener(effect -> {
       switch (effect.type()) {
         case TITLE:
-          latestTitle = displayTermTitle(effect.asTitle());
-          if (titleView != null) titleView.setText(latestTitle);
-          if (titleListener != null) {
-            titleListener.onTitleChanged(latestTitle);
-          }
+          updateTitle(effect.asTitle());
           break;
         case WORKING_DIRECTORY:
-          latestCwd = displayCwd(effect.asWorkingDirectory());
-          if (subtitleView != null) subtitleView.setText(latestCwd);
-          if (titleListener != null) {
-            titleListener.onWorkingDirectoryChanged(latestCwd);
-          }
+          updateWorkingDirectory(effect.asWorkingDirectory());
           break;
         case CLIPBOARD_READ:
           handleClipboardRead(effect.asClipboardRead());
@@ -226,6 +218,24 @@ public final class RemoteTerminalIntegration {
 
   public void stop() {
     clearViewBindings(true);
+  }
+
+  /** 实时 Effect 与恢复快照都经过这里，按规范化后的值去重。 */
+  private void updateTitle(@Nullable String title) {
+    String nextTitle = displayTermTitle(title);
+    if (nextTitle.equals(latestTitle)) return;
+    latestTitle = nextTitle;
+    if (titleView != null) titleView.setText(latestTitle);
+    if (titleListener != null) titleListener.onTitleChanged(latestTitle);
+  }
+
+  /** 实时 Effect 与恢复快照都经过这里，按规范化后的值去重。 */
+  private void updateWorkingDirectory(@Nullable String cwd) {
+    String nextCwd = displayCwd(cwd);
+    if (nextCwd.equals(latestCwd)) return;
+    latestCwd = nextCwd;
+    if (subtitleView != null) subtitleView.setText(latestCwd);
+    if (titleListener != null) titleListener.onWorkingDirectoryChanged(latestCwd);
   }
 
   private void clearViewBindings(boolean releaseRuntime) {

@@ -1797,11 +1797,13 @@ func (x *CellRun) GetCells() []*Cell {
 }
 
 type Cell struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                       // UTF-8 字符簇；空视为空格
-	Width         uint32                 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`                    // 0=spacer, 1=single, 2=wide
-	StyleId       uint32                 `protobuf:"varint,3,opt,name=style_id,json=styleId,proto3" json:"style_id,omitempty"` // 0 表示默认样式
-	LinkId        uint32                 `protobuf:"varint,4,opt,name=link_id,json=linkId,proto3" json:"link_id,omitempty"`    // 0 表示无 hyperlink
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Text  string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"` // UTF-8 字符簇；空视为空格
+	// 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+	// 0 是 proto 默认值，禁止作为 wire Cell 发送。
+	Width         uint32 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
+	StyleId       uint32 `protobuf:"varint,3,opt,name=style_id,json=styleId,proto3" json:"style_id,omitempty"` // 0 表示默认样式
+	LinkId        uint32 `protobuf:"varint,4,opt,name=link_id,json=linkId,proto3" json:"link_id,omitempty"`    // 0 表示无 hyperlink
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

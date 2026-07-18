@@ -242,6 +242,15 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
       view.onHistoryAppended(update.state.tailAppendedLines);
     }
     if (update.state.historyChanged) viewport.loadingOlderHistory = false;
+
+    // Snapshot/Patch 中的元数据与实时 Effect 共用同一条页面分发路径。这样重连恢复
+    // 不会遗漏 title/cwd；页面层负责基于值去重，避免随后到达的实时 Effect 重复通知。
+    if (update.state.titleChanged) {
+      dispatchEffect(TerminalScreenEffect.title(update.snapshot.title));
+    }
+    if (update.state.workingDirectoryChanged) {
+      dispatchEffect(TerminalScreenEffect.workingDirectory(update.snapshot.workingDirectory));
+    }
   }
 
   @Override
@@ -251,6 +260,10 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   @Override
   public void onEffect(@NonNull TerminalScreenEffect effect) {
+    dispatchEffect(effect);
+  }
+
+  private void dispatchEffect(@NonNull TerminalScreenEffect effect) {
     View v = view;
     if (v != null) {
       switch (effect.type()) {

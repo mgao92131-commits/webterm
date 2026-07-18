@@ -1,0 +1,784 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 9.0.1" type="baseline" client="gradle" dependencies="false" name="AGP (9.0.1)" variant="all" version="9.0.1">
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(managers.size()));"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="394"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="GestureBackNavigation"
+        message="`onBackPressed` is no longer called for back gestures; migrate to AndroidX&apos;s backward compatible `OnBackPressedDispatcher`"
+        errorLine1="    public void onBackPressed() {"
+        errorLine2="                ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/ui/MainActivity.java"
+            line="116"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 24 (current min is 23): `android.app.Service#STOP_FOREGROUND_REMOVE`"
+        errorLine1="        stopForeground(STOP_FOREGROUND_REMOVE);"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="329"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 24 (current min is 23): `android.app.Service#STOP_FOREGROUND_REMOVE`"
+        errorLine1="        stopForeground(STOP_FOREGROUND_REMOVE);"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="408"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26 (current min is 23): `android.app.NotificationManager#getNotificationChannel`"
+        errorLine1="        if (nm.getNotificationChannel(id) != null) return;"
+        errorLine2="               ~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="119"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26 (current min is 23): `new android.app.NotificationChannel`"
+        errorLine1="        NotificationChannel channel = new NotificationChannel(id, name, importance);"
+        errorLine2="                                      ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="120"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26 (current min is 23): `android.app.NotificationChannel#setDescription`"
+        errorLine1="        channel.setDescription(description);"
+        errorLine2="                ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="121"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26 (current min is 23): `android.app.NotificationManager#createNotificationChannel`"
+        errorLine1="        nm.createNotificationChannel(channel);"
+        errorLine2="           ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="122"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 29 (current min is 26): `android.provider.MediaStore.Downloads#EXTERNAL_CONTENT_URI`"
+        errorLine1="            Uri initialUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;"
+        errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/ui/AppFlowCoordinator.java"
+            line="765"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24, or core library desugaring (current min is 23): `java.util.Comparator#comparingLong`"
+        errorLine1="        Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());"
+        errorLine2="                                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/CrashReporter.java"
+            line="121"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24, or core library desugaring (current min is 23): `java.util.Comparator#reversed`"
+        errorLine1="        Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());"
+        errorLine2="                                                                        ~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/CrashReporter.java"
+            line="121"
+            column="73"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24, or core library desugaring (current min is 23): `java.util.Comparator#comparingLong`"
+        errorLine1="        Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());"
+        errorLine2="                                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/CrashReporter.java"
+            line="132"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24, or core library desugaring (current min is 23): `java.util.Comparator#reversed`"
+        errorLine1="        Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());"
+        errorLine2="                                                                        ~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/CrashReporter.java"
+            line="132"
+            column="73"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 29 (current min is 23): `android.provider.MediaStore.Downloads#EXTERNAL_CONTENT_URI`"
+        errorLine1="        Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);"
+        errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/SafFilePublisher.java"
+            line="88"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24, or core library desugaring (current min is 23): `java.util.concurrent.ConcurrentHashMap#newKeySet`"
+        errorLine1="    private final Set&lt;String> relayConnectionKeys = ConcurrentHashMap.newKeySet();"
+        errorLine2="                                                                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="103"
+            column="71"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24 (current min is 23): `android.app.Service#stopForeground`"
+        errorLine1="        stopForeground(STOP_FOREGROUND_REMOVE);"
+        errorLine2="        ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="329"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 24 (current min is 23): `android.app.Service#stopForeground`"
+        errorLine1="        stopForeground(STOP_FOREGROUND_REMOVE);"
+        errorLine2="        ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="408"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 23)"
+        errorLine1="        &lt;item name=&quot;android:windowLightNavigationBar&quot;>false&lt;/item>"
+        errorLine2="              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/themes.xml"
+            line="26"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="SuspiciousIndentation"
+        message="The indentation string here is different from on the previous line (`&quot; &quot;` vs `\t`)"
+        errorLine1="  if (deviceId == null || deviceId.isEmpty()) {"
+        errorLine2="~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="378"
+            column="1"/>
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="375"
+            column="1"
+            message="Previous line indentation here"/>
+    </issue>
+
+    <issue
+        id="BatteryLife"
+        message="Use of `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` violates the Play Store Content Policy regarding acceptable use cases, as described in https://developer.android.com/training/monitoring-device-state/doze-standby.html"
+        errorLine1="            Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);"
+        errorLine2="                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/ui/AppFlowCoordinator.java"
+            line="782"
+            column="66"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of Gradle than 9.1.0 is available: 9.6.1"
+        errorLine1="distributionUrl=https\://services.gradle.org/distributions/gradle-9.1.0-bin.zip"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/wrapper/gradle-wrapper.properties"
+            line="3"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 9.0.1 is available: 9.3.0"
+        errorLine1="androidGradlePlugin = &quot;9.0.1&quot;"
+        errorLine2="                      ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="2"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.library than 9.0.1 is available: 9.3.0"
+        errorLine1="androidGradlePlugin = &quot;9.0.1&quot;"
+        errorLine2="                      ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="2"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.annotation:annotation than 1.9.0 is available: 1.10.0"
+        errorLine1="  implementation(&quot;androidx.annotation:annotation:1.9.0&quot;)"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="97"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.18.0 is available: 1.19.0"
+        errorLine1="androidxCore = &quot;1.18.0&quot;"
+        errorLine2="               ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="4"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-compose than 2.10.0 is available: 2.11.0"
+        errorLine1="androidxLifecycle = &quot;2.10.0&quot;"
+        errorLine2="                    ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="5"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.10.0 is available: 2.11.0"
+        errorLine1="androidxLifecycle = &quot;2.10.0&quot;"
+        errorLine2="                    ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="5"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.10.0 is available: 2.11.0"
+        errorLine1="androidxLifecycle = &quot;2.10.0&quot;"
+        errorLine2="                    ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="5"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2026.03.01 is available: 2026.06.01"
+        errorLine1="androidxComposeBom = &quot;2026.03.01&quot;"
+        errorLine2="                     ~~~~~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="7"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation3:navigation3-runtime than 1.0.1 is available: 1.1.4"
+        errorLine1="nav3Core = &quot;1.0.1&quot;"
+        errorLine2="           ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="15"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation3:navigation3-ui than 1.0.1 is available: 1.1.4"
+        errorLine1="nav3Core = &quot;1.0.1&quot;"
+        errorLine2="           ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="15"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-navigation3 than 2.10.0 is available: 2.11.0"
+        errorLine1="lifecycleViewmodelNav3 = &quot;2.10.0&quot;"
+        errorLine2="                         ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="16"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation:navigation-fragment than 2.8.5 is available: 2.9.8"
+        errorLine1="navigationView = &quot;2.8.5&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="17"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation:navigation-ui than 2.8.5 is available: 2.9.8"
+        errorLine1="navigationView = &quot;2.8.5&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="17"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-livedata than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycleView = &quot;2.8.7&quot;"
+        errorLine2="                ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="18"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycleView = &quot;2.8.7&quot;"
+        errorLine2="                ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="18"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.fragment:fragment than 1.8.6 is available: 1.8.9"
+        errorLine1="fragmentVersion = &quot;1.8.6&quot;"
+        errorLine2="                  ~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="19"
+            column="19"/>
+    </issue>
+
+    <issue
+        id="LockedOrientationActivity"
+        message="Expecting `android:screenOrientation=&quot;unspecified&quot;` or `&quot;fullSensor&quot;` for this activity so the user can use the application in any orientation and provide a great experience on Chrome OS devices"
+        errorLine1="            android:screenOrientation=&quot;portrait&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="23"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.squareup.okhttp3:okhttp than 4.12.0 is available: 5.4.0"
+        errorLine1="  implementation(&quot;com.squareup.okhttp3:okhttp:4.12.0&quot;)"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="96"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.errorprone:error_prone_annotations than 2.23.0 is available: 2.50.0"
+        errorLine1="  compileOnly(&quot;com.google.errorprone:error_prone_annotations:2.23.0&quot;)"
+        errorLine2="              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="106"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.json:json than 20240303 is available: 20260522"
+        errorLine1="  testImplementation(&quot;org.json:json:20240303&quot;)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="108"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.mockito:mockito-core than 5.12.0 is available: 5.23.0"
+        errorLine1="  testImplementation(&quot;org.mockito:mockito-core:5.12.0&quot;)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="109"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.dagger.hilt.android than 2.60 is available: 2.60.1"
+        errorLine1="hilt = &quot;2.60&quot;"
+        errorLine2="       ~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="3"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.dagger:hilt-android than 2.60 is available: 2.60.1"
+        errorLine1="hilt = &quot;2.60&quot;"
+        errorLine2="       ~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="3"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.dagger:hilt-android-testing than 2.60 is available: 2.60.1"
+        errorLine1="hilt = &quot;2.60&quot;"
+        errorLine2="       ~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="3"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.dagger:hilt-compiler than 2.60 is available: 2.60.1"
+        errorLine1="hilt = &quot;2.60&quot;"
+        errorLine2="       ~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="3"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlinx:kotlinx-coroutines-test than 1.10.2 is available: 1.11.0"
+        errorLine1="coroutines = &quot;1.10.2&quot;"
+        errorLine2="             ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="12"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.plugin.compose than 2.3.20 is available: 2.4.10"
+        errorLine1="kotlin = &quot;2.3.20&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="14"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.plugin.serialization than 2.3.20 is available: 2.4.10"
+        errorLine1="kotlin = &quot;2.3.20&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="14"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.protobuf:protobuf-java than 4.29.2 is available: 4.35.1"
+        errorLine1="protobufJava = &quot;4.29.2&quot;"
+        errorLine2="               ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="20"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.protobuf:protoc than 4.29.2 is available: 4.35.1"
+        errorLine1="protobufJava = &quot;4.29.2&quot;"
+        errorLine2="               ~~~~~~~~">
+        <location
+            file="$HOME/Documents/webterm-c1/android-client/gradle/libs.versions.toml"
+            line="20"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Fixed screen orientations will be ignored in most cases, starting from Android 16. Android is moving toward a model where apps are expected to adapt to various orientations, display sizes, and aspect ratios."
+        errorLine1="            android:screenOrientation=&quot;portrait&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="23"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ChromeOsAbiSupport"
+        message="Missing x86_64 ABI support for ChromeOS"
+        errorLine1="            abiFilters += &quot;arm64-v8a&quot;"
+        errorLine2="                          ~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="16"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="DataExtractionRules"
+        message="The attribute `android:allowBackup` is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute `android:dataExtractionRules` specifying an `@xml` resource which configures cloud backups and device transfers on Android 12 and higher."
+        errorLine1="        android:allowBackup=&quot;false&quot;"
+        errorLine2="                             ~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="14"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="WakelockTimeout"
+        message="Provide a timeout when requesting a wakelock with `PowerManager.Wakelock.acquire(long timeout)`. This will ensure the OS will cleanup any wakelocks that last longer than you intend, and will save your user&apos;s battery."
+        errorLine1="                wakeLock.acquire();"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="228"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 23"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="80"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 23"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/AndroidNotificationRenderer.java"
+            line="95"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is never &lt; 23"
+        errorLine1="        if (mActivity == null || Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.M) return true;"
+        errorLine2="                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/ui/AppFlowCoordinator.java"
+            line="773"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is never &lt; 23"
+        errorLine1="        if (mActivity == null || Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.M) return;"
+        errorLine2="                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/ui/AppFlowCoordinator.java"
+            line="780"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 23"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/webterm/mobile/device/WebTermDeviceService.java"
+            line="512"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="IconXmlAndPng"
+        message="The following images appear both as density independent `.xml` files and as bitmap files: src/main/res/mipmap-anydpi-v26/ic_launcher.xml, src/main/res/mipmap-hdpi/ic_launcher.png">
+        <location
+            file="src/main/res/mipmap-xxxhdpi/ic_launcher.png"/>
+        <location
+            file="src/main/res/mipmap-xxhdpi/ic_launcher.png"/>
+        <location
+            file="src/main/res/mipmap-xhdpi/ic_launcher.png"/>
+        <location
+            file="src/main/res/mipmap-mdpi/ic_launcher.png"/>
+        <location
+            file="src/main/res/mipmap-hdpi/ic_launcher.png"/>
+        <location
+            file="src/main/res/mipmap-anydpi/ic_launcher.xml"/>
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher.xml"/>
+    </issue>
+
+    <issue
+        id="IconXmlAndPng"
+        message="The following images appear both as density independent `.xml` files and as bitmap files: src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml, src/main/res/mipmap-hdpi/ic_launcher_round.png">
+        <location
+            file="src/main/res/mipmap-xxxhdpi/ic_launcher_round.png"/>
+        <location
+            file="src/main/res/mipmap-xxhdpi/ic_launcher_round.png"/>
+        <location
+            file="src/main/res/mipmap-xhdpi/ic_launcher_round.png"/>
+        <location
+            file="src/main/res/mipmap-mdpi/ic_launcher_round.png"/>
+        <location
+            file="src/main/res/mipmap-hdpi/ic_launcher_round.png"/>
+        <location
+            file="src/main/res/mipmap-anydpi/ic_launcher_round.xml"/>
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  implementation(&quot;com.squareup.okhttp3:okhttp:4.12.0&quot;)"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="96"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  implementation(&quot;androidx.annotation:annotation:1.9.0&quot;)"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="97"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  implementation(&quot;androidx.recyclerview:recyclerview:1.4.0&quot;)"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="98"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  compileOnly(&quot;com.google.errorprone:error_prone_annotations:2.23.0&quot;)"
+        errorLine2="              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="106"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  testImplementation(&quot;org.json:json:20240303&quot;)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="108"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  testImplementation(&quot;org.mockito:mockito-core:5.12.0&quot;)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="109"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="  testImplementation(&quot;androidx.arch.core:core-testing:2.2.0&quot;)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="110"
+            column="22"/>
+    </issue>
+
+</issues>

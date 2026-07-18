@@ -47,6 +47,9 @@ type Runtime struct {
 	lastPTYOutput     time.Time
 	busyFlushWindow   time.Duration
 	ptyReadBuffers    sync.Pool
+	// ptyReadCredits 按固定读缓冲预留 PTY 输出的待处理内存。必须在 Read 前取得
+	// 一个 credit，避免 actor 落后时把未处理的 PTY 数据继续堆在 Go 堆中。
+	ptyReadCredits chan struct{}
 
 	clients map[string]*ScreenClient
 
@@ -184,6 +187,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		pty:              pty,
 		events:           make(chan event, 1024),
 		stopCh:           make(chan struct{}),
+		ptyReadCredits:   make(chan struct{}, ptyPendingByteLimit/ptyReadBufferSize),
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
@@ -232,6 +236,9 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	r.inputWriter = newDefaultInputWriter(pty)
 	r.ptyReadBuffers.New = func() any {
 		return make([]byte, ptyReadBufferSize)
+	}
+	for i := 0; i < cap(r.ptyReadCredits); i++ {
+		r.ptyReadCredits <- struct{}{}
 	}
 
 	go r.readLoop()
@@ -391,6 +398,11 @@ func (r *Runtime) postEvent(ev event) {
 
 func (r *Runtime) readLoop() {
 	for {
+		// 先占用预算再读。actor 消费 ptyOutputEvent 并归还缓冲后才释放 credit，
+		// 因此 readLoop 在最多 8 MiB 待处理输出时停止 Read，让背压回传至 PTY。
+		if !r.acquirePTYReadCredit() {
+			return
+		}
 		buf := r.ptyReadBuffers.Get().([]byte)
 		n, err := r.pty.Read(buf)
 		if n > 0 {
@@ -398,10 +410,12 @@ func (r *Runtime) readLoop() {
 			// readLoop 因而无需为每次 Read 再分配和复制一次数据。
 			if !r.postPTYOutput(buf[:n]) {
 				r.ptyReadBuffers.Put(buf)
+				r.releasePTYReadCredit()
 				return
 			}
 		} else {
 			r.ptyReadBuffers.Put(buf)
+			r.releasePTYReadCredit()
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -412,13 +426,34 @@ func (r *Runtime) readLoop() {
 	}
 }
 
-const ptyReadBufferSize = 64 * 1024
+const (
+	// 32 KiB 兼顾 syscall 次数与高频输出下的单次保留量。
+	ptyReadBufferSize = 32 * 1024
+	// actor inbox 的条数限制不足以约束内存；以读缓冲为粒度预留，精确上限为 8 MiB。
+	ptyPendingByteLimit = 8 * 1024 * 1024
+)
+
+func (r *Runtime) acquirePTYReadCredit() bool {
+	select {
+	case <-r.stopCh:
+		return false
+	case <-r.ptyReadCredits:
+		return true
+	}
+}
+
+func (r *Runtime) releasePTYReadCredit() {
+	r.ptyReadCredits <- struct{}{}
+}
 
 func (r *Runtime) postPTYOutput(data []byte) bool {
 	select {
 	case <-r.stopCh:
 		return false
-	case r.events <- ptyOutputEvent{data: data, release: func() { r.ptyReadBuffers.Put(data[:cap(data)]) }}:
+	case r.events <- ptyOutputEvent{data: data, release: func() {
+		r.ptyReadBuffers.Put(data[:cap(data)])
+		r.releasePTYReadCredit()
+	}}:
 		return true
 	}
 }

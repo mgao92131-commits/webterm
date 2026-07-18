@@ -143,6 +143,25 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
+  public void recoveredSnapshotMetadataUsesTheSameEffectPathAsLiveUpdates() {
+    frameScheduler.runAll(); // attachment's initial render request
+    List<String> metadata = new ArrayList<>();
+    controller.setEffectListener(effect -> {
+      if (effect.type() == TerminalScreenEffect.Type.TITLE) {
+        metadata.add("title=" + effect.asTitle());
+      } else if (effect.type() == TerminalScreenEffect.Type.WORKING_DIRECTORY) {
+        metadata.add("cwd=" + effect.asWorkingDirectory());
+      }
+    });
+
+    connection.listener.onScreenMessage(
+        snapshotWithMetadata("vim: README.md", "/work/webterm").toByteArray());
+    frameScheduler.runAll();
+
+    assertEquals(Arrays.asList("title=vim: README.md", "cwd=/work/webterm"), metadata);
+  }
+
+  @Test
   public void detachedOldFrameCallback_cannotRenderNewAttachment() {
     Runnable old = frameScheduler.firstPending();
     controller.detach(owner);
@@ -202,6 +221,15 @@ public final class TerminalScreenControllerTest {
             .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
             .setHistory(history)
             .build())
+        .build();
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope snapshotWithMetadata(String title, String cwd) {
+    TerminalScreenProto.ScreenEnvelope base = snapshotWithHistory(100, 5, 1, true);
+    return base.toBuilder()
+        .setSnapshot(base.getSnapshot().toBuilder()
+            .setTitle(title)
+            .setWorkingDirectory(cwd))
         .build();
   }
 

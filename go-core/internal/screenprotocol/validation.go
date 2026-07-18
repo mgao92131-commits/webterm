@@ -188,7 +188,7 @@ func validateLines(lines []*pb.TerminalLine, maxCols int) error {
 				if err := validateString(cell.Text, maxCellTextBytes, "cell text"); err != nil {
 					return err
 				}
-				if cell.Width != 0 && cell.Width != 1 && cell.Width != 2 {
+				if cell.Width != 1 && cell.Width != 2 {
 					return fmt.Errorf("invalid cell width: %d", cell.Width)
 				}
 			}

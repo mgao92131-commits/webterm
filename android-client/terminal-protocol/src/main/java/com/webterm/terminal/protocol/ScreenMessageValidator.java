@@ -225,7 +225,9 @@ public final class ScreenMessageValidator {
         return ValidationResult.fail("history run col out of bounds: " + run.getCol());
       }
       for (TerminalScreenProto.Cell cell : run.getCellsList()) {
-        if (!validateString(cell.getText(), MAX_CELL_TEXT_BYTES) || cell.getWidth() > 2) {
+        int width = cell.getWidth();
+        if (!validateString(cell.getText(), MAX_CELL_TEXT_BYTES)
+            || (width != 1 && width != 2)) {
           return ValidationResult.fail("invalid history cell");
         }
       }
@@ -278,7 +280,7 @@ public final class ScreenMessageValidator {
             return ValidationResult.fail("cell text too long");
           }
           int w = cell.getWidth();
-          if (w != 0 && w != 1 && w != 2) {
+          if (w != 1 && w != 2) {
             return ValidationResult.fail("invalid cell width: " + w);
           }
         }

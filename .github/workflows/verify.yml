@@ -1,0 +1,68 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go test and vet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+
+  go-race:
+    name: Go race detector
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go test -race ./...
+
+  android:
+    name: Android test lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: ./gradlew testDebugUnitTest lintDebug assembleDebug
+
+  generated-protocol:
+    name: Generated protocol is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+        working-directory: go-core
+      - run: scripts/generate-proto.sh
+      - run: git diff --exit-code -- go-core/internal/screenprotocol/generated/terminal_screen.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenProto.java

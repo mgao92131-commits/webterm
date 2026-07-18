@@ -46,7 +46,9 @@ func TestAppStreamsUploadRequestBodyToAgent(t *testing.T) {
 		body[i] = byte(i)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// race detector 会显著放大 19 MiB WebSocket 流的调度与复制成本；上传路由本身
+	// 没有总超时，测试也不能用 30 秒客户端 deadline 把慢消费者误判为 502。
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	agentDone := make(chan error, 1)
 	agentReady := make(chan struct{})

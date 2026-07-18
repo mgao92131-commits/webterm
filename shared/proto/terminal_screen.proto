@@ -177,7 +177,9 @@ message CellRun {
 
 message Cell {
   string text = 1;        // UTF-8 字符簇；空视为空格
-  uint32 width = 2;       // 0=spacer, 1=single, 2=wide
+  // 仅允许 1=single 或 2=wide。wide 的第二列 spacer 由接收端本地生成；
+  // 0 是 proto 默认值，禁止作为 wire Cell 发送。
+  uint32 width = 2;
   uint32 style_id = 3;    // 0 表示默认样式
   uint32 link_id = 4;     // 0 表示无 hyperlink
 }

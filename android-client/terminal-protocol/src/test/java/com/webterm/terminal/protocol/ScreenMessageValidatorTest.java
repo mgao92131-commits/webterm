@@ -78,6 +78,16 @@ public final class ScreenMessageValidatorTest {
   }
 
   @Test
+  public void explicitSpacerCellIsRejected() {
+    TerminalScreenProto.TerminalLine line = TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(0)
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
+            .addCells(TerminalScreenProto.Cell.newBuilder().setWidth(0)))
+        .build();
+    assertFalse(validate(validPatch().addScreenRows(line)).ok);
+  }
+
+  @Test
   public void screenRevisionMustExceedBaseRevision() {
     assertFalse(validate(validPatch().setBaseRevision(2).setScreenRevision(2)).ok);
     assertFalse(validate(validPatch().setBaseRevision(3).setScreenRevision(2)).ok);

@@ -135,7 +135,12 @@ public final class ScreenMessageMapper {
           linkId = span.getLinkId();
         }
       }
-      cells[col] = new TerminalCell(String.valueOf(text.charAt(col)), (byte) 1, styleId, linkId);
+      char ch = text.charAt(col);
+      // Go 端会裁剪末尾默认空格；为了兼容旧帧与行内默认空格，这里也不为它们创建
+      // 短命 Cell。数组已预填 EMPTY，直接保留即可。
+      if (ch != ' ' || styleId != 0 || linkId != 0) {
+        cells[col] = new TerminalCell(String.valueOf(ch), (byte) 1, styleId, linkId);
+      }
     }
     return cells;
   }
@@ -154,6 +159,9 @@ public final class ScreenMessageMapper {
     for (TerminalScreenProto.CellRun run : runs) {
       int col = Math.max(0, run.getCol());
       for (TerminalScreenProto.Cell pbCell : run.getCellsList()) {
+        // Validator 会拒绝 width=0；这里仍防御性跳过，确保非法帧若绕过校验也不会
+        // 将宽字符后的本地 spacer 再推进一列。
+        if (pbCell.getWidth() == 0) continue;
         TerminalCell cell = mapCell(pbCell);
         if (col >= cells.length) break;
         cells[col] = cell;

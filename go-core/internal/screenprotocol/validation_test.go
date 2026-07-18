@@ -179,3 +179,16 @@ func TestHandleMessage_MalformedHelloRejected(t *testing.T) {
 		t.Fatal("hello callback must not run for a rejected hello")
 	}
 }
+
+func TestValidateLines_RejectsExplicitSpacerCells(t *testing.T) {
+	lines := []*pb.TerminalLine{{
+		Row: 0,
+		Runs: []*pb.CellRun{{
+			Col:   0,
+			Cells: []*pb.Cell{{Text: "", Width: 0}},
+		}},
+	}}
+	if err := validateLines(lines, 10); err == nil {
+		t.Fatal("explicit width=0 spacer must be rejected")
+	}
+}

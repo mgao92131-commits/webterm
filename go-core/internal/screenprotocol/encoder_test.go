@@ -91,11 +91,25 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 		t.Fatal(err)
 	}
 	line := envelope.GetSnapshot().GetScreen()[0]
-	if line.GetText() != "ab        " || len(line.GetRuns()) != 0 {
+	if line.GetText() != "ab" || len(line.GetRuns()) != 0 {
 		t.Fatalf("compact line=%+v, want text-only encoding", line)
 	}
 	if len(line.GetStyleSpans()) != 1 || line.GetStyleSpans()[0].GetStartCol() != 1 {
 		t.Fatalf("compact style spans=%+v", line.GetStyleSpans())
+	}
+
+	base.Screen[0].Runs[0].Cells = []terminalengine.Cell{{Text: " ", Width: 1}, {Text: " ", Width: 1}}
+	data, err = EncodeFrameWithCompactLines(base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Reset()
+	if err := proto.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	line = envelope.GetSnapshot().GetScreen()[0]
+	if line.GetText() != "" || len(line.GetRuns()) != 0 || len(line.GetStyleSpans()) != 0 {
+		t.Fatalf("default blank line must be represented by client padding: %+v", line)
 	}
 
 	base.Screen[0].Runs[0].Cells[1] = terminalengine.Cell{Text: "界", Width: 2}
