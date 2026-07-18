@@ -52,8 +52,9 @@ func testAppProxiesWebSocketFramesToAgentStream(t *testing.T, clientPath string,
 	headers := http.Header{}
 	headers.Add("Cookie", (&http.Cookie{Name: relaycore.AuthCookieName, Value: token.Value}).String())
 	client, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+clientPath+"?deviceId="+device.ID, &websocket.DialOptions{
-		HTTPHeader:   headers,
-		Subprotocols: []string{subprotocol},
+		HTTPHeader:      headers,
+		Subprotocols:    []string{subprotocol},
+		CompressionMode: websocket.CompressionNoContextTakeover,
 	})
 	if err != nil {
 		t.Fatalf("client Dial returned error: %v", err)
@@ -61,6 +62,9 @@ func testAppProxiesWebSocketFramesToAgentStream(t *testing.T, clientPath string,
 	defer client.Close(websocket.StatusNormalClosure, "")
 	if response == nil || response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("dial response = %#v", response)
+	}
+	if !strings.Contains(response.Header.Get("Sec-WebSocket-Extensions"), "permessage-deflate") {
+		t.Fatalf("permessage-deflate was not negotiated: %q", response.Header.Get("Sec-WebSocket-Extensions"))
 	}
 
 	if err := client.Write(ctx, websocket.MessageText, []byte("hello text")); err != nil {

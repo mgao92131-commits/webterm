@@ -1,23 +1,42 @@
 package com.webterm.feature.terminal.domain;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.util.ArrayDeque;
 
 /** 连接代际感知的有界 screen mailbox；overflow 会生成先于后续消息处理的 fence。 */
 public final class ScreenMailbox {
+  public enum MessageKind {
+    SNAPSHOT,
+    PATCH,
+    OTHER,
+    UNKNOWN
+  }
+
   public static final class Message {
     public final long connectionEpoch;
     public final long mailboxGeneration;
     public final TerminalSessionRuntime.ScreenConnection sourceConnection;
     public final byte[] payload;
+    public final MessageKind kind;
+    public final long enqueuedAtNanos;
 
     Message(long connectionEpoch, long mailboxGeneration,
-            TerminalSessionRuntime.ScreenConnection sourceConnection, byte[] payload) {
+            TerminalSessionRuntime.ScreenConnection sourceConnection, byte[] payload,
+            MessageKind kind) {
+      this(connectionEpoch, mailboxGeneration, sourceConnection, payload, kind, System.nanoTime());
+    }
+
+    Message(long connectionEpoch, long mailboxGeneration,
+            TerminalSessionRuntime.ScreenConnection sourceConnection, byte[] payload,
+            MessageKind kind, long enqueuedAtNanos) {
       this.connectionEpoch = connectionEpoch;
       this.mailboxGeneration = mailboxGeneration;
       this.sourceConnection = sourceConnection;
       this.payload = payload;
+      this.kind = kind;
+      this.enqueuedAtNanos = enqueuedAtNanos;
     }
   }
 
@@ -72,10 +91,19 @@ public final class ScreenMailbox {
   public synchronized Offer offer(long connectionEpoch,
                                   @NonNull TerminalSessionRuntime.ScreenConnection source,
                                   @NonNull byte[] payload,
-                                  boolean validFrameSize) {
+                                  boolean validFrameSize,
+                                  @NonNull MessageKind kind) {
     long nextBytes = pendingBytes + payload.length;
     if (!validFrameSize || messages.size() >= maxMessages || nextBytes > maxBytes) {
-      long discarded = pendingBytes + payload.length;
+      Message retainedSnapshot = validFrameSize ? newestSnapshot() : null;
+      Message snapshot = kind == MessageKind.SNAPSHOT
+          ? new Message(connectionEpoch, generation + 1L, source, payload, kind)
+          : retainedSnapshot == null ? null
+              : new Message(retainedSnapshot.connectionEpoch, generation + 1L,
+                  retainedSnapshot.sourceConnection, retainedSnapshot.payload, retainedSnapshot.kind,
+                  retainedSnapshot.enqueuedAtNanos);
+      long discarded = pendingBytes + payload.length
+          - (snapshot == null ? 0L : snapshot.payload.length);
       messages.clear();
       pendingBytes = 0L;
       generation++;
@@ -87,8 +115,15 @@ public final class ScreenMailbox {
           : (nextBytes > maxBytes
               ? "screen mailbox exceeded byte budget"
               : "screen mailbox exceeded frame budget");
+      // A snapshot is the one frame that can release the recovery fence. Keep the newest
+      // authoritative snapshot even when later patches are what exhausted the mailbox.
+      // The payload remains untouched: webterm.screen.v1 stays a protobuf-only channel.
+      if (snapshot != null) {
+        messages.addLast(snapshot);
+        pendingBytes = snapshot.payload.length;
+      }
     } else {
-      messages.addLast(new Message(connectionEpoch, generation, source, payload));
+      messages.addLast(new Message(connectionEpoch, generation, source, payload, kind));
       pendingBytes = nextBytes;
     }
     boolean schedule = !drainScheduled;
@@ -110,13 +145,29 @@ public final class ScreenMailbox {
       pendingBytes -= message.payload.length;
       return new Drain(message, null);
     }
-    drainScheduled = false;
     return null;
+  }
+
+  /** Atomically releases the current drain or reserves the next time slice. */
+  public synchronized boolean finishDrain() {
+    if (fencePending || !messages.isEmpty()) return true;
+    drainScheduled = false;
+    return false;
+  }
+
+  /** Allows the next offer to arm a drain after an executor-level failure. */
+  public synchronized void abandonDrain() {
+    drainScheduled = false;
+  }
+
+  public synchronized boolean hasPending() {
+    return fencePending || !messages.isEmpty();
   }
 
   public synchronized void reset() {
     messages.clear();
     pendingBytes = 0L;
+    drainScheduled = false;
     generation++;
     fencePending = false;
     fenceReason = "";
@@ -130,5 +181,15 @@ public final class ScreenMailbox {
 
   synchronized int pendingMessages() {
     return messages.size();
+  }
+
+  @Nullable
+  private Message newestSnapshot() {
+    java.util.Iterator<Message> iterator = messages.descendingIterator();
+    while (iterator.hasNext()) {
+      Message message = iterator.next();
+      if (message.kind == MessageKind.SNAPSHOT) return message;
+    }
+    return null;
   }
 }

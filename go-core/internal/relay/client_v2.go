@@ -89,7 +89,9 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	realtimeConn, _, err := websocket.Dial(ctx, relayURL, nil)
+	realtimeConn, _, err := websocket.Dial(ctx, relayURL, &websocket.DialOptions{
+		CompressionMode: websocket.CompressionNoContextTakeover,
+	})
 	if err != nil {
 		return err
 	}

@@ -185,6 +185,7 @@ public final class PerformanceBaselineTest {
     for (int[] size : SIZES) {
       int cols = size[0], rows = size[1], history = size[2];
       RemoteTerminalModel model = newModel(cols, rows, history, Content.ASCII);
+      model.consumeRenderUpdate();
 
       for (boolean historyChanged : new boolean[]{true, false}) {
         for (int i = 0; i < WARMUP; i++) {

@@ -26,7 +26,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ModelChange;
+import com.webterm.terminal.model.RenderDirtyState;
+import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -54,7 +55,8 @@ public final class RemoteTerminalView extends View {
   private static final float AUTO_SCROLL_EDGE_DP = 48f;
   private static final float AUTO_SCROLL_MIN_LINES_PER_SECOND = 3f;
   private static final float AUTO_SCROLL_MAX_LINES_PER_SECOND = 12f;
-  private static final int MAX_PARTIAL_DIRTY_SCREEN_ROWS = 8;
+  private static final int MAX_PARTIAL_DIRTY_RECTS = 8;
+  private static final float MAX_PARTIAL_DIRTY_AREA_RATIO = 0.40f;
 
   /**
    * 使用系统普通文本输入类型，保留用户当前输入法及中英文状态；只关闭联想、
@@ -89,6 +91,8 @@ public final class RemoteTerminalView extends View {
   private final Paint selectionHandlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
   private RemoteTerminalModel model;
+  /** Canvas 本帧唯一允许使用的不可变快照；绝不在 onDraw 再向模型取新快照。 */
+  @Nullable private RemoteTerminalModel.RenderSnapshot renderedSnapshot;
   private TerminalViewportState viewport = new TerminalViewportState();
   private Host host;
   private float lastFlingY;
@@ -153,6 +157,11 @@ public final class RemoteTerminalView extends View {
     this.host = host;
   }
 
+  /** 仅绑定交互所需模型；绘制数据必须通过 {@link #applyRenderUpdate} 进入。 */
+  public void bindModel(@Nullable RemoteTerminalModel model) {
+    this.model = model;
+  }
+
   @Override
   protected void onFocusChanged(boolean gainFocus, int direction, android.graphics.Rect previouslyFocusedRect) {
     super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
@@ -162,29 +171,36 @@ public final class RemoteTerminalView extends View {
   }
 
   public void setModel(@Nullable RemoteTerminalModel model, @Nullable TerminalViewportState viewport) {
-    setModel(model, viewport, ModelChange.full(false));
-  }
-
-  /**
-   * Applies the newest immutable model publication and invalidates only safe dirty screen rows.
-   * Any uncertainty falls back to a full invalidation; correctness is preferred over savings.
-   */
-  public void setModel(@Nullable RemoteTerminalModel model, @Nullable TerminalViewportState viewport,
-                       @NonNull ModelChange change) {
-    this.model = model;
+    bindModel(model);
     if (viewport != null) {
       this.viewport = viewport;
     }
-    boolean geometryChanged = requestLayoutIfSizeChanged();
+    renderedSnapshot = model != null ? model.renderSnapshot() : null;
+    requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
-    if (geometryChanged || !invalidateChangedRows(change)) {
-      TerminalRenderMetrics.fullInvalidate();
-      invalidate();
-    }
+    // 旧测试/嵌入调用的兼容入口不再参与正式脏区链路，保守全量重画。
+    TerminalRenderMetrics.fullInvalidate();
+    invalidate();
   }
 
   public void updateModel(@NonNull RemoteTerminalModel model) {
-    setModel(model, viewport, ModelChange.full(false));
+    setModel(model, viewport);
+  }
+
+  /**
+   * 接收 Controller 在 VSync 原子消费出的绘制批次。脏区判断与真正 Canvas 绘制均使用
+   * 同一个 snapshot，后续 Patch 只能通过下一次 RenderUpdate 改变它。
+   */
+  public void applyRenderUpdate(@NonNull RenderUpdate update,
+                                @NonNull TerminalViewportState viewport) {
+    this.viewport = viewport;
+    this.renderedSnapshot = update.snapshot;
+    boolean geometryChanged = requestLayoutIfSizeChanged();
+    updateCursorBlinkSchedule();
+    if (geometryChanged || !invalidateChangedRows(update.dirty, update.snapshot)) {
+      TerminalRenderMetrics.fullInvalidate();
+      invalidate();
+    }
   }
 
   /**
@@ -239,8 +255,8 @@ public final class RemoteTerminalView extends View {
   @Override
   protected void onDraw(Canvas canvas) {
     super.onDraw(canvas);
-    if (model == null) return;
-    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null) return;
     renderer.render(canvas, snapshot, viewport);
     drawSelectionHandles(canvas, snapshot);
   }
@@ -649,30 +665,33 @@ public final class RemoteTerminalView extends View {
     return false;
   }
 
-  private boolean invalidateChangedRows(@NonNull ModelChange change) {
-    if (model == null || getWidth() <= 0 || getHeight() <= 0
+  private boolean invalidateChangedRows(@NonNull RenderDirtyState change,
+                                        @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    if (getWidth() <= 0 || getHeight() <= 0
         || change.fullInvalidate || change.geometryChanged || change.historyChanged
-        || change.paletteChanged || change.stylesChanged || change.linksChanged
-        || change.activeBufferChanged || change.modesChanged || viewport.selection != null) {
+        || change.paletteChanged || change.modesChanged || change.activeBufferChanged
+        || viewport.selection != null) {
       return false;
     }
-    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
     if (snapshot.screen == null || snapshot.activeBuffer == null) return false;
-    List<Integer> dirtyRows = new ArrayList<>(change.changedScreenRows);
+    List<Integer> dirtyRows = new ArrayList<>(change.changedScreenRows.cardinality());
+    for (int row = change.changedScreenRows.nextSetBit(0);
+         row >= 0;
+         row = change.changedScreenRows.nextSetBit(row + 1)) {
+      dirtyRows.add(row);
+    }
     if (change.cursorChanged) {
       if (change.previousCursorRow < 0 || change.currentCursorRow < 0) return false;
       dirtyRows.add(change.previousCursorRow);
       dirtyRows.add(change.currentCursorRow);
     }
-    if (dirtyRows.isEmpty() || dirtyRows.size() > MAX_PARTIAL_DIRTY_SCREEN_ROWS) return false;
+    if (dirtyRows.isEmpty()) return false;
     Collections.sort(dirtyRows);
     List<Integer> uniqueRows = new ArrayList<>();
     for (int row : dirtyRows) {
       if (row < 0 || row >= snapshot.screen.length) return false;
       if (uniqueRows.isEmpty() || uniqueRows.get(uniqueRows.size() - 1) != row) uniqueRows.add(row);
     }
-    if (uniqueRows.size() > MAX_PARTIAL_DIRTY_SCREEN_ROWS) return false;
-
     TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     float lineHeight = renderer.getLineHeight();
@@ -682,6 +701,7 @@ public final class RemoteTerminalView extends View {
         viewport.followTail ? 0f : viewport.scrollOffsetPixels);
     List<Rect> dirtyRects = dirtyScreenRowRects(uniqueRows, screenTop, lineHeight,
         getWidth(), getHeight());
+    if (!shouldPartiallyInvalidate(dirtyRects, getWidth(), getHeight())) return false;
     int invalidatedRows = 0;
     for (Rect dirtyRect : dirtyRects) {
       invalidate(dirtyRect);
@@ -694,6 +714,17 @@ public final class RemoteTerminalView extends View {
     if (invalidatedRows == 0) return true;
     TerminalRenderMetrics.partialInvalidate(invalidatedRows);
     return true;
+  }
+
+  /** Uses visible area and merged rect count instead of a fixed dirty-row limit. */
+  static boolean shouldPartiallyInvalidate(@NonNull List<Rect> dirtyRects, int width, int height) {
+    if (dirtyRects.isEmpty() || width <= 0 || height <= 0
+        || dirtyRects.size() > MAX_PARTIAL_DIRTY_RECTS) return false;
+    long dirtyArea = 0L;
+    for (Rect rect : dirtyRects) {
+      dirtyArea += (long) Math.max(0, rect.width()) * Math.max(0, rect.height());
+    }
+    return (double) dirtyArea <= (double) width * height * MAX_PARTIAL_DIRTY_AREA_RATIO;
   }
 
   /** Coalesces adjacent screen rows into minimal clipped dirty rectangles. */

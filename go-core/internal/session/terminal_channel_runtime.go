@@ -18,19 +18,20 @@ import (
 )
 
 type terminalChannelRuntime struct {
-	sink             ChannelFrameSink
-	session          *TerminalSession
-	send             chan outboundMessage
-	ready            atomic.Bool
-	done             chan struct{}
-	doneOnce         chan struct{}
-	logger           *logs.Logger
-	screenClientID   string
-	ownerKey         string
-	clientInstanceID string
-	screenAttached   atomic.Bool
-	writerStarted    atomic.Bool
-	screenHandler    *screenprotocol.Handler
+	sink                ChannelFrameSink
+	session             *TerminalSession
+	send                chan outboundMessage
+	ready               atomic.Bool
+	done                chan struct{}
+	doneOnce            chan struct{}
+	logger              *logs.Logger
+	screenClientID      string
+	ownerKey            string
+	clientInstanceID    string
+	screenAttached      atomic.Bool
+	writerStarted       atomic.Bool
+	compactLineEncoding atomic.Bool
+	screenHandler       *screenprotocol.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -72,7 +73,9 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 		ownerKey:       ownerKey,
 		screenWake:     make(chan struct{}, 1),
 		screenInitial:  make(chan initialScreenMessage, 1),
-		encodeFrame:    screenprotocol.EncodeFrame,
+	}
+	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
+		return screenprotocol.EncodeFrameWithCompactLines(frame, client.compactLineEncoding.Load())
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
@@ -269,7 +272,7 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 }
 
 func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context, initial initialScreenMessage) bool {
-	payload, err := encodeInitialScreenSync(initial.sync)
+	payload, err := client.encodeInitialScreenSync(initial.sync)
 	if err != nil {
 		initial.done(false)
 		if client.logger != nil {
@@ -427,6 +430,7 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		return
 	}
 	client.clientInstanceID = hello.GetClientInstanceId()
+	client.compactLineEncoding.Store(hello.GetCapabilities().GetCompactLineEncoding())
 	client.attachScreenClient(hello)
 	client.SendInfo()
 	client.ready.Store(true)
@@ -503,7 +507,7 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 
 func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
 	if !client.writerStarted.Load() {
-		payload, err := encodeInitialScreenSync(syncMessage)
+		payload, err := client.encodeInitialScreenSync(syncMessage)
 		if err != nil {
 			done(false)
 			return
@@ -530,11 +534,20 @@ func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminal
 }
 
 func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, error) {
+	return encodeInitialScreenSyncWith(syncMessage, screenprotocol.EncodeFrame)
+}
+
+func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, error) {
+	return encodeInitialScreenSyncWith(syncMessage, client.encodeFrame)
+}
+
+func encodeInitialScreenSyncWith(syncMessage terminalsession.InitialSync,
+	encode func(terminalengine.ScreenFrame) ([]byte, error)) ([]byte, error) {
 	if syncMessage.Exact {
 		state := syncMessage.State
 		return screenprotocol.EncodeResumeAck(state.InstanceID, state.Epoch, state.Seq)
 	}
-	patchBytes, err := screenprotocol.EncodeFrame(syncMessage.Frame)
+	patchBytes, err := encode(syncMessage.Frame)
 	if err != nil || syncMessage.Frame.Kind != terminalengine.FramePatch {
 		return patchBytes, err
 	}
@@ -542,7 +555,7 @@ func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, e
 	// 时直接发送自包含 Snapshot；比较只发生在 initial-sync，不进入在线热路径。
 	snapshot := syncMessage.State
 	snapshot.Kind = terminalengine.FrameSnapshot
-	snapshotBytes, err := screenprotocol.EncodeFrame(snapshot)
+	snapshotBytes, err := encode(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +573,8 @@ func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revisi
 }
 
 func (client *terminalChannelRuntime) sendScreenHistory(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData) {
-	payload, err := screenprotocol.EncodeHistoryPage(requestID, epoch, revision, page)
+	payload, err := screenprotocol.EncodeHistoryPageWithCompactLines(
+		requestID, epoch, revision, page, client.compactLineEncoding.Load())
 	if err == nil {
 		client.enqueueBinary(payload)
 	}

@@ -1,6 +1,5 @@
 package com.webterm.terminal.protocol;
 
-import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.model.TerminalCell;
@@ -83,8 +82,8 @@ public final class ScreenFixtureTest {
     assertNotNull(name + ": snapshot mapped", snapshot);
 
     RemoteTerminalModel model = new RemoteTerminalModel();
-    ModelChange change = model.applySnapshot(snapshot);
-    assertTrue(name + ": full invalidate", change.fullInvalidate);
+    model.applySnapshot(snapshot);
+    assertTrue(name + ": full invalidate", model.consumeRenderUpdate().dirty.fullInvalidate);
 
     String actual = extractNonEmptyScreenText(model);
     String expected = extractExpectedScreenText(dir.resolve("expected-debug.json"));

@@ -175,6 +175,19 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   @Test
+  public void rejectedHistoryPageClearsOnlyThePagingRequestWithoutResync() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    assertTrue(runtime.requestHistoryPage(100, 250));
+    String rejectedRequestId = connection.historyRequestId;
+
+    connection.listener.onScreenMessage(invalidHistoryPage(rejectedRequestId).toByteArray());
+
+    assertEquals("history page validation must not resync the screen", 0, connection.resyncRequests);
+    assertTrue("a rejected page ends its pending request so the user can retry",
+        runtime.requestHistoryPage(100, 250));
+  }
+
+  @Test
   public void requestHistoryPageWithoutConnection_failsAndLeavesNoPendingRequest() {
     TerminalSessionRuntime disconnected = new TerminalSessionRuntime("s2",
         new RemoteTerminalModel(), Runnable::run, Runnable::run, scheduler);
@@ -256,14 +269,40 @@ public final class TerminalSessionRuntimeResizeTest {
         1, modelExecutor.tasks.size());
 
     modelExecutor.runAll();
-    assertEquals("the frame that broke the patch chain must not be applied",
-        0, runtime.model().screenRevision);
-    assertEquals("overflow must converge through one resync", 1, connection.resyncRequests);
+    assertEquals("the newest authoritative snapshot survives the overflow", 65,
+        runtime.model().screenRevision);
+    assertEquals("overflow still enters one fenced recovery", 1, connection.resyncRequests);
 
     connection.listener.onScreenMessage(snapshot(66).toByteArray());
     modelExecutor.runAll();
     assertEquals("a fresh authoritative snapshot releases the fence",
         66, runtime.model().screenRevision);
+  }
+
+  @Test
+  public void mailboxDrainYieldsToQueuedControlWorkAfterOneSlice() {
+    QueuingExecutor modelExecutor = new QueuingExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
+        modelExecutor, Runnable::run, scheduler);
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    for (int revision = 2; revision <= 17; revision++) {
+      connection.listener.onScreenMessage(patch(revision - 1, revision).toByteArray());
+    }
+    final boolean[] controlRan = {false};
+    modelExecutor.execute(() -> controlRan[0] = true);
+
+    modelExecutor.runNext();
+    assertEquals("one drain slice processes at most eight frames", 8, runtime.model().screenRevision);
+    assertFalse("the control task is still queued behind the first drain slice", controlRan[0]);
+
+    modelExecutor.runNext();
+    assertTrue("the continuation must yield so control work can run", controlRan[0]);
+    modelExecutor.runAll();
+    assertEquals("all remaining patches converge after yielded continuations", 17,
+        runtime.model().screenRevision);
   }
 
   @Test
@@ -433,7 +472,8 @@ public final class TerminalSessionRuntimeResizeTest {
     }
     modelExecutor.runAll();
     assertEquals("overflow while waiting must resend resync", 2, connection.resyncRequests);
-    assertEquals("the in-flight snapshot was cleared, not applied", 1, runtime.model().screenRevision);
+    assertEquals("the in-flight authoritative snapshot survives the patch burst", 2,
+        runtime.model().screenRevision);
 
     // A fresh snapshot still releases the fence afterwards.
     connection.listener.onScreenMessage(snapshot(3).toByteArray());
@@ -497,6 +537,16 @@ public final class TerminalSessionRuntimeResizeTest {
             .setFirstAvailableLineId(firstAvailableLineId)
             .setHasMoreBefore(false)
             .build())
+        .build();
+  }
+
+  private static TerminalScreenProto.ScreenEnvelope invalidHistoryPage(@NonNull String requestId) {
+    TerminalScreenProto.HistoryPage.Builder page = TerminalScreenProto.HistoryPage.newBuilder()
+        .setRequestId(requestId).setLayoutEpoch(1).setAsOfRevision(1);
+    for (int i = 0; i < 501; i++) page.addLines(TerminalScreenProto.HistoryLine.getDefaultInstance());
+    return TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setHistoryPage(page)
         .build();
   }
 
@@ -628,8 +678,13 @@ public final class TerminalSessionRuntimeResizeTest {
 
     void runAll() {
       while (!tasks.isEmpty()) {
-        tasks.remove(0).run();
+        runNext();
       }
+    }
+
+    void runNext() {
+      assertFalse("no queued executor task", tasks.isEmpty());
+      tasks.remove(0).run();
     }
   }
 }

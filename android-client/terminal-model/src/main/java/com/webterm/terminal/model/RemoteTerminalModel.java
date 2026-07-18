@@ -1,6 +1,7 @@
 package com.webterm.terminal.model;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -50,6 +51,10 @@ public final class RemoteTerminalModel {
    * on every frame.
    */
   private volatile RenderSnapshot renderSnapshot = RenderSnapshot.empty();
+  /** 仅由模型事务写入、由 VSync 原子交换出去的渲染真相。 */
+  private RenderDirtyState pendingRenderDirty = new RenderDirtyState();
+  private TerminalStateUpdate pendingTerminalState = new TerminalStateUpdate();
+  private boolean renderPublicationPending;
   private volatile ProjectionHealth projectionHealth =
       ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
@@ -77,7 +82,7 @@ public final class RemoteTerminalModel {
     this.history = new TerminalHistory(RemoteTerminalModel::estimateHistoryLineBytes);
   }
 
-  public synchronized ModelChange applySnapshot(ScreenSnapshot snapshot) {
+  public synchronized void applySnapshot(ScreenSnapshot snapshot) {
     boolean geometryChanged = instanceId == null
         || !instanceId.equals(snapshot.instanceId)
         || layoutEpoch != snapshot.layoutEpoch
@@ -126,15 +131,16 @@ public final class RemoteTerminalModel {
       }
     }
 
-    publishRenderSnapshot(true, true, true);
+    markRenderDirty(true, null, true, geometryChanged, true, -1, cursor.row,
+        true, true, true, true, true);
+    markTerminalState(geometryChanged, true, true, true, 0, 0);
     projectionHealth = projectionIsStructurallyComplete()
         ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
         : ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
-    return ModelChange.full(geometryChanged);
   }
 
-  public synchronized ModelChange applyPatch(ScreenPatch patch) throws RevisionGapException {
+  public synchronized void applyPatch(ScreenPatch patch) throws RevisionGapException {
     if (!instanceIdMatches(patch) || layoutEpoch != patch.layoutEpoch) {
       throw new RevisionGapException("instance/layout epoch mismatch");
     }
@@ -152,7 +158,7 @@ public final class RemoteTerminalModel {
     String previousTitle = title;
     String previousWorkingDirectory = workingDirectory;
 
-    Set<Integer> changedRows = new HashSet<>();
+    BitSet changedRows = new BitSet(rows);
     int tailAppendedLines = 0;
     long watermark = patch.firstAvailableHistoryLineId != null
         ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
@@ -188,7 +194,7 @@ public final class RemoteTerminalModel {
     for (TerminalLine line : patch.screenRows) {
       int row = findRow(line.id);
       screen[row] = padOrCopyLine(line, columns);
-      changedRows.add(row);
+      changedRows.set(row);
     }
 
     if (patch.cursor != null) {
@@ -218,29 +224,15 @@ public final class RemoteTerminalModel {
     boolean workingDirectoryChanged = !Objects.equals(previousWorkingDirectory, workingDirectory);
     screenRevision = patch.screenRevision;
     evictHistoryIfNeeded();
-    publishRenderSnapshot(historyChanged, stylesChanged, linksChanged);
+    markRenderDirty(false, changedRows, historyChanged, false, cursorChanged,
+        cursorChanged ? previousCursor.row : -1, cursorChanged ? cursor.row : -1,
+        paletteChanged, stylesChanged, linksChanged, modesChanged, false);
+    markTerminalState(false, historyChanged, titleChanged, workingDirectoryChanged,
+        tailAppendedLines, 0);
     projectionHealth = projectionWasComplete && patchReferencesComplete(patch)
         ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
         : ProjectionHealth.incomplete(SCHEMA_GENERATION);
 
-    return new ModelChange(
-        false,
-        changedRows,
-        historyChanged,
-        cursorChanged,
-        modesChanged,
-        titleChanged,
-        tailAppendedLines,
-        0,
-        false,
-        paletteChanged,
-        stylesChanged,
-        linksChanged,
-        false,
-        workingDirectoryChanged,
-        cursorChanged ? previousCursor.row : -1,
-        cursorChanged ? cursor.row : -1
-    );
   }
 
   /** exact resume 只推进已验证的 revision，不修改任何投影内容。 */
@@ -256,9 +248,9 @@ public final class RemoteTerminalModel {
         : ProjectionHealth.incomplete(SCHEMA_GENERATION);
   }
 
-  public synchronized ModelChange prependHistoryPage(HistoryPage page) {
+  public synchronized void prependHistoryPage(HistoryPage page) {
     if (layoutEpoch != page.layoutEpoch) {
-      return ModelChange.none();
+      return;
     }
     int historySizeBefore = history.size();
     // 可见锚点：prepend 前缓存中最旧的行。用户向上翻页时视口钉在已缓存内容上，
@@ -287,19 +279,21 @@ public final class RemoteTerminalModel {
     // viewport offset compensation. This count is reported separately from
     // tail appends and must never drive offset adjustments.
     int insertedHistoryLines = Math.max(0, history.size() - historySizeBefore);
-    publishRenderSnapshot(true, !page.styles.isEmpty(), !page.links.isEmpty());
-    return new ModelChange(false, null, true, false, false, false, 0, insertedHistoryLines);
+    markRenderDirty(false, null, true, false, false, -1, -1,
+        false, !page.styles.isEmpty(), !page.links.isEmpty(), false, false);
+    markTerminalState(false, true, false, false, 0, insertedHistoryLines);
   }
 
-  public synchronized ModelChange trimHistory(long trimLayoutEpoch, long firstAvailableLineId) {
-    if (layoutEpoch != trimLayoutEpoch) return ModelChange.none();
+  public synchronized void trimHistory(long trimLayoutEpoch, long firstAvailableLineId) {
+    if (layoutEpoch != trimLayoutEpoch) return;
     // HistoryTrim 可能与恢复 Patch 跨 channel/队列乱序到达；水位只能单调前进。
-    if (firstAvailableLineId <= this.firstAvailableHistoryId) return ModelChange.none();
+    if (firstAvailableLineId <= this.firstAvailableHistoryId) return;
     this.firstAvailableHistoryId = firstAvailableLineId;
     history.trimHeadUntil(firstAvailableLineId);
     recalculateHistoryBytes();
-    publishRenderSnapshot(true, false, false);
-    return new ModelChange(false, null, true, false, false, false);
+    markRenderDirty(false, null, true, false, false, -1, -1,
+        false, false, false, false, false);
+    markTerminalState(false, true, false, false, 0, 0);
   }
 
   /** 只能在 model executor 的完整事务边界读取，返回不可变快照。 */
@@ -355,21 +349,23 @@ public final class RemoteTerminalModel {
         && patch.firstAvailableHistoryLineId < firstAvailableHistoryId) {
       throw new RevisionGapException("history watermark moved backwards");
     }
-    Set<Integer> rowIndexes = new HashSet<>();
+    boolean[] seenRows = new boolean[rows];
     for (TerminalLine line : patch.screenRows) {
       int row = findRow(line.id);
-      if (row < 0 || row >= rows || !rowIndexes.add(row)) {
+      if (row < 0 || row >= rows || seenRows[row]) {
         throw new RevisionGapException("invalid or duplicate screen row " + line.id);
       }
+      seenRows[row] = true;
     }
-    Set<Integer> promotedRows = new HashSet<>();
+    boolean[] seenPromotedRows = new boolean[rows];
     Set<Long> promotedIDs = new HashSet<>();
     for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
       if (promoted.screenRow < 0 || promoted.screenRow >= rows
-          || promoted.historyLineId <= 0 || !promotedRows.add(promoted.screenRow)
+          || promoted.historyLineId <= 0 || seenPromotedRows[promoted.screenRow]
           || !promotedIDs.add(promoted.historyLineId)) {
         throw new RevisionGapException("invalid promoted row mapping");
       }
+      seenPromotedRows[promoted.screenRow] = true;
     }
     long watermark = patch.firstAvailableHistoryLineId != null
         ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
@@ -386,34 +382,64 @@ public final class RemoteTerminalModel {
       previous = line.id;
     }
 
-    Map<Integer, TerminalStyle> availableStyles = new HashMap<>(styles);
-    availableStyles.putAll(patch.newStyles);
-    Map<Integer, Hyperlink> availableLinks = new HashMap<>(links);
-    availableLinks.putAll(patch.newLinks);
     for (TerminalLine line : patch.screenRows) {
-      validateReferences(line, availableStyles, availableLinks);
+      validateReferences(line, styles, patch.newStyles, links, patch.newLinks);
     }
     for (TerminalLine line : patch.historyAppend) {
-      if (line.id >= watermark) validateReferences(line, availableStyles, availableLinks);
+      if (line.id >= watermark) {
+        validateReferences(line, styles, patch.newStyles, links, patch.newLinks);
+      }
     }
   }
 
   private static void validateReferences(TerminalLine line,
-      Map<Integer, TerminalStyle> availableStyles,
-      Map<Integer, Hyperlink> availableLinks) throws RevisionGapException {
+      Map<Integer, TerminalStyle> existingStyles, Map<Integer, TerminalStyle> patchStyles,
+      Map<Integer, Hyperlink> existingLinks, Map<Integer, Hyperlink> patchLinks)
+      throws RevisionGapException {
     for (int i = 0; i < line.length(); i++) {
       TerminalCell cell = line.at(i);
       if (cell == null
-          || (cell.styleId != 0 && !availableStyles.containsKey(cell.styleId))
-          || (cell.linkId != 0 && !availableLinks.containsKey(cell.linkId))) {
+          || (cell.styleId != 0 && !existingStyles.containsKey(cell.styleId)
+              && !patchStyles.containsKey(cell.styleId))
+          || (cell.linkId != 0 && !existingLinks.containsKey(cell.linkId)
+              && !patchLinks.containsKey(cell.linkId))) {
         throw new RevisionGapException("unknown style/link reference");
       }
     }
   }
 
-  /** Returns the atomically published, immutable input for one Canvas frame. */
-  public RenderSnapshot renderSnapshot() {
+  /**
+   * 供旧的非 View 调用方读取当前模型；正式绘制必须使用
+   * {@link #consumeRenderUpdate()} 返回的快照。
+   *
+   * <p>这条兼容读取不会消费 pending dirty。生产 View 已不走此路径，因此不会在高频
+   * Patch 时发布无用的中间快照。</p>
+   */
+  public synchronized RenderSnapshot renderSnapshot() {
+    if (renderPublicationPending) publishRenderSnapshot(pendingRenderDirty);
     return renderSnapshot;
+  }
+
+  /**
+   * 原子交换本帧累计的脏状态，并在同一把模型锁内发布与它严格对应的不可变快照。
+   * 新到达的 Patch 会写入新的 pending 实例，绝不会被本帧消费后的 clear 覆盖。
+   */
+  public synchronized RenderUpdate consumeRenderUpdate() {
+    if (!renderPublicationPending
+        || (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty())) return null;
+    RenderDirtyState consumed = pendingRenderDirty;
+    TerminalStateUpdate consumedState = pendingTerminalState;
+    pendingRenderDirty = new RenderDirtyState();
+    pendingTerminalState = new TerminalStateUpdate();
+    renderPublicationPending = false;
+    publishRenderSnapshot(consumed);
+    return new RenderUpdate(renderSnapshot, consumed, consumedState);
+  }
+
+  /** 页面 attach、恢复或本地滚动需要重画时，由模型统一记录全量脏区。 */
+  public synchronized void requestFullRender() {
+    markRenderDirty(true, null, false, false, false, -1, -1,
+        false, false, false, false, false);
   }
 
   /** 历史行数。不需要拷贝全部历史。 */
@@ -602,17 +628,50 @@ public final class RemoteTerminalModel {
     return new TerminalLine(id, false, cells);
   }
 
-  private void publishRenderSnapshot(boolean historyChanged, boolean stylesChanged,
-                                     boolean linksChanged) {
+  private void markRenderDirty(boolean fullInvalidate, BitSet changedRows, boolean historyChanged,
+                               boolean geometryChanged, boolean cursorChanged,
+                               int previousCursorRow, int currentCursorRow,
+                               boolean paletteChanged, boolean stylesChanged,
+                               boolean linksChanged, boolean modesChanged,
+                               boolean activeBufferChanged) {
+    pendingRenderDirty.merge(fullInvalidate, changedRows, historyChanged, geometryChanged,
+        cursorChanged, previousCursorRow, currentCursorRow, paletteChanged, stylesChanged,
+        linksChanged, modesChanged, activeBufferChanged);
+    renderPublicationPending = !pendingRenderDirty.isEmpty();
+  }
+
+  private void markTerminalState(boolean geometryChanged, boolean historyChanged,
+                                 boolean titleChanged, boolean workingDirectoryChanged,
+                                 int tailAppendedLines, int historyPrependedLines) {
+    pendingTerminalState.merge(geometryChanged, historyChanged, titleChanged,
+        workingDirectoryChanged, tailAppendedLines, historyPrependedLines);
+    renderPublicationPending = true;
+  }
+
+  /** 保留给性能基线的反射入口；正式路径只在 consumeRenderUpdate 时发布。 */
+  @SuppressWarnings("unused")
+  private synchronized void publishRenderSnapshot(boolean historyChanged, boolean stylesChanged,
+                                                  boolean linksChanged) {
+    RenderDirtyState dirty = new RenderDirtyState();
+    dirty.merge(false, null, historyChanged, false, false, -1, -1,
+        false, stylesChanged, linksChanged, false, false);
+    publishRenderSnapshot(dirty);
+  }
+
+  private void publishRenderSnapshot(RenderDirtyState dirty) {
     RenderSnapshot previous = renderSnapshot;
-    TerminalLine[] screenCopy = screen != null ? screen.clone() : null;
-    TerminalHistorySnapshot historySnapshot = historyChanged
+    // TerminalLine is immutable. Metadata-only and history-only patches therefore safely reuse
+    // the previous screen array rather than cloning rows that did not change.
+    boolean screenChanged = dirty.fullInvalidate || dirty.geometryChanged
+        || dirty.activeBufferChanged || !dirty.changedScreenRows.isEmpty();
+    TerminalLine[] screenCopy = screenChanged && screen != null ? screen.clone() : previous.screen;
+    TerminalHistorySnapshot historySnapshot = dirty.historyChanged || dirty.fullInvalidate
         ? history.snapshot()
         : previous.history;
-    Map<Integer, TerminalStyle> stylesCopy = stylesChanged
+    Map<Integer, TerminalStyle> stylesCopy = dirty.stylesChanged || dirty.fullInvalidate
         ? Collections.unmodifiableMap(new HashMap<>(styles))
         : previous.styles;
-    Map<Integer, Hyperlink> linksCopy = linksChanged
+    Map<Integer, Hyperlink> linksCopy = dirty.linksChanged || dirty.fullInvalidate
         ? Collections.unmodifiableMap(new HashMap<>(links))
         : previous.links;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,

@@ -8466,6 +8466,16 @@ public final class TerminalScreenProto {
      * @return The images.
      */
     boolean getImages();
+
+    /**
+     * <pre>
+     * text + StyleSpan 行编码；旧客户端保持 CellRun
+     * </pre>
+     *
+     * <code>bool compact_line_encoding = 4;</code>
+     * @return The compactLineEncoding.
+     */
+    boolean getCompactLineEncoding();
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.CapabilitySet}
@@ -8549,6 +8559,21 @@ public final class TerminalScreenProto {
       return images_;
     }
 
+    public static final int COMPACT_LINE_ENCODING_FIELD_NUMBER = 4;
+    private boolean compactLineEncoding_ = false;
+    /**
+     * <pre>
+     * text + StyleSpan 行编码；旧客户端保持 CellRun
+     * </pre>
+     *
+     * <code>bool compact_line_encoding = 4;</code>
+     * @return The compactLineEncoding.
+     */
+    @java.lang.Override
+    public boolean getCompactLineEncoding() {
+      return compactLineEncoding_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -8572,6 +8597,9 @@ public final class TerminalScreenProto {
       if (images_ != false) {
         output.writeBool(3, images_);
       }
+      if (compactLineEncoding_ != false) {
+        output.writeBool(4, compactLineEncoding_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -8592,6 +8620,10 @@ public final class TerminalScreenProto {
       if (images_ != false) {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(3, images_);
+      }
+      if (compactLineEncoding_ != false) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(4, compactLineEncoding_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -8614,6 +8646,8 @@ public final class TerminalScreenProto {
           != other.getScrollOps()) return false;
       if (getImages()
           != other.getImages()) return false;
+      if (getCompactLineEncoding()
+          != other.getCompactLineEncoding()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -8634,6 +8668,9 @@ public final class TerminalScreenProto {
       hash = (37 * hash) + IMAGES_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
           getImages());
+      hash = (37 * hash) + COMPACT_LINE_ENCODING_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+          getCompactLineEncoding());
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -8768,6 +8805,7 @@ public final class TerminalScreenProto {
         rowPatches_ = false;
         scrollOps_ = false;
         images_ = false;
+        compactLineEncoding_ = false;
         return this;
       }
 
@@ -8810,6 +8848,9 @@ public final class TerminalScreenProto {
         if (((from_bitField0_ & 0x00000004) != 0)) {
           result.images_ = images_;
         }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.compactLineEncoding_ = compactLineEncoding_;
+        }
       }
 
       @java.lang.Override
@@ -8832,6 +8873,9 @@ public final class TerminalScreenProto {
         }
         if (other.getImages() != false) {
           setImages(other.getImages());
+        }
+        if (other.getCompactLineEncoding() != false) {
+          setCompactLineEncoding(other.getCompactLineEncoding());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -8874,6 +8918,11 @@ public final class TerminalScreenProto {
                 bitField0_ |= 0x00000004;
                 break;
               } // case 24
+              case 32: {
+                compactLineEncoding_ = input.readBool();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 32
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -9019,6 +9068,50 @@ public final class TerminalScreenProto {
       public Builder clearImages() {
         bitField0_ = (bitField0_ & ~0x00000004);
         images_ = false;
+        onChanged();
+        return this;
+      }
+
+      private boolean compactLineEncoding_ ;
+      /**
+       * <pre>
+       * text + StyleSpan 行编码；旧客户端保持 CellRun
+       * </pre>
+       *
+       * <code>bool compact_line_encoding = 4;</code>
+       * @return The compactLineEncoding.
+       */
+      @java.lang.Override
+      public boolean getCompactLineEncoding() {
+        return compactLineEncoding_;
+      }
+      /**
+       * <pre>
+       * text + StyleSpan 行编码；旧客户端保持 CellRun
+       * </pre>
+       *
+       * <code>bool compact_line_encoding = 4;</code>
+       * @param value The compactLineEncoding to set.
+       * @return This builder for chaining.
+       */
+      public Builder setCompactLineEncoding(boolean value) {
+
+        compactLineEncoding_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * text + StyleSpan 行编码；旧客户端保持 CellRun
+       * </pre>
+       *
+       * <code>bool compact_line_encoding = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearCompactLineEncoding() {
+        bitField0_ = (bitField0_ & ~0x00000008);
+        compactLineEncoding_ = false;
         onChanged();
         return this;
       }
@@ -19834,6 +19927,50 @@ public final class TerminalScreenProto {
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder getRunsOrBuilder(
         int index);
+
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 5;</code>
+     * @return The text.
+     */
+    java.lang.String getText();
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 5;</code>
+     * @return The bytes for text.
+     */
+    com.google.protobuf.ByteString
+        getTextBytes();
+
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan>
+        getStyleSpansList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index);
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    int getStyleSpansCount();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+        getStyleSpansOrBuilderList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+        int index);
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.TerminalLine}
@@ -19858,6 +19995,8 @@ public final class TerminalScreenProto {
     }
     private TerminalLine() {
       runs_ = java.util.Collections.emptyList();
+      text_ = "";
+      styleSpans_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -19959,6 +20098,94 @@ public final class TerminalScreenProto {
       return runs_.get(index);
     }
 
+    public static final int TEXT_FIELD_NUMBER = 5;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object text_ = "";
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 5;</code>
+     * @return The text.
+     */
+    @java.lang.Override
+    public java.lang.String getText() {
+      java.lang.Object ref = text_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        text_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 5;</code>
+     * @return The bytes for text.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTextBytes() {
+      java.lang.Object ref = text_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        text_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int STYLE_SPANS_FIELD_NUMBER = 6;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> styleSpans_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> getStyleSpansList() {
+      return styleSpans_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+        getStyleSpansOrBuilderList() {
+      return styleSpans_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    @java.lang.Override
+    public int getStyleSpansCount() {
+      return styleSpans_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index) {
+      return styleSpans_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+        int index) {
+      return styleSpans_.get(index);
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -19985,6 +20212,12 @@ public final class TerminalScreenProto {
       for (int i = 0; i < runs_.size(); i++) {
         output.writeMessage(4, runs_.get(i));
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(text_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 5, text_);
+      }
+      for (int i = 0; i < styleSpans_.size(); i++) {
+        output.writeMessage(6, styleSpans_.get(i));
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -20010,6 +20243,13 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(4, runs_.get(i));
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(text_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(5, text_);
+      }
+      for (int i = 0; i < styleSpans_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(6, styleSpans_.get(i));
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -20033,6 +20273,10 @@ public final class TerminalScreenProto {
           != other.getWrapped()) return false;
       if (!getRunsList()
           .equals(other.getRunsList())) return false;
+      if (!getText()
+          .equals(other.getText())) return false;
+      if (!getStyleSpansList()
+          .equals(other.getStyleSpansList())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -20055,6 +20299,12 @@ public final class TerminalScreenProto {
       if (getRunsCount() > 0) {
         hash = (37 * hash) + RUNS_FIELD_NUMBER;
         hash = (53 * hash) + getRunsList().hashCode();
+      }
+      hash = (37 * hash) + TEXT_FIELD_NUMBER;
+      hash = (53 * hash) + getText().hashCode();
+      if (getStyleSpansCount() > 0) {
+        hash = (37 * hash) + STYLE_SPANS_FIELD_NUMBER;
+        hash = (53 * hash) + getStyleSpansList().hashCode();
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -20197,6 +20447,14 @@ public final class TerminalScreenProto {
           runsBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000008);
+        text_ = "";
+        if (styleSpansBuilder_ == null) {
+          styleSpans_ = java.util.Collections.emptyList();
+        } else {
+          styleSpans_ = null;
+          styleSpansBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000020);
         return this;
       }
 
@@ -20239,6 +20497,15 @@ public final class TerminalScreenProto {
         } else {
           result.runs_ = runsBuilder_.build();
         }
+        if (styleSpansBuilder_ == null) {
+          if (((bitField0_ & 0x00000020) != 0)) {
+            styleSpans_ = java.util.Collections.unmodifiableList(styleSpans_);
+            bitField0_ = (bitField0_ & ~0x00000020);
+          }
+          result.styleSpans_ = styleSpans_;
+        } else {
+          result.styleSpans_ = styleSpansBuilder_.build();
+        }
       }
 
       private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine result) {
@@ -20251,6 +20518,9 @@ public final class TerminalScreenProto {
         }
         if (((from_bitField0_ & 0x00000004) != 0)) {
           result.wrapped_ = wrapped_;
+        }
+        if (((from_bitField0_ & 0x00000010) != 0)) {
+          result.text_ = text_;
         }
       }
 
@@ -20298,6 +20568,37 @@ public final class TerminalScreenProto {
                    getRunsFieldBuilder() : null;
             } else {
               runsBuilder_.addAllMessages(other.runs_);
+            }
+          }
+        }
+        if (!other.getText().isEmpty()) {
+          text_ = other.text_;
+          bitField0_ |= 0x00000010;
+          onChanged();
+        }
+        if (styleSpansBuilder_ == null) {
+          if (!other.styleSpans_.isEmpty()) {
+            if (styleSpans_.isEmpty()) {
+              styleSpans_ = other.styleSpans_;
+              bitField0_ = (bitField0_ & ~0x00000020);
+            } else {
+              ensureStyleSpansIsMutable();
+              styleSpans_.addAll(other.styleSpans_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.styleSpans_.isEmpty()) {
+            if (styleSpansBuilder_.isEmpty()) {
+              styleSpansBuilder_.dispose();
+              styleSpansBuilder_ = null;
+              styleSpans_ = other.styleSpans_;
+              bitField0_ = (bitField0_ & ~0x00000020);
+              styleSpansBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getStyleSpansFieldBuilder() : null;
+            } else {
+              styleSpansBuilder_.addAllMessages(other.styleSpans_);
             }
           }
         }
@@ -20355,6 +20656,24 @@ public final class TerminalScreenProto {
                 }
                 break;
               } // case 34
+              case 42: {
+                text_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000010;
+                break;
+              } // case 42
+              case 50: {
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.parser(),
+                        extensionRegistry);
+                if (styleSpansBuilder_ == null) {
+                  ensureStyleSpansIsMutable();
+                  styleSpans_.add(m);
+                } else {
+                  styleSpansBuilder_.addMessage(m);
+                }
+                break;
+              } // case 50
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -20744,6 +21063,338 @@ public final class TerminalScreenProto {
         return runsBuilder_;
       }
 
+      private java.lang.Object text_ = "";
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 5;</code>
+       * @return The text.
+       */
+      public java.lang.String getText() {
+        java.lang.Object ref = text_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          text_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 5;</code>
+       * @return The bytes for text.
+       */
+      public com.google.protobuf.ByteString
+          getTextBytes() {
+        java.lang.Object ref = text_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          text_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 5;</code>
+       * @param value The text to set.
+       * @return This builder for chaining.
+       */
+      public Builder setText(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        text_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearText() {
+        text_ = getDefaultInstance().getText();
+        bitField0_ = (bitField0_ & ~0x00000010);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 5;</code>
+       * @param value The bytes for text to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTextBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        text_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> styleSpans_ =
+        java.util.Collections.emptyList();
+      private void ensureStyleSpansIsMutable() {
+        if (!((bitField0_ & 0x00000020) != 0)) {
+          styleSpans_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan>(styleSpans_);
+          bitField0_ |= 0x00000020;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder> styleSpansBuilder_;
+
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> getStyleSpansList() {
+        if (styleSpansBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(styleSpans_);
+        } else {
+          return styleSpansBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public int getStyleSpansCount() {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.size();
+        } else {
+          return styleSpansBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index) {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.get(index);
+        } else {
+          return styleSpansBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder setStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.set(index, value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder setStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder addStyleSpans(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder addStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(index, value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder addStyleSpans(
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder addStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder addAllStyleSpans(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> values) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, styleSpans_);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder clearStyleSpans() {
+        if (styleSpansBuilder_ == null) {
+          styleSpans_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000020);
+          onChanged();
+        } else {
+          styleSpansBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public Builder removeStyleSpans(int index) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.remove(index);
+          onChanged();
+        } else {
+          styleSpansBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder getStyleSpansBuilder(
+          int index) {
+        return getStyleSpansFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+          int index) {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.get(index);  } else {
+          return styleSpansBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+           getStyleSpansOrBuilderList() {
+        if (styleSpansBuilder_ != null) {
+          return styleSpansBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(styleSpans_);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder() {
+        return getStyleSpansFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder(
+          int index) {
+        return getStyleSpansFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 6;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder>
+           getStyleSpansBuilderList() {
+        return getStyleSpansFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+          getStyleSpansFieldBuilder() {
+        if (styleSpansBuilder_ == null) {
+          styleSpansBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>(
+                  styleSpans_,
+                  ((bitField0_ & 0x00000020) != 0),
+                  getParentForChildren(),
+                  isClean());
+          styleSpans_ = null;
+        }
+        return styleSpansBuilder_;
+      }
+
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.TerminalLine)
     }
 
@@ -20790,6 +21441,696 @@ public final class TerminalScreenProto {
 
     @java.lang.Override
     public com.webterm.terminal.protocol.generated.TerminalScreenProto.TerminalLine getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface StyleSpanOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v1.StyleSpan)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <pre>
+     * inclusive
+     * </pre>
+     *
+     * <code>int32 start_col = 1;</code>
+     * @return The startCol.
+     */
+    int getStartCol();
+
+    /**
+     * <pre>
+     * exclusive
+     * </pre>
+     *
+     * <code>int32 end_col = 2;</code>
+     * @return The endCol.
+     */
+    int getEndCol();
+
+    /**
+     * <code>uint32 style_id = 3;</code>
+     * @return The styleId.
+     */
+    int getStyleId();
+
+    /**
+     * <code>uint32 link_id = 4;</code>
+     * @return The linkId.
+     */
+    int getLinkId();
+  }
+  /**
+   * Protobuf type {@code webterm.terminal.screen.v1.StyleSpan}
+   */
+  public static final class StyleSpan extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v1.StyleSpan)
+      StyleSpanOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        StyleSpan.class.getName());
+    }
+    // Use StyleSpan.newBuilder() to construct.
+    private StyleSpan(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private StyleSpan() {
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_StyleSpan_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder.class);
+    }
+
+    public static final int START_COL_FIELD_NUMBER = 1;
+    private int startCol_ = 0;
+    /**
+     * <pre>
+     * inclusive
+     * </pre>
+     *
+     * <code>int32 start_col = 1;</code>
+     * @return The startCol.
+     */
+    @java.lang.Override
+    public int getStartCol() {
+      return startCol_;
+    }
+
+    public static final int END_COL_FIELD_NUMBER = 2;
+    private int endCol_ = 0;
+    /**
+     * <pre>
+     * exclusive
+     * </pre>
+     *
+     * <code>int32 end_col = 2;</code>
+     * @return The endCol.
+     */
+    @java.lang.Override
+    public int getEndCol() {
+      return endCol_;
+    }
+
+    public static final int STYLE_ID_FIELD_NUMBER = 3;
+    private int styleId_ = 0;
+    /**
+     * <code>uint32 style_id = 3;</code>
+     * @return The styleId.
+     */
+    @java.lang.Override
+    public int getStyleId() {
+      return styleId_;
+    }
+
+    public static final int LINK_ID_FIELD_NUMBER = 4;
+    private int linkId_ = 0;
+    /**
+     * <code>uint32 link_id = 4;</code>
+     * @return The linkId.
+     */
+    @java.lang.Override
+    public int getLinkId() {
+      return linkId_;
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (startCol_ != 0) {
+        output.writeInt32(1, startCol_);
+      }
+      if (endCol_ != 0) {
+        output.writeInt32(2, endCol_);
+      }
+      if (styleId_ != 0) {
+        output.writeUInt32(3, styleId_);
+      }
+      if (linkId_ != 0) {
+        output.writeUInt32(4, linkId_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (startCol_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt32Size(1, startCol_);
+      }
+      if (endCol_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt32Size(2, endCol_);
+      }
+      if (styleId_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt32Size(3, styleId_);
+      }
+      if (linkId_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt32Size(4, linkId_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan)) {
+        return super.equals(obj);
+      }
+      com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan other = (com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan) obj;
+
+      if (getStartCol()
+          != other.getStartCol()) return false;
+      if (getEndCol()
+          != other.getEndCol()) return false;
+      if (getStyleId()
+          != other.getStyleId()) return false;
+      if (getLinkId()
+          != other.getLinkId()) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + START_COL_FIELD_NUMBER;
+      hash = (53 * hash) + getStartCol();
+      hash = (37 * hash) + END_COL_FIELD_NUMBER;
+      hash = (53 * hash) + getEndCol();
+      hash = (37 * hash) + STYLE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getStyleId();
+      hash = (37 * hash) + LINK_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getLinkId();
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code webterm.terminal.screen.v1.StyleSpan}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v1.StyleSpan)
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_StyleSpan_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.class, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder.class);
+      }
+
+      // Construct using com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        startCol_ = 0;
+        endCol_ = 0;
+        styleId_ = 0;
+        linkId_ = 0;
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan build() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan result = new com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.startCol_ = startCol_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.endCol_ = endCol_;
+        }
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.styleId_ = styleId_;
+        }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.linkId_ = linkId_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance()) return this;
+        if (other.getStartCol() != 0) {
+          setStartCol(other.getStartCol());
+        }
+        if (other.getEndCol() != 0) {
+          setEndCol(other.getEndCol());
+        }
+        if (other.getStyleId() != 0) {
+          setStyleId(other.getStyleId());
+        }
+        if (other.getLinkId() != 0) {
+          setLinkId(other.getLinkId());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 8: {
+                startCol_ = input.readInt32();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 8
+              case 16: {
+                endCol_ = input.readInt32();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 16
+              case 24: {
+                styleId_ = input.readUInt32();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 24
+              case 32: {
+                linkId_ = input.readUInt32();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 32
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private int startCol_ ;
+      /**
+       * <pre>
+       * inclusive
+       * </pre>
+       *
+       * <code>int32 start_col = 1;</code>
+       * @return The startCol.
+       */
+      @java.lang.Override
+      public int getStartCol() {
+        return startCol_;
+      }
+      /**
+       * <pre>
+       * inclusive
+       * </pre>
+       *
+       * <code>int32 start_col = 1;</code>
+       * @param value The startCol to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStartCol(int value) {
+
+        startCol_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * inclusive
+       * </pre>
+       *
+       * <code>int32 start_col = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearStartCol() {
+        bitField0_ = (bitField0_ & ~0x00000001);
+        startCol_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private int endCol_ ;
+      /**
+       * <pre>
+       * exclusive
+       * </pre>
+       *
+       * <code>int32 end_col = 2;</code>
+       * @return The endCol.
+       */
+      @java.lang.Override
+      public int getEndCol() {
+        return endCol_;
+      }
+      /**
+       * <pre>
+       * exclusive
+       * </pre>
+       *
+       * <code>int32 end_col = 2;</code>
+       * @param value The endCol to set.
+       * @return This builder for chaining.
+       */
+      public Builder setEndCol(int value) {
+
+        endCol_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * exclusive
+       * </pre>
+       *
+       * <code>int32 end_col = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearEndCol() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        endCol_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private int styleId_ ;
+      /**
+       * <code>uint32 style_id = 3;</code>
+       * @return The styleId.
+       */
+      @java.lang.Override
+      public int getStyleId() {
+        return styleId_;
+      }
+      /**
+       * <code>uint32 style_id = 3;</code>
+       * @param value The styleId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStyleId(int value) {
+
+        styleId_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint32 style_id = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearStyleId() {
+        bitField0_ = (bitField0_ & ~0x00000004);
+        styleId_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private int linkId_ ;
+      /**
+       * <code>uint32 link_id = 4;</code>
+       * @return The linkId.
+       */
+      @java.lang.Override
+      public int getLinkId() {
+        return linkId_;
+      }
+      /**
+       * <code>uint32 link_id = 4;</code>
+       * @param value The linkId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLinkId(int value) {
+
+        linkId_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint32 link_id = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLinkId() {
+        bitField0_ = (bitField0_ & ~0x00000008);
+        linkId_ = 0;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.StyleSpan)
+    }
+
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v1.StyleSpan)
+    private static final com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan();
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<StyleSpan>
+        PARSER = new com.google.protobuf.AbstractParser<StyleSpan>() {
+      @java.lang.Override
+      public StyleSpan parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<StyleSpan> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<StyleSpan> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -31224,6 +32565,50 @@ public final class TerminalScreenProto {
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder getRunsOrBuilder(
         int index);
+
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 4;</code>
+     * @return The text.
+     */
+    java.lang.String getText();
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 4;</code>
+     * @return The bytes for text.
+     */
+    com.google.protobuf.ByteString
+        getTextBytes();
+
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan>
+        getStyleSpansList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index);
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    int getStyleSpansCount();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+        getStyleSpansOrBuilderList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+        int index);
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.HistoryLine}
@@ -31248,6 +32633,8 @@ public final class TerminalScreenProto {
     }
     private HistoryLine() {
       runs_ = java.util.Collections.emptyList();
+      text_ = "";
+      styleSpans_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -31326,6 +32713,94 @@ public final class TerminalScreenProto {
       return runs_.get(index);
     }
 
+    public static final int TEXT_FIELD_NUMBER = 4;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object text_ = "";
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 4;</code>
+     * @return The text.
+     */
+    @java.lang.Override
+    public java.lang.String getText() {
+      java.lang.Object ref = text_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        text_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * compact path：仅单列 ASCII 文本，非空时替代 runs
+     * </pre>
+     *
+     * <code>string text = 4;</code>
+     * @return The bytes for text.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTextBytes() {
+      java.lang.Object ref = text_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        text_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int STYLE_SPANS_FIELD_NUMBER = 5;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> styleSpans_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> getStyleSpansList() {
+      return styleSpans_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+        getStyleSpansOrBuilderList() {
+      return styleSpans_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    @java.lang.Override
+    public int getStyleSpansCount() {
+      return styleSpans_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index) {
+      return styleSpans_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+        int index) {
+      return styleSpans_.get(index);
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -31349,6 +32824,12 @@ public final class TerminalScreenProto {
       for (int i = 0; i < runs_.size(); i++) {
         output.writeMessage(3, runs_.get(i));
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(text_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 4, text_);
+      }
+      for (int i = 0; i < styleSpans_.size(); i++) {
+        output.writeMessage(5, styleSpans_.get(i));
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -31369,6 +32850,13 @@ public final class TerminalScreenProto {
       for (int i = 0; i < runs_.size(); i++) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(3, runs_.get(i));
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(text_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(4, text_);
+      }
+      for (int i = 0; i < styleSpans_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(5, styleSpans_.get(i));
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -31391,6 +32879,10 @@ public final class TerminalScreenProto {
           != other.getWrapped()) return false;
       if (!getRunsList()
           .equals(other.getRunsList())) return false;
+      if (!getText()
+          .equals(other.getText())) return false;
+      if (!getStyleSpansList()
+          .equals(other.getStyleSpansList())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -31411,6 +32903,12 @@ public final class TerminalScreenProto {
       if (getRunsCount() > 0) {
         hash = (37 * hash) + RUNS_FIELD_NUMBER;
         hash = (53 * hash) + getRunsList().hashCode();
+      }
+      hash = (37 * hash) + TEXT_FIELD_NUMBER;
+      hash = (53 * hash) + getText().hashCode();
+      if (getStyleSpansCount() > 0) {
+        hash = (37 * hash) + STYLE_SPANS_FIELD_NUMBER;
+        hash = (53 * hash) + getStyleSpansList().hashCode();
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -31552,6 +33050,14 @@ public final class TerminalScreenProto {
           runsBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000004);
+        text_ = "";
+        if (styleSpansBuilder_ == null) {
+          styleSpans_ = java.util.Collections.emptyList();
+        } else {
+          styleSpans_ = null;
+          styleSpansBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000010);
         return this;
       }
 
@@ -31594,6 +33100,15 @@ public final class TerminalScreenProto {
         } else {
           result.runs_ = runsBuilder_.build();
         }
+        if (styleSpansBuilder_ == null) {
+          if (((bitField0_ & 0x00000010) != 0)) {
+            styleSpans_ = java.util.Collections.unmodifiableList(styleSpans_);
+            bitField0_ = (bitField0_ & ~0x00000010);
+          }
+          result.styleSpans_ = styleSpans_;
+        } else {
+          result.styleSpans_ = styleSpansBuilder_.build();
+        }
       }
 
       private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenProto.HistoryLine result) {
@@ -31603,6 +33118,9 @@ public final class TerminalScreenProto {
         }
         if (((from_bitField0_ & 0x00000002) != 0)) {
           result.wrapped_ = wrapped_;
+        }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.text_ = text_;
         }
       }
 
@@ -31647,6 +33165,37 @@ public final class TerminalScreenProto {
                    getRunsFieldBuilder() : null;
             } else {
               runsBuilder_.addAllMessages(other.runs_);
+            }
+          }
+        }
+        if (!other.getText().isEmpty()) {
+          text_ = other.text_;
+          bitField0_ |= 0x00000008;
+          onChanged();
+        }
+        if (styleSpansBuilder_ == null) {
+          if (!other.styleSpans_.isEmpty()) {
+            if (styleSpans_.isEmpty()) {
+              styleSpans_ = other.styleSpans_;
+              bitField0_ = (bitField0_ & ~0x00000010);
+            } else {
+              ensureStyleSpansIsMutable();
+              styleSpans_.addAll(other.styleSpans_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.styleSpans_.isEmpty()) {
+            if (styleSpansBuilder_.isEmpty()) {
+              styleSpansBuilder_.dispose();
+              styleSpansBuilder_ = null;
+              styleSpans_ = other.styleSpans_;
+              bitField0_ = (bitField0_ & ~0x00000010);
+              styleSpansBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getStyleSpansFieldBuilder() : null;
+            } else {
+              styleSpansBuilder_.addAllMessages(other.styleSpans_);
             }
           }
         }
@@ -31699,6 +33248,24 @@ public final class TerminalScreenProto {
                 }
                 break;
               } // case 26
+              case 34: {
+                text_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 34
+              case 42: {
+                com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.parser(),
+                        extensionRegistry);
+                if (styleSpansBuilder_ == null) {
+                  ensureStyleSpansIsMutable();
+                  styleSpans_.add(m);
+                } else {
+                  styleSpansBuilder_.addMessage(m);
+                }
+                break;
+              } // case 42
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -32018,6 +33585,338 @@ public final class TerminalScreenProto {
           runs_ = null;
         }
         return runsBuilder_;
+      }
+
+      private java.lang.Object text_ = "";
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 4;</code>
+       * @return The text.
+       */
+      public java.lang.String getText() {
+        java.lang.Object ref = text_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          text_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 4;</code>
+       * @return The bytes for text.
+       */
+      public com.google.protobuf.ByteString
+          getTextBytes() {
+        java.lang.Object ref = text_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          text_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 4;</code>
+       * @param value The text to set.
+       * @return This builder for chaining.
+       */
+      public Builder setText(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        text_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearText() {
+        text_ = getDefaultInstance().getText();
+        bitField0_ = (bitField0_ & ~0x00000008);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * compact path：仅单列 ASCII 文本，非空时替代 runs
+       * </pre>
+       *
+       * <code>string text = 4;</code>
+       * @param value The bytes for text to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTextBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        text_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> styleSpans_ =
+        java.util.Collections.emptyList();
+      private void ensureStyleSpansIsMutable() {
+        if (!((bitField0_ & 0x00000010) != 0)) {
+          styleSpans_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan>(styleSpans_);
+          bitField0_ |= 0x00000010;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder> styleSpansBuilder_;
+
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> getStyleSpansList() {
+        if (styleSpansBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(styleSpans_);
+        } else {
+          return styleSpansBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public int getStyleSpansCount() {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.size();
+        } else {
+          return styleSpansBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index) {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.get(index);
+        } else {
+          return styleSpansBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder setStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.set(index, value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder setStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder addStyleSpans(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder addStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
+        if (styleSpansBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(index, value);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder addStyleSpans(
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder addStyleSpans(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder builderForValue) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          styleSpansBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder addAllStyleSpans(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> values) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, styleSpans_);
+          onChanged();
+        } else {
+          styleSpansBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder clearStyleSpans() {
+        if (styleSpansBuilder_ == null) {
+          styleSpans_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000010);
+          onChanged();
+        } else {
+          styleSpansBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public Builder removeStyleSpans(int index) {
+        if (styleSpansBuilder_ == null) {
+          ensureStyleSpansIsMutable();
+          styleSpans_.remove(index);
+          onChanged();
+        } else {
+          styleSpansBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder getStyleSpansBuilder(
+          int index) {
+        return getStyleSpansFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
+          int index) {
+        if (styleSpansBuilder_ == null) {
+          return styleSpans_.get(index);  } else {
+          return styleSpansBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+           getStyleSpansOrBuilderList() {
+        if (styleSpansBuilder_ != null) {
+          return styleSpansBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(styleSpans_);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder() {
+        return getStyleSpansFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder(
+          int index) {
+        return getStyleSpansFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder>
+           getStyleSpansBuilderList() {
+        return getStyleSpansFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
+          getStyleSpansFieldBuilder() {
+        if (styleSpansBuilder_ == null) {
+          styleSpansBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>(
+                  styleSpans_,
+                  ((bitField0_ & 0x00000010) != 0),
+                  getParentForChildren(),
+                  isClean());
+          styleSpans_ = null;
+        }
+        return styleSpansBuilder_;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.HistoryLine)
@@ -55936,6 +57835,11 @@ public final class TerminalScreenProto {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v1_TerminalLine_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor;
+  private static final
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_webterm_terminal_screen_v1_StyleSpan_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v1_CellRun_descriptor;
   private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -56186,210 +58090,216 @@ public final class TerminalScreenProto {
       "ilities\030\t \001(\0132).webterm.terminal.screen." +
       "v1.CapabilitySet\022\032\n\022client_instance_id\030\n" +
       " \001(\t\":\n\021HistoryPreference\022\022\n\ntail_lines\030" +
-      "\001 \001(\005\022\021\n\tpage_size\030\002 \001(\005\"H\n\rCapabilitySe" +
+      "\001 \001(\005\022\021\n\tpage_size\030\002 \001(\005\"g\n\rCapabilitySe" +
       "t\022\023\n\013row_patches\030\001 \001(\010\022\022\n\nscroll_ops\030\002 \001" +
-      "(\010\022\016\n\006images\030\003 \001(\010\"\037\n\004Ping\022\027\n\017screen_rev" +
-      "ision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017screen_revision\030\001" +
-      " \001(\004\"O\n\tResumeAck\022\023\n\013instance_id\030\001 \001(\t\022\024" +
-      "\n\014layout_epoch\030\002 \001(\004\022\027\n\017screen_revision\030" +
-      "\003 \001(\004\"\220\005\n\016ScreenSnapshot\022\022\n\nsession_id\030\001" +
-      " \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoc" +
-      "h\030\003 \001(\004\022\027\n\017screen_revision\030\004 \001(\004\0222\n\010geom" +
-      "etry\030\005 \001(\0132 .webterm.terminal.screen.v1." +
-      "Size\022=\n\ractive_buffer\030\006 \001(\0162&.webterm.te" +
-      "rminal.screen.v1.BufferKind\0222\n\006cursor\030\007 " +
-      "\001(\0132\".webterm.terminal.screen.v1.Cursor\022" +
-      "0\n\005modes\030\010 \001(\0132!.webterm.terminal.screen" +
-      ".v1.Modes\022<\n\007palette\030\t \001(\0132+.webterm.ter" +
-      "minal.screen.v1.TerminalPalette\022:\n\007histo" +
-      "ry\030\n \001(\0132).webterm.terminal.screen.v1.Hi" +
-      "storyWindow\0228\n\006screen\030\013 \003(\0132(.webterm.te" +
-      "rminal.screen.v1.TerminalLine\0229\n\006styles\030" +
-      "\014 \003(\0132).webterm.terminal.screen.v1.Termi" +
-      "nalStyle\0224\n\005links\030\r \003(\0132%.webterm.termin" +
-      "al.screen.v1.Hyperlink\022\r\n\005title\030\016 \001(\t\022\031\n" +
-      "\021working_directory\030\017 \001(\t\"\353\005\n\013ScreenPatch" +
-      "\022\024\n\014layout_epoch\030\001 \001(\004\022\025\n\rbase_revision\030" +
-      "\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\022?\n\016histor" +
-      "y_append\030\004 \003(\0132\'.webterm.terminal.screen" +
-      ".v1.HistoryLine\022=\n\013screen_rows\030\005 \003(\0132(.w" +
-      "ebterm.terminal.screen.v1.TerminalLine\0222" +
-      "\n\006cursor\030\006 \001(\0132\".webterm.terminal.screen" +
-      ".v1.Cursor\0220\n\005modes\030\007 \001(\0132!.webterm.term" +
-      "inal.screen.v1.Modes\022<\n\007palette\030\010 \001(\0132+." +
-      "webterm.terminal.screen.v1.TerminalPalet" +
-      "te\022=\n\nnew_styles\030\t \003(\0132).webterm.termina" +
-      "l.screen.v1.TerminalStyle\0228\n\tnew_links\030\n" +
-      " \003(\0132%.webterm.terminal.screen.v1.Hyperl" +
-      "ink\022\022\n\005title\030\013 \001(\tH\000\210\001\001\022\036\n\021working_direc" +
-      "tory\030\014 \001(\tH\001\210\001\001\022>\n\rpromoted_rows\030\r \003(\0132\'" +
-      ".webterm.terminal.screen.v1.PromotedRow\022" +
-      "\023\n\013instance_id\030\016 \001(\t\022,\n\037first_available_" +
-      "history_line_id\030\017 \001(\004H\002\210\001\001B\010\n\006_titleB\024\n\022" +
-      "_working_directoryB\"\n _first_available_h" +
-      "istory_line_id\":\n\013PromotedRow\022\022\n\nscreen_" +
-      "row\030\001 \001(\005\022\027\n\017history_line_id\030\002 \001(\004\"\"\n\004Si" +
-      "ze\022\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"p\n\014Termin" +
-      "alLine\022\013\n\003row\030\001 \001(\005\022\017\n\007line_id\030\002 \001(\004\022\017\n\007" +
-      "wrapped\030\003 \001(\010\0221\n\004runs\030\004 \003(\0132#.webterm.te" +
-      "rminal.screen.v1.CellRun\"G\n\007CellRun\022\013\n\003c" +
-      "ol\030\001 \001(\005\022/\n\005cells\030\002 \003(\0132 .webterm.termin" +
-      "al.screen.v1.Cell\"F\n\004Cell\022\014\n\004text\030\001 \001(\t\022" +
-      "\r\n\005width\030\002 \001(\r\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link" +
-      "_id\030\004 \001(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webte" +
-      "rm.terminal.screen.v1.ColorKind\022\r\n\005index" +
-      "\030\002 \001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n" +
-      "\002id\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal" +
-      ".screen.v1.Color\022-\n\002bg\030\003 \001(\0132!.webterm.t" +
-      "erminal.screen.v1.Color\022:\n\017underline_col" +
-      "or\030\004 \001(\0132!.webterm.terminal.screen.v1.Co" +
-      "lor\0224\n\005attrs\030\005 \001(\0132%.webterm.terminal.sc" +
-      "reen.v1.CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030" +
-      "\001 \001(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tun" +
-      "derline\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022" +
-      "\027\n\017curly_underline\030\006 \001(\010\022\030\n\020dotted_under" +
-      "line\030\007 \001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\n" +
-      "blink_slow\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007" +
-      "reverse\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030" +
-      "\r \001(\010\"4\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 " +
-      "\001(\t\022\016\n\006params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001" +
-      "(\005\022\013\n\003col\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shap" +
-      "e\030\004 \001(\0162\'.webterm.terminal.screen.v1.Cur" +
-      "sorShape\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022app" +
-      "lication_cursor\030\001 \001(\010\022\032\n\022application_key" +
-      "pad\030\002 \001(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mo" +
-      "use_tracking\030\004 \001(\0162).webterm.terminal.sc" +
-      "reen.v1.MouseTracking\022A\n\016mouse_encoding\030" +
-      "\005 \001(\0162).webterm.terminal.screen.v1.Mouse" +
-      "Encoding\022\027\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017Te" +
-      "rminalPalette\0225\n\ndefault_fg\030\001 \001(\0132!.webt" +
-      "erm.terminal.screen.v1.Color\0225\n\ndefault_" +
-      "bg\030\002 \001(\0132!.webterm.terminal.screen.v1.Co" +
-      "lor\0227\n\014cursor_color\030\003 \001(\0132!.webterm.term" +
-      "inal.screen.v1.Color\022\025\n\rreverse_video\030\004 " +
-      "\001(\010\022G\n\016indexed_colors\030\005 \003(\0132/.webterm.te" +
-      "rminal.screen.v1.IndexedPaletteColor\022\022\n\n" +
-      "generation\030\006 \001(\004\"1\n\023IndexedPaletteColor\022" +
-      "\r\n\005index\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"\300\001\n\rHistoryW" +
-      "indow\022\037\n\027first_available_line_id\030\001 \001(\004\022\036" +
-      "\n\026first_included_line_id\030\002 \001(\004\022\035\n\025last_i" +
-      "ncluded_line_id\030\003 \001(\004\022\027\n\017has_more_before" +
-      "\030\004 \001(\010\0226\n\005lines\030\005 \003(\0132\'.webterm.terminal" +
-      ".screen.v1.HistoryLine\"]\n\013HistoryLine\022\n\n" +
-      "\002id\030\001 \001(\004\022\017\n\007wrapped\030\002 \001(\010\0221\n\004runs\030\003 \003(\013" +
-      "2#.webterm.terminal.screen.v1.CellRun\"a\n" +
-      "\016HistoryRequest\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014l" +
-      "ayout_epoch\030\002 \001(\004\022\026\n\016before_line_id\030\003 \001(" +
-      "\004\022\r\n\005limit\030\004 \001(\005\"\262\002\n\013HistoryPage\022\022\n\nrequ" +
-      "est_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016as" +
-      "_of_revision\030\003 \001(\004\022\037\n\027first_available_li" +
-      "ne_id\030\004 \001(\004\022\027\n\017has_more_before\030\005 \001(\010\0226\n\005" +
-      "lines\030\006 \003(\0132\'.webterm.terminal.screen.v1" +
-      ".HistoryLine\0229\n\006styles\030\007 \003(\0132).webterm.t" +
-      "erminal.screen.v1.TerminalStyle\0224\n\005links" +
-      "\030\010 \003(\0132%.webterm.terminal.screen.v1.Hype" +
-      "rlink\"D\n\013HistoryTrim\022\024\n\014layout_epoch\030\001 \001" +
-      "(\004\022\037\n\027first_available_line_id\030\002 \001(\004\"N\n\rR" +
-      "esyncRequest\022\024\n\014layout_epoch\030\001 \001(\004\022\027\n\017sc" +
-      "reen_revision\030\002 \001(\004\022\016\n\006reason\030\003 \001(\t\"8\n\rA" +
-      "cquireLayout\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013inte" +
-      "ractive\030\002 \001(\010\"\244\001\n\013LayoutLease\022\022\n\nrequest" +
-      "_id\030\001 \001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n\007granted\030\003" +
-      " \001(\010\022\023\n\013interactive\030\004 \001(\010\0222\n\010geometry\030\005 " +
-      "\001(\0132 .webterm.terminal.screen.v1.Size\022\025\n" +
-      "\rexpires_at_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n" +
-      "\010lease_id\030\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022" +
-      "\014\n\004rows\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nreque" +
-      "st_id\030\004 \001(\t\"\360\002\n\rTerminalInput\022\020\n\010lease_i" +
-      "d\030\001 \001(\t\022\032\n\022client_instance_id\030\002 \001(\t\022\021\n\ti" +
-      "nput_seq\030\003 \001(\004\0225\n\004text\030\n \001(\0132%.webterm.t" +
-      "erminal.screen.v1.TextInputH\000\0223\n\003key\030\013 \001" +
-      "(\0132$.webterm.terminal.screen.v1.KeyInput" +
-      "H\000\0227\n\005paste\030\014 \001(\0132&.webterm.terminal.scr" +
-      "een.v1.PasteInputH\000\0227\n\005mouse\030\r \001(\0132&.web" +
-      "term.terminal.screen.v1.MouseInputH\000\0227\n\005" +
-      "focus\030\016 \001(\0132&.webterm.terminal.screen.v1" +
-      ".FocusInputH\000B\007\n\005input\"\223\001\n\010InputAck\022\032\n\022c" +
-      "lient_instance_id\030\001 \001(\t\022\021\n\tinput_seq\030\002 \001" +
-      "(\004\022\034\n\024terminal_instance_id\030\003 \001(\t\022:\n\006stat" +
-      "us\030\004 \001(\0162*.webterm.terminal.screen.v1.In" +
-      "putAckStatus\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"" +
-      "d\n\010KeyInput\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 " +
-      "\001(\0132\'.webterm.terminal.screen.v1.Modifie" +
-      "rSet\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004d" +
-      "ata\030\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n" +
-      "\003col\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'.webterm.ter" +
-      "minal.screen.v1.MouseButton\022\023\n\013wheel_del" +
-      "ta\030\004 \001(\005\022:\n\tmodifiers\030\005 \001(\0132\'.webterm.te" +
-      "rminal.screen.v1.ModifierSet\022\017\n\007pressed\030" +
-      "\006 \001(\010\"\035\n\nFocusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013" +
-      "ModifierSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022" +
-      "\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\343\004\n\016Terminal" +
-      "Effect\022\023\n\013instance_id\030\001 \001(\t\022\027\n\017screen_re" +
-      "vision\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .webterm.ter" +
-      "minal.screen.v1.BellH\000\0229\n\005title\030\013 \001(\0132(." +
-      "webterm.terminal.screen.v1.TitleChangedH" +
-      "\000\022B\n\003cwd\030\014 \001(\01323.webterm.terminal.screen" +
-      ".v1.WorkingDirectoryChangedH\000\022J\n\016clipboa" +
-      "rd_read\030\r \001(\01320.webterm.terminal.screen." +
-      "v1.ClipboardReadRequestH\000\022L\n\017clipboard_w" +
-      "rite\030\016 \001(\01321.webterm.terminal.screen.v1." +
-      "ClipboardWriteRequestH\000\022G\n\014notification\030" +
-      "\017 \001(\0132/.webterm.terminal.screen.v1.Deskt" +
-      "opNotificationH\000\022=\n\007palette\030\020 \001(\0132*.webt" +
-      "erm.terminal.screen.v1.PaletteChangedH\000\022" +
-      "F\n\nshell_mark\030\021 \001(\01320.webterm.terminal.s" +
-      "creen.v1.ShellIntegrationMarkH\000B\010\n\006effec" +
-      "t\"\006\n\004Bell\"\035\n\014TitleChanged\022\r\n\005title\030\001 \001(\t" +
-      "\"\'\n\027WorkingDirectoryChanged\022\014\n\004path\030\001 \001(" +
-      "\t\"=\n\024ClipboardReadRequest\022\022\n\nrequest_id\030" +
-      "\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWri" +
-      "teRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboa" +
-      "rd\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotific" +
-      "ation\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"N\n\016Pa" +
-      "letteChanged\022<\n\007palette\030\001 \001(\0132+.webterm." +
-      "terminal.screen.v1.TerminalPalette\"2\n\024Sh" +
-      "ellIntegrationMark\022\014\n\004type\030\001 \001(\t\022\014\n\004data" +
-      "\030\002 \001(\t\"W\n\021ClipboardResponse\022\022\n\nrequest_i" +
-      "d\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(" +
-      "\010\022\014\n\004data\030\004 \001(\014\"\316\001\n\014TerminalInfo\022\022\n\nsess" +
-      "ion_id\030\001 \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\r\n\005tit" +
-      "le\030\004 \001(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n\007command\030\007 \001(\t\022\016" +
-      "\n\006status\030\010 \001(\t\022\014\n\004cols\030\t \001(\005\022\014\n\004rows\030\n \001" +
-      "(\005\022\025\n\rcreated_at_ms\030\013 \001(\003\022\031\n\021last_active" +
-      "_at_ms\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code" +
-      "\030\001 \001(\005*Z\n\nBufferKind\022\033\n\027BUFFER_KIND_UNSP" +
-      "ECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001\022\031\n\025BUFFE" +
-      "R_KIND_ALTERNATE\020\002*\240\001\n\tColorKind\022\032\n\026COLO" +
-      "R_KIND_UNSPECIFIED\020\000\022\031\n\025COLOR_KIND_DEFAU" +
-      "LT_FG\020\001\022\031\n\025COLOR_KIND_DEFAULT_BG\020\002\022\025\n\021CO" +
-      "LOR_KIND_CURSOR\020\003\022\026\n\022COLOR_KIND_INDEXED\020" +
-      "\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013CursorShape\022\034\n\030" +
-      "CURSOR_SHAPE_UNSPECIFIED\020\000\022\026\n\022CURSOR_SHA" +
-      "PE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020\002\022\032\n\026CURS" +
-      "OR_SHAPE_UNDERLINE\020\003*\374\001\n\rMouseTracking\022\036" +
-      "\n\032MOUSE_TRACKING_UNSPECIFIED\020\000\022\027\n\023MOUSE_" +
-      "TRACKING_NONE\020\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022" +
-      "\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n\036MOUSE_TRACK" +
-      "ING_VT200_HIGHLIGHT\020\004\022\037\n\033MOUSE_TRACKING_" +
-      "BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRACKING_ANY_EVE" +
-      "NT\020\006\022\035\n\031MOUSE_TRACKING_SGR_PIXELS\020\007*\222\001\n\r" +
-      "MouseEncoding\022\036\n\032MOUSE_ENCODING_UNSPECIF" +
-      "IED\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001\022\027\n\023MOUSE_E" +
-      "NCODING_UTF8\020\002\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030" +
-      "\n\024MOUSE_ENCODING_URXVT\020\004*\255\001\n\016InputAckSta" +
-      "tus\022 \n\034INPUT_ACK_STATUS_UNSPECIFIED\020\000\022\034\n" +
-      "\030INPUT_ACK_STATUS_WRITTEN\020\001\022\034\n\030INPUT_ACK" +
-      "_STATUS_IGNORED\020\002\022\035\n\031INPUT_ACK_STATUS_RE" +
-      "JECTED\020\003\022\036\n\032INPUT_ACK_STATUS_UNCERTAIN\020\004" +
-      "*\242\001\n\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECI" +
-      "FIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_B" +
-      "UTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026" +
-      "\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_M" +
-      "OVE\020\005Bq\n\'com.webterm.terminal.protocol.g" +
-      "eneratedB\023TerminalScreenProtoZ1webterm/g" +
-      "o-core/internal/screenprotocol/generated" +
-      "b\006proto3"
+      "(\010\022\016\n\006images\030\003 \001(\010\022\035\n\025compact_line_encod" +
+      "ing\030\004 \001(\010\"\037\n\004Ping\022\027\n\017screen_revision\030\001 \001" +
+      "(\004\"\037\n\004Pong\022\027\n\017screen_revision\030\001 \001(\004\"O\n\tR" +
+      "esumeAck\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_" +
+      "epoch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\"\220\005\n" +
+      "\016ScreenSnapshot\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013i" +
+      "nstance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022\027" +
+      "\n\017screen_revision\030\004 \001(\004\0222\n\010geometry\030\005 \001(" +
+      "\0132 .webterm.terminal.screen.v1.Size\022=\n\ra" +
+      "ctive_buffer\030\006 \001(\0162&.webterm.terminal.sc" +
+      "reen.v1.BufferKind\0222\n\006cursor\030\007 \001(\0132\".web" +
+      "term.terminal.screen.v1.Cursor\0220\n\005modes\030" +
+      "\010 \001(\0132!.webterm.terminal.screen.v1.Modes" +
+      "\022<\n\007palette\030\t \001(\0132+.webterm.terminal.scr" +
+      "een.v1.TerminalPalette\022:\n\007history\030\n \001(\0132" +
+      ").webterm.terminal.screen.v1.HistoryWind" +
+      "ow\0228\n\006screen\030\013 \003(\0132(.webterm.terminal.sc" +
+      "reen.v1.TerminalLine\0229\n\006styles\030\014 \003(\0132).w" +
+      "ebterm.terminal.screen.v1.TerminalStyle\022" +
+      "4\n\005links\030\r \003(\0132%.webterm.terminal.screen" +
+      ".v1.Hyperlink\022\r\n\005title\030\016 \001(\t\022\031\n\021working_" +
+      "directory\030\017 \001(\t\"\353\005\n\013ScreenPatch\022\024\n\014layou" +
+      "t_epoch\030\001 \001(\004\022\025\n\rbase_revision\030\002 \001(\004\022\027\n\017" +
+      "screen_revision\030\003 \001(\004\022?\n\016history_append\030" +
+      "\004 \003(\0132\'.webterm.terminal.screen.v1.Histo" +
+      "ryLine\022=\n\013screen_rows\030\005 \003(\0132(.webterm.te" +
+      "rminal.screen.v1.TerminalLine\0222\n\006cursor\030" +
+      "\006 \001(\0132\".webterm.terminal.screen.v1.Curso" +
+      "r\0220\n\005modes\030\007 \001(\0132!.webterm.terminal.scre" +
+      "en.v1.Modes\022<\n\007palette\030\010 \001(\0132+.webterm.t" +
+      "erminal.screen.v1.TerminalPalette\022=\n\nnew" +
+      "_styles\030\t \003(\0132).webterm.terminal.screen." +
+      "v1.TerminalStyle\0228\n\tnew_links\030\n \003(\0132%.we" +
+      "bterm.terminal.screen.v1.Hyperlink\022\022\n\005ti" +
+      "tle\030\013 \001(\tH\000\210\001\001\022\036\n\021working_directory\030\014 \001(" +
+      "\tH\001\210\001\001\022>\n\rpromoted_rows\030\r \003(\0132\'.webterm." +
+      "terminal.screen.v1.PromotedRow\022\023\n\013instan" +
+      "ce_id\030\016 \001(\t\022,\n\037first_available_history_l" +
+      "ine_id\030\017 \001(\004H\002\210\001\001B\010\n\006_titleB\024\n\022_working_" +
+      "directoryB\"\n _first_available_history_li" +
+      "ne_id\":\n\013PromotedRow\022\022\n\nscreen_row\030\001 \001(\005" +
+      "\022\027\n\017history_line_id\030\002 \001(\004\"\"\n\004Size\022\014\n\004row" +
+      "s\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"\272\001\n\014TerminalLine\022\013" +
+      "\n\003row\030\001 \001(\005\022\017\n\007line_id\030\002 \001(\004\022\017\n\007wrapped\030" +
+      "\003 \001(\010\0221\n\004runs\030\004 \003(\0132#.webterm.terminal.s" +
+      "creen.v1.CellRun\022\014\n\004text\030\005 \001(\t\022:\n\013style_" +
+      "spans\030\006 \003(\0132%.webterm.terminal.screen.v1" +
+      ".StyleSpan\"R\n\tStyleSpan\022\021\n\tstart_col\030\001 \001" +
+      "(\005\022\017\n\007end_col\030\002 \001(\005\022\020\n\010style_id\030\003 \001(\r\022\017\n" +
+      "\007link_id\030\004 \001(\r\"G\n\007CellRun\022\013\n\003col\030\001 \001(\005\022/" +
+      "\n\005cells\030\002 \003(\0132 .webterm.terminal.screen." +
+      "v1.Cell\"F\n\004Cell\022\014\n\004text\030\001 \001(\t\022\r\n\005width\030\002" +
+      " \001(\r\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link_id\030\004 \001(\r\"" +
+      "X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webterm.termina" +
+      "l.screen.v1.ColorKind\022\r\n\005index\030\002 \001(\005\022\013\n\003" +
+      "rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002id\030\001 \001(\r\022" +
+      "-\n\002fg\030\002 \001(\0132!.webterm.terminal.screen.v1" +
+      ".Color\022-\n\002bg\030\003 \001(\0132!.webterm.terminal.sc" +
+      "reen.v1.Color\022:\n\017underline_color\030\004 \001(\0132!" +
+      ".webterm.terminal.screen.v1.Color\0224\n\005att" +
+      "rs\030\005 \001(\0132%.webterm.terminal.screen.v1.Ce" +
+      "llAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001 \001(\010\022\013\n\003d" +
+      "im\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tunderline\030\004 " +
+      "\001(\010\022\030\n\020double_underline\030\005 \001(\010\022\027\n\017curly_u" +
+      "nderline\030\006 \001(\010\022\030\n\020dotted_underline\030\007 \001(\010" +
+      "\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\nblink_slow" +
+      "\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007reverse\030\013 " +
+      "\001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"4\n\tH" +
+      "yperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n\006par" +
+      "ams\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030" +
+      "\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shape\030\004 \001(\0162\'." +
+      "webterm.terminal.screen.v1.CursorShape\022\r" +
+      "\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022application_c" +
+      "ursor\030\001 \001(\010\022\032\n\022application_keypad\030\002 \001(\010\022" +
+      "\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mouse_tracki" +
+      "ng\030\004 \001(\0162).webterm.terminal.screen.v1.Mo" +
+      "useTracking\022A\n\016mouse_encoding\030\005 \001(\0162).we" +
+      "bterm.terminal.screen.v1.MouseEncoding\022\027" +
+      "\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017TerminalPale" +
+      "tte\0225\n\ndefault_fg\030\001 \001(\0132!.webterm.termin" +
+      "al.screen.v1.Color\0225\n\ndefault_bg\030\002 \001(\0132!" +
+      ".webterm.terminal.screen.v1.Color\0227\n\014cur" +
+      "sor_color\030\003 \001(\0132!.webterm.terminal.scree" +
+      "n.v1.Color\022\025\n\rreverse_video\030\004 \001(\010\022G\n\016ind" +
+      "exed_colors\030\005 \003(\0132/.webterm.terminal.scr" +
+      "een.v1.IndexedPaletteColor\022\022\n\ngeneration" +
+      "\030\006 \001(\004\"1\n\023IndexedPaletteColor\022\r\n\005index\030\001" +
+      " \001(\005\022\013\n\003rgb\030\002 \001(\r\"\300\001\n\rHistoryWindow\022\037\n\027f" +
+      "irst_available_line_id\030\001 \001(\004\022\036\n\026first_in" +
+      "cluded_line_id\030\002 \001(\004\022\035\n\025last_included_li" +
+      "ne_id\030\003 \001(\004\022\027\n\017has_more_before\030\004 \001(\010\0226\n\005" +
+      "lines\030\005 \003(\0132\'.webterm.terminal.screen.v1" +
+      ".HistoryLine\"\247\001\n\013HistoryLine\022\n\n\002id\030\001 \001(\004" +
+      "\022\017\n\007wrapped\030\002 \001(\010\0221\n\004runs\030\003 \003(\0132#.webter" +
+      "m.terminal.screen.v1.CellRun\022\014\n\004text\030\004 \001" +
+      "(\t\022:\n\013style_spans\030\005 \003(\0132%.webterm.termin" +
+      "al.screen.v1.StyleSpan\"a\n\016HistoryRequest" +
+      "\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001" +
+      "(\004\022\026\n\016before_line_id\030\003 \001(\004\022\r\n\005limit\030\004 \001(" +
+      "\005\"\262\002\n\013HistoryPage\022\022\n\nrequest_id\030\001 \001(\t\022\024\n" +
+      "\014layout_epoch\030\002 \001(\004\022\026\n\016as_of_revision\030\003 " +
+      "\001(\004\022\037\n\027first_available_line_id\030\004 \001(\004\022\027\n\017" +
+      "has_more_before\030\005 \001(\010\0226\n\005lines\030\006 \003(\0132\'.w" +
+      "ebterm.terminal.screen.v1.HistoryLine\0229\n" +
+      "\006styles\030\007 \003(\0132).webterm.terminal.screen." +
+      "v1.TerminalStyle\0224\n\005links\030\010 \003(\0132%.webter" +
+      "m.terminal.screen.v1.Hyperlink\"D\n\013Histor" +
+      "yTrim\022\024\n\014layout_epoch\030\001 \001(\004\022\037\n\027first_ava" +
+      "ilable_line_id\030\002 \001(\004\"N\n\rResyncRequest\022\024\n" +
+      "\014layout_epoch\030\001 \001(\004\022\027\n\017screen_revision\030\002" +
+      " \001(\004\022\016\n\006reason\030\003 \001(\t\"8\n\rAcquireLayout\022\022\n" +
+      "\nrequest_id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"\244" +
+      "\001\n\013LayoutLease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010le" +
+      "ase_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013interac" +
+      "tive\030\004 \001(\010\0222\n\010geometry\030\005 \001(\0132 .webterm.t" +
+      "erminal.screen.v1.Size\022\025\n\rexpires_at_ms\030" +
+      "\006 \001(\004\"!\n\rReleaseLayout\022\020\n\010lease_id\030\001 \001(\t" +
+      "\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020" +
+      "\n\010lease_id\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\360\002\n" +
+      "\rTerminalInput\022\020\n\010lease_id\030\001 \001(\t\022\032\n\022clie" +
+      "nt_instance_id\030\002 \001(\t\022\021\n\tinput_seq\030\003 \001(\004\022" +
+      "5\n\004text\030\n \001(\0132%.webterm.terminal.screen." +
+      "v1.TextInputH\000\0223\n\003key\030\013 \001(\0132$.webterm.te" +
+      "rminal.screen.v1.KeyInputH\000\0227\n\005paste\030\014 \001" +
+      "(\0132&.webterm.terminal.screen.v1.PasteInp" +
+      "utH\000\0227\n\005mouse\030\r \001(\0132&.webterm.terminal.s" +
+      "creen.v1.MouseInputH\000\0227\n\005focus\030\016 \001(\0132&.w" +
+      "ebterm.terminal.screen.v1.FocusInputH\000B\007" +
+      "\n\005input\"\223\001\n\010InputAck\022\032\n\022client_instance_" +
+      "id\030\001 \001(\t\022\021\n\tinput_seq\030\002 \001(\004\022\034\n\024terminal_" +
+      "instance_id\030\003 \001(\t\022:\n\006status\030\004 \001(\0162*.webt" +
+      "erm.terminal.screen.v1.InputAckStatus\"\031\n" +
+      "\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003" +
+      "key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'.webterm.t" +
+      "erminal.screen.v1.ModifierSet\022\017\n\007pressed" +
+      "\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301\001\n\nM" +
+      "ouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006b" +
+      "utton\030\003 \001(\0162\'.webterm.terminal.screen.v1" +
+      ".MouseButton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n\tmod" +
+      "ifiers\030\005 \001(\0132\'.webterm.terminal.screen.v" +
+      "1.ModifierSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFocusI" +
+      "nput\022\017\n\007focused\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005" +
+      "shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014" +
+      "\n\004meta\030\004 \001(\010\"\343\004\n\016TerminalEffect\022\023\n\013insta" +
+      "nce_id\030\001 \001(\t\022\027\n\017screen_revision\030\002 \001(\004\0220\n" +
+      "\004bell\030\n \001(\0132 .webterm.terminal.screen.v1" +
+      ".BellH\000\0229\n\005title\030\013 \001(\0132(.webterm.termina" +
+      "l.screen.v1.TitleChangedH\000\022B\n\003cwd\030\014 \001(\0132" +
+      "3.webterm.terminal.screen.v1.WorkingDire" +
+      "ctoryChangedH\000\022J\n\016clipboard_read\030\r \001(\01320" +
+      ".webterm.terminal.screen.v1.ClipboardRea" +
+      "dRequestH\000\022L\n\017clipboard_write\030\016 \001(\01321.we" +
+      "bterm.terminal.screen.v1.ClipboardWriteR" +
+      "equestH\000\022G\n\014notification\030\017 \001(\0132/.webterm" +
+      ".terminal.screen.v1.DesktopNotificationH" +
+      "\000\022=\n\007palette\030\020 \001(\0132*.webterm.terminal.sc" +
+      "reen.v1.PaletteChangedH\000\022F\n\nshell_mark\030\021" +
+      " \001(\01320.webterm.terminal.screen.v1.ShellI" +
+      "ntegrationMarkH\000B\010\n\006effect\"\006\n\004Bell\"\035\n\014Ti" +
+      "tleChanged\022\r\n\005title\030\001 \001(\t\"\'\n\027WorkingDire" +
+      "ctoryChanged\022\014\n\004path\030\001 \001(\t\"=\n\024ClipboardR" +
+      "eadRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipbo" +
+      "ard\030\002 \001(\t\"L\n\025ClipboardWriteRequest\022\022\n\nre" +
+      "quest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004dat" +
+      "a\030\003 \001(\014\"2\n\023DesktopNotification\022\r\n\005title\030" +
+      "\001 \001(\t\022\014\n\004body\030\002 \001(\t\"N\n\016PaletteChanged\022<\n" +
+      "\007palette\030\001 \001(\0132+.webterm.terminal.screen" +
+      ".v1.TerminalPalette\"2\n\024ShellIntegrationM" +
+      "ark\022\014\n\004type\030\001 \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021Clipb" +
+      "oardResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007allo" +
+      "wed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(\014" +
+      "\"\316\001\n\014TerminalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023\n" +
+      "\013instance_id\030\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cwd" +
+      "\030\006 \001(\t\022\017\n\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022" +
+      "\014\n\004cols\030\t \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_a" +
+      "t_ms\030\013 \001(\003\022\031\n\021last_active_at_ms\030\014 \001(\003J\004\010" +
+      "\003\020\004J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBuffe" +
+      "rKind\022\033\n\027BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BU" +
+      "FFER_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNAT" +
+      "E\020\002*\240\001\n\tColorKind\022\032\n\026COLOR_KIND_UNSPECIF" +
+      "IED\020\000\022\031\n\025COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLO" +
+      "R_KIND_DEFAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR" +
+      "\020\003\022\026\n\022COLOR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND" +
+      "_RGB\020\005*u\n\013CursorShape\022\034\n\030CURSOR_SHAPE_UN" +
+      "SPECIFIED\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020C" +
+      "URSOR_SHAPE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERL" +
+      "INE\020\003*\374\001\n\rMouseTracking\022\036\n\032MOUSE_TRACKIN" +
+      "G_UNSPECIFIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001" +
+      "\022\026\n\022MOUSE_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKI" +
+      "NG_VT200\020\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHL" +
+      "IGHT\020\004\022\037\n\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022" +
+      "\034\n\030MOUSE_TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_T" +
+      "RACKING_SGR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036" +
+      "\n\032MOUSE_ENCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_" +
+      "ENCODING_X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022" +
+      "\026\n\022MOUSE_ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODIN" +
+      "G_URXVT\020\004*\255\001\n\016InputAckStatus\022 \n\034INPUT_AC" +
+      "K_STATUS_UNSPECIFIED\020\000\022\034\n\030INPUT_ACK_STAT" +
+      "US_WRITTEN\020\001\022\034\n\030INPUT_ACK_STATUS_IGNORED" +
+      "\020\002\022\035\n\031INPUT_ACK_STATUS_REJECTED\020\003\022\036\n\032INP" +
+      "UT_ACK_STATUS_UNCERTAIN\020\004*\242\001\n\013MouseButto" +
+      "n\022\034\n\030MOUSE_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE" +
+      "_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022" +
+      "\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_" +
+      "WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005Bq\n\'com.we" +
+      "bterm.terminal.protocol.generatedB\023Termi" +
+      "nalScreenProtoZ1webterm/go-core/internal" +
+      "/screenprotocol/generatedb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -56418,7 +58328,7 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_CapabilitySet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_CapabilitySet_descriptor,
-        new java.lang.String[] { "RowPatches", "ScrollOps", "Images", });
+        new java.lang.String[] { "RowPatches", "ScrollOps", "Images", "CompactLineEncoding", });
     internal_static_webterm_terminal_screen_v1_Ping_descriptor =
       getDescriptor().getMessageTypes().get(4);
     internal_static_webterm_terminal_screen_v1_Ping_fieldAccessorTable = new
@@ -56466,243 +58376,249 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_TerminalLine_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalLine_descriptor,
-        new java.lang.String[] { "Row", "LineId", "Wrapped", "Runs", });
-    internal_static_webterm_terminal_screen_v1_CellRun_descriptor =
+        new java.lang.String[] { "Row", "LineId", "Wrapped", "Runs", "Text", "StyleSpans", });
+    internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor =
       getDescriptor().getMessageTypes().get(12);
+    internal_static_webterm_terminal_screen_v1_StyleSpan_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor,
+        new java.lang.String[] { "StartCol", "EndCol", "StyleId", "LinkId", });
+    internal_static_webterm_terminal_screen_v1_CellRun_descriptor =
+      getDescriptor().getMessageTypes().get(13);
     internal_static_webterm_terminal_screen_v1_CellRun_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_CellRun_descriptor,
         new java.lang.String[] { "Col", "Cells", });
     internal_static_webterm_terminal_screen_v1_Cell_descriptor =
-      getDescriptor().getMessageTypes().get(13);
+      getDescriptor().getMessageTypes().get(14);
     internal_static_webterm_terminal_screen_v1_Cell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Cell_descriptor,
         new java.lang.String[] { "Text", "Width", "StyleId", "LinkId", });
     internal_static_webterm_terminal_screen_v1_Color_descriptor =
-      getDescriptor().getMessageTypes().get(14);
+      getDescriptor().getMessageTypes().get(15);
     internal_static_webterm_terminal_screen_v1_Color_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Color_descriptor,
         new java.lang.String[] { "Kind", "Index", "Rgb", });
     internal_static_webterm_terminal_screen_v1_TerminalStyle_descriptor =
-      getDescriptor().getMessageTypes().get(15);
+      getDescriptor().getMessageTypes().get(16);
     internal_static_webterm_terminal_screen_v1_TerminalStyle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalStyle_descriptor,
         new java.lang.String[] { "Id", "Fg", "Bg", "UnderlineColor", "Attrs", });
     internal_static_webterm_terminal_screen_v1_CellAttrs_descriptor =
-      getDescriptor().getMessageTypes().get(16);
+      getDescriptor().getMessageTypes().get(17);
     internal_static_webterm_terminal_screen_v1_CellAttrs_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_CellAttrs_descriptor,
         new java.lang.String[] { "Bold", "Dim", "Italic", "Underline", "DoubleUnderline", "CurlyUnderline", "DottedUnderline", "DashedUnderline", "BlinkSlow", "BlinkFast", "Reverse", "Hidden", "Strike", });
     internal_static_webterm_terminal_screen_v1_Hyperlink_descriptor =
-      getDescriptor().getMessageTypes().get(17);
+      getDescriptor().getMessageTypes().get(18);
     internal_static_webterm_terminal_screen_v1_Hyperlink_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Hyperlink_descriptor,
         new java.lang.String[] { "Id", "Uri", "Params", });
     internal_static_webterm_terminal_screen_v1_Cursor_descriptor =
-      getDescriptor().getMessageTypes().get(18);
+      getDescriptor().getMessageTypes().get(19);
     internal_static_webterm_terminal_screen_v1_Cursor_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Cursor_descriptor,
         new java.lang.String[] { "Row", "Col", "Visible", "Shape", "Blink", });
     internal_static_webterm_terminal_screen_v1_Modes_descriptor =
-      getDescriptor().getMessageTypes().get(19);
+      getDescriptor().getMessageTypes().get(20);
     internal_static_webterm_terminal_screen_v1_Modes_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Modes_descriptor,
         new java.lang.String[] { "ApplicationCursor", "ApplicationKeypad", "BracketedPaste", "MouseTracking", "MouseEncoding", "FocusReporting", });
     internal_static_webterm_terminal_screen_v1_TerminalPalette_descriptor =
-      getDescriptor().getMessageTypes().get(20);
+      getDescriptor().getMessageTypes().get(21);
     internal_static_webterm_terminal_screen_v1_TerminalPalette_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalPalette_descriptor,
         new java.lang.String[] { "DefaultFg", "DefaultBg", "CursorColor", "ReverseVideo", "IndexedColors", "Generation", });
     internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor =
-      getDescriptor().getMessageTypes().get(21);
+      getDescriptor().getMessageTypes().get(22);
     internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_IndexedPaletteColor_descriptor,
         new java.lang.String[] { "Index", "Rgb", });
     internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor =
-      getDescriptor().getMessageTypes().get(22);
+      getDescriptor().getMessageTypes().get(23);
     internal_static_webterm_terminal_screen_v1_HistoryWindow_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryWindow_descriptor,
         new java.lang.String[] { "FirstAvailableLineId", "FirstIncludedLineId", "LastIncludedLineId", "HasMoreBefore", "Lines", });
     internal_static_webterm_terminal_screen_v1_HistoryLine_descriptor =
-      getDescriptor().getMessageTypes().get(23);
+      getDescriptor().getMessageTypes().get(24);
     internal_static_webterm_terminal_screen_v1_HistoryLine_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryLine_descriptor,
-        new java.lang.String[] { "Id", "Wrapped", "Runs", });
+        new java.lang.String[] { "Id", "Wrapped", "Runs", "Text", "StyleSpans", });
     internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor =
-      getDescriptor().getMessageTypes().get(24);
+      getDescriptor().getMessageTypes().get(25);
     internal_static_webterm_terminal_screen_v1_HistoryRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor,
         new java.lang.String[] { "RequestId", "LayoutEpoch", "BeforeLineId", "Limit", });
     internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_webterm_terminal_screen_v1_HistoryPage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor,
         new java.lang.String[] { "RequestId", "LayoutEpoch", "AsOfRevision", "FirstAvailableLineId", "HasMoreBefore", "Lines", "Styles", "Links", });
     internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_webterm_terminal_screen_v1_HistoryTrim_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor,
         new java.lang.String[] { "LayoutEpoch", "FirstAvailableLineId", });
     internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_webterm_terminal_screen_v1_ResyncRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor,
         new java.lang.String[] { "LayoutEpoch", "ScreenRevision", "Reason", });
     internal_static_webterm_terminal_screen_v1_AcquireLayout_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_webterm_terminal_screen_v1_AcquireLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_AcquireLayout_descriptor,
         new java.lang.String[] { "RequestId", "Interactive", });
     internal_static_webterm_terminal_screen_v1_LayoutLease_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_webterm_terminal_screen_v1_LayoutLease_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_LayoutLease_descriptor,
         new java.lang.String[] { "RequestId", "LeaseId", "Granted", "Interactive", "Geometry", "ExpiresAtMs", });
     internal_static_webterm_terminal_screen_v1_ReleaseLayout_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_webterm_terminal_screen_v1_ReleaseLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ReleaseLayout_descriptor,
         new java.lang.String[] { "LeaseId", });
     internal_static_webterm_terminal_screen_v1_Resize_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_webterm_terminal_screen_v1_Resize_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Resize_descriptor,
         new java.lang.String[] { "Cols", "Rows", "LeaseId", "RequestId", });
     internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_webterm_terminal_screen_v1_TerminalInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInput_descriptor,
         new java.lang.String[] { "LeaseId", "ClientInstanceId", "InputSeq", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
     internal_static_webterm_terminal_screen_v1_InputAck_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_webterm_terminal_screen_v1_InputAck_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_InputAck_descriptor,
         new java.lang.String[] { "ClientInstanceId", "InputSeq", "TerminalInstanceId", "Status", });
     internal_static_webterm_terminal_screen_v1_TextInput_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_webterm_terminal_screen_v1_TextInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TextInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_KeyInput_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_webterm_terminal_screen_v1_KeyInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_KeyInput_descriptor,
         new java.lang.String[] { "Key", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_PasteInput_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_webterm_terminal_screen_v1_PasteInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PasteInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v1_MouseInput_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_webterm_terminal_screen_v1_MouseInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_MouseInput_descriptor,
         new java.lang.String[] { "Row", "Col", "Button", "WheelDelta", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v1_FocusInput_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_webterm_terminal_screen_v1_FocusInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_FocusInput_descriptor,
         new java.lang.String[] { "Focused", });
     internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_webterm_terminal_screen_v1_ModifierSet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ModifierSet_descriptor,
         new java.lang.String[] { "Shift", "Alt", "Ctrl", "Meta", });
     internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_webterm_terminal_screen_v1_TerminalEffect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalEffect_descriptor,
         new java.lang.String[] { "InstanceId", "ScreenRevision", "Bell", "Title", "Cwd", "ClipboardRead", "ClipboardWrite", "Notification", "Palette", "ShellMark", "Effect", });
     internal_static_webterm_terminal_screen_v1_Bell_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_webterm_terminal_screen_v1_Bell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Bell_descriptor,
         new java.lang.String[] { });
     internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_webterm_terminal_screen_v1_TitleChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TitleChanged_descriptor,
         new java.lang.String[] { "Title", });
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_WorkingDirectoryChanged_descriptor,
         new java.lang.String[] { "Path", });
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardReadRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", });
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardWriteRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", "Data", });
     internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(47);
     internal_static_webterm_terminal_screen_v1_DesktopNotification_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_DesktopNotification_descriptor,
         new java.lang.String[] { "Title", "Body", });
     internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(48);
     internal_static_webterm_terminal_screen_v1_PaletteChanged_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_PaletteChanged_descriptor,
         new java.lang.String[] { "Palette", });
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor =
-      getDescriptor().getMessageTypes().get(48);
+      getDescriptor().getMessageTypes().get(49);
     internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ShellIntegrationMark_descriptor,
         new java.lang.String[] { "Type", "Data", });
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor =
-      getDescriptor().getMessageTypes().get(49);
+      getDescriptor().getMessageTypes().get(50);
     internal_static_webterm_terminal_screen_v1_ClipboardResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ClipboardResponse_descriptor,
         new java.lang.String[] { "RequestId", "Allowed", "Timeout", "Data", });
     internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor =
-      getDescriptor().getMessageTypes().get(50);
+      getDescriptor().getMessageTypes().get(51);
     internal_static_webterm_terminal_screen_v1_TerminalInfo_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_TerminalInfo_descriptor,
         new java.lang.String[] { "SessionId", "InstanceId", "Title", "Cwd", "Command", "Status", "Cols", "Rows", "CreatedAtMs", "LastActiveAtMs", });
     internal_static_webterm_terminal_screen_v1_Exit_descriptor =
-      getDescriptor().getMessageTypes().get(51);
+      getDescriptor().getMessageTypes().get(52);
     internal_static_webterm_terminal_screen_v1_Exit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_Exit_descriptor,

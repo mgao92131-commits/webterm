@@ -35,6 +35,22 @@ func TestProjector_PatchAfterBaseline(t *testing.T) {
 	if frame.BaseRevision != 1 {
 		t.Fatalf("expected patch base=1, got %d", frame.BaseRevision)
 	}
+	if len(frame.Screen) == 0 {
+		t.Fatal("dirty-row revision index must select the changed row")
+	}
+}
+
+func TestChangedScreenRows_UsesRevisionIndexWhenPresent(t *testing.T) {
+	old := terminalengine.ScreenFrame{Seq: 10, Screen: []terminalengine.Line{{Row: 0}, {Row: 1}}}
+	newState := old
+	newState.Seq = 11
+	newState.Screen = []terminalengine.Line{{Row: 0}, {Row: 1, Runs: []terminalengine.CellRun{{Col: 0}}}}
+	newState.RowChangedRevision = []uint64{10, 11}
+
+	rows := changedScreenRows(old, newState)
+	if len(rows) != 1 || rows[0].Row != 1 {
+		t.Fatalf("revision index selected rows=%+v, want only row 1", rows)
+	}
 }
 
 func TestProjector_DynamicPaletteProducesMetadataOnlyPatch(t *testing.T) {

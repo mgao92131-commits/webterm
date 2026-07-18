@@ -6,9 +6,9 @@ import android.view.inputmethod.InputMethodManager;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.renderer.RemoteTerminalView;
 
 /**
@@ -47,9 +47,13 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void render(@NonNull RemoteTerminalModel model, @NonNull TerminalViewportState viewport,
-                     @NonNull ModelChange change) {
-    view.setModel(model, viewport, change);
+  public void bindModel(@NonNull RemoteTerminalModel model) {
+    view.bindModel(model);
+  }
+
+  @Override
+  public void render(@NonNull RenderUpdate update, @NonNull TerminalViewportState viewport) {
+    view.applyRenderUpdate(update, viewport);
     if (afterRender != null) afterRender.run();
   }
 

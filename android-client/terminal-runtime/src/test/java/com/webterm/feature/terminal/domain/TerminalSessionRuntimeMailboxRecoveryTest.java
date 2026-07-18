@@ -1,6 +1,7 @@
 package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -8,7 +9,6 @@ import androidx.annotation.Nullable;
 import com.webterm.core.contract.diagnostics.DiagnosticLevel;
 import com.webterm.core.contract.diagnostics.DiagnosticSink;
 import com.webterm.core.contract.diagnostics.Diagnostics;
-import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
@@ -20,6 +20,10 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 验证 ScreenMailbox drain 不会因为单条消息处理异常而永久卡死。
@@ -48,13 +52,21 @@ public final class TerminalSessionRuntimeMailboxRecoveryTest {
   }
 
   @Test
-  public void modelChangeCallbackException_doesNotStallMailbox() {
-    // 第一条 snapshot 的 model change 回调会抛异常，模拟未保护的 RuntimeException。
+  public void asyncRenderWakeCallbackException_isIsolatedWithoutResync() throws Exception {
+    ExecutorService callbacks = Executors.newSingleThreadExecutor();
+    runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(), Runnable::run, callbacks,
+        (task, delayMs) -> { /* no-op for this test */ });
+    connection = new FakeScreenConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    CountDownLatch healthyListenerCalled = new CountDownLatch(2);
+
+    // 第一条 render-needed 回调会抛异常，模拟真实主线程 callback executor。
     runtime.addListener(new TerminalSessionRuntime.Listener() {
       private boolean armed = true;
 
       @Override
-      public void onModelChange(@NonNull ModelChange change) {
+      public void onRenderNeeded() {
         if (armed) {
           armed = false;
           throw new RuntimeException("simulated callback failure");
@@ -67,18 +79,22 @@ public final class TerminalSessionRuntimeMailboxRecoveryTest {
       @Override
       public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {}
     });
+    runtime.addListener(new TerminalSessionRuntime.Listener() {
+      @Override public void onRenderNeeded() { healthyListenerCalled.countDown(); }
+      @Override public void onEffect(@NonNull TerminalScreenEffect effect) {}
+      @Override public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {}
+    });
 
-    // 第一条消息：snapshot 已应用，但 dispatchModelChange 抛异常。
+    // 两个 callback 都必须执行：异常 Listener 不得影响主线程或后续 Listener。
     connection.listener.onScreenMessage(snapshot(1).toByteArray());
-
-    // 最终安全网应记录异常并启动 resync，而不是让 drainScheduled 悬空。
-    assertEquals("应记录 screen_frame_processing_failed", 1,
-        sink.count("screen_frame_processing_failed"));
-    assertEquals("应启动 resync 恢复", 1, connection.resyncRequests);
-
-    // 第二条权威 snapshot 必须仍能进入 Mailbox 并被处理。
     connection.listener.onScreenMessage(snapshot(2).toByteArray());
-    assertEquals("Mailbox 不能永久卡死", 2, runtime.model().screenRevision);
+    assertTrue("healthy listener should receive both asynchronous callbacks",
+        healthyListenerCalled.await(5, TimeUnit.SECONDS));
+    callbacks.shutdownNow();
+
+    assertEquals("UI callback failures must not request a screen resync", 0, connection.resyncRequests);
+    assertEquals("Mailbox and model remain healthy", 2, runtime.model().screenRevision);
+    assertEquals("listener failure is isolated as a UI diagnostic", 1, sink.count("ui_callback_failed"));
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {

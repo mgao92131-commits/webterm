@@ -110,21 +110,16 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 	return ResumeDerivation{
 		Outcome: ResumeOutcomePatch,
 		Frame: terminalengine.ScreenFrame{
-			Version:      1,
-			Kind:         terminalengine.FramePatch,
-			SessionID:    state.SessionID,
-			InstanceID:   state.InstanceID,
-			Epoch:        state.Epoch,
-			Seq:          current,
-			BaseRevision: clientRevision,
-			Rows:         state.Rows,
-			Cols:         state.Cols,
-			ActiveBuffer: state.ActiveBuffer,
-			// cursor/modes/palette 沿用 diffToPatch 的既有 wire 语义：ScreenFrame
-			// 没有 presence 标志、encoder 对 patch 总是编码这三个组件，因此总是
-			// 携带当前值（客户端无条件覆盖）。上面的 *Changed revision 只用于
-			// 空 patch 判定与后续指标（§13），不改变 wire 内容；若未来引入显式
-			// presence，可据此改为按 revision > clientRevision 决定出现与否。
+			Version:           1,
+			Kind:              terminalengine.FramePatch,
+			SessionID:         state.SessionID,
+			InstanceID:        state.InstanceID,
+			Epoch:             state.Epoch,
+			Seq:               current,
+			BaseRevision:      clientRevision,
+			Rows:              state.Rows,
+			Cols:              state.Cols,
+			ActiveBuffer:      state.ActiveBuffer,
 			ReverseVideo:      state.ReverseVideo,
 			DefaultFG:         state.DefaultFG,
 			DefaultBG:         state.DefaultBG,
@@ -134,6 +129,9 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 			PaletteGeneration: state.PaletteGeneration,
 			Cursor:            state.Cursor,
 			Modes:             state.Modes,
+			CursorChanged:     cursorChanged,
+			ModesChanged:      modesChanged,
+			PaletteChanged:    paletteChanged,
 			Screen:            changedRows,
 			Styles:            newStyles,
 			Links:             newLinks,

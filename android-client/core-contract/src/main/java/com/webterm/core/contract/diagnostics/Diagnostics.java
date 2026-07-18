@@ -52,6 +52,14 @@ public final class Diagnostics {
         log(DiagnosticLevel.ERROR, area, event, fields);
     }
 
+    public static boolean isEnabled(DiagnosticLevel level) {
+        try {
+            return currentSink.isEnabled(level);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private static void log(DiagnosticLevel level, String area, String event, Map<String, ?> fields) {
         Map<String, ?> safeFields = (fields != null) ? fields : Collections.emptyMap();
         try {

@@ -108,6 +108,10 @@ public final class ScreenMessageValidator {
     if (s.getStylesCount() > MAX_STYLES || s.getLinksCount() > MAX_LINKS) {
       return ValidationResult.fail("too many styles or links");
     }
+    for (TerminalScreenProto.HistoryLine line : s.getHistory().getLinesList()) {
+      ValidationResult lineResult = validateHistoryLine(line);
+      if (!lineResult.ok) return lineResult;
+    }
     return validateLines(s.getScreenList(), cols);
   }
 
@@ -212,6 +216,10 @@ public final class ScreenMessageValidator {
   }
 
   private static ValidationResult validateHistoryLine(TerminalScreenProto.HistoryLine line) {
+    if (!line.getText().isEmpty()) {
+      if (line.getRunsCount() != 0) return ValidationResult.fail("history line mixes compact and runs");
+      return validateCompactLine(line.getText(), line.getStyleSpansList(), MAX_COLS);
+    }
     for (TerminalScreenProto.CellRun run : line.getRunsList()) {
       if (run.getCol() < 0 || run.getCol() >= MAX_COLS) {
         return ValidationResult.fail("history run col out of bounds: " + run.getCol());
@@ -255,6 +263,12 @@ public final class ScreenMessageValidator {
 
   private static ValidationResult validateLines(java.util.List<TerminalScreenProto.TerminalLine> lines, int maxCols) {
     for (TerminalScreenProto.TerminalLine line : lines) {
+      if (!line.getText().isEmpty()) {
+        if (line.getRunsCount() != 0) return ValidationResult.fail("line mixes compact and runs");
+        ValidationResult compactResult = validateCompactLine(line.getText(), line.getStyleSpansList(), maxCols);
+        if (!compactResult.ok) return compactResult;
+        continue;
+      }
       for (TerminalScreenProto.CellRun run : line.getRunsList()) {
         if (run.getCol() < 0 || run.getCol() >= maxCols) {
           return ValidationResult.fail("run col out of bounds: " + run.getCol());
@@ -269,6 +283,27 @@ public final class ScreenMessageValidator {
           }
         }
       }
+    }
+    return ValidationResult.ok();
+  }
+
+  private static ValidationResult validateCompactLine(String text,
+                                                      java.util.List<TerminalScreenProto.StyleSpan> spans,
+                                                      int maxCols) {
+    if (text.length() == 0 || text.length() > maxCols) {
+      return ValidationResult.fail("invalid compact line length: " + text.length());
+    }
+    for (int index = 0; index < text.length(); index++) {
+      char ch = text.charAt(index);
+      if (ch < 0x20 || ch > 0x7e) return ValidationResult.fail("compact line must be ASCII");
+    }
+    int previousEnd = 0;
+    for (TerminalScreenProto.StyleSpan span : spans) {
+      if (span.getStartCol() < previousEnd || span.getStartCol() < 0
+          || span.getEndCol() <= span.getStartCol() || span.getEndCol() > text.length()) {
+        return ValidationResult.fail("invalid compact style span");
+      }
+      previousEnd = span.getEndCol();
     }
     return ValidationResult.ok();
   }

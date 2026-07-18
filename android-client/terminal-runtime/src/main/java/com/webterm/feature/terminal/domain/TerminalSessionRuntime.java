@@ -6,12 +6,14 @@ import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.WireFormat;
 import com.webterm.terminal.model.HistoryBudget;
-import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.model.ScreenPatch;
+import com.webterm.core.contract.diagnostics.DiagnosticLevel;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageMapper;
@@ -24,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Map;
 import java.util.HashMap;
+import java.io.IOException;
 
 /**
  * 无 Activity 的终端会话运行时。持有连接、远端模型和模型执行器。
@@ -49,13 +52,21 @@ public final class TerminalSessionRuntime {
   private static final long LEASE_REQUEST_TIMEOUT_MS = 3000L;
   private static final long LEASE_FALLBACK_RENEW_MS = 120_000L;
   private static final long LEASE_MIN_RENEW_DELAY_MS = 1000L;
+  /** Prevent sustained output from monopolizing the serial model executor. */
+  private static final int MAX_DRAIN_MESSAGES_PER_SLICE = 8;
+  private static final long MAX_DRAIN_NANOS_PER_SLICE = 4_000_000L;
 
   public interface Listener {
-    void onModelChange(@NonNull ModelChange change);
+    /** 无数据唤醒；VSync 时从模型原子取得 RenderUpdate。 */
+    default void onRenderNeeded() {}
     void onEffect(@NonNull TerminalScreenEffect effect);
     void onConnectionStateChange(@NonNull State state);
     default void onLayoutLeaseStateChange(boolean ready) {}
     default void onInputDeliveryUncertain(@NonNull String message) {}
+  }
+
+  private interface ListenerInvocation {
+    void invoke(@NonNull Listener listener);
   }
 
   /** 不依赖 Activity/View 的副作用处理器；页面不存在时仍必须持续存在。 */
@@ -123,7 +134,7 @@ public final class TerminalSessionRuntime {
   private final RemoteTerminalModel model;
   private final Executor modelExecutor;
   private final Executor callbackExecutor;
-  private final ModelChangeDispatcher modelChangeDispatcher;
+  private final RenderWakeDispatcher renderWakeDispatcher;
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
   private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
   private final ScreenMailbox screenMailbox =
@@ -207,10 +218,8 @@ public final class TerminalSessionRuntime {
     this.model = model;
     this.modelExecutor = modelExecutor;
     this.callbackExecutor = callbackExecutor;
-    this.modelChangeDispatcher = new ModelChangeDispatcher(callbackExecutor,
-        (change, callbackDelayNanos) -> {
-          for (Listener listener : listeners) listener.onModelChange(change);
-        });
+    this.renderWakeDispatcher = new RenderWakeDispatcher(callbackExecutor,
+        callbackDelayNanos -> notifyListeners("render_needed", Listener::onRenderNeeded));
     this.timeoutScheduler = timeoutScheduler;
     this.leaseScheduler = leaseScheduler;
     this.resyncCoordinator = new ResyncCoordinator(
@@ -308,7 +317,8 @@ public final class TerminalSessionRuntime {
       public void onInputDeliveryUncertain(@NonNull String message) {
         if (TerminalSessionRuntime.this.connection != connection) return;
         callbackExecutor.execute(() -> {
-          for (Listener listener : listeners) listener.onInputDeliveryUncertain(message);
+          notifyListeners("input_delivery_uncertain",
+              listener -> listener.onInputDeliveryUncertain(message));
         });
       }
 
@@ -344,7 +354,12 @@ public final class TerminalSessionRuntime {
         if (authenticationListener != null) {
           callbackExecutor.execute(() -> {
             AuthenticationListener currentListener = authenticationListener;
-            if (currentListener != null) currentListener.onAuthenticationRequired(reason);
+            if (currentListener == null) return;
+            try {
+              currentListener.onAuthenticationRequired(reason);
+            } catch (RuntimeException e) {
+              warnUiCallbackFailure("authentication_required", e);
+            }
           });
         }
       }
@@ -422,8 +437,10 @@ public final class TerminalSessionRuntime {
   public void addListener(@NonNull Listener listener) {
     if (listeners.addIfAbsent(listener)) {
       callbackExecutor.execute(() -> {
-        listener.onConnectionStateChange(state);
-        listener.onLayoutLeaseStateChange(hasLayoutLease());
+        notifyListener("initial_connection_state", listener,
+            current -> current.onConnectionStateChange(state));
+        notifyListener("initial_layout_lease_state", listener,
+            current -> current.onLayoutLeaseStateChange(hasLayoutLease()));
       });
     }
   }
@@ -510,7 +527,7 @@ public final class TerminalSessionRuntime {
 
   public void close() {
     connectionEpoch.incrementAndGet();
-    modelChangeDispatcher.cancel();
+    renderWakeDispatcher.cancel();
     updateState(State.CLOSED);
     screenMailbox.reset();
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
@@ -569,38 +586,83 @@ public final class TerminalSessionRuntime {
     ScreenMessageValidator.ValidationResult frameSize =
         ScreenMessageValidator.validateEnvelopeSize(payload);
     if (state == State.CLOSED) return;
+    ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
     ScreenMailbox.Offer offer = screenMailbox.offer(
-        messageEpoch, sourceConnection, payload, frameSize.ok);
+        messageEpoch, sourceConnection, payload, frameSize.ok, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
     if (offer.scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
   }
 
   private void drainScreenMailbox() {
-    while (true) {
-      ScreenMailbox.Drain drain = screenMailbox.poll();
-      if (drain == null) return;
-      if (drain.fence != null) {
-        onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
-            drain.fence.overflowCount);
-        continue;
+    try {
+      long deadlineNanos = System.nanoTime() + MAX_DRAIN_NANOS_PER_SLICE;
+      int processed = 0;
+      while (processed < MAX_DRAIN_MESSAGES_PER_SLICE && System.nanoTime() < deadlineNanos) {
+        ScreenMailbox.Drain drain = screenMailbox.poll();
+        if (drain == null) return;
+        processed++;
+        try {
+          if (drain.fence != null) {
+            onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
+                drain.fence.overflowCount);
+            continue;
+          }
+          ScreenMailbox.Message message = drain.message;
+          // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
+          if (message.connectionEpoch != connectionEpoch.get()
+              || message.mailboxGeneration != screenMailbox.generation()
+              || message.sourceConnection != connection) continue;
+          TerminalRenderMetrics.inboundScreenFrame(message.kind.ordinal(), message.payload.length);
+          TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
+          // A recovery fence only accepts the authority frame that can release it. Dropping
+          // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
+          if (message.kind == ScreenMailbox.MessageKind.PATCH && resyncCoordinator.isRecovering()) {
+            continue;
+          }
+          processScreenMessage(message);
+        } catch (RuntimeException e) {
+          // Fence handling, epoch checks and message processing all share this safety net. An
+          // isolated failure must never strand drainScheduled or stop subsequent frames.
+          Diagnostics.warn("screen_protocol", "screen_frame_processing_failed", diagnosticFields(
+              "failureKind", e.getClass().getSimpleName(),
+              "localRevision", model.screenRevision));
+          startResyncRecovery(
+              e.getMessage() != null ? e.getMessage() : "unexpected screen frame processing failure");
+        }
       }
-      ScreenMailbox.Message message = drain.message;
-      // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
-      if (message.connectionEpoch != connectionEpoch.get()
-          || message.mailboxGeneration != screenMailbox.generation()
-          || message.sourceConnection != connection) continue;
-      try {
-        processScreenMessage(message);
-      } catch (RuntimeException e) {
-        // 最终安全网：单个消息的处理异常不能导致 Mailbox drain 状态悬空，
-        // 否则后续帧会永远停止处理。
-        Diagnostics.warn("screen_protocol", "screen_frame_processing_failed", diagnosticFields(
-            "failureKind", e.getClass().getSimpleName(),
-            "localRevision", model.screenRevision));
-        startResyncRecovery(
-            e.getMessage() != null ? e.getMessage() : "unexpected screen frame processing failure");
+    } finally {
+      if (screenMailbox.finishDrain()) {
+        try {
+          modelExecutor.execute(this::drainScreenMailbox);
+        } catch (RuntimeException e) {
+          // A rejected continuation must not leave the mailbox permanently armed. A later offer
+          // can safely restart it once the executor becomes available again.
+          screenMailbox.abandonDrain();
+          Diagnostics.warn("screen_protocol", "screen_mailbox_drain_reschedule_failed",
+              diagnosticFields("failureKind", e.getClass().getSimpleName()));
+        }
       }
     }
+  }
+
+  /** Reads only envelope tags; it intentionally does not alter the protobuf-only wire payload. */
+  @NonNull
+  private static ScreenMailbox.MessageKind classifyScreenMessage(@NonNull byte[] payload) {
+    try {
+      CodedInputStream input = CodedInputStream.newInstance(payload);
+      while (!input.isAtEnd()) {
+        int tag = input.readTag();
+        if (tag == 0) break;
+        int field = WireFormat.getTagFieldNumber(tag);
+        // ScreenEnvelope oneof fields in terminal_screen.proto.
+        if (field == 11) return ScreenMailbox.MessageKind.SNAPSHOT;
+        if (field == 12) return ScreenMailbox.MessageKind.PATCH;
+        if (!input.skipField(tag)) break;
+      }
+    } catch (IOException | RuntimeException ignored) {
+      // Full parse and validation retain responsibility for reporting malformed envelopes.
+    }
+    return ScreenMailbox.MessageKind.UNKNOWN;
   }
 
   // ---- resync 恢复状态机（以下方法只能在 modelExecutor 上调用） ----
@@ -680,11 +742,11 @@ public final class TerminalSessionRuntime {
         Diagnostics.warn("screen_protocol", "input_ack_processing_failed", diagnosticFields(
             "failureKind", e.getClass().getSimpleName(),
             "localRevision", model.screenRevision));
-        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "input ack processing failed");
+        ReliableInputTracker tracker = message.sourceConnection.reliableInputTracker();
+        if (tracker != null) tracker.clear();
         return;
       }
 
-      ModelChange change;
       long modelApplyStartedNanos = System.nanoTime();
       switch (envelope.getPayloadCase()) {
         case SNAPSHOT: {
@@ -704,9 +766,14 @@ public final class TerminalSessionRuntime {
             return;
           }
           ScreenSnapshot snapshot;
+          boolean geometryChanged;
           try {
             snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
-            change = model.applySnapshot(snapshot);
+            geometryChanged = model.instanceId == null
+                || !model.instanceId.equals(snapshot.instanceId)
+                || model.layoutEpoch != snapshot.layoutEpoch
+                || model.rows != snapshot.rows || model.columns != snapshot.cols;
+            model.applySnapshot(snapshot);
           } catch (Exception e) {
             Diagnostics.warn("screen_protocol", "snapshot_apply_failed", diagnosticFields(
                 "failureKind", e.getClass().getSimpleName(),
@@ -723,7 +790,7 @@ public final class TerminalSessionRuntime {
               "historyAppend", snapshot.history.lines.size(),
               "payloadBytes", message.payload.length,
               "applyDurationMs", elapsedMillis(modelApplyStartedNanos)));
-          if (change.geometryChanged) {
+          if (geometryChanged) {
             Diagnostics.info("screen_protocol", "layout_epoch_changed", diagnosticFields(
                 "instanceId", snapshot.instanceId,
                 "layoutEpoch", snapshot.layoutEpoch,
@@ -759,7 +826,7 @@ public final class TerminalSessionRuntime {
           try {
             boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
             long patchBase = envelope.getPatch().getBaseRevision();
-            ScreenPatch patch = ScreenMessageMapper.mapPatch(envelope.getPatch());
+            ScreenPatch patch = ScreenMessageMapper.mapPatch(envelope.getPatch(), model.columns);
             if (model.instanceId == null || !model.instanceId.equals(patch.instanceId)) {
               Diagnostics.warn("screen_protocol", "instance_mismatch", diagnosticFields(
                   "instanceId", patch.instanceId, "localRevision", model.screenRevision,
@@ -773,8 +840,8 @@ public final class TerminalSessionRuntime {
                   "baseRevision", patch.baseRevision, "localRevision", model.screenRevision,
                   "screenRevision", patch.screenRevision));
             }
-            change = model.applyPatch(patch);
-            recordPatchSummary(message.payload.length, change.changedScreenRows.size(), patch);
+            model.applyPatch(patch);
+            recordPatchSummary(message.payload.length, patch.screenRows.size(), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
                   envelope.getPatch().getScreenRevision(),
@@ -797,33 +864,31 @@ public final class TerminalSessionRuntime {
           if (!historyRequests.accept(envelope.getHistoryPage().getRequestId())) return;
           try {
             requireValid(ScreenMessageValidator.validateHistoryPage(envelope.getHistoryPage()));
-            change = model.prependHistoryPage(ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage()));
+            model.prependHistoryPage(
+                ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage(), model.columns));
             historyRequests.complete(envelope.getHistoryPage().getRequestId());
           } catch (Exception e) {
             Diagnostics.warn("screen_protocol", "history_page_rejected", diagnosticFields(
                 "failureKind", e.getClass().getSimpleName(),
                 "localRevision", model.screenRevision));
-            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "history page failed");
+            historyRequests.complete(envelope.getHistoryPage().getRequestId());
             return;
           }
           break;
         }
         case HISTORY_TRIM:
-          change = model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
+          model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
               envelope.getHistoryTrim().getFirstAvailableLineId());
           break;
         case LAYOUT_LEASE:
           layoutLeaseCoordinator.handle(envelope.getLayoutLease());
-          change = ModelChange.none();
           break;
         case EFFECT:
-          change = ModelChange.none();
           if (model.instanceId != null && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
             handleEffect(envelope.getEffect());
           }
           break;
         case EXIT:
-          change = ModelChange.none();
           updateState(State.CLOSED);
           break;
         case RESUME_ACK:
@@ -842,15 +907,18 @@ public final class TerminalSessionRuntime {
           }
           TerminalResumeMetrics.exactResume(ackBase,
               envelope.getResumeAck().getScreenRevision());
-          change = ModelChange.none();
           completeSynchronization();
           break;
         default:
-          change = ModelChange.none();
           break;
       }
       TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
-      dispatchModelChange(change);
+      if (envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.SNAPSHOT
+          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.PATCH
+          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.HISTORY_PAGE
+          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.HISTORY_TRIM) {
+        dispatchRenderNeeded();
+      }
   }
 
   private static void requireValid(ScreenMessageValidator.ValidationResult result) {
@@ -867,6 +935,7 @@ public final class TerminalSessionRuntime {
   }
 
   private void recordPatchSummary(int payloadBytes, int changedRows, @NonNull ScreenPatch patch) {
+    if (!Diagnostics.isEnabled(DiagnosticLevel.INFO)) return;
     patchSummaryCount++;
     patchSummaryBytes += payloadBytes;
     patchSummaryChangedRows += changedRows;
@@ -923,7 +992,7 @@ public final class TerminalSessionRuntime {
 
   private void notifyLayoutLeaseState(boolean ready) {
     callbackExecutor.execute(() -> {
-      for (Listener listener : listeners) listener.onLayoutLeaseStateChange(ready);
+      notifyListeners("layout_lease_state", listener -> listener.onLayoutLeaseStateChange(ready));
     });
   }
 
@@ -966,25 +1035,58 @@ public final class TerminalSessionRuntime {
   private void dispatchEffect(@NonNull TerminalScreenEffect effect) {
     callbackExecutor.execute(() -> {
       EffectSink sink = effectSink;
-      if (sink != null) sink.onEffect(this, effect, !listeners.isEmpty());
-      for (Listener listener : listeners) listener.onEffect(effect);
+      if (sink != null) {
+        try {
+          sink.onEffect(this, effect, !listeners.isEmpty());
+        } catch (RuntimeException e) {
+          warnUiCallbackFailure("effect_sink", e);
+        }
+      }
+      notifyListeners("effect", listener -> listener.onEffect(effect));
     });
   }
 
-  private void dispatchModelChange(@NonNull ModelChange change) {
+  /** 请求一次最新模型绘制，供页面 attach、恢复和本地滚动使用。 */
+  public void requestRender() {
+    model.requestFullRender();
+    dispatchRenderNeeded();
+  }
+
+  private void dispatchRenderNeeded() {
     // No page is observing this session. The model remains current and a future attach explicitly
     // requests one fresh render, so posting a main-thread no-op would only create background load.
     if (listeners.isEmpty()) {
       TerminalRenderMetrics.modelChange();
       return;
     }
-    modelChangeDispatcher.dispatch(change);
+    renderWakeDispatcher.dispatch();
   }
 
   private void updateState(@NonNull State newState) {
     state = newState;
     callbackExecutor.execute(() -> {
-      for (Listener listener : listeners) listener.onConnectionStateChange(newState);
+      notifyListeners("connection_state", listener -> listener.onConnectionStateChange(newState));
     });
+  }
+
+  private void notifyListeners(@NonNull String callback, @NonNull ListenerInvocation invocation) {
+    for (Listener listener : listeners) notifyListener(callback, listener, invocation);
+  }
+
+  private void notifyListener(@NonNull String callback, @NonNull Listener listener,
+                              @NonNull ListenerInvocation invocation) {
+    try {
+      invocation.invoke(listener);
+    } catch (RuntimeException e) {
+      warnUiCallbackFailure(callback, e);
+    }
+  }
+
+  private void warnUiCallbackFailure(@NonNull String callback, @NonNull RuntimeException error) {
+    // UI callbacks observe an already-published model. They cannot introduce a protocol gap, so
+    // logging is sufficient; triggering a screen resync here would amplify output under failure.
+    Diagnostics.warn("terminal_runtime", "ui_callback_failed", diagnosticFields(
+        "callback", callback,
+        "failureKind", error.getClass().getSimpleName()));
   }
 }

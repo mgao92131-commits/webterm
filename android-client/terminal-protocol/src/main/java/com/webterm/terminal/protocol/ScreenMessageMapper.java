@@ -42,13 +42,21 @@ public final class ScreenMessageMapper {
   }
 
   public static ScreenPatch mapPatch(TerminalScreenProto.ScreenPatch pb) {
+    return mapPatch(pb, -1);
+  }
+
+  /**
+   * Maps a patch directly to the current grid width so model application can reuse each line
+   * instead of allocating a second padded copy.
+   */
+  public static ScreenPatch mapPatch(TerminalScreenProto.ScreenPatch pb, int columns) {
     List<TerminalLine> historyAppend = new ArrayList<>();
     for (TerminalScreenProto.HistoryLine line : pb.getHistoryAppendList()) {
-      historyAppend.add(mapHistoryLine(line));
+      historyAppend.add(mapHistoryLine(line, columns));
     }
     List<TerminalLine> screenRows = new ArrayList<>();
     for (TerminalScreenProto.TerminalLine line : pb.getScreenRowsList()) {
-      screenRows.add(mapLine(line, -1));
+      screenRows.add(mapLine(line, columns));
     }
     List<ScreenPatch.PromotedRow> promotedRows = new ArrayList<>();
     for (TerminalScreenProto.PromotedRow row : pb.getPromotedRowsList()) {
@@ -76,9 +84,14 @@ public final class ScreenMessageMapper {
   }
 
   public static HistoryPage mapHistoryPage(TerminalScreenProto.HistoryPage pb) {
+    return mapHistoryPage(pb, -1);
+  }
+
+  /** Maps a history page to the current grid width for one-pass line normalization. */
+  public static HistoryPage mapHistoryPage(TerminalScreenProto.HistoryPage pb, int columns) {
     List<TerminalLine> lines = new ArrayList<>();
     for (TerminalScreenProto.HistoryLine line : pb.getLinesList()) {
-      lines.add(mapHistoryLine(line));
+      lines.add(mapHistoryLine(line, columns));
     }
     return new HistoryPage(
         pb.getRequestId(),
@@ -93,11 +106,38 @@ public final class ScreenMessageMapper {
   }
 
   private static TerminalLine mapLine(TerminalScreenProto.TerminalLine pb, int columns) {
-    return new TerminalLine(pb.getRow(), pb.getWrapped(), expandRuns(pb.getRunsList(), columns));
+    return new TerminalLine(pb.getRow(), pb.getWrapped(), pb.getText().isEmpty()
+        ? expandRuns(pb.getRunsList(), columns)
+        : expandCompact(pb.getText(), pb.getStyleSpansList(), columns));
   }
 
-  private static TerminalLine mapHistoryLine(TerminalScreenProto.HistoryLine pb) {
-    return new TerminalLine(pb.getId(), pb.getWrapped(), expandRuns(pb.getRunsList(), -1));
+  private static TerminalLine mapHistoryLine(TerminalScreenProto.HistoryLine pb, int columns) {
+    return new TerminalLine(pb.getId(), pb.getWrapped(), pb.getText().isEmpty()
+        ? expandRuns(pb.getRunsList(), columns)
+        : expandCompact(pb.getText(), pb.getStyleSpansList(), columns));
+  }
+
+  private static TerminalCell[] expandCompact(String text,
+                                               List<TerminalScreenProto.StyleSpan> spans,
+                                               int requestedColumns) {
+    int columns = Math.max(Math.max(0, requestedColumns), text.length());
+    TerminalCell[] cells = new TerminalCell[columns];
+    java.util.Arrays.fill(cells, TerminalCell.EMPTY);
+    int spanIndex = 0;
+    for (int col = 0; col < text.length() && col < cells.length; col++) {
+      while (spanIndex < spans.size() && spans.get(spanIndex).getEndCol() <= col) spanIndex++;
+      int styleId = 0;
+      int linkId = 0;
+      if (spanIndex < spans.size()) {
+        TerminalScreenProto.StyleSpan span = spans.get(spanIndex);
+        if (span.getStartCol() <= col && col < span.getEndCol()) {
+          styleId = span.getStyleId();
+          linkId = span.getLinkId();
+        }
+      }
+      cells[col] = new TerminalCell(String.valueOf(text.charAt(col)), (byte) 1, styleId, linkId);
+    }
+    return cells;
   }
 
   private static TerminalCell[] expandRuns(List<TerminalScreenProto.CellRun> runs, int requestedColumns) {
@@ -215,7 +255,7 @@ public final class ScreenMessageMapper {
   private static HistoryWindow mapHistoryWindow(TerminalScreenProto.HistoryWindow pb, int columns) {
     List<TerminalLine> lines = new ArrayList<>();
     for (TerminalScreenProto.HistoryLine line : pb.getLinesList()) {
-      lines.add(new TerminalLine(line.getId(), line.getWrapped(), expandRuns(line.getRunsList(), columns)));
+      lines.add(mapHistoryLine(line, columns));
     }
     return new HistoryWindow(
         pb.getFirstAvailableLineId(),

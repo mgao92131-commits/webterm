@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +42,11 @@ type Runtime struct {
 	screenRevision    uint64
 	projectionPending bool
 	projectionToken   uint64
+	projectionEvents  int
+	denseFlushes      int
+	lastPTYOutput     time.Time
+	busyFlushWindow   time.Duration
+	ptyReadBuffers    sync.Pool
 
 	clients map[string]*ScreenClient
 
@@ -48,7 +55,7 @@ type Runtime struct {
 	engineSignals    engineSignals
 	inputDedupe      map[string]*inputDedupeWindow
 	inputDedupeOrder []string
-	inputInflight map[inputDeliveryKey][]func(InputDeliveryResult)
+	inputInflight    map[inputDeliveryKey][]func(InputDeliveryResult)
 
 	onTitle        func(string)
 	onBell         func()
@@ -180,12 +187,13 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
-		inputDedupe:   make(map[string]*inputDedupeWindow),
-		inputInflight: make(map[inputDeliveryKey][]func(InputDeliveryResult)),
+		inputDedupe:      make(map[string]*inputDedupeWindow),
+		inputInflight:    make(map[inputDeliveryKey][]func(InputDeliveryResult)),
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
-		layoutEpoch:    1,
-		screenRevision: 1,
+		layoutEpoch:     1,
+		screenRevision:  1,
+		busyFlushWindow: projectionBusyWindowFromEnv(),
 	}
 	for _, opt := range options {
 		opt(r)
@@ -222,6 +230,9 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	)
 	r.projector = screenprojection.NewProjector(r.engine, r.scrollback, id, r.instanceID)
 	r.inputWriter = newDefaultInputWriter(pty)
+	r.ptyReadBuffers.New = func() any {
+		return make([]byte, ptyReadBufferSize)
+	}
 
 	go r.readLoop()
 	go r.actorLoop()
@@ -379,13 +390,18 @@ func (r *Runtime) postEvent(ev event) {
 }
 
 func (r *Runtime) readLoop() {
-	buf := make([]byte, 8192)
 	for {
+		buf := r.ptyReadBuffers.Get().([]byte)
 		n, err := r.pty.Read(buf)
 		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buf[:n])
-			r.postEvent(ptyOutputEvent{data: data})
+			// ptyOutputEvent 独占这块缓冲，actor 完成 Engine.Write 后才归还；
+			// readLoop 因而无需为每次 Read 再分配和复制一次数据。
+			if !r.postPTYOutput(buf[:n]) {
+				r.ptyReadBuffers.Put(buf)
+				return
+			}
+		} else {
+			r.ptyReadBuffers.Put(buf)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -393,6 +409,17 @@ func (r *Runtime) readLoop() {
 			}
 			return
 		}
+	}
+}
+
+const ptyReadBufferSize = 64 * 1024
+
+func (r *Runtime) postPTYOutput(data []byte) bool {
+	select {
+	case <-r.stopCh:
+		return false
+	case r.events <- ptyOutputEvent{data: data, release: func() { r.ptyReadBuffers.Put(data[:cap(data)]) }}:
+		return true
 	}
 }
 
@@ -413,6 +440,9 @@ func (r *Runtime) handleEvent(ev event) {
 	switch e := ev.(type) {
 	case ptyOutputEvent:
 		r.handlePTYOutput(e.data)
+		if e.release != nil {
+			e.release()
+		}
 	case inputEvent:
 		r.handleInput(e)
 	case semanticInputEvent:
@@ -863,19 +893,53 @@ func (r *Runtime) broadcastFrame() {
 	}
 }
 
-const projectionFlushWindow = 16 * time.Millisecond
+const (
+	projectionFlushWindow       = 16 * time.Millisecond
+	defaultBusyProjectionWindow = 40 * time.Millisecond
+	denseFlushThreshold         = 3
+)
+
+// projectionBusyWindowFromEnv 允许逐台 Agent 灰度自适应合帧：
+// WEBTERM_PROJECTION_ADAPTIVE_FLUSH=1 开启，
+// WEBTERM_PROJECTION_BUSY_FLUSH_MS 可在 16~50ms 间覆写（默认 40ms）。
+// 未开启时保持既有 16ms 行为，避免把一次性能优化变成全量时延策略变更。
+func projectionBusyWindowFromEnv() time.Duration {
+	if os.Getenv("WEBTERM_PROJECTION_ADAPTIVE_FLUSH") != "1" {
+		return projectionFlushWindow
+	}
+	value := strings.TrimSpace(os.Getenv("WEBTERM_PROJECTION_BUSY_FLUSH_MS"))
+	if value == "" {
+		return defaultBusyProjectionWindow
+	}
+	ms, err := strconv.Atoi(value)
+	if err != nil || ms < 16 || ms > 50 {
+		return defaultBusyProjectionWindow
+	}
+	return time.Duration(ms) * time.Millisecond
+}
 
 // scheduleProjectionFlush batches PTY chunks into one terminal export. The
 // actor continues applying every byte immediately; only projection/encoding is
 // delayed by at most one display frame.
 func (r *Runtime) scheduleProjectionFlush() {
+	now := time.Now()
+	if !r.lastPTYOutput.IsZero() && now.Sub(r.lastPTYOutput) > r.busyFlushWindow*2 {
+		// 空闲后回到低延迟档，避免上一段命令的高吞吐状态影响下一次交互。
+		r.denseFlushes = 0
+	}
+	r.lastPTYOutput = now
+	r.projectionEvents++
 	if r.projectionPending {
 		return
 	}
 	r.projectionPending = true
 	r.projectionToken++
 	token := r.projectionToken
-	time.AfterFunc(projectionFlushWindow, func() {
+	delay := projectionFlushWindow
+	if r.denseFlushes >= denseFlushThreshold {
+		delay = r.busyFlushWindow
+	}
+	time.AfterFunc(delay, func() {
 		r.postEvent(projectionFlushEvent{token: token})
 	})
 }
@@ -885,6 +949,12 @@ func (r *Runtime) handleProjectionFlush(e projectionFlushEvent) {
 		return
 	}
 	r.projectionPending = false
+	if r.projectionEvents > 1 {
+		r.denseFlushes++
+	} else {
+		r.denseFlushes = 0
+	}
+	r.projectionEvents = 0
 	r.broadcastFrame()
 }
 
@@ -893,6 +963,8 @@ func (r *Runtime) flushProjectionNow() {
 		r.projectionPending = false
 		r.projectionToken++ // invalidate the scheduled timer event
 	}
+	r.projectionEvents = 0
+	r.denseFlushes = 0
 	r.broadcastFrame()
 }
 
@@ -918,7 +990,8 @@ func randomID() string {
 type event interface{}
 
 type ptyOutputEvent struct {
-	data []byte
+	data    []byte
+	release func()
 }
 
 type ptyErrorEvent struct {

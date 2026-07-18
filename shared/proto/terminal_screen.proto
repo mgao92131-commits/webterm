@@ -75,6 +75,7 @@ message CapabilitySet {
   bool row_patches = 1;   // 是否支持 row patch（首版必须 true）
   bool scroll_ops = 2;    // 是否支持 scroll op 优化（首版固定 false）
   bool images = 3;        // 是否支持图片（首版固定 false）
+  bool compact_line_encoding = 4; // text + StyleSpan 行编码；旧客户端保持 CellRun
 }
 
 message Ping {
@@ -158,6 +159,15 @@ message TerminalLine {
   uint64 line_id = 2;     // 历史行 ID，活动屏幕行为 0
   bool wrapped = 3;       // 是否因列溢出而软换行
   repeated CellRun runs = 4;
+  string text = 5;                 // compact path：仅单列 ASCII 文本，非空时替代 runs
+  repeated StyleSpan style_spans = 6;
+}
+
+message StyleSpan {
+  int32 start_col = 1;  // inclusive
+  int32 end_col = 2;    // exclusive
+  uint32 style_id = 3;
+  uint32 link_id = 4;
 }
 
 message CellRun {
@@ -294,6 +304,8 @@ message HistoryLine {
   uint64 id = 1;
   bool wrapped = 2;
   repeated CellRun runs = 3;
+  string text = 4;                 // compact path：仅单列 ASCII 文本，非空时替代 runs
+  repeated StyleSpan style_spans = 5;
 }
 
 message HistoryRequest {

@@ -61,6 +61,23 @@ public final class ScreenMessageValidatorTest {
   }
 
   @Test
+  public void compactLineRequiresAsciiNonOverlappingSpansAndNoRuns() {
+    TerminalScreenProto.TerminalLine valid = TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(0).setText("plain text")
+        .addStyleSpans(TerminalScreenProto.StyleSpan.newBuilder()
+            .setStartCol(0).setEndCol(5).setStyleId(1))
+        .build();
+    assertTrue(validate(validPatch().addScreenRows(valid)).ok);
+
+    assertFalse(validate(validPatch().addScreenRows(valid.toBuilder()
+        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)))).ok);
+    assertFalse(validate(validPatch().addScreenRows(valid.toBuilder().setText("界"))).ok);
+    assertFalse(validate(validPatch().addScreenRows(valid.toBuilder()
+        .addStyleSpans(TerminalScreenProto.StyleSpan.newBuilder()
+            .setStartCol(4).setEndCol(7).setStyleId(2)))).ok);
+  }
+
+  @Test
   public void screenRevisionMustExceedBaseRevision() {
     assertFalse(validate(validPatch().setBaseRevision(2).setScreenRevision(2)).ok);
     assertFalse(validate(validPatch().setBaseRevision(3).setScreenRevision(2)).ok);

@@ -170,12 +170,17 @@ type ScreenFrame struct {
 	PaletteGeneration uint64
 	Cursor            Cursor
 	Modes             Modes
-	History           HistoryWindow
-	Screen            []Line
-	Styles            []TerminalStyle
-	Links             []Hyperlink
-	Title             string
-	WorkingDir        string
+	// CursorChanged/ModesChanged/PaletteChanged are patch-only presence flags.
+	// Snapshots always carry all three components so they remain independently usable.
+	CursorChanged  bool
+	ModesChanged   bool
+	PaletteChanged bool
+	History        HistoryWindow
+	Screen         []Line
+	Styles         []TerminalStyle
+	Links          []Hyperlink
+	Title          string
+	WorkingDir     string
 	// TitleChanged/WorkingDirChanged 只在 patch 帧上有意义：标记 title/cwd 相对
 	// 基线是否变化（变为空串也必须显式标记，与“未变化”区分）。snapshot 必须
 	// 可独立显示，总是携带 title/cwd，不需要标志。
@@ -186,6 +191,10 @@ type ScreenFrame struct {
 	// 在线 Patch 仍可依赖独立 HistoryTrim，不默认携带该字段。
 	FirstAvailableHistoryLineIDChanged bool
 	PromotedRows                       []PromotedRow
+	// RowChangedRevision is process-local projection metadata. It stamps each screen row with
+	// the last authoritative export revision that touched it, allowing per-client derivation to
+	// select changed rows without deep-comparing every cell. It is never encoded on the wire.
+	RowChangedRevision []uint64
 	// ForceSnapshot is process-local projection metadata. It is never encoded;
 	// it tells a per-client sender that a style/link dictionary rotation made
 	// its old baseline invalid even though terminal geometry did not change.

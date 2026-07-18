@@ -1,12 +1,21 @@
 package com.webterm.terminal.protocol;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Test;
 
 public final class ScreenMessageBuilderTest {
+
+  @Test
+  public void helloAdvertisesCompactLineEncoding() throws Exception {
+    TerminalScreenProto.ScreenEnvelope envelope = TerminalScreenProto.ScreenEnvelope.parseFrom(
+        ScreenMessageBuilder.hello(80, 24, "android-1"));
+    assertTrue(envelope.getHello().getCapabilities().getCompactLineEncoding());
+  }
+
 
   @Test
   public void terminalInputCarriesReliabilityAnchor() throws Exception {

@@ -33,6 +33,8 @@ public final class ScreenMessageMapperTest {
     assertEquals("界", mapped.at(3).text);
     assertTrue(mapped.at(4).isSpacer());
     assertEquals("x", mapped.at(5).text);
+    assertEquals("runtime mapping pre-expands patch rows to the model width", 10,
+        ScreenMessageMapper.mapPatch(pb, 10).screenRows.get(0).length());
   }
 
   @Test
@@ -53,6 +55,27 @@ public final class ScreenMessageMapperTest {
     assertEquals("a", mapped.at(0).text);
     assertTrue(mapped.at(1).isDefault());
     assertEquals("b", mapped.at(2).text);
+  }
+
+  @Test
+  public void compactAsciiLineMapsTextAndStyleSpansInOnePass() {
+    TerminalScreenProto.TerminalLine line = TerminalScreenProto.TerminalLine.newBuilder()
+        .setRow(1).setText("abc ")
+        .addStyleSpans(TerminalScreenProto.StyleSpan.newBuilder()
+            .setStartCol(1).setEndCol(3).setStyleId(7).setLinkId(9))
+        .build();
+    TerminalLine mapped = ScreenMessageMapper.mapPatch(
+        TerminalScreenProto.ScreenPatch.newBuilder()
+            .setInstanceId("i").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
+            .addScreenRows(line).build(), 6).screenRows.get(0);
+
+    assertEquals(6, mapped.length());
+    assertEquals("a", mapped.at(0).text);
+    assertEquals(0, mapped.at(0).styleId);
+    assertEquals("b", mapped.at(1).text);
+    assertEquals(7, mapped.at(1).styleId);
+    assertEquals(9, mapped.at(2).linkId);
+    assertTrue(mapped.at(4).isDefault());
   }
 
   /**

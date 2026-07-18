@@ -2,49 +2,41 @@ package com.webterm.feature.terminal.domain;
 
 import androidx.annotation.NonNull;
 
-import com.webterm.terminal.model.ModelChange;
-import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 
 import java.util.concurrent.Executor;
 
 /**
- * Bounded bridge from the serial model executor to the UI callback executor.
+ * 从模型线程到 UI 线程的有界“需要绘制”唤醒。
  *
- * <p>Protocol frames are never coalesced here: {@link RemoteTerminalModel} has already applied
- * each one in revision order. Only their UI invalidation summaries are merged, so a slow main
- * thread receives the newest authoritative model once instead of a FIFO of obsolete callbacks.</p>
+ * <p>不传递任何渲染脏区：脏区仅存于 RemoteTerminalModel，UI 到 VSync 时自行原子消费。
+ * 同一个未消费周期内只保留一个布尔唤醒。</p>
  */
-final class ModelChangeDispatcher {
-
+final class RenderWakeDispatcher {
   interface Consumer {
-    void accept(@NonNull ModelChange change, long callbackDelayNanos);
+    void accept(long callbackDelayNanos);
   }
 
   private final Object lock = new Object();
   private final Executor callbackExecutor;
   private final Consumer consumer;
-  private ModelChange pending;
+  private boolean pendingRenderWake;
   private boolean callbackScheduled;
   private long generation;
   private long scheduledAtNanos;
 
-  ModelChangeDispatcher(@NonNull Executor callbackExecutor, @NonNull Consumer consumer) {
+  RenderWakeDispatcher(@NonNull Executor callbackExecutor, @NonNull Consumer consumer) {
     this.callbackExecutor = callbackExecutor;
     this.consumer = consumer;
   }
 
-  void dispatch(@NonNull ModelChange change) {
+  void dispatch() {
     long scheduledGeneration = 0L;
     boolean schedule = false;
     synchronized (lock) {
       TerminalRenderMetrics.modelChange();
-      if (pending != null) {
-        pending = pending.merge(change);
-        TerminalRenderMetrics.uiCallbackCoalesced();
-      } else {
-        pending = change;
-      }
+      if (pendingRenderWake) TerminalRenderMetrics.uiCallbackCoalesced();
+      pendingRenderWake = true;
       if (!callbackScheduled) {
         callbackScheduled = true;
         scheduledAtNanos = System.nanoTime();
@@ -60,22 +52,20 @@ final class ModelChangeDispatcher {
   }
 
   private void drain(long callbackGeneration) {
-    ModelChange next;
     long delayNanos;
     synchronized (lock) {
-      if (!callbackScheduled || callbackGeneration != generation || pending == null) return;
-      next = pending;
-      pending = null;
+      if (!callbackScheduled || callbackGeneration != generation) return;
+      pendingRenderWake = false;
       callbackScheduled = false;
       delayNanos = Math.max(0L, System.nanoTime() - scheduledAtNanos);
     }
     TerminalRenderMetrics.mainThreadCallbackDelay(delayNanos);
-    consumer.accept(next, delayNanos);
+    consumer.accept(delayNanos);
 
     long nextGeneration = 0L;
     boolean schedule = false;
     synchronized (lock) {
-      if (pending != null && !callbackScheduled) {
+      if (pendingRenderWake && !callbackScheduled) {
         callbackScheduled = true;
         scheduledAtNanos = System.nanoTime();
         nextGeneration = generation;
@@ -92,7 +82,7 @@ final class ModelChangeDispatcher {
   void cancel() {
     synchronized (lock) {
       generation++;
-      pending = null;
+      pendingRenderWake = false;
       callbackScheduled = false;
       scheduledAtNanos = 0L;
     }

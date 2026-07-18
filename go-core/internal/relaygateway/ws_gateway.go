@@ -49,7 +49,8 @@ func (gateway *WSGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: websocketSubprotocols(r),
+		Subprotocols:    websocketSubprotocols(r),
+		CompressionMode: websocket.CompressionNoContextTakeover,
 	})
 	if err != nil {
 		return

@@ -65,6 +65,12 @@ public class DiagnosticsTest {
         // Should not throw
         Diagnostics.debug("area_noop", "event_noop");
         Diagnostics.info("area_noop", "event_noop", null);
+        assertFalse(Diagnostics.isEnabled(DiagnosticLevel.INFO));
+    }
+
+    @Test
+    public void testInstalledSinkEnablesHotPathDiagnostics() {
+        assertTrue(Diagnostics.isEnabled(DiagnosticLevel.INFO));
     }
 
     @Test

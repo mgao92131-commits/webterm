@@ -11,17 +11,23 @@ import (
 // EncodeFrame 把 ScreenFrame 编码为 ScreenEnvelope 二进制。
 // 帧类型只由 frame.Kind 决定，禁止再用 BaseRevision == 0 判断。
 func EncodeFrame(frame terminalengine.ScreenFrame) ([]byte, error) {
+	return EncodeFrameWithCompactLines(frame, false)
+}
+
+// EncodeFrameWithCompactLines emits the compact text/span form only for peers that
+// explicitly advertised the capability. Unsupported or non-ASCII lines keep CellRun.
+func EncodeFrameWithCompactLines(frame terminalengine.ScreenFrame, compactLines bool) ([]byte, error) {
 	var envelope *pb.ScreenEnvelope
 	switch frame.Kind {
 	case terminalengine.FrameSnapshot:
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
-			Payload:         &pb.ScreenEnvelope_Snapshot{Snapshot: encodeSnapshot(frame)},
+			Payload:         &pb.ScreenEnvelope_Snapshot{Snapshot: encodeSnapshot(frame, compactLines)},
 		}
 	case terminalengine.FramePatch:
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
-			Payload:         &pb.ScreenEnvelope_Patch{Patch: encodePatch(frame)},
+			Payload:         &pb.ScreenEnvelope_Patch{Patch: encodePatch(frame, compactLines)},
 		}
 	default:
 		return nil, fmt.Errorf("unknown screen frame kind: %d", frame.Kind)
@@ -31,11 +37,17 @@ func EncodeFrame(frame terminalengine.ScreenFrame) ([]byte, error) {
 
 // EncodeHistoryPage 编码按需历史页。
 func EncodeHistoryPage(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData) ([]byte, error) {
+	return EncodeHistoryPageWithCompactLines(requestID, epoch, revision, page, false)
+}
+
+// EncodeHistoryPageWithCompactLines follows the same per-peer compact encoding policy as frames.
+func EncodeHistoryPageWithCompactLines(requestID string, epoch, revision uint64,
+	page terminalengine.HistoryPageData, compactLines bool) ([]byte, error) {
 	w := page.Window
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryPage{HistoryPage: &pb.HistoryPage{
 		RequestId: requestID, LayoutEpoch: epoch, AsOfRevision: revision,
 		FirstAvailableLineId: w.FirstAvailableLineID, HasMoreBefore: w.HasMoreBefore,
-		Lines: encodeHistoryLines(w.Lines), Styles: encodeStyles(page.Styles), Links: encodeLinks(page.Links),
+		Lines: encodeHistoryLines(w.Lines, compactLines, 0), Styles: encodeStyles(page.Styles), Links: encodeLinks(page.Links),
 	}}})
 }
 
@@ -66,7 +78,7 @@ func EncodeEffect(instanceID string, revision uint64, effect terminalengine.Effe
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_Effect{Effect: pbEffect}})
 }
 
-func encodeSnapshot(frame terminalengine.ScreenFrame) *pb.ScreenSnapshot {
+func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) *pb.ScreenSnapshot {
 	return &pb.ScreenSnapshot{
 		SessionId:        frame.SessionID,
 		InstanceId:       frame.InstanceID,
@@ -77,8 +89,8 @@ func encodeSnapshot(frame terminalengine.ScreenFrame) *pb.ScreenSnapshot {
 		Cursor:           encodeCursor(frame.Cursor),
 		Modes:            encodeModes(frame.Modes),
 		Palette:          encodePalette(frame),
-		History:          encodeHistoryWindow(frame.History),
-		Screen:           encodeScreenLines(frame.Screen),
+		History:          encodeHistoryWindow(frame.History, compactLines, frame.Cols),
+		Screen:           encodeScreenLines(frame.Screen, compactLines, frame.Cols),
 		Styles:           encodeStyles(frame.Styles),
 		Links:            encodeLinks(frame.Links),
 		Title:            frame.Title,
@@ -86,20 +98,26 @@ func encodeSnapshot(frame terminalengine.ScreenFrame) *pb.ScreenSnapshot {
 	}
 }
 
-func encodePatch(frame terminalengine.ScreenFrame) *pb.ScreenPatch {
+func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) *pb.ScreenPatch {
 	patch := &pb.ScreenPatch{
 		InstanceId:     frame.InstanceID,
 		LayoutEpoch:    frame.Epoch,
 		BaseRevision:   frame.BaseRevision,
 		ScreenRevision: frame.Seq,
-		HistoryAppend:  encodeHistoryLines(frame.History.Lines),
-		ScreenRows:     encodeScreenLines(frame.Screen),
-		Cursor:         encodeCursor(frame.Cursor),
-		Modes:          encodeModes(frame.Modes),
-		Palette:        encodePalette(frame),
+		HistoryAppend:  encodeHistoryLines(frame.History.Lines, compactLines, frame.Cols),
+		ScreenRows:     encodeScreenLines(frame.Screen, compactLines, frame.Cols),
 		NewStyles:      encodeStyles(frame.Styles),
 		NewLinks:       encodeLinks(frame.Links),
 		PromotedRows:   encodePromotedRows(frame.PromotedRows),
+	}
+	if frame.CursorChanged {
+		patch.Cursor = encodeCursor(frame.Cursor)
+	}
+	if frame.ModesChanged {
+		patch.Modes = encodeModes(frame.Modes)
+	}
+	if frame.PaletteChanged {
+		patch.Palette = encodePalette(frame)
 	}
 	// title/cwd 是 proto3 optional：只在显式变化标志置位时出现，
 	// 以此在 wire 上区分“未变化”和“变为空串”。
@@ -234,38 +252,117 @@ func encodeColorKind(k terminalengine.ColorKind) pb.ColorKind {
 	}
 }
 
-func encodeHistoryWindow(hw terminalengine.HistoryWindow) *pb.HistoryWindow {
+func encodeHistoryWindow(hw terminalengine.HistoryWindow, compactLines bool, columns int) *pb.HistoryWindow {
 	return &pb.HistoryWindow{
 		FirstAvailableLineId: hw.FirstAvailableLineID,
 		FirstIncludedLineId:  hw.FirstIncludedLineID,
 		LastIncludedLineId:   hw.LastIncludedLineID,
 		HasMoreBefore:        hw.HasMoreBefore,
-		Lines:                encodeHistoryLines(hw.Lines),
+		Lines:                encodeHistoryLines(hw.Lines, compactLines, columns),
 	}
 }
 
-func encodeHistoryLines(lines []terminalengine.Line) []*pb.HistoryLine {
+func encodeHistoryLines(lines []terminalengine.Line, compactLines bool, columns int) []*pb.HistoryLine {
 	out := make([]*pb.HistoryLine, len(lines))
 	for i, line := range lines {
-		out[i] = &pb.HistoryLine{
+		encoded := &pb.HistoryLine{
 			Id:      line.ID,
 			Wrapped: line.Wrapped,
 			Runs:    encodeCellRuns(line.Runs),
 		}
+		if compactLines {
+			if text, spans, ok := compactASCII(line.Runs, columns); ok {
+				encoded.Runs = nil
+				encoded.Text = text
+				encoded.StyleSpans = spans
+			}
+		}
+		out[i] = encoded
 	}
 	return out
 }
 
-func encodeScreenLines(lines []terminalengine.Line) []*pb.TerminalLine {
+func encodeScreenLines(lines []terminalengine.Line, compactLines bool, columns int) []*pb.TerminalLine {
 	out := make([]*pb.TerminalLine, len(lines))
 	for i, line := range lines {
-		out[i] = &pb.TerminalLine{
+		encoded := &pb.TerminalLine{
 			Row:     int32(line.Row),
 			Wrapped: line.Wrapped,
 			Runs:    encodeCellRuns(line.Runs),
 		}
+		if compactLines {
+			if text, spans, ok := compactASCII(line.Runs, columns); ok {
+				encoded.Runs = nil
+				encoded.Text = text
+				encoded.StyleSpans = spans
+			}
+		}
+		out[i] = encoded
 	}
 	return out
+}
+
+// compactASCII is deliberately narrow: Go remains authoritative for display width.
+// The compact form is used only when every visible cell is an ordinary one-column ASCII byte;
+// wide, combining and spacer cells use the established CellRun representation unchanged.
+func compactASCII(runs []terminalengine.CellRun, requestedColumns int) (string, []*pb.StyleSpan, bool) {
+	columns := requestedColumns
+	for _, run := range runs {
+		end := run.Col
+		for _, cell := range run.Cells {
+			if cell.Width != 1 {
+				return "", nil, false
+			}
+			end++
+		}
+		if end > columns {
+			columns = end
+		}
+	}
+	if columns <= 0 {
+		return "", nil, false
+	}
+	chars := make([]byte, columns)
+	styles := make([]uint32, columns)
+	links := make([]uint32, columns)
+	for i := range chars {
+		chars[i] = ' '
+	}
+	for _, run := range runs {
+		col := run.Col
+		if col < 0 {
+			return "", nil, false
+		}
+		for _, cell := range run.Cells {
+			if col >= columns || cell.Width != 1 {
+				return "", nil, false
+			}
+			text := cell.Text
+			if text == "" {
+				text = " "
+			}
+			if len(text) != 1 || text[0] < 0x20 || text[0] > 0x7e {
+				return "", nil, false
+			}
+			chars[col] = text[0]
+			styles[col] = cell.StyleID
+			links[col] = cell.LinkID
+			col++
+		}
+	}
+	spans := make([]*pb.StyleSpan, 0)
+	for start := 0; start < columns; {
+		style, link := styles[start], links[start]
+		end := start + 1
+		for end < columns && styles[end] == style && links[end] == link {
+			end++
+		}
+		if style != 0 || link != 0 {
+			spans = append(spans, &pb.StyleSpan{StartCol: int32(start), EndCol: int32(end), StyleId: style, LinkId: link})
+		}
+		start = end
+	}
+	return string(chars), spans, true
 }
 
 func encodeCellRuns(runs []terminalengine.CellRun) []*pb.CellRun {

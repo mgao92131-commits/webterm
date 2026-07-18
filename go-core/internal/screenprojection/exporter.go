@@ -223,7 +223,9 @@ func cellsSameStyle(a, b terminalengine.Cell) bool {
 }
 
 // snapshotTailLines 是快照附带的历史窗口行数上限。
-const snapshotTailLines = 300
+// 首屏只需覆盖可见区及少量上下文；更早历史统一走 HistoryPage 按需分页，避免
+// attach、resize 与 resync 把不可见的 300 行重复塞入每个 Snapshot。
+const snapshotTailLines = 100
 
 // exportHistoryWindow 全量导出尾部历史窗口，用于独立快照与历史缓存重建路径。
 func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrollback) terminalengine.HistoryWindow {

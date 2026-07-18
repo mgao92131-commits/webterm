@@ -18,8 +18,17 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong RENDER_DURATION_NANOS = new AtomicLong();
   private static final AtomicLong RENDER_DURATION_MAX_NANOS = new AtomicLong();
   private static final AtomicLong PROTOBUF_PARSE_NANOS = new AtomicLong();
+  private static final AtomicLong PROTOBUF_PARSE_COUNT = new AtomicLong();
   private static final AtomicLong MODEL_APPLY_NANOS = new AtomicLong();
   private static final AtomicLong MAIN_CALLBACK_DELAY_NANOS = new AtomicLong();
+  private static final AtomicLong SNAPSHOT_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong SNAPSHOT_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong PATCH_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong PATCH_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong OTHER_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong OTHER_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong MAILBOX_RESIDENCE_NANOS = new AtomicLong();
+  private static final AtomicLong MAILBOX_RESIDENCE_MAX_NANOS = new AtomicLong();
 
   private TerminalRenderMetrics() {}
 
@@ -39,6 +48,7 @@ public final class TerminalRenderMetrics {
     updateMax(RENDER_DURATION_MAX_NANOS, safe);
   }
   public static void protobufParseDuration(long nanos) {
+    PROTOBUF_PARSE_COUNT.incrementAndGet();
     PROTOBUF_PARSE_NANOS.addAndGet(Math.max(0L, nanos));
   }
   public static void modelApplyDuration(long nanos) {
@@ -47,13 +57,38 @@ public final class TerminalRenderMetrics {
   public static void mainThreadCallbackDelay(long nanos) {
     MAIN_CALLBACK_DELAY_NANOS.addAndGet(Math.max(0L, nanos));
   }
+  /** Records only wire class and length; terminal contents never enter diagnostics. */
+  public static void inboundScreenFrame(int kind, int bytes) {
+    AtomicLong count;
+    AtomicLong totalBytes;
+    if (kind == 0) {
+      count = SNAPSHOT_FRAME_COUNT;
+      totalBytes = SNAPSHOT_FRAME_BYTES;
+    } else if (kind == 1) {
+      count = PATCH_FRAME_COUNT;
+      totalBytes = PATCH_FRAME_BYTES;
+    } else {
+      count = OTHER_FRAME_COUNT;
+      totalBytes = OTHER_FRAME_BYTES;
+    }
+    count.incrementAndGet();
+    totalBytes.addAndGet(Math.max(0, bytes));
+  }
+  public static void mailboxResidenceDuration(long nanos) {
+    long safe = Math.max(0L, nanos);
+    MAILBOX_RESIDENCE_NANOS.addAndGet(safe);
+    updateMax(MAILBOX_RESIDENCE_MAX_NANOS, safe);
+  }
 
   public static Snapshot snapshot() {
     return new Snapshot(MODEL_CHANGE_COUNT.get(), UI_CALLBACK_SCHEDULE_COUNT.get(),
         UI_CALLBACK_COALESCED_COUNT.get(), RENDER_REQUEST_COUNT.get(), VSYNC_RENDER_COUNT.get(),
         FULL_INVALIDATE_COUNT.get(), PARTIAL_INVALIDATE_COUNT.get(), DIRTY_ROW_COUNT.get(),
         RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
-        MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get());
+        PROTOBUF_PARSE_COUNT.get(), MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get(),
+        SNAPSHOT_FRAME_COUNT.get(), SNAPSHOT_FRAME_BYTES.get(), PATCH_FRAME_COUNT.get(),
+        PATCH_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(), OTHER_FRAME_BYTES.get(),
+        MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get());
   }
 
   private static void updateMax(AtomicLong counter, long value) {
@@ -73,14 +108,26 @@ public final class TerminalRenderMetrics {
     public final long renderDurationNanos;
     public final long renderDurationMaxNanos;
     public final long protobufParseNanos;
+    public final long protobufParseCount;
     public final long modelApplyNanos;
     public final long mainThreadCallbackDelayNanos;
+    public final long snapshotFrameCount;
+    public final long snapshotFrameBytes;
+    public final long patchFrameCount;
+    public final long patchFrameBytes;
+    public final long otherFrameCount;
+    public final long otherFrameBytes;
+    public final long mailboxResidenceNanos;
+    public final long mailboxResidenceMaxNanos;
 
     Snapshot(long modelChangeCount, long uiCallbackScheduleCount, long uiCallbackCoalescedCount,
              long renderRequestCount, long vsyncRenderCount, long fullInvalidateCount,
              long partialInvalidateCount, long dirtyRowCount, long renderDurationNanos,
-             long renderDurationMaxNanos, long protobufParseNanos, long modelApplyNanos,
-             long mainThreadCallbackDelayNanos) {
+             long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
+             long modelApplyNanos, long mainThreadCallbackDelayNanos, long snapshotFrameCount,
+             long snapshotFrameBytes, long patchFrameCount, long patchFrameBytes,
+             long otherFrameCount, long otherFrameBytes, long mailboxResidenceNanos,
+             long mailboxResidenceMaxNanos) {
       this.modelChangeCount = modelChangeCount;
       this.uiCallbackScheduleCount = uiCallbackScheduleCount;
       this.uiCallbackCoalescedCount = uiCallbackCoalescedCount;
@@ -92,8 +139,17 @@ public final class TerminalRenderMetrics {
       this.renderDurationNanos = renderDurationNanos;
       this.renderDurationMaxNanos = renderDurationMaxNanos;
       this.protobufParseNanos = protobufParseNanos;
+      this.protobufParseCount = protobufParseCount;
       this.modelApplyNanos = modelApplyNanos;
       this.mainThreadCallbackDelayNanos = mainThreadCallbackDelayNanos;
+      this.snapshotFrameCount = snapshotFrameCount;
+      this.snapshotFrameBytes = snapshotFrameBytes;
+      this.patchFrameCount = patchFrameCount;
+      this.patchFrameBytes = patchFrameBytes;
+      this.otherFrameCount = otherFrameCount;
+      this.otherFrameBytes = otherFrameBytes;
+      this.mailboxResidenceNanos = mailboxResidenceNanos;
+      this.mailboxResidenceMaxNanos = mailboxResidenceMaxNanos;
     }
   }
 }

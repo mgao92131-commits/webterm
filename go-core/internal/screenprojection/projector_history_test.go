@@ -165,13 +165,24 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
 			if len(state.History.Lines) != want {
 				t.Fatalf("iter %d: window=%d lines, want %d (scrollback %d)", i, len(state.History.Lines), want, sb.Len())
 			}
-			// 容量 120 < 窗口上限 300：窗口包含全部留存行，起点即最老可用行。
-			if state.History.FirstIncludedLineID != state.History.FirstAvailableLineID {
-				t.Fatalf("iter %d: FirstIncluded=%d != FirstAvailable=%d", i,
-					state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
-			}
-			if state.History.HasMoreBefore {
-				t.Fatalf("iter %d: HasMoreBefore must be false when window starts at FirstAvailable", i)
+			if want == sb.Len() {
+				// 留存行未超过窗口：窗口包含全部留存行。
+				if state.History.FirstIncludedLineID != state.History.FirstAvailableLineID {
+					t.Fatalf("iter %d: FirstIncluded=%d != FirstAvailable=%d", i,
+						state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+				}
+				if state.History.HasMoreBefore {
+					t.Fatalf("iter %d: HasMoreBefore must be false when window starts at FirstAvailable", i)
+				}
+			} else {
+				// 留存行超过首屏窗口：窗口从较新的位置开始，旧行需分页取得。
+				if state.History.FirstIncludedLineID <= state.History.FirstAvailableLineID {
+					t.Fatalf("iter %d: FirstIncluded=%d must be after FirstAvailable=%d", i,
+						state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+				}
+				if !state.History.HasMoreBefore {
+					t.Fatalf("iter %d: HasMoreBefore must be true when window omits retained lines", i)
+				}
 			}
 			assertConsecutiveIDs(t, state.History)
 			assertStateEquivalent(t, state, forceFullExport(p, seq))
@@ -181,7 +192,7 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
 
 	t.Run("byte-budget", func(t *testing.T) {
 		engine, sb, p := newHistoryRig(t, 8, 20)
-		sb.SetMaxBytes(2160 * 60) // 每行约 2.1KB，留存约 60 行，远低于 300 行窗口
+		sb.SetMaxBytes(2160 * 60) // 每行约 2.1KB，留存约 60 行，低于首屏历史窗口
 		seq := uint64(1)
 		for i := 0; i < 10; i++ {
 			writeScrollLines(t, engine, i*20, 20)
@@ -267,7 +278,7 @@ func TestProjector_PatchFallsBackToSnapshotWhenBaselineTrimmed(t *testing.T) {
 	}
 	deriver.FrameForState(baseline)
 
-	// 区域滚动 301 次：历史追加 301 行 > 300 行窗口容量。
+	// 历史追加量超过首屏窗口容量，中间行无法由 append 补齐。
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.FrameForState(state)
@@ -277,7 +288,9 @@ func TestProjector_PatchFallsBackToSnapshotWhenBaselineTrimmed(t *testing.T) {
 	if got := len(frame.History.Lines); got != snapshotTailLines {
 		t.Fatalf("snapshot window=%d lines, want %d", got, snapshotTailLines)
 	}
-	if frame.History.FirstIncludedLineID != 2 || frame.History.LastIncludedLineID != 301 || !frame.History.HasMoreBefore {
+	if frame.History.FirstIncludedLineID != state.History.FirstIncludedLineID ||
+		frame.History.LastIncludedLineID != state.History.LastIncludedLineID ||
+		!frame.History.HasMoreBefore {
 		t.Fatalf("snapshot window bounds wrong: %+v", frame.History)
 	}
 	assertConsecutiveIDs(t, frame.History)
@@ -521,7 +534,7 @@ func TestProjector_IncrementalHistoryMatchesFullExport(t *testing.T) {
 }
 
 // 性能（轻量）：持续 scroll 场景下，增量历史导出的 ExportState 分配量必须
-// 显著低于每帧全量重导出 300 行窗口——不再按窗口大小分配。用 TotalAlloc 只
+// 显著低于每帧全量重导出首屏历史窗口——不再按窗口大小分配。用 TotalAlloc 只
 // 统计 ExportState 区间（Write 不计入），两种形态同负载对比，避免 flaky 的
 // 绝对阈值。
 func TestProjector_IncrementalHistoryExportReducesAllocations(t *testing.T) {
@@ -530,7 +543,7 @@ func TestProjector_IncrementalHistoryExportReducesAllocations(t *testing.T) {
 	engine := terminalengine.NewEngine(rows, cols, scrollback)
 	p := NewProjector(engine, scrollback, "s1", "i1")
 	payload := genProjScrollChunk(cols, 16)
-	for i := 0; i < 320; i++ { // 预热到稳态：屏幕满、历史窗口满 300 行
+	for i := 0; i < 320; i++ { // 预热到稳态：屏幕满、历史窗口满
 		if err := engine.Write(payload); err != nil {
 			t.Fatal(err)
 		}
@@ -562,7 +575,7 @@ func TestProjector_IncrementalHistoryExportReducesAllocations(t *testing.T) {
 	full := measure(true)
 	incr := measure(false)
 	t.Logf("ExportState B/op: full-history=%d incremental=%d", full/30, incr/30)
-	if incr > full/2 {
+	if incr > full*2/3 {
 		t.Fatalf("incremental history export did not reduce allocations: full=%dB incr=%dB per export", full/30, incr/30)
 	}
 }

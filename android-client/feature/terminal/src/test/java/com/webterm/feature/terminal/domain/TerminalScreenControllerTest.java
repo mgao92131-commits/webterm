@@ -11,8 +11,8 @@ import androidx.annotation.Nullable;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
@@ -55,32 +55,33 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void tailAppendWhileScrolledUp_compensatesViewportOnce() {
+  public void renderWakeWhileScrolledUp_schedulesOneFrame() {
     controller.onScrollPixels(600, 2_000);
     assertFalse(controller.viewport().followTail);
 
-    controller.onModelChange(new ModelChange(false, null, true, false, false, false, 3, 0));
+    runtime.model().requestFullRender();
+    controller.onRenderNeeded();
 
-    assertEquals(Collections.singletonList(3), view.historyAppends);
+    assertEquals(1, frameScheduler.pendingCount());
   }
 
   @Test
-  public void historyPrepend_doesNotCompensateOrUndoReverseGesture() {
+  public void renderWakeDoesNotUndoReverseGesture() {
     controller.onScrollPixels(1_000, 1_000); // reach the hard top
     controller.onScrollPixels(-300, 1_000);  // reverse swipe toward the tail
     assertEquals(700, controller.viewport().scrollOffsetPixels);
 
-    controller.onModelChange(new ModelChange(false, null, true, false, false, false, 0, 250));
+    runtime.model().requestFullRender();
+    controller.onRenderNeeded();
 
-    assertTrue("prepend must not trigger tail-append compensation",
-        view.historyAppends.isEmpty());
     assertEquals("a returned page must not undo the reverse gesture",
         700, controller.viewport().scrollOffsetPixels);
   }
 
   @Test
-  public void tailAppendWhileFollowingTail_keepsOffsetZero() {
-    controller.onModelChange(new ModelChange(false, null, true, false, false, false, 4, 0));
+  public void renderWakeWhileFollowingTail_keepsOffsetZero() {
+    runtime.model().requestFullRender();
+    controller.onRenderNeeded();
 
     assertTrue(view.historyAppends.isEmpty());
     assertEquals(0, controller.viewport().scrollOffsetPixels);
@@ -128,19 +129,17 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void sameVsyncWindow_rendersOnlyNewestModelChange() {
+  public void sameVsyncWindow_schedulesOnlyOneRenderWake() {
     frameScheduler.runAll(); // attachment's initial full render
-    controller.onModelChange(new ModelChange(false, Collections.singleton(1), false,
-        false, false, false));
-    controller.onModelChange(new ModelChange(false, Collections.singleton(2), false,
-        false, false, false));
+    runtime.model().requestFullRender();
+    controller.onRenderNeeded();
+    controller.onRenderNeeded();
 
     assertEquals(1, frameScheduler.pendingCount());
     frameScheduler.runAll();
 
     assertEquals(2, view.renderCount);
-    assertTrue(view.lastChange.changedScreenRows.contains(1));
-    assertTrue(view.lastChange.changedScreenRows.contains(2));
+    assertTrue(view.lastUpdate.dirty.fullInvalidate);
   }
 
   @Test
@@ -227,14 +226,16 @@ public final class TerminalScreenControllerTest {
   private static final class RecordingView implements TerminalScreenController.View {
     final List<Integer> historyAppends = new ArrayList<>();
     int renderCount;
-    ModelChange lastChange;
+    RenderUpdate lastUpdate;
 
     @Override
-    public void render(@NonNull RemoteTerminalModel model,
-                       @NonNull com.webterm.terminal.model.TerminalViewportState viewport,
-                       @NonNull ModelChange change) {
+    public void bindModel(@NonNull RemoteTerminalModel model) {}
+
+    @Override
+    public void render(@NonNull RenderUpdate update,
+                       @NonNull com.webterm.terminal.model.TerminalViewportState viewport) {
       renderCount++;
-      lastChange = change;
+      lastUpdate = update;
     }
 
     @Override

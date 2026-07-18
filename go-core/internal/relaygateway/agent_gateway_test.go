@@ -38,11 +38,16 @@ func TestAgentGatewayRegistersPresenceAndRemovesOnClose(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, wsURL(server.URL), nil)
+	conn, handshakeResponse, err := websocket.Dial(ctx, wsURL(server.URL), &websocket.DialOptions{
+		CompressionMode: websocket.CompressionNoContextTakeover,
+	})
 	if err != nil {
 		t.Fatalf("Dial returned error: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	if handshakeResponse == nil || !strings.Contains(handshakeResponse.Header.Get("Sec-WebSocket-Extensions"), "permessage-deflate") {
+		t.Fatalf("permessage-deflate was not negotiated: %#v", handshakeResponse)
+	}
 
 	writeJSON(t, ctx, conn, map[string]any{
 		"type":       AgentRegisterMessage,

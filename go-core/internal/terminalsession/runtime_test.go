@@ -72,6 +72,27 @@ func TestNewRuntimeInitialVersions(t *testing.T) {
 	}
 }
 
+func TestProjectionBusyWindowFromEnv(t *testing.T) {
+	t.Setenv("WEBTERM_PROJECTION_ADAPTIVE_FLUSH", "")
+	if got := projectionBusyWindowFromEnv(); got != projectionFlushWindow {
+		t.Fatalf("adaptive disabled window=%s, want %s", got, projectionFlushWindow)
+	}
+
+	t.Setenv("WEBTERM_PROJECTION_ADAPTIVE_FLUSH", "1")
+	t.Setenv("WEBTERM_PROJECTION_BUSY_FLUSH_MS", "")
+	if got := projectionBusyWindowFromEnv(); got != defaultBusyProjectionWindow {
+		t.Fatalf("default busy window=%s, want %s", got, defaultBusyProjectionWindow)
+	}
+	t.Setenv("WEBTERM_PROJECTION_BUSY_FLUSH_MS", "33")
+	if got := projectionBusyWindowFromEnv(); got != 33*time.Millisecond {
+		t.Fatalf("configured busy window=%s, want 33ms", got)
+	}
+	t.Setenv("WEBTERM_PROJECTION_BUSY_FLUSH_MS", "99")
+	if got := projectionBusyWindowFromEnv(); got != defaultBusyProjectionWindow {
+		t.Fatalf("out-of-range busy window=%s, want %s", got, defaultBusyProjectionWindow)
+	}
+}
+
 func TestRuntimeLargeScrollbackTrimDoesNotSelfDeadlock(t *testing.T) {
 	r := newRuntimeTestHarness(t, WithScrollbackLimits(1, 1<<30))
 

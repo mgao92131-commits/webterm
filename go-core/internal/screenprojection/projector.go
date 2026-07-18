@@ -310,6 +310,8 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	// 行的 Runs 与缓存/历史帧共享且不可变，这是有意的零拷贝复用。
 	screen := make([]terminalengine.Line, len(s.screen))
 	copy(screen, s.screen)
+	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
+	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
 
 	history := terminalengine.HistoryWindow{}
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
@@ -323,30 +325,31 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	}
 
 	return terminalengine.ScreenFrame{
-		Version:           1,
-		Kind:              terminalengine.FrameSnapshot,
-		SessionID:         p.sessionID,
-		InstanceID:        p.instanceID,
-		Epoch:             epoch,
-		Seq:               seq,
-		Rows:              s.rows,
-		Cols:              s.cols,
-		ActiveBuffer:      s.activeBuffer,
-		ReverseVideo:      s.palette.reverseVideo,
-		DefaultFG:         s.palette.defaultFG,
-		DefaultBG:         s.palette.defaultBG,
-		CursorColor:       s.palette.cursorColor,
-		IndexedPalette:    s.palette.indexed,
-		IndexedPaletteSet: s.palette.indexedSet,
-		PaletteGeneration: s.palette.generation,
-		Cursor:            s.cursor,
-		Modes:             s.modes,
-		History:           history,
-		Screen:            screen,
-		Styles:            p.exporter.styleTable.Styles(),
-		Links:             p.exporter.linkTable.Links(),
-		Title:             s.title,
-		WorkingDir:        s.workingDir,
+		Version:            1,
+		Kind:               terminalengine.FrameSnapshot,
+		SessionID:          p.sessionID,
+		InstanceID:         p.instanceID,
+		Epoch:              epoch,
+		Seq:                seq,
+		Rows:               s.rows,
+		Cols:               s.cols,
+		ActiveBuffer:       s.activeBuffer,
+		ReverseVideo:       s.palette.reverseVideo,
+		DefaultFG:          s.palette.defaultFG,
+		DefaultBG:          s.palette.defaultBG,
+		CursorColor:        s.palette.cursorColor,
+		IndexedPalette:     s.palette.indexed,
+		IndexedPaletteSet:  s.palette.indexedSet,
+		PaletteGeneration:  s.palette.generation,
+		Cursor:             s.cursor,
+		Modes:              s.modes,
+		History:            history,
+		Screen:             screen,
+		Styles:             p.exporter.styleTable.Styles(),
+		Links:              p.exporter.linkTable.Links(),
+		Title:              s.title,
+		WorkingDir:         s.workingDir,
+		RowChangedRevision: rowChangedRevision,
 	}
 }
 
@@ -447,10 +450,8 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 	return patch
 }
 
-// isEmptyPatch 判断 diff 出的 patch 是否不含任何可观察变化。patch 始终携带
-// cursor/modes/palette 的当前值（尚无 presence 标志），因此这些组件与
-// baseline 相等才算未变化；history append、变化行、promoted rows、新字典项
-// 与 title/cwd 标志任一非空即为真实变化。
+// isEmptyPatch 判断 diff 出的 patch 是否不含任何可观察变化。cursor/modes/palette
+// 通过 patch presence 标志表达，避免把未变化的元数据重复编码到每一帧。
 func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) == 0 &&
 		len(patch.Screen) == 0 &&
@@ -459,15 +460,9 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 		len(patch.Links) == 0 &&
 		!patch.TitleChanged &&
 		!patch.WorkingDirChanged &&
-		patch.Cursor == baseline.Cursor &&
-		patch.Modes == baseline.Modes &&
-		patch.ReverseVideo == baseline.ReverseVideo &&
-		patch.DefaultFG == baseline.DefaultFG &&
-		patch.DefaultBG == baseline.DefaultBG &&
-		patch.CursorColor == baseline.CursorColor &&
-		patch.IndexedPalette == baseline.IndexedPalette &&
-		patch.IndexedPaletteSet == baseline.IndexedPaletteSet &&
-		patch.PaletteGeneration == baseline.PaletteGeneration
+		!patch.CursorChanged &&
+		!patch.ModesChanged &&
+		!patch.PaletteChanged
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
@@ -492,19 +487,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		}
 		historyAppend = new.History.Lines[len(new.History.Lines)-int(appended):]
 	}
-	changedRows := make(map[int]terminalengine.Line)
-	for r := 0; r < len(new.Screen); r++ {
-		if r >= len(old.Screen) || !linesEqual(old.Screen[r], new.Screen[r]) {
-			changedRows[r] = new.Screen[r]
-		}
-	}
-
-	screenRows := make([]terminalengine.Line, 0, len(changedRows))
-	for r := 0; r < len(new.Screen); r++ {
-		if line, ok := changedRows[r]; ok {
-			screenRows = append(screenRows, line)
-		}
-	}
+	screenRows := changedScreenRows(old, new)
 
 	return terminalengine.ScreenFrame{
 		Version:           1,
@@ -526,6 +509,13 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		PaletteGeneration: new.PaletteGeneration,
 		Cursor:            new.Cursor,
 		Modes:             new.Modes,
+		CursorChanged:     old.Cursor != new.Cursor,
+		ModesChanged:      old.Modes != new.Modes,
+		PaletteChanged: old.ReverseVideo != new.ReverseVideo ||
+			old.DefaultFG != new.DefaultFG || old.DefaultBG != new.DefaultBG ||
+			old.CursorColor != new.CursorColor || old.IndexedPalette != new.IndexedPalette ||
+			old.IndexedPaletteSet != new.IndexedPaletteSet ||
+			old.PaletteGeneration != new.PaletteGeneration,
 		History: terminalengine.HistoryWindow{
 			FirstAvailableLineID: new.History.FirstAvailableLineID,
 			FirstIncludedLineID:  new.History.FirstIncludedLineID,
@@ -545,6 +535,28 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		TitleChanged:      old.Title != new.Title,
 		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
 	}
+}
+
+// changedScreenRows selects rows using projector revision stamps when available. The fallback
+// keeps synthetic frames and older tests correct while production avoids O(rows*cols) compares
+// for every connected client.
+func changedScreenRows(old, new terminalengine.ScreenFrame) []terminalengine.Line {
+	if len(new.RowChangedRevision) == len(new.Screen) {
+		rows := make([]terminalengine.Line, 0)
+		for r, changedRevision := range new.RowChangedRevision {
+			if changedRevision > old.Seq {
+				rows = append(rows, new.Screen[r])
+			}
+		}
+		return rows
+	}
+	rows := make([]terminalengine.Line, 0)
+	for r := 0; r < len(new.Screen); r++ {
+		if r >= len(old.Screen) || !linesEqual(old.Screen[r], new.Screen[r]) {
+			rows = append(rows, new.Screen[r])
+		}
+	}
+	return rows
 }
 
 func newlyAddedStyles(old, new []terminalengine.TerminalStyle) []terminalengine.TerminalStyle {

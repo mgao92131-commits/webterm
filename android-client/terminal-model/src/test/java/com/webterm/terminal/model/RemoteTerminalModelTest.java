@@ -14,11 +14,12 @@ public class RemoteTerminalModelTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     ScreenSnapshot snapshot = sampleSnapshot(2, 4, 1, "ab");
 
-    ModelChange change = model.applySnapshot(snapshot);
-    RemoteTerminalModel.RenderSnapshot render = model.renderSnapshot();
+    model.applySnapshot(snapshot);
+    RenderUpdate update = model.consumeRenderUpdate();
+    RemoteTerminalModel.RenderSnapshot render = update.snapshot;
 
-    assertTrue(change.fullInvalidate);
-    assertTrue(change.geometryChanged);
+    assertTrue(update.state.geometryChanged);
+    assertTrue(update.dirty.fullInvalidate);
     assertEquals(1, model.screenRevision);
     assertEquals("i1", model.instanceId);
     assertEquals(2, model.rows);
@@ -36,26 +37,75 @@ public class RemoteTerminalModelTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
 
-    ModelChange sameGeometry = model.applySnapshot(sampleSnapshot(2, 4, 2, "cd"));
-    assertFalse(sameGeometry.geometryChanged);
+    model.consumeRenderUpdate();
+    model.applySnapshot(sampleSnapshot(2, 4, 2, "cd"));
+    assertFalse(model.consumeRenderUpdate().state.geometryChanged);
 
-    ModelChange resized = model.applySnapshot(sampleSnapshot(3, 4, 3, "ef"));
-    assertTrue(resized.geometryChanged);
+    model.applySnapshot(sampleSnapshot(3, 4, 3, "ef"));
+    assertTrue(model.consumeRenderUpdate().state.geometryChanged);
   }
 
   @Test
   public void applyPatch_updatesRowsAndRevision() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+    model.consumeRenderUpdate();
 
     ScreenPatch patch = samplePatch(1, 2, "cd");
-    ModelChange change = model.applyPatch(patch);
+    model.applyPatch(patch);
+    RenderUpdate update = model.consumeRenderUpdate();
 
-    assertFalse(change.fullInvalidate);
     assertEquals(2, model.screenRevision);
-    assertEquals("c", model.renderSnapshot().screen[0].at(0).text);
-    assertEquals("d", model.renderSnapshot().screen[0].at(1).text);
-    assertTrue(change.changedScreenRows.contains(0));
+    assertEquals("c", update.snapshot.screen[0].at(0).text);
+    assertEquals("d", update.snapshot.screen[0].at(1).text);
+    assertTrue(update.dirty.changedScreenRows.get(0));
+  }
+
+  @Test
+  public void consumeRenderUpdate_mergesCurrentPatches_andLeavesLaterPatchForNextFrame()
+      throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+    model.consumeRenderUpdate();
+
+    model.applyPatch(samplePatch(1, 2, "c"));
+    model.applyPatch(new ScreenPatch("i1", 1, 2, 3, Collections.emptyList(),
+        Collections.singletonList(line(1, "d")), null, null, null,
+        Collections.emptyMap(), Collections.emptyMap(), null, null, Collections.emptyList()));
+
+    RenderUpdate current = model.consumeRenderUpdate();
+    assertEquals(3, current.snapshot.screenRevision);
+    assertTrue(current.dirty.changedScreenRows.get(0));
+    assertTrue(current.dirty.changedScreenRows.get(1));
+    assertEquals("c", current.snapshot.screen[0].at(0).text);
+    assertEquals("d", current.snapshot.screen[1].at(0).text);
+    assertNull(model.consumeRenderUpdate());
+
+    model.applyPatch(samplePatch(3, 4, "e"));
+    RenderUpdate next = model.consumeRenderUpdate();
+    assertEquals(4, next.snapshot.screenRevision);
+    assertTrue(next.dirty.changedScreenRows.get(0));
+    assertFalse(next.dirty.changedScreenRows.get(1));
+  }
+
+  @Test
+  public void cursorAndModesChanges_areAccumulatedForSafeRedraw() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(sampleSnapshot(2, 4, 1, "ab"));
+    model.consumeRenderUpdate();
+
+    TerminalCursor cursor = new TerminalCursor(1, 0, true, TerminalCursor.Shape.BLOCK, false);
+    TerminalModes modes = new TerminalModes(true, false, false,
+        TerminalModes.MouseTracking.NONE, TerminalModes.MouseEncoding.X10, false);
+    model.applyPatch(new ScreenPatch("i1", 1, 1, 2, Collections.emptyList(),
+        Collections.emptyList(), cursor, modes, null, Collections.emptyMap(),
+        Collections.emptyMap(), null, null, Collections.emptyList()));
+
+    RenderUpdate update = model.consumeRenderUpdate();
+    assertTrue(update.dirty.cursorChanged);
+    assertEquals(0, update.dirty.previousCursorRow);
+    assertEquals(1, update.dirty.currentCursorRow);
+    assertTrue(update.dirty.modesChanged);
   }
 
   @Test
@@ -89,11 +139,13 @@ public class RemoteTerminalModelTest {
     List<TerminalLine> lines = new ArrayList<>();
     lines.add(line(99, "x"));
     HistoryPage page = new HistoryPage("r1", 1, 1, 98, true, lines);
-    ModelChange change = model.prependHistoryPage(page);
+    model.consumeRenderUpdate();
+    model.prependHistoryPage(page);
+    RenderUpdate update = model.consumeRenderUpdate();
 
-    assertTrue(change.historyChanged);
-    assertEquals(1, change.historyPrependedLines);
-    assertEquals("prepend is not a tail append", 0, change.tailAppendedLines);
+    assertTrue(update.state.historyChanged);
+    assertEquals(1, update.state.historyPrependedLines);
+    assertEquals("prepend is not a tail append", 0, update.state.tailAppendedLines);
     assertEquals(2, model.renderSnapshot().history.size());
     assertEquals(98L, model.firstAvailableHistoryId());
   }
@@ -110,10 +162,12 @@ public class RemoteTerminalModelTest {
         "i1", 1, 1, 2, appended, Collections.emptyList(),
         null, null, null, Collections.emptyMap(), Collections.emptyMap(),
         null, null, Collections.emptyList());
-    ModelChange change = model.applyPatch(patch);
+    model.consumeRenderUpdate();
+    model.applyPatch(patch);
+    RenderUpdate update = model.consumeRenderUpdate();
 
-    assertEquals(2, change.tailAppendedLines);
-    assertEquals("tail append is not a history prepend", 0, change.historyPrependedLines);
+    assertEquals(2, update.state.tailAppendedLines);
+    assertEquals("tail append is not a history prepend", 0, update.state.historyPrependedLines);
   }
 
   @Test
@@ -148,12 +202,14 @@ public class RemoteTerminalModelTest {
     model.applySnapshot(titledSnapshot("vim", "/home/u"));
 
     // present 空串表示 title/cwd 已被清空，模型必须清空而不是保持原值。
-    ModelChange change = model.applyPatch(titlePatch("", ""));
+    model.consumeRenderUpdate();
+    model.applyPatch(titlePatch("", ""));
+    RenderUpdate update = model.consumeRenderUpdate();
 
     assertEquals("", model.title());
     assertEquals("", model.workingDirectory());
     assertEquals("", model.renderSnapshot().title);
-    assertTrue(change.titleChanged);
+    assertTrue(update.state.titleChanged);
   }
 
   @Test
@@ -162,11 +218,25 @@ public class RemoteTerminalModelTest {
     model.applySnapshot(titledSnapshot("vim", "/home/u"));
 
     // null 表示未变化，模型保持原值。
-    ModelChange change = model.applyPatch(titlePatch(null, null));
+    model.consumeRenderUpdate();
+    model.applyPatch(titlePatch(null, null));
+    RenderUpdate update = model.consumeRenderUpdate();
 
     assertEquals("vim", model.title());
     assertEquals("/home/u", model.workingDirectory());
-    assertFalse(change.titleChanged);
+    assertNull(update);
+  }
+
+  @Test
+  public void metadataOnlyPatchReusesPublishedScreenArray() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(titledSnapshot("vim", "/home/u"));
+    TerminalLine[] before = model.consumeRenderUpdate().snapshot.screen;
+
+    model.applyPatch(titlePatch("bash", null));
+
+    assertSame("metadata-only patches must not clone the screen array", before,
+        model.renderSnapshot().screen);
   }
 
   @Test

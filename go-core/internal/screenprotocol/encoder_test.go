@@ -75,6 +75,44 @@ func TestEncodeFrame_SnapshotRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *testing.T) {
+	base := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
+		Rows: 5, Cols: 10,
+		Screen: []terminalengine.Line{{Row: 0, Runs: []terminalengine.CellRun{{Col: 0,
+			Cells: []terminalengine.Cell{{Text: "a", Width: 1}, {Text: "b", Width: 1, StyleID: 7}}}}}},
+	}
+	data, err := EncodeFrameWithCompactLines(base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	line := envelope.GetSnapshot().GetScreen()[0]
+	if line.GetText() != "ab        " || len(line.GetRuns()) != 0 {
+		t.Fatalf("compact line=%+v, want text-only encoding", line)
+	}
+	if len(line.GetStyleSpans()) != 1 || line.GetStyleSpans()[0].GetStartCol() != 1 {
+		t.Fatalf("compact style spans=%+v", line.GetStyleSpans())
+	}
+
+	base.Screen[0].Runs[0].Cells[1] = terminalengine.Cell{Text: "界", Width: 2}
+	data, err = EncodeFrameWithCompactLines(base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Reset()
+	if err := proto.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	line = envelope.GetSnapshot().GetScreen()[0]
+	if line.GetText() != "" || len(line.GetRuns()) != 1 {
+		t.Fatalf("wide line must retain CellRun encoding: %+v", line)
+	}
+}
+
 func TestEncodeFrame_PatchRoundTrip(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(5, 10, sb)
@@ -215,6 +253,40 @@ func TestEncodeFrame_PatchTitleWorkingDirPresence(t *testing.T) {
 	}
 	if patch.WorkingDirectory == nil || *patch.WorkingDirectory != "/tmp/work" {
 		t.Fatalf("cwd mismatch: %v", patch.WorkingDirectory)
+	}
+}
+
+func TestEncodeFrame_PatchMetadataPresence(t *testing.T) {
+	base := terminalengine.ScreenFrame{
+		Version: 1, Kind: terminalengine.FramePatch, InstanceID: "i1",
+		Epoch: 1, Seq: 2, BaseRevision: 1, Rows: 5, Cols: 10,
+	}
+	decode := func(frame terminalengine.ScreenFrame) *pb.ScreenPatch {
+		t.Helper()
+		data, err := EncodeFrame(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var env pb.ScreenEnvelope
+		if err := proto.Unmarshal(data, &env); err != nil {
+			t.Fatal(err)
+		}
+		return env.GetPatch()
+	}
+
+	patch := decode(base)
+	if patch.Cursor != nil || patch.Modes != nil || patch.Palette != nil {
+		t.Fatalf("unchanged metadata must be absent: cursor=%v modes=%v palette=%v",
+			patch.Cursor, patch.Modes, patch.Palette)
+	}
+
+	base.CursorChanged = true
+	base.ModesChanged = true
+	base.PaletteChanged = true
+	patch = decode(base)
+	if patch.Cursor == nil || patch.Modes == nil || patch.Palette == nil {
+		t.Fatalf("changed metadata must be present: cursor=%v modes=%v palette=%v",
+			patch.Cursor, patch.Modes, patch.Palette)
 	}
 }
 
