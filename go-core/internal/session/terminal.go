@@ -378,16 +378,6 @@ func (terminal *TerminalSession) ProjectedInputTrace() []terminalsession.InputTr
 	return rt.InputTraceSnapshot()
 }
 
-func (terminal *TerminalSession) RawPTYOutputSnapshot() terminalsession.RawPTYOutputSnapshot {
-	terminal.mu.RLock()
-	rt := terminal.runtime
-	terminal.mu.RUnlock()
-	if rt == nil {
-		return terminalsession.RawPTYOutputSnapshot{}
-	}
-	return rt.RawPTYOutputSnapshot()
-}
-
 func (terminal *TerminalSession) waitLoop() {
 	code, _ := terminal.process.Wait()
 	terminal.markClosed()

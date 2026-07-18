@@ -12,7 +12,6 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageMapper;
@@ -23,7 +22,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -148,11 +146,13 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
-  private String replacementReportedInstanceId = "";
   private long patchSummaryStartedAtMs;
+  private long patchSummaryFirstBaseRevision = -1;
+  private long patchSummaryLastScreenRevision = -1;
   private int patchSummaryCount;
   private long patchSummaryBytes;
   private int patchSummaryChangedRows;
+  private int patchSummaryHistoryAppend;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -624,6 +624,7 @@ public final class TerminalSessionRuntime {
     resyncCoordinator.reset();
     historyRequests.clear();
     screenMailbox.reset();
+    resetPatchSummary();
   }
 
   private void sendResync(@NonNull String reason) {
@@ -673,8 +674,7 @@ public final class TerminalSessionRuntime {
             }
             ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
             change = model.applySnapshot(snapshot);
-            int replacements = countReplacement(snapshot.screen) + countReplacement(snapshot.history.lines);
-            maybeLogReplacement(snapshot.instanceId, snapshot.screenRevision, replacements);
+            resetPatchSummary();
             Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
                 "instanceId", snapshot.instanceId,
                 "layoutEpoch", snapshot.layoutEpoch,
@@ -707,12 +707,6 @@ public final class TerminalSessionRuntime {
             if (resyncCoordinator.isRecovering()) return;
             // rows 取当前模型 geometry：patch 自身不携带 geometry，
             // 行索引上界只能相对本地投影校验（计划 §10.1）。
-            Diagnostics.debug("screen_protocol", "patch_received", diagnosticFields(
-                "instanceId", envelope.getPatch().getInstanceId(),
-                "layoutEpoch", envelope.getPatch().getLayoutEpoch(),
-                "baseRevision", envelope.getPatch().getBaseRevision(),
-                "screenRevision", envelope.getPatch().getScreenRevision(),
-                "payloadBytes", message.payload.length));
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
             long patchBase = envelope.getPatch().getBaseRevision();
@@ -731,8 +725,6 @@ public final class TerminalSessionRuntime {
                   "screenRevision", patch.screenRevision));
             }
             change = model.applyPatch(patch);
-            maybeLogReplacement(patch.instanceId, patch.screenRevision,
-                countReplacement(patch.screenRows) + countReplacement(patch.historyAppend));
             recordPatchSummary(message.payload.length, change.changedScreenRows.size(), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
@@ -813,40 +805,33 @@ public final class TerminalSessionRuntime {
     patchSummaryCount++;
     patchSummaryBytes += payloadBytes;
     patchSummaryChangedRows += changedRows;
+    patchSummaryHistoryAppend += patch.historyAppend.size();
+    if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
+    patchSummaryLastScreenRevision = patch.screenRevision;
     long now = android.os.SystemClock.elapsedRealtime();
     if (patchSummaryStartedAtMs == 0) patchSummaryStartedAtMs = now;
     if (now - patchSummaryStartedAtMs < 1000L) return;
-    Diagnostics.info("screen_protocol", "patch_applied", diagnosticFields(
+    Diagnostics.info("screen_protocol", "patch_applied_summary", diagnosticFields(
+        "sessionId", sessionId,
         "instanceId", patch.instanceId,
         "layoutEpoch", patch.layoutEpoch,
-        "baseRevision", patch.baseRevision,
-        "screenRevision", patch.screenRevision,
-        "changedRows", patchSummaryChangedRows,
+        "firstBaseRevision", patchSummaryFirstBaseRevision,
+        "lastScreenRevision", patchSummaryLastScreenRevision,
+        "patchCount", patchSummaryCount,
         "payloadBytes", patchSummaryBytes,
-        "patchCount", patchSummaryCount));
-    patchSummaryStartedAtMs = now;
+        "changedRows", patchSummaryChangedRows,
+        "historyAppend", patchSummaryHistoryAppend));
+    resetPatchSummary();
+  }
+
+  private void resetPatchSummary() {
+    patchSummaryStartedAtMs = 0;
+    patchSummaryFirstBaseRevision = -1;
+    patchSummaryLastScreenRevision = -1;
     patchSummaryCount = 0;
     patchSummaryBytes = 0;
     patchSummaryChangedRows = 0;
-  }
-
-  private void maybeLogReplacement(String instanceId, long revision, int replacementCount) {
-    if (replacementCount <= 0 || instanceId == null || instanceId.equals(replacementReportedInstanceId)) return;
-    replacementReportedInstanceId = instanceId;
-    Diagnostics.warn("screen_protocol", "android_model_contains_replacement", diagnosticFields(
-        "instanceId", instanceId,
-        "screenRevision", revision,
-        "replacementCount", replacementCount));
-  }
-
-  private static int countReplacement(List<TerminalLine> lines) {
-    int count = 0;
-    for (TerminalLine line : lines) {
-      for (com.webterm.terminal.model.TerminalCell cell : line.cells) {
-        if (cell.text != null && cell.text.indexOf('\ufffd') >= 0) count++;
-      }
-    }
-    return count;
+    patchSummaryHistoryAppend = 0;
   }
 
   private static long elapsedMillis(long startedNanos) {

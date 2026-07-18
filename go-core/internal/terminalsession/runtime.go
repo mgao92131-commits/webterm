@@ -1,18 +1,14 @@
 package terminalsession
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/screenprojection"
@@ -54,15 +50,8 @@ type Runtime struct {
 	inputTrace                  []InputTrace
 	inputDedupe                 map[string]*inputDedupeWindow
 	inputDedupeOrder            []string
-	inputInflight               map[inputDeliveryKey][]func(InputDeliveryResult)
-	capturePTYOutput            bool
-	rawPTYOutput                []byte
-	rawPTYTruncated             bool
-	logger                      *logs.Logger
-	invalidUTF8Logged           bool
-	replacementBytesLogged      bool
-	incompleteUTF8Logged        bool
-	projectionReplacementLogged bool
+	inputInflight map[inputDeliveryKey][]func(InputDeliveryResult)
+	logger        *logs.Logger
 
 	onTitle        func(string)
 	onBell         func()
@@ -194,9 +183,8 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]byte),
-		inputDedupe:      make(map[string]*inputDedupeWindow),
-		inputInflight:    make(map[inputDeliveryKey][]func(InputDeliveryResult)),
-		capturePTYOutput: os.Getenv("WEBTERM_CAPTURE_PTY_OUTPUT") == "1",
+		inputDedupe:   make(map[string]*inputDedupeWindow),
+		inputInflight: make(map[inputDeliveryKey][]func(InputDeliveryResult)),
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
 		layoutEpoch:    1,
@@ -394,26 +382,6 @@ func (r *Runtime) InputTraceSnapshot() []InputTrace {
 	}
 }
 
-// RawPTYOutputSnapshot returns an opt-in, bounded copy of bytes received from
-// the PTY before ANSI parsing. It is for local fixture capture only and is
-// disabled unless WEBTERM_CAPTURE_PTY_OUTPUT=1 was set at Agent startup.
-type RawPTYOutputSnapshot struct {
-	Enabled   bool   `json:"enabled"`
-	Truncated bool   `json:"truncated"`
-	Data      []byte `json:"data"`
-}
-
-func (r *Runtime) RawPTYOutputSnapshot() RawPTYOutputSnapshot {
-	reply := make(chan RawPTYOutputSnapshot, 1)
-	r.postEvent(rawPTYOutputSnapshotEvent{reply: reply})
-	select {
-	case snapshot := <-reply:
-		return snapshot
-	case <-r.stopCh:
-		return RawPTYOutputSnapshot{}
-	}
-}
-
 // Close 关闭 runtime。
 func (r *Runtime) Close() error {
 	r.stopOnce.Do(func() {
@@ -513,11 +481,6 @@ func (r *Runtime) handleEvent(ev event) {
 	case inputTraceSnapshotEvent:
 		trace := append([]InputTrace(nil), r.inputTrace...)
 		e.reply <- trace
-	case rawPTYOutputSnapshotEvent:
-		e.reply <- RawPTYOutputSnapshot{
-			Enabled: r.capturePTYOutput, Truncated: r.rawPTYTruncated,
-			Data: append([]byte(nil), r.rawPTYOutput...),
-		}
 	case acquireLayoutEvent:
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
@@ -729,78 +692,10 @@ func inputKindName(kind terminalengine.InputKind) string {
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
-	r.diagnosePTYBytes(data)
-	r.captureRawPTYOutput(data)
 	_ = r.engine.Write(data)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	r.scheduleProjectionFlush()
-}
-
-func (r *Runtime) diagnosePTYBytes(data []byte) {
-	if r.logger == nil || len(data) == 0 {
-		return
-	}
-	if !utf8.Valid(data) && !r.invalidUTF8Logged {
-		r.invalidUTF8Logged = true
-		offset := firstInvalidUTF8Offset(data)
-		r.logger.Add("warn", "pty", fmt.Sprintf("pty_invalid_utf8 sessionId=%s chunkBytes=%d invalidOffset=%d nearbyHex=%s screenRevision=%d", r.id, len(data), offset, nearbyHex(data, offset), r.currentRevision()))
-	}
-	if bytes.Contains(data, []byte{0xef, 0xbf, 0xbd}) && !r.replacementBytesLogged {
-		r.replacementBytesLogged = true
-		r.logger.Add("warn", "pty", fmt.Sprintf("pty_contains_replacement_bytes sessionId=%s chunkBytes=%d screenRevision=%d", r.id, len(data), r.currentRevision()))
-	}
-	if hasIncompleteUTF8Suffix(data) && !r.incompleteUTF8Logged {
-		r.incompleteUTF8Logged = true
-		r.logger.Add("warn", "pty", fmt.Sprintf("pty_chunk_ends_with_incomplete_utf8 sessionId=%s chunkBytes=%d screenRevision=%d", r.id, len(data), r.currentRevision()))
-	}
-}
-
-func firstInvalidUTF8Offset(data []byte) int {
-	for offset := 0; offset < len(data); {
-		_, size := utf8.DecodeRune(data[offset:])
-		if size == 1 && data[offset] >= 0x80 {
-			return offset
-		}
-		offset += size
-	}
-	return -1
-}
-
-func hasIncompleteUTF8Suffix(data []byte) bool {
-	for index := len(data) - 1; index >= 0 && index >= len(data)-utf8.UTFMax; index-- {
-		lead := data[index]
-		if lead&0xc0 == 0x80 {
-			continue
-		}
-		expected := 0
-		switch {
-		case lead >= 0xc2 && lead <= 0xdf:
-			expected = 2
-		case lead >= 0xe0 && lead <= 0xef:
-			expected = 3
-		case lead >= 0xf0 && lead <= 0xf4:
-			expected = 4
-		default:
-			return false
-		}
-		return len(data)-index < expected
-	}
-	return false
-}
-
-func nearbyHex(data []byte, offset int) string {
-	if offset < 0 {
-		return ""
-	}
-	start, end := offset-8, offset+8
-	if start < 0 {
-		start = 0
-	}
-	if end > len(data) {
-		end = len(data)
-	}
-	return hex.EncodeToString(data[start:end])
 }
 
 func (r *Runtime) commitEngineSignals() {
@@ -811,24 +706,6 @@ func (r *Runtime) commitEngineSignals() {
 	for _, effect := range batch.effects {
 		r.handleEffect(effect)
 	}
-}
-
-func (r *Runtime) captureRawPTYOutput(data []byte) {
-	if !r.capturePTYOutput || len(data) == 0 || r.rawPTYTruncated {
-		return
-	}
-	const maxRawPTYOutputBytes = 256 << 10
-	remaining := maxRawPTYOutputBytes - len(r.rawPTYOutput)
-	if remaining <= 0 {
-		r.rawPTYTruncated = true
-		return
-	}
-	if len(data) > remaining {
-		r.rawPTYOutput = append(r.rawPTYOutput, data[:remaining]...)
-		r.rawPTYTruncated = true
-		return
-	}
-	r.rawPTYOutput = append(r.rawPTYOutput, data...)
 }
 
 func (r *Runtime) handleInput(e inputEvent) {
@@ -1054,7 +931,6 @@ func (r *Runtime) broadcastFrame() {
 	// is limited to diffing against that client's baseline; without this split a
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
-	r.diagnoseProjectionReplacement(state)
 	for _, c := range r.clients {
 		if c.synced {
 			c.Send(state)
@@ -1062,35 +938,6 @@ func (r *Runtime) broadcastFrame() {
 			c.pendingState = state
 		}
 	}
-}
-
-func (r *Runtime) diagnoseProjectionReplacement(state terminalengine.ScreenFrame) {
-	if r.logger == nil || r.projectionReplacementLogged {
-		return
-	}
-	if count := countReplacementCells(state.Screen); count > 0 {
-		r.projectionReplacementLogged = true
-		r.logger.Add("warn", "projection", fmt.Sprintf("projection_contains_replacement sessionId=%s screenRevision=%d replacementCount=%d screenOrHistory=screen", r.id, state.Seq, count))
-		return
-	}
-	if count := countReplacementCells(state.History.Lines); count > 0 {
-		r.projectionReplacementLogged = true
-		r.logger.Add("warn", "projection", fmt.Sprintf("projection_contains_replacement sessionId=%s screenRevision=%d replacementCount=%d screenOrHistory=history", r.id, state.Seq, count))
-	}
-}
-
-func countReplacementCells(lines []terminalengine.Line) int {
-	count := 0
-	for _, line := range lines {
-		for _, run := range line.Runs {
-			for _, cell := range run.Cells {
-				if strings.ContainsRune(cell.Text, '\ufffd') {
-					count++
-				}
-			}
-		}
-	}
-	return count
 }
 
 const projectionFlushWindow = 16 * time.Millisecond
@@ -1226,10 +1073,6 @@ type projectedSnapshotEvent struct {
 
 type inputTraceSnapshotEvent struct {
 	reply chan []InputTrace
-}
-
-type rawPTYOutputSnapshotEvent struct {
-	reply chan RawPTYOutputSnapshot
 }
 
 type acquireLayoutEvent struct {
