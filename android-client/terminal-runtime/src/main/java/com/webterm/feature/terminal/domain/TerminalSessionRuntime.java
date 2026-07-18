@@ -147,7 +147,6 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
   private long patchSummaryGeneration;
-  private long patchSummaryStartedAtMs;
   private long patchSummaryFirstBaseRevision = -1;
   private long patchSummaryLastScreenRevision = -1;
   private String patchSummaryInstanceId;
@@ -642,10 +641,10 @@ public final class TerminalSessionRuntime {
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
+      TerminalScreenProto.ScreenEnvelope envelope;
       try {
         long parseStartedNanos = System.nanoTime();
-        TerminalScreenProto.ScreenEnvelope envelope =
-            TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
+        envelope = TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
         TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
         if (envelope.getProtocolVersion() != 1) {
           throw new IllegalArgumentException("unsupported protocol version");
@@ -656,60 +655,78 @@ public final class TerminalSessionRuntime {
             || message.sourceConnection != connection) return;
         if (ScreenEnvelopeDispatcher.dispatchReliableInput(
             envelope, message.sourceConnection.reliableInputTracker())) return;
-        ModelChange change;
-        long modelApplyStartedNanos = System.nanoTime();
-        switch (envelope.getPayloadCase()) {
-          case SNAPSHOT: {
-            Diagnostics.info("screen_protocol", "snapshot_received", diagnosticFields(
-                "instanceId", envelope.getSnapshot().getInstanceId(),
-                "layoutEpoch", envelope.getSnapshot().getLayoutEpoch(),
-                "screenRevision", envelope.getSnapshot().getScreenRevision(),
-                "payloadBytes", message.payload.length));
-            ScreenMessageValidator.ValidationResult validation =
-                ScreenMessageValidator.validateSnapshot(envelope.getSnapshot());
-            if (!validation.ok) {
-              Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
-                  "failureKind", "INVALID_SNAPSHOT"));
-              // 无效 snapshot 不能解除围栏：等待期间按退避重发 resync，
-              // 空闲时启动一次恢复。不能静默丢弃，否则永远等不到权威帧。
-              onInvalidSnapshot(validation.reason != null ? validation.reason : "invalid snapshot");
-              return;
-            }
-            ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
+      } catch (Exception e) {
+        Diagnostics.warn("screen_protocol", "screen_frame_decode_failed", diagnosticFields(
+            "failureKind", e.getClass().getSimpleName(),
+            "localRevision", model.screenRevision));
+        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
+        return;
+      }
+
+      ModelChange change;
+      long modelApplyStartedNanos = System.nanoTime();
+      switch (envelope.getPayloadCase()) {
+        case SNAPSHOT: {
+          Diagnostics.info("screen_protocol", "snapshot_received", diagnosticFields(
+              "instanceId", envelope.getSnapshot().getInstanceId(),
+              "layoutEpoch", envelope.getSnapshot().getLayoutEpoch(),
+              "screenRevision", envelope.getSnapshot().getScreenRevision(),
+              "payloadBytes", message.payload.length));
+          ScreenMessageValidator.ValidationResult validation =
+              ScreenMessageValidator.validateSnapshot(envelope.getSnapshot());
+          if (!validation.ok) {
+            Diagnostics.warn("screen_protocol", "snapshot_rejected", diagnosticFields(
+                "failureKind", "INVALID_SNAPSHOT"));
+            // 无效 snapshot 不能解除围栏：等待期间按退避重发 resync，
+            // 空闲时启动一次恢复。不能静默丢弃，否则永远等不到权威帧。
+            onInvalidSnapshot(validation.reason != null ? validation.reason : "invalid snapshot");
+            return;
+          }
+          ScreenSnapshot snapshot;
+          try {
+            snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
             change = model.applySnapshot(snapshot);
-            resetPatchSummary();
-            Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
+          } catch (Exception e) {
+            Diagnostics.warn("screen_protocol", "snapshot_apply_failed", diagnosticFields(
+                "failureKind", e.getClass().getSimpleName(),
+                "localRevision", model.screenRevision));
+            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "snapshot apply failed");
+            return;
+          }
+          resetPatchSummary();
+          Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
+              "instanceId", snapshot.instanceId,
+              "layoutEpoch", snapshot.layoutEpoch,
+              "screenRevision", snapshot.screenRevision,
+              "changedRows", snapshot.screen.size(),
+              "historyAppend", snapshot.history.lines.size(),
+              "payloadBytes", message.payload.length,
+              "applyDurationMs", elapsedMillis(modelApplyStartedNanos)));
+          if (change.geometryChanged) {
+            Diagnostics.info("screen_protocol", "layout_epoch_changed", diagnosticFields(
                 "instanceId", snapshot.instanceId,
                 "layoutEpoch", snapshot.layoutEpoch,
                 "screenRevision", snapshot.screenRevision,
-                "changedRows", snapshot.screen.size(),
-                "historyAppend", snapshot.history.lines.size(),
-                "payloadBytes", message.payload.length,
-                "applyDurationMs", elapsedMillis(modelApplyStartedNanos)));
-            if (change.geometryChanged) {
-              Diagnostics.info("screen_protocol", "layout_epoch_changed", diagnosticFields(
-                  "instanceId", snapshot.instanceId,
-                  "layoutEpoch", snapshot.layoutEpoch,
-                  "screenRevision", snapshot.screenRevision,
-                  "newCols", snapshot.cols,
-                  "newRows", snapshot.rows));
-            }
-            TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
-            // A snapshot atomically replaces the local projection and is the
-            // only frame that may release a revision-gap recovery fence.
-            onAuthoritativeSnapshot();
-            completeSynchronization();
-            break;
+                "newCols", snapshot.cols,
+                "newRows", snapshot.rows));
           }
-          case PATCH:
-            // A patch is relative to the state that failed validation. Applying
-            // queued patches while waiting for a snapshot only creates repeated
-            // revision gaps and a resync storm on slow links. The envelope is
-            // already parsed here on modelExecutor; drop without validating
-            // or touching the local revision.
-            if (resyncCoordinator.isRecovering()) return;
-            // rows 取当前模型 geometry：patch 自身不携带 geometry，
-            // 行索引上界只能相对本地投影校验（计划 §10.1）。
+          TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
+          // A snapshot atomically replaces the local projection and is the
+          // only frame that may release a revision-gap recovery fence.
+          onAuthoritativeSnapshot();
+          completeSynchronization();
+          break;
+        }
+        case PATCH:
+          // A patch is relative to the state that failed validation. Applying
+          // queued patches while waiting for a snapshot only creates repeated
+          // revision gaps and a resync storm on slow links. The envelope is
+          // already parsed here on modelExecutor; drop without validating
+          // or touching the local revision.
+          if (resyncCoordinator.isRecovering()) return;
+          // rows 取当前模型 geometry：patch 自身不携带 geometry，
+          // 行索引上界只能相对本地投影校验（计划 §10.1）。
+          try {
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
             long patchBase = envelope.getPatch().getBaseRevision();
@@ -735,60 +752,76 @@ public final class TerminalSessionRuntime {
                   envelope.getPatch().getScreenRowsCount(),
                   envelope.getPatch().getHistoryAppendCount());
             }
-            completeSynchronization();
-            break;
-          case HISTORY_PAGE:
-            // A page is anchored to the cache window that requested it. A late
-            // response after reconnect/snapshot must not prepend rows into a
-            // different viewport.
-            if (!historyRequests.accept(envelope.getHistoryPage().getRequestId())) return;
+          } catch (Exception e) {
+            Diagnostics.warn("screen_protocol", "patch_apply_failed", diagnosticFields(
+                "failureKind", e.getClass().getSimpleName(),
+                "localRevision", model.screenRevision));
+            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "patch apply failed");
+            return;
+          }
+          completeSynchronization();
+          break;
+        case HISTORY_PAGE: {
+          // A page is anchored to the cache window that requested it. A late
+          // response after reconnect/snapshot must not prepend rows into a
+          // different viewport.
+          if (!historyRequests.accept(envelope.getHistoryPage().getRequestId())) return;
+          try {
             requireValid(ScreenMessageValidator.validateHistoryPage(envelope.getHistoryPage()));
             change = model.prependHistoryPage(ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage()));
             historyRequests.complete(envelope.getHistoryPage().getRequestId());
-            break;
-          case HISTORY_TRIM:
-            change = model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
-                envelope.getHistoryTrim().getFirstAvailableLineId());
-            break;
-          case LAYOUT_LEASE:
-            layoutLeaseCoordinator.handle(envelope.getLayoutLease());
-            change = ModelChange.none();
-            break;
-          case EFFECT:
-            change = ModelChange.none();
-            if (model.instanceId != null && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
-              handleEffect(envelope.getEffect());
-            }
-            break;
-          case EXIT:
-            change = ModelChange.none();
-            updateState(State.CLOSED);
-            break;
-          case RESUME_ACK:
-            long ackBase = model.screenRevision;
+          } catch (Exception e) {
+            Diagnostics.warn("screen_protocol", "history_page_rejected", diagnosticFields(
+                "failureKind", e.getClass().getSimpleName(),
+                "localRevision", model.screenRevision));
+            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "history page failed");
+            return;
+          }
+          break;
+        }
+        case HISTORY_TRIM:
+          change = model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
+              envelope.getHistoryTrim().getFirstAvailableLineId());
+          break;
+        case LAYOUT_LEASE:
+          layoutLeaseCoordinator.handle(envelope.getLayoutLease());
+          change = ModelChange.none();
+          break;
+        case EFFECT:
+          change = ModelChange.none();
+          if (model.instanceId != null && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
+            handleEffect(envelope.getEffect());
+          }
+          break;
+        case EXIT:
+          change = ModelChange.none();
+          updateState(State.CLOSED);
+          break;
+        case RESUME_ACK:
+          long ackBase = model.screenRevision;
+          try {
             model.applyResumeAck(
                 envelope.getResumeAck().getInstanceId(),
                 envelope.getResumeAck().getLayoutEpoch(),
                 envelope.getResumeAck().getScreenRevision());
-            TerminalResumeMetrics.exactResume(ackBase,
-                envelope.getResumeAck().getScreenRevision());
-            change = ModelChange.none();
-            completeSynchronization();
-            break;
-          default:
-            change = ModelChange.none();
-            break;
-        }
-        TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
-        dispatchModelChange(change);
-      } catch (Exception e) {
-        Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
-            "failureKind", e.getClass().getSimpleName(),
-            "localRevision", model.screenRevision));
-        // revision gap、校验失败、解析失败：空闲时启动一次恢复；
-        // 等待/重试期间的消息失败由等待超时兜底，这里直接丢弃。
-        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
+          } catch (RemoteTerminalModel.RevisionGapException e) {
+            Diagnostics.warn("screen_protocol", "resume_ack_rejected", diagnosticFields(
+                "failureKind", e.getClass().getSimpleName(),
+                "localRevision", model.screenRevision));
+            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "resume ack rejected");
+            return;
+          }
+          TerminalResumeMetrics.exactResume(ackBase,
+              envelope.getResumeAck().getScreenRevision());
+          change = ModelChange.none();
+          completeSynchronization();
+          break;
+        default:
+          change = ModelChange.none();
+          break;
       }
+      TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
+      dispatchModelChange(change);
   }
 
   private static void requireValid(ScreenMessageValidator.ValidationResult result) {
@@ -812,7 +845,6 @@ public final class TerminalSessionRuntime {
     if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
     patchSummaryLastScreenRevision = patch.screenRevision;
     if (patchSummaryCount == 1) {
-      patchSummaryStartedAtMs = android.os.SystemClock.elapsedRealtime();
       patchSummaryInstanceId = patch.instanceId;
       patchSummaryLayoutEpoch = patch.layoutEpoch;
       final long generation = patchSummaryGeneration;
@@ -837,7 +869,6 @@ public final class TerminalSessionRuntime {
 
   private void resetPatchSummary() {
     patchSummaryGeneration++;
-    patchSummaryStartedAtMs = 0;
     patchSummaryFirstBaseRevision = -1;
     patchSummaryLastScreenRevision = -1;
     patchSummaryInstanceId = null;

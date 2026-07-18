@@ -57,6 +57,7 @@ final class TerminalInputCoordinator {
 
   void submitPaste(@NonNull String text, @NonNull String source) {
     if (text.isEmpty()) return;
+    consumeCtrl();
     sink.sendPaste(text);
   }
 
@@ -72,15 +73,11 @@ final class TerminalInputCoordinator {
   void submitHardwareKey(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                          boolean meta, boolean pressed) {
     boolean effectiveCtrl = ctrl;
-    boolean ctrlBefore = ctrlArmed;
-    boolean ctrlConsumed = false;
     if (pressed) {
       if (ctrl || alt || meta) {
         clearModifiers();
-        ctrlConsumed = ctrlBefore;
       } else {
         effectiveCtrl = consumeCtrl();
-        ctrlConsumed = effectiveCtrl;
       }
     }
     sink.sendKey(key, shift, alt, effectiveCtrl, meta, pressed);
