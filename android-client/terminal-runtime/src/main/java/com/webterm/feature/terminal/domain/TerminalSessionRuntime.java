@@ -589,7 +589,17 @@ public final class TerminalSessionRuntime {
       if (message.connectionEpoch != connectionEpoch.get()
           || message.mailboxGeneration != screenMailbox.generation()
           || message.sourceConnection != connection) continue;
-      processScreenMessage(message);
+      try {
+        processScreenMessage(message);
+      } catch (RuntimeException e) {
+        // 最终安全网：单个消息的处理异常不能导致 Mailbox drain 状态悬空，
+        // 否则后续帧会永远停止处理。
+        Diagnostics.warn("screen_protocol", "screen_frame_processing_failed", diagnosticFields(
+            "failureKind", e.getClass().getSimpleName(),
+            "localRevision", model.screenRevision));
+        startResyncRecovery(
+            e.getMessage() != null ? e.getMessage() : "unexpected screen frame processing failure");
+      }
     }
   }
 
@@ -649,17 +659,28 @@ public final class TerminalSessionRuntime {
         if (envelope.getProtocolVersion() != 1) {
           throw new IllegalArgumentException("unsupported protocol version");
         }
-        // InputAck 与 instance identity 同样消费这一次 typed parse；TerminalChannel
-        // 不再在 DeviceConnection event loop 上重复解析原始 protobuf。
-        if (message.connectionEpoch != connectionEpoch.get()
-            || message.sourceConnection != connection) return;
-        if (ScreenEnvelopeDispatcher.dispatchReliableInput(
-            envelope, message.sourceConnection.reliableInputTracker())) return;
       } catch (Exception e) {
         Diagnostics.warn("screen_protocol", "screen_frame_decode_failed", diagnosticFields(
             "failureKind", e.getClass().getSimpleName(),
             "localRevision", model.screenRevision));
         startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
+        return;
+      }
+
+      // 旧物理连接已经到达本地但尚未处理的帧不得跨代际生效。
+      if (message.connectionEpoch != connectionEpoch.get()
+          || message.sourceConnection != connection) return;
+
+      // InputAck 与 instance identity 同样消费这一次 typed parse；TerminalChannel
+      // 不再在 DeviceConnection event loop 上重复解析原始 protobuf。
+      try {
+        if (ScreenEnvelopeDispatcher.dispatchReliableInput(
+            envelope, message.sourceConnection.reliableInputTracker())) return;
+      } catch (RuntimeException e) {
+        Diagnostics.warn("screen_protocol", "input_ack_processing_failed", diagnosticFields(
+            "failureKind", e.getClass().getSimpleName(),
+            "localRevision", model.screenRevision));
+        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "input ack processing failed");
         return;
       }
 
@@ -726,8 +747,16 @@ public final class TerminalSessionRuntime {
           if (resyncCoordinator.isRecovering()) return;
           // rows 取当前模型 geometry：patch 自身不携带 geometry，
           // 行索引上界只能相对本地投影校验（计划 §10.1）。
+          ScreenMessageValidator.ValidationResult patchValidation =
+              ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows);
+          if (!patchValidation.ok) {
+            Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
+                "failureKind", "INVALID_PATCH",
+                "localRevision", model.screenRevision));
+            startResyncRecovery(patchValidation.reason != null ? patchValidation.reason : "invalid patch");
+            return;
+          }
           try {
-            requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
             long patchBase = envelope.getPatch().getBaseRevision();
             ScreenPatch patch = ScreenMessageMapper.mapPatch(envelope.getPatch());
