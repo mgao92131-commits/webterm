@@ -18,6 +18,7 @@ dependencies {
     annotationProcessor(libs.hilt.compiler)
     implementation(project(":transport-api"))
     implementation(project(":core-api"))
+    implementation(project(":core-contract"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")

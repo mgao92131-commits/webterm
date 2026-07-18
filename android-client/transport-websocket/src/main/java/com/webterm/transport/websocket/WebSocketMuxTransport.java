@@ -1,6 +1,7 @@
 package com.webterm.transport.websocket;
 
 import com.webterm.transport.api.MuxTransport;
+import com.webterm.core.contract.diagnostics.Diagnostics;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -11,6 +12,8 @@ import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 
+import java.util.Map;
+
 public final class WebSocketMuxTransport implements MuxTransport {
     private final OkHttpClient muxHttp;
     private final String wsUrl;
@@ -20,15 +23,20 @@ public final class WebSocketMuxTransport implements MuxTransport {
     /** 一次物理 WebSocket 连接尝试；OkHttp 回调只能推进所属 Attempt。 */
     private static final class Attempt {
         final Listener listener;
+        final int number;
+        final long startedAtNanos;
         volatile WebSocket socket;
         volatile boolean connected;
 
-        Attempt(Listener listener) {
+        Attempt(Listener listener, int number) {
             this.listener = listener;
+            this.number = number;
+            this.startedAtNanos = System.nanoTime();
         }
     }
 
     private Attempt currentAttempt;
+    private int nextAttemptNumber;
 
     public WebSocketMuxTransport(OkHttpClient http, String wsUrl, String cookie, String subprotocol) {
         this.muxHttp = http.newBuilder()
@@ -49,9 +57,12 @@ public final class WebSocketMuxTransport implements MuxTransport {
         final Attempt attempt;
         synchronized (this) {
             if (currentAttempt != null) return;
-            attempt = new Attempt(listener);
+            attempt = new Attempt(listener, ++nextAttemptNumber);
             currentAttempt = attempt;
         }
+        Diagnostics.info("ws", "ws_connect_start", Map.of(
+            "attempt", attempt.number,
+            "host", safeHost(wsUrl)));
         Request request = new Request.Builder()
             .url(wsUrl)
             .header("Cookie", cookie != null ? cookie : "")
@@ -64,6 +75,9 @@ public final class WebSocketMuxTransport implements MuxTransport {
                     webSocket.close(1000, "stale mux socket");
                     return;
                 }
+                Diagnostics.info("ws", "ws_open", Map.of(
+                    "attempt", attempt.number,
+                    "responseCode", response.code()));
                 attempt.listener.onOpen();
             }
 
@@ -86,6 +100,11 @@ public final class WebSocketMuxTransport implements MuxTransport {
                     return;
                 }
                 int code = response != null ? response.code() : 0;
+                Diagnostics.warn("ws", "ws_failure", Map.of(
+                    "attempt", attempt.number,
+                    "responseCode", code,
+                    "exceptionType", t.getClass().getSimpleName(),
+                    "connectedDurationMs", elapsedMs(attempt)));
                 if (response != null && response.body() != null) response.close();
                 attempt.listener.onError(code, t.getMessage());
             }
@@ -93,6 +112,10 @@ public final class WebSocketMuxTransport implements MuxTransport {
             @Override
             public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
                 if (!finish(attempt, webSocket)) return;
+                Diagnostics.info("ws", "ws_closed", Map.of(
+                    "attempt", attempt.number,
+                    "closeCode", code,
+                    "connectedDurationMs", elapsedMs(attempt)));
                 attempt.listener.onClosed(code, reason);
             }
         });
@@ -128,13 +151,27 @@ public final class WebSocketMuxTransport implements MuxTransport {
     @Override
     public boolean sendText(String text) {
         Attempt attempt = connectedAttempt();
-        return attempt != null && attempt.socket.send(text);
+        int bytes = text == null ? 0 : text.length();
+        if (attempt == null) {
+            logSendRejected(bytes);
+            return false;
+        }
+        boolean accepted = attempt.socket.send(text);
+        if (!accepted) logSendRejected(bytes);
+        return accepted;
     }
 
     @Override
     public boolean sendBinary(byte[] data) {
         Attempt attempt = connectedAttempt();
-        return attempt != null && attempt.socket.send(okio.ByteString.of(data));
+        int bytes = data == null ? 0 : data.length;
+        if (attempt == null) {
+            logSendRejected(bytes);
+            return false;
+        }
+        boolean accepted = attempt.socket.send(okio.ByteString.of(data));
+        if (!accepted) logSendRejected(bytes);
+        return accepted;
     }
 
     private synchronized Attempt connectedAttempt() {
@@ -161,5 +198,27 @@ public final class WebSocketMuxTransport implements MuxTransport {
         attempt.connected = false;
         currentAttempt = null;
         return true;
+    }
+
+    private void logSendRejected(int payloadBytes) {
+        Attempt attempt;
+        synchronized (this) {
+            attempt = currentAttempt;
+        }
+        Diagnostics.warn("ws", "ws_send_rejected", Map.of(
+            "attempt", attempt == null ? 0 : attempt.number,
+            "payloadBytes", payloadBytes));
+    }
+
+    private static long elapsedMs(Attempt attempt) {
+        return Math.max(0L, (System.nanoTime() - attempt.startedAtNanos) / 1_000_000L);
+    }
+
+    private static String safeHost(String url) {
+        try {
+            return okhttp3.HttpUrl.get(url).host();
+        } catch (RuntimeException ignored) {
+            return "invalid";
+        }
     }
 }

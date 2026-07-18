@@ -19,11 +19,16 @@ import com.webterm.ui.common.UIUtils;
 public final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-	public static HomeResult buildHome(Activity activity, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
-		return buildTopLevel(activity, "WebTerm", "中转设备", onSettings, onRefresh, onRelaySettings, onCrashLogs);
+	public static HomeResult buildHome(Activity activity, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings,
+                                     Runnable onCrashLogs, boolean canShareDiagnosticLogs,
+                                     Runnable onDiagnosticLogs) {
+		return buildTopLevel(activity, "WebTerm", "中转设备", onSettings, onRefresh, onRelaySettings,
+                onCrashLogs, canShareDiagnosticLogs, onDiagnosticLogs);
 	}
 
-	private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs) {
+	private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onSettings,
+                                          Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs,
+                                          boolean canShareDiagnosticLogs, Runnable onDiagnosticLogs) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(DesignTokens.BG_PRIMARY);
@@ -80,6 +85,9 @@ public final class HomeScreenBuilder {
 			popup.getMenu().add(0, 2, 1, "中转服务");
 			popup.getMenu().add(0, 3, 2, "刷新设备");
 			popup.getMenu().add(0, 4, 3, "导出崩溃日志");
+			if (canShareDiagnosticLogs) {
+				popup.getMenu().add(0, 5, 4, "导出诊断日志");
+			}
 			popup.setOnMenuItemClickListener((item) -> {
 				if (item.getItemId() == 1) {
 					onSettings.run();
@@ -92,6 +100,9 @@ public final class HomeScreenBuilder {
 					return true;
 				} else if (item.getItemId() == 4) {
                     onCrashLogs.run();
+                    return true;
+                } else if (item.getItemId() == 5) {
+                    onDiagnosticLogs.run();
                     return true;
                 }
                 return false;

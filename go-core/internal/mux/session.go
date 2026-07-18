@@ -3,6 +3,7 @@ package mux
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -73,6 +74,7 @@ func (s *Session) readLoop(ctx context.Context) error {
 	for {
 		msgType, data, err := s.conn.Read(ctx)
 		if err != nil {
+			s.log("warn", "mux_read_failed", "error=%T", err)
 			return err
 		}
 		switch msgType {
@@ -87,6 +89,7 @@ func (s *Session) readLoop(ctx context.Context) error {
 func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 	msg, err := s.codec.Decode(data)
 	if err != nil {
+		s.log("warn", "mux_control_decode_failed", "payloadBytes=%d error=%T", len(data), err)
 		return
 	}
 	switch msg.Type {
@@ -130,9 +133,11 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 
 	oldByID, oldByRoute := s.registry.Replace(entry)
 	if oldByID != nil {
+		s.log("info", "mux_channel_replaced", "channelId=%s reason=id", tunnelID)
 		oldByID.handler.Close()
 	}
 	if oldByRoute != nil && oldByRoute != oldByID {
+		s.log("info", "mux_channel_replaced", "channelId=%s reason=route", tunnelID)
 		oldByRoute.handler.Close()
 	}
 
@@ -141,6 +146,7 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 		handler.Close()
 		return
 	}
+	s.log("info", "mux_channel_open", "channelId=%s", tunnelID)
 
 	go func() {
 		handler.Run(ctx)
@@ -155,6 +161,9 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 func (s *Session) handleBinaryFrame(data []byte) {
 	frame, err := protocol.DecodeTunnelFrame(data)
 	if err != nil || frame.MsgType != protocol.MsgTypeWSData {
+		if err != nil {
+			s.log("warn", "mux_binary_decode_failed", "payloadBytes=%d error=%T", len(data), err)
+		}
 		return
 	}
 	entry := s.registry.Get(frame.ID)
@@ -166,6 +175,7 @@ func (s *Session) handleBinaryFrame(data []byte) {
 func (s *Session) closeChannel(id string) {
 	entry := s.registry.Remove(id)
 	if entry != nil {
+		s.log("info", "mux_channel_closed", "channelId=%s", id)
 		entry.handler.Close()
 	}
 }
@@ -200,12 +210,15 @@ func (s *Session) writeChannelFramePriority(ctx context.Context, id string, payl
 	if err != nil {
 		return err
 	}
-	return s.writer.Submit(ctx, termsession.MessageBinary, frame,
-		priority == termsession.FramePriorityHigh)
+	err = s.writer.Submit(ctx, termsession.MessageBinary, frame, priority == termsession.FramePriorityHigh)
+	s.logWriteError(err)
+	return err
 }
 
 func (s *Session) writeBinary(ctx context.Context, data []byte) error {
-	return s.writer.Submit(ctx, termsession.MessageBinary, data, false)
+	err := s.writer.Submit(ctx, termsession.MessageBinary, data, false)
+	s.logWriteError(err)
+	return err
 }
 
 func (s *Session) sendJSON(ctx context.Context, value any) error {
@@ -213,7 +226,31 @@ func (s *Session) sendJSON(ctx context.Context, value any) error {
 	if err != nil {
 		return err
 	}
-	return s.writer.Submit(ctx, termsession.MessageText, bytes, true)
+	err = s.writer.Submit(ctx, termsession.MessageText, bytes, true)
+	s.logWriteError(err)
+	return err
+}
+
+func (s *Session) logWriteError(err error) {
+	if err == nil {
+		return
+	}
+	event := "writer_failed"
+	if errors.Is(err, context.DeadlineExceeded) {
+		event = "writer_timeout"
+	}
+	s.log("warn", event, "error=%T", err)
+}
+
+func (s *Session) log(level, event, format string, args ...any) {
+	if s.logger == nil {
+		return
+	}
+	message := event
+	if format != "" {
+		message += " " + fmt.Sprintf(format, args...)
+	}
+	s.logger.Add(level, "mux", message)
 }
 
 type channelSink struct {

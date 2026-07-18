@@ -141,6 +141,8 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
         return state::destroy;
     }
     @Override public void shareCrashLog() { coordinator.shareLatestCrashLog(this); }
+    @Override public boolean canShareDiagnosticLogs() { return coordinator.canShareDiagnosticLogs(); }
+    @Override public void shareDiagnosticLogs() { coordinator.shareDiagnosticLogs(); }
 
     // ── TerminalHost ─────────────────────────────────────────────
 

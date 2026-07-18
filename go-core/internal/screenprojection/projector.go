@@ -471,7 +471,12 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
-// 如果变化行数超过活动屏幕的 60%，直接返回 snapshot。
+//
+// 在线客户端已持有连续 baseline 时，即使本次变化覆盖整屏，也仍然使用
+// Patch：它只携带当前屏幕的变化行与新增历史，不能因为 AGY 一类 TUI 的
+// 全屏重绘而重复发送整个历史窗口并让 Android 重置投影。Snapshot 只由
+// frameForBaseline 的真实同步边界（首帧、epoch/buffer/dictionary 变化或
+// ForceSnapshot）触发。断线恢复的成本判定仍在 resume.go 单独处理。
 //
 // 历史窗口是 epoch 内连续 LineID 的尾部窗口，且历史行推出后不可变，因此
 // history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
@@ -492,13 +497,6 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		if r >= len(old.Screen) || !linesEqual(old.Screen[r], new.Screen[r]) {
 			changedRows[r] = new.Screen[r]
 		}
-	}
-
-	// 变化行超过阈值时回退 snapshot；阈值与 resume 推导共用
-	// （snapshotRowThresholdPercent，计划 §6.1 第 1 条）。
-	threshold := len(new.Screen) * snapshotRowThresholdPercent / 100
-	if len(changedRows) > threshold {
-		return new
 	}
 
 	screenRows := make([]terminalengine.Line, 0, len(changedRows))

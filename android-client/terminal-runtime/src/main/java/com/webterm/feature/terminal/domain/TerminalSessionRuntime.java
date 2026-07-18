@@ -11,6 +11,9 @@ import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
 import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenPatch;
+import com.webterm.terminal.model.TerminalLine;
+import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageMapper;
 import com.webterm.terminal.protocol.ScreenMessageValidator;
@@ -20,6 +23,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * 无 Activity 的终端会话运行时。持有连接、远端模型和模型执行器。
@@ -142,6 +148,11 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
+  private String replacementReportedInstanceId = "";
+  private long patchSummaryStartedAtMs;
+  private int patchSummaryCount;
+  private long patchSummaryBytes;
+  private int patchSummaryChangedRows;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -618,6 +629,10 @@ public final class TerminalSessionRuntime {
   private void sendResync(@NonNull String reason) {
     ScreenConnection c = connection;
     if (c != null) {
+      Diagnostics.warn("screen_protocol", "resync_requested", diagnosticFields(
+          "layoutEpoch", model.layoutEpoch,
+          "screenRevision", model.screenRevision,
+          "reason", reason));
       c.requestResync(model.layoutEpoch, model.screenRevision, reason);
     }
   }
@@ -641,15 +656,41 @@ public final class TerminalSessionRuntime {
         long modelApplyStartedNanos = System.nanoTime();
         switch (envelope.getPayloadCase()) {
           case SNAPSHOT: {
+            Diagnostics.info("screen_protocol", "snapshot_received", diagnosticFields(
+                "instanceId", envelope.getSnapshot().getInstanceId(),
+                "layoutEpoch", envelope.getSnapshot().getLayoutEpoch(),
+                "screenRevision", envelope.getSnapshot().getScreenRevision(),
+                "payloadBytes", message.payload.length));
             ScreenMessageValidator.ValidationResult validation =
                 ScreenMessageValidator.validateSnapshot(envelope.getSnapshot());
             if (!validation.ok) {
+              Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
+                  "failureKind", "INVALID_SNAPSHOT"));
               // 无效 snapshot 不能解除围栏：等待期间按退避重发 resync，
               // 空闲时启动一次恢复。不能静默丢弃，否则永远等不到权威帧。
               onInvalidSnapshot(validation.reason != null ? validation.reason : "invalid snapshot");
               return;
             }
-            change = model.applySnapshot(ScreenMessageMapper.mapSnapshot(envelope.getSnapshot()));
+            ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
+            change = model.applySnapshot(snapshot);
+            int replacements = countReplacement(snapshot.screen) + countReplacement(snapshot.history.lines);
+            maybeLogReplacement(snapshot.instanceId, snapshot.screenRevision, replacements);
+            Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
+                "instanceId", snapshot.instanceId,
+                "layoutEpoch", snapshot.layoutEpoch,
+                "screenRevision", snapshot.screenRevision,
+                "changedRows", snapshot.screen.size(),
+                "historyAppend", snapshot.history.lines.size(),
+                "payloadBytes", message.payload.length,
+                "applyDurationMs", elapsedMillis(modelApplyStartedNanos)));
+            if (change.geometryChanged) {
+              Diagnostics.info("screen_protocol", "layout_epoch_changed", diagnosticFields(
+                  "instanceId", snapshot.instanceId,
+                  "layoutEpoch", snapshot.layoutEpoch,
+                  "screenRevision", snapshot.screenRevision,
+                  "newCols", snapshot.cols,
+                  "newRows", snapshot.rows));
+            }
             TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
             // A snapshot atomically replaces the local projection and is the
             // only frame that may release a revision-gap recovery fence.
@@ -666,10 +707,33 @@ public final class TerminalSessionRuntime {
             if (resyncCoordinator.isRecovering()) return;
             // rows 取当前模型 geometry：patch 自身不携带 geometry，
             // 行索引上界只能相对本地投影校验（计划 §10.1）。
+            Diagnostics.debug("screen_protocol", "patch_received", diagnosticFields(
+                "instanceId", envelope.getPatch().getInstanceId(),
+                "layoutEpoch", envelope.getPatch().getLayoutEpoch(),
+                "baseRevision", envelope.getPatch().getBaseRevision(),
+                "screenRevision", envelope.getPatch().getScreenRevision(),
+                "payloadBytes", message.payload.length));
             requireValid(ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows));
             boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
             long patchBase = envelope.getPatch().getBaseRevision();
-            change = model.applyPatch(ScreenMessageMapper.mapPatch(envelope.getPatch()));
+            ScreenPatch patch = ScreenMessageMapper.mapPatch(envelope.getPatch());
+            if (model.instanceId == null || !model.instanceId.equals(patch.instanceId)) {
+              Diagnostics.warn("screen_protocol", "instance_mismatch", diagnosticFields(
+                  "instanceId", patch.instanceId, "localRevision", model.screenRevision,
+                  "baseRevision", patch.baseRevision));
+            } else if (model.layoutEpoch != patch.layoutEpoch) {
+              Diagnostics.warn("screen_protocol", "layout_epoch_mismatch", diagnosticFields(
+                  "layoutEpoch", patch.layoutEpoch, "localRevision", model.screenRevision,
+                  "baseRevision", patch.baseRevision));
+            } else if (model.screenRevision != patch.baseRevision) {
+              Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
+                  "baseRevision", patch.baseRevision, "localRevision", model.screenRevision,
+                  "screenRevision", patch.screenRevision));
+            }
+            change = model.applyPatch(patch);
+            maybeLogReplacement(patch.instanceId, patch.screenRevision,
+                countReplacement(patch.screenRows) + countReplacement(patch.historyAppend));
+            recordPatchSummary(message.payload.length, change.changedScreenRows.size(), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
                   envelope.getPatch().getScreenRevision(),
@@ -723,6 +787,9 @@ public final class TerminalSessionRuntime {
         TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
         dispatchModelChange(change);
       } catch (Exception e) {
+        Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
+            "failureKind", e.getClass().getSimpleName(),
+            "localRevision", model.screenRevision));
         // revision gap、校验失败、解析失败：空闲时启动一次恢复；
         // 等待/重试期间的消息失败由等待超时兜底，这里直接丢弃。
         startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
@@ -731,6 +798,59 @@ public final class TerminalSessionRuntime {
 
   private static void requireValid(ScreenMessageValidator.ValidationResult result) {
     if (!result.ok) throw new IllegalArgumentException(result.reason);
+  }
+
+  private Map<String, Object> diagnosticFields(Object... pairs) {
+    Map<String, Object> fields = new HashMap<>();
+    fields.put("sessionId", sessionId);
+    for (int i = 0; i + 1 < pairs.length; i += 2) {
+      fields.put(String.valueOf(pairs[i]), pairs[i + 1]);
+    }
+    return fields;
+  }
+
+  private void recordPatchSummary(int payloadBytes, int changedRows, @NonNull ScreenPatch patch) {
+    patchSummaryCount++;
+    patchSummaryBytes += payloadBytes;
+    patchSummaryChangedRows += changedRows;
+    long now = android.os.SystemClock.elapsedRealtime();
+    if (patchSummaryStartedAtMs == 0) patchSummaryStartedAtMs = now;
+    if (now - patchSummaryStartedAtMs < 1000L) return;
+    Diagnostics.info("screen_protocol", "patch_applied", diagnosticFields(
+        "instanceId", patch.instanceId,
+        "layoutEpoch", patch.layoutEpoch,
+        "baseRevision", patch.baseRevision,
+        "screenRevision", patch.screenRevision,
+        "changedRows", patchSummaryChangedRows,
+        "payloadBytes", patchSummaryBytes,
+        "patchCount", patchSummaryCount));
+    patchSummaryStartedAtMs = now;
+    patchSummaryCount = 0;
+    patchSummaryBytes = 0;
+    patchSummaryChangedRows = 0;
+  }
+
+  private void maybeLogReplacement(String instanceId, long revision, int replacementCount) {
+    if (replacementCount <= 0 || instanceId == null || instanceId.equals(replacementReportedInstanceId)) return;
+    replacementReportedInstanceId = instanceId;
+    Diagnostics.warn("screen_protocol", "android_model_contains_replacement", diagnosticFields(
+        "instanceId", instanceId,
+        "screenRevision", revision,
+        "replacementCount", replacementCount));
+  }
+
+  private static int countReplacement(List<TerminalLine> lines) {
+    int count = 0;
+    for (TerminalLine line : lines) {
+      for (com.webterm.terminal.model.TerminalCell cell : line.cells) {
+        if (cell.text != null && cell.text.indexOf('\ufffd') >= 0) count++;
+      }
+    }
+    return count;
+  }
+
+  private static long elapsedMillis(long startedNanos) {
+    return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
   }
 
   @NonNull

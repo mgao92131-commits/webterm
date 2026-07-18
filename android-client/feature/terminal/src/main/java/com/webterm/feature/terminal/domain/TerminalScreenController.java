@@ -12,6 +12,9 @@ import androidx.lifecycle.LifecycleOwner;
 import com.webterm.terminal.model.ModelChange;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.TerminalViewportState;
+import com.webterm.core.contract.diagnostics.Diagnostics;
+
+import java.util.Map;
 
 /**
  * 页面级屏幕控制器。持有 View / Renderer / Viewport，负责 attach/detach 和用户输入。
@@ -48,6 +51,11 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private int pendingRows;
   private int sentCols = -1;
   private int sentRows = -1;
+  private int pendingViewWidth;
+  private int pendingViewHeight;
+  private float pendingCellWidth;
+  private float pendingLineHeight;
+  private boolean pendingKeyboardVisible;
   private EffectListener effectListener;
   private View view;
   private boolean renderScheduled;
@@ -129,9 +137,19 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   public void requestResize(int cols, int rows) {
+    requestResize(cols, rows, 0, 0, 0f, 0f, false);
+  }
+
+  public void requestResize(int cols, int rows, int viewWidth, int viewHeight,
+                            float cellWidth, float lineHeight, boolean keyboardVisible) {
     if (cols <= 0 || rows <= 0) return;
     pendingCols = cols;
     pendingRows = rows;
+    pendingViewWidth = viewWidth;
+    pendingViewHeight = viewHeight;
+    pendingCellWidth = cellWidth;
+    pendingLineHeight = lineHeight;
+    pendingKeyboardVisible = keyboardVisible;
     mainHandler.removeCallbacks(sendResizeRunnable);
     mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
   }
@@ -178,6 +196,18 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private void sendResizeNow() {
     if (pendingCols <= 0 || pendingRows <= 0) return;
     if (pendingCols == sentCols && pendingRows == sentRows) return;
+    Diagnostics.info("terminal_view", "terminal_resize_requested", Map.ofEntries(
+        Map.entry("sessionId", runtime.sessionId()),
+        Map.entry("oldCols", sentCols),
+        Map.entry("oldRows", sentRows),
+        Map.entry("newCols", pendingCols),
+        Map.entry("newRows", pendingRows),
+        Map.entry("viewWidth", pendingViewWidth),
+        Map.entry("viewHeight", pendingViewHeight),
+        Map.entry("cellWidth", pendingCellWidth),
+        Map.entry("lineHeight", pendingLineHeight),
+        Map.entry("keyboardVisible", pendingKeyboardVisible),
+        Map.entry("layoutEpoch", runtime.model().layoutEpoch)));
     runtime.requestResize(pendingCols, pendingRows);
     sentCols = pendingCols;
     sentRows = pendingRows;

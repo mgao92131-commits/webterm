@@ -1,15 +1,20 @@
 package terminalsession
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalengine"
 )
@@ -43,16 +48,21 @@ type Runtime struct {
 
 	clients map[string]*ScreenClient
 
-	leaseManager     *LeaseManager
-	pendingClipboard map[string]byte
-	engineSignals    engineSignals
-	inputTrace       []InputTrace
-	inputDedupe      map[string]*inputDedupeWindow
-	inputDedupeOrder []string
-	inputInflight    map[inputDeliveryKey][]func(InputDeliveryResult)
-	capturePTYOutput bool
-	rawPTYOutput     []byte
-	rawPTYTruncated  bool
+	leaseManager                *LeaseManager
+	pendingClipboard            map[string]byte
+	engineSignals               engineSignals
+	inputTrace                  []InputTrace
+	inputDedupe                 map[string]*inputDedupeWindow
+	inputDedupeOrder            []string
+	inputInflight               map[inputDeliveryKey][]func(InputDeliveryResult)
+	capturePTYOutput            bool
+	rawPTYOutput                []byte
+	rawPTYTruncated             bool
+	logger                      *logs.Logger
+	invalidUTF8Logged           bool
+	replacementBytesLogged      bool
+	incompleteUTF8Logged        bool
+	projectionReplacementLogged bool
 
 	onTitle        func(string)
 	onBell         func()
@@ -719,11 +729,78 @@ func inputKindName(kind terminalengine.InputKind) string {
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
+	r.diagnosePTYBytes(data)
 	r.captureRawPTYOutput(data)
 	_ = r.engine.Write(data)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	r.scheduleProjectionFlush()
+}
+
+func (r *Runtime) diagnosePTYBytes(data []byte) {
+	if r.logger == nil || len(data) == 0 {
+		return
+	}
+	if !utf8.Valid(data) && !r.invalidUTF8Logged {
+		r.invalidUTF8Logged = true
+		offset := firstInvalidUTF8Offset(data)
+		r.logger.Add("warn", "pty", fmt.Sprintf("pty_invalid_utf8 sessionId=%s chunkBytes=%d invalidOffset=%d nearbyHex=%s screenRevision=%d", r.id, len(data), offset, nearbyHex(data, offset), r.currentRevision()))
+	}
+	if bytes.Contains(data, []byte{0xef, 0xbf, 0xbd}) && !r.replacementBytesLogged {
+		r.replacementBytesLogged = true
+		r.logger.Add("warn", "pty", fmt.Sprintf("pty_contains_replacement_bytes sessionId=%s chunkBytes=%d screenRevision=%d", r.id, len(data), r.currentRevision()))
+	}
+	if hasIncompleteUTF8Suffix(data) && !r.incompleteUTF8Logged {
+		r.incompleteUTF8Logged = true
+		r.logger.Add("warn", "pty", fmt.Sprintf("pty_chunk_ends_with_incomplete_utf8 sessionId=%s chunkBytes=%d screenRevision=%d", r.id, len(data), r.currentRevision()))
+	}
+}
+
+func firstInvalidUTF8Offset(data []byte) int {
+	for offset := 0; offset < len(data); {
+		_, size := utf8.DecodeRune(data[offset:])
+		if size == 1 && data[offset] >= 0x80 {
+			return offset
+		}
+		offset += size
+	}
+	return -1
+}
+
+func hasIncompleteUTF8Suffix(data []byte) bool {
+	for index := len(data) - 1; index >= 0 && index >= len(data)-utf8.UTFMax; index-- {
+		lead := data[index]
+		if lead&0xc0 == 0x80 {
+			continue
+		}
+		expected := 0
+		switch {
+		case lead >= 0xc2 && lead <= 0xdf:
+			expected = 2
+		case lead >= 0xe0 && lead <= 0xef:
+			expected = 3
+		case lead >= 0xf0 && lead <= 0xf4:
+			expected = 4
+		default:
+			return false
+		}
+		return len(data)-index < expected
+	}
+	return false
+}
+
+func nearbyHex(data []byte, offset int) string {
+	if offset < 0 {
+		return ""
+	}
+	start, end := offset-8, offset+8
+	if start < 0 {
+		start = 0
+	}
+	if end > len(data) {
+		end = len(data)
+	}
+	return hex.EncodeToString(data[start:end])
 }
 
 func (r *Runtime) commitEngineSignals() {
@@ -977,6 +1054,7 @@ func (r *Runtime) broadcastFrame() {
 	// is limited to diffing against that client's baseline; without this split a
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
+	r.diagnoseProjectionReplacement(state)
 	for _, c := range r.clients {
 		if c.synced {
 			c.Send(state)
@@ -984,6 +1062,35 @@ func (r *Runtime) broadcastFrame() {
 			c.pendingState = state
 		}
 	}
+}
+
+func (r *Runtime) diagnoseProjectionReplacement(state terminalengine.ScreenFrame) {
+	if r.logger == nil || r.projectionReplacementLogged {
+		return
+	}
+	if count := countReplacementCells(state.Screen); count > 0 {
+		r.projectionReplacementLogged = true
+		r.logger.Add("warn", "projection", fmt.Sprintf("projection_contains_replacement sessionId=%s screenRevision=%d replacementCount=%d screenOrHistory=screen", r.id, state.Seq, count))
+		return
+	}
+	if count := countReplacementCells(state.History.Lines); count > 0 {
+		r.projectionReplacementLogged = true
+		r.logger.Add("warn", "projection", fmt.Sprintf("projection_contains_replacement sessionId=%s screenRevision=%d replacementCount=%d screenOrHistory=history", r.id, state.Seq, count))
+	}
+}
+
+func countReplacementCells(lines []terminalengine.Line) int {
+	count := 0
+	for _, line := range lines {
+		for _, run := range line.Runs {
+			for _, cell := range run.Cells {
+				if strings.ContainsRune(cell.Text, '\ufffd') {
+					count++
+				}
+			}
+		}
+	}
+	return count
 }
 
 const projectionFlushWindow = 16 * time.Millisecond

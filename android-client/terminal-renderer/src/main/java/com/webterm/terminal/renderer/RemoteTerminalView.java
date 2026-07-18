@@ -71,6 +71,10 @@ public final class RemoteTerminalView extends View {
     void onPasteInput(@NonNull String text);
     void onKeyEvent(@NonNull KeyEvent event);
     void onRequestResize(int cols, int rows);
+    default void onRequestResize(int cols, int rows, int viewWidth, int viewHeight,
+                                 float cellWidth, float lineHeight, boolean keyboardVisible) {
+      onRequestResize(cols, rows);
+    }
     void onRequestShowKeyboard();
     /** @param maxScrollOffsetPixels inclusive top bound for this rendered content. */
     void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels);
@@ -626,9 +630,15 @@ public final class RemoteTerminalView extends View {
     int cols = Math.max(4, (int) (w / cellW));
     int rows = Math.max(4, (int) ((h - renderer.getTopInset()) / lineH));
     if (host != null) {
-      host.onRequestResize(cols, rows);
+      host.onRequestResize(cols, rows, w, h, cellW, lineH, isKeyboardVisible());
     }
     invalidate();
+  }
+
+  private boolean isKeyboardVisible() {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return false;
+    android.view.WindowInsets insets = getRootWindowInsets();
+    return insets != null && insets.isVisible(android.view.WindowInsets.Type.ime());
   }
 
   private boolean requestLayoutIfSizeChanged() {

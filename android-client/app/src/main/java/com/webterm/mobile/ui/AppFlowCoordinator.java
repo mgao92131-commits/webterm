@@ -21,6 +21,7 @@ import org.json.JSONObject;
 
 import com.webterm.mobile.CrashReporter;
 import com.webterm.mobile.R;
+import com.webterm.mobile.diagnostics.DiagnosticLogExporter;
 import com.webterm.data.http.WebTermApi;
 import com.webterm.core.api.AuthSessionCoordinator;
 import com.webterm.core.api.WebTermUrls;
@@ -820,6 +821,16 @@ public final class AppFlowCoordinator implements
 
     public void shareCrashLog() {
         shareLatestCrashLog(mActivity);
+    }
+
+    public boolean canShareDiagnosticLogs() {
+        return DiagnosticLogExporter.isAvailable();
+    }
+
+    public void shareDiagnosticLogs() {
+        if (mActivity != null) {
+            DiagnosticLogExporter.share(mActivity);
+        }
     }
 
     public void removeCachedTerminal(String baseUrl, String sessionId) {

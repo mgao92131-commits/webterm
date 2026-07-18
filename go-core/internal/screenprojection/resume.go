@@ -4,9 +4,9 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
-// snapshotRowThresholdPercent 是 patch 成本降级阈值：变化活动行超过该比例时
-// 优先 snapshot（计划 §6.1 第 1 条）。在线 diffToPatch 与 resume 推导共用，
-// 阈值由 benchmark/真机流量校准（§6.1 第 4 条），不要凭经验改动。
+// snapshotRowThresholdPercent 是断线恢复的 patch 成本降级阈值：变化活动行超过
+// 该比例时优先 snapshot（计划 §6.1 第 1 条）。在线 diffToPatch 不使用此
+// 阈值；在线客户端已有连续 baseline，应只发送变化行和新增历史。
 const snapshotRowThresholdPercent = 60
 
 // ResumeOutcome 是 resume 推导的判定结果类别。

@@ -7,12 +7,15 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class DiagnosticLogFiles {
     private static final String TAG = "DiagnosticLogFiles";
     private static final String LOG_DIR_NAME = "diagnostics";
-    private static final int MAX_LOG_FILES = 4;
+    /** 每次启动一份日志；旧版产生的 .bak.* 仍按原启动批次整体保留或清理。 */
+    private static final int MAX_LOG_SESSIONS = 4;
 
     private DiagnosticLogFiles() {}
 
@@ -67,13 +70,25 @@ public final class DiagnosticLogFiles {
     public static void trim(Context context) {
         try {
             List<File> files = list(context);
-            if (files.size() <= MAX_LOG_FILES) {
+            Map<String, List<File>> sessions = new LinkedHashMap<>();
+            for (File file : files) {
+                if (!file.isFile()) continue;
+                String session = sessionKey(file.getName());
+                List<File> sessionFiles = sessions.get(session);
+                if (sessionFiles == null) {
+                    sessionFiles = new ArrayList<>();
+                    sessions.put(session, sessionFiles);
+                }
+                sessionFiles.add(file);
+            }
+            if (sessions.size() <= MAX_LOG_SESSIONS) {
                 return;
             }
-            int filesToDelete = files.size() - MAX_LOG_FILES;
-            for (int i = 0; i < filesToDelete; i++) {
-                File file = files.get(i);
-                if (file.isFile()) {
+            int sessionsToDelete = sessions.size() - MAX_LOG_SESSIONS;
+            int deleted = 0;
+            for (List<File> sessionFiles : sessions.values()) {
+                if (deleted++ >= sessionsToDelete) break;
+                for (File file : sessionFiles) {
                     if (!file.delete()) {
                         Log.w(TAG, "Failed to trim old log file: " + file.getAbsolutePath());
                     }
@@ -82,5 +97,10 @@ public final class DiagnosticLogFiles {
         } catch (Throwable t) {
             Log.w(TAG, "Error trimming diagnostic files", t);
         }
+    }
+
+    /** XLog 的文件大小备份命名为 {@code <base>.bak.<n>}，它们必须归入同一启动批次。 */
+    static String sessionKey(String name) {
+        return name.replaceFirst("\\.bak\\.[0-9]+$", "");
     }
 }

@@ -123,6 +123,13 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
+  public void onRequestResize(int cols, int rows, int viewWidth, int viewHeight,
+                              float cellWidth, float lineHeight, boolean keyboardVisible) {
+    controller.requestResize(cols, rows, viewWidth, viewHeight, cellWidth, lineHeight,
+        keyboardVisible);
+  }
+
+  @Override
   public void onRequestShowKeyboard() {
     InputMethodManager imm = (InputMethodManager) view.getContext()
         .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);

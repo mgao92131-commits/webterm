@@ -13,14 +13,28 @@ public final class DiagnosticFormatter {
         sb.append(" event=").append(formatValue("event", event));
 
         if (fields != null && !fields.isEmpty()) {
-            Map<String, ?> sortedFields = new TreeMap<>(fields);
-            for (Map.Entry<String, ?> entry : sortedFields.entrySet()) {
-                String key = entry.getKey();
-                Object val = entry.getValue();
-                sb.append(" ").append(key).append("=").append(formatValue(key, val));
+            Map<String, Object> sortedFields = new TreeMap<>();
+            for (Map.Entry<String, ?> entry : fields.entrySet()) {
+                String key = sanitizeFieldKey(entry.getKey());
+                if (key == null || "area".equals(key) || "event".equals(key)) continue;
+                sortedFields.put(key, entry.getValue());
+            }
+            for (Map.Entry<String, Object> entry : sortedFields.entrySet()) {
+                sb.append(" ").append(entry.getKey()).append("=")
+                    .append(formatValue(entry.getKey(), entry.getValue()));
             }
         }
         return sb.toString();
+    }
+
+    private static String sanitizeFieldKey(String key) {
+        if (key == null) return null;
+        StringBuilder out = new StringBuilder(Math.min(key.length(), 64));
+        for (int i = 0; i < key.length() && out.length() < 64; i++) {
+            char c = key.charAt(i);
+            out.append(Character.isLetterOrDigit(c) || c == '_' ? c : '_');
+        }
+        return out.length() == 0 ? null : out.toString();
     }
 
     private static String formatValue(String key, Object value) {

@@ -1,38 +1,35 @@
 package com.webterm.core.contract.diagnostics;
 
-import java.util.HashSet;
-import java.util.Set;
-
 public final class DiagnosticSanitizer {
-    private static final Set<String> SENSITIVE_WORDS = new HashSet<>();
-
-    static {
-        SENSITIVE_WORDS.add("authorization");
-        SENSITIVE_WORDS.add("cookie");
-        SENSITIVE_WORDS.add("setcookie");
-        SENSITIVE_WORDS.add("password");
-        SENSITIVE_WORDS.add("passwd");
-        SENSITIVE_WORDS.add("otp");
-        SENSITIVE_WORDS.add("secret");
-        SENSITIVE_WORDS.add("token");
-        SENSITIVE_WORDS.add("accesstoken");
-        SENSITIVE_WORDS.add("refreshtoken");
-        SENSITIVE_WORDS.add("clipboard");
-        SENSITIVE_WORDS.add("prompt");
-        SENSITIVE_WORDS.add("command");
-        SENSITIVE_WORDS.add("body");
-        SENSITIVE_WORDS.add("content");
-        SENSITIVE_WORDS.add("terminaltext");
-        SENSITIVE_WORDS.add("inputtext");
-    }
-
     private DiagnosticSanitizer() {}
 
     public static boolean isSensitive(String key) {
-        if (key == null) {
-            return false;
+        String normalized = normalize(key);
+        return normalized.contains("authorization")
+            || normalized.contains("cookie")
+            || normalized.contains("password")
+            || normalized.contains("passwd")
+            || normalized.contains("secret")
+            || normalized.contains("token")
+            || normalized.equals("otp")
+            || normalized.contains("clipboard")
+            || normalized.contains("prompt")
+            || normalized.contains("command")
+            || normalized.contains("body")
+            || normalized.contains("content")
+            || normalized.contains("terminaltext")
+            || normalized.contains("inputtext");
+    }
+
+    private static String normalize(String key) {
+        if (key == null) return "";
+        StringBuilder out = new StringBuilder(key.length());
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                out.append(Character.toLowerCase(c));
+            }
         }
-        String normalized = key.replace("_", "").replace("-", "").toLowerCase();
-        return SENSITIVE_WORDS.contains(normalized);
+        return out.toString();
     }
 }

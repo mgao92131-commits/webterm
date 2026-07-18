@@ -5,12 +5,14 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
 
 import org.json.JSONObject;
 
 import java.util.UUID;
+import java.util.Map;
 
 public final class DeviceConnection {
     private static final String TAG = "DeviceConnection";
@@ -179,6 +181,12 @@ public final class DeviceConnection {
         ChannelFailure failure = code == 401 || code == 403
             ? ChannelFailure.authRequired(code, reason)
             : ChannelFailure.muxTemporary(code, reason);
+        Diagnostics.warn("device_connection", "channel_failed", physicalFields(
+            "transportGeneration", generation,
+            "failureKind", failure.kind.name(),
+            "closeCode", code,
+            "stateBefore", "CONNECTED",
+            "stateAfter", failure.kind == ChannelFailure.Kind.AUTH_REQUIRED ? "STOPPED" : "RETRY_WAIT"));
         notifyPhysicalFailure(failure);
         if (failure.kind == ChannelFailure.Kind.AUTH_REQUIRED) {
             physicalDesired = false;
@@ -204,6 +212,12 @@ public final class DeviceConnection {
         }
         long cap = Math.min(1_000L * attempt, 8_000L);
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
+        Diagnostics.info("device_connection", "physical_reconnect_scheduled", physicalFields(
+            "transportGeneration", transportGeneration,
+            "retryAttempt", attempt,
+            "delayMs", delayMs,
+            "stateBefore", "DISCONNECTED",
+            "stateAfter", "RETRY_WAIT"));
         int generation = transportGeneration;
         stateHandler.postDelayed(() -> {
             if (physicalDesired && generation == transportGeneration && !physicalConnected) {
@@ -237,6 +251,8 @@ public final class DeviceConnection {
             channel.retryGeneration++;
             channel.retryAttempt = 0;
             channel.state = LogicalChannelRegistry.Channel.State.OPEN;
+            Diagnostics.info("device_connection", "channel_connected", channelFields(channel,
+                "stateBefore", "OPENING", "stateAfter", "OPEN"));
             notifyConnected(channel);
         }
     }
@@ -244,6 +260,11 @@ public final class DeviceConnection {
     private void onTunnelError(String tunnelId, int code, String message) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
         if (channel == null) return;
+        Diagnostics.warn("device_connection", "channel_failed", channelFields(channel,
+            "failureKind", channelFailureKind(code),
+            "closeCode", code,
+            "stateBefore", channel.state.name(),
+            "stateAfter", code == 401 || code == 404 ? "CLOSED" : "RETRY_WAIT"));
         if (code == 404) {
             removeChannelIfCurrent(channel);
             notifyFailure(channel, ChannelFailure.channelNotFound(code, message));
@@ -260,6 +281,10 @@ public final class DeviceConnection {
     private void onTunnelClosed(String tunnelId, int code, String reason) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
         if (channel == null) return;
+        Diagnostics.info("device_connection", "channel_closed", channelFields(channel,
+            "closeCode", code,
+            "stateBefore", channel.state.name(),
+            "stateAfter", code == 1000 || code == 401 || code == 404 ? "CLOSED" : "RETRY_WAIT"));
         if (code == 404) {
             removeChannelIfCurrent(channel);
             notifyFailure(channel, ChannelFailure.channelNotFound(code, reason));
@@ -289,6 +314,8 @@ public final class DeviceConnection {
 
     private boolean sendChannelOpen(LogicalChannelRegistry.Channel channel) {
         if (!physicalConnected || transport == null) return false;
+        Diagnostics.info("device_connection", "channel_open_requested", channelFields(channel,
+            "stateBefore", channel.state.name(), "stateAfter", "OPENING"));
         String message = controlCodec.connect(channel.id, channel.path, channel.screenRouteKey,
             screenOwnerId + ":" + channel.screenRouteKey, channel.protocols);
         return message != null && transport.sendText(message);
@@ -520,12 +547,18 @@ public final class DeviceConnection {
     public boolean tryEnqueueTunnelFrame(String channelId, byte[] payload, boolean binary,
                                          TunnelSendCallback callback) {
         if (channelId == null || channelId.isEmpty() || payload == null) {
+            Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
+                "channelId", channelId == null ? "" : channelId,
+                "failureKind", "INVALID_FRAME"));
             notifySendResult(callback, TunnelSendResult.CHANNEL_NOT_OPEN);
             return false;
         }
         MuxOutboundQueue.Offer offer = outboundQueue.offer(channelId, payload, binary,
             result -> notifySendResult(callback, mapSendResult(result)));
         if (offer.result != MuxOutboundQueue.Result.LOCAL_ACCEPTED) {
+            Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
+                "channelId", channelId,
+                "failureKind", offer.result.name()));
             notifySendResult(callback, mapSendResult(offer.result));
             return false;
         }
@@ -695,6 +728,9 @@ public final class DeviceConnection {
             if (frame == null) return;
             LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.channelId);
             if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPEN) {
+                Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
+                    "channelId", frame.channelId,
+                    "failureKind", "CHANNEL_NOT_OPEN"));
                 frame.completion.onResult(MuxOutboundQueue.Result.CHANNEL_NOT_OPEN);
                 continue;
             }
@@ -703,6 +739,9 @@ public final class DeviceConnection {
                 continue;
             }
             frame.completion.onResult(MuxOutboundQueue.Result.TRANSPORT_REJECTED);
+            Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
+                "channelId", frame.channelId,
+                "failureKind", "TRANSPORT_REJECTED"));
             reconnectTransport("tunnel frame enqueue rejected", true);
         }
     }
@@ -754,6 +793,37 @@ public final class DeviceConnection {
     private boolean isOnStateThread() {
         Looper looper = stateHandler.getLooper();
         return looper != null && looper.getThread() == Thread.currentThread();
+    }
+
+    private Map<String, Object> physicalFields(Object... pairs) {
+        java.util.HashMap<String, Object> fields = new java.util.HashMap<>();
+        fields.put("deviceId", deviceId);
+        fields.put("transportGeneration", transportGeneration);
+        fields.put("activeChannelCount", activeChannelCount);
+        addFields(fields, pairs);
+        return fields;
+    }
+
+    private Map<String, Object> channelFields(LogicalChannelRegistry.Channel channel, Object... pairs) {
+        java.util.HashMap<String, Object> fields = new java.util.HashMap<>();
+        fields.put("deviceId", deviceId);
+        fields.put("channelId", channel.id);
+        fields.put("transportGeneration", transportGeneration);
+        fields.put("activeChannelCount", activeChannelCount);
+        addFields(fields, pairs);
+        return fields;
+    }
+
+    private static void addFields(Map<String, Object> fields, Object... pairs) {
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            fields.put(String.valueOf(pairs[i]), pairs[i + 1]);
+        }
+    }
+
+    private static String channelFailureKind(int code) {
+        if (code == 401) return "AUTH_REQUIRED";
+        if (code == 404) return "CHANNEL_NOT_FOUND";
+        return code >= 500 && code < 600 ? "SERVER_TEMPORARY" : "MUX_TEMPORARY";
     }
 
     public static boolean safeEquals(String a, String b) {

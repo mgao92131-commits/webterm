@@ -170,10 +170,47 @@ public class DiagnosticsTest {
         assertEquals(1, testSink.records.size());
         TestSink.Record record = testSink.records.get(0);
         
-        assertTrue(record.formatted.contains("SET-COOKIE=[REDACTED]"));
+        assertTrue(record.formatted.contains("SET_COOKIE=[REDACTED]"));
         assertTrue(record.formatted.contains("Access_Token=[REDACTED]"));
         assertTrue(record.formatted.contains("otp=[REDACTED]"));
         assertTrue(record.formatted.contains("terminaltext=[REDACTED]"));
+    }
+
+    @Test
+    public void testRequiredTokenVariantsAreRedacted() {
+        Map<String, Object> fields = Map.of(
+            "transfer_token", "one",
+            "deviceToken", "two",
+            "webterm_token", "three",
+            "relayToken", "four",
+            "session-token", "five",
+            "refreshToken", "six"
+        );
+        Diagnostics.info("test", "token_variants", fields);
+        String formatted = testSink.records.get(0).formatted;
+        assertFalse(formatted.contains("one"));
+        assertFalse(formatted.contains("two"));
+        assertFalse(formatted.contains("three"));
+        assertFalse(formatted.contains("four"));
+        assertFalse(formatted.contains("five"));
+        assertFalse(formatted.contains("six"));
+    }
+
+    @Test
+    public void testUnsafeFieldNamesAreNormalizedAndCannotOverrideHeaders() {
+        Map<String, Object> fields = new HashMap<>();
+        fields.put(null, "ignored");
+        fields.put("area", "ignored");
+        fields.put("event", "ignored");
+        fields.put("line\nbreak/field", "kept");
+        fields.put("x".repeat(80), "limited");
+        Diagnostics.info("original_area", "original_event", fields);
+        String formatted = testSink.records.get(0).formatted;
+        assertTrue(formatted.startsWith("area=original_area event=original_event"));
+        assertTrue(formatted.contains("line_break_field=kept"));
+        assertFalse(formatted.contains("ignored"));
+        assertTrue(formatted.contains("x".repeat(64) + "=limited"));
+        assertFalse(formatted.contains("x".repeat(65) + "=limited"));
     }
 
     @Test

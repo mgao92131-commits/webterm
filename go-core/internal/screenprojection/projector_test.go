@@ -134,13 +134,71 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 			metaPatch.WorkingDirChanged, metaPatch.WorkingDir)
 	}
 
-	// 超过 60% 行变化：diffToPatch 回退 snapshot，Kind 仍为 FrameSnapshot。
+	// 在线 baseline 连续时，即使超过 60% 行变化，也必须保留 Patch，避免
+	// TUI 全屏重绘重复发送整份 history snapshot。
 	if err := engine.Write([]byte("row0\r\nrow1\r\nrow2\r\nrow3")); err != nil {
 		t.Fatal(err)
 	}
 	full := deriver.FrameForState(p.ExportState(0, 4))
-	if full.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("snapshot fallback kind=%d, want FrameSnapshot", full.Kind)
+	if full.Kind != terminalengine.FramePatch {
+		t.Fatalf("full-screen delta kind=%d, want FramePatch", full.Kind)
+	}
+	if full.BaseRevision != 3 {
+		t.Fatalf("full-screen delta base=%d, want 3", full.BaseRevision)
+	}
+}
+
+func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
+	const rows = 52
+	const historySize = 300
+
+	makeLine := func(id uint64, row int, text string) terminalengine.Line {
+		return terminalengine.Line{Row: row, ID: id, Runs: []terminalengine.CellRun{{
+			Col:   0,
+			Cells: []terminalengine.Cell{{Text: text, Width: 1}},
+		}}}
+	}
+	makeScreen := func(text string) []terminalengine.Line {
+		screen := make([]terminalengine.Line, rows)
+		for row := range screen {
+			screen[row] = makeLine(0, row, fmt.Sprintf("%s-%d", text, row))
+		}
+		return screen
+	}
+	history := make([]terminalengine.Line, historySize)
+	for index := range history {
+		history[index] = makeLine(uint64(index+1), 0, fmt.Sprintf("history-%d", index+1))
+	}
+	baseline := terminalengine.ScreenFrame{
+		Version: 1, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
+		Rows: rows, Cols: 60, ActiveBuffer: terminalengine.BufferMain,
+		Screen: makeScreen("before"),
+		History: terminalengine.HistoryWindow{
+			FirstAvailableLineID: 1, FirstIncludedLineID: 1, LastIncludedLineID: historySize,
+			Lines: history,
+		},
+	}
+	currentHistory := append([]terminalengine.Line(nil), history[1:]...)
+	currentHistory = append(currentHistory, makeLine(historySize+1, 0, "history-301"))
+	current := baseline
+	current.Seq = 2
+	current.Screen = makeScreen("after")
+	current.History = terminalengine.HistoryWindow{
+		FirstAvailableLineID: 1, FirstIncludedLineID: 2, LastIncludedLineID: historySize + 1,
+		Lines: currentHistory,
+	}
+
+	var deriver FrameDeriver
+	deriver.Seed(baseline)
+	patch := deriver.FrameForState(current)
+	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != baseline.Seq {
+		t.Fatalf("kind=%d base=%d, want patch based on %d", patch.Kind, patch.BaseRevision, baseline.Seq)
+	}
+	if len(patch.Screen) != rows {
+		t.Fatalf("screen rows=%d, want all %d changed rows", len(patch.Screen), rows)
+	}
+	if len(patch.History.Lines) != 1 || patch.History.Lines[0].ID != historySize+1 {
+		t.Fatalf("history delta=%+v, want only line %d", patch.History.Lines, historySize+1)
 	}
 }
 

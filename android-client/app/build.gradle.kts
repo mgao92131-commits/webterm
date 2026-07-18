@@ -73,6 +73,7 @@ android {
 
 dependencies {
   implementation(project(":core-contract"))
+  implementation(libs.androidx.core.ktx)
   "debugImplementation"(libs.xlog)
   "diagImplementation"(libs.xlog)
   implementation(project(":transport-api"))

@@ -97,7 +97,11 @@ public final class HomeFragment extends Fragment {
                 mViewModel.getRelayService().refresh();
             },
             () -> mViewModel.requestRelay(),
-            () -> shareCrashLog()
+            () -> shareCrashLog(),
+            mHost != null && mHost.canShareDiagnosticLogs(),
+            () -> {
+                if (mHost != null) mHost.shareDiagnosticLogs();
+            }
         );
 
         // Attach relay state to subtitle/status

@@ -48,4 +48,10 @@ public interface HomeHost extends RelayNavigator {
 
     /** Export/share the latest crash log. */
     void shareCrashLog();
+
+    /** Whether this build exposes the local diagnostic-log export action. */
+    boolean canShareDiagnosticLogs();
+
+    /** Export/share the bounded local diagnostic logs. */
+    void shareDiagnosticLogs();
 }

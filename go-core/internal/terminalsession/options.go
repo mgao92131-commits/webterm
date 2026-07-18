@@ -1,5 +1,7 @@
 package terminalsession
 
+import "webterm/go-core/internal/logs"
+
 // Option 配置 Runtime。
 type Option func(*Runtime)
 
@@ -57,4 +59,9 @@ func WithScrollbackLimits(maxLines, maxBytes int) Option {
 		r.scrollbackMaxLines = maxLines
 		r.scrollbackMaxBytes = maxBytes
 	}
+}
+
+// WithLogger 提供有限容量的 Agent 诊断日志；不会记录正常 PTY 输出正文。
+func WithLogger(logger *logs.Logger) Option {
+	return func(r *Runtime) { r.logger = logger }
 }
