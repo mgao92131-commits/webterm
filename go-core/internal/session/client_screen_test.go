@@ -202,13 +202,13 @@ func dumpScreen(t *testing.T, data []byte) {
 		t.Logf("unmarshal: %v", err)
 		return
 	}
-	var lines []*pb.TerminalLine
+	var lines []*pb.LineData
 	switch p := env.Payload.(type) {
 	case *pb.ScreenEnvelope_Snapshot:
-		lines = p.Snapshot.Screen
+		lines = p.Snapshot.ScreenLines
 		t.Logf("snapshot rows=%d cols=%d", p.Snapshot.Geometry.Rows, p.Snapshot.Geometry.Cols)
 	case *pb.ScreenEnvelope_Patch:
-		lines = p.Patch.ScreenRows
+		lines = p.Patch.LineUpdates
 		t.Logf("patch base=%d rev=%d", p.Patch.BaseRevision, p.Patch.ScreenRevision)
 	}
 	for r, line := range lines {
@@ -510,12 +510,12 @@ func screenContains(data []byte, text string) bool {
 	if err := proto.Unmarshal(data, &env); err != nil {
 		return false
 	}
-	var lines []*pb.TerminalLine
+	var lines []*pb.LineData
 	switch p := env.Payload.(type) {
 	case *pb.ScreenEnvelope_Snapshot:
-		lines = p.Snapshot.Screen
+		lines = p.Snapshot.ScreenLines
 	case *pb.ScreenEnvelope_Patch:
-		lines = p.Patch.ScreenRows
+		lines = p.Patch.LineUpdates
 	default:
 		return false
 	}

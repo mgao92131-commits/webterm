@@ -32,10 +32,11 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     for (long id = 16; id <= 25; id++) {
       appended.add(textLine(id, 10, "abcdefghij", 0));
     }
+    List<Long> appendIds = new ArrayList<>();
+    for (TerminalLine line : appended) appendIds.add(line.id);
     model.applyPatch(new ScreenPatch(
-        "i1", 1, 1, 2, appended, Collections.emptyList(),
-        null, null, null, Collections.emptyMap(), Collections.emptyMap(),
-        null, null, Collections.emptyList()));
+        "i1", 1, 1, 2, null, appended, appendIds,
+        null, null, null, Collections.emptyMap(), Collections.emptyMap(), null, null));
 
     assertEquals("evict down to the soft line target", 10, model.historySize());
     assertEquals("oldest lines are evicted first", 16L, model.firstCachedHistoryId());

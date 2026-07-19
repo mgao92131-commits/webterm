@@ -31,18 +31,21 @@ func ExportSnapshot(engine *terminalengine.Engine, scrollback *terminalengine.Tr
 
 // ExportSnapshot 从 Engine 导出完整 ScreenFrame。
 func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *terminalengine.TrackedScrollback, sessionID, instanceID string, epoch, seq uint64) terminalengine.ScreenFrame {
-	rows := engine.Rows()
-	cols := engine.Cols()
-	cursorRow, cursorCol := engine.CursorPos()
+	proj := engine.ReadFullProjection()
+	rows := proj.Rows
+	cols := proj.Cols
+	cursorRow, cursorCol := proj.Cursor.Row, proj.Cursor.Col
 
 	activeBuffer := terminalengine.BufferMain
-	if engine.IsAlternateScreen() {
+	if proj.ActiveBuffer == headlessterm.BufferKindAlternate {
 		activeBuffer = terminalengine.BufferAlternate
 	}
 
 	screen := make([]terminalengine.Line, rows)
-	for r := 0; r < rows; r++ {
-		screen[r] = exp.exportScreenRow(engine, r, cols, cursorRow, cursorCol)
+	for _, row := range proj.DirtyRows {
+		if row.Index >= 0 && row.Index < rows {
+			screen[row.Index] = exp.exportProjectionRow(row, cursorRow, cursorCol)
+		}
 	}
 	cursorStyle := engine.CursorStyle()
 
@@ -94,17 +97,18 @@ func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols, c
 			cells = append(cells, *cell)
 		}
 	}
-	return terminalengine.Line{
-		Row:     row,
-		Wrapped: engine.IsWrapped(row),
-		Runs:    exp.exportCells(cells, row, cursorRow, cursorCol),
-	}
+	// The direct exporter is only used for isolated fixtures; ReadFullProjection
+	// is the authoritative path that carries stable identity.
+	return terminalengine.Line{Row: row, ID: uint64(row + 1), Version: 1,
+		Wrapped: engine.IsWrapped(row), Runs: exp.exportCells(cells, row, cursorRow, cursorCol)}
 }
 
 // exportProjectionRow 把投影中的一行（已是不可变拷贝）转换为导出 Line。
 func (exp *exporter) exportProjectionRow(row headlessterm.ProjectionRow, cursorRow, cursorCol int) terminalengine.Line {
 	return terminalengine.Line{
 		Row:     row.Index,
+		ID:      row.LineID,
+		Version: row.LineVersion,
 		Wrapped: row.Wrapped,
 		Runs:    exp.exportCells(row.Cells, row.Index, cursorRow, cursorCol),
 	}
@@ -263,6 +267,7 @@ func exportHistoryLines(exp *exporter, lines []terminalengine.HistoryLine) []ter
 func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalengine.Line {
 	return terminalengine.Line{
 		ID:      hl.ID,
+		Version: hl.Version,
 		Row:     -1,
 		Wrapped: hl.Wrapped,
 		Runs:    exp.exportHistoryCells(hl.Cells),

@@ -17,9 +17,14 @@ public final class ScreenMessageMapper {
   private ScreenMessageMapper() {}
 
   public static ScreenSnapshot mapSnapshot(TerminalScreenProto.ScreenSnapshot pb) {
-    List<TerminalLine> screen = new ArrayList<>();
-    for (TerminalScreenProto.TerminalLine line : pb.getScreenList()) {
-      screen.add(mapLine(line, pb.getGeometry().getCols()));
+    Map<Long, TerminalLine> lines = mapLines(pb.getScreenLinesList(), pb.getGeometry().getCols());
+    List<TerminalLine> screen = resolveLayout(pb.getLayout().getLineIdsList(), lines);
+    List<TerminalLine> historyLines = new ArrayList<>();
+    Map<Long, TerminalLine> history = mapLines(pb.getHistoryTailLinesList(), pb.getGeometry().getCols());
+    for (long id : pb.getHistoryTailIdsList()) {
+      TerminalLine line = history.get(id);
+      if (line == null) throw new IllegalArgumentException("snapshot history line data missing: " + id);
+      historyLines.add(line);
     }
     return new ScreenSnapshot(
         pb.getSessionId(),
@@ -32,12 +37,15 @@ public final class ScreenMessageMapper {
         mapCursor(pb.getCursor()),
         mapModes(pb.getModes()),
         mapPalette(pb.getPalette()),
-        mapHistoryWindow(pb.getHistory(), pb.getGeometry().getCols()),
+        new HistoryWindow(pb.getFirstAvailableHistoryLineId(),
+            historyLines.isEmpty() ? 0 : historyLines.get(0).id,
+            historyLines.isEmpty() ? 0 : historyLines.get(historyLines.size() - 1).id,
+            pb.getHasMoreHistoryBefore(), historyLines),
         screen,
         mapStyles(pb.getStylesList()),
         mapLinks(pb.getLinksList()),
-        pb.getTitle(),
-        pb.getWorkingDirectory()
+        pb.hasTitle() ? pb.getTitle() : "",
+        pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : ""
     );
   }
 
@@ -50,18 +58,11 @@ public final class ScreenMessageMapper {
    * instead of allocating a second padded copy.
    */
   public static ScreenPatch mapPatch(TerminalScreenProto.ScreenPatch pb, int columns) {
-    List<TerminalLine> historyAppend = new ArrayList<>();
-    for (TerminalScreenProto.HistoryLine line : pb.getHistoryAppendList()) {
-      historyAppend.add(mapHistoryLine(line, columns));
-    }
-    List<TerminalLine> screenRows = new ArrayList<>();
-    for (TerminalScreenProto.TerminalLine line : pb.getScreenRowsList()) {
-      screenRows.add(mapLine(line, columns));
-    }
-    List<ScreenPatch.PromotedRow> promotedRows = new ArrayList<>();
-    for (TerminalScreenProto.PromotedRow row : pb.getPromotedRowsList()) {
-      promotedRows.add(new ScreenPatch.PromotedRow(row.getScreenRow(), row.getHistoryLineId()));
-    }
+    List<TerminalLine> updates = new ArrayList<>(mapLines(pb.getLineUpdatesList(), columns).values());
+    List<Long> historyAppend = new ArrayList<>();
+    for (long id : pb.getHistoryAppendIdsList()) historyAppend.add(id);
+    long[] layout = null;
+    if (pb.hasLayout()) { layout = new long[pb.getLayout().getLineIdsCount()]; for (int i = 0; i < layout.length; i++) layout[i] = pb.getLayout().getLineIds(i); }
     // title/working_directory 是 proto3 optional，按 presence 区分三态：
     // absent 映射为 null（模型保持原值）；present 即使是空串也原样传递（模型清空）。
     return new ScreenPatch(
@@ -69,8 +70,9 @@ public final class ScreenMessageMapper {
         pb.getLayoutEpoch(),
         pb.getBaseRevision(),
         pb.getScreenRevision(),
+        layout,
+        updates,
         historyAppend,
-        screenRows,
         pb.hasCursor() ? mapCursor(pb.getCursor()) : null,
         pb.hasModes() ? mapModes(pb.getModes()) : null,
         pb.hasPalette() ? mapPalette(pb.getPalette()) : null,
@@ -78,8 +80,7 @@ public final class ScreenMessageMapper {
         mapLinks(pb.getNewLinksList()),
         pb.hasTitle() ? pb.getTitle() : null,
         pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : null,
-        promotedRows,
-        pb.hasFirstAvailableHistoryLineId() ? pb.getFirstAvailableHistoryLineId() : null
+        pb.hasHistoryTrimBeforeId() ? pb.getHistoryTrimBeforeId() : null
     );
   }
 
@@ -90,8 +91,8 @@ public final class ScreenMessageMapper {
   /** Maps a history page to the current grid width for one-pass line normalization. */
   public static HistoryPage mapHistoryPage(TerminalScreenProto.HistoryPage pb, int columns) {
     List<TerminalLine> lines = new ArrayList<>();
-    for (TerminalScreenProto.HistoryLine line : pb.getLinesList()) {
-      lines.add(mapHistoryLine(line, columns));
+    for (TerminalScreenProto.LineData line : pb.getLinesList()) {
+      lines.add(mapLine(line, columns));
     }
     return new HistoryPage(
         pb.getRequestId(),
@@ -105,16 +106,30 @@ public final class ScreenMessageMapper {
     );
   }
 
-  private static TerminalLine mapLine(TerminalScreenProto.TerminalLine pb, int columns) {
-    return new TerminalLine(pb.getRow(), pb.getWrapped(), pb.getText().isEmpty()
+  private static TerminalLine mapLine(TerminalScreenProto.LineData pb, int columns) {
+    return new TerminalLine(pb.getLineId(), pb.getLineVersion(), pb.getWrapped(), pb.getText().isEmpty()
         ? expandRuns(pb.getRunsList(), columns)
         : expandCompact(pb.getText(), pb.getStyleSpansList(), columns));
   }
 
-  private static TerminalLine mapHistoryLine(TerminalScreenProto.HistoryLine pb, int columns) {
-    return new TerminalLine(pb.getId(), pb.getWrapped(), pb.getText().isEmpty()
-        ? expandRuns(pb.getRunsList(), columns)
-        : expandCompact(pb.getText(), pb.getStyleSpansList(), columns));
+  private static Map<Long, TerminalLine> mapLines(List<TerminalScreenProto.LineData> data, int columns) {
+    Map<Long, TerminalLine> lines = new HashMap<>();
+    for (TerminalScreenProto.LineData line : data) {
+      if (lines.put(line.getLineId(), mapLine(line, columns)) != null) {
+        throw new IllegalArgumentException("duplicate line data id: " + line.getLineId());
+      }
+    }
+    return lines;
+  }
+
+  private static List<TerminalLine> resolveLayout(List<Long> layout, Map<Long, TerminalLine> lines) {
+    List<TerminalLine> result = new ArrayList<>();
+    for (long id : layout) {
+      TerminalLine line = lines.get(id);
+      if (line == null) throw new IllegalArgumentException("layout line data missing: " + id);
+      result.add(line);
+    }
+    return result;
   }
 
   private static TerminalCell[] expandCompact(String text,
@@ -260,19 +275,6 @@ public final class ScreenMessageMapper {
     }
   }
 
-  private static HistoryWindow mapHistoryWindow(TerminalScreenProto.HistoryWindow pb, int columns) {
-    List<TerminalLine> lines = new ArrayList<>();
-    for (TerminalScreenProto.HistoryLine line : pb.getLinesList()) {
-      lines.add(mapHistoryLine(line, columns));
-    }
-    return new HistoryWindow(
-        pb.getFirstAvailableLineId(),
-        pb.getFirstIncludedLineId(),
-        pb.getLastIncludedLineId(),
-        pb.getHasMoreBefore(),
-        lines
-    );
-  }
 
   private static Map<Integer, TerminalStyle> mapStyles(List<TerminalScreenProto.TerminalStyle> list) {
     Map<Integer, TerminalStyle> map = new HashMap<>();

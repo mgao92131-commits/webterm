@@ -67,7 +67,7 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		last = h.Changes[len(h.Changes)-1].LineID
 	}
 	for _, id := range w.IDs {
-		if id < w.FirstID || id > w.LastID || (last != 0 && id != last+1) {
+		if id < w.FirstID || id > w.LastID || (last != 0 && id <= last) {
 			gap = true
 		}
 		if last == 0 || id > last {
@@ -117,7 +117,7 @@ func (h *HistoryChangeIndex) selectAfter(clientRevision uint64) historyResumeSel
 		}
 	}
 	for i := 1; i < len(sel.lineIDs); i++ {
-		if sel.lineIDs[i] != sel.lineIDs[i-1]+1 {
+		if sel.lineIDs[i] <= sel.lineIDs[i-1] {
 			sel.lineIDs = nil
 			sel.reason = ResumeReasonHistoryGap
 			return sel

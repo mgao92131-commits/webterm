@@ -120,14 +120,7 @@ public final class TerminalSessionRuntimePatchSummaryTest {
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(revision)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
-            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
-            .build())
+        .setSnapshot(TestScreenFrames.snapshotBuilder(revision).build())
         .build();
   }
 
@@ -139,22 +132,12 @@ public final class TerminalSessionRuntimePatchSummaryTest {
         .setBaseRevision(baseRevision)
         .setScreenRevision(screenRevision);
     for (int row = 0; row < screenRows; row++) {
-      pb.addScreenRows(TerminalScreenProto.TerminalLine.newBuilder()
-          .setRow(row)
-          .addRuns(TerminalScreenProto.CellRun.newBuilder()
-              .setCol(0)
-              .addCells(TerminalScreenProto.Cell.newBuilder().setText("x").setWidth(1).build())
-              .build())
-          .build());
+      pb.addLineUpdates(TestScreenFrames.line(row + 1L, 2, "x"));
     }
     for (int i = 0; i < historyAppend; i++) {
-      pb.addHistoryAppend(TerminalScreenProto.HistoryLine.newBuilder()
-          .setId(100 + i)
-          .addRuns(TerminalScreenProto.CellRun.newBuilder()
-              .setCol(0)
-              .addCells(TerminalScreenProto.Cell.newBuilder().setText("h").setWidth(1).build())
-              .build())
-          .build());
+      long id = 100L + i;
+      pb.addLineUpdates(TestScreenFrames.line(id, 1, "h"));
+      pb.addHistoryAppendIds(id);
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)

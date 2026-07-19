@@ -29,6 +29,8 @@ public final class RemoteTerminalModel {
 
   private final TerminalHistory history;
   private TerminalLine[] screen;
+  /** 当前 layout 与缓存历史引用的不可变行内容。 */
+  private final Map<Long, TerminalLine> lineStore = new HashMap<>();
 
   private long firstAvailableHistoryId;
   private boolean hasMoreHistoryBefore;
@@ -110,11 +112,13 @@ public final class RemoteTerminalModel {
     }
 
     this.history.clear();
+	this.lineStore.clear();
     this.historyBytes = 0;
     this.firstAvailableHistoryId = snapshot.history.firstAvailableLineId;
     this.hasMoreHistoryBefore = snapshot.history.hasMoreBefore;
     for (TerminalLine line : snapshot.history.lines) {
       if (line.id != 0) {
+		lineStore.put(line.id, line);
         putHistoryLine(line);
       }
     }
@@ -124,11 +128,10 @@ public final class RemoteTerminalModel {
     for (int i = 0; i < this.rows; i++) {
       this.screen[i] = emptyLine(i, this.columns);
     }
-    for (TerminalLine line : snapshot.screen) {
-      int row = findRow(line.id);
-      if (row >= 0 && row < this.screen.length) {
-        this.screen[row] = padOrCopyLine(line, this.columns);
-      }
+    for (int row = 0; row < snapshot.screen.size() && row < this.screen.length; row++) {
+      TerminalLine line = padOrCopyLine(snapshot.screen.get(row), this.columns);
+      lineStore.put(line.id, line);
+      this.screen[row] = line;
     }
 
     markRenderDirty(true, null, true, geometryChanged, true, -1, cursor.row,
@@ -160,19 +163,11 @@ public final class RemoteTerminalModel {
 
     BitSet changedRows = new BitSet(rows);
     int tailAppendedLines = 0;
-    long watermark = patch.firstAvailableHistoryLineId != null
-        ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
-
-    // promoted row 必须从 mutation 前的基线屏幕捕获，避免 screenRows 覆盖后
-    // 错把新行当成滚入历史的旧行。
-    List<TerminalLine> promotedHistory = new ArrayList<>();
-    for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
-      TerminalLine promotedLine = screen[promoted.screenRow];
-      promotedHistory.add(promotedLine.withId(promoted.historyLineId));
-    }
+    long watermark = patch.historyTrimBeforeId != null
+        ? patch.historyTrimBeforeId : firstAvailableHistoryId;
 
     // 恢复 Patch 的原子顺序：先推进水位并 trim，再丢弃水位以下 append。
-    if (patch.firstAvailableHistoryLineId != null) {
+    if (patch.historyTrimBeforeId != null) {
       firstAvailableHistoryId = watermark;
       history.trimHeadUntil(watermark);
       recalculateHistoryBytes();
@@ -181,20 +176,29 @@ public final class RemoteTerminalModel {
     if (patch.newStyles != null) styles.putAll(patch.newStyles);
     if (patch.newLinks != null) links.putAll(patch.newLinks);
 
-    for (TerminalLine line : patch.historyAppend) {
-      if (line.id >= watermark) {
+    for (TerminalLine line : patch.lineUpdates) {
+      lineStore.put(line.id, padOrCopyLine(line, columns));
+    }
+
+    for (long id : patch.historyAppendIds) {
+      TerminalLine line = lineStore.get(id);
+      if (line != null && line.id >= watermark) {
         if (putHistoryLine(line)) tailAppendedLines++;
       }
     }
 
-    for (TerminalLine line : promotedHistory) {
-      if (line.id >= watermark && putHistoryLine(line)) tailAppendedLines++;
-    }
-
-    for (TerminalLine line : patch.screenRows) {
-      int row = findRow(line.id);
-      screen[row] = padOrCopyLine(line, columns);
-      changedRows.set(row);
+    if (patch.layout != null) {
+      for (int row = 0; row < rows; row++) {
+        TerminalLine line = lineStore.get(patch.layout[row]);
+        if (screen[row] != line) changedRows.set(row);
+        screen[row] = line;
+      }
+    } else {
+      for (int row = 0; row < rows; row++) {
+        TerminalLine current = screen[row];
+        TerminalLine updated = lineStore.get(current.id);
+        if (updated != null && updated != current) { screen[row] = updated; changedRows.set(row); }
+      }
     }
 
     if (patch.cursor != null) {
@@ -213,8 +217,8 @@ public final class RemoteTerminalModel {
       workingDirectory = patch.workingDirectory;
     }
 
-    boolean historyChanged = patch.firstAvailableHistoryLineId != null
-        || !patch.historyAppend.isEmpty() || !patch.promotedRows.isEmpty();
+    boolean historyChanged = patch.historyTrimBeforeId != null
+        || !patch.historyAppendIds.isEmpty();
     boolean stylesChanged = !patch.newStyles.isEmpty();
     boolean linksChanged = !patch.newLinks.isEmpty();
     boolean cursorChanged = !Objects.equals(previousCursor, cursor);
@@ -224,6 +228,7 @@ public final class RemoteTerminalModel {
     boolean workingDirectoryChanged = !Objects.equals(previousWorkingDirectory, workingDirectory);
     screenRevision = patch.screenRevision;
     evictHistoryIfNeeded();
+    pruneLineStore();
     markRenderDirty(false, changedRows, historyChanged, false, cursorChanged,
         cursorChanged ? previousCursor.row : -1, cursorChanged ? cursor.row : -1,
         paletteChanged, stylesChanged, linksChanged, modesChanged, false);
@@ -259,7 +264,9 @@ public final class RemoteTerminalModel {
     List<TerminalLine> toPrepend = new ArrayList<>();
     for (TerminalLine line : page.lines) {
       if (line.id != 0 && history.findLineIndex(line.id) < 0) {
-        toPrepend.add(line);
+        TerminalLine normalized = padOrCopyLine(line, columns);
+        lineStore.put(normalized.id, normalized);
+        toPrepend.add(normalized);
       }
     }
     history.prepend(toPrepend);
@@ -291,6 +298,7 @@ public final class RemoteTerminalModel {
     this.firstAvailableHistoryId = firstAvailableLineId;
     history.trimHeadUntil(firstAvailableLineId);
     recalculateHistoryBytes();
+    pruneLineStore();
     markRenderDirty(false, null, true, false, false, -1, -1,
         false, false, false, false, false);
     markTerminalState(false, true, false, false, 0, 0);
@@ -332,10 +340,7 @@ public final class RemoteTerminalModel {
   }
 
   private boolean patchReferencesComplete(ScreenPatch patch) {
-    for (TerminalLine line : patch.screenRows) {
-      if (!referencesComplete(line)) return false;
-    }
-    for (TerminalLine line : patch.historyAppend) {
+    for (TerminalLine line : patch.lineUpdates) {
       if (!referencesComplete(line)) return false;
     }
     return true;
@@ -345,49 +350,40 @@ public final class RemoteTerminalModel {
     if (screen == null || screen.length != rows) {
       throw new RevisionGapException("local projection is incomplete");
     }
-    if (patch.firstAvailableHistoryLineId != null
-        && patch.firstAvailableHistoryLineId < firstAvailableHistoryId) {
+    if (patch.historyTrimBeforeId != null
+        && patch.historyTrimBeforeId < firstAvailableHistoryId) {
       throw new RevisionGapException("history watermark moved backwards");
     }
-    boolean[] seenRows = new boolean[rows];
-    for (TerminalLine line : patch.screenRows) {
-      int row = findRow(line.id);
-      if (row < 0 || row >= rows || seenRows[row]) {
-        throw new RevisionGapException("invalid or duplicate screen row " + line.id);
-      }
-      seenRows[row] = true;
+    if (patch.layout != null && patch.layout.length != rows) {
+      throw new RevisionGapException("layout length mismatch");
     }
-    boolean[] seenPromotedRows = new boolean[rows];
-    Set<Long> promotedIDs = new HashSet<>();
-    for (ScreenPatch.PromotedRow promoted : patch.promotedRows) {
-      if (promoted.screenRow < 0 || promoted.screenRow >= rows
-          || promoted.historyLineId <= 0 || seenPromotedRows[promoted.screenRow]
-          || !promotedIDs.add(promoted.historyLineId)) {
-        throw new RevisionGapException("invalid promoted row mapping");
+    Set<Long> updateIds = new HashSet<>();
+    for (TerminalLine line : patch.lineUpdates) {
+      TerminalLine previous = lineStore.get(line.id);
+      if (line.id <= 0 || !updateIds.add(line.id)
+          || (previous != null && line.version <= previous.version)) {
+        throw new RevisionGapException("invalid line update");
       }
-      seenPromotedRows[promoted.screenRow] = true;
-    }
-    long watermark = patch.firstAvailableHistoryLineId != null
-        ? patch.firstAvailableHistoryLineId : firstAvailableHistoryId;
-    long previous = -1;
-    for (TerminalLine line : patch.historyAppend) {
-      if (line.id <= 0) throw new RevisionGapException("invalid history line id");
-      if (line.id < watermark) continue;
-      if (previous >= 0 && line.id != previous + 1) {
-        throw new RevisionGapException("history append is not contiguous");
-      }
-      if (history.findLineIndex(line.id) >= 0 || promotedIDs.contains(line.id)) {
-        throw new RevisionGapException("duplicate history line " + line.id);
-      }
-      previous = line.id;
-    }
-
-    for (TerminalLine line : patch.screenRows) {
       validateReferences(line, styles, patch.newStyles, links, patch.newLinks);
     }
-    for (TerminalLine line : patch.historyAppend) {
-      if (line.id >= watermark) {
-        validateReferences(line, styles, patch.newStyles, links, patch.newLinks);
+    long watermark = patch.historyTrimBeforeId != null
+        ? patch.historyTrimBeforeId : firstAvailableHistoryId;
+    long previous = -1;
+    for (long id : patch.historyAppendIds) {
+      if (id <= 0 || id < watermark || (previous >= 0 && id <= previous)
+          || (history.findLineIndex(id) >= 0 && !updateIds.contains(id))) {
+        throw new RevisionGapException("invalid history append id");
+      }
+      if (!lineStore.containsKey(id) && !updateIds.contains(id)) {
+        throw new RevisionGapException("history line data missing");
+      }
+      previous = id;
+    }
+    if (patch.layout != null) {
+      for (long id : patch.layout) {
+        if (id <= 0 || (!lineStore.containsKey(id) && !updateIds.contains(id))) {
+          throw new RevisionGapException("layout line data missing");
+        }
       }
     }
   }
@@ -516,7 +512,17 @@ public final class RemoteTerminalModel {
     for (int i = copyLen; i < cols; i++) {
       cells[i] = TerminalCell.EMPTY;
     }
-    return new TerminalLine(line.id, line.wrapped, cells);
+    return new TerminalLine(line.id, line.version, line.wrapped, cells);
+  }
+
+  /** 只保留活动 Layout 或 Android 历史缓存仍引用的行，防止 LineStore 无界增长。 */
+  private void pruneLineStore() {
+    java.util.HashSet<Long> retained = new java.util.HashSet<>();
+    if (screen != null) for (TerminalLine line : screen) if (line != null) retained.add(line.id);
+    TerminalHistorySnapshot snapshot = history.snapshot();
+    for (int i = 0; i < snapshot.size(); i++) retained.add(snapshot.lineAt(i).id);
+    java.util.Iterator<Long> it = lineStore.keySet().iterator();
+    while (it.hasNext()) if (!retained.contains(it.next())) it.remove();
   }
 
   /**

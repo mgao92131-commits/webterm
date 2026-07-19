@@ -9,9 +9,8 @@ import (
 )
 
 // malformed Hello 矩阵（计划 §3.5）：hasProjection=false 时 token 字段必须
-// 全部为默认值；hasProjection=true 时 token 必须完整且声明 row_patches。
+// 全部为默认值；hasProjection=true 时 token 必须完整。
 func TestValidateHello_ProjectionTokenConsistency(t *testing.T) {
-	rowPatchCaps := &pb.CapabilitySet{RowPatches: true}
 	tests := []struct {
 		name    string
 		hello   *pb.Hello
@@ -24,15 +23,12 @@ func TestValidateHello_ProjectionTokenConsistency(t *testing.T) {
 		{name: "cold with instance", hello: &pb.Hello{Version: 1, InstanceId: "i1"}, wantErr: true},
 		{name: "cold with epoch", hello: &pb.Hello{Version: 1, LayoutEpoch: 1}, wantErr: true},
 		{name: "cold with revision", hello: &pb.Hello{Version: 1, ScreenRevision: 1}, wantErr: true},
-		// hasProjection=true：token 完整且声明 row_patches。
-		{name: "projection complete", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 1, Capabilities: rowPatchCaps}},
-		{name: "projection with geometry", hello: &pb.Hello{Version: 1, Cols: 120, Rows: 40, HasProjection: true, InstanceId: "i1", LayoutEpoch: 2, ScreenRevision: 9, Capabilities: rowPatchCaps}},
+		{name: "projection complete", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 1}},
+		{name: "projection with geometry", hello: &pb.Hello{Version: 1, Cols: 120, Rows: 40, HasProjection: true, InstanceId: "i1", LayoutEpoch: 2, ScreenRevision: 9}},
 		// hasProjection=true：任一字段缺失即拒绝。
-		{name: "projection missing instance", hello: &pb.Hello{Version: 1, HasProjection: true, LayoutEpoch: 1, ScreenRevision: 1, Capabilities: rowPatchCaps}, wantErr: true},
-		{name: "projection zero epoch", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", ScreenRevision: 1, Capabilities: rowPatchCaps}, wantErr: true},
-		{name: "projection zero revision", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1, Capabilities: rowPatchCaps}, wantErr: true},
-		{name: "projection missing capabilities", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 1}, wantErr: true},
-		{name: "projection without row patches", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 1, Capabilities: &pb.CapabilitySet{}}, wantErr: true},
+		{name: "projection missing instance", hello: &pb.Hello{Version: 1, HasProjection: true, LayoutEpoch: 1, ScreenRevision: 1}, wantErr: true},
+		{name: "projection zero epoch", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", ScreenRevision: 1}, wantErr: true},
+		{name: "projection zero revision", hello: &pb.Hello{Version: 1, HasProjection: true, InstanceId: "i1", LayoutEpoch: 1}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,14 +177,15 @@ func TestHandleMessage_MalformedHelloRejected(t *testing.T) {
 }
 
 func TestValidateLines_RejectsExplicitSpacerCells(t *testing.T) {
-	lines := []*pb.TerminalLine{{
-		Row: 0,
+	lines := []*pb.LineData{{
+		LineId: 1,
+		LineVersion: 1,
 		Runs: []*pb.CellRun{{
 			Col:   0,
 			Cells: []*pb.Cell{{Text: "", Width: 0}},
 		}},
 	}}
-	if err := validateLines(lines, 10); err == nil {
+	if _, err := validateLineData(lines, 10); err == nil {
 		t.Fatal("explicit width=0 spacer must be rejected")
 	}
 }

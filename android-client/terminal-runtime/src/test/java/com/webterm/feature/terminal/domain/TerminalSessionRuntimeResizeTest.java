@@ -488,14 +488,7 @@ public final class TerminalSessionRuntimeResizeTest {
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(revision)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
-            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
-            .build())
+        .setSnapshot(TestScreenFrames.snapshotBuilder(revision).build())
         .build();
   }
 
@@ -509,7 +502,6 @@ public final class TerminalSessionRuntimeResizeTest {
             .setLayoutEpoch(1)
             .setScreenRevision(2)
             .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(1).setCols(10).build())
-            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
             .build())
         .build();
   }
@@ -543,7 +535,7 @@ public final class TerminalSessionRuntimeResizeTest {
   private static TerminalScreenProto.ScreenEnvelope invalidHistoryPage(@NonNull String requestId) {
     TerminalScreenProto.HistoryPage.Builder page = TerminalScreenProto.HistoryPage.newBuilder()
         .setRequestId(requestId).setLayoutEpoch(1).setAsOfRevision(1);
-    for (int i = 0; i < 501; i++) page.addLines(TerminalScreenProto.HistoryLine.getDefaultInstance());
+    for (int i = 0; i < 501; i++) page.addLines(TestScreenFrames.line(i + 1L, 1, ""));
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setHistoryPage(page)

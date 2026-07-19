@@ -68,7 +68,7 @@ func TestFixtures_DecodeAndMatchDebug(t *testing.T) {
 					s.Geometry.Rows, s.Geometry.Cols, debug.Geometry.Rows, debug.Geometry.Cols)
 			}
 
-			pbText := extractNonEmptyScreenText(s.Screen)
+			pbText := extractNonEmptyScreenText(s.ScreenLines)
 			debugText := extractNonEmptyDebugScreenText(debug.Screen.Rows)
 			if pbText != debugText {
 				t.Errorf("screen text mismatch\nprotobuf:\n%s\ndebug:\n%s", pbText, debugText)
@@ -95,13 +95,17 @@ type fixtureDebugJSON struct {
 	} `json:"screen"`
 }
 
-func extractNonEmptyScreenText(lines []*pb.TerminalLine) string {
+func extractNonEmptyScreenText(lines []*pb.LineData) string {
 	var rows []string
 	for _, line := range lines {
 		var sb strings.Builder
-		for _, run := range line.Runs {
-			for _, cell := range run.Cells {
-				sb.WriteString(cell.Text)
+		if line.Text != "" {
+			sb.WriteString(line.Text)
+		} else {
+			for _, run := range line.Runs {
+				for _, cell := range run.Cells {
+					sb.WriteString(cell.Text)
+				}
 			}
 		}
 		text := strings.TrimRight(sb.String(), " ")

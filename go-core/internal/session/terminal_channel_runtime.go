@@ -430,7 +430,9 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		return
 	}
 	client.clientInstanceID = hello.GetClientInstanceId()
-	client.compactLineEncoding.Store(hello.GetCapabilities().GetCompactLineEncoding())
+	// Stable LineData has a single final encoding; all current peers understand
+	// compact text/spans, with CellRun retained for complex rows.
+	client.compactLineEncoding.Store(true)
 	client.attachScreenClient(hello)
 	client.SendInfo()
 	client.ready.Store(true)

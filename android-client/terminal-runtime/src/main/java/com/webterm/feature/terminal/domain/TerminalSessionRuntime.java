@@ -841,12 +841,12 @@ public final class TerminalSessionRuntime {
                   "screenRevision", patch.screenRevision));
             }
             model.applyPatch(patch);
-            recordPatchSummary(message.payload.length, patch.screenRows.size(), patch);
+            recordPatchSummary(message.payload.length, countScreenLineUpdates(patch), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
                   envelope.getPatch().getScreenRevision(),
-                  envelope.getPatch().getScreenRowsCount(),
-                  envelope.getPatch().getHistoryAppendCount());
+                  envelope.getPatch().getLineUpdatesCount(),
+                  envelope.getPatch().getHistoryAppendIdsCount());
             }
           } catch (Exception e) {
             Diagnostics.warn("screen_protocol", "patch_apply_failed", diagnosticFields(
@@ -939,7 +939,7 @@ public final class TerminalSessionRuntime {
     patchSummaryCount++;
     patchSummaryBytes += payloadBytes;
     patchSummaryChangedRows += changedRows;
-    patchSummaryHistoryAppend += patch.historyAppend.size();
+    patchSummaryHistoryAppend += patch.historyAppendIds.size();
     if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
     patchSummaryLastScreenRevision = patch.screenRevision;
     if (patchSummaryCount == 1) {
@@ -949,6 +949,17 @@ public final class TerminalSessionRuntime {
       timeoutScheduler.schedule(
           () -> modelExecutor.execute(() -> flushPatchSummary(generation)), 1000L);
     }
+  }
+
+  /** History promotion carries an ID but is not a changed visible screen row. */
+  private static int countScreenLineUpdates(@NonNull ScreenPatch patch) {
+    if (patch.lineUpdates.isEmpty()) return 0;
+    java.util.HashSet<Long> historyIds = new java.util.HashSet<>(patch.historyAppendIds);
+    int count = 0;
+    for (com.webterm.terminal.model.TerminalLine line : patch.lineUpdates) {
+      if (!historyIds.contains(line.id)) count++;
+    }
+    return count;
   }
 
   private void flushPatchSummary(long generation) {

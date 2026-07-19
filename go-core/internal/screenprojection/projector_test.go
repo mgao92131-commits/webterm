@@ -168,37 +168,37 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 	const rows = 52
 	const historySize = 300
 
-	makeLine := func(id uint64, row int, text string) terminalengine.Line {
-		return terminalengine.Line{Row: row, ID: id, Runs: []terminalengine.CellRun{{
+	makeLine := func(id, version uint64, row int, text string) terminalengine.Line {
+		return terminalengine.Line{Row: row, ID: id, Version: version, Runs: []terminalengine.CellRun{{
 			Col:   0,
 			Cells: []terminalengine.Cell{{Text: text, Width: 1}},
 		}}}
 	}
-	makeScreen := func(text string) []terminalengine.Line {
+	makeScreen := func(version uint64, text string) []terminalengine.Line {
 		screen := make([]terminalengine.Line, rows)
 		for row := range screen {
-			screen[row] = makeLine(0, row, fmt.Sprintf("%s-%d", text, row))
+			screen[row] = makeLine(1000+uint64(row), version, row, fmt.Sprintf("%s-%d", text, row))
 		}
 		return screen
 	}
 	history := make([]terminalengine.Line, historySize)
 	for index := range history {
-		history[index] = makeLine(uint64(index+1), 0, fmt.Sprintf("history-%d", index+1))
+		history[index] = makeLine(uint64(index+1), 1, 0, fmt.Sprintf("history-%d", index+1))
 	}
 	baseline := terminalengine.ScreenFrame{
 		Version: 1, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
 		Rows: rows, Cols: 60, ActiveBuffer: terminalengine.BufferMain,
-		Screen: makeScreen("before"),
+		Screen: makeScreen(1, "before"),
 		History: terminalengine.HistoryWindow{
 			FirstAvailableLineID: 1, FirstIncludedLineID: 1, LastIncludedLineID: historySize,
 			Lines: history,
 		},
 	}
 	currentHistory := append([]terminalengine.Line(nil), history[1:]...)
-	currentHistory = append(currentHistory, makeLine(historySize+1, 0, "history-301"))
+	currentHistory = append(currentHistory, makeLine(historySize+1, 1, 0, "history-301"))
 	current := baseline
 	current.Seq = 2
-	current.Screen = makeScreen("after")
+	current.Screen = makeScreen(2, "after")
 	current.History = terminalengine.HistoryWindow{
 		FirstAvailableLineID: 1, FirstIncludedLineID: 2, LastIncludedLineID: historySize + 1,
 		Lines: currentHistory,

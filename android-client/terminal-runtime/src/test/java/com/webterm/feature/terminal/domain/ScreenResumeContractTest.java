@@ -56,7 +56,7 @@ public final class ScreenResumeContractTest {
     FakeScreenConnection connection = fixture.connection;
 
     connection.listener.onScreenMessage(envelope(patch(100, 150)
-        .addScreenRows(terminalLine(0, "z", 0))
+        .addLineUpdates(terminalLine(1, 2, "z", 0))
         .setTitle("resumed")).toByteArray());
 
     assertEquals(150, runtime.model().screenRevision);
@@ -72,10 +72,9 @@ public final class ScreenResumeContractTest {
     FakeScreenConnection connection = fixture.connection;
 
     TerminalScreenProto.ScreenPatch.Builder builder = patch(100, 150)
-        .setFirstAvailableHistoryLineId(102);
-    for (long id = 100; id <= 102; id++) {
-      builder.addHistoryAppend(historyLine(id, "h" + id));
-    }
+        .setHistoryTrimBeforeId(102)
+        .addLineUpdates(historyLine(102, 1, "h102"))
+        .addHistoryAppendIds(102);
     connection.listener.onScreenMessage(envelope(builder).toByteArray());
 
     assertEquals(150, runtime.model().screenRevision);
@@ -245,7 +244,7 @@ public final class ScreenResumeContractTest {
 
     // style 7 未在已有字典或 new_styles 中定义；title 也不得部分落地。
     byte[] invalid = envelope(patch(1, 2)
-        .addScreenRows(terminalLine(0, "x", 7))
+        .addLineUpdates(terminalLine(1, 2, "x", 7))
         .setTitle("must-not-commit")).toByteArray();
     connection.listener.onScreenMessage(invalid);
     connection.listener.onScreenMessage(invalid);
@@ -298,36 +297,21 @@ public final class ScreenResumeContractTest {
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(revision)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
-            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
-            .build())
+        .setSnapshot(TestScreenFrames.snapshotBuilder(revision).build())
         .build();
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshotWithHistory(
       long revision, long firstId, long lastId) {
-    TerminalScreenProto.HistoryWindow.Builder history =
-        TerminalScreenProto.HistoryWindow.newBuilder()
-            .setFirstAvailableLineId(firstId)
-            .setFirstIncludedLineId(firstId)
-            .setLastIncludedLineId(lastId);
+    TerminalScreenProto.ScreenSnapshot.Builder snapshot = TestScreenFrames.snapshotBuilder(revision)
+        .setFirstAvailableHistoryLineId(firstId);
     for (long id = firstId; id <= lastId; id++) {
-      history.addLines(historyLine(id, "h" + id));
+      snapshot.addHistoryTailIds(id);
+      snapshot.addHistoryTailLines(historyLine(id, 1, "h" + id));
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(revision)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10))
-            .setHistory(history))
+        .setSnapshot(snapshot)
         .build();
   }
 
@@ -348,21 +332,12 @@ public final class ScreenResumeContractTest {
         .build();
   }
 
-  private static TerminalScreenProto.TerminalLine terminalLine(int row, String text, int styleId) {
-    return TerminalScreenProto.TerminalLine.newBuilder()
-        .setRow(row)
-        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
-            .addCells(TerminalScreenProto.Cell.newBuilder()
-                .setText(text).setWidth(1).setStyleId(styleId)))
-        .build();
+  private static TerminalScreenProto.LineData terminalLine(long id, long version, String text, int styleId) {
+    return TestScreenFrames.line(id, version, text, styleId);
   }
 
-  private static TerminalScreenProto.HistoryLine historyLine(long id, String text) {
-    return TerminalScreenProto.HistoryLine.newBuilder()
-        .setId(id)
-        .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
-            .addCells(TerminalScreenProto.Cell.newBuilder().setText(text).setWidth(1)))
-        .build();
+  private static TerminalScreenProto.LineData historyLine(long id, long version, String text) {
+    return TestScreenFrames.line(id, version, text);
   }
 
   private static final class RuntimeFixture {

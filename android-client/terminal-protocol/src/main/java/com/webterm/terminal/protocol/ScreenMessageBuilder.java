@@ -30,10 +30,6 @@ public final class ScreenMessageBuilder {
         .setLayoutEpoch(resumeToken.layoutEpoch)
         .setScreenRevision(resumeToken.screenRevision)
         .setClientInstanceId(clientInstanceId)
-        .setCapabilities(TerminalScreenProto.CapabilitySet.newBuilder()
-            .setRowPatches(true)
-            .setCompactLineEncoding(true)
-            .build())
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.HELLO,
         TerminalScreenProto.ScreenEnvelope.newBuilder().setHello(hello)).toByteArray();

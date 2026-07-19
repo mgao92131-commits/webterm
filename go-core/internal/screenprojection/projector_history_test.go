@@ -79,20 +79,8 @@ func forceFullExportAt(p *Projector, epoch, seq uint64) terminalengine.ScreenFra
 	return p.ExportState(epoch, seq)
 }
 
-// assertConsecutiveIDs 断言历史窗口行 ID 严格连续（LineID 与窗口下标一一对应）。
-func assertConsecutiveIDs(t *testing.T, w terminalengine.HistoryWindow) {
-	t.Helper()
-	for i := 1; i < len(w.Lines); i++ {
-		if w.Lines[i].ID != w.Lines[i-1].ID+1 {
-			t.Fatalf("history window IDs not consecutive at %d: %d -> %d", i, w.Lines[i-1].ID, w.Lines[i].ID)
-		}
-	}
-	assertTrueBounds(t, w)
-}
-
-// assertMonotoneIDs 断言窗口行 ID 严格递增且边界字段真实。resize 放大时
-// headlessterm 会从 scrollback Pop 行，在 ID 空间留下缺口，此时 ID 单调但
-// 不再连续。
+// assertMonotoneIDs 断言历史窗口按时间顺序严格递增且边界字段真实。稳定
+// Line ID 在 resize、删除或历史回填后允许留有缺口，绝不能把相邻数值当语义。
 func assertMonotoneIDs(t *testing.T, w terminalengine.HistoryWindow) {
 	t.Helper()
 	for i := 1; i < len(w.Lines); i++ {
@@ -117,7 +105,7 @@ func assertTrueBounds(t *testing.T, w terminalengine.HistoryWindow) {
 
 // §6.4：一次输出滚出多行进历史——窗口按连续 ID 追加，边界真实，空闲 flush
 // 不产生历史追加，且与全量路径逐格相等。
-func TestProjector_MultiLineScrollAppendsContiguousHistory(t *testing.T) {
+func TestProjector_MultiLineScrollAppendsStableHistory(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 5, 20)
 	first := p.ExportState(0, 1)
 	if len(first.History.Lines) != 0 {
@@ -130,8 +118,8 @@ func TestProjector_MultiLineScrollAppendsContiguousHistory(t *testing.T) {
 	if got := len(second.History.Lines); got != 26 {
 		t.Fatalf("expected 26 history lines, got %d", got)
 	}
-	assertConsecutiveIDs(t, second.History)
-	if second.History.FirstIncludedLineID != 1 || second.History.LastIncludedLineID != 26 || second.History.HasMoreBefore {
+	assertMonotoneIDs(t, second.History)
+	if second.History.HasMoreBefore {
 		t.Fatalf("window bounds wrong: %+v", second.History)
 	}
 	if got := second.History.Lines[25].Runs[0].Cells[0].Text; got != "l" {
@@ -149,7 +137,7 @@ func TestProjector_MultiLineScrollAppendsContiguousHistory(t *testing.T) {
 
 // §6.4：scrollback 行数/字节预算驱逐最旧端后，缓存窗口下裁对齐且保持连续；
 // 每个导出点都与全量路径逐格相等。
-func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
+func TestProjector_ScrollbackTrimKeepsHistoryWindowOrdered(t *testing.T) {
 	t.Run("line-budget", func(t *testing.T) {
 		engine, sb, p := newHistoryRig(t, 8, 20)
 		sb.SetMaxLines(120)
@@ -184,7 +172,7 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
 					t.Fatalf("iter %d: HasMoreBefore must be true when window omits retained lines", i)
 				}
 			}
-			assertConsecutiveIDs(t, state.History)
+			assertMonotoneIDs(t, state.History)
 			assertStateEquivalent(t, state, forceFullExport(p, seq))
 			seq++
 		}
@@ -205,7 +193,7 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
 				t.Fatalf("iter %d: FirstIncluded=%d != FirstAvailable=%d", i,
 					state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
 			}
-			assertConsecutiveIDs(t, state.History)
+			assertMonotoneIDs(t, state.History)
 			assertStateEquivalent(t, state, forceFullExport(p, seq))
 			seq++
 		}
@@ -214,7 +202,7 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowContinuous(t *testing.T) {
 
 // §6.4/§6.5：客户端 baseline 落后 k 行（窗口旧端同时被裁），diff 出的
 // historyAppend 恰好是缺失的连续 k 行，窗口边界与新 State 一致。
-func TestProjector_PatchCarriesExactlyMissingContiguousHistoryLines(t *testing.T) {
+func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 24, 20)
 	writeScrollLines(t, engine, 0, 350) // 历史 327 行：窗口满 300
 	fillScreenStable(t, engine, 24)
@@ -236,18 +224,18 @@ func TestProjector_PatchCarriesExactlyMissingContiguousHistoryLines(t *testing.T
 		t.Fatalf("expected patch base=1, got %d (snapshot fallback?)", patch.BaseRevision)
 	}
 
-	// historyAppend 恰好是缺失的连续 k 行。
-	if len(patch.History.Lines) != k {
-		t.Fatalf("patch carried %d history lines, want %d", len(patch.History.Lines), k)
+	// 滚入历史的 k 行都以 ID 追加；其中已存在于旧屏幕 layout 的行不重传内容。
+	if len(patch.HistoryAppendIDs) != k {
+		t.Fatalf("history append ids=%d, want %d", len(patch.HistoryAppendIDs), k)
 	}
-	for i, line := range patch.History.Lines {
-		wantID := baseline.History.LastIncludedLineID + 1 + uint64(i)
-		if line.ID != wantID {
-			t.Fatalf("append line %d ID=%d, want %d", i, line.ID, wantID)
+	wantIDs := state.History.Lines[len(state.History.Lines)-k:]
+	for i, id := range patch.HistoryAppendIDs {
+		if id != wantIDs[i].ID {
+			t.Fatalf("append id[%d]=%d, want %d", i, id, wantIDs[i].ID)
 		}
 	}
-	if !reflect.DeepEqual(patch.History.Lines, state.History.Lines[len(state.History.Lines)-k:]) {
-		t.Fatal("patch historyAppend differs from the new window tail")
+	if len(patch.History.Lines) >= k {
+		t.Fatalf("known screen lines must not be duplicated as history content: %d", len(patch.History.Lines))
 	}
 
 	// 窗口旧端被裁 k 行：边界必须与新 State 完全一致。
@@ -267,7 +255,7 @@ func TestProjector_PatchCarriesExactlyMissingContiguousHistoryLines(t *testing.T
 
 // §6.4/§6.5：baseline 已被 trim——追加量超出窗口容量（中间行客户端永远收
 // 不到），连续性无法证明，退回完整 snapshot。
-func TestProjector_PatchFallsBackToSnapshotWhenBaselineTrimmed(t *testing.T) {
+func TestProjector_LargeHistoryAdvanceUsesTailIDsWithoutSnapshot(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 24, 20)
 	fillScreenStable(t, engine, 24)
 
@@ -282,19 +270,19 @@ func TestProjector_PatchFallsBackToSnapshotWhenBaselineTrimmed(t *testing.T) {
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.FrameForState(state)
-	if frame.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("trimmed baseline must fall back to snapshot, got kind=%v", frame.Kind)
+	if frame.Kind != terminalengine.FramePatch {
+		t.Fatalf("stable-id patch must remain incremental, got kind=%v", frame.Kind)
 	}
-	if got := len(frame.History.Lines); got != snapshotTailLines {
-		t.Fatalf("snapshot window=%d lines, want %d", got, snapshotTailLines)
+	if got := len(frame.HistoryAppendIDs); got != snapshotTailLines {
+		t.Fatalf("history append ids=%d, want tail window %d", got, snapshotTailLines)
 	}
 	if frame.History.FirstIncludedLineID != state.History.FirstIncludedLineID ||
 		frame.History.LastIncludedLineID != state.History.LastIncludedLineID ||
 		!frame.History.HasMoreBefore {
 		t.Fatalf("snapshot window bounds wrong: %+v", frame.History)
 	}
-	assertConsecutiveIDs(t, frame.History)
-	assertStateEquivalent(t, frame, forceFullExport(p, 3))
+	assertMonotoneIDs(t, frame.History)
+	assertStateEquivalent(t, state, forceFullExport(p, 3))
 }
 
 // §6.4：resize（layoutEpoch 变化）走全量路径——客户端得 snapshot；历史本身
@@ -439,10 +427,10 @@ func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 		if len(next.History.Lines) != sb.Len() {
 			t.Fatalf("window=%d lines after re-accumulation, want scrollback len %d", len(next.History.Lines), sb.Len())
 		}
-		if len(next.History.Lines) == 0 || next.History.FirstIncludedLineID != clearedWatermark {
+		if len(next.History.Lines) == 0 || next.History.FirstIncludedLineID < clearedWatermark {
 			t.Fatalf("re-accumulated window wrong: %+v", next.History)
 		}
-		assertConsecutiveIDs(t, next.History)
+		assertMonotoneIDs(t, next.History)
 		assertStateEquivalent(t, next, forceFullExport(p, 5))
 	})
 
@@ -475,7 +463,7 @@ func TestProjector_AttachSnapshotIncludesFullHistoryWindow(t *testing.T) {
 	if got := len(snap.History.Lines); got != 36 {
 		t.Fatalf("attach snapshot carried %d history lines, want 36", got)
 	}
-	assertConsecutiveIDs(t, snap.History)
+	assertMonotoneIDs(t, snap.History)
 	assertStateEquivalent(t, snap, forceFullExport(p, 3))
 }
 

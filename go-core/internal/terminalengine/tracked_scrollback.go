@@ -10,6 +10,7 @@ import (
 // HistoryLine 是带稳定 ID 的历史行，由 TrackedScrollback 维护。
 type HistoryLine struct {
 	ID      uint64
+	Version uint64
 	Wrapped bool
 	Cells   []headlessterm.Cell
 	bytes   int
@@ -120,14 +121,23 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	copy(cells, line.Cells)
 
 	historyLine := HistoryLine{
-		ID:      t.nextID,
+		ID:      line.LineID,
 		Wrapped: line.Wrapped,
+		Version: line.LineVersion,
 		Cells:   cells,
 		bytes:   estimateHistoryLineBytes(cells),
 	}
+	// Screen rows now own their identity before entering scrollback. Keep the
+	// historical high-water mark only for compatibility with page cursors; IDs
+	// are strictly increasing but may have gaps after row deletion/resize.
+	if historyLine.ID == 0 || (len(t.lines) > 0 && historyLine.ID <= t.lines[len(t.lines)-1].ID) {
+		historyLine.ID = t.nextID
+	}
+	if historyLine.ID >= t.nextID {
+		t.nextID = historyLine.ID + 1
+	}
 	t.lines = append(t.lines, historyLine)
 	t.bytes += historyLine.bytes
-	t.nextID++
 
 	if t.trimToLimitsLocked() {
 		t.fireTrimLocked()
@@ -149,7 +159,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	} else {
 		t.firstID = t.nextID
 	}
-	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped}
+	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.ID, LineVersion: line.Version}
 }
 
 // Len 返回当前历史行数。
@@ -167,7 +177,7 @@ func (t *TrackedScrollback) Line(index int) headlessterm.ScrollbackLine {
 		return headlessterm.ScrollbackLine{}
 	}
 	line := t.lines[index]
-	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped}
+	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.ID, LineVersion: line.Version}
 }
 
 // LineByID 按 line ID 返回历史行；找不到返回 ok=false。

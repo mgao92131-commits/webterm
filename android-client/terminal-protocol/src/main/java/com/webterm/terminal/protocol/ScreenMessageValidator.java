@@ -96,8 +96,18 @@ public final class ScreenMessageValidator {
     if (cols < MIN_COLS || cols > MAX_COLS) {
       return ValidationResult.fail("invalid snapshot cols: " + cols);
     }
-    if (s.getHistory().getLinesCount() > MAX_SNAPSHOT_HISTORY) {
-      return ValidationResult.fail("snapshot history too large: " + s.getHistory().getLinesCount());
+    if (!s.hasLayout() || s.getLayout().getLineIdsCount() != rows) {
+      return ValidationResult.fail("snapshot layout mismatch");
+    }
+    java.util.Set<Long> screenIds = new java.util.HashSet<>();
+    for (long id : s.getLayout().getLineIdsList()) {
+      if (id <= 0 || !screenIds.add(id)) {
+        return ValidationResult.fail("invalid snapshot layout line id: " + id);
+      }
+    }
+    if (s.getHistoryTailIdsCount() > MAX_SNAPSHOT_HISTORY
+        || s.getHistoryTailLinesCount() > MAX_SNAPSHOT_HISTORY) {
+      return ValidationResult.fail("snapshot history too large");
     }
     if (!validateString(s.getTitle(), MAX_TITLE_BYTES)) {
       return ValidationResult.fail("title too long");
@@ -108,11 +118,27 @@ public final class ScreenMessageValidator {
     if (s.getStylesCount() > MAX_STYLES || s.getLinksCount() > MAX_LINKS) {
       return ValidationResult.fail("too many styles or links");
     }
-    for (TerminalScreenProto.HistoryLine line : s.getHistory().getLinesList()) {
-      ValidationResult lineResult = validateHistoryLine(line);
-      if (!lineResult.ok) return lineResult;
+    ValidationResult screenResult = validateLines(s.getScreenLinesList(), cols);
+    if (!screenResult.ok) return screenResult;
+    ValidationResult historyResult = validateLines(s.getHistoryTailLinesList(), cols);
+    if (!historyResult.ok) return historyResult;
+    java.util.Set<Long> screenDataIds = lineIds(s.getScreenLinesList());
+    java.util.Set<Long> historyDataIds = lineIds(s.getHistoryTailLinesList());
+    if (screenDataIds == null || historyDataIds == null) {
+      return ValidationResult.fail("duplicate or invalid line data id");
     }
-    return validateLines(s.getScreenList(), cols);
+    for (long id : s.getLayout().getLineIdsList()) {
+      if (!screenDataIds.contains(id)) return ValidationResult.fail("snapshot layout line data missing");
+    }
+    long previousHistoryId = -1;
+    for (long id : s.getHistoryTailIdsList()) {
+      if (id <= 0 || (previousHistoryId >= 0 && id <= previousHistoryId)
+          || !historyDataIds.contains(id)) {
+        return ValidationResult.fail("invalid snapshot history line id: " + id);
+      }
+      previousHistoryId = id;
+    }
+    return ValidationResult.ok();
   }
 
   /**
@@ -143,50 +169,27 @@ public final class ScreenMessageValidator {
     // 实际变化字段的空 patch。接收端按 no-op 容忍，不实施 §10.1 的
     // “metadata-only patch 至少包含一个实际变化字段” 拒绝逻辑；
     // 空 patch 的抑制由新版服务端在源头保证。
-    if (p.getScreenRowsCount() > rows) {
-      return ValidationResult.fail("too many patch rows: " + p.getScreenRowsCount() + " > " + rows);
+    if (p.hasLayout() && p.getLayout().getLineIdsCount() != rows) {
+      return ValidationResult.fail("patch layout length mismatch");
     }
-    java.util.Set<Integer> seenRows = new java.util.HashSet<>();
-    for (TerminalScreenProto.TerminalLine line : p.getScreenRowsList()) {
-      int row = line.getRow();
-      if (row < 0 || row >= rows) {
-        return ValidationResult.fail("patch row out of bounds: " + row);
-      }
-      if (!seenRows.add(row)) {
-        return ValidationResult.fail("duplicate patch row: " + row);
+    if (p.hasLayout()) {
+      java.util.Set<Long> layoutIds = new java.util.HashSet<>();
+      for (long id : p.getLayout().getLineIdsList()) {
+        if (id <= 0 || !layoutIds.add(id)) {
+          return ValidationResult.fail("invalid patch layout line id: " + id);
+        }
       }
     }
-    if (p.getHistoryAppendCount() > MAX_HISTORY_APPEND) {
-      return ValidationResult.fail("history append too large: " + p.getHistoryAppendCount());
+    if (p.getHistoryAppendIdsCount() > MAX_HISTORY_APPEND) {
+      return ValidationResult.fail("history append too large: " + p.getHistoryAppendIdsCount());
     }
-    // history_append 必须是连续 LineID 段（蕴含严格递增且不重复）。
+    // 稳定屏幕 LineID 在删除/resize 后允许缺口，但历史顺序仍必须严格递增。
     long prevHistoryLineId = -1;
-    for (TerminalScreenProto.HistoryLine line : p.getHistoryAppendList()) {
-      long lineId = line.getId();
-      if (lineId <= 0 || (prevHistoryLineId >= 0 && lineId != prevHistoryLineId + 1)) {
-        return ValidationResult.fail("history line ids are not contiguous: " + lineId);
+    for (long lineId : p.getHistoryAppendIdsList()) {
+      if (lineId <= 0 || (prevHistoryLineId >= 0 && lineId <= prevHistoryLineId)) {
+        return ValidationResult.fail("history line ids are not increasing: " + lineId);
       }
       prevHistoryLineId = lineId;
-      ValidationResult lineResult = validateHistoryLine(line);
-      if (!lineResult.ok) return lineResult;
-    }
-    java.util.Set<Integer> seenPromotedRows = new java.util.HashSet<>();
-    java.util.Set<Long> seenPromotedLineIds = new java.util.HashSet<>();
-    for (TerminalScreenProto.PromotedRow promoted : p.getPromotedRowsList()) {
-      int row = promoted.getScreenRow();
-      if (row < 0 || row >= rows) {
-        return ValidationResult.fail("promoted row out of bounds: " + row);
-      }
-      if (!seenPromotedRows.add(row)) {
-        return ValidationResult.fail("duplicate promoted row: " + row);
-      }
-      if (!seenPromotedLineIds.add(promoted.getHistoryLineId())) {
-        return ValidationResult.fail("duplicate promoted history line id: "
-            + promoted.getHistoryLineId());
-      }
-      if (promoted.getHistoryLineId() <= 0) {
-        return ValidationResult.fail("invalid promoted history line id");
-      }
     }
     ValidationResult dictResult = validateStylesLinks(p.getNewStylesList(), p.getNewLinksList());
     if (!dictResult.ok) return dictResult;
@@ -198,7 +201,10 @@ public final class ScreenMessageValidator {
     if (!validateString(p.getWorkingDirectory(), MAX_CWD_BYTES)) {
       return ValidationResult.fail("cwd too long");
     }
-    return validateLines(p.getScreenRowsList(), MAX_COLS);
+    ValidationResult lineResult = validateLines(p.getLineUpdatesList(), MAX_COLS);
+    if (!lineResult.ok) return lineResult;
+    return lineIds(p.getLineUpdatesList()) == null
+        ? ValidationResult.fail("duplicate or invalid line update id") : ValidationResult.ok();
   }
 
   public static ValidationResult validateHistoryPage(TerminalScreenProto.HistoryPage p) {
@@ -208,20 +214,22 @@ public final class ScreenMessageValidator {
     if (p.getStylesCount() > MAX_STYLES || p.getLinksCount() > MAX_LINKS) {
       return ValidationResult.fail("too many history styles or links");
     }
-    for (TerminalScreenProto.HistoryLine line : p.getLinesList()) {
-      ValidationResult lineResult = validateHistoryLine(line);
-      if (!lineResult.ok) return lineResult;
-    }
-    return ValidationResult.ok();
+    ValidationResult lineResult = validateLines(p.getLinesList(), MAX_COLS);
+    if (!lineResult.ok) return lineResult;
+    return lineIds(p.getLinesList()) == null
+        ? ValidationResult.fail("duplicate or invalid history line id") : ValidationResult.ok();
   }
 
-  private static ValidationResult validateHistoryLine(TerminalScreenProto.HistoryLine line) {
+  private static ValidationResult validateLine(TerminalScreenProto.LineData line, int maxCols) {
+    if (line.getLineId() <= 0 || line.getLineVersion() <= 0) {
+      return ValidationResult.fail("line id and version must be positive");
+    }
     if (!line.getText().isEmpty()) {
       if (line.getRunsCount() != 0) return ValidationResult.fail("history line mixes compact and runs");
-      return validateCompactLine(line.getText(), line.getStyleSpansList(), MAX_COLS);
+      return validateCompactLine(line.getText(), line.getStyleSpansList(), maxCols);
     }
     for (TerminalScreenProto.CellRun run : line.getRunsList()) {
-      if (run.getCol() < 0 || run.getCol() >= MAX_COLS) {
+      if (run.getCol() < 0 || run.getCol() >= maxCols) {
         return ValidationResult.fail("history run col out of bounds: " + run.getCol());
       }
       for (TerminalScreenProto.Cell cell : run.getCellsList()) {
@@ -263,8 +271,11 @@ public final class ScreenMessageValidator {
     return ValidationResult.ok();
   }
 
-  private static ValidationResult validateLines(java.util.List<TerminalScreenProto.TerminalLine> lines, int maxCols) {
-    for (TerminalScreenProto.TerminalLine line : lines) {
+  private static ValidationResult validateLines(java.util.List<TerminalScreenProto.LineData> lines, int maxCols) {
+    for (TerminalScreenProto.LineData line : lines) {
+      if (line.getLineId() <= 0 || line.getLineVersion() <= 0) {
+        return ValidationResult.fail("line id and version must be positive");
+      }
       if (!line.getText().isEmpty()) {
         if (line.getRunsCount() != 0) return ValidationResult.fail("line mixes compact and runs");
         ValidationResult compactResult = validateCompactLine(line.getText(), line.getStyleSpansList(), maxCols);
@@ -287,6 +298,17 @@ public final class ScreenMessageValidator {
       }
     }
     return ValidationResult.ok();
+  }
+
+  /** Returns null for a duplicate/invalid Line ID so structural checks share one rule. */
+  private static java.util.Set<Long> lineIds(java.util.List<TerminalScreenProto.LineData> lines) {
+    java.util.Set<Long> ids = new java.util.HashSet<>();
+    for (TerminalScreenProto.LineData line : lines) {
+      if (line.getLineId() <= 0 || line.getLineVersion() <= 0 || !ids.add(line.getLineId())) {
+        return null;
+      }
+    }
+    return ids;
   }
 
   private static ValidationResult validateCompactLine(String text,

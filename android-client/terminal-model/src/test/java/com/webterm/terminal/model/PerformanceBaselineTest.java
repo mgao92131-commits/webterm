@@ -77,10 +77,8 @@ public final class PerformanceBaselineTest {
         TerminalLine appended = contentLine(0, cols, content, seed(cols, content));
         for (int i = 0; i < WARMUP + ITERATIONS; i++) {
           long baseRevision = 1 + i;
-          patches.add(new ScreenPatch("i1", 1, baseRevision, baseRevision + 1,
-              Collections.singletonList(appended.withId(history + 1L + i)),
-              Collections.emptyList(), null, null, null, newStyles, Collections.emptyMap(),
-              null, null, Collections.emptyList()));
+          TerminalLine line = appended.withId(history + 1L + i);
+          patches.add(historyAppendPatch(baseRevision, line, newStyles));
         }
 
         for (int i = 0; i < WARMUP; i++) {
@@ -132,11 +130,9 @@ public final class PerformanceBaselineTest {
         List<ScreenPatch> patches = new ArrayList<>(WARMUP + ITERATIONS);
         for (int i = 0; i < WARMUP + ITERATIONS; i++) {
           long baseRevision = 1 + i;
-          patches.add(new ScreenPatch("i1", 1, baseRevision, baseRevision + 1,
-              Collections.emptyList(),
-              Collections.singletonList((i & 1) == 0 ? lineA : lineB),
-              null, null, null, newStyles, Collections.emptyMap(),
-              null, null, Collections.emptyList()));
+          TerminalLine source = (i & 1) == 0 ? lineA : lineB;
+          patches.add(screenUpdatePatch(baseRevision,
+              new TerminalLine(source.id, 2L + i, source.wrapped, source.cells), newStyles));
         }
 
         for (int i = 0; i < WARMUP; i++) {
@@ -244,10 +240,8 @@ public final class PerformanceBaselineTest {
       TerminalLine appended = contentLine(0, cols, Content.ASCII, seed(cols, Content.ASCII));
       for (int i = 0; i < WARMUP + ITERATIONS; i++) {
         long baseRevision = 1 + i;
-        patches.add(new ScreenPatch("i1", 1, baseRevision, baseRevision + 1,
-            Collections.singletonList(appended.withId(history + 1L + i)),
-            Collections.emptyList(), null, null, null, Collections.emptyMap(),
-            Collections.emptyMap(), null, null, Collections.emptyList()));
+        patches.add(historyAppendPatch(baseRevision, appended.withId(history + 1L + i),
+            Collections.emptyMap()));
       }
       for (int i = 0; i < WARMUP; i++) {
         model.applyPatch(patches.get(i));
@@ -311,6 +305,20 @@ public final class PerformanceBaselineTest {
         Collections.emptyMap(), "", ""));
     assertEquals(historyLines, model.historySize());
     return model;
+  }
+
+  private static ScreenPatch historyAppendPatch(long baseRevision, TerminalLine line,
+                                                 Map<Integer, TerminalStyle> styles) {
+    return new ScreenPatch("i1", 1, baseRevision, baseRevision + 1, null,
+        Collections.singletonList(line), Collections.singletonList(line.id),
+        null, null, null, styles, Collections.emptyMap(), null, null);
+  }
+
+  private static ScreenPatch screenUpdatePatch(long baseRevision, TerminalLine line,
+                                                Map<Integer, TerminalStyle> styles) {
+    return new ScreenPatch("i1", 1, baseRevision, baseRevision + 1, null,
+        Collections.singletonList(line), Collections.emptyList(),
+        null, null, null, styles, Collections.emptyMap(), null, null);
   }
 
   /** 生成恰好 cols 个 cell 的一行；宽字符占两格（宽 cell + spacer）。 */

@@ -62,20 +62,12 @@ message Hello {
   uint64 screen_revision = 6;      // 本地最后已应用的 screen revision
   bool has_projection = 7;         // 是否持有完整可用投影
   HistoryPreference history = 8;   // 历史分页偏好
-  CapabilitySet capabilities = 9;  // 客户端能力
   string client_instance_id = 10;  // Android 终端通道实例，用于输入去重
 }
 
 message HistoryPreference {
   int32 tail_lines = 1;   // 首次快照希望附带的最近历史行数，默认 300
   int32 page_size = 2;    // 历史分页大小，默认 250
-}
-
-message CapabilitySet {
-  bool row_patches = 1;   // 是否支持 row patch（首版必须 true）
-  bool scroll_ops = 2;    // 是否支持 scroll op 优化（首版固定 false）
-  bool images = 3;        // 是否支持图片（首版固定 false）
-  bool compact_line_encoding = 4; // text + StyleSpan 行编码；旧客户端保持 CellRun
 }
 
 message Ping {
@@ -105,38 +97,40 @@ message ScreenSnapshot {
   uint64 screen_revision = 4;
   Size geometry = 5;
   BufferKind active_buffer = 6;
-  Cursor cursor = 7;
-  Modes modes = 8;
-  TerminalPalette palette = 9;
-  HistoryWindow history = 10;
-  repeated TerminalLine screen = 11;
-  repeated TerminalStyle styles = 12;    // 完整 style 字典
-  repeated Hyperlink links = 13;         // 完整 hyperlink 字典
-  string title = 14;
-  string working_directory = 15;
+  ScreenLayout layout = 7;
+  repeated LineData screen_lines = 8; // 覆盖 layout 全部引用
+  repeated uint64 history_tail_ids = 9;
+  repeated LineData history_tail_lines = 10;
+  uint64 dictionary_generation = 11;
+  repeated TerminalStyle styles = 12;
+  repeated Hyperlink links = 13;
+  Cursor cursor = 14;
+  Modes modes = 15;
+  TerminalPalette palette = 16;
+  optional string title = 17;
+  optional string working_directory = 18;
+  uint64 first_available_history_line_id = 19;
+  bool has_more_history_before = 20;
 }
 
 message ScreenPatch {
   uint64 layout_epoch = 1;
   uint64 base_revision = 2;      // 必须等于客户端当前 screen_revision
   uint64 screen_revision = 3;    // 应用后的新 revision
-  repeated HistoryLine history_append = 4;   // 新进入 scrollback 的行
-  repeated TerminalLine screen_rows = 5;     // 被替换的活动屏幕行（row 索引由 TerminalLine.row 指定）
-  Cursor cursor = 6;
-  Modes modes = 7;               // 只在变化时非空
-  TerminalPalette palette = 8;   // 只在变化时非空
-  repeated TerminalStyle new_styles = 9;     // 本 patch 新增的 style
-  repeated Hyperlink new_links = 10;         // 本 patch 新增的 link
-  optional string title = 11;             // 只在变化时出现；has=true 且为空串表示已清空
-  optional string working_directory = 12; // 只在变化时出现；has=true 且为空串表示已清空
-  repeated PromotedRow promoted_rows = 13;   // 活动行滚入历史时的 ID 映射
-  string instance_id = 14;          // 必须匹配当前 snapshot.instance_id
-  optional uint64 first_available_history_line_id = 15; // 恢复 Patch 携带的当前历史水位，只在需要推进水位时出现
-}
-
-message PromotedRow {
-  int32 screen_row = 1;     // 旧活动屏幕行索引
-  uint64 history_line_id = 2; // 晋升后的历史行 ID
+  optional ScreenLayout layout = 5;
+  repeated LineData line_updates = 6;
+  repeated uint64 history_append_ids = 7;
+  optional uint64 history_trim_before_id = 8;
+  uint64 dictionary_generation = 9;
+  repeated TerminalStyle new_styles = 10;
+  repeated Hyperlink new_links = 11;
+  optional Cursor cursor = 12;
+  optional Modes modes = 13;
+  optional TerminalPalette palette = 14;
+  optional BufferKind active_buffer = 15;
+  optional string title = 16;
+  optional string working_directory = 17;
+  string instance_id = 18;
 }
 
 message Size {
@@ -154,13 +148,17 @@ enum BufferKind {
 // 行 / Cell / 样式 / 颜色
 // ---------------------------------------------------------------------------
 
-message TerminalLine {
-  int32 row = 1;          // 活动屏幕行索引；历史行不使用此字段
-  uint64 line_id = 2;     // 历史行 ID，活动屏幕行为 0
-  bool wrapped = 3;       // 是否因列溢出而软换行
-  repeated CellRun runs = 4;
-  string text = 5;                 // compact path：仅单列 ASCII 文本，非空时替代 runs
-  repeated StyleSpan style_spans = 6;
+message ScreenLayout {
+  repeated uint64 line_ids = 1; // 下标即屏幕 row；长度必须等于 geometry.rows
+}
+
+message LineData {
+  uint64 line_id = 1;
+  uint64 line_version = 2;
+  bool wrapped = 3;
+  string text = 4; // compact path，非空时替代 runs
+  repeated StyleSpan style_spans = 5;
+  repeated CellRun runs = 6;
 }
 
 message StyleSpan {
@@ -294,22 +292,6 @@ message IndexedPaletteColor {
 // 历史分页
 // ---------------------------------------------------------------------------
 
-message HistoryWindow {
-  uint64 first_available_line_id = 1;
-  uint64 first_included_line_id = 2;
-  uint64 last_included_line_id = 3;
-  bool has_more_before = 4;
-  repeated HistoryLine lines = 5;
-}
-
-message HistoryLine {
-  uint64 id = 1;
-  bool wrapped = 2;
-  repeated CellRun runs = 3;
-  string text = 4;                 // compact path：仅单列 ASCII 文本，非空时替代 runs
-  repeated StyleSpan style_spans = 5;
-}
-
 message HistoryRequest {
   string request_id = 1;
   uint64 layout_epoch = 2;
@@ -323,7 +305,7 @@ message HistoryPage {
   uint64 as_of_revision = 3;
   uint64 first_available_line_id = 4;
   bool has_more_before = 5;
-  repeated HistoryLine lines = 6; // 按 line_id 升序
+  repeated LineData lines = 6; // 按 line_id 严格升序，允许 ID 缺口
   repeated TerminalStyle styles = 7;
   repeated Hyperlink links = 8;
 }

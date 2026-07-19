@@ -9,41 +9,60 @@ import "strings"
 // the affected row (dirtyRows) or the whole buffer (dirtyAll). Consumers
 // read and clear the state with TakeDirty.
 type Buffer struct {
-	rows       int
-	cols       int
-	cells      [][]Cell
-	wrapped    []bool // tracks if each line was wrapped (vs explicit newline)
-	tabStop    []bool
-	scrollback ScrollbackProvider
-	dirtyRows  []bool // per-row dirty flags, len == rows
-	dirtyAll   bool   // whole-buffer dirty (scroll, resize, clear, buffer switch)
+	rows    int
+	cols    int
+	cells   [][]Cell
+	wrapped []bool // tracks if each line was wrapped (vs explicit newline)
+	// lineID/lineVersion are the stable identity of a physical terminal row.
+	// They deliberately live beside cells rather than in a new row object, so
+	// the long-standing buffer representation and its cell hot paths stay intact.
+	lineID      []uint64
+	lineVersion []uint64
+	nextLineID  *uint64
+	tabStop     []bool
+	scrollback  ScrollbackProvider
+	dirtyRows   []bool // per-row dirty flags, len == rows
+	dirtyAll    bool   // whole-buffer dirty (scroll, resize, clear, buffer switch)
 }
 
 // NewBuffer creates a buffer with the given dimensions and no scrollback.
 func NewBuffer(rows, cols int) *Buffer {
-	return NewBufferWithStorage(rows, cols, NoopScrollback{})
+	next := uint64(1)
+	return NewBufferWithStorageAndLineIDs(rows, cols, NoopScrollback{}, &next)
 }
 
 // NewBufferWithStorage creates a buffer with custom scrollback storage.
 // Tab stops are initialized every 8 columns. A new buffer starts fully
 // dirty (dirtyAll) so the first projection is a complete snapshot.
 func NewBufferWithStorage(rows, cols int, storage ScrollbackProvider) *Buffer {
+	next := uint64(1)
+	return NewBufferWithStorageAndLineIDs(rows, cols, storage, &next)
+}
+
+// NewBufferWithStorageAndLineIDs creates a buffer using the supplied session
+// allocator. Primary and alternate buffers of one Terminal must share it so a
+// LineID can never be reused when buffers switch.
+func NewBufferWithStorageAndLineIDs(rows, cols int, storage ScrollbackProvider, nextLineID *uint64) *Buffer {
+	if nextLineID == nil {
+		next := uint64(1)
+		nextLineID = &next
+	}
 	b := &Buffer{
-		rows:       rows,
-		cols:       cols,
-		cells:      make([][]Cell, rows),
-		wrapped:    make([]bool, rows),
-		tabStop:    make([]bool, cols),
-		scrollback: storage,
-		dirtyRows:  make([]bool, rows),
-		dirtyAll:   true,
+		rows:        rows,
+		cols:        cols,
+		cells:       make([][]Cell, rows),
+		wrapped:     make([]bool, rows),
+		lineID:      make([]uint64, rows),
+		lineVersion: make([]uint64, rows),
+		nextLineID:  nextLineID,
+		tabStop:     make([]bool, cols),
+		scrollback:  storage,
+		dirtyRows:   make([]bool, rows),
+		dirtyAll:    true,
 	}
 
 	for i := range b.cells {
-		b.cells[i] = make([]Cell, cols)
-		for j := range b.cells[i] {
-			b.cells[i][j] = NewCell()
-		}
+		b.resetRow(i)
 	}
 
 	// Set default tab stops every 8 columns
@@ -52,6 +71,31 @@ func NewBufferWithStorage(rows, cols int, storage ScrollbackProvider) *Buffer {
 	}
 
 	return b
+}
+
+func (b *Buffer) allocateLineID() uint64 {
+	id := *b.nextLineID
+	(*b.nextLineID)++
+	return id
+}
+
+func (b *Buffer) resetRow(row int) {
+	b.cells[row] = make([]Cell, b.cols)
+	for col := range b.cells[row] {
+		b.cells[row][col] = NewCell()
+	}
+	b.wrapped[row] = false
+	b.lineID[row] = b.allocateLineID()
+	b.lineVersion[row] = 1
+}
+
+func (b *Buffer) markLineChanged(row int) {
+	if row >= 0 && row < len(b.lineVersion) {
+		b.lineVersion[row]++
+		if b.lineVersion[row] == 0 {
+			b.lineVersion[row] = 1
+		}
+	}
 }
 
 // Rows returns the buffer height in character rows.
@@ -84,7 +128,9 @@ func (b *Buffer) SetCell(row, col int, cell Cell) {
 		return
 	}
 	b.cells[row][col] = cell
+	b.markLineChanged(row)
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // MarkDirty marks the row containing (row, col) as modified.
@@ -144,6 +190,7 @@ func (b *Buffer) ClearRow(row int) {
 		b.cells[row][col].Reset()
 	}
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // ClearRowRange resets cells in the row from startCol (inclusive) to endCol (exclusive)
@@ -162,6 +209,7 @@ func (b *Buffer) ClearRowRange(row, startCol, endCol int) {
 		b.cells[row][col].Reset()
 	}
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // ClearAll resets all cells in the buffer to default state
@@ -195,7 +243,7 @@ func (b *Buffer) ScrollUp(top, bottom, n int) {
 	// Save lines to scrollback if enabled and scrolling from top
 	if b.scrollback != nil && b.scrollback.MaxLines() > 0 && top == 0 {
 		for i := 0; i < n; i++ {
-			b.scrollback.Push(ScrollbackLine{Cells: b.cells[i], Wrapped: b.wrapped[i]})
+			b.scrollback.Push(ScrollbackLine{Cells: b.cells[i], Wrapped: b.wrapped[i], LineID: b.lineID[i], LineVersion: b.lineVersion[i]})
 		}
 	}
 
@@ -203,15 +251,13 @@ func (b *Buffer) ScrollUp(top, bottom, n int) {
 	for row := top; row < bottom-n; row++ {
 		b.cells[row] = b.cells[row+n]
 		b.wrapped[row] = b.wrapped[row+n]
+		b.lineID[row] = b.lineID[row+n]
+		b.lineVersion[row] = b.lineVersion[row+n]
 	}
 
 	// Clear the bottom lines
 	for row := bottom - n; row < bottom; row++ {
-		b.cells[row] = make([]Cell, b.cols)
-		b.wrapped[row] = false
-		for col := range b.cells[row] {
-			b.cells[row][col] = NewCell()
-		}
+		b.resetRow(row)
 	}
 	b.dirtyAll = true
 }
@@ -237,15 +283,13 @@ func (b *Buffer) ScrollDown(top, bottom, n int) {
 	for row := bottom - 1; row >= top+n; row-- {
 		b.cells[row] = b.cells[row-n]
 		b.wrapped[row] = b.wrapped[row-n]
+		b.lineID[row] = b.lineID[row-n]
+		b.lineVersion[row] = b.lineVersion[row-n]
 	}
 
 	// Clear the top lines
 	for row := top; row < top+n; row++ {
-		b.cells[row] = make([]Cell, b.cols)
-		b.wrapped[row] = false
-		for col := 0; col < b.cols; col++ {
-			b.cells[row][col] = NewCell()
-		}
+		b.resetRow(row)
 	}
 	b.dirtyAll = true
 }
@@ -285,6 +329,7 @@ func (b *Buffer) InsertBlanks(row, col, n int) {
 		b.cells[row][c].Reset()
 	}
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // DeleteChars removes n characters at (row, col), shifting remaining characters left,
@@ -306,6 +351,7 @@ func (b *Buffer) DeleteChars(row, col, n int) {
 		}
 	}
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // Resize changes buffer dimensions, preserving existing cells where possible.
@@ -333,9 +379,25 @@ func (b *Buffer) Resize(rows, cols int) {
 	// Resize wrapped tracking
 	newWrapped := make([]bool, rows)
 	copy(newWrapped, b.wrapped)
+	newLineID := make([]uint64, rows)
+	newLineVersion := make([]uint64, rows)
+	copy(newLineID, b.lineID)
+	copy(newLineVersion, b.lineVersion)
+	for i := 0; i < rows; i++ {
+		if i >= b.rows {
+			newLineID[i] = b.allocateLineID()
+			newLineVersion[i] = 1
+		} else {
+			// The physical line width is part of LineData; changing it advances
+			// the version even when a following snapshot makes this conservative.
+			newLineVersion[i]++
+		}
+	}
 
 	b.cells = newCells
 	b.wrapped = newWrapped
+	b.lineID = newLineID
+	b.lineVersion = newLineVersion
 	b.rows = rows
 	b.cols = cols
 	b.dirtyRows = make([]bool, rows)
@@ -522,6 +584,15 @@ func (b *Buffer) GrowRows(n int) {
 
 	b.cells = newCells
 	b.wrapped = newWrapped
+	newIDs := make([]uint64, newRows)
+	newVersions := make([]uint64, newRows)
+	copy(newIDs, b.lineID)
+	copy(newVersions, b.lineVersion)
+	for i := b.rows; i < newRows; i++ {
+		newIDs[i], newVersions[i] = b.allocateLineID(), 1
+	}
+	b.lineID = newIDs
+	b.lineVersion = newVersions
 	b.dirtyRows = newDirtyRows
 	b.rows = newRows
 	b.dirtyAll = true
@@ -559,6 +630,7 @@ func (b *Buffer) GrowCols(row, minCols int) {
 	}
 
 	b.dirtyRows[row] = true
+	b.markLineChanged(row)
 }
 
 // --- Wrapped Line Tracking ---
@@ -578,6 +650,31 @@ func (b *Buffer) SetWrapped(row int, wrapped bool) {
 		return
 	}
 	b.wrapped[row] = wrapped
+	b.dirtyRows[row] = true
+	b.markLineChanged(row)
+}
+
+// RestoreRow installs a row that was temporarily held by scrollback during a
+// resize. Unlike SetCell it restores the original stable identity/version.
+// The caller already owns Terminal.mu.
+func (b *Buffer) RestoreRow(row int, cells []Cell, wrapped bool, lineID, lineVersion uint64) {
+	if row < 0 || row >= b.rows {
+		return
+	}
+	for col := 0; col < b.cols; col++ {
+		if col < len(cells) {
+			b.cells[row][col] = cells[col]
+		} else {
+			b.cells[row][col] = NewCell()
+		}
+	}
+	b.wrapped[row] = wrapped
+	if lineID != 0 {
+		b.lineID[row] = lineID
+		b.lineVersion[row] = lineVersion
+	} else {
+		b.markLineChanged(row)
+	}
 	b.dirtyRows[row] = true
 }
 

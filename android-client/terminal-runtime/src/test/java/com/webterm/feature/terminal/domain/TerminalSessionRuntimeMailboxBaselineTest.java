@@ -76,14 +76,7 @@ public final class TerminalSessionRuntimeMailboxBaselineTest {
   private static TerminalScreenProto.ScreenEnvelope snapshot(long revision) {
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(revision)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
-            .setHistory(TerminalScreenProto.HistoryWindow.getDefaultInstance())
-            .build())
+        .setSnapshot(TestScreenFrames.snapshotBuilder(revision).build())
         .build();
   }
 

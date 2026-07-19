@@ -383,9 +383,11 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 		// 较新行不再存在，增量无法修复，全量重建。
 		return p.rebuildHistoryWindow()
 	}
-	if delta.FirstID > s.historyLastID+1 {
-		// 缓存最后一行与新窗口之间出现缺口（中间行已被驱逐）：新窗口恰好
-		// 是 delta——LinesAfter 已按窗口上限取最新一段。
+	if delta.FirstID > s.historyLastID {
+		// Stable IDs may legitimately have gaps after a row was deleted or a
+		// resize discarded it. A gap only means our cached tail was trimmed, so
+		// rebuild from the authoritative bounded window instead of treating it
+		// as a protocol discontinuity.
 		s.historyLines = exportHistoryLines(p.exporter, delta.Lines)
 	} else {
 		// 连续：追加新行（新切片，不改动缓存旧切片，历史帧共享不受影响），
@@ -454,8 +456,9 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 // 通过 patch presence 标志表达，避免把未变化的元数据重复编码到每一帧。
 func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) == 0 &&
+		len(patch.HistoryAppendIDs) == 0 &&
 		len(patch.Screen) == 0 &&
-		len(patch.PromotedRows) == 0 &&
+		len(patch.Layout) == 0 &&
 		len(patch.Styles) == 0 &&
 		len(patch.Links) == 0 &&
 		!patch.TitleChanged &&
@@ -476,18 +479,35 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 // 历史窗口是 epoch 内连续 LineID 的尾部窗口，且历史行推出后不可变，因此
 // history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
 func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	// history append 是 baseline 最后一行之后的连续新增段。baseline 已被 trim
-	// 或中间行越出新窗口（追加量超过窗口容量）时 patch 无法表达缺失行，
-	// 退回完整 snapshot。
-	var historyAppend []terminalengine.Line
-	if new.History.LastIncludedLineID > old.History.LastIncludedLineID {
-		appended := new.History.LastIncludedLineID - old.History.LastIncludedLineID
-		if appended > uint64(len(new.History.Lines)) {
-			return new
-		}
-		historyAppend = new.History.Lines[len(new.History.Lines)-int(appended):]
+	// Stable screen IDs can leave gaps in scrollback after delete/resize. Select
+	// the newly present IDs instead of relying on historical ID contiguity.
+	oldHistory := make(map[uint64]struct{}, len(old.History.Lines))
+	for _, line := range old.History.Lines {
+		oldHistory[line.ID] = struct{}{}
 	}
-	screenRows := changedScreenRows(old, new)
+	knownLines := make(map[uint64]struct{}, len(old.Screen)+len(old.History.Lines))
+	for _, line := range old.Screen {
+		knownLines[line.ID] = struct{}{}
+	}
+	for _, line := range old.History.Lines {
+		knownLines[line.ID] = struct{}{}
+	}
+	var historyAppend []terminalengine.Line
+	var historyAppendIDs []uint64
+	for _, line := range new.History.Lines {
+		if _, seen := oldHistory[line.ID]; !seen {
+			historyAppendIDs = append(historyAppendIDs, line.ID)
+			if _, known := knownLines[line.ID]; !known {
+				historyAppend = append(historyAppend, line)
+			}
+		}
+	}
+	screenRows := changedLinesByID(old, new.Screen)
+	newLayout := screenLayout(new.Screen)
+	var layout []uint64
+	if !sameLayout(screenLayout(old.Screen), newLayout) {
+		layout = newLayout
+	}
 
 	return terminalengine.ScreenFrame{
 		Version:           1,
@@ -523,7 +543,9 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 			HasMoreBefore:        new.History.HasMoreBefore,
 			Lines:                historyAppend,
 		},
-		Screen: screenRows,
+		HistoryAppendIDs: historyAppendIDs,
+		Screen:           screenRows,
+		Layout:           layout,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
 		// appeared after the recipient's baseline; repeatedly sending the whole
 		// table was pure wire and allocation overhead.
@@ -535,6 +557,45 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		TitleChanged:      old.Title != new.Title,
 		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
 	}
+}
+
+func screenLayout(lines []terminalengine.Line) []uint64 {
+	ids := make([]uint64, len(lines))
+	for i := range lines {
+		ids[i] = lines[i].ID
+	}
+	return ids
+}
+func sameLayout(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// changedLinesByID deliberately ignores current row number: a scroll only
+// changes Layout, while a line update is needed only when its stable identity
+// is absent from the baseline or carries a newer content version.
+func changedLinesByID(old terminalengine.ScreenFrame, lines []terminalengine.Line) []terminalengine.Line {
+	known := make(map[uint64]uint64, len(old.Screen)+len(old.History.Lines))
+	for _, line := range old.Screen {
+		known[line.ID] = line.Version
+	}
+	for _, line := range old.History.Lines {
+		known[line.ID] = line.Version
+	}
+	var changed []terminalengine.Line
+	for _, line := range lines {
+		if version, ok := known[line.ID]; !ok || version < line.Version {
+			changed = append(changed, line)
+		}
+	}
+	return changed
 }
 
 // changedScreenRows selects rows using projector revision stamps when available. The fallback

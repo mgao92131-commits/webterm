@@ -203,24 +203,25 @@ public final class TerminalScreenControllerTest {
 
   private static TerminalScreenProto.ScreenEnvelope snapshotWithHistory(
       long firstHistoryId, int count, long firstAvailableLineId, boolean hasMoreBefore) {
-    TerminalScreenProto.HistoryWindow.Builder history = TerminalScreenProto.HistoryWindow.newBuilder()
-        .setFirstAvailableLineId(firstAvailableLineId)
-        .setFirstIncludedLineId(firstHistoryId)
-        .setLastIncludedLineId(firstHistoryId + count - 1)
-        .setHasMoreBefore(hasMoreBefore);
+    TerminalScreenProto.ScreenSnapshot.Builder snapshot = TerminalScreenProto.ScreenSnapshot.newBuilder()
+        .setSessionId("s1").setInstanceId("i1").setLayoutEpoch(1).setScreenRevision(1)
+        .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10))
+        .setFirstAvailableHistoryLineId(firstAvailableLineId)
+        .setHasMoreHistoryBefore(hasMoreBefore);
+    TerminalScreenProto.ScreenLayout.Builder layout = TerminalScreenProto.ScreenLayout.newBuilder();
+    for (int row = 0; row < 5; row++) {
+      long id = row + 1L;
+      layout.addLineIds(id);
+      snapshot.addScreenLines(line(id));
+    }
+    snapshot.setLayout(layout);
     for (long id = firstHistoryId; id < firstHistoryId + count; id++) {
-      history.addLines(TerminalScreenProto.HistoryLine.newBuilder().setId(id));
+      snapshot.addHistoryTailIds(id);
+      snapshot.addHistoryTailLines(line(id));
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
-        .setSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()
-            .setSessionId("s1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setScreenRevision(1)
-            .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10).build())
-            .setHistory(history)
-            .build())
+        .setSnapshot(snapshot.build())
         .build();
   }
 
@@ -243,12 +244,16 @@ public final class TerminalScreenControllerTest {
         .setFirstAvailableLineId(firstAvailableLineId)
         .setHasMoreBefore(hasMoreBefore);
     for (long id = firstHistoryId; id < lastHistoryIdExclusive; id++) {
-      page.addLines(TerminalScreenProto.HistoryLine.newBuilder().setId(id));
+      page.addLines(line(id));
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setHistoryPage(page)
         .build();
+  }
+
+  private static TerminalScreenProto.LineData line(long id) {
+    return TerminalScreenProto.LineData.newBuilder().setLineId(id).setLineVersion(1).build();
   }
 
   private static final class RecordingView implements TerminalScreenController.View {

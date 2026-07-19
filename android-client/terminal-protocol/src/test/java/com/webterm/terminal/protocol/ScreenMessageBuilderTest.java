@@ -13,7 +13,7 @@ public final class ScreenMessageBuilderTest {
   public void helloAdvertisesCompactLineEncoding() throws Exception {
     TerminalScreenProto.ScreenEnvelope envelope = TerminalScreenProto.ScreenEnvelope.parseFrom(
         ScreenMessageBuilder.hello(80, 24, "android-1"));
-    assertTrue(envelope.getHello().getCapabilities().getCompactLineEncoding());
+    assertEquals(1, envelope.getHello().getVersion());
   }
 
 

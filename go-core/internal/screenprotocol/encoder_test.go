@@ -29,7 +29,7 @@ func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetPatch().FirstAvailableHistoryLineId != nil {
+	if envelope.GetPatch().HistoryTrimBeforeId != nil {
 		t.Fatal("watermark must be absent without explicit presence flag")
 	}
 
@@ -42,8 +42,8 @@ func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetPatch().FirstAvailableHistoryLineId == nil || envelope.GetPatch().GetFirstAvailableHistoryLineId() != 42 {
-		t.Fatalf("watermark=%v, want present 42", envelope.GetPatch().FirstAvailableHistoryLineId)
+	if envelope.GetPatch().HistoryTrimBeforeId == nil || envelope.GetPatch().GetHistoryTrimBeforeId() != 42 {
+		t.Fatalf("watermark=%v, want present 42", envelope.GetPatch().HistoryTrimBeforeId)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestEncodeFrame_SnapshotRoundTrip(t *testing.T) {
 	if snapshot.Snapshot.SessionId != "s1" {
 		t.Fatalf("session id mismatch")
 	}
-	if len(snapshot.Snapshot.Screen) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(snapshot.Snapshot.Screen))
+	if len(snapshot.Snapshot.ScreenLines) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(snapshot.Snapshot.ScreenLines))
 	}
 }
 
@@ -79,7 +79,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 	base := terminalengine.ScreenFrame{
 		Kind: terminalengine.FrameSnapshot, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
 		Rows: 5, Cols: 10,
-		Screen: []terminalengine.Line{{Row: 0, Runs: []terminalengine.CellRun{{Col: 0,
+		Screen: []terminalengine.Line{{ID: 1, Version: 1, Row: 0, Runs: []terminalengine.CellRun{{Col: 0,
 			Cells: []terminalengine.Cell{{Text: "a", Width: 1}, {Text: "b", Width: 1, StyleID: 7}}}}}},
 	}
 	data, err := EncodeFrameWithCompactLines(base, true)
@@ -90,7 +90,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 	if err := proto.Unmarshal(data, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	line := envelope.GetSnapshot().GetScreen()[0]
+	line := envelope.GetSnapshot().GetScreenLines()[0]
 	if line.GetText() != "ab" || len(line.GetRuns()) != 0 {
 		t.Fatalf("compact line=%+v, want text-only encoding", line)
 	}
@@ -107,7 +107,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 	if err := proto.Unmarshal(data, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	line = envelope.GetSnapshot().GetScreen()[0]
+	line = envelope.GetSnapshot().GetScreenLines()[0]
 	if line.GetText() != "" || len(line.GetRuns()) != 0 || len(line.GetStyleSpans()) != 0 {
 		t.Fatalf("default blank line must be represented by client padding: %+v", line)
 	}
@@ -121,7 +121,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 	if err := proto.Unmarshal(data, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	line = envelope.GetSnapshot().GetScreen()[0]
+	line = envelope.GetSnapshot().GetScreenLines()[0]
 	if line.GetText() != "" || len(line.GetRuns()) != 1 {
 		t.Fatalf("wide line must retain CellRun encoding: %+v", line)
 	}
@@ -159,8 +159,8 @@ func TestEncodeFrame_PatchRoundTrip(t *testing.T) {
 	if patch.Patch.InstanceId != "i1" {
 		t.Fatalf("instance id mismatch: %q", patch.Patch.InstanceId)
 	}
-	if got := patch.Patch.ScreenRows[0].Row; got != 3 {
-		t.Fatalf("patch row mismatch: got %d want 3", got)
+	if got := patch.Patch.LineUpdates[0].LineId; got == 0 {
+		t.Fatalf("patch line id must be stable and non-zero")
 	}
 }
 

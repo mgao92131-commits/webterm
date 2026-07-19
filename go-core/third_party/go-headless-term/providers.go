@@ -79,7 +79,6 @@ type NoopSOS struct{}
 
 func (NoopSOS) Receive(data []byte) {}
 
-
 // ClipboardProvider handles clipboard read/write operations (OSC 52).
 type ClipboardProvider interface {
 	// Read returns content from the specified clipboard ('c' for clipboard, 'p' for primary selection).
@@ -91,8 +90,10 @@ type ClipboardProvider interface {
 // ScrollbackLine represents one line scrolled off the top of the primary buffer.
 // Wrapped indicates whether the line was wrapped due to column overflow.
 type ScrollbackLine struct {
-	Cells   []Cell
-	Wrapped bool
+	Cells       []Cell
+	Wrapped     bool
+	LineID      uint64
+	LineVersion uint64
 }
 
 // ScrollbackProvider stores lines scrolled off the top of the primary buffer.

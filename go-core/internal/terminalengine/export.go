@@ -74,8 +74,9 @@ type CellRun struct {
 
 // Line 是屏幕或历史的一行内容。
 type Line struct {
-	ID      uint64 // 历史行使用；活动屏幕行为 0
-	Row     int    // 活动屏幕行索引；历史行使用 -1
+	ID      uint64 // session 内稳定行 ID；屏幕与历史共用同一命名空间
+	Version uint64 // 行内容版本；行移动不改变，内容/宽度变化递增
+	Row     int    // 仅 Projector 内部缓存的当前位置，永不参与 wire 语义
 	Wrapped bool
 	Runs    []CellRun
 }
@@ -176,11 +177,18 @@ type ScreenFrame struct {
 	ModesChanged   bool
 	PaletteChanged bool
 	History        HistoryWindow
-	Screen         []Line
-	Styles         []TerminalStyle
-	Links          []Hyperlink
-	Title          string
-	WorkingDir     string
+	// HistoryAppendIDs is patch-only. It separates history index movement from
+	// LineData: a promoted line already known from the prior screen layout does
+	// not need its content serialized again.
+	HistoryAppendIDs []uint64
+	Screen           []Line
+	// Layout is patch-only presence data. Snapshot layout is always derived from
+	// Screen, while a patch omits it when line positions did not change.
+	Layout     []uint64
+	Styles     []TerminalStyle
+	Links      []Hyperlink
+	Title      string
+	WorkingDir string
 	// TitleChanged/WorkingDirChanged 只在 patch 帧上有意义：标记 title/cwd 相对
 	// 基线是否变化（变为空串也必须显式标记，与“未变化”区分）。snapshot 必须
 	// 可独立显示，总是携带 title/cwd，不需要标志。
@@ -190,7 +198,6 @@ type ScreenFrame struct {
 	// FirstAvailableLineID 配合表达 optional history watermark presence。
 	// 在线 Patch 仍可依赖独立 HistoryTrim，不默认携带该字段。
 	FirstAvailableHistoryLineIDChanged bool
-	PromotedRows                       []PromotedRow
 	// RowChangedRevision is process-local projection metadata. It stamps each screen row with
 	// the last authoritative export revision that touched it, allowing per-client derivation to
 	// select changed rows without deep-comparing every cell. It is never encoded on the wire.
@@ -206,12 +213,6 @@ type ScreenFrame struct {
 	// snapshot instead of a patch referencing dictionary IDs the client never
 	// received.
 	DictionaryGeneration uint64
-}
-
-// PromotedRow 表示活动行滚入历史时的 ID 映射。
-type PromotedRow struct {
-	ScreenRow     int
-	HistoryLineID uint64
 }
 
 type EffectKind uint8

@@ -219,6 +219,8 @@ func (p *Projector) DeriveResumeFrame(state terminalengine.ScreenFrame, clientRe
 		FirstAvailableLineID: selection.firstAvailableID,
 		Lines:                historyLines,
 	}
+	derived.Frame.HistoryAppendIDs = make([]uint64, len(historyLines))
+	for i, line := range historyLines { derived.Frame.HistoryAppendIDs[i] = line.ID }
 	// 每一帧恢复 Patch 都原子携带当前水位；接收端无需依赖 HistoryTrim 与
 	// screen mailbox 的相对顺序。
 	derived.Frame.FirstAvailableHistoryLineIDChanged = true

@@ -164,9 +164,6 @@ func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) 
 		LayoutEpoch:    epoch,
 		ScreenRevision: revision,
 	}
-	if hasProjection {
-		hello.Capabilities = &pb.CapabilitySet{RowPatches: true}
-	}
 	data, _ := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 1,
 		Payload:         &pb.ScreenEnvelope_Hello{Hello: hello},

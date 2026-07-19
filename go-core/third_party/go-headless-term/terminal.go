@@ -397,8 +397,9 @@ func New(opts ...Option) *Terminal {
 	if t.scrollbackStorage == nil {
 		t.scrollbackStorage = NoopScrollback{}
 	}
-	t.primaryBuffer = NewBufferWithStorage(t.rows, t.cols, t.scrollbackStorage)
-	t.alternateBuffer = NewBuffer(t.rows, t.cols) // Alternate buffer has no scrollback
+	nextLineID := uint64(1)
+	t.primaryBuffer = NewBufferWithStorageAndLineIDs(t.rows, t.cols, t.scrollbackStorage, &nextLineID)
+	t.alternateBuffer = NewBufferWithStorageAndLineIDs(t.rows, t.cols, NoopScrollback{}, &nextLineID) // Alternate buffer has no scrollback
 	t.activeBuffer = t.primaryBuffer
 
 	t.cursor = NewCursor()
@@ -542,12 +543,7 @@ func (t *Terminal) Resize(rows, cols int) {
 
 				// Copy popped lines to the top of the buffer
 				for i, line := range lines {
-					for col, cell := range line.Cells {
-						if col < t.cols {
-							t.primaryBuffer.SetCell(i, col, cell)
-						}
-					}
-					t.primaryBuffer.SetWrapped(i, line.Wrapped)
+					t.primaryBuffer.RestoreRow(i, line.Cells, line.Wrapped, line.LineID, line.LineVersion)
 				}
 
 				// Adjust cursor position to account for the shift

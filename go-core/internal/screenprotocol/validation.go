@@ -58,9 +58,6 @@ func ValidateHello(h *pb.Hello) error {
 	if h.ScreenRevision < 1 {
 		return fmt.Errorf("hello with projection has invalid screen revision: %d", h.ScreenRevision)
 	}
-	if h.Capabilities == nil || !h.Capabilities.RowPatches {
-		return fmt.Errorf("hello with projection requires row_patches capability")
-	}
 	return nil
 }
 
@@ -116,19 +113,57 @@ func ValidateSnapshot(s *pb.ScreenSnapshot) error {
 	if s.Geometry.Cols < minCols || s.Geometry.Cols > maxCols {
 		return fmt.Errorf("invalid snapshot cols: %d", s.Geometry.Cols)
 	}
-	if len(s.History.Lines) > maxSnapshotHistory {
-		return fmt.Errorf("snapshot history too large: %d", len(s.History.Lines))
+	if len(s.HistoryTailIds) > maxSnapshotHistory || len(s.HistoryTailLines) > maxSnapshotHistory {
+		return fmt.Errorf("snapshot history too large")
 	}
-	if err := validateString(s.Title, maxTitleBytes, "title"); err != nil {
-		return err
+	if s.Title != nil {
+		if err := validateString(*s.Title, maxTitleBytes, "title"); err != nil {
+			return err
+		}
 	}
-	if err := validateString(s.WorkingDirectory, maxCWDBytes, "cwd"); err != nil {
-		return err
+	if s.WorkingDirectory != nil {
+		if err := validateString(*s.WorkingDirectory, maxCWDBytes, "cwd"); err != nil {
+			return err
+		}
 	}
 	if err := validateStylesLinks(s.Styles, s.Links); err != nil {
 		return err
 	}
-	return validateLines(s.Screen, int(s.Geometry.Cols))
+	if s.Layout == nil || len(s.Layout.LineIds) != int(s.Geometry.Rows) {
+		return fmt.Errorf("invalid snapshot layout")
+	}
+	screenIDs, err := validateLineData(s.ScreenLines, int(s.Geometry.Cols))
+	if err != nil {
+		return err
+	}
+	historyIDs, err := validateLineData(s.HistoryTailLines, int(s.Geometry.Cols))
+	if err != nil {
+		return err
+	}
+	layoutIDs := make(map[uint64]struct{}, len(s.Layout.LineIds))
+	for _, id := range s.Layout.LineIds {
+		if id == 0 {
+			return fmt.Errorf("snapshot layout contains zero line id")
+		}
+		if _, duplicate := layoutIDs[id]; duplicate {
+			return fmt.Errorf("snapshot layout contains duplicate line id: %d", id)
+		}
+		layoutIDs[id] = struct{}{}
+		if _, ok := screenIDs[id]; !ok {
+			return fmt.Errorf("snapshot layout line data missing: %d", id)
+		}
+	}
+	var previous uint64
+	for index, id := range s.HistoryTailIds {
+		if id == 0 || (index > 0 && id <= previous) {
+			return fmt.Errorf("invalid snapshot history line id: %d", id)
+		}
+		if _, ok := historyIDs[id]; !ok {
+			return fmt.Errorf("snapshot history line data missing: %d", id)
+		}
+		previous = id
+	}
+	return nil
 }
 
 // ValidatePatch 校验 patch 资源限制。
@@ -139,7 +174,32 @@ func ValidatePatch(p *pb.ScreenPatch) error {
 	if err := validateStylesLinks(p.NewStyles, p.NewLinks); err != nil {
 		return err
 	}
-	return validateLines(p.ScreenRows, maxCols)
+	if p.BaseRevision < 1 || p.ScreenRevision <= p.BaseRevision {
+		return fmt.Errorf("invalid patch revisions")
+	}
+	if p.Layout != nil {
+		seen := make(map[uint64]struct{}, len(p.Layout.LineIds))
+		for _, id := range p.Layout.LineIds {
+			if id == 0 {
+				return fmt.Errorf("patch layout contains zero line id")
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return fmt.Errorf("patch layout contains duplicate line id: %d", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	if _, err := validateLineData(p.LineUpdates, maxCols); err != nil {
+		return err
+	}
+	var previous uint64
+	for index, id := range p.HistoryAppendIds {
+		if id == 0 || (index > 0 && id <= previous) {
+			return fmt.Errorf("invalid patch history append id: %d", id)
+		}
+		previous = id
+	}
+	return nil
 }
 
 // ValidateClipboardResponse 限制来自客户端的剪贴板载荷。
@@ -178,21 +238,32 @@ func validateStylesLinks(styles []*pb.TerminalStyle, links []*pb.Hyperlink) erro
 	return nil
 }
 
-func validateLines(lines []*pb.TerminalLine, maxCols int) error {
+func validateLineData(lines []*pb.LineData, maxCols int) (map[uint64]struct{}, error) {
+	ids := make(map[uint64]struct{}, len(lines))
 	for _, line := range lines {
+		if line.LineId == 0 || line.LineVersion == 0 {
+			return nil, fmt.Errorf("line id and version must be positive")
+		}
+		if _, duplicate := ids[line.LineId]; duplicate {
+			return nil, fmt.Errorf("duplicate line id: %d", line.LineId)
+		}
+		ids[line.LineId] = struct{}{}
+		if line.Text != "" && len(line.Runs) != 0 {
+			return nil, fmt.Errorf("line mixes compact text and runs")
+		}
 		for _, run := range line.Runs {
 			if run.Col < 0 || int(run.Col) >= maxCols {
-				return fmt.Errorf("run col out of bounds: %d", run.Col)
+				return nil, fmt.Errorf("run col out of bounds: %d", run.Col)
 			}
 			for _, cell := range run.Cells {
 				if err := validateString(cell.Text, maxCellTextBytes, "cell text"); err != nil {
-					return err
+					return nil, err
 				}
 				if cell.Width != 1 && cell.Width != 2 {
-					return fmt.Errorf("invalid cell width: %d", cell.Width)
+					return nil, fmt.Errorf("invalid cell width: %d", cell.Width)
 				}
 			}
 		}
 	}
-	return nil
+	return ids, nil
 }

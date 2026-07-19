@@ -589,17 +589,18 @@ func screenEnvelopeContains(data []byte, text string) bool {
 	if err := proto.Unmarshal(data, &envelope); err != nil {
 		return false
 	}
-	var lines []*pb.TerminalLine
+	var lines []*pb.LineData
 	switch payload := envelope.Payload.(type) {
 	case *pb.ScreenEnvelope_Snapshot:
-		lines = payload.Snapshot.Screen
+		lines = payload.Snapshot.ScreenLines
 	case *pb.ScreenEnvelope_Patch:
-		lines = payload.Patch.ScreenRows
+		lines = payload.Patch.LineUpdates
 	default:
 		return false
 	}
 	for _, line := range lines {
 		var builder strings.Builder
+		builder.WriteString(line.Text)
 		for _, run := range line.Runs {
 			for _, cell := range run.Cells {
 				builder.WriteString(cell.Text)
