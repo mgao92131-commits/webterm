@@ -104,7 +104,7 @@ public final class TerminalSessionRuntime {
     void sendFocusInput(boolean focused);
     void requestResize(int cols, int rows);
     /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
-    boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit);
+    boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit);
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
@@ -508,12 +508,12 @@ public final class TerminalSessionRuntime {
    * 只有连接可用且请求成功排队后才记录 pending 请求 id 并返回 true；
    * 否则返回 false，调用方必须清除 loading 状态并允许之后重试。
    */
-  public boolean requestHistoryPage(long beforeLineId, int limit) {
+  public boolean requestHistoryPage(long beforeHistorySeq, int limit) {
     if (state != State.CONNECTED) return false;
     ScreenConnection c = connection;
     if (c == null) return false;
     String requestId = historyRequests.nextRequestId();
-    if (!c.requestHistoryPage(requestId, beforeLineId, limit)) return false;
+    if (!c.requestHistoryPage(requestId, beforeHistorySeq, limit)) return false;
     historyRequests.markPending(requestId);
     return true;
   }
@@ -846,7 +846,7 @@ public final class TerminalSessionRuntime {
               TerminalResumeMetrics.cumulativePatch(patchBase,
                   envelope.getPatch().getScreenRevision(),
                   envelope.getPatch().getLineUpdatesCount(),
-                  envelope.getPatch().getHistoryAppendIdsCount());
+                  envelope.getPatch().getHistoryAppendSeqsCount());
             }
           } catch (Exception e) {
             Diagnostics.warn("screen_protocol", "patch_apply_failed", diagnosticFields(
@@ -878,7 +878,7 @@ public final class TerminalSessionRuntime {
         }
         case HISTORY_TRIM:
           model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
-              envelope.getHistoryTrim().getFirstAvailableLineId());
+              envelope.getHistoryTrim().getFirstAvailableHistorySeq());
           break;
         case LAYOUT_LEASE:
           layoutLeaseCoordinator.handle(envelope.getLayoutLease());
@@ -939,7 +939,7 @@ public final class TerminalSessionRuntime {
     patchSummaryCount++;
     patchSummaryBytes += payloadBytes;
     patchSummaryChangedRows += changedRows;
-    patchSummaryHistoryAppend += patch.historyAppendIds.size();
+    patchSummaryHistoryAppend += patch.historyAppendSeqs.size();
     if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
     patchSummaryLastScreenRevision = patch.screenRevision;
     if (patchSummaryCount == 1) {
@@ -951,13 +951,13 @@ public final class TerminalSessionRuntime {
     }
   }
 
-  /** History promotion carries an ID but is not a changed visible screen row. */
+  /** History promotion carries a HistorySeq but is not a changed visible screen row. */
   private static int countScreenLineUpdates(@NonNull ScreenPatch patch) {
     if (patch.lineUpdates.isEmpty()) return 0;
-    java.util.HashSet<Long> historyIds = new java.util.HashSet<>(patch.historyAppendIds);
+    java.util.HashSet<Long> historySeqs = new java.util.HashSet<>(patch.historyAppendSeqs);
     int count = 0;
     for (com.webterm.terminal.model.TerminalLine line : patch.lineUpdates) {
-      if (!historyIds.contains(line.id)) count++;
+      if (!historySeqs.contains(line.historySeq)) count++;
     }
     return count;
   }

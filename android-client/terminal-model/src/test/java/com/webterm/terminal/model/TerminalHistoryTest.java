@@ -19,8 +19,8 @@ public final class TerminalHistoryTest {
     TerminalHistory h = history();
     assertEquals(0, h.size());
     assertTrue(h.isEmpty());
-    assertEquals(-1L, h.firstLineId());
-    assertEquals(-1L, h.lastLineId());
+    assertEquals(-1L, h.firstSeq());
+    assertEquals(-1L, h.lastSeq());
     assertEquals(0L, h.estimatedBytes());
     assertTrue(h.snapshot().isEmpty());
   }
@@ -30,8 +30,8 @@ public final class TerminalHistoryTest {
     TerminalHistory h = history();
     h.append(line(1));
     assertEquals(1, h.size());
-    assertEquals(1L, h.firstLineId());
-    assertEquals(1L, h.lastLineId());
+    assertEquals(1L, h.firstSeq());
+    assertEquals(1L, h.lastSeq());
     assertEquals(lineBytes(1), h.estimatedBytes());
     assertEquals(1L, h.lineAt(0).id);
   }
@@ -44,8 +44,8 @@ public final class TerminalHistoryTest {
       h.append(line(id));
     }
     assertEquals(n, h.size());
-    assertEquals(1L, h.firstLineId());
-    assertEquals(n, h.lastLineId());
+    assertEquals(1L, h.firstSeq());
+    assertEquals(n, h.lastSeq());
     assertEquals(n * lineBytes(1), h.estimatedBytes());
     assertEquals(1L, h.lineAt(0).id);
     assertEquals(n, h.lineAt(n - 1).id);
@@ -61,8 +61,8 @@ public final class TerminalHistoryTest {
     h1.appendAll(lines);
     for (TerminalLine line : lines) h2.append(line);
     assertEquals(h1.size(), h2.size());
-    assertEquals(h1.firstLineId(), h2.firstLineId());
-    assertEquals(h1.lastLineId(), h2.lastLineId());
+    assertEquals(h1.firstSeq(), h2.firstSeq());
+    assertEquals(h1.lastSeq(), h2.lastSeq());
     assertEquals(h1.estimatedBytes(), h2.estimatedBytes());
   }
 
@@ -76,29 +76,29 @@ public final class TerminalHistoryTest {
     h.prepend(page);
 
     assertEquals(7, h.size());
-    assertEquals(5L, h.firstLineId());
-    assertEquals(11L, h.lastLineId());
+    assertEquals(5L, h.firstSeq());
+    assertEquals(11L, h.lastSeq());
     assertEquals(5L, h.lineAt(0).id);
     assertEquals(11L, h.lineAt(6).id);
   }
 
   @Test
-  public void findLineIndex_existing() {
+  public void findSeqIndex_existing() {
     TerminalHistory h = history();
     for (long id = 1; id <= 300; id++) h.append(line(id));
-    assertEquals(0, h.findLineIndex(1));
-    assertEquals(299, h.findLineIndex(300));
-    assertEquals(TerminalHistory.CHUNK_SIZE - 1, h.findLineIndex(TerminalHistory.CHUNK_SIZE));
-    assertEquals(TerminalHistory.CHUNK_SIZE, h.findLineIndex(TerminalHistory.CHUNK_SIZE + 1));
+    assertEquals(0, h.findSeqIndex(1));
+    assertEquals(299, h.findSeqIndex(300));
+    assertEquals(TerminalHistory.CHUNK_SIZE - 1, h.findSeqIndex(TerminalHistory.CHUNK_SIZE));
+    assertEquals(TerminalHistory.CHUNK_SIZE, h.findSeqIndex(TerminalHistory.CHUNK_SIZE + 1));
   }
 
   @Test
-  public void findLineIndex_missing() {
+  public void findSeqIndex_missing() {
     TerminalHistory h = history();
     for (long id = 1; id <= 100; id++) h.append(line(id * 2));
-    assertEquals(-1, h.findLineIndex(3));
-    assertEquals(-1, h.findLineIndex(0));
-    assertEquals(-1, h.findLineIndex(201));
+    assertEquals(-1, h.findSeqIndex(3));
+    assertEquals(-1, h.findSeqIndex(0));
+    assertEquals(-1, h.findSeqIndex(201));
   }
 
   @Test
@@ -121,8 +121,8 @@ public final class TerminalHistoryTest {
     assertEquals(2L, snap.lineAt(1).id);
     assertEquals(3L, snap.lineAt(2).id);
     assertEquals("a", snap.lineAt(2).at(0).text);
-    assertEquals(0, snap.findLineIndex(1));
-    assertEquals(2, snap.findLineIndex(3));
+    assertEquals(0, snap.findSeqIndex(1));
+    assertEquals(2, snap.findSeqIndex(3));
   }
 
   @Test
@@ -134,8 +134,8 @@ public final class TerminalHistoryTest {
     h.append(line(TerminalHistory.CHUNK_SIZE + 1L));
 
     assertEquals(TerminalHistory.CHUNK_SIZE, h.size());
-    assertEquals(2L, h.firstLineId());
-    assertEquals(TerminalHistory.CHUNK_SIZE + 1L, h.lastLineId());
+    assertEquals(2L, h.firstSeq());
+    assertEquals(TerminalHistory.CHUNK_SIZE + 1L, h.lastSeq());
     TerminalHistorySnapshot snap = h.snapshot();
     assertEquals(2L, snap.lineAt(0).id);
     assertEquals(TerminalHistory.CHUNK_SIZE + 1L,
@@ -153,7 +153,7 @@ public final class TerminalHistoryTest {
     for (int index = 0; index < snap.size(); index++) {
       long expectedId = index + 11L;
       assertEquals(expectedId, snap.lineAt(index).id);
-      assertEquals(index, snap.findLineIndex(expectedId));
+      assertEquals(index, snap.findSeqIndex(expectedId));
     }
   }
 
@@ -163,8 +163,8 @@ public final class TerminalHistoryTest {
     for (long id = 1; id <= 10; id++) h.append(line(id));
     h.trimHeadUntil(5);
     assertEquals(6, h.size()); // 5..10
-    assertEquals(5L, h.firstLineId());
-    assertEquals(10L, h.lastLineId());
+    assertEquals(5L, h.firstSeq());
+    assertEquals(10L, h.lastSeq());
   }
 
   @Test
@@ -175,8 +175,8 @@ public final class TerminalHistoryTest {
     long firstKept = TerminalHistory.CHUNK_SIZE * 2 + 1L;
     h.trimHeadUntil(firstKept);
     assertEquals(n - (firstKept - 1), h.size());
-    assertEquals(firstKept, h.firstLineId());
-    assertEquals(n, h.lastLineId());
+    assertEquals(firstKept, h.firstSeq());
+    assertEquals(n, h.lastSeq());
   }
 
   @Test
@@ -185,8 +185,8 @@ public final class TerminalHistoryTest {
     for (long id = 1; id <= 100; id++) h.append(line(id));
     h.trimHeadToBudget(5, Long.MAX_VALUE);
     assertEquals(5, h.size());
-    assertEquals(96L, h.firstLineId());
-    assertEquals(100L, h.lastLineId());
+    assertEquals(96L, h.firstSeq());
+    assertEquals(100L, h.lastSeq());
 
     // already under budget: no-op
     h.trimHeadToBudget(5, Long.MAX_VALUE);
@@ -202,7 +202,7 @@ public final class TerminalHistoryTest {
     assertTrue(h.size() <= 10);
     assertTrue(h.size() >= 1);
     assertTrue(h.estimatedBytes() <= perLine * 10);
-    assertEquals(100L, h.lastLineId());
+    assertEquals(100L, h.lastSeq());
   }
 
   @Test
@@ -230,7 +230,7 @@ public final class TerminalHistoryTest {
     h.trimTailToBudget(5, Long.MAX_VALUE, anchor);
     assertEquals(5, h.size());
     assertTrue(h.asMap().containsKey(anchor));
-    assertEquals(anchor, h.lastLineId());
+    assertEquals(anchor, h.lastSeq());
   }
 
   @Test

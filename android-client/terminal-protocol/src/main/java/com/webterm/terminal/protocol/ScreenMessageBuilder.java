@@ -159,10 +159,10 @@ public final class ScreenMessageBuilder {
   }
 
   @NonNull
-  public static byte[] historyRequest(@NonNull String requestId, long beforeLineId, int limit) {
+  public static byte[] historyRequest(@NonNull String requestId, long beforeHistorySeq, int limit) {
     TerminalScreenProto.HistoryRequest req = TerminalScreenProto.HistoryRequest.newBuilder()
         .setRequestId(requestId)
-        .setBeforeLineId(beforeLineId)
+        .setBeforeHistorySeq(beforeHistorySeq)
         .setLimit(limit)
         .build();
     return envelope(TerminalScreenProto.ScreenEnvelope.PayloadCase.HISTORY_REQUEST,

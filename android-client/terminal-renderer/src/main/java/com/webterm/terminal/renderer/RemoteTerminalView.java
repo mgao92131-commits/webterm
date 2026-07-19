@@ -801,8 +801,8 @@ public final class RemoteTerminalView extends View {
     int endCol = selectionStart.col + 1;
     while (startCol > 0 && !isWordBoundary(line.at(startCol - 1))) startCol--;
     while (endCol < line.length() && !isWordBoundary(line.at(endCol))) endCol++;
-    selectionStart = new TerminalSelection.Anchor(selectionStart.historyLineId, selectionStart.screenRow, startCol);
-    selectionEnd = new TerminalSelection.Anchor(selectionStart.historyLineId, selectionStart.screenRow, endCol);
+    selectionStart = new TerminalSelection.Anchor(selectionStart.historySeq, selectionStart.screenRow, startCol);
+    selectionEnd = new TerminalSelection.Anchor(selectionStart.historySeq, selectionStart.screenRow, endCol);
   }
 
   private void updateViewportSelection() {
@@ -866,7 +866,7 @@ public final class RemoteTerminalView extends View {
     int historyIndex = (int) ((y - contentTopY) / lineH);
     historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
     TerminalLine line = history.lineAt(historyIndex);
-    return new TerminalSelection.Anchor(line.id, -1, normalizeSelectionColumn(line, col));
+    return new TerminalSelection.Anchor(line.historyOrder(), -1, normalizeSelectionColumn(line, col));
   }
 
   private int normalizeSelectionColumn(@Nullable TerminalLine line, int col) {
@@ -890,8 +890,8 @@ public final class RemoteTerminalView extends View {
     while (startCol > 0 && !isWordBoundary(line.at(startCol - 1))) startCol--;
     while (endCol < line.length() && !isWordBoundary(line.at(endCol))) endCol++;
     selecting = true;
-    selectionStart = new TerminalSelection.Anchor(anchor.historyLineId, anchor.screenRow, startCol);
-    selectionEnd = new TerminalSelection.Anchor(anchor.historyLineId, anchor.screenRow, endCol);
+    selectionStart = new TerminalSelection.Anchor(anchor.historySeq, anchor.screenRow, startCol);
+    selectionEnd = new TerminalSelection.Anchor(anchor.historySeq, anchor.screenRow, endCol);
     updateViewportSelection();
     startSelectionActionMode();
     invalidate();
@@ -906,8 +906,8 @@ public final class RemoteTerminalView extends View {
   private TerminalLine lineAt(TerminalSelection.Anchor anchor) {
     if (model == null) return null;
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
-    if (anchor.historyLineId != 0) {
-      int index = snapshot.history.findLineIndex(anchor.historyLineId);
+    if (anchor.historySeq != 0) {
+      int index = snapshot.history.findSeqIndex(anchor.historySeq);
       return index >= 0 ? snapshot.history.lineAt(index) : null;
     }
     TerminalLine[] screen = snapshot.screen;
@@ -1092,8 +1092,8 @@ public final class RemoteTerminalView extends View {
     float contentTop = contentTopY(snapshot);
     TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
-    if (anchor.historyLineId != 0) {
-      int index = history.findLineIndex(anchor.historyLineId);
+    if (anchor.historySeq != 0) {
+      int index = history.findSeqIndex(anchor.historySeq);
       if (index < 0) return null;
       return new float[] {col * cellWidth(), contentTop + index * lineHeight()};
     }

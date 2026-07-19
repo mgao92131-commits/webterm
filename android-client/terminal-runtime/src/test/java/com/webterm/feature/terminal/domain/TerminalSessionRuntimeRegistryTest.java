@@ -180,7 +180,7 @@ public final class TerminalSessionRuntimeRegistryTest {
                                          boolean pressed) {}
     @Override public void sendFocusInput(boolean focused) {}
     @Override public void requestResize(int cols, int rows) {}
-    @Override public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId,
+    @Override public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq,
                                                 int limit) { return false; }
     @Override public void acquireLayout(boolean interactive) {}
     @Override public void releaseLayout() {}

@@ -198,10 +198,10 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+  public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageBuilder.historyRequest(requestId, beforeLineId, limit), true);
+        channelId, ScreenMessageBuilder.historyRequest(requestId, beforeHistorySeq, limit), true);
   }
 
   @Override

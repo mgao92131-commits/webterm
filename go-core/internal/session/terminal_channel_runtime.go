@@ -115,7 +115,7 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocol.Handler
 		}),
 		screenprotocol.WithHistoryRequestCallback(func(req *pb.HistoryRequest) {
 			if rt != nil {
-				rt.RequestHistory(client.screenClientID, req.RequestId, req.BeforeLineId, int(req.Limit))
+				rt.RequestHistory(client.screenClientID, req.RequestId, req.BeforeHistorySeq, int(req.Limit))
 			}
 		}),
 		screenprotocol.WithResyncCallback(func(req *pb.ResyncRequest) {
@@ -332,7 +332,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		snapshot.BaseRevision = 0
 		snapshot.TitleChanged = false
 		snapshot.WorkingDirChanged = false
-		snapshot.FirstAvailableHistoryLineIDChanged = false
+		snapshot.FirstAvailableHistorySeqChanged = false
 		payload, err = client.encodeFrame(snapshot)
 		if err != nil {
 			client.logScreenEncodeFailure("snapshot_fallback", state, err)
@@ -582,8 +582,8 @@ func (client *terminalChannelRuntime) sendScreenHistory(requestID string, epoch,
 	}
 }
 
-func (client *terminalChannelRuntime) sendScreenHistoryTrim(epoch, firstAvailableID uint64) {
-	payload, err := screenprotocol.EncodeHistoryTrim(epoch, firstAvailableID)
+func (client *terminalChannelRuntime) sendScreenHistoryTrim(epoch, firstAvailableSeq uint64) {
+	payload, err := screenprotocol.EncodeHistoryTrim(epoch, firstAvailableSeq)
 	if err == nil {
 		client.enqueueBinary(payload)
 	}

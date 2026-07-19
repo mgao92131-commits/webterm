@@ -138,7 +138,7 @@ public final class TerminalSessionRuntimePatchSummaryTest {
       long historySeq = 100L + i;
       pb.addLineUpdates(TestScreenFrames.line(historySeq, 1, "h").toBuilder()
           .setHistorySeq(historySeq).build());
-      pb.addHistoryAppendIds(historySeq);
+      pb.addHistoryAppendSeqs(historySeq);
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
@@ -184,7 +184,7 @@ public final class TerminalSessionRuntimePatchSummaryTest {
     public void requestResize(int cols, int rows) {}
 
     @Override
-    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
       return true;
     }
 

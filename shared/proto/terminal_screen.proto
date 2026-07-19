@@ -20,7 +20,7 @@ option java_outer_classname = "TerminalScreenProto";
 //   notification payload   <=64 KiB
 //   styles per layoutEpoch <=4096
 //   links per layoutEpoch  <=4096
-//   cell text              <=64 UTF-8 bytes
+//   Compact line text      <=32 KiB UTF-8 bytes
 
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 1
@@ -99,7 +99,7 @@ message ScreenSnapshot {
   BufferKind active_buffer = 6;
   ScreenLayout layout = 7;
   repeated LineData screen_lines = 8; // 覆盖 layout 全部引用
-  repeated uint64 history_tail_ids = 9;
+  repeated uint64 history_tail_seqs = 9;
   repeated LineData history_tail_lines = 10;
   uint64 dictionary_generation = 11;
   repeated TerminalStyle styles = 12;
@@ -109,7 +109,7 @@ message ScreenSnapshot {
   TerminalPalette palette = 16;
   optional string title = 17;
   optional string working_directory = 18;
-  uint64 first_available_history_line_id = 19;
+  uint64 first_available_history_seq = 19;
   bool has_more_history_before = 20;
 }
 
@@ -119,8 +119,8 @@ message ScreenPatch {
   uint64 screen_revision = 3;    // 应用后的新 revision
   optional ScreenLayout layout = 5;
   repeated LineData line_updates = 6;
-  repeated uint64 history_append_ids = 7;
-  optional uint64 history_trim_before_id = 8;
+  repeated uint64 history_append_seqs = 7;
+  optional uint64 history_trim_before_seq = 8;
   uint64 dictionary_generation = 9;
   repeated TerminalStyle new_styles = 10;
   repeated Hyperlink new_links = 11;
@@ -306,7 +306,7 @@ message IndexedPaletteColor {
 message HistoryRequest {
   string request_id = 1;
   uint64 layout_epoch = 2;
-  uint64 before_line_id = 3; // 请求严格小于此 ID 的行
+  uint64 before_history_seq = 3; // 请求严格小于此 HistorySeq 的行
   int32 limit = 4;
 }
 
@@ -314,16 +314,16 @@ message HistoryPage {
   string request_id = 1;
   uint64 layout_epoch = 2;
   uint64 as_of_revision = 3;
-  uint64 first_available_line_id = 4;
+  uint64 first_available_history_seq = 4;
   bool has_more_before = 5;
-  repeated LineData lines = 6; // 按 line_id 严格升序，允许 ID 缺口
+  repeated LineData lines = 6; // 按 history_seq 严格升序；LineID 可有缺口
   repeated TerminalStyle styles = 7;
   repeated Hyperlink links = 8;
 }
 
 message HistoryTrim {
   uint64 layout_epoch = 1;
-  uint64 first_available_line_id = 2; // 所有小于此 ID 的本地缓存应删除
+  uint64 first_available_history_seq = 2; // 所有小于此 HistorySeq 的本地缓存应删除
 }
 
 // ---------------------------------------------------------------------------

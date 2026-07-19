@@ -122,8 +122,8 @@ func TestExportSnapshot_HistoryWindow(t *testing.T) {
 	if len(frame.History.Lines) == 0 {
 		t.Fatal("expected history lines")
 	}
-	if frame.History.FirstAvailableLineID != 1 {
-		t.Fatalf("FirstAvailableLineID=1, got %d", frame.History.FirstAvailableLineID)
+	if frame.History.FirstAvailableHistorySeq != 1 {
+		t.Fatalf("FirstAvailableHistorySeq=1, got %d", frame.History.FirstAvailableHistorySeq)
 	}
 }
 

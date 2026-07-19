@@ -138,11 +138,11 @@ const (
 
 // HistoryWindow 是快照附带的历史窗口。
 type HistoryWindow struct {
-	FirstAvailableLineID uint64
-	FirstIncludedLineID  uint64
-	LastIncludedLineID   uint64
-	HasMoreBefore        bool
-	Lines                []Line
+	FirstAvailableHistorySeq uint64
+	FirstIncludedHistorySeq  uint64
+	LastIncludedHistorySeq   uint64
+	HasMoreBefore            bool
+	Lines                    []Line
 }
 
 // HistoryPageData 是按需历史页及其所依赖的字典。
@@ -181,11 +181,11 @@ type ScreenFrame struct {
 	ModesChanged   bool
 	PaletteChanged bool
 	History        HistoryWindow
-	// HistoryAppendIDs is patch-only. It separates history index movement from
+	// HistoryAppendSeqs is patch-only. It separates history index movement from
 	// LineData: a promoted line already known from the prior screen layout does
 	// not need its content serialized again.
-	HistoryAppendIDs []uint64
-	Screen           []Line
+	HistoryAppendSeqs []uint64
+	Screen            []Line
 	// Layout is patch-only presence data. Snapshot layout is always derived from
 	// Screen, while a patch omits it when line positions did not change.
 	Layout     []uint64
@@ -198,10 +198,10 @@ type ScreenFrame struct {
 	// 可独立显示，总是携带 title/cwd，不需要标志。
 	TitleChanged      bool
 	WorkingDirChanged bool
-	// FirstAvailableHistoryLineIDChanged 只用于恢复 Patch：与 History 中的
-	// FirstAvailableLineID 配合表达 optional history watermark presence。
+	// FirstAvailableHistorySeqChanged 只用于恢复 Patch：与 History 中的
+	// FirstAvailableHistorySeq 配合表达 optional history watermark presence。
 	// 在线 Patch 仍可依赖独立 HistoryTrim，不默认携带该字段。
-	FirstAvailableHistoryLineIDChanged bool
+	FirstAvailableHistorySeqChanged bool
 	// RowChangedRevision is process-local projection metadata. It stamps each screen row with
 	// the last authoritative export revision that touched it, allowing per-client derivation to
 	// select changed rows without deep-comparing every cell. It is never encoded on the wire.

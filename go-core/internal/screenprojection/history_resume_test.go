@@ -29,10 +29,10 @@ func TestHistoryChangeIndex_ResumePatchCarriesCreatedLinesAndWatermark(t *testin
 	if d.Outcome != ResumeOutcomePatch {
 		t.Fatalf("outcome=%v reason=%q, want patch", d.Outcome, d.Reason)
 	}
-	if !d.Frame.FirstAvailableHistoryLineIDChanged {
+	if !d.Frame.FirstAvailableHistorySeqChanged {
 		t.Fatal("resume patch must carry history watermark presence")
 	}
-	if got := d.Frame.History.FirstAvailableLineID; got != 1 {
+	if got := d.Frame.History.FirstAvailableHistorySeq; got != 1 {
 		t.Fatalf("watermark=%d, want 1", got)
 	}
 	if got := len(d.Frame.History.Lines); got != 3 {
@@ -57,7 +57,7 @@ func TestHistoryChangeIndex_TrimUsesActualWatermarkAndDropsOldIndex(t *testing.T
 	if d.Outcome != ResumeOutcomePatch {
 		t.Fatalf("outcome=%v reason=%q, want patch", d.Outcome, d.Reason)
 	}
-	if got := d.Frame.History.FirstAvailableLineID; got != 2 {
+	if got := d.Frame.History.FirstAvailableHistorySeq; got != 2 {
 		t.Fatalf("watermark=%d, want actual first ID 2", got)
 	}
 	if len(d.Frame.History.Lines) != 1 || d.Frame.History.Lines[0].ID != 3 {

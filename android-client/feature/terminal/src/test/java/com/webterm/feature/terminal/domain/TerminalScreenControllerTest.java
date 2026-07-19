@@ -96,7 +96,7 @@ public final class TerminalScreenControllerTest {
     connection.acceptHistoryRequests = false;
     controller.requestOlderHistoryPage();
     assertTrue("failed request must not reach the connection",
-        connection.historyBeforeIds.isEmpty());
+        connection.historyBeforeSeqs.isEmpty());
     assertFalse("failed request must not leave the loading flag stuck",
         controller.viewport().loadingOlderHistory);
 
@@ -104,7 +104,7 @@ public final class TerminalScreenControllerTest {
     connection.acceptHistoryRequests = true;
     controller.requestOlderHistoryPage();
     assertEquals("the same edge must be retryable after a failed request",
-        Collections.singletonList(100L), connection.historyBeforeIds);
+        Collections.singletonList(100L), connection.historyBeforeSeqs);
     assertTrue(controller.viewport().loadingOlderHistory);
   }
 
@@ -177,36 +177,36 @@ public final class TerminalScreenControllerTest {
   @Test
   public void consecutiveHistoryPagesReachHardTopWithoutRepeatingRequest() {
     // History line ids are positive; id 0 is reserved for screen rows. The
-    // server's hard top is firstAvailableLineId == 1.
+    // server's hard top is firstAvailableHistorySeq == 1.
     connection.listener.onScreenMessage(snapshotWithHistory(100, 5, 1, true).toByteArray());
 
     controller.requestOlderHistoryPage();
-    assertEquals(Collections.singletonList(100L), connection.historyBeforeIds);
+    assertEquals(Collections.singletonList(100L), connection.historyBeforeSeqs);
 
     // The in-flight page suppresses a duplicate request for the same edge.
     controller.requestOlderHistoryPage();
-    assertEquals(Collections.singletonList(100L), connection.historyBeforeIds);
+    assertEquals(Collections.singletonList(100L), connection.historyBeforeSeqs);
 
     connection.listener.onScreenMessage(
         historyPage(connection.lastHistoryRequestId, 50, 100, 1, true).toByteArray());
     controller.requestOlderHistoryPage();
-    assertEquals("beforeId must advance strictly toward older history",
-        Arrays.asList(100L, 50L), connection.historyBeforeIds);
+    assertEquals("beforeSeq must advance strictly toward older history",
+        Arrays.asList(100L, 50L), connection.historyBeforeSeqs);
 
     connection.listener.onScreenMessage(
         historyPage(connection.lastHistoryRequestId, 1, 50, 1, false).toByteArray());
     controller.requestOlderHistoryPage();
     assertEquals("the hard top must not re-request the same page",
-        Arrays.asList(100L, 50L), connection.historyBeforeIds);
+        Arrays.asList(100L, 50L), connection.historyBeforeSeqs);
     assertFalse(runtime.model().hasMoreHistoryBefore());
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshotWithHistory(
-      long firstHistoryId, int count, long firstAvailableLineId, boolean hasMoreBefore) {
+      long firstHistorySeq, int count, long firstAvailableHistorySeq, boolean hasMoreBefore) {
     TerminalScreenProto.ScreenSnapshot.Builder snapshot = TerminalScreenProto.ScreenSnapshot.newBuilder()
         .setSessionId("s1").setInstanceId("i1").setLayoutEpoch(1).setScreenRevision(1)
         .setGeometry(TerminalScreenProto.Size.newBuilder().setRows(5).setCols(10))
-        .setFirstAvailableHistoryLineId(firstAvailableLineId)
+        .setFirstAvailableHistorySeq(firstAvailableHistorySeq)
         .setHasMoreHistoryBefore(hasMoreBefore);
     TerminalScreenProto.ScreenLayout.Builder layout = TerminalScreenProto.ScreenLayout.newBuilder();
     for (int row = 0; row < 5; row++) {
@@ -215,8 +215,8 @@ public final class TerminalScreenControllerTest {
       snapshot.addScreenLines(line(id));
     }
     snapshot.setLayout(layout);
-    for (long id = firstHistoryId; id < firstHistoryId + count; id++) {
-      snapshot.addHistoryTailIds(id);
+    for (long id = firstHistorySeq; id < firstHistorySeq + count; id++) {
+      snapshot.addHistoryTailSeqs(id);
       snapshot.addHistoryTailLines(line(id).toBuilder().setHistorySeq(id).build());
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
@@ -235,15 +235,15 @@ public final class TerminalScreenControllerTest {
   }
 
   private static TerminalScreenProto.ScreenEnvelope historyPage(
-      @NonNull String requestId, long firstHistoryId, long lastHistoryIdExclusive,
-      long firstAvailableLineId, boolean hasMoreBefore) {
+      @NonNull String requestId, long firstHistorySeq, long lastHistorySeqExclusive,
+      long firstAvailableHistorySeq, boolean hasMoreBefore) {
     TerminalScreenProto.HistoryPage.Builder page = TerminalScreenProto.HistoryPage.newBuilder()
         .setRequestId(requestId)
         .setLayoutEpoch(1)
         .setAsOfRevision(1)
-        .setFirstAvailableLineId(firstAvailableLineId)
+        .setFirstAvailableHistorySeq(firstAvailableHistorySeq)
         .setHasMoreBefore(hasMoreBefore);
-    for (long id = firstHistoryId; id < lastHistoryIdExclusive; id++) {
+    for (long id = firstHistorySeq; id < lastHistorySeqExclusive; id++) {
       page.addLines(line(id).toBuilder().setHistorySeq(id).build());
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
@@ -300,7 +300,7 @@ public final class TerminalScreenControllerTest {
   }
 
   private static final class FakeScreenConnection implements TerminalSessionRuntime.ScreenConnection {
-    final List<Long> historyBeforeIds = new ArrayList<>();
+    final List<Long> historyBeforeSeqs = new ArrayList<>();
     String lastHistoryRequestId = "";
     boolean acceptHistoryRequests = true;
     Listener listener;
@@ -340,10 +340,10 @@ public final class TerminalScreenControllerTest {
     public void requestResize(int cols, int rows) {}
 
     @Override
-    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
       if (!acceptHistoryRequests) return false;
       lastHistoryRequestId = requestId;
-      historyBeforeIds.add(beforeLineId);
+      historyBeforeSeqs.add(beforeHistorySeq);
       return true;
     }
 

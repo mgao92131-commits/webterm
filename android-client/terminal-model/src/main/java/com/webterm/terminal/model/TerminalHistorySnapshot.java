@@ -16,16 +16,16 @@ public final class TerminalHistorySnapshot {
   private final List<TerminalHistory.HistoryChunk> chunks;
   private final int[] chunkStartIndices;
   private final int size;
-  private final long firstLineId;
-  private final long lastLineId;
+  private final long firstSeq;
+  private final long lastSeq;
 
   TerminalHistorySnapshot(List<TerminalHistory.HistoryChunk> chunks, int[] chunkStartIndices, int size,
-                          long firstLineId, long lastLineId) {
+                          long firstSeq, long lastSeq) {
     this.chunks = Collections.unmodifiableList(new ArrayList<>(chunks));
     this.chunkStartIndices = chunkStartIndices.clone();
     this.size = size;
-    this.firstLineId = firstLineId;
-    this.lastLineId = lastLineId;
+    this.firstSeq = firstSeq;
+    this.lastSeq = lastSeq;
   }
 
   public static TerminalHistorySnapshot empty() {
@@ -40,12 +40,12 @@ public final class TerminalHistorySnapshot {
     return size == 0;
   }
 
-  public long firstLineId() {
-    return firstLineId;
+  public long firstSeq() {
+    return firstSeq;
   }
 
-  public long lastLineId() {
-    return lastLineId;
+  public long lastSeq() {
+    return lastSeq;
   }
 
   /** 按历史索引（0=最旧）O(log chunk count) 取行。 */
@@ -58,29 +58,29 @@ public final class TerminalHistorySnapshot {
   }
 
   /**
-   * 按 LineID 定位在历史中的索引。O(log chunks + log chunk size)。
+   * 按 HistorySeq 定位在历史中的索引。O(log chunks + log chunk size)。
    *
    * @return 索引（0=最旧），不存在返回 -1。
    */
-  public int findLineIndex(long lineId) {
+  public int findSeqIndex(long seq) {
     int lo = 0;
     int hi = chunks.size() - 1;
     while (lo <= hi) {
       int mid = (lo + hi) >>> 1;
       TerminalHistory.HistoryChunk chunk = chunks.get(mid);
-      if (lineId < chunk.firstId()) {
+      if (seq < chunk.firstSeq()) {
         hi = mid - 1;
-      } else if (lineId > chunk.lastId()) {
+      } else if (seq > chunk.lastSeq()) {
         lo = mid + 1;
       } else {
-        int local = chunk.findLocalIndex(lineId);
+        int local = chunk.findLocalIndex(seq);
         return local >= 0 ? local + chunkStartIndices[mid] : -1;
       }
     }
     return -1;
   }
 
-  /** 测试/过渡用：按 id 升序导出为 map。 */
+  /** 测试/过渡用：按 HistorySeq 升序导出为 map。 */
   java.util.NavigableMap<Long, TerminalLine> asMap() {
     java.util.NavigableMap<Long, TerminalLine> map = new java.util.TreeMap<>();
     for (TerminalHistory.HistoryChunk chunk : chunks) {

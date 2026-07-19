@@ -253,7 +253,7 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 		Rows: rows, Cols: 60, ActiveBuffer: terminalengine.BufferMain,
 		Screen: makeScreen(1, "before"),
 		History: terminalengine.HistoryWindow{
-			FirstAvailableLineID: 1, FirstIncludedLineID: 1, LastIncludedLineID: historySize,
+			FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 1, LastIncludedHistorySeq: historySize,
 			Lines: history,
 		},
 	}
@@ -263,7 +263,7 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 	current.Seq = 2
 	current.Screen = makeScreen(2, "after")
 	current.History = terminalengine.HistoryWindow{
-		FirstAvailableLineID: 1, FirstIncludedLineID: 2, LastIncludedLineID: historySize + 1,
+		FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 2, LastIncludedHistorySeq: historySize + 1,
 		Lines: currentHistory,
 	}
 

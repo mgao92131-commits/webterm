@@ -15,13 +15,13 @@ public final class ScreenMessageValidatorTest {
         .setHistorySeq(seq).build();
   }
   @Test public void acceptsStableIdsWithGapsInHistory() {
-    assertTrue(ScreenMessageValidator.validatePatch(patch().addHistoryAppendIds(4)
-        .addHistoryAppendIds(9).addLineUpdates(historyLine(100, 4))
+    assertTrue(ScreenMessageValidator.validatePatch(patch().addHistoryAppendSeqs(4)
+        .addHistoryAppendSeqs(9).addLineUpdates(historyLine(100, 4))
         .addLineUpdates(historyLine(3, 9)).build(), 5, 5).ok);
   }
-  @Test public void rejectsNonIncreasingHistoryIds() {
-    assertFalse(ScreenMessageValidator.validatePatch(patch().addHistoryAppendIds(9)
-        .addHistoryAppendIds(4).build(), 5, 5).ok);
+  @Test public void rejectsNonIncreasingHistorySeqs() {
+    assertFalse(ScreenMessageValidator.validatePatch(patch().addHistoryAppendSeqs(9)
+        .addHistoryAppendSeqs(4).build(), 5, 5).ok);
   }
   @Test public void rejectsHistoryPageWithoutHistorySequence() {
     TerminalScreenProto.HistoryPage page = TerminalScreenProto.HistoryPage.newBuilder()
@@ -54,6 +54,17 @@ public final class ScreenMessageValidatorTest {
     assertFalse(ScreenMessageValidator.validatePatch(patch().addLineUpdates(
         compactLine("中", new byte[] {(byte) 0x81})).build(), 5, 1).ok);
   }
+  @Test public void compactTextUsesLineLimitNotPerCell64ByteLimit() {
+    String over64Bytes = repeat("界", 22); // 66 UTF-8 bytes, 22 code points.
+    assertTrue(ScreenMessageValidator.validatePatch(patch().addLineUpdates(
+        compactLine(over64Bytes, new byte[] {22})).build(), 5, 1).ok);
+
+    String tooLarge = repeat("界", 127 * 87);
+    byte[] metadata = new byte[87];
+    java.util.Arrays.fill(metadata, (byte) 127);
+    assertFalse(ScreenMessageValidator.validatePatch(patch().addLineUpdates(
+        compactLine(tooLarge, metadata)).build(), 5, 100).ok);
+  }
   @Test public void rejectsCompactRunsAndUnconsumedData() {
     TerminalScreenProto.LineData mixed = compactLine("A", new byte[] {1}).toBuilder()
         .addRuns(TerminalScreenProto.CellRun.newBuilder().setCol(0)
@@ -67,5 +78,10 @@ public final class ScreenMessageValidatorTest {
   private static TerminalScreenProto.LineData compactLine(String text, byte[] cellMeta) {
     return TerminalScreenProto.LineData.newBuilder().setLineId(1).setLineVersion(1)
         .setText(text).setCellMeta(ByteString.copyFrom(cellMeta)).build();
+  }
+  private static String repeat(String value, int count) {
+    StringBuilder result = new StringBuilder(value.length() * count);
+    for (int i = 0; i < count; i++) result.append(value);
+    return result.toString();
   }
 }

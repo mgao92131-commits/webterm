@@ -240,16 +240,16 @@ func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrol
 	w := scrollback.Window(snapshotTailLines)
 	if len(w.Lines) == 0 {
 		return terminalengine.HistoryWindow{
-			FirstAvailableLineID: w.FirstID,
-			FirstIncludedLineID:  w.FirstID,
-			LastIncludedLineID:   w.FirstID - 1,
-			HasMoreBefore:        false,
-			Lines:                nil,
+			FirstAvailableHistorySeq: w.FirstSeq,
+			FirstIncludedHistorySeq:  w.FirstSeq,
+			LastIncludedHistorySeq:   w.FirstSeq - 1,
+			HasMoreBefore:            false,
+			Lines:                    nil,
 		}
 	}
 
 	lines := exportHistoryLines(exp, w.Lines)
-	return historyWindowFromLines(lines, w.FirstID)
+	return historyWindowFromLines(lines, w.FirstSeq)
 }
 
 // exportHistoryLines 把不可变历史行批量转换为导出 Line。
@@ -266,7 +266,7 @@ func exportHistoryLines(exp *exporter, lines []terminalengine.HistoryLine) []ter
 
 func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalengine.Line {
 	return terminalengine.Line{
-		ID:         hl.ID,
+		ID:         hl.LineID,
 		Version:    hl.Version,
 		HistorySeq: hl.HistorySeq,
 		Row:        -1,
@@ -279,19 +279,19 @@ func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalen
 func historyWindowFromLines(lines []terminalengine.Line, firstAvailable uint64) terminalengine.HistoryWindow {
 	if len(lines) == 0 {
 		return terminalengine.HistoryWindow{
-			FirstAvailableLineID: firstAvailable,
-			FirstIncludedLineID:  firstAvailable,
-			LastIncludedLineID:   firstAvailable - 1,
-			HasMoreBefore:        false,
-			Lines:                nil,
+			FirstAvailableHistorySeq: firstAvailable,
+			FirstIncludedHistorySeq:  firstAvailable,
+			LastIncludedHistorySeq:   firstAvailable - 1,
+			HasMoreBefore:            false,
+			Lines:                    nil,
 		}
 	}
 	return terminalengine.HistoryWindow{
-		FirstAvailableLineID: firstAvailable,
-		FirstIncludedLineID:  lines[0].HistorySeq,
-		LastIncludedLineID:   lines[len(lines)-1].HistorySeq,
-		HasMoreBefore:        lines[0].HistorySeq > firstAvailable,
-		Lines:                lines,
+		FirstAvailableHistorySeq: firstAvailable,
+		FirstIncludedHistorySeq:  lines[0].HistorySeq,
+		LastIncludedHistorySeq:   lines[len(lines)-1].HistorySeq,
+		HasMoreBefore:            lines[0].HistorySeq > firstAvailable,
+		Lines:                    lines,
 	}
 }
 

@@ -1101,29 +1101,29 @@ func (x *ResumeAck) GetScreenRevision() uint64 {
 }
 
 type ScreenSnapshot struct {
-	state                       protoimpl.MessageState `protogen:"open.v1"`
-	SessionId                   string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	InstanceId                  string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	LayoutEpoch                 uint64                 `protobuf:"varint,3,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
-	ScreenRevision              uint64                 `protobuf:"varint,4,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"`
-	Geometry                    *Size                  `protobuf:"bytes,5,opt,name=geometry,proto3" json:"geometry,omitempty"`
-	ActiveBuffer                BufferKind             `protobuf:"varint,6,opt,name=active_buffer,json=activeBuffer,proto3,enum=webterm.terminal.screen.v1.BufferKind" json:"active_buffer,omitempty"`
-	Layout                      *ScreenLayout          `protobuf:"bytes,7,opt,name=layout,proto3" json:"layout,omitempty"`
-	ScreenLines                 []*LineData            `protobuf:"bytes,8,rep,name=screen_lines,json=screenLines,proto3" json:"screen_lines,omitempty"` // 覆盖 layout 全部引用
-	HistoryTailIds              []uint64               `protobuf:"varint,9,rep,packed,name=history_tail_ids,json=historyTailIds,proto3" json:"history_tail_ids,omitempty"`
-	HistoryTailLines            []*LineData            `protobuf:"bytes,10,rep,name=history_tail_lines,json=historyTailLines,proto3" json:"history_tail_lines,omitempty"`
-	DictionaryGeneration        uint64                 `protobuf:"varint,11,opt,name=dictionary_generation,json=dictionaryGeneration,proto3" json:"dictionary_generation,omitempty"`
-	Styles                      []*TerminalStyle       `protobuf:"bytes,12,rep,name=styles,proto3" json:"styles,omitempty"`
-	Links                       []*Hyperlink           `protobuf:"bytes,13,rep,name=links,proto3" json:"links,omitempty"`
-	Cursor                      *Cursor                `protobuf:"bytes,14,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	Modes                       *Modes                 `protobuf:"bytes,15,opt,name=modes,proto3" json:"modes,omitempty"`
-	Palette                     *TerminalPalette       `protobuf:"bytes,16,opt,name=palette,proto3" json:"palette,omitempty"`
-	Title                       *string                `protobuf:"bytes,17,opt,name=title,proto3,oneof" json:"title,omitempty"`
-	WorkingDirectory            *string                `protobuf:"bytes,18,opt,name=working_directory,json=workingDirectory,proto3,oneof" json:"working_directory,omitempty"`
-	FirstAvailableHistoryLineId uint64                 `protobuf:"varint,19,opt,name=first_available_history_line_id,json=firstAvailableHistoryLineId,proto3" json:"first_available_history_line_id,omitempty"`
-	HasMoreHistoryBefore        bool                   `protobuf:"varint,20,opt,name=has_more_history_before,json=hasMoreHistoryBefore,proto3" json:"has_more_history_before,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	InstanceId               string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	LayoutEpoch              uint64                 `protobuf:"varint,3,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	ScreenRevision           uint64                 `protobuf:"varint,4,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"`
+	Geometry                 *Size                  `protobuf:"bytes,5,opt,name=geometry,proto3" json:"geometry,omitempty"`
+	ActiveBuffer             BufferKind             `protobuf:"varint,6,opt,name=active_buffer,json=activeBuffer,proto3,enum=webterm.terminal.screen.v1.BufferKind" json:"active_buffer,omitempty"`
+	Layout                   *ScreenLayout          `protobuf:"bytes,7,opt,name=layout,proto3" json:"layout,omitempty"`
+	ScreenLines              []*LineData            `protobuf:"bytes,8,rep,name=screen_lines,json=screenLines,proto3" json:"screen_lines,omitempty"` // 覆盖 layout 全部引用
+	HistoryTailSeqs          []uint64               `protobuf:"varint,9,rep,packed,name=history_tail_seqs,json=historyTailSeqs,proto3" json:"history_tail_seqs,omitempty"`
+	HistoryTailLines         []*LineData            `protobuf:"bytes,10,rep,name=history_tail_lines,json=historyTailLines,proto3" json:"history_tail_lines,omitempty"`
+	DictionaryGeneration     uint64                 `protobuf:"varint,11,opt,name=dictionary_generation,json=dictionaryGeneration,proto3" json:"dictionary_generation,omitempty"`
+	Styles                   []*TerminalStyle       `protobuf:"bytes,12,rep,name=styles,proto3" json:"styles,omitempty"`
+	Links                    []*Hyperlink           `protobuf:"bytes,13,rep,name=links,proto3" json:"links,omitempty"`
+	Cursor                   *Cursor                `protobuf:"bytes,14,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	Modes                    *Modes                 `protobuf:"bytes,15,opt,name=modes,proto3" json:"modes,omitempty"`
+	Palette                  *TerminalPalette       `protobuf:"bytes,16,opt,name=palette,proto3" json:"palette,omitempty"`
+	Title                    *string                `protobuf:"bytes,17,opt,name=title,proto3,oneof" json:"title,omitempty"`
+	WorkingDirectory         *string                `protobuf:"bytes,18,opt,name=working_directory,json=workingDirectory,proto3,oneof" json:"working_directory,omitempty"`
+	FirstAvailableHistorySeq uint64                 `protobuf:"varint,19,opt,name=first_available_history_seq,json=firstAvailableHistorySeq,proto3" json:"first_available_history_seq,omitempty"`
+	HasMoreHistoryBefore     bool                   `protobuf:"varint,20,opt,name=has_more_history_before,json=hasMoreHistoryBefore,proto3" json:"has_more_history_before,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ScreenSnapshot) Reset() {
@@ -1212,9 +1212,9 @@ func (x *ScreenSnapshot) GetScreenLines() []*LineData {
 	return nil
 }
 
-func (x *ScreenSnapshot) GetHistoryTailIds() []uint64 {
+func (x *ScreenSnapshot) GetHistoryTailSeqs() []uint64 {
 	if x != nil {
-		return x.HistoryTailIds
+		return x.HistoryTailSeqs
 	}
 	return nil
 }
@@ -1282,9 +1282,9 @@ func (x *ScreenSnapshot) GetWorkingDirectory() string {
 	return ""
 }
 
-func (x *ScreenSnapshot) GetFirstAvailableHistoryLineId() uint64 {
+func (x *ScreenSnapshot) GetFirstAvailableHistorySeq() uint64 {
 	if x != nil {
-		return x.FirstAvailableHistoryLineId
+		return x.FirstAvailableHistorySeq
 	}
 	return 0
 }
@@ -1303,8 +1303,8 @@ type ScreenPatch struct {
 	ScreenRevision       uint64                 `protobuf:"varint,3,opt,name=screen_revision,json=screenRevision,proto3" json:"screen_revision,omitempty"` // 应用后的新 revision
 	Layout               *ScreenLayout          `protobuf:"bytes,5,opt,name=layout,proto3,oneof" json:"layout,omitempty"`
 	LineUpdates          []*LineData            `protobuf:"bytes,6,rep,name=line_updates,json=lineUpdates,proto3" json:"line_updates,omitempty"`
-	HistoryAppendIds     []uint64               `protobuf:"varint,7,rep,packed,name=history_append_ids,json=historyAppendIds,proto3" json:"history_append_ids,omitempty"`
-	HistoryTrimBeforeId  *uint64                `protobuf:"varint,8,opt,name=history_trim_before_id,json=historyTrimBeforeId,proto3,oneof" json:"history_trim_before_id,omitempty"`
+	HistoryAppendSeqs    []uint64               `protobuf:"varint,7,rep,packed,name=history_append_seqs,json=historyAppendSeqs,proto3" json:"history_append_seqs,omitempty"`
+	HistoryTrimBeforeSeq *uint64                `protobuf:"varint,8,opt,name=history_trim_before_seq,json=historyTrimBeforeSeq,proto3,oneof" json:"history_trim_before_seq,omitempty"`
 	DictionaryGeneration uint64                 `protobuf:"varint,9,opt,name=dictionary_generation,json=dictionaryGeneration,proto3" json:"dictionary_generation,omitempty"`
 	NewStyles            []*TerminalStyle       `protobuf:"bytes,10,rep,name=new_styles,json=newStyles,proto3" json:"new_styles,omitempty"`
 	NewLinks             []*Hyperlink           `protobuf:"bytes,11,rep,name=new_links,json=newLinks,proto3" json:"new_links,omitempty"`
@@ -1384,16 +1384,16 @@ func (x *ScreenPatch) GetLineUpdates() []*LineData {
 	return nil
 }
 
-func (x *ScreenPatch) GetHistoryAppendIds() []uint64 {
+func (x *ScreenPatch) GetHistoryAppendSeqs() []uint64 {
 	if x != nil {
-		return x.HistoryAppendIds
+		return x.HistoryAppendSeqs
 	}
 	return nil
 }
 
-func (x *ScreenPatch) GetHistoryTrimBeforeId() uint64 {
-	if x != nil && x.HistoryTrimBeforeId != nil {
-		return *x.HistoryTrimBeforeId
+func (x *ScreenPatch) GetHistoryTrimBeforeSeq() uint64 {
+	if x != nil && x.HistoryTrimBeforeSeq != nil {
+		return *x.HistoryTrimBeforeSeq
 	}
 	return 0
 }
@@ -2496,13 +2496,13 @@ func (x *IndexedPaletteColor) GetRgb() uint32 {
 }
 
 type HistoryRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	LayoutEpoch   uint64                 `protobuf:"varint,2,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
-	BeforeLineId  uint64                 `protobuf:"varint,3,opt,name=before_line_id,json=beforeLineId,proto3" json:"before_line_id,omitempty"` // 请求严格小于此 ID 的行
-	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	RequestId        string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	LayoutEpoch      uint64                 `protobuf:"varint,2,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	BeforeHistorySeq uint64                 `protobuf:"varint,3,opt,name=before_history_seq,json=beforeHistorySeq,proto3" json:"before_history_seq,omitempty"` // 请求严格小于此 HistorySeq 的行
+	Limit            int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *HistoryRequest) Reset() {
@@ -2549,9 +2549,9 @@ func (x *HistoryRequest) GetLayoutEpoch() uint64 {
 	return 0
 }
 
-func (x *HistoryRequest) GetBeforeLineId() uint64 {
+func (x *HistoryRequest) GetBeforeHistorySeq() uint64 {
 	if x != nil {
-		return x.BeforeLineId
+		return x.BeforeHistorySeq
 	}
 	return 0
 }
@@ -2564,17 +2564,17 @@ func (x *HistoryRequest) GetLimit() int32 {
 }
 
 type HistoryPage struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	RequestId            string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	LayoutEpoch          uint64                 `protobuf:"varint,2,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
-	AsOfRevision         uint64                 `protobuf:"varint,3,opt,name=as_of_revision,json=asOfRevision,proto3" json:"as_of_revision,omitempty"`
-	FirstAvailableLineId uint64                 `protobuf:"varint,4,opt,name=first_available_line_id,json=firstAvailableLineId,proto3" json:"first_available_line_id,omitempty"`
-	HasMoreBefore        bool                   `protobuf:"varint,5,opt,name=has_more_before,json=hasMoreBefore,proto3" json:"has_more_before,omitempty"`
-	Lines                []*LineData            `protobuf:"bytes,6,rep,name=lines,proto3" json:"lines,omitempty"` // 按 line_id 严格升序，允许 ID 缺口
-	Styles               []*TerminalStyle       `protobuf:"bytes,7,rep,name=styles,proto3" json:"styles,omitempty"`
-	Links                []*Hyperlink           `protobuf:"bytes,8,rep,name=links,proto3" json:"links,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	RequestId                string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	LayoutEpoch              uint64                 `protobuf:"varint,2,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	AsOfRevision             uint64                 `protobuf:"varint,3,opt,name=as_of_revision,json=asOfRevision,proto3" json:"as_of_revision,omitempty"`
+	FirstAvailableHistorySeq uint64                 `protobuf:"varint,4,opt,name=first_available_history_seq,json=firstAvailableHistorySeq,proto3" json:"first_available_history_seq,omitempty"`
+	HasMoreBefore            bool                   `protobuf:"varint,5,opt,name=has_more_before,json=hasMoreBefore,proto3" json:"has_more_before,omitempty"`
+	Lines                    []*LineData            `protobuf:"bytes,6,rep,name=lines,proto3" json:"lines,omitempty"` // 按 history_seq 严格升序；LineID 可有缺口
+	Styles                   []*TerminalStyle       `protobuf:"bytes,7,rep,name=styles,proto3" json:"styles,omitempty"`
+	Links                    []*Hyperlink           `protobuf:"bytes,8,rep,name=links,proto3" json:"links,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *HistoryPage) Reset() {
@@ -2628,9 +2628,9 @@ func (x *HistoryPage) GetAsOfRevision() uint64 {
 	return 0
 }
 
-func (x *HistoryPage) GetFirstAvailableLineId() uint64 {
+func (x *HistoryPage) GetFirstAvailableHistorySeq() uint64 {
 	if x != nil {
-		return x.FirstAvailableLineId
+		return x.FirstAvailableHistorySeq
 	}
 	return 0
 }
@@ -2664,11 +2664,11 @@ func (x *HistoryPage) GetLinks() []*Hyperlink {
 }
 
 type HistoryTrim struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	LayoutEpoch          uint64                 `protobuf:"varint,1,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
-	FirstAvailableLineId uint64                 `protobuf:"varint,2,opt,name=first_available_line_id,json=firstAvailableLineId,proto3" json:"first_available_line_id,omitempty"` // 所有小于此 ID 的本地缓存应删除
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	LayoutEpoch              uint64                 `protobuf:"varint,1,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	FirstAvailableHistorySeq uint64                 `protobuf:"varint,2,opt,name=first_available_history_seq,json=firstAvailableHistorySeq,proto3" json:"first_available_history_seq,omitempty"` // 所有小于此 HistorySeq 的本地缓存应删除
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *HistoryTrim) Reset() {
@@ -2708,9 +2708,9 @@ func (x *HistoryTrim) GetLayoutEpoch() uint64 {
 	return 0
 }
 
-func (x *HistoryTrim) GetFirstAvailableLineId() uint64 {
+func (x *HistoryTrim) GetFirstAvailableHistorySeq() uint64 {
 	if x != nil {
-		return x.FirstAvailableLineId
+		return x.FirstAvailableHistorySeq
 	}
 	return 0
 }
@@ -4449,7 +4449,7 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12!\n" +
 	"\flayout_epoch\x18\x02 \x01(\x04R\vlayoutEpoch\x12'\n" +
-	"\x0fscreen_revision\x18\x03 \x01(\x04R\x0escreenRevision\"\x8b\t\n" +
+	"\x0fscreen_revision\x18\x03 \x01(\x04R\x0escreenRevision\"\x86\t\n" +
 	"\x0eScreenSnapshot\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
@@ -4460,8 +4460,8 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\bgeometry\x18\x05 \x01(\v2 .webterm.terminal.screen.v1.SizeR\bgeometry\x12K\n" +
 	"\ractive_buffer\x18\x06 \x01(\x0e2&.webterm.terminal.screen.v1.BufferKindR\factiveBuffer\x12@\n" +
 	"\x06layout\x18\a \x01(\v2(.webterm.terminal.screen.v1.ScreenLayoutR\x06layout\x12G\n" +
-	"\fscreen_lines\x18\b \x03(\v2$.webterm.terminal.screen.v1.LineDataR\vscreenLines\x12(\n" +
-	"\x10history_tail_ids\x18\t \x03(\x04R\x0ehistoryTailIds\x12R\n" +
+	"\fscreen_lines\x18\b \x03(\v2$.webterm.terminal.screen.v1.LineDataR\vscreenLines\x12*\n" +
+	"\x11history_tail_seqs\x18\t \x03(\x04R\x0fhistoryTailSeqs\x12R\n" +
 	"\x12history_tail_lines\x18\n" +
 	" \x03(\v2$.webterm.terminal.screen.v1.LineDataR\x10historyTailLines\x123\n" +
 	"\x15dictionary_generation\x18\v \x01(\x04R\x14dictionaryGeneration\x12A\n" +
@@ -4471,19 +4471,19 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x05modes\x18\x0f \x01(\v2!.webterm.terminal.screen.v1.ModesR\x05modes\x12E\n" +
 	"\apalette\x18\x10 \x01(\v2+.webterm.terminal.screen.v1.TerminalPaletteR\apalette\x12\x19\n" +
 	"\x05title\x18\x11 \x01(\tH\x00R\x05title\x88\x01\x01\x120\n" +
-	"\x11working_directory\x18\x12 \x01(\tH\x01R\x10workingDirectory\x88\x01\x01\x12D\n" +
-	"\x1ffirst_available_history_line_id\x18\x13 \x01(\x04R\x1bfirstAvailableHistoryLineId\x125\n" +
+	"\x11working_directory\x18\x12 \x01(\tH\x01R\x10workingDirectory\x88\x01\x01\x12=\n" +
+	"\x1bfirst_available_history_seq\x18\x13 \x01(\x04R\x18firstAvailableHistorySeq\x125\n" +
 	"\x17has_more_history_before\x18\x14 \x01(\bR\x14hasMoreHistoryBeforeB\b\n" +
 	"\x06_titleB\x14\n" +
-	"\x12_working_directory\"\xbd\b\n" +
+	"\x12_working_directory\"\xc2\b\n" +
 	"\vScreenPatch\x12!\n" +
 	"\flayout_epoch\x18\x01 \x01(\x04R\vlayoutEpoch\x12#\n" +
 	"\rbase_revision\x18\x02 \x01(\x04R\fbaseRevision\x12'\n" +
 	"\x0fscreen_revision\x18\x03 \x01(\x04R\x0escreenRevision\x12E\n" +
 	"\x06layout\x18\x05 \x01(\v2(.webterm.terminal.screen.v1.ScreenLayoutH\x00R\x06layout\x88\x01\x01\x12G\n" +
-	"\fline_updates\x18\x06 \x03(\v2$.webterm.terminal.screen.v1.LineDataR\vlineUpdates\x12,\n" +
-	"\x12history_append_ids\x18\a \x03(\x04R\x10historyAppendIds\x128\n" +
-	"\x16history_trim_before_id\x18\b \x01(\x04H\x01R\x13historyTrimBeforeId\x88\x01\x01\x123\n" +
+	"\fline_updates\x18\x06 \x03(\v2$.webterm.terminal.screen.v1.LineDataR\vlineUpdates\x12.\n" +
+	"\x13history_append_seqs\x18\a \x03(\x04R\x11historyAppendSeqs\x12:\n" +
+	"\x17history_trim_before_seq\x18\b \x01(\x04H\x01R\x14historyTrimBeforeSeq\x88\x01\x01\x123\n" +
 	"\x15dictionary_generation\x18\t \x01(\x04R\x14dictionaryGeneration\x12H\n" +
 	"\n" +
 	"new_styles\x18\n" +
@@ -4497,8 +4497,8 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x11working_directory\x18\x11 \x01(\tH\aR\x10workingDirectory\x88\x01\x01\x12\x1f\n" +
 	"\vinstance_id\x18\x12 \x01(\tR\n" +
 	"instanceIdB\t\n" +
-	"\a_layoutB\x19\n" +
-	"\x17_history_trim_before_idB\t\n" +
+	"\a_layoutB\x1a\n" +
+	"\x18_history_trim_before_seqB\t\n" +
 	"\a_cursorB\b\n" +
 	"\x06_modesB\n" +
 	"\n" +
@@ -4592,26 +4592,26 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"generation\"=\n" +
 	"\x13IndexedPaletteColor\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x10\n" +
-	"\x03rgb\x18\x02 \x01(\rR\x03rgb\"\x8e\x01\n" +
+	"\x03rgb\x18\x02 \x01(\rR\x03rgb\"\x96\x01\n" +
 	"\x0eHistoryRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
-	"\flayout_epoch\x18\x02 \x01(\x04R\vlayoutEpoch\x12$\n" +
-	"\x0ebefore_line_id\x18\x03 \x01(\x04R\fbeforeLineId\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\x90\x03\n" +
+	"\flayout_epoch\x18\x02 \x01(\x04R\vlayoutEpoch\x12,\n" +
+	"\x12before_history_seq\x18\x03 \x01(\x04R\x10beforeHistorySeq\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\x98\x03\n" +
 	"\vHistoryPage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
 	"\flayout_epoch\x18\x02 \x01(\x04R\vlayoutEpoch\x12$\n" +
-	"\x0eas_of_revision\x18\x03 \x01(\x04R\fasOfRevision\x125\n" +
-	"\x17first_available_line_id\x18\x04 \x01(\x04R\x14firstAvailableLineId\x12&\n" +
+	"\x0eas_of_revision\x18\x03 \x01(\x04R\fasOfRevision\x12=\n" +
+	"\x1bfirst_available_history_seq\x18\x04 \x01(\x04R\x18firstAvailableHistorySeq\x12&\n" +
 	"\x0fhas_more_before\x18\x05 \x01(\bR\rhasMoreBefore\x12:\n" +
 	"\x05lines\x18\x06 \x03(\v2$.webterm.terminal.screen.v1.LineDataR\x05lines\x12A\n" +
 	"\x06styles\x18\a \x03(\v2).webterm.terminal.screen.v1.TerminalStyleR\x06styles\x12;\n" +
-	"\x05links\x18\b \x03(\v2%.webterm.terminal.screen.v1.HyperlinkR\x05links\"g\n" +
+	"\x05links\x18\b \x03(\v2%.webterm.terminal.screen.v1.HyperlinkR\x05links\"o\n" +
 	"\vHistoryTrim\x12!\n" +
-	"\flayout_epoch\x18\x01 \x01(\x04R\vlayoutEpoch\x125\n" +
-	"\x17first_available_line_id\x18\x02 \x01(\x04R\x14firstAvailableLineId\"s\n" +
+	"\flayout_epoch\x18\x01 \x01(\x04R\vlayoutEpoch\x12=\n" +
+	"\x1bfirst_available_history_seq\x18\x02 \x01(\x04R\x18firstAvailableHistorySeq\"s\n" +
 	"\rResyncRequest\x12!\n" +
 	"\flayout_epoch\x18\x01 \x01(\x04R\vlayoutEpoch\x12'\n" +
 	"\x0fscreen_revision\x18\x02 \x01(\x04R\x0escreenRevision\x12\x16\n" +

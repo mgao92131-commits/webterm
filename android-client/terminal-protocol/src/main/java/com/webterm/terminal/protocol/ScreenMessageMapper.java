@@ -29,7 +29,7 @@ public final class ScreenMessageMapper {
         throw new IllegalArgumentException("invalid snapshot history sequence");
       }
     }
-    for (long seq : pb.getHistoryTailIdsList()) {
+    for (long seq : pb.getHistoryTailSeqsList()) {
       TerminalLine line = history.get(seq);
       if (line == null) throw new IllegalArgumentException("snapshot history line data missing: " + seq);
       historyLines.add(line);
@@ -45,7 +45,7 @@ public final class ScreenMessageMapper {
         mapCursor(pb.getCursor()),
         mapModes(pb.getModes()),
         mapPalette(pb.getPalette()),
-        new HistoryWindow(pb.getFirstAvailableHistoryLineId(),
+        new HistoryWindow(pb.getFirstAvailableHistorySeq(),
             historyLines.isEmpty() ? 0 : historyLines.get(0).historyOrder(),
             historyLines.isEmpty() ? 0 : historyLines.get(historyLines.size() - 1).historyOrder(),
             pb.getHasMoreHistoryBefore(), historyLines),
@@ -68,7 +68,7 @@ public final class ScreenMessageMapper {
   public static ScreenPatch mapPatch(TerminalScreenProto.ScreenPatch pb, int columns) {
     List<TerminalLine> updates = new ArrayList<>(mapLines(pb.getLineUpdatesList(), columns).values());
     List<Long> historyAppend = new ArrayList<>();
-    for (long id : pb.getHistoryAppendIdsList()) historyAppend.add(id);
+    for (long id : pb.getHistoryAppendSeqsList()) historyAppend.add(id);
     long[] layout = null;
     if (pb.hasLayout()) { layout = new long[pb.getLayout().getLineIdsCount()]; for (int i = 0; i < layout.length; i++) layout[i] = pb.getLayout().getLineIds(i); }
     // title/working_directory 是 proto3 optional，按 presence 区分三态：
@@ -88,7 +88,7 @@ public final class ScreenMessageMapper {
         mapLinks(pb.getNewLinksList()),
         pb.hasTitle() ? pb.getTitle() : null,
         pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : null,
-        pb.hasHistoryTrimBeforeId() ? pb.getHistoryTrimBeforeId() : null
+        pb.hasHistoryTrimBeforeSeq() ? pb.getHistoryTrimBeforeSeq() : null
     );
   }
 
@@ -106,7 +106,7 @@ public final class ScreenMessageMapper {
         pb.getRequestId(),
         pb.getLayoutEpoch(),
         pb.getAsOfRevision(),
-        pb.getFirstAvailableLineId(),
+        pb.getFirstAvailableHistorySeq(),
         pb.getHasMoreBefore(),
         lines,
         mapStyles(pb.getStylesList()),

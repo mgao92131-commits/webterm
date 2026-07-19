@@ -41,15 +41,15 @@ public final class TerminalHistory {
   }
 
   /** 缓存最旧 HistorySeq；空缓存返回 -1。 */
-  public long firstLineId() {
+  public long firstSeq() {
     if (chunks.isEmpty()) return -1;
-    return chunks.get(0).firstId();
+    return chunks.get(0).firstSeq();
   }
 
   /** 缓存最新 HistorySeq；空缓存返回 -1。 */
-  public long lastLineId() {
+  public long lastSeq() {
     if (chunks.isEmpty()) return -1;
-    return chunks.get(chunks.size() - 1).lastId();
+    return chunks.get(chunks.size() - 1).lastSeq();
   }
 
   /** 按历史索引（0=最旧）O(chunk count) 取行。 */
@@ -70,18 +70,18 @@ public final class TerminalHistory {
    *
    * @return 索引（0=最旧），不存在返回 -1。
    */
-  public int findLineIndex(long lineId) {
+  public int findSeqIndex(long seq) {
     int lo = 0;
     int hi = chunks.size() - 1;
     while (lo <= hi) {
       int mid = (lo + hi) >>> 1;
       HistoryChunk chunk = chunks.get(mid);
-      if (lineId < chunk.firstId()) {
+      if (seq < chunk.firstSeq()) {
         hi = mid - 1;
-      } else if (lineId > chunk.lastId()) {
+      } else if (seq > chunk.lastSeq()) {
         lo = mid + 1;
       } else {
-        int local = chunk.findLocalIndex(lineId);
+        int local = chunk.findLocalIndex(seq);
         return local >= 0 ? local + sizeBefore(mid) : -1;
       }
     }
@@ -115,11 +115,11 @@ public final class TerminalHistory {
   }
 
   /**
-   * 插入或替换一行。若 line id 已存在则原地替换（id 不变），否则追加到尾部。
-   * 替换只应在同 id 内容更新时使用，以保持 LineID 升序不变。
+   * 插入或替换一行。若 HistorySeq 已存在则原地替换，否则追加到尾部。
+   * 替换只应在同一 HistorySeq 内容更新时使用，以保持历史顺序不变。
    */
   public boolean put(TerminalLine line) {
-    int index = findLineIndex(line.historyOrder());
+    int index = findSeqIndex(line.historyOrder());
     if (index >= 0) {
       replaceAt(index, line);
       return false;
@@ -136,7 +136,7 @@ public final class TerminalHistory {
   }
 
   /**
-   * 在头部 prepend 一页。lines 必须按 lineId 升序，且全部 id 小于当前 {@link #firstLineId()}。
+   * 在头部 prepend 一页。lines 必须按 HistorySeq 升序，且全部序号小于当前 {@link #firstSeq()}。
    * O(lines + chunks) 用于复制引用。
    */
   public void prepend(List<TerminalLine> lines) {
@@ -149,14 +149,14 @@ public final class TerminalHistory {
     }
   }
 
-  /** 删除所有 HistorySeq 小于 firstAvailableLineId 的行。O(chunks)。 */
-  public void trimHeadUntil(long firstAvailableLineId) {
-    while (!chunks.isEmpty() && chunks.get(0).lastId() < firstAvailableLineId) {
+  /** 删除所有 HistorySeq 小于 firstAvailableHistorySeq 的行。O(chunks)。 */
+  public void trimHeadUntil(long firstAvailableHistorySeq) {
+    while (!chunks.isEmpty() && chunks.get(0).lastSeq() < firstAvailableHistorySeq) {
       removeFirstChunk();
     }
-    if (!chunks.isEmpty() && chunks.get(0).firstId() < firstAvailableLineId) {
+    if (!chunks.isEmpty() && chunks.get(0).firstSeq() < firstAvailableHistorySeq) {
       HistoryChunk first = chunks.get(0);
-      int local = first.findLocalIndex(firstAvailableLineId);
+      int local = first.findLocalIndex(firstAvailableHistorySeq);
       if (local < 0) local = 0;
       removeFirstLines(first, local);
     }
@@ -178,18 +178,18 @@ public final class TerminalHistory {
   }
 
   /**
-   * Prepend 后从较新端驱逐，保护 anchorLineId 不被删除。
-   * 驱逐顺序：先删 id > anchorLineId 的行，再删 id < anchorLineId 的行；
+   * Prepend 后从较新端驱逐，保护 anchorSeq 不被删除。
+   * 驱逐顺序：先删 HistorySeq > anchorSeq 的行，再删 HistorySeq < anchorSeq 的行；
    * anchor 本身永不驱逐。每次只删一行，确保缓存量平滑下降到目标附近。
    */
-  public void trimTailToBudget(int targetLines, long targetBytes, long anchorLineId) {
+  public void trimTailToBudget(int targetLines, long targetBytes, long anchorSeq) {
     while (size > 1 && (size > targetLines || estimatedBytes > targetBytes)) {
       HistoryChunk last = chunks.get(chunks.size() - 1);
-      if (last.lastId() > anchorLineId) {
+      if (last.lastSeq() > anchorSeq) {
         // last chunk 仍包含比 anchor 新的行，从尾部逐行删除。
         removeLastLines(last, 1);
-      } else if (canEvictHeadLine(anchorLineId)) {
-        evictHeadLine(anchorLineId);
+      } else if (canEvictHeadLine(anchorSeq)) {
+        evictHeadLine(anchorSeq);
       } else {
         break;
       }
@@ -205,11 +205,11 @@ public final class TerminalHistory {
         new ArrayList<>(chunks),
         chunkStartIndices(),
         size,
-        chunks.get(0).firstId(),
-        chunks.get(chunks.size() - 1).lastId());
+        chunks.get(0).firstSeq(),
+        chunks.get(chunks.size() - 1).lastSeq());
   }
 
-  /** 测试/过渡用：按 id 升序导出为 map。 */
+  /** 测试/过渡用：按 HistorySeq 升序导出为 map。 */
   NavigableMap<Long, TerminalLine> asMap() {
     NavigableMap<Long, TerminalLine> map = new TreeMap<>();
     for (HistoryChunk chunk : chunks) {
@@ -297,22 +297,22 @@ public final class TerminalHistory {
   }
 
   /** 判断是否能从头部（更旧端）删除一行而不触及 anchor。 */
-  private boolean canEvictHeadLine(long anchorLineId) {
+  private boolean canEvictHeadLine(long anchorSeq) {
     if (size <= 1) return false;
     HistoryChunk first = chunks.get(0);
-    long firstLastId = first.lastId();
-    if (firstLastId < anchorLineId) return true;
-    if (firstLastId == anchorLineId && first.firstId() < anchorLineId) {
-      int anchorLocal = first.findLocalIndex(anchorLineId);
+    long firstLastSeq = first.lastSeq();
+    if (firstLastSeq < anchorSeq) return true;
+    if (firstLastSeq == anchorSeq && first.firstSeq() < anchorSeq) {
+      int anchorLocal = first.findLocalIndex(anchorSeq);
       return anchorLocal > 0;
     }
     return false;
   }
 
   /** 从头部删除一行，保证 anchor 不被删除。 */
-  private void evictHeadLine(long anchorLineId) {
+  private void evictHeadLine(long anchorSeq) {
     HistoryChunk first = chunks.get(0);
-    if (first.lastId() < anchorLineId) {
+    if (first.lastSeq() < anchorSeq) {
       removeFirstLines(first, 1);
     } else {
       // anchor is inside first chunk and not the first line
@@ -357,11 +357,11 @@ public final class TerminalHistory {
       this.estimatedBytes = estimatedBytes;
     }
 
-    long firstId() {
+    long firstSeq() {
       return lines[offset].historyOrder();
     }
 
-    long lastId() {
+    long lastSeq() {
       return lines[offset + size - 1].historyOrder();
     }
 
@@ -369,14 +369,14 @@ public final class TerminalHistory {
       return lines[offset + localIndex];
     }
 
-    int findLocalIndex(long lineId) {
+    int findLocalIndex(long seq) {
       int lo = offset;
       int hi = offset + size - 1;
       while (lo <= hi) {
         int mid = (lo + hi) >>> 1;
-        long midId = lines[mid].historyOrder();
-        if (midId == lineId) return mid - offset;
-        if (midId < lineId) lo = mid + 1;
+        long midSeq = lines[mid].historyOrder();
+        if (midSeq == seq) return mid - offset;
+        if (midSeq < seq) lo = mid + 1;
         else hi = mid - 1;
       }
       return -1;

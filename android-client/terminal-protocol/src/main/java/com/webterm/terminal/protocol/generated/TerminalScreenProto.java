@@ -9835,21 +9835,21 @@ public final class TerminalScreenProto {
         int index);
 
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
-     * @return A list containing the historyTailIds.
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
+     * @return A list containing the historyTailSeqs.
      */
-    java.util.List<java.lang.Long> getHistoryTailIdsList();
+    java.util.List<java.lang.Long> getHistoryTailSeqsList();
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
-     * @return The count of historyTailIds.
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
+     * @return The count of historyTailSeqs.
      */
-    int getHistoryTailIdsCount();
+    int getHistoryTailSeqsCount();
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
      * @param index The index of the element to return.
-     * @return The historyTailIds at the given index.
+     * @return The historyTailSeqs at the given index.
      */
-    long getHistoryTailIds(int index);
+    long getHistoryTailSeqs(int index);
 
     /**
      * <code>repeated .webterm.terminal.screen.v1.LineData history_tail_lines = 10;</code>
@@ -10009,10 +10009,10 @@ public final class TerminalScreenProto {
         getWorkingDirectoryBytes();
 
     /**
-     * <code>uint64 first_available_history_line_id = 19;</code>
-     * @return The firstAvailableHistoryLineId.
+     * <code>uint64 first_available_history_seq = 19;</code>
+     * @return The firstAvailableHistorySeq.
      */
-    long getFirstAvailableHistoryLineId();
+    long getFirstAvailableHistorySeq();
 
     /**
      * <code>bool has_more_history_before = 20;</code>
@@ -10046,7 +10046,7 @@ public final class TerminalScreenProto {
       instanceId_ = "";
       activeBuffer_ = 0;
       screenLines_ = java.util.Collections.emptyList();
-      historyTailIds_ = emptyLongList();
+      historyTailSeqs_ = emptyLongList();
       historyTailLines_ = java.util.Collections.emptyList();
       styles_ = java.util.Collections.emptyList();
       links_ = java.util.Collections.emptyList();
@@ -10299,35 +10299,35 @@ public final class TerminalScreenProto {
       return screenLines_.get(index);
     }
 
-    public static final int HISTORY_TAIL_IDS_FIELD_NUMBER = 9;
+    public static final int HISTORY_TAIL_SEQS_FIELD_NUMBER = 9;
     @SuppressWarnings("serial")
-    private com.google.protobuf.Internal.LongList historyTailIds_ =
+    private com.google.protobuf.Internal.LongList historyTailSeqs_ =
         emptyLongList();
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
-     * @return A list containing the historyTailIds.
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
+     * @return A list containing the historyTailSeqs.
      */
     @java.lang.Override
     public java.util.List<java.lang.Long>
-        getHistoryTailIdsList() {
-      return historyTailIds_;
+        getHistoryTailSeqsList() {
+      return historyTailSeqs_;
     }
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
-     * @return The count of historyTailIds.
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
+     * @return The count of historyTailSeqs.
      */
-    public int getHistoryTailIdsCount() {
-      return historyTailIds_.size();
+    public int getHistoryTailSeqsCount() {
+      return historyTailSeqs_.size();
     }
     /**
-     * <code>repeated uint64 history_tail_ids = 9;</code>
+     * <code>repeated uint64 history_tail_seqs = 9;</code>
      * @param index The index of the element to return.
-     * @return The historyTailIds at the given index.
+     * @return The historyTailSeqs at the given index.
      */
-    public long getHistoryTailIds(int index) {
-      return historyTailIds_.getLong(index);
+    public long getHistoryTailSeqs(int index) {
+      return historyTailSeqs_.getLong(index);
     }
-    private int historyTailIdsMemoizedSerializedSize = -1;
+    private int historyTailSeqsMemoizedSerializedSize = -1;
 
     public static final int HISTORY_TAIL_LINES_FIELD_NUMBER = 10;
     @SuppressWarnings("serial")
@@ -10635,15 +10635,15 @@ public final class TerminalScreenProto {
       }
     }
 
-    public static final int FIRST_AVAILABLE_HISTORY_LINE_ID_FIELD_NUMBER = 19;
-    private long firstAvailableHistoryLineId_ = 0L;
+    public static final int FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER = 19;
+    private long firstAvailableHistorySeq_ = 0L;
     /**
-     * <code>uint64 first_available_history_line_id = 19;</code>
-     * @return The firstAvailableHistoryLineId.
+     * <code>uint64 first_available_history_seq = 19;</code>
+     * @return The firstAvailableHistorySeq.
      */
     @java.lang.Override
-    public long getFirstAvailableHistoryLineId() {
-      return firstAvailableHistoryLineId_;
+    public long getFirstAvailableHistorySeq() {
+      return firstAvailableHistorySeq_;
     }
 
     public static final int HAS_MORE_HISTORY_BEFORE_FIELD_NUMBER = 20;
@@ -10696,12 +10696,12 @@ public final class TerminalScreenProto {
       for (int i = 0; i < screenLines_.size(); i++) {
         output.writeMessage(8, screenLines_.get(i));
       }
-      if (getHistoryTailIdsList().size() > 0) {
+      if (getHistoryTailSeqsList().size() > 0) {
         output.writeUInt32NoTag(74);
-        output.writeUInt32NoTag(historyTailIdsMemoizedSerializedSize);
+        output.writeUInt32NoTag(historyTailSeqsMemoizedSerializedSize);
       }
-      for (int i = 0; i < historyTailIds_.size(); i++) {
-        output.writeUInt64NoTag(historyTailIds_.getLong(i));
+      for (int i = 0; i < historyTailSeqs_.size(); i++) {
+        output.writeUInt64NoTag(historyTailSeqs_.getLong(i));
       }
       for (int i = 0; i < historyTailLines_.size(); i++) {
         output.writeMessage(10, historyTailLines_.get(i));
@@ -10730,8 +10730,8 @@ public final class TerminalScreenProto {
       if (((bitField0_ & 0x00000040) != 0)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 18, workingDirectory_);
       }
-      if (firstAvailableHistoryLineId_ != 0L) {
-        output.writeUInt64(19, firstAvailableHistoryLineId_);
+      if (firstAvailableHistorySeq_ != 0L) {
+        output.writeUInt64(19, firstAvailableHistorySeq_);
       }
       if (hasMoreHistoryBefore_ != false) {
         output.writeBool(20, hasMoreHistoryBefore_);
@@ -10777,17 +10777,17 @@ public final class TerminalScreenProto {
       }
       {
         int dataSize = 0;
-        for (int i = 0; i < historyTailIds_.size(); i++) {
+        for (int i = 0; i < historyTailSeqs_.size(); i++) {
           dataSize += com.google.protobuf.CodedOutputStream
-            .computeUInt64SizeNoTag(historyTailIds_.getLong(i));
+            .computeUInt64SizeNoTag(historyTailSeqs_.getLong(i));
         }
         size += dataSize;
-        if (!getHistoryTailIdsList().isEmpty()) {
+        if (!getHistoryTailSeqsList().isEmpty()) {
           size += 1;
           size += com.google.protobuf.CodedOutputStream
               .computeInt32SizeNoTag(dataSize);
         }
-        historyTailIdsMemoizedSerializedSize = dataSize;
+        historyTailSeqsMemoizedSerializedSize = dataSize;
       }
       for (int i = 0; i < historyTailLines_.size(); i++) {
         size += com.google.protobuf.CodedOutputStream
@@ -10823,9 +10823,9 @@ public final class TerminalScreenProto {
       if (((bitField0_ & 0x00000040) != 0)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(18, workingDirectory_);
       }
-      if (firstAvailableHistoryLineId_ != 0L) {
+      if (firstAvailableHistorySeq_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(19, firstAvailableHistoryLineId_);
+          .computeUInt64Size(19, firstAvailableHistorySeq_);
       }
       if (hasMoreHistoryBefore_ != false) {
         size += com.google.protobuf.CodedOutputStream
@@ -10867,8 +10867,8 @@ public final class TerminalScreenProto {
       }
       if (!getScreenLinesList()
           .equals(other.getScreenLinesList())) return false;
-      if (!getHistoryTailIdsList()
-          .equals(other.getHistoryTailIdsList())) return false;
+      if (!getHistoryTailSeqsList()
+          .equals(other.getHistoryTailSeqsList())) return false;
       if (!getHistoryTailLinesList()
           .equals(other.getHistoryTailLinesList())) return false;
       if (getDictionaryGeneration()
@@ -10902,8 +10902,8 @@ public final class TerminalScreenProto {
         if (!getWorkingDirectory()
             .equals(other.getWorkingDirectory())) return false;
       }
-      if (getFirstAvailableHistoryLineId()
-          != other.getFirstAvailableHistoryLineId()) return false;
+      if (getFirstAvailableHistorySeq()
+          != other.getFirstAvailableHistorySeq()) return false;
       if (getHasMoreHistoryBefore()
           != other.getHasMoreHistoryBefore()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
@@ -10941,9 +10941,9 @@ public final class TerminalScreenProto {
         hash = (37 * hash) + SCREEN_LINES_FIELD_NUMBER;
         hash = (53 * hash) + getScreenLinesList().hashCode();
       }
-      if (getHistoryTailIdsCount() > 0) {
-        hash = (37 * hash) + HISTORY_TAIL_IDS_FIELD_NUMBER;
-        hash = (53 * hash) + getHistoryTailIdsList().hashCode();
+      if (getHistoryTailSeqsCount() > 0) {
+        hash = (37 * hash) + HISTORY_TAIL_SEQS_FIELD_NUMBER;
+        hash = (53 * hash) + getHistoryTailSeqsList().hashCode();
       }
       if (getHistoryTailLinesCount() > 0) {
         hash = (37 * hash) + HISTORY_TAIL_LINES_FIELD_NUMBER;
@@ -10980,9 +10980,9 @@ public final class TerminalScreenProto {
         hash = (37 * hash) + WORKING_DIRECTORY_FIELD_NUMBER;
         hash = (53 * hash) + getWorkingDirectory().hashCode();
       }
-      hash = (37 * hash) + FIRST_AVAILABLE_HISTORY_LINE_ID_FIELD_NUMBER;
+      hash = (37 * hash) + FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getFirstAvailableHistoryLineId());
+          getFirstAvailableHistorySeq());
       hash = (37 * hash) + HAS_MORE_HISTORY_BEFORE_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
           getHasMoreHistoryBefore());
@@ -11153,7 +11153,7 @@ public final class TerminalScreenProto {
           screenLinesBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000080);
-        historyTailIds_ = emptyLongList();
+        historyTailSeqs_ = emptyLongList();
         if (historyTailLinesBuilder_ == null) {
           historyTailLines_ = java.util.Collections.emptyList();
         } else {
@@ -11193,7 +11193,7 @@ public final class TerminalScreenProto {
         }
         title_ = "";
         workingDirectory_ = "";
-        firstAvailableHistoryLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         hasMoreHistoryBefore_ = false;
         return this;
       }
@@ -11297,8 +11297,8 @@ public final class TerminalScreenProto {
           to_bitField0_ |= 0x00000002;
         }
         if (((from_bitField0_ & 0x00000100) != 0)) {
-          historyTailIds_.makeImmutable();
-          result.historyTailIds_ = historyTailIds_;
+          historyTailSeqs_.makeImmutable();
+          result.historyTailSeqs_ = historyTailSeqs_;
         }
         if (((from_bitField0_ & 0x00000400) != 0)) {
           result.dictionaryGeneration_ = dictionaryGeneration_;
@@ -11330,7 +11330,7 @@ public final class TerminalScreenProto {
           to_bitField0_ |= 0x00000040;
         }
         if (((from_bitField0_ & 0x00040000) != 0)) {
-          result.firstAvailableHistoryLineId_ = firstAvailableHistoryLineId_;
+          result.firstAvailableHistorySeq_ = firstAvailableHistorySeq_;
         }
         if (((from_bitField0_ & 0x00080000) != 0)) {
           result.hasMoreHistoryBefore_ = hasMoreHistoryBefore_;
@@ -11401,14 +11401,14 @@ public final class TerminalScreenProto {
             }
           }
         }
-        if (!other.historyTailIds_.isEmpty()) {
-          if (historyTailIds_.isEmpty()) {
-            historyTailIds_ = other.historyTailIds_;
-            historyTailIds_.makeImmutable();
+        if (!other.historyTailSeqs_.isEmpty()) {
+          if (historyTailSeqs_.isEmpty()) {
+            historyTailSeqs_ = other.historyTailSeqs_;
+            historyTailSeqs_.makeImmutable();
             bitField0_ |= 0x00000100;
           } else {
-            ensureHistoryTailIdsIsMutable();
-            historyTailIds_.addAll(other.historyTailIds_);
+            ensureHistoryTailSeqsIsMutable();
+            historyTailSeqs_.addAll(other.historyTailSeqs_);
           }
           onChanged();
         }
@@ -11512,8 +11512,8 @@ public final class TerminalScreenProto {
           bitField0_ |= 0x00020000;
           onChanged();
         }
-        if (other.getFirstAvailableHistoryLineId() != 0L) {
-          setFirstAvailableHistoryLineId(other.getFirstAvailableHistoryLineId());
+        if (other.getFirstAvailableHistorySeq() != 0L) {
+          setFirstAvailableHistorySeq(other.getFirstAvailableHistorySeq());
         }
         if (other.getHasMoreHistoryBefore() != false) {
           setHasMoreHistoryBefore(other.getHasMoreHistoryBefore());
@@ -11598,16 +11598,16 @@ public final class TerminalScreenProto {
               } // case 66
               case 72: {
                 long v = input.readUInt64();
-                ensureHistoryTailIdsIsMutable();
-                historyTailIds_.addLong(v);
+                ensureHistoryTailSeqsIsMutable();
+                historyTailSeqs_.addLong(v);
                 break;
               } // case 72
               case 74: {
                 int length = input.readRawVarint32();
                 int limit = input.pushLimit(length);
-                ensureHistoryTailIdsIsMutable();
+                ensureHistoryTailSeqsIsMutable();
                 while (input.getBytesUntilLimit() > 0) {
-                  historyTailIds_.addLong(input.readUInt64());
+                  historyTailSeqs_.addLong(input.readUInt64());
                 }
                 input.popLimit(limit);
                 break;
@@ -11688,7 +11688,7 @@ public final class TerminalScreenProto {
                 break;
               } // case 146
               case 152: {
-                firstAvailableHistoryLineId_ = input.readUInt64();
+                firstAvailableHistorySeq_ = input.readUInt64();
                 bitField0_ |= 0x00040000;
                 break;
               } // case 152
@@ -12529,85 +12529,85 @@ public final class TerminalScreenProto {
         return screenLinesBuilder_;
       }
 
-      private com.google.protobuf.Internal.LongList historyTailIds_ = emptyLongList();
-      private void ensureHistoryTailIdsIsMutable() {
-        if (!historyTailIds_.isModifiable()) {
-          historyTailIds_ = makeMutableCopy(historyTailIds_);
+      private com.google.protobuf.Internal.LongList historyTailSeqs_ = emptyLongList();
+      private void ensureHistoryTailSeqsIsMutable() {
+        if (!historyTailSeqs_.isModifiable()) {
+          historyTailSeqs_ = makeMutableCopy(historyTailSeqs_);
         }
         bitField0_ |= 0x00000100;
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
-       * @return A list containing the historyTailIds.
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
+       * @return A list containing the historyTailSeqs.
        */
       public java.util.List<java.lang.Long>
-          getHistoryTailIdsList() {
-        historyTailIds_.makeImmutable();
-        return historyTailIds_;
+          getHistoryTailSeqsList() {
+        historyTailSeqs_.makeImmutable();
+        return historyTailSeqs_;
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
-       * @return The count of historyTailIds.
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
+       * @return The count of historyTailSeqs.
        */
-      public int getHistoryTailIdsCount() {
-        return historyTailIds_.size();
+      public int getHistoryTailSeqsCount() {
+        return historyTailSeqs_.size();
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
        * @param index The index of the element to return.
-       * @return The historyTailIds at the given index.
+       * @return The historyTailSeqs at the given index.
        */
-      public long getHistoryTailIds(int index) {
-        return historyTailIds_.getLong(index);
+      public long getHistoryTailSeqs(int index) {
+        return historyTailSeqs_.getLong(index);
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
        * @param index The index to set the value at.
-       * @param value The historyTailIds to set.
+       * @param value The historyTailSeqs to set.
        * @return This builder for chaining.
        */
-      public Builder setHistoryTailIds(
+      public Builder setHistoryTailSeqs(
           int index, long value) {
 
-        ensureHistoryTailIdsIsMutable();
-        historyTailIds_.setLong(index, value);
+        ensureHistoryTailSeqsIsMutable();
+        historyTailSeqs_.setLong(index, value);
         bitField0_ |= 0x00000100;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
-       * @param value The historyTailIds to add.
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
+       * @param value The historyTailSeqs to add.
        * @return This builder for chaining.
        */
-      public Builder addHistoryTailIds(long value) {
+      public Builder addHistoryTailSeqs(long value) {
 
-        ensureHistoryTailIdsIsMutable();
-        historyTailIds_.addLong(value);
+        ensureHistoryTailSeqsIsMutable();
+        historyTailSeqs_.addLong(value);
         bitField0_ |= 0x00000100;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
-       * @param values The historyTailIds to add.
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
+       * @param values The historyTailSeqs to add.
        * @return This builder for chaining.
        */
-      public Builder addAllHistoryTailIds(
+      public Builder addAllHistoryTailSeqs(
           java.lang.Iterable<? extends java.lang.Long> values) {
-        ensureHistoryTailIdsIsMutable();
+        ensureHistoryTailSeqsIsMutable();
         com.google.protobuf.AbstractMessageLite.Builder.addAll(
-            values, historyTailIds_);
+            values, historyTailSeqs_);
         bitField0_ |= 0x00000100;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_tail_ids = 9;</code>
+       * <code>repeated uint64 history_tail_seqs = 9;</code>
        * @return This builder for chaining.
        */
-      public Builder clearHistoryTailIds() {
-        historyTailIds_ = emptyLongList();
+      public Builder clearHistoryTailSeqs() {
+        historyTailSeqs_ = emptyLongList();
         bitField0_ = (bitField0_ & ~0x00000100);
         onChanged();
         return this;
@@ -13886,34 +13886,34 @@ public final class TerminalScreenProto {
         return this;
       }
 
-      private long firstAvailableHistoryLineId_ ;
+      private long firstAvailableHistorySeq_ ;
       /**
-       * <code>uint64 first_available_history_line_id = 19;</code>
-       * @return The firstAvailableHistoryLineId.
+       * <code>uint64 first_available_history_seq = 19;</code>
+       * @return The firstAvailableHistorySeq.
        */
       @java.lang.Override
-      public long getFirstAvailableHistoryLineId() {
-        return firstAvailableHistoryLineId_;
+      public long getFirstAvailableHistorySeq() {
+        return firstAvailableHistorySeq_;
       }
       /**
-       * <code>uint64 first_available_history_line_id = 19;</code>
-       * @param value The firstAvailableHistoryLineId to set.
+       * <code>uint64 first_available_history_seq = 19;</code>
+       * @param value The firstAvailableHistorySeq to set.
        * @return This builder for chaining.
        */
-      public Builder setFirstAvailableHistoryLineId(long value) {
+      public Builder setFirstAvailableHistorySeq(long value) {
 
-        firstAvailableHistoryLineId_ = value;
+        firstAvailableHistorySeq_ = value;
         bitField0_ |= 0x00040000;
         onChanged();
         return this;
       }
       /**
-       * <code>uint64 first_available_history_line_id = 19;</code>
+       * <code>uint64 first_available_history_seq = 19;</code>
        * @return This builder for chaining.
        */
-      public Builder clearFirstAvailableHistoryLineId() {
+      public Builder clearFirstAvailableHistorySeq() {
         bitField0_ = (bitField0_ & ~0x00040000);
-        firstAvailableHistoryLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         onChanged();
         return this;
       }
@@ -14071,32 +14071,32 @@ public final class TerminalScreenProto {
         int index);
 
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
-     * @return A list containing the historyAppendIds.
+     * <code>repeated uint64 history_append_seqs = 7;</code>
+     * @return A list containing the historyAppendSeqs.
      */
-    java.util.List<java.lang.Long> getHistoryAppendIdsList();
+    java.util.List<java.lang.Long> getHistoryAppendSeqsList();
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
-     * @return The count of historyAppendIds.
+     * <code>repeated uint64 history_append_seqs = 7;</code>
+     * @return The count of historyAppendSeqs.
      */
-    int getHistoryAppendIdsCount();
+    int getHistoryAppendSeqsCount();
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
+     * <code>repeated uint64 history_append_seqs = 7;</code>
      * @param index The index of the element to return.
-     * @return The historyAppendIds at the given index.
+     * @return The historyAppendSeqs at the given index.
      */
-    long getHistoryAppendIds(int index);
+    long getHistoryAppendSeqs(int index);
 
     /**
-     * <code>optional uint64 history_trim_before_id = 8;</code>
-     * @return Whether the historyTrimBeforeId field is set.
+     * <code>optional uint64 history_trim_before_seq = 8;</code>
+     * @return Whether the historyTrimBeforeSeq field is set.
      */
-    boolean hasHistoryTrimBeforeId();
+    boolean hasHistoryTrimBeforeSeq();
     /**
-     * <code>optional uint64 history_trim_before_id = 8;</code>
-     * @return The historyTrimBeforeId.
+     * <code>optional uint64 history_trim_before_seq = 8;</code>
+     * @return The historyTrimBeforeSeq.
      */
-    long getHistoryTrimBeforeId();
+    long getHistoryTrimBeforeSeq();
 
     /**
      * <code>uint64 dictionary_generation = 9;</code>
@@ -14282,7 +14282,7 @@ public final class TerminalScreenProto {
     }
     private ScreenPatch() {
       lineUpdates_ = java.util.Collections.emptyList();
-      historyAppendIds_ = emptyLongList();
+      historyAppendSeqs_ = emptyLongList();
       newStyles_ = java.util.Collections.emptyList();
       newLinks_ = java.util.Collections.emptyList();
       activeBuffer_ = 0;
@@ -14413,53 +14413,53 @@ public final class TerminalScreenProto {
       return lineUpdates_.get(index);
     }
 
-    public static final int HISTORY_APPEND_IDS_FIELD_NUMBER = 7;
+    public static final int HISTORY_APPEND_SEQS_FIELD_NUMBER = 7;
     @SuppressWarnings("serial")
-    private com.google.protobuf.Internal.LongList historyAppendIds_ =
+    private com.google.protobuf.Internal.LongList historyAppendSeqs_ =
         emptyLongList();
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
-     * @return A list containing the historyAppendIds.
+     * <code>repeated uint64 history_append_seqs = 7;</code>
+     * @return A list containing the historyAppendSeqs.
      */
     @java.lang.Override
     public java.util.List<java.lang.Long>
-        getHistoryAppendIdsList() {
-      return historyAppendIds_;
+        getHistoryAppendSeqsList() {
+      return historyAppendSeqs_;
     }
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
-     * @return The count of historyAppendIds.
+     * <code>repeated uint64 history_append_seqs = 7;</code>
+     * @return The count of historyAppendSeqs.
      */
-    public int getHistoryAppendIdsCount() {
-      return historyAppendIds_.size();
+    public int getHistoryAppendSeqsCount() {
+      return historyAppendSeqs_.size();
     }
     /**
-     * <code>repeated uint64 history_append_ids = 7;</code>
+     * <code>repeated uint64 history_append_seqs = 7;</code>
      * @param index The index of the element to return.
-     * @return The historyAppendIds at the given index.
+     * @return The historyAppendSeqs at the given index.
      */
-    public long getHistoryAppendIds(int index) {
-      return historyAppendIds_.getLong(index);
+    public long getHistoryAppendSeqs(int index) {
+      return historyAppendSeqs_.getLong(index);
     }
-    private int historyAppendIdsMemoizedSerializedSize = -1;
+    private int historyAppendSeqsMemoizedSerializedSize = -1;
 
-    public static final int HISTORY_TRIM_BEFORE_ID_FIELD_NUMBER = 8;
-    private long historyTrimBeforeId_ = 0L;
+    public static final int HISTORY_TRIM_BEFORE_SEQ_FIELD_NUMBER = 8;
+    private long historyTrimBeforeSeq_ = 0L;
     /**
-     * <code>optional uint64 history_trim_before_id = 8;</code>
-     * @return Whether the historyTrimBeforeId field is set.
+     * <code>optional uint64 history_trim_before_seq = 8;</code>
+     * @return Whether the historyTrimBeforeSeq field is set.
      */
     @java.lang.Override
-    public boolean hasHistoryTrimBeforeId() {
+    public boolean hasHistoryTrimBeforeSeq() {
       return ((bitField0_ & 0x00000002) != 0);
     }
     /**
-     * <code>optional uint64 history_trim_before_id = 8;</code>
-     * @return The historyTrimBeforeId.
+     * <code>optional uint64 history_trim_before_seq = 8;</code>
+     * @return The historyTrimBeforeSeq.
      */
     @java.lang.Override
-    public long getHistoryTrimBeforeId() {
-      return historyTrimBeforeId_;
+    public long getHistoryTrimBeforeSeq() {
+      return historyTrimBeforeSeq_;
     }
 
     public static final int DICTIONARY_GENERATION_FIELD_NUMBER = 9;
@@ -14821,15 +14821,15 @@ public final class TerminalScreenProto {
       for (int i = 0; i < lineUpdates_.size(); i++) {
         output.writeMessage(6, lineUpdates_.get(i));
       }
-      if (getHistoryAppendIdsList().size() > 0) {
+      if (getHistoryAppendSeqsList().size() > 0) {
         output.writeUInt32NoTag(58);
-        output.writeUInt32NoTag(historyAppendIdsMemoizedSerializedSize);
+        output.writeUInt32NoTag(historyAppendSeqsMemoizedSerializedSize);
       }
-      for (int i = 0; i < historyAppendIds_.size(); i++) {
-        output.writeUInt64NoTag(historyAppendIds_.getLong(i));
+      for (int i = 0; i < historyAppendSeqs_.size(); i++) {
+        output.writeUInt64NoTag(historyAppendSeqs_.getLong(i));
       }
       if (((bitField0_ & 0x00000002) != 0)) {
-        output.writeUInt64(8, historyTrimBeforeId_);
+        output.writeUInt64(8, historyTrimBeforeSeq_);
       }
       if (dictionaryGeneration_ != 0L) {
         output.writeUInt64(9, dictionaryGeneration_);
@@ -14892,21 +14892,21 @@ public final class TerminalScreenProto {
       }
       {
         int dataSize = 0;
-        for (int i = 0; i < historyAppendIds_.size(); i++) {
+        for (int i = 0; i < historyAppendSeqs_.size(); i++) {
           dataSize += com.google.protobuf.CodedOutputStream
-            .computeUInt64SizeNoTag(historyAppendIds_.getLong(i));
+            .computeUInt64SizeNoTag(historyAppendSeqs_.getLong(i));
         }
         size += dataSize;
-        if (!getHistoryAppendIdsList().isEmpty()) {
+        if (!getHistoryAppendSeqsList().isEmpty()) {
           size += 1;
           size += com.google.protobuf.CodedOutputStream
               .computeInt32SizeNoTag(dataSize);
         }
-        historyAppendIdsMemoizedSerializedSize = dataSize;
+        historyAppendSeqsMemoizedSerializedSize = dataSize;
       }
       if (((bitField0_ & 0x00000002) != 0)) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(8, historyTrimBeforeId_);
+          .computeUInt64Size(8, historyTrimBeforeSeq_);
       }
       if (dictionaryGeneration_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
@@ -14973,12 +14973,12 @@ public final class TerminalScreenProto {
       }
       if (!getLineUpdatesList()
           .equals(other.getLineUpdatesList())) return false;
-      if (!getHistoryAppendIdsList()
-          .equals(other.getHistoryAppendIdsList())) return false;
-      if (hasHistoryTrimBeforeId() != other.hasHistoryTrimBeforeId()) return false;
-      if (hasHistoryTrimBeforeId()) {
-        if (getHistoryTrimBeforeId()
-            != other.getHistoryTrimBeforeId()) return false;
+      if (!getHistoryAppendSeqsList()
+          .equals(other.getHistoryAppendSeqsList())) return false;
+      if (hasHistoryTrimBeforeSeq() != other.hasHistoryTrimBeforeSeq()) return false;
+      if (hasHistoryTrimBeforeSeq()) {
+        if (getHistoryTrimBeforeSeq()
+            != other.getHistoryTrimBeforeSeq()) return false;
       }
       if (getDictionaryGeneration()
           != other.getDictionaryGeneration()) return false;
@@ -15045,14 +15045,14 @@ public final class TerminalScreenProto {
         hash = (37 * hash) + LINE_UPDATES_FIELD_NUMBER;
         hash = (53 * hash) + getLineUpdatesList().hashCode();
       }
-      if (getHistoryAppendIdsCount() > 0) {
-        hash = (37 * hash) + HISTORY_APPEND_IDS_FIELD_NUMBER;
-        hash = (53 * hash) + getHistoryAppendIdsList().hashCode();
+      if (getHistoryAppendSeqsCount() > 0) {
+        hash = (37 * hash) + HISTORY_APPEND_SEQS_FIELD_NUMBER;
+        hash = (53 * hash) + getHistoryAppendSeqsList().hashCode();
       }
-      if (hasHistoryTrimBeforeId()) {
-        hash = (37 * hash) + HISTORY_TRIM_BEFORE_ID_FIELD_NUMBER;
+      if (hasHistoryTrimBeforeSeq()) {
+        hash = (37 * hash) + HISTORY_TRIM_BEFORE_SEQ_FIELD_NUMBER;
         hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-            getHistoryTrimBeforeId());
+            getHistoryTrimBeforeSeq());
       }
       hash = (37 * hash) + DICTIONARY_GENERATION_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
@@ -15249,8 +15249,8 @@ public final class TerminalScreenProto {
           lineUpdatesBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000010);
-        historyAppendIds_ = emptyLongList();
-        historyTrimBeforeId_ = 0L;
+        historyAppendSeqs_ = emptyLongList();
+        historyTrimBeforeSeq_ = 0L;
         dictionaryGeneration_ = 0L;
         if (newStylesBuilder_ == null) {
           newStyles_ = java.util.Collections.emptyList();
@@ -15366,11 +15366,11 @@ public final class TerminalScreenProto {
           to_bitField0_ |= 0x00000001;
         }
         if (((from_bitField0_ & 0x00000020) != 0)) {
-          historyAppendIds_.makeImmutable();
-          result.historyAppendIds_ = historyAppendIds_;
+          historyAppendSeqs_.makeImmutable();
+          result.historyAppendSeqs_ = historyAppendSeqs_;
         }
         if (((from_bitField0_ & 0x00000040) != 0)) {
-          result.historyTrimBeforeId_ = historyTrimBeforeId_;
+          result.historyTrimBeforeSeq_ = historyTrimBeforeSeq_;
           to_bitField0_ |= 0x00000002;
         }
         if (((from_bitField0_ & 0x00000080) != 0)) {
@@ -15462,19 +15462,19 @@ public final class TerminalScreenProto {
             }
           }
         }
-        if (!other.historyAppendIds_.isEmpty()) {
-          if (historyAppendIds_.isEmpty()) {
-            historyAppendIds_ = other.historyAppendIds_;
-            historyAppendIds_.makeImmutable();
+        if (!other.historyAppendSeqs_.isEmpty()) {
+          if (historyAppendSeqs_.isEmpty()) {
+            historyAppendSeqs_ = other.historyAppendSeqs_;
+            historyAppendSeqs_.makeImmutable();
             bitField0_ |= 0x00000020;
           } else {
-            ensureHistoryAppendIdsIsMutable();
-            historyAppendIds_.addAll(other.historyAppendIds_);
+            ensureHistoryAppendSeqsIsMutable();
+            historyAppendSeqs_.addAll(other.historyAppendSeqs_);
           }
           onChanged();
         }
-        if (other.hasHistoryTrimBeforeId()) {
-          setHistoryTrimBeforeId(other.getHistoryTrimBeforeId());
+        if (other.hasHistoryTrimBeforeSeq()) {
+          setHistoryTrimBeforeSeq(other.getHistoryTrimBeforeSeq());
         }
         if (other.getDictionaryGeneration() != 0L) {
           setDictionaryGeneration(other.getDictionaryGeneration());
@@ -15621,22 +15621,22 @@ public final class TerminalScreenProto {
               } // case 50
               case 56: {
                 long v = input.readUInt64();
-                ensureHistoryAppendIdsIsMutable();
-                historyAppendIds_.addLong(v);
+                ensureHistoryAppendSeqsIsMutable();
+                historyAppendSeqs_.addLong(v);
                 break;
               } // case 56
               case 58: {
                 int length = input.readRawVarint32();
                 int limit = input.pushLimit(length);
-                ensureHistoryAppendIdsIsMutable();
+                ensureHistoryAppendSeqsIsMutable();
                 while (input.getBytesUntilLimit() > 0) {
-                  historyAppendIds_.addLong(input.readUInt64());
+                  historyAppendSeqs_.addLong(input.readUInt64());
                 }
                 input.popLimit(limit);
                 break;
               } // case 58
               case 64: {
-                historyTrimBeforeId_ = input.readUInt64();
+                historyTrimBeforeSeq_ = input.readUInt64();
                 bitField0_ |= 0x00000040;
                 break;
               } // case 64
@@ -16210,126 +16210,126 @@ public final class TerminalScreenProto {
         return lineUpdatesBuilder_;
       }
 
-      private com.google.protobuf.Internal.LongList historyAppendIds_ = emptyLongList();
-      private void ensureHistoryAppendIdsIsMutable() {
-        if (!historyAppendIds_.isModifiable()) {
-          historyAppendIds_ = makeMutableCopy(historyAppendIds_);
+      private com.google.protobuf.Internal.LongList historyAppendSeqs_ = emptyLongList();
+      private void ensureHistoryAppendSeqsIsMutable() {
+        if (!historyAppendSeqs_.isModifiable()) {
+          historyAppendSeqs_ = makeMutableCopy(historyAppendSeqs_);
         }
         bitField0_ |= 0x00000020;
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
-       * @return A list containing the historyAppendIds.
+       * <code>repeated uint64 history_append_seqs = 7;</code>
+       * @return A list containing the historyAppendSeqs.
        */
       public java.util.List<java.lang.Long>
-          getHistoryAppendIdsList() {
-        historyAppendIds_.makeImmutable();
-        return historyAppendIds_;
+          getHistoryAppendSeqsList() {
+        historyAppendSeqs_.makeImmutable();
+        return historyAppendSeqs_;
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
-       * @return The count of historyAppendIds.
+       * <code>repeated uint64 history_append_seqs = 7;</code>
+       * @return The count of historyAppendSeqs.
        */
-      public int getHistoryAppendIdsCount() {
-        return historyAppendIds_.size();
+      public int getHistoryAppendSeqsCount() {
+        return historyAppendSeqs_.size();
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
+       * <code>repeated uint64 history_append_seqs = 7;</code>
        * @param index The index of the element to return.
-       * @return The historyAppendIds at the given index.
+       * @return The historyAppendSeqs at the given index.
        */
-      public long getHistoryAppendIds(int index) {
-        return historyAppendIds_.getLong(index);
+      public long getHistoryAppendSeqs(int index) {
+        return historyAppendSeqs_.getLong(index);
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
+       * <code>repeated uint64 history_append_seqs = 7;</code>
        * @param index The index to set the value at.
-       * @param value The historyAppendIds to set.
+       * @param value The historyAppendSeqs to set.
        * @return This builder for chaining.
        */
-      public Builder setHistoryAppendIds(
+      public Builder setHistoryAppendSeqs(
           int index, long value) {
 
-        ensureHistoryAppendIdsIsMutable();
-        historyAppendIds_.setLong(index, value);
+        ensureHistoryAppendSeqsIsMutable();
+        historyAppendSeqs_.setLong(index, value);
         bitField0_ |= 0x00000020;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
-       * @param value The historyAppendIds to add.
+       * <code>repeated uint64 history_append_seqs = 7;</code>
+       * @param value The historyAppendSeqs to add.
        * @return This builder for chaining.
        */
-      public Builder addHistoryAppendIds(long value) {
+      public Builder addHistoryAppendSeqs(long value) {
 
-        ensureHistoryAppendIdsIsMutable();
-        historyAppendIds_.addLong(value);
+        ensureHistoryAppendSeqsIsMutable();
+        historyAppendSeqs_.addLong(value);
         bitField0_ |= 0x00000020;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
-       * @param values The historyAppendIds to add.
+       * <code>repeated uint64 history_append_seqs = 7;</code>
+       * @param values The historyAppendSeqs to add.
        * @return This builder for chaining.
        */
-      public Builder addAllHistoryAppendIds(
+      public Builder addAllHistoryAppendSeqs(
           java.lang.Iterable<? extends java.lang.Long> values) {
-        ensureHistoryAppendIdsIsMutable();
+        ensureHistoryAppendSeqsIsMutable();
         com.google.protobuf.AbstractMessageLite.Builder.addAll(
-            values, historyAppendIds_);
+            values, historyAppendSeqs_);
         bitField0_ |= 0x00000020;
         onChanged();
         return this;
       }
       /**
-       * <code>repeated uint64 history_append_ids = 7;</code>
+       * <code>repeated uint64 history_append_seqs = 7;</code>
        * @return This builder for chaining.
        */
-      public Builder clearHistoryAppendIds() {
-        historyAppendIds_ = emptyLongList();
+      public Builder clearHistoryAppendSeqs() {
+        historyAppendSeqs_ = emptyLongList();
         bitField0_ = (bitField0_ & ~0x00000020);
         onChanged();
         return this;
       }
 
-      private long historyTrimBeforeId_ ;
+      private long historyTrimBeforeSeq_ ;
       /**
-       * <code>optional uint64 history_trim_before_id = 8;</code>
-       * @return Whether the historyTrimBeforeId field is set.
+       * <code>optional uint64 history_trim_before_seq = 8;</code>
+       * @return Whether the historyTrimBeforeSeq field is set.
        */
       @java.lang.Override
-      public boolean hasHistoryTrimBeforeId() {
+      public boolean hasHistoryTrimBeforeSeq() {
         return ((bitField0_ & 0x00000040) != 0);
       }
       /**
-       * <code>optional uint64 history_trim_before_id = 8;</code>
-       * @return The historyTrimBeforeId.
+       * <code>optional uint64 history_trim_before_seq = 8;</code>
+       * @return The historyTrimBeforeSeq.
        */
       @java.lang.Override
-      public long getHistoryTrimBeforeId() {
-        return historyTrimBeforeId_;
+      public long getHistoryTrimBeforeSeq() {
+        return historyTrimBeforeSeq_;
       }
       /**
-       * <code>optional uint64 history_trim_before_id = 8;</code>
-       * @param value The historyTrimBeforeId to set.
+       * <code>optional uint64 history_trim_before_seq = 8;</code>
+       * @param value The historyTrimBeforeSeq to set.
        * @return This builder for chaining.
        */
-      public Builder setHistoryTrimBeforeId(long value) {
+      public Builder setHistoryTrimBeforeSeq(long value) {
 
-        historyTrimBeforeId_ = value;
+        historyTrimBeforeSeq_ = value;
         bitField0_ |= 0x00000040;
         onChanged();
         return this;
       }
       /**
-       * <code>optional uint64 history_trim_before_id = 8;</code>
+       * <code>optional uint64 history_trim_before_seq = 8;</code>
        * @return This builder for chaining.
        */
-      public Builder clearHistoryTrimBeforeId() {
+      public Builder clearHistoryTrimBeforeSeq() {
         bitField0_ = (bitField0_ & ~0x00000040);
-        historyTrimBeforeId_ = 0L;
+        historyTrimBeforeSeq_ = 0L;
         onChanged();
         return this;
       }
@@ -30606,13 +30606,13 @@ public final class TerminalScreenProto {
 
     /**
      * <pre>
-     * 请求严格小于此 ID 的行
+     * 请求严格小于此 HistorySeq 的行
      * </pre>
      *
-     * <code>uint64 before_line_id = 3;</code>
-     * @return The beforeLineId.
+     * <code>uint64 before_history_seq = 3;</code>
+     * @return The beforeHistorySeq.
      */
-    long getBeforeLineId();
+    long getBeforeHistorySeq();
 
     /**
      * <code>int32 limit = 4;</code>
@@ -30708,19 +30708,19 @@ public final class TerminalScreenProto {
       return layoutEpoch_;
     }
 
-    public static final int BEFORE_LINE_ID_FIELD_NUMBER = 3;
-    private long beforeLineId_ = 0L;
+    public static final int BEFORE_HISTORY_SEQ_FIELD_NUMBER = 3;
+    private long beforeHistorySeq_ = 0L;
     /**
      * <pre>
-     * 请求严格小于此 ID 的行
+     * 请求严格小于此 HistorySeq 的行
      * </pre>
      *
-     * <code>uint64 before_line_id = 3;</code>
-     * @return The beforeLineId.
+     * <code>uint64 before_history_seq = 3;</code>
+     * @return The beforeHistorySeq.
      */
     @java.lang.Override
-    public long getBeforeLineId() {
-      return beforeLineId_;
+    public long getBeforeHistorySeq() {
+      return beforeHistorySeq_;
     }
 
     public static final int LIMIT_FIELD_NUMBER = 4;
@@ -30754,8 +30754,8 @@ public final class TerminalScreenProto {
       if (layoutEpoch_ != 0L) {
         output.writeUInt64(2, layoutEpoch_);
       }
-      if (beforeLineId_ != 0L) {
-        output.writeUInt64(3, beforeLineId_);
+      if (beforeHistorySeq_ != 0L) {
+        output.writeUInt64(3, beforeHistorySeq_);
       }
       if (limit_ != 0) {
         output.writeInt32(4, limit_);
@@ -30776,9 +30776,9 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt64Size(2, layoutEpoch_);
       }
-      if (beforeLineId_ != 0L) {
+      if (beforeHistorySeq_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(3, beforeLineId_);
+          .computeUInt64Size(3, beforeHistorySeq_);
       }
       if (limit_ != 0) {
         size += com.google.protobuf.CodedOutputStream
@@ -30803,8 +30803,8 @@ public final class TerminalScreenProto {
           .equals(other.getRequestId())) return false;
       if (getLayoutEpoch()
           != other.getLayoutEpoch()) return false;
-      if (getBeforeLineId()
-          != other.getBeforeLineId()) return false;
+      if (getBeforeHistorySeq()
+          != other.getBeforeHistorySeq()) return false;
       if (getLimit()
           != other.getLimit()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
@@ -30823,9 +30823,9 @@ public final class TerminalScreenProto {
       hash = (37 * hash) + LAYOUT_EPOCH_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getLayoutEpoch());
-      hash = (37 * hash) + BEFORE_LINE_ID_FIELD_NUMBER;
+      hash = (37 * hash) + BEFORE_HISTORY_SEQ_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getBeforeLineId());
+          getBeforeHistorySeq());
       hash = (37 * hash) + LIMIT_FIELD_NUMBER;
       hash = (53 * hash) + getLimit();
       hash = (29 * hash) + getUnknownFields().hashCode();
@@ -30961,7 +30961,7 @@ public final class TerminalScreenProto {
         bitField0_ = 0;
         requestId_ = "";
         layoutEpoch_ = 0L;
-        beforeLineId_ = 0L;
+        beforeHistorySeq_ = 0L;
         limit_ = 0;
         return this;
       }
@@ -31003,7 +31003,7 @@ public final class TerminalScreenProto {
           result.layoutEpoch_ = layoutEpoch_;
         }
         if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.beforeLineId_ = beforeLineId_;
+          result.beforeHistorySeq_ = beforeHistorySeq_;
         }
         if (((from_bitField0_ & 0x00000008) != 0)) {
           result.limit_ = limit_;
@@ -31030,8 +31030,8 @@ public final class TerminalScreenProto {
         if (other.getLayoutEpoch() != 0L) {
           setLayoutEpoch(other.getLayoutEpoch());
         }
-        if (other.getBeforeLineId() != 0L) {
-          setBeforeLineId(other.getBeforeLineId());
+        if (other.getBeforeHistorySeq() != 0L) {
+          setBeforeHistorySeq(other.getBeforeHistorySeq());
         }
         if (other.getLimit() != 0) {
           setLimit(other.getLimit());
@@ -31073,7 +31073,7 @@ public final class TerminalScreenProto {
                 break;
               } // case 16
               case 24: {
-                beforeLineId_ = input.readUInt64();
+                beforeHistorySeq_ = input.readUInt64();
                 bitField0_ |= 0x00000004;
                 break;
               } // case 24
@@ -31203,46 +31203,46 @@ public final class TerminalScreenProto {
         return this;
       }
 
-      private long beforeLineId_ ;
+      private long beforeHistorySeq_ ;
       /**
        * <pre>
-       * 请求严格小于此 ID 的行
+       * 请求严格小于此 HistorySeq 的行
        * </pre>
        *
-       * <code>uint64 before_line_id = 3;</code>
-       * @return The beforeLineId.
+       * <code>uint64 before_history_seq = 3;</code>
+       * @return The beforeHistorySeq.
        */
       @java.lang.Override
-      public long getBeforeLineId() {
-        return beforeLineId_;
+      public long getBeforeHistorySeq() {
+        return beforeHistorySeq_;
       }
       /**
        * <pre>
-       * 请求严格小于此 ID 的行
+       * 请求严格小于此 HistorySeq 的行
        * </pre>
        *
-       * <code>uint64 before_line_id = 3;</code>
-       * @param value The beforeLineId to set.
+       * <code>uint64 before_history_seq = 3;</code>
+       * @param value The beforeHistorySeq to set.
        * @return This builder for chaining.
        */
-      public Builder setBeforeLineId(long value) {
+      public Builder setBeforeHistorySeq(long value) {
 
-        beforeLineId_ = value;
+        beforeHistorySeq_ = value;
         bitField0_ |= 0x00000004;
         onChanged();
         return this;
       }
       /**
        * <pre>
-       * 请求严格小于此 ID 的行
+       * 请求严格小于此 HistorySeq 的行
        * </pre>
        *
-       * <code>uint64 before_line_id = 3;</code>
+       * <code>uint64 before_history_seq = 3;</code>
        * @return This builder for chaining.
        */
-      public Builder clearBeforeLineId() {
+      public Builder clearBeforeHistorySeq() {
         bitField0_ = (bitField0_ & ~0x00000004);
-        beforeLineId_ = 0L;
+        beforeHistorySeq_ = 0L;
         onChanged();
         return this;
       }
@@ -31359,10 +31359,10 @@ public final class TerminalScreenProto {
     long getAsOfRevision();
 
     /**
-     * <code>uint64 first_available_line_id = 4;</code>
-     * @return The firstAvailableLineId.
+     * <code>uint64 first_available_history_seq = 4;</code>
+     * @return The firstAvailableHistorySeq.
      */
-    long getFirstAvailableLineId();
+    long getFirstAvailableHistorySeq();
 
     /**
      * <code>bool has_more_before = 5;</code>
@@ -31372,7 +31372,7 @@ public final class TerminalScreenProto {
 
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31381,7 +31381,7 @@ public final class TerminalScreenProto {
         getLinesList();
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31389,7 +31389,7 @@ public final class TerminalScreenProto {
     com.webterm.terminal.protocol.generated.TerminalScreenProto.LineData getLines(int index);
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31397,7 +31397,7 @@ public final class TerminalScreenProto {
     int getLinesCount();
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31406,7 +31406,7 @@ public final class TerminalScreenProto {
         getLinesOrBuilderList();
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31564,15 +31564,15 @@ public final class TerminalScreenProto {
       return asOfRevision_;
     }
 
-    public static final int FIRST_AVAILABLE_LINE_ID_FIELD_NUMBER = 4;
-    private long firstAvailableLineId_ = 0L;
+    public static final int FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER = 4;
+    private long firstAvailableHistorySeq_ = 0L;
     /**
-     * <code>uint64 first_available_line_id = 4;</code>
-     * @return The firstAvailableLineId.
+     * <code>uint64 first_available_history_seq = 4;</code>
+     * @return The firstAvailableHistorySeq.
      */
     @java.lang.Override
-    public long getFirstAvailableLineId() {
-      return firstAvailableLineId_;
+    public long getFirstAvailableHistorySeq() {
+      return firstAvailableHistorySeq_;
     }
 
     public static final int HAS_MORE_BEFORE_FIELD_NUMBER = 5;
@@ -31591,7 +31591,7 @@ public final class TerminalScreenProto {
     private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.LineData> lines_;
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31602,7 +31602,7 @@ public final class TerminalScreenProto {
     }
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31614,7 +31614,7 @@ public final class TerminalScreenProto {
     }
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31625,7 +31625,7 @@ public final class TerminalScreenProto {
     }
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31636,7 +31636,7 @@ public final class TerminalScreenProto {
     }
     /**
      * <pre>
-     * 按 line_id 严格升序，允许 ID 缺口
+     * 按 history_seq 严格升序；LineID 可有缺口
      * </pre>
      *
      * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -31752,8 +31752,8 @@ public final class TerminalScreenProto {
       if (asOfRevision_ != 0L) {
         output.writeUInt64(3, asOfRevision_);
       }
-      if (firstAvailableLineId_ != 0L) {
-        output.writeUInt64(4, firstAvailableLineId_);
+      if (firstAvailableHistorySeq_ != 0L) {
+        output.writeUInt64(4, firstAvailableHistorySeq_);
       }
       if (hasMoreBefore_ != false) {
         output.writeBool(5, hasMoreBefore_);
@@ -31787,9 +31787,9 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt64Size(3, asOfRevision_);
       }
-      if (firstAvailableLineId_ != 0L) {
+      if (firstAvailableHistorySeq_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(4, firstAvailableLineId_);
+          .computeUInt64Size(4, firstAvailableHistorySeq_);
       }
       if (hasMoreBefore_ != false) {
         size += com.google.protobuf.CodedOutputStream
@@ -31828,8 +31828,8 @@ public final class TerminalScreenProto {
           != other.getLayoutEpoch()) return false;
       if (getAsOfRevision()
           != other.getAsOfRevision()) return false;
-      if (getFirstAvailableLineId()
-          != other.getFirstAvailableLineId()) return false;
+      if (getFirstAvailableHistorySeq()
+          != other.getFirstAvailableHistorySeq()) return false;
       if (getHasMoreBefore()
           != other.getHasMoreBefore()) return false;
       if (!getLinesList()
@@ -31857,9 +31857,9 @@ public final class TerminalScreenProto {
       hash = (37 * hash) + AS_OF_REVISION_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getAsOfRevision());
-      hash = (37 * hash) + FIRST_AVAILABLE_LINE_ID_FIELD_NUMBER;
+      hash = (37 * hash) + FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getFirstAvailableLineId());
+          getFirstAvailableHistorySeq());
       hash = (37 * hash) + HAS_MORE_BEFORE_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
           getHasMoreBefore());
@@ -32009,7 +32009,7 @@ public final class TerminalScreenProto {
         requestId_ = "";
         layoutEpoch_ = 0L;
         asOfRevision_ = 0L;
-        firstAvailableLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         hasMoreBefore_ = false;
         if (linesBuilder_ == null) {
           lines_ = java.util.Collections.emptyList();
@@ -32106,7 +32106,7 @@ public final class TerminalScreenProto {
           result.asOfRevision_ = asOfRevision_;
         }
         if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.firstAvailableLineId_ = firstAvailableLineId_;
+          result.firstAvailableHistorySeq_ = firstAvailableHistorySeq_;
         }
         if (((from_bitField0_ & 0x00000010) != 0)) {
           result.hasMoreBefore_ = hasMoreBefore_;
@@ -32136,8 +32136,8 @@ public final class TerminalScreenProto {
         if (other.getAsOfRevision() != 0L) {
           setAsOfRevision(other.getAsOfRevision());
         }
-        if (other.getFirstAvailableLineId() != 0L) {
-          setFirstAvailableLineId(other.getFirstAvailableLineId());
+        if (other.getFirstAvailableHistorySeq() != 0L) {
+          setFirstAvailableHistorySeq(other.getFirstAvailableHistorySeq());
         }
         if (other.getHasMoreBefore() != false) {
           setHasMoreBefore(other.getHasMoreBefore());
@@ -32262,7 +32262,7 @@ public final class TerminalScreenProto {
                 break;
               } // case 24
               case 32: {
-                firstAvailableLineId_ = input.readUInt64();
+                firstAvailableHistorySeq_ = input.readUInt64();
                 bitField0_ |= 0x00000008;
                 break;
               } // case 32
@@ -32463,34 +32463,34 @@ public final class TerminalScreenProto {
         return this;
       }
 
-      private long firstAvailableLineId_ ;
+      private long firstAvailableHistorySeq_ ;
       /**
-       * <code>uint64 first_available_line_id = 4;</code>
-       * @return The firstAvailableLineId.
+       * <code>uint64 first_available_history_seq = 4;</code>
+       * @return The firstAvailableHistorySeq.
        */
       @java.lang.Override
-      public long getFirstAvailableLineId() {
-        return firstAvailableLineId_;
+      public long getFirstAvailableHistorySeq() {
+        return firstAvailableHistorySeq_;
       }
       /**
-       * <code>uint64 first_available_line_id = 4;</code>
-       * @param value The firstAvailableLineId to set.
+       * <code>uint64 first_available_history_seq = 4;</code>
+       * @param value The firstAvailableHistorySeq to set.
        * @return This builder for chaining.
        */
-      public Builder setFirstAvailableLineId(long value) {
+      public Builder setFirstAvailableHistorySeq(long value) {
 
-        firstAvailableLineId_ = value;
+        firstAvailableHistorySeq_ = value;
         bitField0_ |= 0x00000008;
         onChanged();
         return this;
       }
       /**
-       * <code>uint64 first_available_line_id = 4;</code>
+       * <code>uint64 first_available_history_seq = 4;</code>
        * @return This builder for chaining.
        */
-      public Builder clearFirstAvailableLineId() {
+      public Builder clearFirstAvailableHistorySeq() {
         bitField0_ = (bitField0_ & ~0x00000008);
-        firstAvailableLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         onChanged();
         return this;
       }
@@ -32541,7 +32541,7 @@ public final class TerminalScreenProto {
 
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32555,7 +32555,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32569,7 +32569,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32583,7 +32583,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32604,7 +32604,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32622,7 +32622,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32642,7 +32642,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32663,7 +32663,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32681,7 +32681,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32699,7 +32699,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32718,7 +32718,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32735,7 +32735,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32752,7 +32752,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32763,7 +32763,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32777,7 +32777,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32792,7 +32792,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32803,7 +32803,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -32815,7 +32815,7 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * 按 line_id 严格升序，允许 ID 缺口
+       * 按 history_seq 严格升序；LineID 可有缺口
        * </pre>
        *
        * <code>repeated .webterm.terminal.screen.v1.LineData lines = 6;</code>
@@ -33382,13 +33382,13 @@ public final class TerminalScreenProto {
 
     /**
      * <pre>
-     * 所有小于此 ID 的本地缓存应删除
+     * 所有小于此 HistorySeq 的本地缓存应删除
      * </pre>
      *
-     * <code>uint64 first_available_line_id = 2;</code>
-     * @return The firstAvailableLineId.
+     * <code>uint64 first_available_history_seq = 2;</code>
+     * @return The firstAvailableHistorySeq.
      */
-    long getFirstAvailableLineId();
+    long getFirstAvailableHistorySeq();
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.HistoryTrim}
@@ -33438,19 +33438,19 @@ public final class TerminalScreenProto {
       return layoutEpoch_;
     }
 
-    public static final int FIRST_AVAILABLE_LINE_ID_FIELD_NUMBER = 2;
-    private long firstAvailableLineId_ = 0L;
+    public static final int FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER = 2;
+    private long firstAvailableHistorySeq_ = 0L;
     /**
      * <pre>
-     * 所有小于此 ID 的本地缓存应删除
+     * 所有小于此 HistorySeq 的本地缓存应删除
      * </pre>
      *
-     * <code>uint64 first_available_line_id = 2;</code>
-     * @return The firstAvailableLineId.
+     * <code>uint64 first_available_history_seq = 2;</code>
+     * @return The firstAvailableHistorySeq.
      */
     @java.lang.Override
-    public long getFirstAvailableLineId() {
-      return firstAvailableLineId_;
+    public long getFirstAvailableHistorySeq() {
+      return firstAvailableHistorySeq_;
     }
 
     private byte memoizedIsInitialized = -1;
@@ -33470,8 +33470,8 @@ public final class TerminalScreenProto {
       if (layoutEpoch_ != 0L) {
         output.writeUInt64(1, layoutEpoch_);
       }
-      if (firstAvailableLineId_ != 0L) {
-        output.writeUInt64(2, firstAvailableLineId_);
+      if (firstAvailableHistorySeq_ != 0L) {
+        output.writeUInt64(2, firstAvailableHistorySeq_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -33486,9 +33486,9 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt64Size(1, layoutEpoch_);
       }
-      if (firstAvailableLineId_ != 0L) {
+      if (firstAvailableHistorySeq_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(2, firstAvailableLineId_);
+          .computeUInt64Size(2, firstAvailableHistorySeq_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -33507,8 +33507,8 @@ public final class TerminalScreenProto {
 
       if (getLayoutEpoch()
           != other.getLayoutEpoch()) return false;
-      if (getFirstAvailableLineId()
-          != other.getFirstAvailableLineId()) return false;
+      if (getFirstAvailableHistorySeq()
+          != other.getFirstAvailableHistorySeq()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -33523,9 +33523,9 @@ public final class TerminalScreenProto {
       hash = (37 * hash) + LAYOUT_EPOCH_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getLayoutEpoch());
-      hash = (37 * hash) + FIRST_AVAILABLE_LINE_ID_FIELD_NUMBER;
+      hash = (37 * hash) + FIRST_AVAILABLE_HISTORY_SEQ_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getFirstAvailableLineId());
+          getFirstAvailableHistorySeq());
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -33658,7 +33658,7 @@ public final class TerminalScreenProto {
         super.clear();
         bitField0_ = 0;
         layoutEpoch_ = 0L;
-        firstAvailableLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         return this;
       }
 
@@ -33696,7 +33696,7 @@ public final class TerminalScreenProto {
           result.layoutEpoch_ = layoutEpoch_;
         }
         if (((from_bitField0_ & 0x00000002) != 0)) {
-          result.firstAvailableLineId_ = firstAvailableLineId_;
+          result.firstAvailableHistorySeq_ = firstAvailableHistorySeq_;
         }
       }
 
@@ -33715,8 +33715,8 @@ public final class TerminalScreenProto {
         if (other.getLayoutEpoch() != 0L) {
           setLayoutEpoch(other.getLayoutEpoch());
         }
-        if (other.getFirstAvailableLineId() != 0L) {
-          setFirstAvailableLineId(other.getFirstAvailableLineId());
+        if (other.getFirstAvailableHistorySeq() != 0L) {
+          setFirstAvailableHistorySeq(other.getFirstAvailableHistorySeq());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -33750,7 +33750,7 @@ public final class TerminalScreenProto {
                 break;
               } // case 8
               case 16: {
-                firstAvailableLineId_ = input.readUInt64();
+                firstAvailableHistorySeq_ = input.readUInt64();
                 bitField0_ |= 0x00000002;
                 break;
               } // case 16
@@ -33803,46 +33803,46 @@ public final class TerminalScreenProto {
         return this;
       }
 
-      private long firstAvailableLineId_ ;
+      private long firstAvailableHistorySeq_ ;
       /**
        * <pre>
-       * 所有小于此 ID 的本地缓存应删除
+       * 所有小于此 HistorySeq 的本地缓存应删除
        * </pre>
        *
-       * <code>uint64 first_available_line_id = 2;</code>
-       * @return The firstAvailableLineId.
+       * <code>uint64 first_available_history_seq = 2;</code>
+       * @return The firstAvailableHistorySeq.
        */
       @java.lang.Override
-      public long getFirstAvailableLineId() {
-        return firstAvailableLineId_;
+      public long getFirstAvailableHistorySeq() {
+        return firstAvailableHistorySeq_;
       }
       /**
        * <pre>
-       * 所有小于此 ID 的本地缓存应删除
+       * 所有小于此 HistorySeq 的本地缓存应删除
        * </pre>
        *
-       * <code>uint64 first_available_line_id = 2;</code>
-       * @param value The firstAvailableLineId to set.
+       * <code>uint64 first_available_history_seq = 2;</code>
+       * @param value The firstAvailableHistorySeq to set.
        * @return This builder for chaining.
        */
-      public Builder setFirstAvailableLineId(long value) {
+      public Builder setFirstAvailableHistorySeq(long value) {
 
-        firstAvailableLineId_ = value;
+        firstAvailableHistorySeq_ = value;
         bitField0_ |= 0x00000002;
         onChanged();
         return this;
       }
       /**
        * <pre>
-       * 所有小于此 ID 的本地缓存应删除
+       * 所有小于此 HistorySeq 的本地缓存应删除
        * </pre>
        *
-       * <code>uint64 first_available_line_id = 2;</code>
+       * <code>uint64 first_available_history_seq = 2;</code>
        * @return This builder for chaining.
        */
-      public Builder clearFirstAvailableLineId() {
+      public Builder clearFirstAvailableHistorySeq() {
         bitField0_ = (bitField0_ & ~0x00000002);
-        firstAvailableLineId_ = 0L;
+        firstAvailableHistorySeq_ = 0L;
         onChanged();
         return this;
       }
@@ -54689,7 +54689,7 @@ public final class TerminalScreenProto {
       "\037\n\004Ping\022\027\n\017screen_revision\030\001 \001(\004\"\037\n\004Pong" +
       "\022\027\n\017screen_revision\030\001 \001(\004\"O\n\tResumeAck\022\023" +
       "\n\013instance_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(" +
-      "\004\022\027\n\017screen_revision\030\003 \001(\004\"\377\006\n\016ScreenSna" +
+      "\004\022\027\n\017screen_revision\030\003 \001(\004\"\374\006\n\016ScreenSna" +
       "pshot\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance_id" +
       "\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022\027\n\017screen_r" +
       "evision\030\004 \001(\004\0222\n\010geometry\030\005 \001(\0132 .webter" +
@@ -54698,40 +54698,40 @@ public final class TerminalScreenProto {
       "fferKind\0228\n\006layout\030\007 \001(\0132(.webterm.termi" +
       "nal.screen.v1.ScreenLayout\022:\n\014screen_lin" +
       "es\030\010 \003(\0132$.webterm.terminal.screen.v1.Li" +
-      "neData\022\030\n\020history_tail_ids\030\t \003(\004\022@\n\022hist" +
-      "ory_tail_lines\030\n \003(\0132$.webterm.terminal." +
-      "screen.v1.LineData\022\035\n\025dictionary_generat" +
-      "ion\030\013 \001(\004\0229\n\006styles\030\014 \003(\0132).webterm.term" +
-      "inal.screen.v1.TerminalStyle\0224\n\005links\030\r " +
-      "\003(\0132%.webterm.terminal.screen.v1.Hyperli" +
-      "nk\0222\n\006cursor\030\016 \001(\0132\".webterm.terminal.sc" +
-      "reen.v1.Cursor\0220\n\005modes\030\017 \001(\0132!.webterm." +
-      "terminal.screen.v1.Modes\022<\n\007palette\030\020 \001(" +
-      "\0132+.webterm.terminal.screen.v1.TerminalP" +
-      "alette\022\022\n\005title\030\021 \001(\tH\000\210\001\001\022\036\n\021working_di" +
-      "rectory\030\022 \001(\tH\001\210\001\001\022\'\n\037first_available_hi" +
-      "story_line_id\030\023 \001(\004\022\037\n\027has_more_history_" +
-      "before\030\024 \001(\010B\010\n\006_titleB\024\n\022_working_direc" +
-      "tory\"\340\006\n\013ScreenPatch\022\024\n\014layout_epoch\030\001 \001" +
-      "(\004\022\025\n\rbase_revision\030\002 \001(\004\022\027\n\017screen_revi" +
-      "sion\030\003 \001(\004\022=\n\006layout\030\005 \001(\0132(.webterm.ter" +
-      "minal.screen.v1.ScreenLayoutH\000\210\001\001\022:\n\014lin" +
-      "e_updates\030\006 \003(\0132$.webterm.terminal.scree" +
-      "n.v1.LineData\022\032\n\022history_append_ids\030\007 \003(" +
-      "\004\022#\n\026history_trim_before_id\030\010 \001(\004H\001\210\001\001\022\035" +
-      "\n\025dictionary_generation\030\t \001(\004\022=\n\nnew_sty" +
-      "les\030\n \003(\0132).webterm.terminal.screen.v1.T" +
-      "erminalStyle\0228\n\tnew_links\030\013 \003(\0132%.webter" +
-      "m.terminal.screen.v1.Hyperlink\0227\n\006cursor" +
-      "\030\014 \001(\0132\".webterm.terminal.screen.v1.Curs" +
-      "orH\002\210\001\001\0225\n\005modes\030\r \001(\0132!.webterm.termina" +
-      "l.screen.v1.ModesH\003\210\001\001\022A\n\007palette\030\016 \001(\0132" +
-      "+.webterm.terminal.screen.v1.TerminalPal" +
-      "etteH\004\210\001\001\022B\n\ractive_buffer\030\017 \001(\0162&.webte" +
-      "rm.terminal.screen.v1.BufferKindH\005\210\001\001\022\022\n" +
-      "\005title\030\020 \001(\tH\006\210\001\001\022\036\n\021working_directory\030\021" +
-      " \001(\tH\007\210\001\001\022\023\n\013instance_id\030\022 \001(\tB\t\n\007_layou" +
-      "tB\031\n\027_history_trim_before_idB\t\n\007_cursorB" +
+      "neData\022\031\n\021history_tail_seqs\030\t \003(\004\022@\n\022his" +
+      "tory_tail_lines\030\n \003(\0132$.webterm.terminal" +
+      ".screen.v1.LineData\022\035\n\025dictionary_genera" +
+      "tion\030\013 \001(\004\0229\n\006styles\030\014 \003(\0132).webterm.ter" +
+      "minal.screen.v1.TerminalStyle\0224\n\005links\030\r" +
+      " \003(\0132%.webterm.terminal.screen.v1.Hyperl" +
+      "ink\0222\n\006cursor\030\016 \001(\0132\".webterm.terminal.s" +
+      "creen.v1.Cursor\0220\n\005modes\030\017 \001(\0132!.webterm" +
+      ".terminal.screen.v1.Modes\022<\n\007palette\030\020 \001" +
+      "(\0132+.webterm.terminal.screen.v1.Terminal" +
+      "Palette\022\022\n\005title\030\021 \001(\tH\000\210\001\001\022\036\n\021working_d" +
+      "irectory\030\022 \001(\tH\001\210\001\001\022#\n\033first_available_h" +
+      "istory_seq\030\023 \001(\004\022\037\n\027has_more_history_bef" +
+      "ore\030\024 \001(\010B\010\n\006_titleB\024\n\022_working_director" +
+      "y\"\343\006\n\013ScreenPatch\022\024\n\014layout_epoch\030\001 \001(\004\022" +
+      "\025\n\rbase_revision\030\002 \001(\004\022\027\n\017screen_revisio" +
+      "n\030\003 \001(\004\022=\n\006layout\030\005 \001(\0132(.webterm.termin" +
+      "al.screen.v1.ScreenLayoutH\000\210\001\001\022:\n\014line_u" +
+      "pdates\030\006 \003(\0132$.webterm.terminal.screen.v" +
+      "1.LineData\022\033\n\023history_append_seqs\030\007 \003(\004\022" +
+      "$\n\027history_trim_before_seq\030\010 \001(\004H\001\210\001\001\022\035\n" +
+      "\025dictionary_generation\030\t \001(\004\022=\n\nnew_styl" +
+      "es\030\n \003(\0132).webterm.terminal.screen.v1.Te" +
+      "rminalStyle\0228\n\tnew_links\030\013 \003(\0132%.webterm" +
+      ".terminal.screen.v1.Hyperlink\0227\n\006cursor\030" +
+      "\014 \001(\0132\".webterm.terminal.screen.v1.Curso" +
+      "rH\002\210\001\001\0225\n\005modes\030\r \001(\0132!.webterm.terminal" +
+      ".screen.v1.ModesH\003\210\001\001\022A\n\007palette\030\016 \001(\0132+" +
+      ".webterm.terminal.screen.v1.TerminalPale" +
+      "tteH\004\210\001\001\022B\n\ractive_buffer\030\017 \001(\0162&.webter" +
+      "m.terminal.screen.v1.BufferKindH\005\210\001\001\022\022\n\005" +
+      "title\030\020 \001(\tH\006\210\001\001\022\036\n\021working_directory\030\021 " +
+      "\001(\tH\007\210\001\001\022\023\n\013instance_id\030\022 \001(\tB\t\n\007_layout" +
+      "B\032\n\030_history_trim_before_seqB\t\n\007_cursorB" +
       "\010\n\006_modesB\n\n\010_paletteB\020\n\016_active_bufferB" +
       "\010\n\006_titleB\024\n\022_working_directory\"\"\n\004Size\022" +
       "\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\" \n\014ScreenLay" +
@@ -54781,118 +54781,119 @@ public final class TerminalScreenProto {
       "\n\016indexed_colors\030\005 \003(\0132/.webterm.termina" +
       "l.screen.v1.IndexedPaletteColor\022\022\n\ngener" +
       "ation\030\006 \001(\004\"1\n\023IndexedPaletteColor\022\r\n\005in" +
-      "dex\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"a\n\016HistoryRequest" +
+      "dex\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"e\n\016HistoryRequest" +
       "\022\022\n\nrequest_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001" +
-      "(\004\022\026\n\016before_line_id\030\003 \001(\004\022\r\n\005limit\030\004 \001(" +
-      "\005\"\257\002\n\013HistoryPage\022\022\n\nrequest_id\030\001 \001(\t\022\024\n" +
-      "\014layout_epoch\030\002 \001(\004\022\026\n\016as_of_revision\030\003 " +
-      "\001(\004\022\037\n\027first_available_line_id\030\004 \001(\004\022\027\n\017" +
-      "has_more_before\030\005 \001(\010\0223\n\005lines\030\006 \003(\0132$.w" +
-      "ebterm.terminal.screen.v1.LineData\0229\n\006st" +
-      "yles\030\007 \003(\0132).webterm.terminal.screen.v1." +
-      "TerminalStyle\0224\n\005links\030\010 \003(\0132%.webterm.t" +
-      "erminal.screen.v1.Hyperlink\"D\n\013HistoryTr" +
-      "im\022\024\n\014layout_epoch\030\001 \001(\004\022\037\n\027first_availa" +
-      "ble_line_id\030\002 \001(\004\"N\n\rResyncRequest\022\024\n\014la" +
-      "yout_epoch\030\001 \001(\004\022\027\n\017screen_revision\030\002 \001(" +
-      "\004\022\016\n\006reason\030\003 \001(\t\"8\n\rAcquireLayout\022\022\n\nre" +
-      "quest_id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"\244\001\n\013" +
-      "LayoutLease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease" +
-      "_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013interactiv" +
-      "e\030\004 \001(\010\0222\n\010geometry\030\005 \001(\0132 .webterm.term" +
-      "inal.screen.v1.Size\022\025\n\rexpires_at_ms\030\006 \001" +
-      "(\004\"!\n\rReleaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n" +
-      "\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010l" +
-      "ease_id\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\360\002\n\rTe" +
-      "rminalInput\022\020\n\010lease_id\030\001 \001(\t\022\032\n\022client_" +
-      "instance_id\030\002 \001(\t\022\021\n\tinput_seq\030\003 \001(\004\0225\n\004" +
-      "text\030\n \001(\0132%.webterm.terminal.screen.v1." +
-      "TextInputH\000\0223\n\003key\030\013 \001(\0132$.webterm.termi" +
-      "nal.screen.v1.KeyInputH\000\0227\n\005paste\030\014 \001(\0132" +
-      "&.webterm.terminal.screen.v1.PasteInputH" +
-      "\000\0227\n\005mouse\030\r \001(\0132&.webterm.terminal.scre" +
-      "en.v1.MouseInputH\000\0227\n\005focus\030\016 \001(\0132&.webt" +
-      "erm.terminal.screen.v1.FocusInputH\000B\007\n\005i" +
-      "nput\"\223\001\n\010InputAck\022\032\n\022client_instance_id\030" +
-      "\001 \001(\t\022\021\n\tinput_seq\030\002 \001(\004\022\034\n\024terminal_ins" +
-      "tance_id\030\003 \001(\t\022:\n\006status\030\004 \001(\0162*.webterm" +
-      ".terminal.screen.v1.InputAckStatus\"\031\n\tTe" +
-      "xtInput\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key" +
-      "\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'.webterm.term" +
-      "inal.screen.v1.ModifierSet\022\017\n\007pressed\030\003 " +
-      "\001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMous" +
-      "eInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006butt" +
-      "on\030\003 \001(\0162\'.webterm.terminal.screen.v1.Mo" +
-      "useButton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n\tmodifi" +
-      "ers\030\005 \001(\0132\'.webterm.terminal.screen.v1.M" +
-      "odifierSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFocusInpu" +
-      "t\022\017\n\007focused\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005shi" +
-      "ft\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004m" +
-      "eta\030\004 \001(\010\"\343\004\n\016TerminalEffect\022\023\n\013instance" +
-      "_id\030\001 \001(\t\022\027\n\017screen_revision\030\002 \001(\004\0220\n\004be" +
-      "ll\030\n \001(\0132 .webterm.terminal.screen.v1.Be" +
-      "llH\000\0229\n\005title\030\013 \001(\0132(.webterm.terminal.s" +
-      "creen.v1.TitleChangedH\000\022B\n\003cwd\030\014 \001(\01323.w" +
-      "ebterm.terminal.screen.v1.WorkingDirecto" +
-      "ryChangedH\000\022J\n\016clipboard_read\030\r \001(\01320.we" +
-      "bterm.terminal.screen.v1.ClipboardReadRe" +
-      "questH\000\022L\n\017clipboard_write\030\016 \001(\01321.webte" +
-      "rm.terminal.screen.v1.ClipboardWriteRequ" +
-      "estH\000\022G\n\014notification\030\017 \001(\0132/.webterm.te" +
-      "rminal.screen.v1.DesktopNotificationH\000\022=" +
-      "\n\007palette\030\020 \001(\0132*.webterm.terminal.scree" +
-      "n.v1.PaletteChangedH\000\022F\n\nshell_mark\030\021 \001(" +
-      "\01320.webterm.terminal.screen.v1.ShellInte" +
-      "grationMarkH\000B\010\n\006effect\"\006\n\004Bell\"\035\n\014Title" +
-      "Changed\022\r\n\005title\030\001 \001(\t\"\'\n\027WorkingDirecto" +
-      "ryChanged\022\014\n\004path\030\001 \001(\t\"=\n\024ClipboardRead" +
-      "Request\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard" +
-      "\030\002 \001(\t\"L\n\025ClipboardWriteRequest\022\022\n\nreque" +
-      "st_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003" +
-      " \001(\014\"2\n\023DesktopNotification\022\r\n\005title\030\001 \001" +
-      "(\t\022\014\n\004body\030\002 \001(\t\"N\n\016PaletteChanged\022<\n\007pa" +
-      "lette\030\001 \001(\0132+.webterm.terminal.screen.v1" +
-      ".TerminalPalette\"2\n\024ShellIntegrationMark" +
-      "\022\014\n\004type\030\001 \001(\t\022\014\n\004data\030\002 \001(\t\"W\n\021Clipboar" +
-      "dResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007allowed" +
-      "\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\316\001" +
-      "\n\014TerminalInfo\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013in" +
-      "stance_id\030\002 \001(\t\022\r\n\005title\030\004 \001(\t\022\013\n\003cwd\030\006 " +
-      "\001(\t\022\017\n\007command\030\007 \001(\t\022\016\n\006status\030\010 \001(\t\022\014\n\004" +
-      "cols\030\t \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\rcreated_at_m" +
-      "s\030\013 \001(\003\022\031\n\021last_active_at_ms\030\014 \001(\003J\004\010\003\020\004" +
-      "J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005*Z\n\nBufferKi" +
-      "nd\022\033\n\027BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFE" +
-      "R_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002" +
-      "*\240\001\n\tColorKind\022\032\n\026COLOR_KIND_UNSPECIFIED" +
-      "\020\000\022\031\n\025COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_K" +
-      "IND_DEFAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022" +
-      "\026\n\022COLOR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND_RG" +
-      "B\020\005*u\n\013CursorShape\022\034\n\030CURSOR_SHAPE_UNSPE" +
-      "CIFIED\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURS" +
-      "OR_SHAPE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE" +
-      "\020\003*\374\001\n\rMouseTracking\022\036\n\032MOUSE_TRACKING_U" +
-      "NSPECIFIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n" +
-      "\022MOUSE_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKING_" +
-      "VT200\020\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHLIGH" +
-      "T\020\004\022\037\n\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030" +
-      "MOUSE_TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRAC" +
-      "KING_SGR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032M" +
-      "OUSE_ENCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENC" +
-      "ODING_X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022" +
-      "MOUSE_ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODING_U" +
-      "RXVT\020\004*\255\001\n\016InputAckStatus\022 \n\034INPUT_ACK_S" +
-      "TATUS_UNSPECIFIED\020\000\022\034\n\030INPUT_ACK_STATUS_" +
-      "WRITTEN\020\001\022\034\n\030INPUT_ACK_STATUS_IGNORED\020\002\022" +
-      "\035\n\031INPUT_ACK_STATUS_REJECTED\020\003\022\036\n\032INPUT_" +
-      "ACK_STATUS_UNCERTAIN\020\004*\242\001\n\013MouseButton\022\034" +
-      "\n\030MOUSE_BUTTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BU" +
-      "TTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022" +
-      "MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_WHE" +
-      "EL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005Bq\n\'com.webte" +
-      "rm.terminal.protocol.generatedB\023Terminal" +
-      "ScreenProtoZ1webterm/go-core/internal/sc" +
-      "reenprotocol/generatedb\006proto3"
+      "(\004\022\032\n\022before_history_seq\030\003 \001(\004\022\r\n\005limit\030" +
+      "\004 \001(\005\"\263\002\n\013HistoryPage\022\022\n\nrequest_id\030\001 \001(" +
+      "\t\022\024\n\014layout_epoch\030\002 \001(\004\022\026\n\016as_of_revisio" +
+      "n\030\003 \001(\004\022#\n\033first_available_history_seq\030\004" +
+      " \001(\004\022\027\n\017has_more_before\030\005 \001(\010\0223\n\005lines\030\006" +
+      " \003(\0132$.webterm.terminal.screen.v1.LineDa" +
+      "ta\0229\n\006styles\030\007 \003(\0132).webterm.terminal.sc" +
+      "reen.v1.TerminalStyle\0224\n\005links\030\010 \003(\0132%.w" +
+      "ebterm.terminal.screen.v1.Hyperlink\"H\n\013H" +
+      "istoryTrim\022\024\n\014layout_epoch\030\001 \001(\004\022#\n\033firs" +
+      "t_available_history_seq\030\002 \001(\004\"N\n\rResyncR" +
+      "equest\022\024\n\014layout_epoch\030\001 \001(\004\022\027\n\017screen_r" +
+      "evision\030\002 \001(\004\022\016\n\006reason\030\003 \001(\t\"8\n\rAcquire" +
+      "Layout\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013interactiv" +
+      "e\030\002 \001(\010\"\244\001\n\013LayoutLease\022\022\n\nrequest_id\030\001 " +
+      "\001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023" +
+      "\n\013interactive\030\004 \001(\010\0222\n\010geometry\030\005 \001(\0132 ." +
+      "webterm.terminal.screen.v1.Size\022\025\n\rexpir" +
+      "es_at_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n\010lease" +
+      "_id\030\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004row" +
+      "s\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nrequest_id\030" +
+      "\004 \001(\t\"\360\002\n\rTerminalInput\022\020\n\010lease_id\030\001 \001(" +
+      "\t\022\032\n\022client_instance_id\030\002 \001(\t\022\021\n\tinput_s" +
+      "eq\030\003 \001(\004\0225\n\004text\030\n \001(\0132%.webterm.termina" +
+      "l.screen.v1.TextInputH\000\0223\n\003key\030\013 \001(\0132$.w" +
+      "ebterm.terminal.screen.v1.KeyInputH\000\0227\n\005" +
+      "paste\030\014 \001(\0132&.webterm.terminal.screen.v1" +
+      ".PasteInputH\000\0227\n\005mouse\030\r \001(\0132&.webterm.t" +
+      "erminal.screen.v1.MouseInputH\000\0227\n\005focus\030" +
+      "\016 \001(\0132&.webterm.terminal.screen.v1.Focus" +
+      "InputH\000B\007\n\005input\"\223\001\n\010InputAck\022\032\n\022client_" +
+      "instance_id\030\001 \001(\t\022\021\n\tinput_seq\030\002 \001(\004\022\034\n\024" +
+      "terminal_instance_id\030\003 \001(\t\022:\n\006status\030\004 \001" +
+      "(\0162*.webterm.terminal.screen.v1.InputAck" +
+      "Status\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010Key" +
+      "Input\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'." +
+      "webterm.terminal.screen.v1.ModifierSet\022\017" +
+      "\n\007pressed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 " +
+      "\001(\t\"\301\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002" +
+      " \001(\005\0227\n\006button\030\003 \001(\0162\'.webterm.terminal." +
+      "screen.v1.MouseButton\022\023\n\013wheel_delta\030\004 \001" +
+      "(\005\022:\n\tmodifiers\030\005 \001(\0132\'.webterm.terminal" +
+      ".screen.v1.ModifierSet\022\017\n\007pressed\030\006 \001(\010\"" +
+      "\035\n\nFocusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013Modifi" +
+      "erSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctr" +
+      "l\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\343\004\n\016TerminalEffect" +
+      "\022\023\n\013instance_id\030\001 \001(\t\022\027\n\017screen_revision" +
+      "\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .webterm.terminal." +
+      "screen.v1.BellH\000\0229\n\005title\030\013 \001(\0132(.webter" +
+      "m.terminal.screen.v1.TitleChangedH\000\022B\n\003c" +
+      "wd\030\014 \001(\01323.webterm.terminal.screen.v1.Wo" +
+      "rkingDirectoryChangedH\000\022J\n\016clipboard_rea" +
+      "d\030\r \001(\01320.webterm.terminal.screen.v1.Cli" +
+      "pboardReadRequestH\000\022L\n\017clipboard_write\030\016" +
+      " \001(\01321.webterm.terminal.screen.v1.Clipbo" +
+      "ardWriteRequestH\000\022G\n\014notification\030\017 \001(\0132" +
+      "/.webterm.terminal.screen.v1.DesktopNoti" +
+      "ficationH\000\022=\n\007palette\030\020 \001(\0132*.webterm.te" +
+      "rminal.screen.v1.PaletteChangedH\000\022F\n\nshe" +
+      "ll_mark\030\021 \001(\01320.webterm.terminal.screen." +
+      "v1.ShellIntegrationMarkH\000B\010\n\006effect\"\006\n\004B" +
+      "ell\"\035\n\014TitleChanged\022\r\n\005title\030\001 \001(\t\"\'\n\027Wo" +
+      "rkingDirectoryChanged\022\014\n\004path\030\001 \001(\t\"=\n\024C" +
+      "lipboardReadRequest\022\022\n\nrequest_id\030\001 \001(\t\022" +
+      "\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWriteRequ" +
+      "est\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001" +
+      "(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotification\022" +
+      "\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"N\n\016PaletteC" +
+      "hanged\022<\n\007palette\030\001 \001(\0132+.webterm.termin" +
+      "al.screen.v1.TerminalPalette\"2\n\024ShellInt" +
+      "egrationMark\022\014\n\004type\030\001 \001(\t\022\014\n\004data\030\002 \001(\t" +
+      "\"W\n\021ClipboardResponse\022\022\n\nrequest_id\030\001 \001(" +
+      "\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004d" +
+      "ata\030\004 \001(\014\"\316\001\n\014TerminalInfo\022\022\n\nsession_id" +
+      "\030\001 \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\r\n\005title\030\004 \001" +
+      "(\t\022\013\n\003cwd\030\006 \001(\t\022\017\n\007command\030\007 \001(\t\022\016\n\006stat" +
+      "us\030\010 \001(\t\022\014\n\004cols\030\t \001(\005\022\014\n\004rows\030\n \001(\005\022\025\n\r" +
+      "created_at_ms\030\013 \001(\003\022\031\n\021last_active_at_ms" +
+      "\030\014 \001(\003J\004\010\003\020\004J\004\010\005\020\006\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005" +
+      "*Z\n\nBufferKind\022\033\n\027BUFFER_KIND_UNSPECIFIE" +
+      "D\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND" +
+      "_ALTERNATE\020\002*\240\001\n\tColorKind\022\032\n\026COLOR_KIND" +
+      "_UNSPECIFIED\020\000\022\031\n\025COLOR_KIND_DEFAULT_FG\020" +
+      "\001\022\031\n\025COLOR_KIND_DEFAULT_BG\020\002\022\025\n\021COLOR_KI" +
+      "ND_CURSOR\020\003\022\026\n\022COLOR_KIND_INDEXED\020\004\022\022\n\016C" +
+      "OLOR_KIND_RGB\020\005*u\n\013CursorShape\022\034\n\030CURSOR" +
+      "_SHAPE_UNSPECIFIED\020\000\022\026\n\022CURSOR_SHAPE_BLO" +
+      "CK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020\002\022\032\n\026CURSOR_SHA" +
+      "PE_UNDERLINE\020\003*\374\001\n\rMouseTracking\022\036\n\032MOUS" +
+      "E_TRACKING_UNSPECIFIED\020\000\022\027\n\023MOUSE_TRACKI" +
+      "NG_NONE\020\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022\030\n\024MOU" +
+      "SE_TRACKING_VT200\020\003\022\"\n\036MOUSE_TRACKING_VT" +
+      "200_HIGHLIGHT\020\004\022\037\n\033MOUSE_TRACKING_BUTTON" +
+      "_EVENT\020\005\022\034\n\030MOUSE_TRACKING_ANY_EVENT\020\006\022\035" +
+      "\n\031MOUSE_TRACKING_SGR_PIXELS\020\007*\222\001\n\rMouseE" +
+      "ncoding\022\036\n\032MOUSE_ENCODING_UNSPECIFIED\020\000\022" +
+      "\026\n\022MOUSE_ENCODING_X10\020\001\022\027\n\023MOUSE_ENCODIN" +
+      "G_UTF8\020\002\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030\n\024MOUS" +
+      "E_ENCODING_URXVT\020\004*\255\001\n\016InputAckStatus\022 \n" +
+      "\034INPUT_ACK_STATUS_UNSPECIFIED\020\000\022\034\n\030INPUT" +
+      "_ACK_STATUS_WRITTEN\020\001\022\034\n\030INPUT_ACK_STATU" +
+      "S_IGNORED\020\002\022\035\n\031INPUT_ACK_STATUS_REJECTED" +
+      "\020\003\022\036\n\032INPUT_ACK_STATUS_UNCERTAIN\020\004*\242\001\n\013M" +
+      "ouseButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIED\020\000" +
+      "\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_" +
+      "MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOUS" +
+      "E_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005B" +
+      "q\n\'com.webterm.terminal.protocol.generat" +
+      "edB\023TerminalScreenProtoZ1webterm/go-core" +
+      "/internal/screenprotocol/generatedb\006prot" +
+      "o3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -54939,13 +54940,13 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_ScreenSnapshot_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ScreenSnapshot_descriptor,
-        new java.lang.String[] { "SessionId", "InstanceId", "LayoutEpoch", "ScreenRevision", "Geometry", "ActiveBuffer", "Layout", "ScreenLines", "HistoryTailIds", "HistoryTailLines", "DictionaryGeneration", "Styles", "Links", "Cursor", "Modes", "Palette", "Title", "WorkingDirectory", "FirstAvailableHistoryLineId", "HasMoreHistoryBefore", });
+        new java.lang.String[] { "SessionId", "InstanceId", "LayoutEpoch", "ScreenRevision", "Geometry", "ActiveBuffer", "Layout", "ScreenLines", "HistoryTailSeqs", "HistoryTailLines", "DictionaryGeneration", "Styles", "Links", "Cursor", "Modes", "Palette", "Title", "WorkingDirectory", "FirstAvailableHistorySeq", "HasMoreHistoryBefore", });
     internal_static_webterm_terminal_screen_v1_ScreenPatch_descriptor =
       getDescriptor().getMessageTypes().get(7);
     internal_static_webterm_terminal_screen_v1_ScreenPatch_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_ScreenPatch_descriptor,
-        new java.lang.String[] { "LayoutEpoch", "BaseRevision", "ScreenRevision", "Layout", "LineUpdates", "HistoryAppendIds", "HistoryTrimBeforeId", "DictionaryGeneration", "NewStyles", "NewLinks", "Cursor", "Modes", "Palette", "ActiveBuffer", "Title", "WorkingDirectory", "InstanceId", });
+        new java.lang.String[] { "LayoutEpoch", "BaseRevision", "ScreenRevision", "Layout", "LineUpdates", "HistoryAppendSeqs", "HistoryTrimBeforeSeq", "DictionaryGeneration", "NewStyles", "NewLinks", "Cursor", "Modes", "Palette", "ActiveBuffer", "Title", "WorkingDirectory", "InstanceId", });
     internal_static_webterm_terminal_screen_v1_Size_descriptor =
       getDescriptor().getMessageTypes().get(8);
     internal_static_webterm_terminal_screen_v1_Size_fieldAccessorTable = new
@@ -55035,19 +55036,19 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_HistoryRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryRequest_descriptor,
-        new java.lang.String[] { "RequestId", "LayoutEpoch", "BeforeLineId", "Limit", });
+        new java.lang.String[] { "RequestId", "LayoutEpoch", "BeforeHistorySeq", "Limit", });
     internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor =
       getDescriptor().getMessageTypes().get(23);
     internal_static_webterm_terminal_screen_v1_HistoryPage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryPage_descriptor,
-        new java.lang.String[] { "RequestId", "LayoutEpoch", "AsOfRevision", "FirstAvailableLineId", "HasMoreBefore", "Lines", "Styles", "Links", });
+        new java.lang.String[] { "RequestId", "LayoutEpoch", "AsOfRevision", "FirstAvailableHistorySeq", "HasMoreBefore", "Lines", "Styles", "Links", });
     internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor =
       getDescriptor().getMessageTypes().get(24);
     internal_static_webterm_terminal_screen_v1_HistoryTrim_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_HistoryTrim_descriptor,
-        new java.lang.String[] { "LayoutEpoch", "FirstAvailableLineId", });
+        new java.lang.String[] { "LayoutEpoch", "FirstAvailableHistorySeq", });
     internal_static_webterm_terminal_screen_v1_ResyncRequest_descriptor =
       getDescriptor().getMessageTypes().get(25);
     internal_static_webterm_terminal_screen_v1_ResyncRequest_fieldAccessorTable = new

@@ -20,7 +20,7 @@ public final class ScreenMessageValidator {
   private static final int MAX_TITLE_BYTES = 4096;
   private static final int MAX_CWD_BYTES = 4096;
   private static final int MAX_URI_BYTES = 8192;
-  private static final int MAX_CELL_TEXT_BYTES = 64;
+  private static final int MAX_COMPACT_LINE_TEXT_BYTES = 32 * 1024;
   private static final int MAX_STYLES = 4096;
   private static final int MAX_LINKS = 4096;
   // instance id 长度上限：现有校验无同类惯例，取 256 字节。
@@ -105,7 +105,7 @@ public final class ScreenMessageValidator {
         return ValidationResult.fail("invalid snapshot layout line id: " + id);
       }
     }
-    if (s.getHistoryTailIdsCount() > MAX_SNAPSHOT_HISTORY
+    if (s.getHistoryTailSeqsCount() > MAX_SNAPSHOT_HISTORY
         || s.getHistoryTailLinesCount() > MAX_SNAPSHOT_HISTORY) {
       return ValidationResult.fail("snapshot history too large");
     }
@@ -123,8 +123,8 @@ public final class ScreenMessageValidator {
     ValidationResult historyResult = validateLines(s.getHistoryTailLinesList(), cols);
     if (!historyResult.ok) return historyResult;
     java.util.Set<Long> screenDataIds = lineIds(s.getScreenLinesList());
-    java.util.Set<Long> historyDataIds = lineIds(s.getHistoryTailLinesList());
-    if (screenDataIds == null || historyDataIds == null) {
+    java.util.Set<Long> historyLineIds = lineIds(s.getHistoryTailLinesList());
+    if (screenDataIds == null || historyLineIds == null) {
       return ValidationResult.fail("duplicate or invalid line data id");
     }
     for (long id : s.getLayout().getLineIdsList()) {
@@ -137,7 +137,7 @@ public final class ScreenMessageValidator {
       }
     }
     long previousHistorySeq = -1;
-    for (long seq : s.getHistoryTailIdsList()) {
+    for (long seq : s.getHistoryTailSeqsList()) {
       if (seq <= 0 || (previousHistorySeq >= 0 && seq <= previousHistorySeq)
           || !historySeqs.contains(seq)) {
         return ValidationResult.fail("invalid snapshot history sequence: " + seq);
@@ -185,12 +185,12 @@ public final class ScreenMessageValidator {
         }
       }
     }
-    if (p.getHistoryAppendIdsCount() > MAX_HISTORY_APPEND) {
-      return ValidationResult.fail("history append too large: " + p.getHistoryAppendIdsCount());
+    if (p.getHistoryAppendSeqsCount() > MAX_HISTORY_APPEND) {
+      return ValidationResult.fail("history append too large: " + p.getHistoryAppendSeqsCount());
     }
     // 稳定屏幕 LineID 在删除/resize 后允许缺口，但历史顺序仍必须严格递增。
     long prevHistorySeq = -1;
-    for (long seq : p.getHistoryAppendIdsList()) {
+    for (long seq : p.getHistoryAppendSeqsList()) {
       if (seq <= 0 || (prevHistorySeq >= 0 && seq <= prevHistorySeq)) {
         return ValidationResult.fail("history sequences are not increasing: " + seq);
       }
@@ -218,7 +218,7 @@ public final class ScreenMessageValidator {
         return ValidationResult.fail("duplicate history update sequence");
       }
     }
-    for (long seq : p.getHistoryAppendIdsList()) {
+    for (long seq : p.getHistoryAppendSeqsList()) {
       if (!updateHistorySeqs.contains(seq)) {
         return ValidationResult.fail("history append line data missing");
       }
@@ -259,14 +259,15 @@ public final class ScreenMessageValidator {
           line.getStyleSpansList(), maxCols);
     }
     if (line.getStyleSpansCount() != 0) return ValidationResult.fail("history style spans require compact text");
+    int runTextBytes = 0;
     for (TerminalScreenProto.CellRun run : line.getRunsList()) {
       if (run.getCol() < 0 || run.getCol() >= maxCols) {
         return ValidationResult.fail("history run col out of bounds: " + run.getCol());
       }
       for (TerminalScreenProto.Cell cell : run.getCellsList()) {
         int width = cell.getWidth();
-        if (!validateString(cell.getText(), MAX_CELL_TEXT_BYTES)
-            || (width != 1 && width != 2)) {
+        runTextBytes += utf8ByteLength(cell.getText());
+        if (runTextBytes > MAX_COMPACT_LINE_TEXT_BYTES || (width != 1 && width != 2)) {
           return ValidationResult.fail("invalid history cell");
         }
       }
@@ -315,13 +316,15 @@ public final class ScreenMessageValidator {
         continue;
       }
       if (line.getStyleSpansCount() != 0) return ValidationResult.fail("style spans require compact text");
+      int runTextBytes = 0;
       for (TerminalScreenProto.CellRun run : line.getRunsList()) {
         if (run.getCol() < 0 || run.getCol() >= maxCols) {
           return ValidationResult.fail("run col out of bounds: " + run.getCol());
         }
         for (TerminalScreenProto.Cell cell : run.getCellsList()) {
-          if (!validateString(cell.getText(), MAX_CELL_TEXT_BYTES)) {
-            return ValidationResult.fail("cell text too long");
+          runTextBytes += utf8ByteLength(cell.getText());
+          if (runTextBytes > MAX_COMPACT_LINE_TEXT_BYTES) {
+            return ValidationResult.fail("line text too long");
           }
           int w = cell.getWidth();
           if (w != 1 && w != 2) {
@@ -354,8 +357,8 @@ public final class ScreenMessageValidator {
       return spans.isEmpty() ? ValidationResult.ok()
           : ValidationResult.fail("empty compact line must not have style spans");
     }
-    if (!isWellFormedUtf16(text) || text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-        > maxCols * MAX_CELL_TEXT_BYTES || cellMeta.length > maxCols) {
+    if (!isWellFormedUtf16(text) || utf8ByteLength(text) > MAX_COMPACT_LINE_TEXT_BYTES
+        || cellMeta.length > maxCols) {
       return ValidationResult.fail("compact line exceeds resource limit");
     }
     int textCodePoints = text.codePointCount(0, text.length());
@@ -431,8 +434,11 @@ public final class ScreenMessageValidator {
   private static boolean validateString(String s, int maxBytes) {
     if (s == null) return true;
     if (s.length() > maxBytes) return false;
-    byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    return bytes.length <= maxBytes;
+    return utf8ByteLength(s) <= maxBytes;
+  }
+
+  private static int utf8ByteLength(String text) {
+    return text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
   }
 
   public static final class ValidationResult {

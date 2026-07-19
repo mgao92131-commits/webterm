@@ -5,7 +5,7 @@ package com.webterm.terminal.model;
  */
 public final class TerminalViewportState {
   public boolean followTail = true;
-  public Long anchorHistoryLineId;
+  public Long anchorHistorySeq;
   public int anchorPixelOffset;
   public int scrollOffsetPixels; // 从屏幕底部向上滚动的像素
   public TerminalSelection selection;
@@ -29,7 +29,7 @@ public final class TerminalViewportState {
 
   public void resetForSnapshot() {
     followTail = true;
-    anchorHistoryLineId = null;
+    anchorHistorySeq = null;
     anchorPixelOffset = 0;
     scrollOffsetPixels = 0;
     selection = null;

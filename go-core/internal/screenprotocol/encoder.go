@@ -61,15 +61,15 @@ func EncodeHistoryPageWithCompactLines(requestID string, epoch, revision uint64,
 	}
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryPage{HistoryPage: &pb.HistoryPage{
 		RequestId: requestID, LayoutEpoch: epoch, AsOfRevision: revision,
-		FirstAvailableLineId: w.FirstAvailableLineID, HasMoreBefore: w.HasMoreBefore,
+		FirstAvailableHistorySeq: w.FirstAvailableHistorySeq, HasMoreBefore: w.HasMoreBefore,
 		Lines: lines, Styles: encodeStyles(page.Styles), Links: encodeLinks(page.Links),
 	}}})
 }
 
 // EncodeHistoryTrim 编码服务端历史裁剪水位。
-func EncodeHistoryTrim(epoch, firstAvailableID uint64) ([]byte, error) {
+func EncodeHistoryTrim(epoch, firstAvailableSeq uint64) ([]byte, error) {
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryTrim{HistoryTrim: &pb.HistoryTrim{
-		LayoutEpoch: epoch, FirstAvailableLineId: firstAvailableID,
+		LayoutEpoch: epoch, FirstAvailableHistorySeq: firstAvailableSeq,
 	}}})
 }
 
@@ -103,26 +103,26 @@ func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) (*pb.Sc
 		return nil, err
 	}
 	return &pb.ScreenSnapshot{
-		SessionId:                   frame.SessionID,
-		InstanceId:                  frame.InstanceID,
-		LayoutEpoch:                 frame.Epoch,
-		ScreenRevision:              frame.Seq,
-		Geometry:                    encodeSize(frame.Rows, frame.Cols),
-		ActiveBuffer:                encodeBufferKind(frame.ActiveBuffer),
-		Layout:                      encodeLayout(frame.Screen),
-		ScreenLines:                 screenLines,
-		HistoryTailIds:              historySeqs(frame.History.Lines),
-		HistoryTailLines:            historyLines,
-		DictionaryGeneration:        frame.DictionaryGeneration,
-		Styles:                      encodeStyles(frame.Styles),
-		Links:                       encodeLinks(frame.Links),
-		Cursor:                      encodeCursor(frame.Cursor),
-		Modes:                       encodeModes(frame.Modes),
-		Palette:                     encodePalette(frame),
-		Title:                       proto.String(frame.Title),
-		WorkingDirectory:            proto.String(frame.WorkingDir),
-		FirstAvailableHistoryLineId: frame.History.FirstAvailableLineID,
-		HasMoreHistoryBefore:        frame.History.HasMoreBefore,
+		SessionId:                frame.SessionID,
+		InstanceId:               frame.InstanceID,
+		LayoutEpoch:              frame.Epoch,
+		ScreenRevision:           frame.Seq,
+		Geometry:                 encodeSize(frame.Rows, frame.Cols),
+		ActiveBuffer:             encodeBufferKind(frame.ActiveBuffer),
+		Layout:                   encodeLayout(frame.Screen),
+		ScreenLines:              screenLines,
+		HistoryTailSeqs:          historySeqs(frame.History.Lines),
+		HistoryTailLines:         historyLines,
+		DictionaryGeneration:     frame.DictionaryGeneration,
+		Styles:                   encodeStyles(frame.Styles),
+		Links:                    encodeLinks(frame.Links),
+		Cursor:                   encodeCursor(frame.Cursor),
+		Modes:                    encodeModes(frame.Modes),
+		Palette:                  encodePalette(frame),
+		Title:                    proto.String(frame.Title),
+		WorkingDirectory:         proto.String(frame.WorkingDir),
+		FirstAvailableHistorySeq: frame.History.FirstAvailableHistorySeq,
+		HasMoreHistoryBefore:     frame.History.HasMoreBefore,
 	}, nil
 }
 
@@ -137,7 +137,7 @@ func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) (*pb.Scree
 		BaseRevision:         frame.BaseRevision,
 		ScreenRevision:       frame.Seq,
 		LineUpdates:          lineUpdates,
-		HistoryAppendIds:     frame.HistoryAppendIDs,
+		HistoryAppendSeqs:    frame.HistoryAppendSeqs,
 		DictionaryGeneration: frame.DictionaryGeneration,
 		NewStyles:            encodeStyles(frame.Styles),
 		NewLinks:             encodeLinks(frame.Links),
@@ -162,8 +162,8 @@ func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) (*pb.Scree
 	if frame.WorkingDirChanged {
 		patch.WorkingDirectory = proto.String(frame.WorkingDir)
 	}
-	if frame.FirstAvailableHistoryLineIDChanged {
-		patch.HistoryTrimBeforeId = proto.Uint64(frame.History.FirstAvailableLineID)
+	if frame.FirstAvailableHistorySeqChanged {
+		patch.HistoryTrimBeforeSeq = proto.Uint64(frame.History.FirstAvailableHistorySeq)
 	}
 	return patch, nil
 }
@@ -295,17 +295,17 @@ func encodeLineData(lines []terminalengine.Line, compactLines bool, columns int)
 			LineVersion: line.Version,
 			HistorySeq:  line.HistorySeq,
 			Wrapped:     line.Wrapped,
-			Runs:        encodeCellRuns(line.Runs),
 		}
 		if compactLines {
 			text, meta, spans, err := compactLine(line.Runs, columns)
 			if err != nil {
 				return nil, fmt.Errorf("compact line id=%d row=%d: %w", line.ID, line.Row, err)
 			}
-			encoded.Runs = nil
 			encoded.Text = text
 			encoded.CellMeta = meta
 			encoded.StyleSpans = spans
+		} else {
+			encoded.Runs = encodeCellRuns(line.Runs)
 		}
 		out[i] = encoded
 	}
@@ -403,7 +403,7 @@ func compactLine(runs []terminalengine.CellRun, requestedColumns int) (string, [
 			if text == "" {
 				text = " "
 			}
-			if len(text) > maxCellTextBytes || !utf8.ValidString(text) {
+			if !utf8.ValidString(text) {
 				return "", nil, nil, fmt.Errorf("invalid UTF-8 cell text at col=%d bytes=%d", col, len(text))
 			}
 			codePoints := utf8.RuneCountInString(text)
@@ -468,8 +468,12 @@ func compactLine(runs []terminalengine.CellRun, requestedColumns int) (string, [
 		col += int(entry.width)
 	}
 
+	encodedText := text.String()
+	if len(encodedText) > maxCompactLineTextBytes {
+		return "", nil, nil, fmt.Errorf("compact line text exceeds limit: bytes=%d limit=%d", len(encodedText), maxCompactLineTextBytes)
+	}
 	spans := compactStyleSpans(styles, links)
-	return text.String(), meta, spans, nil
+	return encodedText, meta, spans, nil
 }
 
 func compactStyleSpans(styles, links []uint32) []*pb.StyleSpan {

@@ -120,7 +120,7 @@ public final class TerminalSessionRuntimeMailboxBaselineTest {
     public void requestResize(int cols, int rows) {}
 
     @Override
-    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
       return true;
     }
 

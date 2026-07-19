@@ -94,11 +94,11 @@ func assertMonotoneIDs(t *testing.T, w terminalengine.HistoryWindow) {
 func assertTrueBounds(t *testing.T, w terminalengine.HistoryWindow) {
 	t.Helper()
 	if len(w.Lines) > 0 {
-		if w.Lines[0].HistorySeq != w.FirstIncludedLineID || w.Lines[len(w.Lines)-1].HistorySeq != w.LastIncludedLineID {
+		if w.Lines[0].HistorySeq != w.FirstIncludedHistorySeq || w.Lines[len(w.Lines)-1].HistorySeq != w.LastIncludedHistorySeq {
 			t.Fatalf("window bounds mismatch: lines %d..%d, fields %d..%d",
-				w.Lines[0].HistorySeq, w.Lines[len(w.Lines)-1].HistorySeq, w.FirstIncludedLineID, w.LastIncludedLineID)
+				w.Lines[0].HistorySeq, w.Lines[len(w.Lines)-1].HistorySeq, w.FirstIncludedHistorySeq, w.LastIncludedHistorySeq)
 		}
-	} else if w.LastIncludedLineID != w.FirstIncludedLineID-1 {
+	} else if w.LastIncludedHistorySeq != w.FirstIncludedHistorySeq-1 {
 		t.Fatalf("empty window bounds wrong: %+v", w)
 	}
 }
@@ -155,18 +155,18 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowOrdered(t *testing.T) {
 			}
 			if want == sb.Len() {
 				// 留存行未超过窗口：窗口包含全部留存行。
-				if state.History.FirstIncludedLineID != state.History.FirstAvailableLineID {
+				if state.History.FirstIncludedHistorySeq != state.History.FirstAvailableHistorySeq {
 					t.Fatalf("iter %d: FirstIncluded=%d != FirstAvailable=%d", i,
-						state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+						state.History.FirstIncludedHistorySeq, state.History.FirstAvailableHistorySeq)
 				}
 				if state.History.HasMoreBefore {
 					t.Fatalf("iter %d: HasMoreBefore must be false when window starts at FirstAvailable", i)
 				}
 			} else {
 				// 留存行超过首屏窗口：窗口从较新的位置开始，旧行需分页取得。
-				if state.History.FirstIncludedLineID <= state.History.FirstAvailableLineID {
+				if state.History.FirstIncludedHistorySeq <= state.History.FirstAvailableHistorySeq {
 					t.Fatalf("iter %d: FirstIncluded=%d must be after FirstAvailable=%d", i,
-						state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+						state.History.FirstIncludedHistorySeq, state.History.FirstAvailableHistorySeq)
 				}
 				if !state.History.HasMoreBefore {
 					t.Fatalf("iter %d: HasMoreBefore must be true when window omits retained lines", i)
@@ -189,9 +189,9 @@ func TestProjector_ScrollbackTrimKeepsHistoryWindowOrdered(t *testing.T) {
 			if len(state.History.Lines) != sb.Len() {
 				t.Fatalf("iter %d: window=%d lines, want scrollback len %d", i, len(state.History.Lines), sb.Len())
 			}
-			if state.History.FirstIncludedLineID != state.History.FirstAvailableLineID {
+			if state.History.FirstIncludedHistorySeq != state.History.FirstAvailableHistorySeq {
 				t.Fatalf("iter %d: FirstIncluded=%d != FirstAvailable=%d", i,
-					state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+					state.History.FirstIncludedHistorySeq, state.History.FirstAvailableHistorySeq)
 			}
 			assertMonotoneIDs(t, state.History)
 			assertStateEquivalent(t, state, forceFullExport(p, seq))
@@ -225,11 +225,11 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 	}
 
 	// 滚入历史的 k 行都以 HistorySeq 追加，并携带其 LineID 的绑定数据。
-	if len(patch.HistoryAppendIDs) != k {
-		t.Fatalf("history append ids=%d, want %d", len(patch.HistoryAppendIDs), k)
+	if len(patch.HistoryAppendSeqs) != k {
+		t.Fatalf("history append ids=%d, want %d", len(patch.HistoryAppendSeqs), k)
 	}
 	wantIDs := state.History.Lines[len(state.History.Lines)-k:]
-	for i, id := range patch.HistoryAppendIDs {
+	for i, id := range patch.HistoryAppendSeqs {
 		if id != wantIDs[i].HistorySeq {
 			t.Fatalf("append sequence[%d]=%d, want %d", i, id, wantIDs[i].HistorySeq)
 		}
@@ -239,13 +239,13 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 	}
 
 	// 窗口旧端被裁 k 行：边界必须与新 State 完全一致。
-	if patch.History.FirstIncludedLineID != baseline.History.FirstIncludedLineID+k {
+	if patch.History.FirstIncludedHistorySeq != baseline.History.FirstIncludedHistorySeq+k {
 		t.Fatalf("FirstIncluded=%d, want baseline+%d=%d",
-			patch.History.FirstIncludedLineID, k, baseline.History.FirstIncludedLineID+k)
+			patch.History.FirstIncludedHistorySeq, k, baseline.History.FirstIncludedHistorySeq+k)
 	}
-	if patch.History.FirstAvailableLineID != state.History.FirstAvailableLineID ||
-		patch.History.FirstIncludedLineID != state.History.FirstIncludedLineID ||
-		patch.History.LastIncludedLineID != state.History.LastIncludedLineID ||
+	if patch.History.FirstAvailableHistorySeq != state.History.FirstAvailableHistorySeq ||
+		patch.History.FirstIncludedHistorySeq != state.History.FirstIncludedHistorySeq ||
+		patch.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq ||
 		patch.History.HasMoreBefore != state.History.HasMoreBefore {
 		t.Fatal("patch history bounds differ from the new state")
 	}
@@ -273,11 +273,11 @@ func TestProjector_LargeHistoryAdvanceUsesTailIDsWithoutSnapshot(t *testing.T) {
 	if frame.Kind != terminalengine.FramePatch {
 		t.Fatalf("stable-id patch must remain incremental, got kind=%v", frame.Kind)
 	}
-	if got := len(frame.HistoryAppendIDs); got != snapshotTailLines {
+	if got := len(frame.HistoryAppendSeqs); got != snapshotTailLines {
 		t.Fatalf("history append ids=%d, want tail window %d", got, snapshotTailLines)
 	}
-	if frame.History.FirstIncludedLineID != state.History.FirstIncludedLineID ||
-		frame.History.LastIncludedLineID != state.History.LastIncludedLineID ||
+	if frame.History.FirstIncludedHistorySeq != state.History.FirstIncludedHistorySeq ||
+		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq ||
 		!frame.History.HasMoreBefore {
 		t.Fatalf("snapshot window bounds wrong: %+v", frame.History)
 	}
@@ -305,13 +305,13 @@ func TestProjector_ResizeRebuildsHistoryOnEpochChange(t *testing.T) {
 	// resize 后历史继续按 LineID 增量追加。
 	writeScrollLines(t, engine, 30, 5)
 	next := p.ExportState(1, 4)
-	if next.History.LastIncludedLineID <= state.History.LastIncludedLineID {
-		t.Fatalf("history did not grow after resize: lastID %d -> %d",
-			state.History.LastIncludedLineID, next.History.LastIncludedLineID)
+	if next.History.LastIncludedHistorySeq <= state.History.LastIncludedHistorySeq {
+		t.Fatalf("history did not grow after resize: lastSeq %d -> %d",
+			state.History.LastIncludedHistorySeq, next.History.LastIncludedHistorySeq)
 	}
-	if next.History.FirstIncludedLineID < state.History.FirstIncludedLineID {
+	if next.History.FirstIncludedHistorySeq < state.History.FirstIncludedHistorySeq {
 		t.Fatalf("window start moved backwards after resize: %d -> %d",
-			state.History.FirstIncludedLineID, next.History.FirstIncludedLineID)
+			state.History.FirstIncludedHistorySeq, next.History.FirstIncludedHistorySeq)
 	}
 	// resize 放大 Pop 了 2 行，ID 空间有缺口：窗口 ID 单调但不一定连续。
 	assertMonotoneIDs(t, next.History)
@@ -391,9 +391,9 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	if frame := deriver.FrameForState(back); frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("buffer switch back must derive snapshot, got kind=%v", frame.Kind)
 	}
-	if back.History.LastIncludedLineID != main.History.LastIncludedLineID {
-		t.Fatalf("history lost across alt round trip: lastID %d -> %d",
-			main.History.LastIncludedLineID, back.History.LastIncludedLineID)
+	if back.History.LastIncludedHistorySeq != main.History.LastIncludedHistorySeq {
+		t.Fatalf("history lost across alt round trip: lastSeq %d -> %d",
+			main.History.LastIncludedHistorySeq, back.History.LastIncludedHistorySeq)
 	}
 	if !reflect.DeepEqual(back.History, main.History) {
 		t.Fatal("restored history differs from pre-alternate window")
@@ -401,7 +401,7 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	assertStateEquivalent(t, back, forceFullExport(p, 4))
 }
 
-// §6.4：Clear 推进头部水位，Pop 使尾部 LastID 回落；历史窗口缓存必须
+// §6.4：Clear 推进头部水位，Pop 使尾部 LastSeq 回落；历史窗口缓存必须
 // 分别通过增量裁剪或全量重建恢复到权威状态。
 func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 	t.Run("clear", func(t *testing.T) {
@@ -411,12 +411,12 @@ func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 
 		sb.Clear()
 		cleared := p.ExportState(0, 2)
-		if len(cleared.History.Lines) != 0 || cleared.History.LastIncludedLineID != cleared.History.FirstAvailableLineID-1 {
+		if len(cleared.History.Lines) != 0 || cleared.History.LastIncludedHistorySeq != cleared.History.FirstAvailableHistorySeq-1 {
 			t.Fatalf("history not empty after Clear: %+v", cleared.History)
 		}
 		assertStateEquivalent(t, cleared, forceFullExport(p, 3))
 
-		clearedWatermark := cleared.History.FirstAvailableLineID
+		clearedWatermark := cleared.History.FirstAvailableHistorySeq
 		if clearedWatermark <= 1 {
 			t.Fatalf("Clear must advance the history watermark, got %d", clearedWatermark)
 		}
@@ -427,7 +427,7 @@ func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 		if len(next.History.Lines) != sb.Len() {
 			t.Fatalf("window=%d lines after re-accumulation, want scrollback len %d", len(next.History.Lines), sb.Len())
 		}
-		if len(next.History.Lines) == 0 || next.History.FirstIncludedLineID < clearedWatermark {
+		if len(next.History.Lines) == 0 || next.History.FirstIncludedHistorySeq < clearedWatermark {
 			t.Fatalf("re-accumulated window wrong: %+v", next.History)
 		}
 		assertMonotoneIDs(t, next.History)
@@ -441,9 +441,9 @@ func TestProjector_ScrollbackClearAndPopReconcileHistoryCache(t *testing.T) {
 
 		sb.Pop() // 模拟 resize 放大从 scrollback 拉回一行
 		after := p.ExportState(0, 2)
-		if after.History.LastIncludedLineID != before.History.LastIncludedLineID-1 {
-			t.Fatalf("lastID after Pop=%d, want %d",
-				after.History.LastIncludedLineID, before.History.LastIncludedLineID-1)
+		if after.History.LastIncludedHistorySeq != before.History.LastIncludedHistorySeq-1 {
+			t.Fatalf("lastSeq after Pop=%d, want %d",
+				after.History.LastIncludedHistorySeq, before.History.LastIncludedHistorySeq-1)
 		}
 		assertStateEquivalent(t, after, forceFullExport(p, 3))
 	})
@@ -510,9 +510,9 @@ func TestProjector_IncrementalHistoryMatchesFullExport(t *testing.T) {
 	if len(state.History.Lines) != 60 {
 		t.Fatalf("gap rebuild window=%d lines, want 60", len(state.History.Lines))
 	}
-	if state.History.FirstIncludedLineID != state.History.FirstAvailableLineID {
+	if state.History.FirstIncludedHistorySeq != state.History.FirstAvailableHistorySeq {
 		t.Fatalf("gap window FirstIncluded=%d != FirstAvailable=%d",
-			state.History.FirstIncludedLineID, state.History.FirstAvailableLineID)
+			state.History.FirstIncludedHistorySeq, state.History.FirstAvailableHistorySeq)
 	}
 	check(state)
 

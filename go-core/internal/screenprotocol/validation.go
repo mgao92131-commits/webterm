@@ -8,18 +8,20 @@ import (
 )
 
 const (
-	minRows             = 5
-	maxRows             = 200
-	minCols             = 10
-	maxCols             = 500
-	maxHistoryPage      = 500
-	maxSnapshotHistory  = 500
-	maxEnvelopeBytes    = 2 * 1024 * 1024
-	maxTitleBytes       = 4096
-	maxCWDBytes         = 4096
-	maxURIBytes         = 8192
-	maxCellTextBytes    = 64
-	maxCompactMetaBytes = maxCols
+	minRows            = 5
+	maxRows            = 200
+	minCols            = 10
+	maxCols            = 500
+	maxHistoryPage     = 500
+	maxSnapshotHistory = 500
+	maxEnvelopeBytes   = 2 * 1024 * 1024
+	maxTitleBytes      = 4096
+	maxCWDBytes        = 4096
+	maxURIBytes        = 8192
+	// Compact text is bounded per logical line, independently of the number
+	// of terminal columns or the size of an individual grapheme cluster.
+	maxCompactLineTextBytes = 32 * 1024
+	maxCompactMetaBytes     = maxCols
 )
 
 // ValidateEnvelopeSize 校验 envelope 总大小。
@@ -114,7 +116,7 @@ func ValidateSnapshot(s *pb.ScreenSnapshot) error {
 	if s.Geometry.Cols < minCols || s.Geometry.Cols > maxCols {
 		return fmt.Errorf("invalid snapshot cols: %d", s.Geometry.Cols)
 	}
-	if len(s.HistoryTailIds) > maxSnapshotHistory || len(s.HistoryTailLines) > maxSnapshotHistory {
+	if len(s.HistoryTailSeqs) > maxSnapshotHistory || len(s.HistoryTailLines) > maxSnapshotHistory {
 		return fmt.Errorf("snapshot history too large")
 	}
 	if s.Title != nil {
@@ -165,7 +167,7 @@ func ValidateSnapshot(s *pb.ScreenSnapshot) error {
 		historySeqs[line.HistorySeq] = struct{}{}
 	}
 	var previous uint64
-	for index, seq := range s.HistoryTailIds {
+	for index, seq := range s.HistoryTailSeqs {
 		if seq == 0 || (index > 0 && seq <= previous) {
 			return fmt.Errorf("invalid snapshot history sequence: %d", seq)
 		}
@@ -213,7 +215,7 @@ func ValidatePatch(p *pb.ScreenPatch) error {
 		}
 	}
 	var previous uint64
-	for index, seq := range p.HistoryAppendIds {
+	for index, seq := range p.HistoryAppendSeqs {
 		if seq == 0 || (index > 0 && seq <= previous) {
 			return fmt.Errorf("invalid patch history append sequence: %d", seq)
 		}
@@ -281,13 +283,18 @@ func validateLineData(lines []*pb.LineData, maxCols int) (map[uint64]struct{}, e
 		} else if len(line.StyleSpans) != 0 {
 			return nil, fmt.Errorf("style spans require compact text")
 		}
+		runTextBytes := 0
 		for _, run := range line.Runs {
 			if run.Col < 0 || int(run.Col) >= maxCols {
 				return nil, fmt.Errorf("run col out of bounds: %d", run.Col)
 			}
 			for _, cell := range run.Cells {
-				if err := validateString(cell.Text, maxCellTextBytes, "cell text"); err != nil {
-					return nil, err
+				if !utf8.ValidString(cell.Text) {
+					return nil, fmt.Errorf("cell text contains invalid UTF-8")
+				}
+				runTextBytes += len(cell.Text)
+				if runTextBytes > maxCompactLineTextBytes {
+					return nil, fmt.Errorf("line text exceeds resource limit")
 				}
 				if cell.Width != 1 && cell.Width != 2 {
 					return nil, fmt.Errorf("invalid cell width: %d", cell.Width)
@@ -311,7 +318,7 @@ func validateCompactLine(text string, meta []byte, spans []*pb.StyleSpan, maxCol
 	if !utf8.ValidString(text) {
 		return fmt.Errorf("compact text contains invalid UTF-8")
 	}
-	if len(text) > maxCols*maxCellTextBytes || len(meta) > maxCompactMetaBytes || len(meta) > maxCols {
+	if len(text) > maxCompactLineTextBytes || len(meta) > maxCompactMetaBytes || len(meta) > maxCols {
 		return fmt.Errorf("compact line exceeds resource limit")
 	}
 	codePoints := 0

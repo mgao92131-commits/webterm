@@ -18,15 +18,15 @@ public final class ScreenMessageMapperTest {
     ScreenPatch patch = ScreenMessageMapper.mapPatch(TerminalScreenProto.ScreenPatch.newBuilder()
         .setInstanceId("i").setLayoutEpoch(1).setBaseRevision(1).setScreenRevision(2)
         .setLayout(TerminalScreenProto.ScreenLayout.newBuilder().addLineIds(42))
-        .addLineUpdates(line).addHistoryAppendIds(42).build(), 10);
+        .addLineUpdates(line).addHistoryAppendSeqs(42).build(), 10);
     assertArrayEquals(new long[] {42}, patch.layout);
     TerminalLine mapped = patch.lineUpdates.get(0);
     assertEquals(42, mapped.id); assertEquals(7, mapped.version);
     assertEquals("界", mapped.at(3).text); assertTrue(mapped.at(4).isSpacer());
-    assertEquals("x", mapped.at(5).text); assertEquals(Long.valueOf(42), patch.historyAppendIds.get(0));
+    assertEquals("x", mapped.at(5).text); assertEquals(Long.valueOf(42), patch.historyAppendSeqs.get(0));
   }
 
-  @Test public void snapshotResolvesLayoutByLineId() {
+  @Test public void snapshotResolvesLayoutBySeq() {
     TerminalScreenProto.LineData line = TerminalScreenProto.LineData.newBuilder().setLineId(8)
         .setLineVersion(1).build();
     ScreenSnapshot snapshot = ScreenMessageMapper.mapSnapshot(TerminalScreenProto.ScreenSnapshot.newBuilder()

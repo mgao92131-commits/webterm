@@ -18,7 +18,7 @@ func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
 		BaseRevision: 1,
 		Seq:          2,
 		History: terminalengine.HistoryWindow{
-			FirstAvailableLineID: 42,
+			FirstAvailableHistorySeq: 42,
 		},
 	}
 
@@ -30,11 +30,11 @@ func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetPatch().HistoryTrimBeforeId != nil {
+	if envelope.GetPatch().HistoryTrimBeforeSeq != nil {
 		t.Fatal("watermark must be absent without explicit presence flag")
 	}
 
-	frame.FirstAvailableHistoryLineIDChanged = true
+	frame.FirstAvailableHistorySeqChanged = true
 	encoded, err = EncodeFrame(frame)
 	if err != nil {
 		t.Fatal(err)
@@ -43,8 +43,8 @@ func TestEncodePatch_HistoryWatermarkPresence(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetPatch().HistoryTrimBeforeId == nil || envelope.GetPatch().GetHistoryTrimBeforeId() != 42 {
-		t.Fatalf("watermark=%v, want present 42", envelope.GetPatch().HistoryTrimBeforeId)
+	if envelope.GetPatch().HistoryTrimBeforeSeq == nil || envelope.GetPatch().GetHistoryTrimBeforeSeq() != 42 {
+		t.Fatalf("watermark=%v, want present 42", envelope.GetPatch().HistoryTrimBeforeSeq)
 	}
 }
 
@@ -97,6 +97,19 @@ func TestEncodeFrameWithCompactLines_UsesUTF8TextMetadataAndSpans(t *testing.T) 
 	}
 	if len(line.GetStyleSpans()) != 1 || line.GetStyleSpans()[0].GetStartCol() != 1 {
 		t.Fatalf("compact style spans=%+v", line.GetStyleSpans())
+	}
+
+	data, err = EncodeFrameWithCompactLines(base, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Reset()
+	if err := proto.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	line = envelope.GetSnapshot().GetScreenLines()[0]
+	if line.GetText() != "" || len(line.GetCellMeta()) != 0 || len(line.GetStyleSpans()) != 0 || len(line.GetRuns()) != 1 {
+		t.Fatalf("non-compact line=%+v, want runs-only encoding", line)
 	}
 
 	base.Screen[0].Runs[0].Cells = []terminalengine.Cell{{Text: " ", Width: 1}, {Text: " ", Width: 1}}
@@ -182,7 +195,6 @@ func TestCompactLine_StylesAndTrailingSpaces(t *testing.T) {
 }
 
 func TestCompactLine_RejectsInvalidModelData(t *testing.T) {
-	tooLong := strings.Repeat("a", maxCellTextBytes+1)
 	invalidUTF8 := string([]byte{0xff})
 	tests := []struct {
 		name string
@@ -191,7 +203,6 @@ func TestCompactLine_RejectsInvalidModelData(t *testing.T) {
 	}{
 		{"invalid-width", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "x", Width: 3}}}}, 4},
 		{"invalid-utf8", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: invalidUTF8, Width: 1}}}}, 4},
-		{"too-long", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: tooLong, Width: 1}}}}, 4},
 		{"wide-out-of-bounds", []terminalengine.CellRun{{Col: 1, Cells: []terminalengine.Cell{{Text: "中", Width: 2}}}}, 2},
 		{"overlaps-wide-spacer", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "中", Width: 2}}}, {Col: 1, Cells: []terminalengine.Cell{{Text: "x", Width: 1}}}}, 3},
 	}
@@ -201,6 +212,26 @@ func TestCompactLine_RejectsInvalidModelData(t *testing.T) {
 				t.Fatal("expected compact model error")
 			}
 		})
+	}
+}
+
+func TestCompactLine_TextLimits(t *testing.T) {
+	over64Bytes := strings.Repeat("界", 22) // 66 bytes, 22 code points.
+	text, meta, _, err := compactLine([]terminalengine.CellRun{{Col: 0,
+		Cells: []terminalengine.Cell{{Text: over64Bytes, Width: 1}}}}, 1)
+	if err != nil || text != over64Bytes || len(meta) != 1 || meta[0] != 22 {
+		t.Fatalf("cell larger than 64B must remain valid: text=%d meta=%v err=%v", len(text), meta, err)
+	}
+
+	// Each cell remains within the 7-bit code point metadata representation,
+	// while the line as a whole intentionally exceeds the independent 32 KiB cap.
+	largeCell := strings.Repeat("界", 127)
+	cells := make([]terminalengine.Cell, 87)
+	for i := range cells {
+		cells[i] = terminalengine.Cell{Text: largeCell, Width: 1}
+	}
+	if _, _, _, err := compactLine([]terminalengine.CellRun{{Col: 0, Cells: cells}}, len(cells)); err == nil {
+		t.Fatalf("compact text larger than %d bytes must be rejected", maxCompactLineTextBytes)
 	}
 }
 

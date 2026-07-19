@@ -85,7 +85,7 @@ type ScreenClient struct {
 	// forced full state (attach/resync/dictionary rotation).
 	ResetProjection func()
 	SendHistory     func(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData)
-	SendHistoryTrim func(epoch, firstAvailableID uint64)
+	SendHistoryTrim func(epoch, firstAvailableSeq uint64)
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
 	SendLayoutLease func(LayoutLeaseEvent)
 
@@ -206,7 +206,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
 	// scrollbackMaxBytes<=0 时保留 NewTrackedScrollback 的 DefaultScrollbackByteLimit。
 	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, func(ev terminalengine.ScrollbackTrimEvent) {
-		r.engineSignals.recordHistoryTrim(ev.FirstAvailableID)
+		r.engineSignals.recordHistoryTrim(ev.FirstAvailableSeq)
 	})
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
@@ -301,8 +301,8 @@ func (r *Runtime) Resize(clientID, leaseID string, cols, rows int) {
 }
 
 // RequestHistory 请求历史分页。
-func (r *Runtime) RequestHistory(clientID, requestID string, beforeID uint64, limit int) {
-	r.postEvent(historyRequestEvent{clientID: clientID, requestID: requestID, beforeID: beforeID, limit: limit})
+func (r *Runtime) RequestHistory(clientID, requestID string, beforeSeq uint64, limit int) {
+	r.postEvent(historyRequestEvent{clientID: clientID, requestID: requestID, beforeSeq: beforeSeq, limit: limit})
 }
 
 func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, data []byte) {
@@ -688,8 +688,8 @@ func (r *Runtime) handlePTYOutput(data []byte) {
 
 func (r *Runtime) commitEngineSignals() {
 	batch := r.engineSignals.drain()
-	if batch.historyTrimFirstID != 0 {
-		r.broadcastHistoryTrim(batch.historyTrimFirstID)
+	if batch.historyTrimFirstSeq != 0 {
+		r.broadcastHistoryTrim(batch.historyTrimFirstSeq)
 	}
 	for _, effect := range batch.effects {
 		r.handleEffect(effect)
@@ -797,13 +797,13 @@ func (r *Runtime) handleHistoryRequest(e historyRequestEvent) {
 	if client == nil || client.SendHistory == nil {
 		return
 	}
-	client.SendHistory(e.requestID, r.layoutEpoch, r.currentRevision(), r.projector.HistoryPage(e.beforeID, e.limit))
+	client.SendHistory(e.requestID, r.layoutEpoch, r.currentRevision(), r.projector.HistoryPage(e.beforeSeq, e.limit))
 }
 
-func (r *Runtime) broadcastHistoryTrim(firstAvailableID uint64) {
+func (r *Runtime) broadcastHistoryTrim(firstAvailableSeq uint64) {
 	for _, client := range r.clients {
 		if client.SendHistoryTrim != nil {
-			client.SendHistoryTrim(r.layoutEpoch, firstAvailableID)
+			client.SendHistoryTrim(r.layoutEpoch, firstAvailableSeq)
 		}
 	}
 }
@@ -1070,7 +1070,7 @@ type clientDetachEvent struct {
 type historyRequestEvent struct {
 	clientID  string
 	requestID string
-	beforeID  uint64
+	beforeSeq uint64
 	limit     int
 }
 

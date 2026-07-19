@@ -76,9 +76,9 @@ func assertStateEquivalent(t *testing.T, a, b terminalengine.ScreenFrame) {
 		t.Fatalf("screen mismatch:\na=%v\nb=%v", a.Screen, b.Screen)
 	}
 	if !linesEquivalentIgnoringExportVersion(a.History.Lines, b.History.Lines) ||
-		a.History.FirstAvailableLineID != b.History.FirstAvailableLineID ||
-		a.History.FirstIncludedLineID != b.History.FirstIncludedLineID ||
-		a.History.LastIncludedLineID != b.History.LastIncludedLineID ||
+		a.History.FirstAvailableHistorySeq != b.History.FirstAvailableHistorySeq ||
+		a.History.FirstIncludedHistorySeq != b.History.FirstIncludedHistorySeq ||
+		a.History.LastIncludedHistorySeq != b.History.LastIncludedHistorySeq ||
 		a.History.HasMoreBefore != b.History.HasMoreBefore {
 		t.Fatalf("history mismatch:\na=%v\nb=%v", a.History, b.History)
 	}

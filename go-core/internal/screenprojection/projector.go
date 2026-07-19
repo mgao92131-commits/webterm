@@ -38,9 +38,9 @@ type projectedState struct {
 	// 复用）与缓存窗口最后一行的 ID。historyValid=false 表示缓存不反映当前
 	// scrollback（首次导出、epoch/字典轮转、备用屏期间），下次主屏导出经
 	// exportHistoryWindow 全量重建。
-	historyValid  bool
-	historyLines  []terminalengine.Line
-	historyLastID uint64 // 缓存窗口最后一行的 ID；窗口为空时为 FirstAvailable-1
+	historyValid   bool
+	historyLines   []terminalengine.Line
+	historyLastSeq uint64 // 缓存窗口最后一行的 ID；窗口为空时为 FirstAvailable-1
 }
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
@@ -174,10 +174,10 @@ type Projector struct {
 	// changeIndexReady 标记首次导出已完成：NewProjector 后的首次导出视为
 	// “projector 整体重建”事件，把 barrier 初始化到首次导出 revision。
 	changeIndexReady bool
-	// scrollbackNextID 是上次导出时观察到的 scrollback.NextID()。nextID 回退
+	// scrollbackNextSeq 是上次导出时观察到的 scrollback.NextSeq()。nextSeq 回退
 	// 表示历史 LineID 体系被 Clear/ResetForReflow 重置（§4.2 barrier 事件）；
-	// Pop（resize 放大从 scrollback 回拉行）不回退 nextID，不会误触发。
-	scrollbackNextID uint64
+	// Pop（resize 放大从 scrollback 回拉行）不回退 nextSeq，不会误触发。
+	scrollbackNextSeq uint64
 }
 
 // SnapshotBarrierRevision 返回当前 epoch 内最近的快照屏障。
@@ -228,10 +228,10 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 }
 
 // HistoryPage 使用与实时投影相同的字典导出历史页，保证 style/link ID 稳定。
-func (p *Projector) HistoryPage(beforeID uint64, limit int) terminalengine.HistoryPageData {
+func (p *Projector) HistoryPage(beforeSeq uint64, limit int) terminalengine.HistoryPageData {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	window := NewHistoryView(p.scrollback).pageWithExporter(beforeID, limit, p.exporter)
+	window := NewHistoryView(p.scrollback).pageWithExporter(beforeSeq, limit, p.exporter)
 	return terminalengine.HistoryPageData{Window: window, Styles: p.exporter.styleTable.Styles(), Links: p.exporter.linkTable.Links()}
 }
 
@@ -267,16 +267,16 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		// §4.2 的 barrier 事件。
 		p.changeIndex.resetForEpoch(seq)
 	}
-	// 历史 LineID 体系重置探测：nextID 回退只可能来自 TrackedScrollback
+	// 历史 LineID 体系重置探测：nextSeq 回退只可能来自 TrackedScrollback
 	// Clear/ResetForReflow（当前无生产调用路径，此处是保守的前置 seam）。
 	// 旧 LineID 与新分配不可比较，断线期间的投影不能再 patch 恢复，推进
 	// barrier。普通清屏（ED 2）、全屏重绘不触碰 LineID，不推进。
 	if p.scrollback != nil {
-		nextID := p.scrollback.NextID()
-		if nextID < p.scrollbackNextID {
+		nextSeq := p.scrollback.NextSeq()
+		if nextSeq < p.scrollbackNextSeq {
 			p.changeIndex.advanceBarrier(seq)
 		}
-		p.scrollbackNextID = nextID
+		p.scrollbackNextSeq = nextSeq
 	}
 	if p.historyChangeIndex.sync(p.scrollback, seq) {
 		// 尾部回退、LineID 跳号或索引遗漏意味着旧投影无法用 append+watermark
@@ -405,7 +405,7 @@ func projectionColorRGB(c color.Color) uint32 {
 
 // syncHistoryWindow 增量维护历史窗口缓存并返回当前完整窗口（持 p.mu 调用）。
 // scrollback 行一旦推出即不可变（Push 时已拷贝），因此缓存的 Line 可跨帧
-// 复用，每帧只导出缓存 lastID 之后的新行。产出的窗口与 exportHistoryWindow
+// 复用，每帧只导出缓存 lastSeq 之后的新行。产出的窗口与 exportHistoryWindow
 // 全量路径内容完全相等。屏幕全量重建（Full 投影）不影响 LineID 连续性，
 // 历史缓存跨 Full 帧保持有效——否则持续 scroll 场景（每帧 Full）无法受益。
 func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
@@ -413,13 +413,13 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 	if !s.historyValid {
 		return p.rebuildHistoryWindow()
 	}
-	delta := p.scrollback.LinesAfter(s.historyLastID, snapshotTailLines)
-	if delta.LastID < s.historyLastID {
+	delta := p.scrollback.LinesAfter(s.historyLastSeq, snapshotTailLines)
+	if delta.LastSeq < s.historyLastSeq {
 		// Pop（resize 放大从 scrollback 拉回行）/Clear/ResetForReflow 使缓存的
 		// 较新行不再存在，增量无法修复，全量重建。
 		return p.rebuildHistoryWindow()
 	}
-	if delta.FirstID > s.historyLastID {
+	if delta.FirstSeq > s.historyLastSeq {
 		// Stable IDs may legitimately have gaps after a row was deleted or a
 		// resize discarded it. A gap only means our cached tail was trimmed, so
 		// rebuild from the authoritative bounded window instead of treating it
@@ -436,7 +436,7 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 			lines = merged
 		}
 		start := 0
-		for start < len(lines) && lines[start].HistorySeq < delta.FirstID {
+		for start < len(lines) && lines[start].HistorySeq < delta.FirstSeq {
 			start++
 		}
 		if len(lines)-start > snapshotTailLines {
@@ -445,11 +445,11 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 		s.historyLines = lines[start:]
 	}
 	if n := len(s.historyLines); n > 0 {
-		s.historyLastID = s.historyLines[n-1].HistorySeq
+		s.historyLastSeq = s.historyLines[n-1].HistorySeq
 	} else {
-		s.historyLastID = delta.LastID
+		s.historyLastSeq = delta.LastSeq
 	}
-	return historyWindowFromLines(s.historyLines, delta.FirstID)
+	return historyWindowFromLines(s.historyLines, delta.FirstSeq)
 }
 
 // rebuildHistoryWindow 全量重建历史窗口缓存（首次导出、epoch/字典轮转、
@@ -458,7 +458,7 @@ func (p *Projector) rebuildHistoryWindow() terminalengine.HistoryWindow {
 	s := &p.projected
 	w := p.exporter.exportHistoryWindow(p.scrollback)
 	s.historyLines = w.Lines
-	s.historyLastID = w.LastIncludedLineID
+	s.historyLastSeq = w.LastIncludedHistorySeq
 	s.historyValid = true
 	return w
 }
@@ -492,7 +492,7 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 // 通过 patch presence 标志表达，避免把未变化的元数据重复编码到每一帧。
 func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) == 0 &&
-		len(patch.HistoryAppendIDs) == 0 &&
+		len(patch.HistoryAppendSeqs) == 0 &&
 		len(patch.Screen) == 0 &&
 		len(patch.Layout) == 0 &&
 		len(patch.Styles) == 0 &&
@@ -522,10 +522,10 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		oldHistory[line.HistorySeq] = struct{}{}
 	}
 	var historyAppend []terminalengine.Line
-	var historyAppendIDs []uint64
+	var historyAppendSeqs []uint64
 	for _, line := range new.History.Lines {
 		if _, seen := oldHistory[line.HistorySeq]; !seen {
-			historyAppendIDs = append(historyAppendIDs, line.HistorySeq)
+			historyAppendSeqs = append(historyAppendSeqs, line.HistorySeq)
 			// A HistorySeq must be bound to a LineID at the receiver. Even when
 			// the line was visible on the previous screen, include its LineData so
 			// the bounded Android cache can append the correct history entry.
@@ -567,15 +567,15 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 			old.IndexedPaletteSet != new.IndexedPaletteSet ||
 			old.PaletteGeneration != new.PaletteGeneration,
 		History: terminalengine.HistoryWindow{
-			FirstAvailableLineID: new.History.FirstAvailableLineID,
-			FirstIncludedLineID:  new.History.FirstIncludedLineID,
-			LastIncludedLineID:   new.History.LastIncludedLineID,
-			HasMoreBefore:        new.History.HasMoreBefore,
-			Lines:                historyAppend,
+			FirstAvailableHistorySeq: new.History.FirstAvailableHistorySeq,
+			FirstIncludedHistorySeq:  new.History.FirstIncludedHistorySeq,
+			LastIncludedHistorySeq:   new.History.LastIncludedHistorySeq,
+			HasMoreBefore:            new.History.HasMoreBefore,
+			Lines:                    historyAppend,
 		},
-		HistoryAppendIDs: historyAppendIDs,
-		Screen:           screenRows,
-		Layout:           layout,
+		HistoryAppendSeqs: historyAppendSeqs,
+		Screen:            screenRows,
+		Layout:            layout,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
 		// appeared after the recipient's baseline; repeatedly sending the whole
 		// table was pure wire and allocation overhead.

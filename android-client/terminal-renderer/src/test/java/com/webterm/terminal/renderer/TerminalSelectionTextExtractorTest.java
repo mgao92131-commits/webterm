@@ -47,8 +47,8 @@ public class TerminalSelectionTextExtractorTest {
     return new TerminalLine(0, wrapped, cells(text));
   }
 
-  private static TerminalSelection.Anchor hist(long lineId, int col) {
-    return new TerminalSelection.Anchor(lineId, 0, col);
+  private static TerminalSelection.Anchor hist(long seq, int col) {
+    return new TerminalSelection.Anchor(seq, 0, col);
   }
 
   private static TerminalSelection.Anchor scr(int row, int col) {
@@ -69,6 +69,15 @@ public class TerminalSelectionTextExtractorTest {
         historyLine(3, "cccc"));
     TerminalSelection sel = new TerminalSelection(hist(1, 1), hist(3, 2)).normalized();
     assertEquals("aaa\nbbbb\ncc", extract(sel, history, null));
+  }
+
+  @Test
+  public void historySelectionUsesHistorySeqRatherThanStableLineId() {
+    List<TerminalLine> history = Arrays.asList(
+        new TerminalLine(100, 1, 1, false, cells("first")),
+        new TerminalLine(7, 1, 2, false, cells("second")));
+    TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(2, 6)).normalized();
+    assertEquals("first\nsecond", extract(sel, history, null));
   }
 
   @Test

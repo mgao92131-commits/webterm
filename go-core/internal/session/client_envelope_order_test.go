@@ -68,9 +68,9 @@ func newOrderTestClient(t *testing.T) (*terminalChannelRuntime, *blockingWriteSo
 func testHistoryPageData() terminalengine.HistoryPageData {
 	return terminalengine.HistoryPageData{
 		Window: terminalengine.HistoryWindow{
-			FirstAvailableLineID: 1,
-			FirstIncludedLineID:  1,
-			LastIncludedLineID:   1,
+			FirstAvailableHistorySeq: 1,
+			FirstIncludedHistorySeq:  1,
+			LastIncludedHistorySeq:   1,
 			Lines: []terminalengine.Line{{
 				ID: 1, Row: -1,
 				Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "h", Width: 1}}}},
@@ -136,9 +136,9 @@ func TestScreenWriter_ControlAndScreenInterleaveKeepsBothContracts(t *testing.T)
 	if got := envelopes[effectIdx].effect.GetScreenRevision(); got != 2 {
 		t.Fatalf("effect revision=%d, want 2", got)
 	}
-	if trim := envelopes[trimIdx].trim; trim.GetLayoutEpoch() != 1 || trim.GetFirstAvailableLineId() != 42 {
+	if trim := envelopes[trimIdx].trim; trim.GetLayoutEpoch() != 1 || trim.GetFirstAvailableHistorySeq() != 42 {
 		t.Fatalf("trim epoch=%d firstAvailable=%d, want 1/42",
-			trim.GetLayoutEpoch(), trim.GetFirstAvailableLineId())
+			trim.GetLayoutEpoch(), trim.GetFirstAvailableHistorySeq())
 	}
 	if page := envelopes[pageIdx].page; page.GetRequestId() != "h-7" || page.GetLayoutEpoch() != 1 {
 		t.Fatalf("page request=%q epoch=%d, want h-7/1", page.GetRequestId(), page.GetLayoutEpoch())

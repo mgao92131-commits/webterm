@@ -138,7 +138,7 @@ public final class RemoteTerminalRenderer {
     for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
-      drawLine(canvas, model.columns, palette, styles, line, y, line.id, -1,
+      drawLine(canvas, model.columns, palette, styles, line, y, line.historyOrder(), -1,
           normalizedSelection, cursor, false, canvasBackground);
     }
     } finally {
@@ -167,7 +167,7 @@ public final class RemoteTerminalRenderer {
 
   private void drawLine(Canvas canvas, int columns, TerminalPalette palette,
                         Map<Integer, TerminalStyle> styles, TerminalLine line, float y,
-                        long historyLineId, int screenRow, TerminalSelection selection,
+                        long historySeq, int screenRow, TerminalSelection selection,
                         TerminalCursor cursor, boolean cursorVisible, int canvasBackground) {
     if (line == null) return;
     int lineLength = Math.min(line.length(), columns);
@@ -180,7 +180,7 @@ public final class RemoteTerminalRenderer {
 
       // Keep Unicode/wide cells on the canonical path, but batch contiguous ASCII cells with
       // the same style. Selection and cursor boundaries deliberately split runs.
-      if (startsBatchableAsciiRun(line, lineLength, selection, historyLineId, screenRow, col,
+      if (startsBatchableAsciiRun(line, lineLength, selection, historySeq, screenRow, col,
           cursor, cursorVisible)) {
         int runStart = col;
         int runStyleId = cell.styleId;
@@ -189,7 +189,7 @@ public final class RemoteTerminalRenderer {
           plainAsciiRun.append(line.at(col).text.charAt(0));
           col++;
         } while (col < lineLength && line.at(col).styleId == runStyleId
-            && canBatchAscii(line.at(col), selection, historyLineId, screenRow, col, cursor,
+            && canBatchAscii(line.at(col), selection, historySeq, screenRow, col, cursor,
                 cursorVisible));
         if (drawAsciiRun(canvas, palette, styles.get(runStyleId), plainAsciiRun, runStart, y,
             canvasBackground)) {
@@ -200,7 +200,7 @@ public final class RemoteTerminalRenderer {
         col = runStart;
       }
       int columnWidth = cell.isWideStart() ? 2 : 1;
-      boolean selected = isCellSelected(selection, historyLineId, screenRow, col, columnWidth);
+      boolean selected = isCellSelected(selection, historySeq, screenRow, col, columnWidth);
       boolean insideCursor = cursorVisible && screenRow == cursor.row
           && (cursor.col == col || (columnWidth == 2 && cursor.col == col + 1));
       int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
@@ -213,18 +213,18 @@ public final class RemoteTerminalRenderer {
   }
 
   private static boolean canBatchAscii(TerminalCell cell, TerminalSelection selection,
-                                       long historyLineId, int screenRow, int col,
+                                       long historySeq, int screenRow, int col,
                                        TerminalCursor cursor, boolean cursorVisible) {
     if (cell == null || cell.isSpacer() || cell.isWideStart()
         || cell.text == null || cell.text.length() != 1) return false;
     char c = cell.text.charAt(0);
     if (c < ' ' || c > '~') return false;
-    if (isCellSelected(selection, historyLineId, screenRow, col, 1)) return false;
+    if (isCellSelected(selection, historySeq, screenRow, col, 1)) return false;
     return !cursorVisible || screenRow != cursor.row || cursor.col != col;
   }
 
   private static boolean startsBatchableAsciiRun(TerminalLine line, int lineLength,
-                                                 TerminalSelection selection, long historyLineId,
+                                                 TerminalSelection selection, long historySeq,
                                                  int screenRow, int col, TerminalCursor cursor,
                                                  boolean cursorVisible) {
     if (col + 2 >= lineLength) return false;
@@ -232,7 +232,7 @@ public final class RemoteTerminalRenderer {
     for (int candidate = col; candidate < col + 3; candidate++) {
       TerminalCell cell = line.at(candidate);
       if (cell == null || cell.styleId != styleId
-          || !canBatchAscii(cell, selection, historyLineId, screenRow,
+          || !canBatchAscii(cell, selection, historySeq, screenRow,
           candidate, cursor, cursorVisible)) return false;
     }
     return true;
@@ -400,22 +400,22 @@ public final class RemoteTerminalRenderer {
         && (next.text == null || next.text.isEmpty() || " ".equals(next.text));
   }
 
-  private static boolean isCellSelected(TerminalSelection selection, long historyLineId, int screenRow,
+  private static boolean isCellSelected(TerminalSelection selection, long historySeq, int screenRow,
                                         int col, int columnWidth) {
     if (selection == null) return false;
-    return compareSelectionPosition(historyLineId, screenRow, col, selection.end) < 0
-        && compareSelectionPosition(historyLineId, screenRow, col + Math.max(1, columnWidth),
+    return compareSelectionPosition(historySeq, screenRow, col, selection.end) < 0
+        && compareSelectionPosition(historySeq, screenRow, col + Math.max(1, columnWidth),
             selection.start) > 0;
   }
 
-  private static int compareSelectionPosition(long historyLineId, int screenRow, int col,
+  private static int compareSelectionPosition(long historySeq, int screenRow, int col,
                                               TerminalSelection.Anchor other) {
-    if (historyLineId != 0 && other.historyLineId != 0) {
-      int cmp = Long.compare(historyLineId, other.historyLineId);
+    if (historySeq != 0 && other.historySeq != 0) {
+      int cmp = Long.compare(historySeq, other.historySeq);
       return cmp != 0 ? cmp : Integer.compare(col, other.col);
     }
-    if (historyLineId != 0) return -1;
-    if (other.historyLineId != 0) return 1;
+    if (historySeq != 0) return -1;
+    if (other.historySeq != 0) return 1;
     int cmp = Integer.compare(screenRow, other.screenRow);
     return cmp != 0 ? cmp : Integer.compare(col, other.col);
   }

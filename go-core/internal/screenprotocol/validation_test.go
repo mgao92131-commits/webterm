@@ -216,3 +216,25 @@ func TestValidateCompactLine_UTF8Metadata(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateCompactLine_TextLimitAndMetadata(t *testing.T) {
+	over64Bytes := strings.Repeat("界", 22)
+	if err := validateCompactLine(over64Bytes, []byte{22}, nil, 1); err != nil {
+		t.Fatalf("compact cell larger than 64B must be accepted: %v", err)
+	}
+	if err := validateCompactLine(string([]byte{0xff}), []byte{1}, nil, 1); err == nil {
+		t.Fatal("invalid UTF-8 must be rejected")
+	}
+	if err := validateCompactLine("中A", []byte{1}, nil, 2); err == nil {
+		t.Fatal("mismatched cell metadata must be rejected")
+	}
+
+	text := strings.Repeat("界", 127*87)
+	meta := make([]byte, 87)
+	for i := range meta {
+		meta[i] = 127
+	}
+	if err := validateCompactLine(text, meta, nil, len(meta)); err == nil {
+		t.Fatalf("compact text larger than %d bytes must be rejected", maxCompactLineTextBytes)
+	}
+}

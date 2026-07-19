@@ -26,7 +26,7 @@ func TestScreenHistoryRequestReturnsPage(t *testing.T) {
 	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 20, Rows: 10}}})
 	client.handleBinary(helloBytes)
 	consumeInitialScreenSnapshot(t, client)
-	reqBytes, _ := proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryRequest{HistoryRequest: &pb.HistoryRequest{RequestId: "page-1", BeforeLineId: math.MaxUint64, Limit: 5}}})
+	reqBytes, _ := proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryRequest{HistoryRequest: &pb.HistoryRequest{RequestId: "page-1", BeforeHistorySeq: math.MaxUint64, Limit: 5}}})
 	client.handleBinary(reqBytes)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {

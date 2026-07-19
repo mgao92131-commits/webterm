@@ -39,8 +39,8 @@ public final class RemoteTerminalModelHistoryBudgetTest {
         null, null, null, Collections.emptyMap(), Collections.emptyMap(), null, null));
 
     assertEquals("evict down to the soft line target", 10, model.historySize());
-    assertEquals("oldest lines are evicted first", 16L, model.firstCachedHistoryId());
-    assertEquals("newest tail lines stay", 25L, lastHistoryId(model));
+    assertEquals("oldest lines are evicted first", 16L, model.firstCachedHistorySeq());
+    assertEquals("newest tail lines stay", 25L, lastHistorySeq(model));
   }
 
   // ---- §8.3：prepend 超预算从较新端驱逐，新页与可见锚点保留 ----
@@ -58,11 +58,11 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     model.prependHistoryPage(new HistoryPage("r1", 1, 1, 1, true, page));
 
     assertEquals("evict down to the soft line target", 10, model.historySize());
-    assertEquals("the whole prepended page survives", 196L, model.firstCachedHistoryId());
-    assertTrue("the visible anchor survives", containsHistoryId(model, 201L));
+    assertEquals("the whole prepended page survives", 196L, model.firstCachedHistorySeq());
+    assertTrue("the visible anchor survives", containsHistorySeq(model, 201L));
     assertFalse("the newest, screen-side history is evicted instead",
-        containsHistoryId(model, 220L));
-    assertEquals(205L, lastHistoryId(model));
+        containsHistorySeq(model, 220L));
+    assertEquals(205L, lastHistorySeq(model));
   }
 
   @Test
@@ -71,7 +71,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     RemoteTerminalModel model = new RemoteTerminalModel(
         new HistoryBudget(1_000_000, 1_000_000, 5_000, 8_000));
     model.applySnapshot(snapshot(5, 10, 201, 8, true));
-    long anchor = model.firstCachedHistoryId();
+    long anchor = model.firstCachedHistorySeq();
 
     List<TerminalLine> page = new ArrayList<>();
     for (long id = 198; id <= 200; id++) {
@@ -80,10 +80,10 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     model.prependHistoryPage(new HistoryPage("r1", 1, 1, 1, true, page));
 
     assertTrue("hard byte budget respected after eviction", model.historyBytes() <= 8_000);
-    assertEquals("the whole prepended page survives", 198L, model.firstCachedHistoryId());
-    assertTrue("the visible anchor survives", containsHistoryId(model, anchor));
+    assertEquals("the whole prepended page survives", 198L, model.firstCachedHistorySeq());
+    assertTrue("the visible anchor survives", containsHistorySeq(model, anchor));
     assertFalse("the newest, screen-side history is evicted instead",
-        containsHistoryId(model, 208L));
+        containsHistorySeq(model, 208L));
   }
 
   @Test
@@ -101,8 +101,8 @@ public final class RemoteTerminalModelHistoryBudgetTest {
 
     assertTrue(model.historySize() < 20);
     assertTrue("the page's oldest lines are dropped first",
-        model.firstCachedHistoryId() > 1);
-    assertEquals("the screen-side end of the page survives", 20L, lastHistoryId(model));
+        model.firstCachedHistorySeq() > 1);
+    assertEquals("the screen-side end of the page survives", 20L, lastHistorySeq(model));
   }
 
   // ---- §8.3：连续分页在行数/字节上限附近不停滞、不循环 ----
@@ -128,18 +128,18 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     RemoteTerminalModel model = new RemoteTerminalModel(new HistoryBudget(750, 1000, 0, 0));
     model.applySnapshot(snapshot(24, 80, 10_000, 900, true));
 
-    long previousFirst = model.firstCachedHistoryId();
-    Set<Long> requestedBeforeIds = new HashSet<>();
+    long previousFirst = model.firstCachedHistorySeq();
+    Set<Long> requestedBeforeSeqs = new HashSet<>();
     for (int p = 0; p < 8; p++) {
-      long beforeId = model.firstCachedHistoryId();
-      assertTrue("beforeId must not repeat (no request loop)", requestedBeforeIds.add(beforeId));
-      model.prependHistoryPage(historyPage(p, beforeId - PAGE_SIZE, beforeId, ContentKind.ASCII, 80));
+      long beforeSeq = model.firstCachedHistorySeq();
+      assertTrue("beforeSeq must not repeat (no request loop)", requestedBeforeSeqs.add(beforeSeq));
+      model.prependHistoryPage(historyPage(p, beforeSeq - PAGE_SIZE, beforeSeq, ContentKind.ASCII, 80));
 
-      long first = model.firstCachedHistoryId();
-      assertTrue("round " + p + ": beforeId must strictly advance toward older history",
+      long first = model.firstCachedHistorySeq();
+      assertTrue("round " + p + ": beforeSeq must strictly advance toward older history",
           first < previousFirst);
       assertTrue("round " + p + ": the visible anchor must survive eviction",
-          containsHistoryId(model, previousFirst));
+          containsHistorySeq(model, previousFirst));
       assertTrue("round " + p + ": hard line limit respected", model.historySize() <= 1000);
       previousFirst = first;
     }
@@ -155,20 +155,20 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     RemoteTerminalModel model = new RemoteTerminalModel(budget);
     model.applySnapshot(snapshot(24, cols, 10_000, 100, true));
 
-    long previousFirst = model.firstCachedHistoryId();
-    Set<Long> requestedBeforeIds = new HashSet<>();
+    long previousFirst = model.firstCachedHistorySeq();
+    Set<Long> requestedBeforeSeqs = new HashSet<>();
     for (int p = 0; p < 10; p++) {
-      long beforeId = model.firstCachedHistoryId();
-      assertTrue("beforeId must not repeat (no request loop)", requestedBeforeIds.add(beforeId));
-      model.prependHistoryPage(historyPage(p, beforeId - PAGE_SIZE, beforeId, kind, cols));
+      long beforeSeq = model.firstCachedHistorySeq();
+      assertTrue("beforeSeq must not repeat (no request loop)", requestedBeforeSeqs.add(beforeSeq));
+      model.prependHistoryPage(historyPage(p, beforeSeq - PAGE_SIZE, beforeSeq, kind, cols));
 
-      long first = model.firstCachedHistoryId();
-      assertTrue("round " + p + ": beforeId must strictly advance toward older history",
+      long first = model.firstCachedHistorySeq();
+      assertTrue("round " + p + ": beforeSeq must strictly advance toward older history",
           first < previousFirst);
       assertTrue("round " + p + ": the visible anchor must survive eviction",
-          containsHistoryId(model, previousFirst));
+          containsHistorySeq(model, previousFirst));
       assertTrue("round " + p + ": the just-prepended page must survive eviction",
-          containsHistoryId(model, beforeId - 1));
+          containsHistorySeq(model, beforeSeq - 1));
       assertTrue("round " + p + ": hard byte budget respected",
           model.historyBytes() <= budget.hardBytes);
       previousFirst = first;
@@ -189,7 +189,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applySnapshot(snapshot(5, 4, 1, 10_001, false));
     assertEquals(7500, model.historySize());
-    assertEquals(2502L, model.firstCachedHistoryId());
+    assertEquals(2502L, model.firstCachedHistorySeq());
   }
 
   @Test
@@ -197,7 +197,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     RemoteTerminalModel byLines = new RemoteTerminalModel(new HistoryBudget(50, 100, 0, 0));
     byLines.applySnapshot(snapshot(5, 4, 1, 101, false));
     assertEquals(50, byLines.historySize());
-    assertEquals(52L, byLines.firstCachedHistoryId());
+    assertEquals(52L, byLines.firstCachedHistorySeq());
 
     // 字节预算关闭时（0）不触发字节驱逐。
     assertEquals(50, byLines.historySize());
@@ -264,22 +264,22 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     return rt.totalMemory() - rt.freeMemory();
   }
 
-  private static boolean containsHistoryId(RemoteTerminalModel model, long lineId) {
-    return model.renderSnapshot().history.findLineIndex(lineId) >= 0;
+  private static boolean containsHistorySeq(RemoteTerminalModel model, long seq) {
+    return model.renderSnapshot().history.findSeqIndex(seq) >= 0;
   }
 
-  private static long lastHistoryId(RemoteTerminalModel model) {
-    return model.renderSnapshot().history.lastLineId();
+  private static long lastHistorySeq(RemoteTerminalModel model) {
+    return model.renderSnapshot().history.lastSeq();
   }
 
   // ---- fixtures ----
 
   private enum ContentKind { ASCII, STYLED_ASCII, WIDE, MIXED }
 
-  private static HistoryPage historyPage(int page, long firstId, long lastIdExclusive,
+  private static HistoryPage historyPage(int page, long firstSeq, long lastSeqExclusive,
                                          ContentKind kind, int cols) {
     List<TerminalLine> lines = new ArrayList<>();
-    for (long id = firstId; id < lastIdExclusive; id++) {
+    for (long id = firstSeq; id < lastSeqExclusive; id++) {
       lines.add(contentLine(id, cols, kind));
     }
     return new HistoryPage("r" + page, 1, 1, 1, true, lines);
@@ -324,7 +324,7 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     return new TerminalLine(id, false, cells);
   }
 
-  private static ScreenSnapshot snapshot(int rows, int cols, long firstHistoryId,
+  private static ScreenSnapshot snapshot(int rows, int cols, long firstHistorySeq,
                                          int historyCount, boolean hasMoreBefore) {
     List<TerminalLine> screen = new ArrayList<>();
     for (int r = 0; r < rows; r++) {
@@ -332,13 +332,13 @@ public final class RemoteTerminalModelHistoryBudgetTest {
     }
     List<TerminalLine> history = new ArrayList<>();
     for (int i = 0; i < historyCount; i++) {
-      history.add(textLine(firstHistoryId + i, cols, "h", 0));
+      history.add(textLine(firstHistorySeq + i, cols, "h", 0));
     }
-    long lastId = historyCount > 0 ? firstHistoryId + historyCount - 1 : firstHistoryId;
+    long lastSeq = historyCount > 0 ? firstHistorySeq + historyCount - 1 : firstHistorySeq;
     return new ScreenSnapshot(
         "s1", "i1", 1, 1, rows, cols, ScreenSnapshot.BufferKind.MAIN,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        new HistoryWindow(firstHistoryId, firstHistoryId, lastId, hasMoreBefore, history),
+        new HistoryWindow(firstHistorySeq, firstHistorySeq, lastSeq, hasMoreBefore, history),
         screen, Collections.emptyMap(), Collections.emptyMap(), "", ""
     );
   }

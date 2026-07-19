@@ -17,7 +17,7 @@ func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
 	if sb.Len() == 0 {
 		t.Fatal("expected scrollback before CSI 3 J")
 	}
-	nextID := sb.NextID()
+	nextSeq := sb.NextSeq()
 
 	if err := engine.Write([]byte("\x1b[3J")); err != nil {
 		t.Fatal(err)
@@ -26,13 +26,13 @@ func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
 	if got := sb.Len(); got != 0 {
 		t.Fatalf("scrollback len after CSI 3 J = %d, want 0", got)
 	}
-	if got := sb.FirstID(); got != nextID {
-		t.Fatalf("watermark after CSI 3 J = %d, want %d", got, nextID)
+	if got := sb.FirstSeq(); got != nextSeq {
+		t.Fatalf("watermark after CSI 3 J = %d, want %d", got, nextSeq)
 	}
-	if sb.NextID() != nextID {
-		t.Fatalf("next ID changed across CSI 3 J: got %d, want %d", sb.NextID(), nextID)
+	if sb.NextSeq() != nextSeq {
+		t.Fatalf("next ID changed across CSI 3 J: got %d, want %d", sb.NextSeq(), nextSeq)
 	}
-	if len(trims) == 0 || trims[len(trims)-1].FirstAvailableID != nextID {
-		t.Fatalf("trim events = %+v, want final watermark %d", trims, nextID)
+	if len(trims) == 0 || trims[len(trims)-1].FirstAvailableSeq != nextSeq {
+		t.Fatalf("trim events = %+v, want final watermark %d", trims, nextSeq)
 	}
 }

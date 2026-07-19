@@ -19,7 +19,7 @@ final class TerminalSelectionTextExtractor {
    * 提取选择范围内的文本。
    *
    * @param selection 已归一化的选择范围（start <= end）
-   * @param history   按 {@link TerminalLine#id} 升序排列的历史行快照；可能为空
+   * @param history   按 {@link TerminalLine#historyOrder()}（HistorySeq）升序排列的历史行快照；可能为空
    * @param screen    活动屏幕行数组；可能为 null
    */
   static String extract(TerminalSelection selection, TerminalHistorySnapshot history, TerminalLine[] screen) {
@@ -27,16 +27,16 @@ final class TerminalSelectionTextExtractor {
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
 
-    if (start.historyLineId != 0) {
-      if (end.historyLineId != 0) {
+    if (start.historySeq != 0) {
+      if (end.historySeq != 0) {
         // 历史内部选择。
-        appendHistoryRange(output, start.historyLineId, end.historyLineId, start.col, end.col, history);
+        appendHistoryRange(output, start.historySeq, end.historySeq, start.col, end.col, history);
       } else {
         // 起点在历史、终点在屏幕：先取到历史末尾，再取屏幕开头到终点。
-        appendHistoryRange(output, start.historyLineId, Long.MAX_VALUE, start.col, -1, history);
+        appendHistoryRange(output, start.historySeq, Long.MAX_VALUE, start.col, -1, history);
         appendScreenRange(output, new TerminalSelection.Anchor(0, 0, 0), end, screen);
       }
-    } else if (end.historyLineId == 0 && start.screenRow == end.screenRow) {
+    } else if (end.historySeq == 0 && start.screenRow == end.screenRow) {
       appendScreenRow(output, screen, start.screenRow, start.col, end.col);
     } else {
       appendScreenRange(output, start, end, screen);
@@ -52,21 +52,21 @@ final class TerminalSelectionTextExtractor {
     return 0;
   }
 
-  private static void appendHistoryRange(SelectionTextBuilder output, long startLineId, long endLineId,
+  private static void appendHistoryRange(SelectionTextBuilder output, long startSeq, long endSeq,
                                          int startCol, int endCol, TerminalHistorySnapshot history) {
     if (history == null || history.isEmpty()) return;
-    int startIndex = history.findLineIndex(startLineId);
+    int startIndex = history.findSeqIndex(startSeq);
     if (startIndex < 0) startIndex = 0;
-    int endIndex = endCol >= 0 ? history.findLineIndex(endLineId) : history.size() - 1;
+    int endIndex = endCol >= 0 ? history.findSeqIndex(endSeq) : history.size() - 1;
     if (endIndex < 0) endIndex = history.size() - 1;
 
     for (int i = startIndex; i <= endIndex && i < history.size(); i++) {
       TerminalLine line = history.lineAt(i);
-      long lineId = line.id;
-      if (lineId < startLineId) continue;
-      if (lineId > endLineId) break;
-      int c0 = lineId == startLineId ? startCol : 0;
-      int c1 = lineId == endLineId ? (endCol >= 0 ? endCol : line.length()) : line.length();
+      long seq = line.historyOrder();
+      if (seq < startSeq) continue;
+      if (seq > endSeq) break;
+      int c0 = seq == startSeq ? startCol : 0;
+      int c1 = seq == endSeq ? (endCol >= 0 ? endCol : line.length()) : line.length();
       output.append(line, c0, c1, /* inferVisualWrap */ false);
     }
   }

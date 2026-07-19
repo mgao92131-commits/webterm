@@ -20,42 +20,42 @@ type HistoryChangeIndex struct {
 	Changes                  []HistoryChange
 	GapRevision              uint64
 	WatermarkChangedRevision uint64
-	firstID                  uint64
-	lastID                   uint64
-	nextID                   uint64
+	firstSeq                 uint64
+	lastSeq                  uint64
+	nextSeq                  uint64
 }
 
 const maxResumeHistoryAppend = 500
 
 // sync 在 Projector 的导出提交点同步一次历史索引。返回 true 表示本次发现了
 // 必须推进 snapshot barrier 的结构缺口。普通从最旧端 trim 不算缺口：恢复
-// Patch 通过 first_available_history_line_id 原子推进水位即可。
+// Patch 通过 first_available_history_seq 原子推进水位即可。
 func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, revision uint64) bool {
 	if scrollback == nil {
 		return false
 	}
-	w := scrollback.IndexAfter(h.lastID)
+	w := scrollback.IndexAfter(h.lastSeq)
 	gap := false
-	if h.firstID != 0 && w.FirstID > h.firstID {
+	if h.firstSeq != 0 && w.FirstSeq > h.firstSeq {
 		h.WatermarkChangedRevision = revision
 	}
 
-	if h.nextID != 0 && w.NextID < h.nextID {
+	if h.nextSeq != 0 && w.NextSeq < h.nextSeq {
 		// Clear/ResetForReflow 重置了 LineID 空间。
 		h.Changes = nil
 		gap = true
 	}
-	if h.lastID != 0 && w.LastID < h.lastID {
+	if h.lastSeq != 0 && w.LastSeq < h.lastSeq {
 		// Pop 从尾部删除历史，append+前端水位无法表达尾删。
 		gap = true
-		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].HistorySeq > w.LastID {
+		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].HistorySeq > w.LastSeq {
 			h.Changes = h.Changes[:len(h.Changes)-1]
 		}
 	}
 
 	// 实际 trim 事件是唯一水位锚点；同步删除已不再权威窗口中的索引项。
 	cut := 0
-	for cut < len(h.Changes) && h.Changes[cut].HistorySeq < w.FirstID {
+	for cut < len(h.Changes) && h.Changes[cut].HistorySeq < w.FirstSeq {
 		cut++
 	}
 	if cut > 0 {
@@ -68,7 +68,7 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		last = h.Changes[len(h.Changes)-1].HistorySeq
 	}
 	for _, entry := range w.Entries {
-		if entry.HistorySeq < w.FirstID || entry.HistorySeq > w.LastID || (last != 0 && entry.HistorySeq <= last) {
+		if entry.HistorySeq < w.FirstSeq || entry.HistorySeq > w.LastSeq || (last != 0 && entry.HistorySeq <= last) {
 			gap = true
 		}
 		if last == 0 || entry.HistorySeq > last {
@@ -79,18 +79,18 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 
 	// 防御性核对：当前驻留窗口非空却没有覆盖到尾部，说明一次 flush 跨过了
 	// 未捕获的 LineID，禁止静默少发。
-	if w.LastID >= w.FirstID && (len(h.Changes) == 0 || h.Changes[len(h.Changes)-1].HistorySeq != w.LastID) {
+	if w.LastSeq >= w.FirstSeq && (len(h.Changes) == 0 || h.Changes[len(h.Changes)-1].HistorySeq != w.LastSeq) {
 		gap = true
 	}
 	if gap {
 		h.GapRevision = revision
 	}
-	h.firstID, h.lastID, h.nextID = w.FirstID, w.LastID, w.NextID
+	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
 	return gap
 }
 
 type historyResumeSelection struct {
-	firstAvailableID uint64
+	firstAvailableSeq uint64
 	historySeqs      []uint64
 	watermarkChanged bool
 	reason           string
@@ -100,7 +100,7 @@ type historyResumeSelection struct {
 // 索引遗漏或协议行数上限都会显式返回降级原因。
 func (h *HistoryChangeIndex) selectAfter(clientRevision uint64) historyResumeSelection {
 	sel := historyResumeSelection{
-		firstAvailableID: h.firstID,
+		firstAvailableSeq: h.firstSeq,
 		watermarkChanged: h.WatermarkChangedRevision > clientRevision,
 	}
 	if h.GapRevision > clientRevision {
@@ -152,16 +152,16 @@ func NewHistoryView(scrollback *terminalengine.TrackedScrollback) *HistoryView {
 	return &HistoryView{scrollback: scrollback}
 }
 
-// Page 返回严格小于 beforeID 的最多 limit 行，按 ID 升序。
-func (v *HistoryView) Page(beforeID uint64, limit int) terminalengine.HistoryWindow {
+// Page 返回严格小于 beforeSeq 的最多 limit 行，按 ID 升序。
+func (v *HistoryView) Page(beforeSeq uint64, limit int) terminalengine.HistoryWindow {
 	exp := newExporter(
 		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
 		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
 	)
-	return v.pageWithExporter(beforeID, limit, exp)
+	return v.pageWithExporter(beforeSeq, limit, exp)
 }
 
-func (v *HistoryView) pageWithExporter(beforeID uint64, limit int, exp *exporter) terminalengine.HistoryWindow {
+func (v *HistoryView) pageWithExporter(beforeSeq uint64, limit int, exp *exporter) terminalengine.HistoryWindow {
 	if limit <= 0 {
 		limit = 250
 	}
@@ -169,25 +169,25 @@ func (v *HistoryView) pageWithExporter(beforeID uint64, limit int, exp *exporter
 		limit = 500
 	}
 
-	firstAvailable := v.scrollback.FirstID()
-	if beforeID <= firstAvailable {
+	firstAvailable := v.scrollback.FirstSeq()
+	if beforeSeq <= firstAvailable {
 		return terminalengine.HistoryWindow{
-			FirstAvailableLineID: firstAvailable,
-			FirstIncludedLineID:  firstAvailable,
-			LastIncludedLineID:   firstAvailable - 1,
-			HasMoreBefore:        false,
-			Lines:                nil,
+			FirstAvailableHistorySeq: firstAvailable,
+			FirstIncludedHistorySeq:  firstAvailable,
+			LastIncludedHistorySeq:   firstAvailable - 1,
+			HasMoreBefore:            false,
+			Lines:                    nil,
 		}
 	}
 
-	lines := v.scrollback.PageBefore(beforeID, limit)
+	lines := v.scrollback.PageBefore(beforeSeq, limit)
 	if len(lines) == 0 {
 		return terminalengine.HistoryWindow{
-			FirstAvailableLineID: firstAvailable,
-			FirstIncludedLineID:  beforeID,
-			LastIncludedLineID:   beforeID - 1,
-			HasMoreBefore:        false,
-			Lines:                nil,
+			FirstAvailableHistorySeq: firstAvailable,
+			FirstIncludedHistorySeq:  beforeSeq,
+			LastIncludedHistorySeq:   beforeSeq - 1,
+			HasMoreBefore:            false,
+			Lines:                    nil,
 		}
 	}
 
@@ -197,10 +197,10 @@ func (v *HistoryView) pageWithExporter(beforeID uint64, limit int, exp *exporter
 	}
 
 	return terminalengine.HistoryWindow{
-		FirstAvailableLineID: firstAvailable,
-		FirstIncludedLineID:  exported[0].HistorySeq,
-		LastIncludedLineID:   exported[len(exported)-1].HistorySeq,
-		HasMoreBefore:        exported[0].HistorySeq > firstAvailable,
-		Lines:                exported,
+		FirstAvailableHistorySeq: firstAvailable,
+		FirstIncludedHistorySeq:  exported[0].HistorySeq,
+		LastIncludedHistorySeq:   exported[len(exported)-1].HistorySeq,
+		HasMoreBefore:            exported[0].HistorySeq > firstAvailable,
+		Lines:                    exported,
 	}
 }

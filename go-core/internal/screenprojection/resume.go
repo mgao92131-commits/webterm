@@ -230,16 +230,16 @@ func (p *Projector) DeriveResumeFrame(state terminalengine.ScreenFrame, clientRe
 		}}
 	}
 	derived.Frame.History = terminalengine.HistoryWindow{
-		FirstAvailableLineID: selection.firstAvailableID,
-		Lines:                historyLines,
+		FirstAvailableHistorySeq: selection.firstAvailableSeq,
+		Lines:                    historyLines,
 	}
-	derived.Frame.HistoryAppendIDs = make([]uint64, len(historyLines))
+	derived.Frame.HistoryAppendSeqs = make([]uint64, len(historyLines))
 	for i, line := range historyLines {
-		derived.Frame.HistoryAppendIDs[i] = line.HistorySeq
+		derived.Frame.HistoryAppendSeqs[i] = line.HistorySeq
 	}
 	// 每一帧恢复 Patch 都原子携带当前水位；接收端无需依赖 HistoryTrim 与
 	// screen mailbox 的相对顺序。
-	derived.Frame.FirstAvailableHistoryLineIDChanged = true
+	derived.Frame.FirstAvailableHistorySeqChanged = true
 	return derived
 }
 

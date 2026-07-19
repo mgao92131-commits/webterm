@@ -328,7 +328,7 @@ func TestChangeIndex_BarrierMonotonicWithinEpoch(t *testing.T) {
 	}
 }
 
-// 历史 LineID 体系重置（ResetForReflow 的探测 seam 是 nextID 回退）：
+// 历史 LineID 体系重置（ResetForReflow 的探测 seam 是 nextSeq 回退）：
 // 推进 barrier；重置后新写入不再误推进。普通 Clear 只推进历史水位，
 // 不重置 LineID 空间。
 func TestChangeIndex_HistoryLineIDResetAdvancesBarrier(t *testing.T) {
@@ -337,7 +337,7 @@ func TestChangeIndex_HistoryLineIDResetAdvancesBarrier(t *testing.T) {
 		mustEngineWrite(t, engine, fmt.Sprintf("line-%02d\r\n", i))
 	}
 	p.ExportState(0, 1)
-	if sb.NextID() <= 1 {
+	if sb.NextSeq() <= 1 {
 		t.Fatal("expected scrollback lines after scrolling output")
 	}
 

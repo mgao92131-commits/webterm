@@ -3,12 +3,12 @@ package com.webterm.terminal.model;
 import java.util.Arrays;
 
 /**
- * 终端行。屏幕与历史共用稳定 lineId；version 只在内容变化时递增。
+ * 终端行。屏幕与历史共用稳定 LineID；version 只在内容变化时递增。
  */
 public final class TerminalLine {
   public final long id;
   public final long version;
-  /** Non-zero only for a scrollback entry; orders history independently of id. */
+  /** Non-zero only for a scrollback entry; orders history independently of LineID. */
   public final long historySeq;
   public final boolean wrapped;
   public final TerminalCell[] cells;

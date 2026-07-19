@@ -168,10 +168,10 @@ public final class TerminalSessionRuntimeResizeTest {
     assertTrue(runtime.requestHistoryPage(100, 250));
 
     connection.listener.onScreenMessage(historyPage("stale", 42).toByteArray());
-    assertEquals(0, runtime.model().firstAvailableHistoryId());
+    assertEquals(0, runtime.model().firstAvailableHistorySeq());
 
     connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
-    assertEquals(42, runtime.model().firstAvailableHistoryId());
+    assertEquals(42, runtime.model().firstAvailableHistorySeq());
   }
 
   @Test
@@ -199,7 +199,7 @@ public final class TerminalSessionRuntimeResizeTest {
     disconnected.attachConnection(lateConnection);
     lateConnection.listener.onScreenMessage(snapshot(1).toByteArray());
     lateConnection.listener.onScreenMessage(historyPage("h-1", 42).toByteArray());
-    assertEquals(0, disconnected.model().firstAvailableHistoryId());
+    assertEquals(0, disconnected.model().firstAvailableHistorySeq());
   }
 
   @Test
@@ -212,7 +212,7 @@ public final class TerminalSessionRuntimeResizeTest {
     // 发送失败的请求不得登记为 pending；同一 request id 的迟到/伪造响应
     // 也不能被误当成有效分页结果应用。
     connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
-    assertEquals(0, runtime.model().firstAvailableHistoryId());
+    assertEquals(0, runtime.model().firstAvailableHistorySeq());
   }
 
   @Test
@@ -229,7 +229,7 @@ public final class TerminalSessionRuntimeResizeTest {
     assertEquals(Arrays.asList("cookie expired"), reasons);
     connection.listener.onScreenMessage(historyPage(expiredRequestId, 42).toByteArray());
     assertEquals("认证失效必须清除旧 channel 的 history pending", 0,
-        runtime.model().firstAvailableHistoryId());
+        runtime.model().firstAvailableHistorySeq());
   }
 
   @Test
@@ -240,13 +240,13 @@ public final class TerminalSessionRuntimeResizeTest {
     // 权威 snapshot 替换本地投影：旧请求 id 的迟到响应必须被丢弃。
     connection.listener.onScreenMessage(snapshot(2).toByteArray());
     connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
-    assertEquals(0, runtime.model().firstAvailableHistoryId());
+    assertEquals(0, runtime.model().firstAvailableHistorySeq());
 
     // 断线同样清理 pending history，重连后不会被迟到响应污染。
     assertTrue(runtime.requestHistoryPage(100, 250));
     connection.listener.onDisconnected("relay lost");
     connection.listener.onScreenMessage(historyPage(connection.historyRequestId, 42).toByteArray());
-    assertEquals(0, runtime.model().firstAvailableHistoryId());
+    assertEquals(0, runtime.model().firstAvailableHistorySeq());
   }
 
   @Test
@@ -519,14 +519,14 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   private static TerminalScreenProto.ScreenEnvelope historyPage(@NonNull String requestId,
-                                                                 long firstAvailableLineId) {
+                                                                 long firstAvailableHistorySeq) {
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setHistoryPage(TerminalScreenProto.HistoryPage.newBuilder()
             .setRequestId(requestId)
             .setLayoutEpoch(1)
             .setAsOfRevision(1)
-            .setFirstAvailableLineId(firstAvailableLineId)
+            .setFirstAvailableHistorySeq(firstAvailableHistorySeq)
             .setHasMoreBefore(false)
             .build())
         .build();
@@ -609,7 +609,7 @@ public final class TerminalSessionRuntimeResizeTest {
     }
 
     @Override
-    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
       historyRequestId = requestId;
       return historyRequestAccepted;
     }

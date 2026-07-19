@@ -14,7 +14,7 @@ public final class TerminalViewportStateTest {
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.followTail = false;
     viewport.scrollOffsetPixels = 480;
-    viewport.anchorHistoryLineId = 42L;
+    viewport.anchorHistorySeq = 42L;
     viewport.anchorPixelOffset = 7;
     viewport.selection = new TerminalSelection(
         new TerminalSelection.Anchor(42L, -1, 0),
@@ -25,7 +25,7 @@ public final class TerminalViewportStateTest {
 
     assertTrue(viewport.followTail);
     assertEquals(0, viewport.scrollOffsetPixels);
-    assertNull(viewport.anchorHistoryLineId);
+    assertNull(viewport.anchorHistorySeq);
     assertEquals(0, viewport.anchorPixelOffset);
     assertNull(viewport.selection);
     assertFalse(viewport.loadingOlderHistory);

@@ -15,7 +15,7 @@ public final class ScreenPatch {
   /** null 表示布局未变化；非 null 时下标即当前屏幕 row。 */
   public final long[] layout;
   public final List<TerminalLine> lineUpdates;
-  public final List<Long> historyAppendIds;
+  public final List<Long> historyAppendSeqs;
   public final TerminalCursor cursor;
   public final TerminalModes modes;
   public final TerminalPalette palette;
@@ -24,29 +24,29 @@ public final class ScreenPatch {
   public final String title;
   public final String workingDirectory;
   /** null=字段 absent；非 null=历史在此 Line ID 之前已被服务端裁剪。 */
-  public final Long historyTrimBeforeId;
+  public final Long historyTrimBeforeSeq;
 
   public ScreenPatch(String instanceId, long layoutEpoch, long baseRevision, long screenRevision,
-                     long[] layout, List<TerminalLine> lineUpdates, List<Long> historyAppendIds,
+                     long[] layout, List<TerminalLine> lineUpdates, List<Long> historyAppendSeqs,
                      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                      Map<Integer, TerminalStyle> newStyles, Map<Integer, Hyperlink> newLinks,
                      String title, String workingDirectory) {
-    this(instanceId, layoutEpoch, baseRevision, screenRevision, layout, lineUpdates, historyAppendIds,
+    this(instanceId, layoutEpoch, baseRevision, screenRevision, layout, lineUpdates, historyAppendSeqs,
         cursor, modes, palette, newStyles, newLinks, title, workingDirectory, null);
   }
 
   public ScreenPatch(String instanceId, long layoutEpoch, long baseRevision, long screenRevision,
-                     long[] layout, List<TerminalLine> lineUpdates, List<Long> historyAppendIds,
+                     long[] layout, List<TerminalLine> lineUpdates, List<Long> historyAppendSeqs,
                      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                      Map<Integer, TerminalStyle> newStyles, Map<Integer, Hyperlink> newLinks,
-                     String title, String workingDirectory, Long historyTrimBeforeId) {
+                     String title, String workingDirectory, Long historyTrimBeforeSeq) {
     this.instanceId = instanceId;
     this.layoutEpoch = layoutEpoch;
     this.baseRevision = baseRevision;
     this.screenRevision = screenRevision;
     this.layout = layout;
     this.lineUpdates = lineUpdates != null ? lineUpdates : Collections.emptyList();
-    this.historyAppendIds = historyAppendIds != null ? historyAppendIds : Collections.emptyList();
+    this.historyAppendSeqs = historyAppendSeqs != null ? historyAppendSeqs : Collections.emptyList();
     this.cursor = cursor;
     this.modes = modes;
     this.palette = palette;
@@ -54,6 +54,6 @@ public final class ScreenPatch {
     this.newLinks = newLinks != null ? newLinks : Collections.emptyMap();
     this.title = title;
     this.workingDirectory = workingDirectory;
-    this.historyTrimBeforeId = historyTrimBeforeId;
+    this.historyTrimBeforeSeq = historyTrimBeforeSeq;
   }
 }

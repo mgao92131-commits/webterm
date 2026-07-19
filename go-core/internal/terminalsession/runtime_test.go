@@ -134,8 +134,8 @@ func TestRuntimeLargeScrollbackTrimDoesNotSelfDeadlock(t *testing.T) {
 	r.AttachClient(&ScreenClient{
 		ID:   "screen-1",
 		Send: func(terminalengine.ScreenFrame) {},
-		SendHistoryTrim: func(_ uint64, firstAvailableID uint64) {
-			trimWatermarks <- firstAvailableID
+		SendHistoryTrim: func(_ uint64, firstAvailableSeq uint64) {
+			trimWatermarks <- firstAvailableSeq
 		},
 	})
 	if _, granted := r.AcquireLayout("screen-1", true); !granted {
@@ -148,9 +148,9 @@ func TestRuntimeLargeScrollbackTrimDoesNotSelfDeadlock(t *testing.T) {
 	waitRuntimeSnapshot(t, r)
 
 	select {
-	case firstID := <-trimWatermarks:
-		if firstID <= 1 {
-			t.Fatalf("trim watermark=%d, want > 1", firstID)
+	case firstSeq := <-trimWatermarks:
+		if firstSeq <= 1 {
+			t.Fatalf("trim watermark=%d, want > 1", firstSeq)
 		}
 	default:
 		t.Fatal("large scrollback output did not publish a trim watermark")

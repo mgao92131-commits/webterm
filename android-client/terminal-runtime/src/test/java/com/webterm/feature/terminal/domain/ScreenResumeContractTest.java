@@ -72,24 +72,24 @@ public final class ScreenResumeContractTest {
     FakeScreenConnection connection = fixture.connection;
 
     TerminalScreenProto.ScreenPatch.Builder builder = patch(100, 150)
-        .setHistoryTrimBeforeId(102)
+        .setHistoryTrimBeforeSeq(102)
         .addLineUpdates(historyLine(102, 1, "h102").toBuilder().setHistorySeq(102).build())
-        .addHistoryAppendIds(102);
+        .addHistoryAppendSeqs(102);
     connection.listener.onScreenMessage(envelope(builder).toByteArray());
 
     assertEquals(150, runtime.model().screenRevision);
-    assertEquals(102, runtime.model().firstAvailableHistoryId());
+    assertEquals(102, runtime.model().firstAvailableHistorySeq());
     assertEquals(1, runtime.model().historySize());
-    assertEquals(102, runtime.model().firstCachedHistoryId());
+    assertEquals(102, runtime.model().firstCachedHistorySeq());
 
     // 晚到的旧 HistoryTrim 不得让水位倒退或复活已删除行。
     connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setHistoryTrim(TerminalScreenProto.HistoryTrim.newBuilder()
-            .setLayoutEpoch(1).setFirstAvailableLineId(101))
+            .setLayoutEpoch(1).setFirstAvailableHistorySeq(101))
         .build().toByteArray());
-    assertEquals(102, runtime.model().firstAvailableHistoryId());
-    assertEquals(102, runtime.model().firstCachedHistoryId());
+    assertEquals(102, runtime.model().firstAvailableHistorySeq());
+    assertEquals(102, runtime.model().firstCachedHistorySeq());
   }
 
   @Test
@@ -102,10 +102,10 @@ public final class ScreenResumeContractTest {
     connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
         .setHistoryTrim(TerminalScreenProto.HistoryTrim.newBuilder()
-            .setLayoutEpoch(1).setFirstAvailableLineId(102))
+            .setLayoutEpoch(1).setFirstAvailableHistorySeq(102))
         .build().toByteArray());
 
-    assertEquals(102, runtime.model().firstAvailableHistoryId());
+    assertEquals(102, runtime.model().firstAvailableHistorySeq());
     assertEquals(0, runtime.model().historySize());
     assertTrue(runtime.model().renderSnapshot().history.isEmpty());
   }
@@ -302,11 +302,11 @@ public final class ScreenResumeContractTest {
   }
 
   private static TerminalScreenProto.ScreenEnvelope snapshotWithHistory(
-      long revision, long firstId, long lastId) {
+      long revision, long firstSeq, long lastSeq) {
     TerminalScreenProto.ScreenSnapshot.Builder snapshot = TestScreenFrames.snapshotBuilder(revision)
-        .setFirstAvailableHistoryLineId(firstId);
-    for (long id = firstId; id <= lastId; id++) {
-      snapshot.addHistoryTailIds(id);
+        .setFirstAvailableHistorySeq(firstSeq);
+    for (long id = firstSeq; id <= lastSeq; id++) {
+      snapshot.addHistoryTailSeqs(id);
       snapshot.addHistoryTailLines(historyLine(id, 1, "h" + id).toBuilder()
           .setHistorySeq(id).build());
     }
@@ -410,7 +410,7 @@ public final class ScreenResumeContractTest {
     public void requestResize(int cols, int rows) {}
 
     @Override
-    public boolean requestHistoryPage(@NonNull String requestId, long beforeLineId, int limit) {
+    public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
       return true;
     }
 
