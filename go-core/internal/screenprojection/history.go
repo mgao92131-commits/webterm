@@ -9,6 +9,7 @@ import (
 // HistoryChange 绑定仍驻留在权威 scrollback 中的 LineID 与其首次进入可导出
 // 投影的 revision。Cell 不保存在索引里，恢复时始终从 scrollback 读取。
 type HistoryChange struct {
+	HistorySeq      uint64
 	LineID          uint64
 	CreatedRevision uint64
 }
@@ -47,14 +48,14 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	if h.lastID != 0 && w.LastID < h.lastID {
 		// Pop 从尾部删除历史，append+前端水位无法表达尾删。
 		gap = true
-		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].LineID > w.LastID {
+		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].HistorySeq > w.LastID {
 			h.Changes = h.Changes[:len(h.Changes)-1]
 		}
 	}
 
 	// 实际 trim 事件是唯一水位锚点；同步删除已不再权威窗口中的索引项。
 	cut := 0
-	for cut < len(h.Changes) && h.Changes[cut].LineID < w.FirstID {
+	for cut < len(h.Changes) && h.Changes[cut].HistorySeq < w.FirstID {
 		cut++
 	}
 	if cut > 0 {
@@ -64,21 +65,21 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 
 	last := uint64(0)
 	if len(h.Changes) > 0 {
-		last = h.Changes[len(h.Changes)-1].LineID
+		last = h.Changes[len(h.Changes)-1].HistorySeq
 	}
-	for _, id := range w.IDs {
-		if id < w.FirstID || id > w.LastID || (last != 0 && id <= last) {
+	for _, entry := range w.Entries {
+		if entry.HistorySeq < w.FirstID || entry.HistorySeq > w.LastID || (last != 0 && entry.HistorySeq <= last) {
 			gap = true
 		}
-		if last == 0 || id > last {
-			h.Changes = append(h.Changes, HistoryChange{LineID: id, CreatedRevision: revision})
-			last = id
+		if last == 0 || entry.HistorySeq > last {
+			h.Changes = append(h.Changes, HistoryChange{HistorySeq: entry.HistorySeq, LineID: entry.LineID, CreatedRevision: revision})
+			last = entry.HistorySeq
 		}
 	}
 
 	// 防御性核对：当前驻留窗口非空却没有覆盖到尾部，说明一次 flush 跨过了
 	// 未捕获的 LineID，禁止静默少发。
-	if w.LastID >= w.FirstID && (len(h.Changes) == 0 || h.Changes[len(h.Changes)-1].LineID != w.LastID) {
+	if w.LastID >= w.FirstID && (len(h.Changes) == 0 || h.Changes[len(h.Changes)-1].HistorySeq != w.LastID) {
 		gap = true
 	}
 	if gap {
@@ -90,7 +91,7 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 
 type historyResumeSelection struct {
 	firstAvailableID uint64
-	lineIDs          []uint64
+	historySeqs      []uint64
 	watermarkChanged bool
 	reason           string
 }
@@ -108,17 +109,17 @@ func (h *HistoryChangeIndex) selectAfter(clientRevision uint64) historyResumeSel
 	}
 	for _, change := range h.Changes {
 		if change.CreatedRevision > clientRevision {
-			sel.lineIDs = append(sel.lineIDs, change.LineID)
-			if len(sel.lineIDs) > maxResumeHistoryAppend {
-				sel.lineIDs = nil
+			sel.historySeqs = append(sel.historySeqs, change.HistorySeq)
+			if len(sel.historySeqs) > maxResumeHistoryAppend {
+				sel.historySeqs = nil
 				sel.reason = ResumeReasonPatchCost
 				return sel
 			}
 		}
 	}
-	for i := 1; i < len(sel.lineIDs); i++ {
-		if sel.lineIDs[i] <= sel.lineIDs[i-1] {
-			sel.lineIDs = nil
+	for i := 1; i < len(sel.historySeqs); i++ {
+		if sel.historySeqs[i] <= sel.historySeqs[i-1] {
+			sel.historySeqs = nil
 			sel.reason = ResumeReasonHistoryGap
 			return sel
 		}
@@ -126,15 +127,15 @@ func (h *HistoryChangeIndex) selectAfter(clientRevision uint64) historyResumeSel
 	return sel
 }
 
-func (p *Projector) exportResumeHistoryLocked(ids []uint64) ([]terminalengine.Line, error) {
-	if len(ids) == 0 {
+func (p *Projector) exportResumeHistoryLocked(seqs []uint64) ([]terminalengine.Line, error) {
+	if len(seqs) == 0 {
 		return nil, nil
 	}
-	lines := make([]terminalengine.Line, 0, len(ids))
-	for _, id := range ids {
-		historyLine, ok := p.scrollback.LineByID(id)
+	lines := make([]terminalengine.Line, 0, len(seqs))
+	for _, seq := range seqs {
+		historyLine, ok := p.scrollback.LineByHistorySeq(seq)
 		if !ok {
-			return nil, fmt.Errorf("history line %d is no longer available", id)
+			return nil, fmt.Errorf("history sequence %d is no longer available", seq)
 		}
 		lines = append(lines, p.exporter.exportHistoryLine(historyLine))
 	}
@@ -197,9 +198,9 @@ func (v *HistoryView) pageWithExporter(beforeID uint64, limit int, exp *exporter
 
 	return terminalengine.HistoryWindow{
 		FirstAvailableLineID: firstAvailable,
-		FirstIncludedLineID:  exported[0].ID,
-		LastIncludedLineID:   exported[len(exported)-1].ID,
-		HasMoreBefore:        exported[0].ID > firstAvailable,
+		FirstIncludedLineID:  exported[0].HistorySeq,
+		LastIncludedLineID:   exported[len(exported)-1].HistorySeq,
+		HasMoreBefore:        exported[0].HistorySeq > firstAvailable,
 		Lines:                exported,
 	}
 }

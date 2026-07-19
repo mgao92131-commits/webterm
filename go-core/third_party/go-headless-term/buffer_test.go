@@ -31,6 +31,30 @@ func TestBufferCell(t *testing.T) {
 	}
 }
 
+func TestSetCellAdvancesLineVersionOnce(t *testing.T) {
+	b := NewBuffer(1, 2)
+	before := b.lineVersion[0]
+	b.SetCell(0, 0, Cell{Char: "x"})
+	if got := b.lineVersion[0]; got != before+1 {
+		t.Fatalf("SetCell version=%d, want %d (exactly one increment)", got, before+1)
+	}
+}
+
+func TestMarkDirtyAdvancesLineVersionForCellPointerWrite(t *testing.T) {
+	b := NewBuffer(1, 2)
+	b.TakeDirty() // consume the initial full projection marker
+	before := b.lineVersion[0]
+	b.Cell(0, 0).Char = "x"
+	b.MarkDirty(0, 0)
+	if got := b.lineVersion[0]; got != before+1 {
+		t.Fatalf("MarkDirty version=%d, want %d", got, before+1)
+	}
+	rows, all := b.TakeDirty()
+	if all || len(rows) != 1 || !rows[0] {
+		t.Fatalf("MarkDirty did not mark row dirty: rows=%v all=%v", rows, all)
+	}
+}
+
 func TestBufferCellOutOfBounds(t *testing.T) {
 	b := NewBuffer(24, 80)
 

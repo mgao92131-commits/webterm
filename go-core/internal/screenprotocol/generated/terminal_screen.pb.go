@@ -1565,13 +1565,24 @@ func (x *ScreenLayout) GetLineIds() []uint64 {
 }
 
 type LineData struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LineId        uint64                 `protobuf:"varint,1,opt,name=line_id,json=lineId,proto3" json:"line_id,omitempty"`
-	LineVersion   uint64                 `protobuf:"varint,2,opt,name=line_version,json=lineVersion,proto3" json:"line_version,omitempty"`
-	Wrapped       bool                   `protobuf:"varint,3,opt,name=wrapped,proto3" json:"wrapped,omitempty"`
-	Text          string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"` // compact path，非空时替代 runs
-	StyleSpans    []*StyleSpan           `protobuf:"bytes,5,rep,name=style_spans,json=styleSpans,proto3" json:"style_spans,omitempty"`
-	Runs          []*CellRun             `protobuf:"bytes,6,rep,name=runs,proto3" json:"runs,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	LineId      uint64                 `protobuf:"varint,1,opt,name=line_id,json=lineId,proto3" json:"line_id,omitempty"`
+	LineVersion uint64                 `protobuf:"varint,2,opt,name=line_version,json=lineVersion,proto3" json:"line_version,omitempty"`
+	Wrapped     bool                   `protobuf:"varint,3,opt,name=wrapped,proto3" json:"wrapped,omitempty"`
+	// Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+	// 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
+	Text string `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
+	// Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+	// 或 Java UTF-16 offset。
+	StyleSpans []*StyleSpan `protobuf:"bytes,5,rep,name=style_spans,json=styleSpans,proto3" json:"style_spans,omitempty"`
+	Runs       []*CellRun   `protobuf:"bytes,6,rep,name=runs,proto3" json:"runs,omitempty"`
+	// 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+	// scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+	HistorySeq uint64 `protobuf:"varint,7,opt,name=history_seq,json=historySeq,proto3" json:"history_seq,omitempty"`
+	// Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+	// 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+	// width=2 的第二列 spacer 不单独携带 metadata。
+	CellMeta      []byte `protobuf:"bytes,8,opt,name=cell_meta,json=cellMeta,proto3" json:"cell_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1644,6 +1655,20 @@ func (x *LineData) GetStyleSpans() []*StyleSpan {
 func (x *LineData) GetRuns() []*CellRun {
 	if x != nil {
 		return x.Runs
+	}
+	return nil
+}
+
+func (x *LineData) GetHistorySeq() uint64 {
+	if x != nil {
+		return x.HistorySeq
+	}
+	return 0
+}
+
+func (x *LineData) GetCellMeta() []byte {
+	if x != nil {
+		return x.CellMeta
 	}
 	return nil
 }
@@ -4485,7 +4510,7 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x04rows\x18\x01 \x01(\x05R\x04rows\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\x05R\x04cols\")\n" +
 	"\fScreenLayout\x12\x19\n" +
-	"\bline_ids\x18\x01 \x03(\x04R\alineIds\"\xf5\x01\n" +
+	"\bline_ids\x18\x01 \x03(\x04R\alineIds\"\xb3\x02\n" +
 	"\bLineData\x12\x17\n" +
 	"\aline_id\x18\x01 \x01(\x04R\x06lineId\x12!\n" +
 	"\fline_version\x18\x02 \x01(\x04R\vlineVersion\x12\x18\n" +
@@ -4493,7 +4518,10 @@ const file_shared_proto_terminal_screen_proto_rawDesc = "" +
 	"\x04text\x18\x04 \x01(\tR\x04text\x12F\n" +
 	"\vstyle_spans\x18\x05 \x03(\v2%.webterm.terminal.screen.v1.StyleSpanR\n" +
 	"styleSpans\x127\n" +
-	"\x04runs\x18\x06 \x03(\v2#.webterm.terminal.screen.v1.CellRunR\x04runs\"u\n" +
+	"\x04runs\x18\x06 \x03(\v2#.webterm.terminal.screen.v1.CellRunR\x04runs\x12\x1f\n" +
+	"\vhistory_seq\x18\a \x01(\x04R\n" +
+	"historySeq\x12\x1b\n" +
+	"\tcell_meta\x18\b \x01(\fR\bcellMeta\"u\n" +
 	"\tStyleSpan\x12\x1b\n" +
 	"\tstart_col\x18\x01 \x01(\x05R\bstartCol\x12\x17\n" +
 	"\aend_col\x18\x02 \x01(\x05R\x06endCol\x12\x19\n" +

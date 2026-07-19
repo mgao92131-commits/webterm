@@ -45,10 +45,12 @@ type projectedState struct {
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
 func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
+	previous := s.screen
 	screen := make([]terminalengine.Line, proj.Rows)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(screen) {
-			screen[row.Index] = exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+			screen[row.Index] = reconcileExportLine(previous,
+				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
 		}
 	}
 	s.screen = screen
@@ -64,10 +66,43 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(s.screen) {
-			s.screen[row.Index] = exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+			s.screen[row.Index] = reconcileExportLine(s.screen,
+				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
 		}
 	}
 	s.mergeMeta(proj)
+}
+
+// reconcileExportLine gives Line.Version wire semantics: it is the version of
+// the final exported representation, not merely Buffer's physical cell
+// version.  The exporter suppresses stale software cursors based on the live
+// cursor position, so a cursor move can alter Runs without touching a Cell.
+// Conversely, a projection-dirty cursor row whose output is unchanged must
+// retain its previous version and not create a needless LineData update.
+func reconcileExportLine(previous []terminalengine.Line, candidate terminalengine.Line) terminalengine.Line {
+	var prior *terminalengine.Line
+	for i := range previous {
+		if previous[i].ID == candidate.ID {
+			prior = &previous[i]
+			break
+		}
+	}
+	if prior == nil {
+		if candidate.Version == 0 {
+			candidate.Version = 1
+		}
+		return candidate
+	}
+	if linesEqual(*prior, candidate) {
+		candidate.Version = prior.Version
+		return candidate
+	}
+	// Preserve physical versions where they already advance monotonically, but
+	// create an ExportVersion step when only cursor-dependent filtering changed.
+	if candidate.Version <= prior.Version {
+		candidate.Version = prior.Version + 1
+	}
+	return candidate
 }
 
 func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
@@ -284,6 +319,7 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 		palette:      s.palette,
 		title:        s.title,
 		workingDir:   s.workingDir,
+		layout:       screenLayout(s.screen),
 	}
 	proj := p.engine.ReadProjection()
 	if !proj.Full && (!s.valid || s.rows != proj.Rows || s.cols != proj.Cols) {
@@ -400,7 +436,7 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 			lines = merged
 		}
 		start := 0
-		for start < len(lines) && lines[start].ID < delta.FirstID {
+		for start < len(lines) && lines[start].HistorySeq < delta.FirstID {
 			start++
 		}
 		if len(lines)-start > snapshotTailLines {
@@ -409,7 +445,7 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 		s.historyLines = lines[start:]
 	}
 	if n := len(s.historyLines); n > 0 {
-		s.historyLastID = s.historyLines[n-1].ID
+		s.historyLastID = s.historyLines[n-1].HistorySeq
 	} else {
 		s.historyLastID = delta.LastID
 	}
@@ -483,23 +519,17 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	// the newly present IDs instead of relying on historical ID contiguity.
 	oldHistory := make(map[uint64]struct{}, len(old.History.Lines))
 	for _, line := range old.History.Lines {
-		oldHistory[line.ID] = struct{}{}
-	}
-	knownLines := make(map[uint64]struct{}, len(old.Screen)+len(old.History.Lines))
-	for _, line := range old.Screen {
-		knownLines[line.ID] = struct{}{}
-	}
-	for _, line := range old.History.Lines {
-		knownLines[line.ID] = struct{}{}
+		oldHistory[line.HistorySeq] = struct{}{}
 	}
 	var historyAppend []terminalengine.Line
 	var historyAppendIDs []uint64
 	for _, line := range new.History.Lines {
-		if _, seen := oldHistory[line.ID]; !seen {
-			historyAppendIDs = append(historyAppendIDs, line.ID)
-			if _, known := knownLines[line.ID]; !known {
-				historyAppend = append(historyAppend, line)
-			}
+		if _, seen := oldHistory[line.HistorySeq]; !seen {
+			historyAppendIDs = append(historyAppendIDs, line.HistorySeq)
+			// A HistorySeq must be bound to a LineID at the receiver. Even when
+			// the line was visible on the previous screen, include its LineData so
+			// the bounded Android cache can append the correct history entry.
+			historyAppend = append(historyAppend, line)
 		}
 	}
 	screenRows := changedLinesByID(old, new.Screen)
@@ -582,11 +612,13 @@ func sameLayout(a, b []uint64) bool {
 // changes Layout, while a line update is needed only when its stable identity
 // is absent from the baseline or carries a newer content version.
 func changedLinesByID(old terminalengine.ScreenFrame, lines []terminalengine.Line) []terminalengine.Line {
-	known := make(map[uint64]uint64, len(old.Screen)+len(old.History.Lines))
+	// Android bounds LineStore to its current ScreenLayout and history cache.
+	// A line that existed only in an old history tail is not a safe baseline for
+	// a new screen layout: it may have been pruned locally. Re-entering screen
+	// lines therefore need their LineData unless the previous ScreenLayout also
+	// referenced them.
+	known := make(map[uint64]uint64, len(old.Screen))
 	for _, line := range old.Screen {
-		known[line.ID] = line.Version
-	}
-	for _, line := range old.History.Lines {
 		known[line.ID] = line.Version
 	}
 	var changed []terminalengine.Line

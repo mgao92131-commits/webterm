@@ -66,6 +66,12 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 		return ResumeDerivation{Outcome: ResumeOutcomeExact}
 	}
 
+	// 布局移动不能只靠更新 LineData 恢复：Android 需要新的 row -> LineID
+	// 映射。并且 resume 端只有 revision、没有客户端 LineStore 清单；一旦
+	// 布局在断线期间变化，最保守且自包含的 patch 是带当前 layout 的全部
+	// screen LineData。它仍不携带 snapshot 的历史窗口和完整字典。
+	layoutChanged := idx.LayoutChangedRevision > clientRevision
+
 	// 变化行：RowChangedRevision > clientRevision 的行，携带当前最终值。
 	// 索引短于屏幕行数是内部不一致：保守地视为已变化——多带行不影响正确性，
 	// 且通常会触发下面的成本降级。先计数再构帧：超阈值时不必收集行内容。
@@ -75,12 +81,14 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 			changed++
 		}
 	}
-	if changed > len(state.Screen)*snapshotRowThresholdPercent/100 {
+	if !layoutChanged && changed > len(state.Screen)*snapshotRowThresholdPercent/100 {
 		// §6.1 第 1 条：变化活动行超过阈值时优先 snapshot（与 diffToPatch 一致）。
 		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: ResumeReasonPatchCost}
 	}
 	var changedRows []terminalengine.Line
-	if changed > 0 {
+	if layoutChanged {
+		changedRows = append(changedRows, state.Screen...)
+	} else if changed > 0 {
 		changedRows = make([]terminalengine.Line, 0, changed)
 		for r := 0; r < len(state.Screen); r++ {
 			if r >= len(idx.RowChangedRevision) || idx.RowChangedRevision[r] > clientRevision {
@@ -97,7 +105,7 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 	newStyles := stylesCreatedAfter(state.Styles, idx.StyleCreatedRevision, clientRevision)
 	newLinks := linksCreatedAfter(state.Links, idx.LinkCreatedRevision, clientRevision)
 
-	if len(changedRows) == 0 && !titleChanged && !cwdChanged &&
+	if len(changedRows) == 0 && !layoutChanged && !titleChanged && !cwdChanged &&
 		!cursorChanged && !modesChanged && !paletteChanged &&
 		len(newStyles) == 0 && len(newLinks) == 0 {
 		// revision gap 内没有任何可观察变化（bell 等只推进 revision 的输出）：
@@ -133,8 +141,14 @@ func DeriveResumeFrame(state terminalengine.ScreenFrame, idx *ChangeIndex, clien
 			ModesChanged:      modesChanged,
 			PaletteChanged:    paletteChanged,
 			Screen:            changedRows,
-			Styles:            newStyles,
-			Links:             newLinks,
+			Layout: func() []uint64 {
+				if layoutChanged {
+					return screenLayout(state.Screen)
+				}
+				return nil
+			}(),
+			Styles: newStyles,
+			Links:  newLinks,
 			// title/cwd 以显式 presence 标志表达三态（未变化/变为空串/新值）。
 			Title:             state.Title,
 			WorkingDir:        state.WorkingDir,
@@ -163,7 +177,7 @@ func (p *Projector) DeriveResumeFrame(state terminalengine.ScreenFrame, clientRe
 	if selection.reason != "" {
 		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: selection.reason}
 	}
-	historyLines, err := p.exportResumeHistoryLocked(selection.lineIDs)
+	historyLines, err := p.exportResumeHistoryLocked(selection.historySeqs)
 	if err != nil {
 		return ResumeDerivation{Outcome: ResumeOutcomeSnapshot, Reason: ResumeReasonHistoryGap}
 	}
@@ -220,7 +234,9 @@ func (p *Projector) DeriveResumeFrame(state terminalengine.ScreenFrame, clientRe
 		Lines:                historyLines,
 	}
 	derived.Frame.HistoryAppendIDs = make([]uint64, len(historyLines))
-	for i, line := range historyLines { derived.Frame.HistoryAppendIDs[i] = line.ID }
+	for i, line := range historyLines {
+		derived.Frame.HistoryAppendIDs[i] = line.HistorySeq
+	}
 	// 每一帧恢复 Patch 都原子携带当前水位；接收端无需依赖 HistoryTrim 与
 	// screen mailbox 的相对顺序。
 	derived.Frame.FirstAvailableHistoryLineIDChanged = true

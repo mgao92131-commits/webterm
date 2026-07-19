@@ -217,7 +217,7 @@ public final class TerminalScreenControllerTest {
     snapshot.setLayout(layout);
     for (long id = firstHistoryId; id < firstHistoryId + count; id++) {
       snapshot.addHistoryTailIds(id);
-      snapshot.addHistoryTailLines(line(id));
+      snapshot.addHistoryTailLines(line(id).toBuilder().setHistorySeq(id).build());
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
@@ -244,7 +244,7 @@ public final class TerminalScreenControllerTest {
         .setFirstAvailableLineId(firstAvailableLineId)
         .setHasMoreBefore(hasMoreBefore);
     for (long id = firstHistoryId; id < lastHistoryIdExclusive; id++) {
-      page.addLines(line(id));
+      page.addLines(line(id).toBuilder().setHistorySeq(id).build());
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)

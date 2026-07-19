@@ -18686,7 +18686,8 @@ public final class TerminalScreenProto {
 
     /**
      * <pre>
-     * compact path，非空时替代 runs
+     * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+     * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
      * </pre>
      *
      * <code>string text = 4;</code>
@@ -18695,7 +18696,8 @@ public final class TerminalScreenProto {
     java.lang.String getText();
     /**
      * <pre>
-     * compact path，非空时替代 runs
+     * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+     * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
      * </pre>
      *
      * <code>string text = 4;</code>
@@ -18705,24 +18707,49 @@ public final class TerminalScreenProto {
         getTextBytes();
 
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan>
         getStyleSpansList();
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index);
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     int getStyleSpansCount();
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
         getStyleSpansOrBuilderList();
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
@@ -18751,6 +18778,29 @@ public final class TerminalScreenProto {
      */
     com.webterm.terminal.protocol.generated.TerminalScreenProto.CellRunOrBuilder getRunsOrBuilder(
         int index);
+
+    /**
+     * <pre>
+     * 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+     * scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+     * </pre>
+     *
+     * <code>uint64 history_seq = 7;</code>
+     * @return The historySeq.
+     */
+    long getHistorySeq();
+
+    /**
+     * <pre>
+     * Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+     * 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+     * width=2 的第二列 spacer 不单独携带 metadata。
+     * </pre>
+     *
+     * <code>bytes cell_meta = 8;</code>
+     * @return The cellMeta.
+     */
+    com.google.protobuf.ByteString getCellMeta();
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v1.LineData}
@@ -18777,6 +18827,7 @@ public final class TerminalScreenProto {
       text_ = "";
       styleSpans_ = java.util.Collections.emptyList();
       runs_ = java.util.Collections.emptyList();
+      cellMeta_ = com.google.protobuf.ByteString.EMPTY;
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -18830,7 +18881,8 @@ public final class TerminalScreenProto {
     private volatile java.lang.Object text_ = "";
     /**
      * <pre>
-     * compact path，非空时替代 runs
+     * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+     * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
      * </pre>
      *
      * <code>string text = 4;</code>
@@ -18851,7 +18903,8 @@ public final class TerminalScreenProto {
     }
     /**
      * <pre>
-     * compact path，非空时替代 runs
+     * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+     * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
      * </pre>
      *
      * <code>string text = 4;</code>
@@ -18876,6 +18929,11 @@ public final class TerminalScreenProto {
     @SuppressWarnings("serial")
     private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> styleSpans_;
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     @java.lang.Override
@@ -18883,6 +18941,11 @@ public final class TerminalScreenProto {
       return styleSpans_;
     }
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     @java.lang.Override
@@ -18891,6 +18954,11 @@ public final class TerminalScreenProto {
       return styleSpans_;
     }
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     @java.lang.Override
@@ -18898,6 +18966,11 @@ public final class TerminalScreenProto {
       return styleSpans_.size();
     }
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     @java.lang.Override
@@ -18905,6 +18978,11 @@ public final class TerminalScreenProto {
       return styleSpans_.get(index);
     }
     /**
+     * <pre>
+     * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+     * 或 Java UTF-16 offset。
+     * </pre>
+     *
      * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
      */
     @java.lang.Override
@@ -18954,6 +19032,39 @@ public final class TerminalScreenProto {
       return runs_.get(index);
     }
 
+    public static final int HISTORY_SEQ_FIELD_NUMBER = 7;
+    private long historySeq_ = 0L;
+    /**
+     * <pre>
+     * 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+     * scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+     * </pre>
+     *
+     * <code>uint64 history_seq = 7;</code>
+     * @return The historySeq.
+     */
+    @java.lang.Override
+    public long getHistorySeq() {
+      return historySeq_;
+    }
+
+    public static final int CELL_META_FIELD_NUMBER = 8;
+    private com.google.protobuf.ByteString cellMeta_ = com.google.protobuf.ByteString.EMPTY;
+    /**
+     * <pre>
+     * Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+     * 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+     * width=2 的第二列 spacer 不单独携带 metadata。
+     * </pre>
+     *
+     * <code>bytes cell_meta = 8;</code>
+     * @return The cellMeta.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString getCellMeta() {
+      return cellMeta_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -18985,6 +19096,12 @@ public final class TerminalScreenProto {
       }
       for (int i = 0; i < runs_.size(); i++) {
         output.writeMessage(6, runs_.get(i));
+      }
+      if (historySeq_ != 0L) {
+        output.writeUInt64(7, historySeq_);
+      }
+      if (!cellMeta_.isEmpty()) {
+        output.writeBytes(8, cellMeta_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -19018,6 +19135,14 @@ public final class TerminalScreenProto {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(6, runs_.get(i));
       }
+      if (historySeq_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(7, historySeq_);
+      }
+      if (!cellMeta_.isEmpty()) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(8, cellMeta_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -19045,6 +19170,10 @@ public final class TerminalScreenProto {
           .equals(other.getStyleSpansList())) return false;
       if (!getRunsList()
           .equals(other.getRunsList())) return false;
+      if (getHistorySeq()
+          != other.getHistorySeq()) return false;
+      if (!getCellMeta()
+          .equals(other.getCellMeta())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -19075,6 +19204,11 @@ public final class TerminalScreenProto {
         hash = (37 * hash) + RUNS_FIELD_NUMBER;
         hash = (53 * hash) + getRunsList().hashCode();
       }
+      hash = (37 * hash) + HISTORY_SEQ_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getHistorySeq());
+      hash = (37 * hash) + CELL_META_FIELD_NUMBER;
+      hash = (53 * hash) + getCellMeta().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -19224,6 +19358,8 @@ public final class TerminalScreenProto {
           runsBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000020);
+        historySeq_ = 0L;
+        cellMeta_ = com.google.protobuf.ByteString.EMPTY;
         return this;
       }
 
@@ -19290,6 +19426,12 @@ public final class TerminalScreenProto {
         }
         if (((from_bitField0_ & 0x00000008) != 0)) {
           result.text_ = text_;
+        }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.historySeq_ = historySeq_;
+        }
+        if (((from_bitField0_ & 0x00000080) != 0)) {
+          result.cellMeta_ = cellMeta_;
         }
       }
 
@@ -19371,6 +19513,12 @@ public final class TerminalScreenProto {
             }
           }
         }
+        if (other.getHistorySeq() != 0L) {
+          setHistorySeq(other.getHistorySeq());
+        }
+        if (other.getCellMeta() != com.google.protobuf.ByteString.EMPTY) {
+          setCellMeta(other.getCellMeta());
+        }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
         return this;
@@ -19443,6 +19591,16 @@ public final class TerminalScreenProto {
                 }
                 break;
               } // case 50
+              case 56: {
+                historySeq_ = input.readUInt64();
+                bitField0_ |= 0x00000040;
+                break;
+              } // case 56
+              case 66: {
+                cellMeta_ = input.readBytes();
+                bitField0_ |= 0x00000080;
+                break;
+              } // case 66
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -19559,7 +19717,8 @@ public final class TerminalScreenProto {
       private java.lang.Object text_ = "";
       /**
        * <pre>
-       * compact path，非空时替代 runs
+       * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+       * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
        * </pre>
        *
        * <code>string text = 4;</code>
@@ -19579,7 +19738,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * compact path，非空时替代 runs
+       * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+       * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
        * </pre>
        *
        * <code>string text = 4;</code>
@@ -19600,7 +19760,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * compact path，非空时替代 runs
+       * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+       * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
        * </pre>
        *
        * <code>string text = 4;</code>
@@ -19617,7 +19778,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * compact path，非空时替代 runs
+       * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+       * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
        * </pre>
        *
        * <code>string text = 4;</code>
@@ -19631,7 +19793,8 @@ public final class TerminalScreenProto {
       }
       /**
        * <pre>
-       * compact path，非空时替代 runs
+       * Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+       * 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
        * </pre>
        *
        * <code>string text = 4;</code>
@@ -19661,6 +19824,11 @@ public final class TerminalScreenProto {
           com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder> styleSpansBuilder_;
 
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan> getStyleSpansList() {
@@ -19671,6 +19839,11 @@ public final class TerminalScreenProto {
         }
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public int getStyleSpansCount() {
@@ -19681,6 +19854,11 @@ public final class TerminalScreenProto {
         }
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan getStyleSpans(int index) {
@@ -19691,6 +19869,11 @@ public final class TerminalScreenProto {
         }
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder setStyleSpans(
@@ -19708,6 +19891,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder setStyleSpans(
@@ -19722,6 +19910,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder addStyleSpans(com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan value) {
@@ -19738,6 +19931,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder addStyleSpans(
@@ -19755,6 +19953,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder addStyleSpans(
@@ -19769,6 +19972,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder addStyleSpans(
@@ -19783,6 +19991,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder addAllStyleSpans(
@@ -19798,6 +20011,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder clearStyleSpans() {
@@ -19811,6 +20029,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public Builder removeStyleSpans(int index) {
@@ -19824,6 +20047,11 @@ public final class TerminalScreenProto {
         return this;
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder getStyleSpansBuilder(
@@ -19831,6 +20059,11 @@ public final class TerminalScreenProto {
         return getStyleSpansFieldBuilder().getBuilder(index);
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder getStyleSpansOrBuilder(
@@ -19841,6 +20074,11 @@ public final class TerminalScreenProto {
         }
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpanOrBuilder>
@@ -19852,6 +20090,11 @@ public final class TerminalScreenProto {
         }
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder() {
@@ -19859,6 +20102,11 @@ public final class TerminalScreenProto {
             com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder addStyleSpansBuilder(
@@ -19867,6 +20115,11 @@ public final class TerminalScreenProto {
             index, com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.getDefaultInstance());
       }
       /**
+       * <pre>
+       * Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+       * 或 Java UTF-16 offset。
+       * </pre>
+       *
        * <code>repeated .webterm.terminal.screen.v1.StyleSpan style_spans = 5;</code>
        */
       public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenProto.StyleSpan.Builder>
@@ -20126,6 +20379,103 @@ public final class TerminalScreenProto {
           runs_ = null;
         }
         return runsBuilder_;
+      }
+
+      private long historySeq_ ;
+      /**
+       * <pre>
+       * 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+       * scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+       * </pre>
+       *
+       * <code>uint64 history_seq = 7;</code>
+       * @return The historySeq.
+       */
+      @java.lang.Override
+      public long getHistorySeq() {
+        return historySeq_;
+      }
+      /**
+       * <pre>
+       * 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+       * scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+       * </pre>
+       *
+       * <code>uint64 history_seq = 7;</code>
+       * @param value The historySeq to set.
+       * @return This builder for chaining.
+       */
+      public Builder setHistorySeq(long value) {
+
+        historySeq_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+       * scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+       * </pre>
+       *
+       * <code>uint64 history_seq = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearHistorySeq() {
+        bitField0_ = (bitField0_ & ~0x00000040);
+        historySeq_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private com.google.protobuf.ByteString cellMeta_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <pre>
+       * Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+       * 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+       * width=2 的第二列 spacer 不单独携带 metadata。
+       * </pre>
+       *
+       * <code>bytes cell_meta = 8;</code>
+       * @return The cellMeta.
+       */
+      @java.lang.Override
+      public com.google.protobuf.ByteString getCellMeta() {
+        return cellMeta_;
+      }
+      /**
+       * <pre>
+       * Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+       * 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+       * width=2 的第二列 spacer 不单独携带 metadata。
+       * </pre>
+       *
+       * <code>bytes cell_meta = 8;</code>
+       * @param value The cellMeta to set.
+       * @return This builder for chaining.
+       */
+      public Builder setCellMeta(com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        cellMeta_ = value;
+        bitField0_ |= 0x00000080;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+       * 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+       * width=2 的第二列 spacer 不单独携带 metadata。
+       * </pre>
+       *
+       * <code>bytes cell_meta = 8;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearCellMeta() {
+        bitField0_ = (bitField0_ & ~0x00000080);
+        cellMeta_ = getDefaultInstance().getCellMeta();
+        onChanged();
+        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v1.LineData)
@@ -54385,12 +54735,13 @@ public final class TerminalScreenProto {
       "\010\n\006_modesB\n\n\010_paletteB\020\n\016_active_bufferB" +
       "\010\n\006_titleB\024\n\022_working_directory\"\"\n\004Size\022" +
       "\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\" \n\014ScreenLay" +
-      "out\022\020\n\010line_ids\030\001 \003(\004\"\277\001\n\010LineData\022\017\n\007li" +
+      "out\022\020\n\010line_ids\030\001 \003(\004\"\347\001\n\010LineData\022\017\n\007li" +
       "ne_id\030\001 \001(\004\022\024\n\014line_version\030\002 \001(\004\022\017\n\007wra" +
       "pped\030\003 \001(\010\022\014\n\004text\030\004 \001(\t\022:\n\013style_spans\030" +
       "\005 \003(\0132%.webterm.terminal.screen.v1.Style" +
       "Span\0221\n\004runs\030\006 \003(\0132#.webterm.terminal.sc" +
-      "reen.v1.CellRun\"R\n\tStyleSpan\022\021\n\tstart_co" +
+      "reen.v1.CellRun\022\023\n\013history_seq\030\007 \001(\004\022\021\n\t" +
+      "cell_meta\030\010 \001(\014\"R\n\tStyleSpan\022\021\n\tstart_co" +
       "l\030\001 \001(\005\022\017\n\007end_col\030\002 \001(\005\022\020\n\010style_id\030\003 \001" +
       "(\r\022\017\n\007link_id\030\004 \001(\r\"G\n\007CellRun\022\013\n\003col\030\001 " +
       "\001(\005\022/\n\005cells\030\002 \003(\0132 .webterm.terminal.sc" +
@@ -54612,7 +54963,7 @@ public final class TerminalScreenProto {
     internal_static_webterm_terminal_screen_v1_LineData_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v1_LineData_descriptor,
-        new java.lang.String[] { "LineId", "LineVersion", "Wrapped", "Text", "StyleSpans", "Runs", });
+        new java.lang.String[] { "LineId", "LineVersion", "Wrapped", "Text", "StyleSpans", "Runs", "HistorySeq", "CellMeta", });
     internal_static_webterm_terminal_screen_v1_StyleSpan_descriptor =
       getDescriptor().getMessageTypes().get(11);
     internal_static_webterm_terminal_screen_v1_StyleSpan_fieldAccessorTable = new

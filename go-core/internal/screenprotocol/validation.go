@@ -8,17 +8,18 @@ import (
 )
 
 const (
-	minRows            = 5
-	maxRows            = 200
-	minCols            = 10
-	maxCols            = 500
-	maxHistoryPage     = 500
-	maxSnapshotHistory = 500
-	maxEnvelopeBytes   = 2 * 1024 * 1024
-	maxTitleBytes      = 4096
-	maxCWDBytes        = 4096
-	maxURIBytes        = 8192
-	maxCellTextBytes   = 64
+	minRows             = 5
+	maxRows             = 200
+	minCols             = 10
+	maxCols             = 500
+	maxHistoryPage      = 500
+	maxSnapshotHistory  = 500
+	maxEnvelopeBytes    = 2 * 1024 * 1024
+	maxTitleBytes       = 4096
+	maxCWDBytes         = 4096
+	maxURIBytes         = 8192
+	maxCellTextBytes    = 64
+	maxCompactMetaBytes = maxCols
 )
 
 // ValidateEnvelopeSize 校验 envelope 总大小。
@@ -136,7 +137,7 @@ func ValidateSnapshot(s *pb.ScreenSnapshot) error {
 	if err != nil {
 		return err
 	}
-	historyIDs, err := validateLineData(s.HistoryTailLines, int(s.Geometry.Cols))
+	_, err = validateLineData(s.HistoryTailLines, int(s.Geometry.Cols))
 	if err != nil {
 		return err
 	}
@@ -153,15 +154,25 @@ func ValidateSnapshot(s *pb.ScreenSnapshot) error {
 			return fmt.Errorf("snapshot layout line data missing: %d", id)
 		}
 	}
+	historySeqs := make(map[uint64]struct{}, len(s.HistoryTailLines))
+	for _, line := range s.HistoryTailLines {
+		if line.HistorySeq == 0 {
+			return fmt.Errorf("snapshot history line missing history sequence")
+		}
+		if _, duplicate := historySeqs[line.HistorySeq]; duplicate {
+			return fmt.Errorf("duplicate snapshot history sequence: %d", line.HistorySeq)
+		}
+		historySeqs[line.HistorySeq] = struct{}{}
+	}
 	var previous uint64
-	for index, id := range s.HistoryTailIds {
-		if id == 0 || (index > 0 && id <= previous) {
-			return fmt.Errorf("invalid snapshot history line id: %d", id)
+	for index, seq := range s.HistoryTailIds {
+		if seq == 0 || (index > 0 && seq <= previous) {
+			return fmt.Errorf("invalid snapshot history sequence: %d", seq)
 		}
-		if _, ok := historyIDs[id]; !ok {
-			return fmt.Errorf("snapshot history line data missing: %d", id)
+		if _, ok := historySeqs[seq]; !ok {
+			return fmt.Errorf("snapshot history line data missing for sequence: %d", seq)
 		}
-		previous = id
+		previous = seq
 	}
 	return nil
 }
@@ -192,12 +203,24 @@ func ValidatePatch(p *pb.ScreenPatch) error {
 	if _, err := validateLineData(p.LineUpdates, maxCols); err != nil {
 		return err
 	}
-	var previous uint64
-	for index, id := range p.HistoryAppendIds {
-		if id == 0 || (index > 0 && id <= previous) {
-			return fmt.Errorf("invalid patch history append id: %d", id)
+	historySeqs := make(map[uint64]struct{}, len(p.LineUpdates))
+	for _, line := range p.LineUpdates {
+		if line.HistorySeq != 0 {
+			if _, duplicate := historySeqs[line.HistorySeq]; duplicate {
+				return fmt.Errorf("duplicate history update sequence: %d", line.HistorySeq)
+			}
+			historySeqs[line.HistorySeq] = struct{}{}
 		}
-		previous = id
+	}
+	var previous uint64
+	for index, seq := range p.HistoryAppendIds {
+		if seq == 0 || (index > 0 && seq <= previous) {
+			return fmt.Errorf("invalid patch history append sequence: %d", seq)
+		}
+		if _, ok := historySeqs[seq]; !ok {
+			return fmt.Errorf("patch history append missing line data for sequence: %d", seq)
+		}
+		previous = seq
 	}
 	return nil
 }
@@ -248,8 +271,15 @@ func validateLineData(lines []*pb.LineData, maxCols int) (map[uint64]struct{}, e
 			return nil, fmt.Errorf("duplicate line id: %d", line.LineId)
 		}
 		ids[line.LineId] = struct{}{}
-		if line.Text != "" && len(line.Runs) != 0 {
-			return nil, fmt.Errorf("line mixes compact text and runs")
+		if line.Text != "" || len(line.CellMeta) != 0 {
+			if len(line.Runs) != 0 {
+				return nil, fmt.Errorf("line mixes compact text and runs")
+			}
+			if err := validateCompactLine(line.Text, line.CellMeta, line.StyleSpans, maxCols); err != nil {
+				return nil, err
+			}
+		} else if len(line.StyleSpans) != 0 {
+			return nil, fmt.Errorf("style spans require compact text")
 		}
 		for _, run := range line.Runs {
 			if run.Col < 0 || int(run.Col) >= maxCols {
@@ -266,4 +296,84 @@ func validateLineData(lines []*pb.LineData, maxCols int) (map[uint64]struct{}, e
 		}
 	}
 	return ids, nil
+}
+
+func validateCompactLine(text string, meta []byte, spans []*pb.StyleSpan, maxCols int) error {
+	if (text == "") != (len(meta) == 0) {
+		return fmt.Errorf("compact text and cell metadata must appear together")
+	}
+	if text == "" {
+		if len(spans) != 0 {
+			return fmt.Errorf("empty compact line must not have style spans")
+		}
+		return nil
+	}
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("compact text contains invalid UTF-8")
+	}
+	if len(text) > maxCols*maxCellTextBytes || len(meta) > maxCompactMetaBytes || len(meta) > maxCols {
+		return fmt.Errorf("compact line exceeds resource limit")
+	}
+	codePoints := 0
+	columns := 0
+	for _, value := range meta {
+		count := int(value & 0x7f)
+		if count == 0 {
+			return fmt.Errorf("compact cell metadata has zero code point count")
+		}
+		width := 1
+		if value&0x80 != 0 {
+			width = 2
+		}
+		if columns+width > maxCols {
+			return fmt.Errorf("compact cell metadata exceeds line width")
+		}
+		codePoints += count
+		columns += width
+	}
+	if utf8.RuneCountInString(text) != codePoints {
+		return fmt.Errorf("compact metadata code point count does not match text")
+	}
+	if len(spans) > len(meta) {
+		return fmt.Errorf("too many compact style spans")
+	}
+	previousEnd := 0
+	for _, span := range spans {
+		if span.StartCol < int32(previousEnd) || span.StartCol < 0 || span.EndCol <= span.StartCol || int(span.EndCol) > columns {
+			return fmt.Errorf("invalid compact style span")
+		}
+		previousEnd = int(span.EndCol)
+	}
+	// A logical width=2 Cell has one style/link identity. Splitting its two
+	// terminal columns would be unrepresentable at the receiver.
+	col := 0
+	for _, value := range meta {
+		width := 1
+		if value&0x80 != 0 {
+			width = 2
+		}
+		if width == 2 && !sameSpanStyleAt(spans, col, col+1) {
+			return fmt.Errorf("compact style span splits wide cell at col=%d", col)
+		}
+		col += width
+	}
+	return nil
+}
+
+func sameSpanStyleAt(spans []*pb.StyleSpan, first, second int) bool {
+	firstStyle, firstLink := compactStyleAt(spans, first)
+	secondStyle, secondLink := compactStyleAt(spans, second)
+	return firstStyle == secondStyle && firstLink == secondLink
+}
+
+func compactStyleAt(spans []*pb.StyleSpan, col int) (uint32, uint32) {
+	for _, span := range spans {
+		if int(span.StartCol) > col {
+			break
+		}
+		if int(span.StartCol) <= col && col < int(span.EndCol) {
+			return span.StyleId, span.LinkId
+		}
+	}
+	return 0, 0
 }

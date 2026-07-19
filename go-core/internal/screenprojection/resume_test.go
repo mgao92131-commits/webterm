@@ -63,6 +63,32 @@ func TestDeriveResumeFrame_RevisionJumpCarriesFinalState(t *testing.T) {
 	}
 }
 
+func TestDeriveResumeFrame_LayoutChangeCarriesSelfContainedLayout(t *testing.T) {
+	state := terminalengine.ScreenFrame{
+		Version: 1, Kind: terminalengine.FrameSnapshot, InstanceID: "instance", Epoch: 1,
+		Seq: 2, Rows: 2, Cols: 4,
+		Screen: []terminalengine.Line{
+			{ID: 22, Version: 1, Row: 0, Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "b", Width: 1}}}}},
+			{ID: 11, Version: 1, Row: 1, Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "a", Width: 1}}}}},
+		},
+	}
+	idx := &ChangeIndex{
+		SnapshotBarrierRevision: 1,
+		RowChangedRevision:      []uint64{2, 2},
+		LayoutChangedRevision:   2,
+	}
+	d := DeriveResumeFrame(state, idx, 1)
+	if d.Outcome != ResumeOutcomePatch {
+		t.Fatalf("outcome=%v reason=%q, want patch", d.Outcome, d.Reason)
+	}
+	if got, want := d.Frame.Layout, []uint64{22, 11}; !sameLayout(got, want) {
+		t.Fatalf("layout=%v, want %v", got, want)
+	}
+	if len(d.Frame.Screen) != len(state.Screen) {
+		t.Fatalf("layout patch line updates=%d, want self-contained %d", len(d.Frame.Screen), len(state.Screen))
+	}
+}
+
 // metadata-only：title 变化的 resume patch 置 TitleChanged 且不携带屏幕行。
 func TestDeriveResumeFrame_MetadataOnly(t *testing.T) {
 	engine, _, p := newChangeIndexFixture(5, 20)

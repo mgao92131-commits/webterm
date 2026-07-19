@@ -40,13 +40,13 @@ public final class TerminalHistory {
     return estimatedBytes;
   }
 
-  /** 缓存最旧行 id；空缓存返回 -1。 */
+  /** 缓存最旧 HistorySeq；空缓存返回 -1。 */
   public long firstLineId() {
     if (chunks.isEmpty()) return -1;
     return chunks.get(0).firstId();
   }
 
-  /** 缓存最新行 id；空缓存返回 -1。 */
+  /** 缓存最新 HistorySeq；空缓存返回 -1。 */
   public long lastLineId() {
     if (chunks.isEmpty()) return -1;
     return chunks.get(chunks.size() - 1).lastId();
@@ -66,7 +66,7 @@ public final class TerminalHistory {
   }
 
   /**
-   * 按 LineID 定位在历史中的索引。O(log chunks + log chunk size)。
+   * 按 HistorySeq 定位在历史中的索引。O(log chunks + log chunk size)。
    *
    * @return 索引（0=最旧），不存在返回 -1。
    */
@@ -119,7 +119,7 @@ public final class TerminalHistory {
    * 替换只应在同 id 内容更新时使用，以保持 LineID 升序不变。
    */
   public boolean put(TerminalLine line) {
-    int index = findLineIndex(line.id);
+    int index = findLineIndex(line.historyOrder());
     if (index >= 0) {
       replaceAt(index, line);
       return false;
@@ -149,7 +149,7 @@ public final class TerminalHistory {
     }
   }
 
-  /** 删除所有 lineId 小于 firstAvailableLineId 的行。O(chunks)。 */
+  /** 删除所有 HistorySeq 小于 firstAvailableLineId 的行。O(chunks)。 */
   public void trimHeadUntil(long firstAvailableLineId) {
     while (!chunks.isEmpty() && chunks.get(0).lastId() < firstAvailableLineId) {
       removeFirstChunk();
@@ -215,7 +215,7 @@ public final class TerminalHistory {
     for (HistoryChunk chunk : chunks) {
       for (int i = 0; i < chunk.size; i++) {
         TerminalLine line = chunk.lineAt(i);
-        map.put(line.id, line);
+      map.put(line.historyOrder(), line);
       }
     }
     return map;
@@ -358,11 +358,11 @@ public final class TerminalHistory {
     }
 
     long firstId() {
-      return lines[offset].id;
+      return lines[offset].historyOrder();
     }
 
     long lastId() {
-      return lines[offset + size - 1].id;
+      return lines[offset + size - 1].historyOrder();
     }
 
     TerminalLine lineAt(int localIndex) {
@@ -374,7 +374,7 @@ public final class TerminalHistory {
       int hi = offset + size - 1;
       while (lo <= hi) {
         int mid = (lo + hi) >>> 1;
-        long midId = lines[mid].id;
+        long midId = lines[mid].historyOrder();
         if (midId == lineId) return mid - offset;
         if (midId < lineId) lo = mid + 1;
         else hi = mid - 1;

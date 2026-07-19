@@ -76,9 +76,13 @@ type CellRun struct {
 type Line struct {
 	ID      uint64 // session 内稳定行 ID；屏幕与历史共用同一命名空间
 	Version uint64 // 行内容版本；行移动不改变，内容/宽度变化递增
-	Row     int    // 仅 Projector 内部缓存的当前位置，永不参与 wire 语义
-	Wrapped bool
-	Runs    []CellRun
+	// HistorySeq is non-zero only while this Line is represented in scrollback.
+	// It orders history entrance and pagination independently from the stable
+	// logical Line ID, which is allowed to move in non-monotonic order.
+	HistorySeq uint64
+	Row        int // 仅 Projector 内部缓存的当前位置，永不参与 wire 语义
+	Wrapped    bool
+	Runs       []CellRun
 }
 
 // Cursor 是光标状态。

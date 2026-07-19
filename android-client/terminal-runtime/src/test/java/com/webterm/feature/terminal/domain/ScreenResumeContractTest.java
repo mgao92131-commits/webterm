@@ -73,7 +73,7 @@ public final class ScreenResumeContractTest {
 
     TerminalScreenProto.ScreenPatch.Builder builder = patch(100, 150)
         .setHistoryTrimBeforeId(102)
-        .addLineUpdates(historyLine(102, 1, "h102"))
+        .addLineUpdates(historyLine(102, 1, "h102").toBuilder().setHistorySeq(102).build())
         .addHistoryAppendIds(102);
     connection.listener.onScreenMessage(envelope(builder).toByteArray());
 
@@ -307,7 +307,8 @@ public final class ScreenResumeContractTest {
         .setFirstAvailableHistoryLineId(firstId);
     for (long id = firstId; id <= lastId; id++) {
       snapshot.addHistoryTailIds(id);
-      snapshot.addHistoryTailLines(historyLine(id, 1, "h" + id));
+      snapshot.addHistoryTailLines(historyLine(id, 1, "h" + id).toBuilder()
+          .setHistorySeq(id).build());
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)

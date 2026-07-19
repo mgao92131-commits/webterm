@@ -1,6 +1,7 @@
 package screenprotocol
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -75,7 +76,7 @@ func TestEncodeFrame_SnapshotRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *testing.T) {
+func TestEncodeFrameWithCompactLines_UsesUTF8TextMetadataAndSpans(t *testing.T) {
 	base := terminalengine.ScreenFrame{
 		Kind: terminalengine.FrameSnapshot, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
 		Rows: 5, Cols: 10,
@@ -91,7 +92,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 		t.Fatal(err)
 	}
 	line := envelope.GetSnapshot().GetScreenLines()[0]
-	if line.GetText() != "ab" || len(line.GetRuns()) != 0 {
+	if line.GetText() != "ab" || string(line.GetCellMeta()) != "\x01\x01" || len(line.GetRuns()) != 0 {
 		t.Fatalf("compact line=%+v, want text-only encoding", line)
 	}
 	if len(line.GetStyleSpans()) != 1 || line.GetStyleSpans()[0].GetStartCol() != 1 {
@@ -108,7 +109,7 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 		t.Fatal(err)
 	}
 	line = envelope.GetSnapshot().GetScreenLines()[0]
-	if line.GetText() != "" || len(line.GetRuns()) != 0 || len(line.GetStyleSpans()) != 0 {
+	if line.GetText() != "" || len(line.GetCellMeta()) != 0 || len(line.GetRuns()) != 0 || len(line.GetStyleSpans()) != 0 {
 		t.Fatalf("default blank line must be represented by client padding: %+v", line)
 	}
 
@@ -122,8 +123,153 @@ func TestEncodeFrameWithCompactLines_UsesTextSpansAndFallsBackForWideCells(t *te
 		t.Fatal(err)
 	}
 	line = envelope.GetSnapshot().GetScreenLines()[0]
-	if line.GetText() != "" || len(line.GetRuns()) != 1 {
-		t.Fatalf("wide line must retain CellRun encoding: %+v", line)
+	if line.GetText() != " 界" || string(line.GetCellMeta()) != "\x01\x81" || len(line.GetRuns()) != 0 {
+		t.Fatalf("wide line must use UTF-8 compact encoding: %+v", line)
+	}
+}
+
+func TestCompactLine_UnicodeAndGridRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		runs []terminalengine.CellRun
+		cols int
+		text string
+		meta []byte
+	}{
+		{"ascii", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "A", Width: 1}}}}, 4, "A", []byte{1}},
+		{"chinese", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "中", Width: 2}}}}, 4, "中", []byte{0x81}},
+		{"mixed", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "A", Width: 1}, {Text: "中", Width: 2}, {Text: "B", Width: 1}}}}, 4, "A中B", []byte{1, 0x81, 1}},
+		{"combining", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "é", Width: 1}}}}, 2, "é", []byte{2}},
+		{"variation", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "❤️", Width: 2}}}}, 2, "❤️", []byte{0x82}},
+		{"skin-tone", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "👍🏻", Width: 2}}}}, 2, "👍🏻", []byte{0x82}},
+		{"zwj", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "👨‍👩‍👧‍👦", Width: 2}}}}, 2, "👨‍👩‍👧‍👦", []byte{0x87}},
+		{"flag", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "🇯🇵", Width: 2}}}}, 2, "🇯🇵", []byte{0x82}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, meta, _, err := compactLine(tt.runs, tt.cols)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text != tt.text || string(meta) != string(tt.meta) {
+				t.Fatalf("compact=(%q,%v), want (%q,%v)", text, meta, tt.text, tt.meta)
+			}
+		})
+	}
+}
+
+func TestCompactLine_StylesAndTrailingSpaces(t *testing.T) {
+	runs := []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
+		{Text: "中", Width: 2, StyleID: 3, LinkID: 7},
+		{Text: "A", Width: 1, StyleID: 4},
+		{Text: " ", Width: 1},
+		{Text: " ", Width: 1, StyleID: 5},
+	}}}
+	text, meta, spans, err := compactLine(runs, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "中A  " || string(meta) != string([]byte{0x81, 1, 1, 1}) {
+		t.Fatalf("unexpected compact payload text=%q meta=%v", text, meta)
+	}
+	if len(spans) != 3 || spans[0].StartCol != 0 || spans[0].EndCol != 2 || spans[0].StyleId != 3 || spans[0].LinkId != 7 || spans[2].StartCol != 4 {
+		t.Fatalf("unexpected terminal-column spans: %+v", spans)
+	}
+	text, meta, _, err = compactLine([]terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "中", Width: 2}, {Text: " ", Width: 1}, {Text: " ", Width: 1}}}}, 4)
+	if err != nil || text != "中" || string(meta) != string([]byte{0x81}) {
+		t.Fatalf("trailing defaults must trim without dropping wide cell: text=%q meta=%v err=%v", text, meta, err)
+	}
+}
+
+func TestCompactLine_RejectsInvalidModelData(t *testing.T) {
+	tooLong := strings.Repeat("a", maxCellTextBytes+1)
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name string
+		runs []terminalengine.CellRun
+		cols int
+	}{
+		{"invalid-width", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "x", Width: 3}}}}, 4},
+		{"invalid-utf8", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: invalidUTF8, Width: 1}}}}, 4},
+		{"too-long", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: tooLong, Width: 1}}}}, 4},
+		{"wide-out-of-bounds", []terminalengine.CellRun{{Col: 1, Cells: []terminalengine.Cell{{Text: "中", Width: 2}}}}, 2},
+		{"overlaps-wide-spacer", []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: "中", Width: 2}}}, {Col: 1, Cells: []terminalengine.Cell{{Text: "x", Width: 1}}}}, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, _, err := compactLine(tt.runs, tt.cols); err == nil {
+				t.Fatal("expected compact model error")
+			}
+		})
+	}
+}
+
+func TestUTF8CompactSerializedSizes(t *testing.T) {
+	cases := []struct {
+		name  string
+		cells []terminalengine.Cell
+		cols  int
+	}{
+		{"ascii-200", repeatedCells("a", 1, 200), 200},
+		{"chinese-100", repeatedCells("中", 2, 100), 200},
+		{"mixed-150", alternatingCells("A", "中", 75), 225},
+		{"chinese-path", []terminalengine.Cell{{Text: "/", Width: 1}, {Text: "用", Width: 2}, {Text: "户", Width: 2}, {Text: "/", Width: 1}, {Text: "项目", Width: 2}, {Text: "/", Width: 1}, {Text: "日志", Width: 2}}, 11},
+		{"styled-unicode", []terminalengine.Cell{{Text: "中", Width: 2, StyleID: 4}, {Text: "文", Width: 2, StyleID: 4}, {Text: "😀", Width: 2, StyleID: 5}, {Text: "é", Width: 1, LinkID: 7}}, 7},
+		{"emoji-combining", []terminalengine.Cell{{Text: "❤️", Width: 2}, {Text: "👍🏻", Width: 2}, {Text: "👨‍👩‍👧‍👦", Width: 2}, {Text: "é", Width: 1}}, 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := terminalengine.ScreenFrame{Kind: terminalengine.FrameSnapshot, SessionID: "size", InstanceID: "size", Epoch: 1, Seq: 1,
+				Rows: 5, Cols: tc.cols, Screen: []terminalengine.Line{{ID: 1, Version: 1, Runs: []terminalengine.CellRun{{Col: 0, Cells: tc.cells}}}}}
+			compact, err := EncodeFrameWithCompactLines(frame, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runs, err := EncodeFrameWithCompactLines(frame, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("[UTF8CompactSize] scenario=%s compact_bytes=%d cellrun_bytes=%d delta=%d", tc.name, len(compact), len(runs), len(compact)-len(runs))
+			if len(compact) >= len(runs) {
+				t.Fatalf("compact=%d must be smaller than CellRun=%d", len(compact), len(runs))
+			}
+		})
+	}
+}
+
+func repeatedCells(text string, width uint8, count int) []terminalengine.Cell {
+	cells := make([]terminalengine.Cell, count)
+	for i := range cells {
+		cells[i] = terminalengine.Cell{Text: text, Width: width}
+	}
+	return cells
+}
+
+func alternatingCells(ascii, wide string, pairs int) []terminalengine.Cell {
+	cells := make([]terminalengine.Cell, 0, pairs*2)
+	for i := 0; i < pairs; i++ {
+		cells = append(cells, terminalengine.Cell{Text: ascii, Width: 1}, terminalengine.Cell{Text: wide, Width: 2})
+	}
+	return cells
+}
+
+func BenchmarkEncodeUTF8CompactMixed(b *testing.B) {
+	frame := terminalengine.ScreenFrame{Kind: terminalengine.FrameSnapshot, SessionID: "bench", InstanceID: "bench", Epoch: 1, Seq: 1,
+		Rows: 5, Cols: 300, Screen: []terminalengine.Line{{ID: 1, Version: 1,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: alternatingCells("A", "中", 100)}}}}}
+	for _, compact := range []bool{true, false} {
+		name := "cellrun"
+		if compact {
+			name = "utf8-compact"
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := EncodeFrameWithCompactLines(frame, compact); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

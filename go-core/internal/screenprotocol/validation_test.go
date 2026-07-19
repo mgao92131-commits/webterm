@@ -178,7 +178,7 @@ func TestHandleMessage_MalformedHelloRejected(t *testing.T) {
 
 func TestValidateLines_RejectsExplicitSpacerCells(t *testing.T) {
 	lines := []*pb.LineData{{
-		LineId: 1,
+		LineId:      1,
 		LineVersion: 1,
 		Runs: []*pb.CellRun{{
 			Col:   0,
@@ -187,5 +187,32 @@ func TestValidateLines_RejectsExplicitSpacerCells(t *testing.T) {
 	}}
 	if _, err := validateLineData(lines, 10); err == nil {
 		t.Fatal("explicit width=0 spacer must be rejected")
+	}
+}
+
+func TestValidateCompactLine_UTF8Metadata(t *testing.T) {
+	valid := []*pb.LineData{{
+		LineId: 1, LineVersion: 1, Text: "A❤️中", CellMeta: []byte{1, 0x82, 0x81},
+		StyleSpans: []*pb.StyleSpan{{StartCol: 1, EndCol: 3, StyleId: 7, LinkId: 9}},
+	}}
+	if _, err := validateLineData(valid, 5); err != nil {
+		t.Fatalf("valid UTF-8 compact line rejected: %v", err)
+	}
+	invalid := []struct {
+		name string
+		line *pb.LineData
+		cols int
+	}{
+		{"zero-code-points", &pb.LineData{LineId: 1, LineVersion: 1, Text: "A", CellMeta: []byte{0}}, 5},
+		{"metadata-too-short", &pb.LineData{LineId: 1, LineVersion: 1, Text: "A中", CellMeta: []byte{1}}, 5},
+		{"wide-out-of-bounds", &pb.LineData{LineId: 1, LineVersion: 1, Text: "中", CellMeta: []byte{0x81}}, 1},
+		{"mixed-runs", &pb.LineData{LineId: 1, LineVersion: 1, Text: "A", CellMeta: []byte{1}, Runs: []*pb.CellRun{{Col: 0, Cells: []*pb.Cell{{Text: "A", Width: 1}}}}}, 5},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := validateLineData([]*pb.LineData{tc.line}, tc.cols); err == nil {
+				t.Fatal("expected compact validation error")
+			}
+		})
 	}
 }

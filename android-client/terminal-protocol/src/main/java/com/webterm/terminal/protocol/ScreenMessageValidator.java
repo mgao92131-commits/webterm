@@ -130,13 +130,19 @@ public final class ScreenMessageValidator {
     for (long id : s.getLayout().getLineIdsList()) {
       if (!screenDataIds.contains(id)) return ValidationResult.fail("snapshot layout line data missing");
     }
-    long previousHistoryId = -1;
-    for (long id : s.getHistoryTailIdsList()) {
-      if (id <= 0 || (previousHistoryId >= 0 && id <= previousHistoryId)
-          || !historyDataIds.contains(id)) {
-        return ValidationResult.fail("invalid snapshot history line id: " + id);
+    java.util.Set<Long> historySeqs = new java.util.HashSet<>();
+    for (TerminalScreenProto.LineData line : s.getHistoryTailLinesList()) {
+      if (line.getHistorySeq() <= 0 || !historySeqs.add(line.getHistorySeq())) {
+        return ValidationResult.fail("invalid snapshot history sequence");
       }
-      previousHistoryId = id;
+    }
+    long previousHistorySeq = -1;
+    for (long seq : s.getHistoryTailIdsList()) {
+      if (seq <= 0 || (previousHistorySeq >= 0 && seq <= previousHistorySeq)
+          || !historySeqs.contains(seq)) {
+        return ValidationResult.fail("invalid snapshot history sequence: " + seq);
+      }
+      previousHistorySeq = seq;
     }
     return ValidationResult.ok();
   }
@@ -144,11 +150,10 @@ public final class ScreenMessageValidator {
   /**
    * 校验 patch 的结构与资源上限（计划 §10.1）。
    *
-   * @param rows 调用方持有的当前模型行数（RemoteTerminalModel.rows）。patch 自身
-   *     不携带 geometry，行索引上界只能相对本地投影校验；rows=0（尚未收到任何
-   *     snapshot）时任何 screen_rows/promoted_rows 都会被拒绝，空 patch 仍可放行。
+   * @param rows 调用方持有的当前模型行数（RemoteTerminalModel.rows）。
+   * @param columns 调用方持有的当前模型列数；用于拒绝 Compact metadata 越过右边界。
    */
-  public static ValidationResult validatePatch(TerminalScreenProto.ScreenPatch p, int rows) {
+  public static ValidationResult validatePatch(TerminalScreenProto.ScreenPatch p, int rows, int columns) {
     if (p.getInstanceId().isEmpty()) {
       return ValidationResult.fail("patch missing instance id");
     }
@@ -184,12 +189,12 @@ public final class ScreenMessageValidator {
       return ValidationResult.fail("history append too large: " + p.getHistoryAppendIdsCount());
     }
     // 稳定屏幕 LineID 在删除/resize 后允许缺口，但历史顺序仍必须严格递增。
-    long prevHistoryLineId = -1;
-    for (long lineId : p.getHistoryAppendIdsList()) {
-      if (lineId <= 0 || (prevHistoryLineId >= 0 && lineId <= prevHistoryLineId)) {
-        return ValidationResult.fail("history line ids are not increasing: " + lineId);
+    long prevHistorySeq = -1;
+    for (long seq : p.getHistoryAppendIdsList()) {
+      if (seq <= 0 || (prevHistorySeq >= 0 && seq <= prevHistorySeq)) {
+        return ValidationResult.fail("history sequences are not increasing: " + seq);
       }
-      prevHistoryLineId = lineId;
+      prevHistorySeq = seq;
     }
     ValidationResult dictResult = validateStylesLinks(p.getNewStylesList(), p.getNewLinksList());
     if (!dictResult.ok) return dictResult;
@@ -201,10 +206,24 @@ public final class ScreenMessageValidator {
     if (!validateString(p.getWorkingDirectory(), MAX_CWD_BYTES)) {
       return ValidationResult.fail("cwd too long");
     }
-    ValidationResult lineResult = validateLines(p.getLineUpdatesList(), MAX_COLS);
+    ValidationResult lineResult = validateLines(p.getLineUpdatesList(),
+        columns > 0 ? columns : MAX_COLS);
     if (!lineResult.ok) return lineResult;
-    return lineIds(p.getLineUpdatesList()) == null
-        ? ValidationResult.fail("duplicate or invalid line update id") : ValidationResult.ok();
+    if (lineIds(p.getLineUpdatesList()) == null) {
+      return ValidationResult.fail("duplicate or invalid line update id");
+    }
+    java.util.Set<Long> updateHistorySeqs = new java.util.HashSet<>();
+    for (TerminalScreenProto.LineData line : p.getLineUpdatesList()) {
+      if (line.getHistorySeq() != 0 && !updateHistorySeqs.add(line.getHistorySeq())) {
+        return ValidationResult.fail("duplicate history update sequence");
+      }
+    }
+    for (long seq : p.getHistoryAppendIdsList()) {
+      if (!updateHistorySeqs.contains(seq)) {
+        return ValidationResult.fail("history append line data missing");
+      }
+    }
+    return ValidationResult.ok();
   }
 
   public static ValidationResult validateHistoryPage(TerminalScreenProto.HistoryPage p) {
@@ -216,18 +235,30 @@ public final class ScreenMessageValidator {
     }
     ValidationResult lineResult = validateLines(p.getLinesList(), MAX_COLS);
     if (!lineResult.ok) return lineResult;
-    return lineIds(p.getLinesList()) == null
-        ? ValidationResult.fail("duplicate or invalid history line id") : ValidationResult.ok();
+    if (lineIds(p.getLinesList()) == null) {
+      return ValidationResult.fail("duplicate or invalid history line id");
+    }
+    long previousHistorySeq = -1;
+    for (TerminalScreenProto.LineData line : p.getLinesList()) {
+      long historySeq = line.getHistorySeq();
+      if (historySeq <= 0 || (previousHistorySeq >= 0 && historySeq <= previousHistorySeq)) {
+        return ValidationResult.fail("invalid history page sequence: " + historySeq);
+      }
+      previousHistorySeq = historySeq;
+    }
+    return ValidationResult.ok();
   }
 
   private static ValidationResult validateLine(TerminalScreenProto.LineData line, int maxCols) {
     if (line.getLineId() <= 0 || line.getLineVersion() <= 0) {
       return ValidationResult.fail("line id and version must be positive");
     }
-    if (!line.getText().isEmpty()) {
+    if (!line.getText().isEmpty() || !line.getCellMeta().isEmpty()) {
       if (line.getRunsCount() != 0) return ValidationResult.fail("history line mixes compact and runs");
-      return validateCompactLine(line.getText(), line.getStyleSpansList(), maxCols);
+      return validateCompactLine(line.getText(), line.getCellMeta().toByteArray(),
+          line.getStyleSpansList(), maxCols);
     }
+    if (line.getStyleSpansCount() != 0) return ValidationResult.fail("history style spans require compact text");
     for (TerminalScreenProto.CellRun run : line.getRunsList()) {
       if (run.getCol() < 0 || run.getCol() >= maxCols) {
         return ValidationResult.fail("history run col out of bounds: " + run.getCol());
@@ -276,12 +307,14 @@ public final class ScreenMessageValidator {
       if (line.getLineId() <= 0 || line.getLineVersion() <= 0) {
         return ValidationResult.fail("line id and version must be positive");
       }
-      if (!line.getText().isEmpty()) {
+      if (!line.getText().isEmpty() || !line.getCellMeta().isEmpty()) {
         if (line.getRunsCount() != 0) return ValidationResult.fail("line mixes compact and runs");
-        ValidationResult compactResult = validateCompactLine(line.getText(), line.getStyleSpansList(), maxCols);
+        ValidationResult compactResult = validateCompactLine(line.getText(), line.getCellMeta().toByteArray(),
+            line.getStyleSpansList(), maxCols);
         if (!compactResult.ok) return compactResult;
         continue;
       }
+      if (line.getStyleSpansCount() != 0) return ValidationResult.fail("style spans require compact text");
       for (TerminalScreenProto.CellRun run : line.getRunsList()) {
         if (run.getCol() < 0 || run.getCol() >= maxCols) {
           return ValidationResult.fail("run col out of bounds: " + run.getCol());
@@ -311,25 +344,88 @@ public final class ScreenMessageValidator {
     return ids;
   }
 
-  private static ValidationResult validateCompactLine(String text,
+  private static ValidationResult validateCompactLine(String text, byte[] cellMeta,
                                                       java.util.List<TerminalScreenProto.StyleSpan> spans,
                                                       int maxCols) {
-    if (text.length() == 0 || text.length() > maxCols) {
-      return ValidationResult.fail("invalid compact line length: " + text.length());
+    if (text.isEmpty() != (cellMeta.length == 0)) {
+      return ValidationResult.fail("compact text and cell metadata must appear together");
     }
-    for (int index = 0; index < text.length(); index++) {
-      char ch = text.charAt(index);
-      if (ch < 0x20 || ch > 0x7e) return ValidationResult.fail("compact line must be ASCII");
+    if (text.isEmpty()) {
+      return spans.isEmpty() ? ValidationResult.ok()
+          : ValidationResult.fail("empty compact line must not have style spans");
     }
+    if (!isWellFormedUtf16(text) || text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+        > maxCols * MAX_CELL_TEXT_BYTES || cellMeta.length > maxCols) {
+      return ValidationResult.fail("compact line exceeds resource limit");
+    }
+    int textCodePoints = text.codePointCount(0, text.length());
+    int metadataCodePoints = 0;
+    int terminalColumns = 0;
+    int[] widths = new int[cellMeta.length];
+    for (int i = 0; i < cellMeta.length; i++) {
+      int value = cellMeta[i] & 0xff;
+      int codePointCount = value & 0x7f;
+      if (codePointCount == 0) return ValidationResult.fail("compact metadata has zero code point count");
+      int width = (value & 0x80) != 0 ? 2 : 1;
+      if (terminalColumns + width > maxCols) {
+        return ValidationResult.fail("compact metadata exceeds terminal columns");
+      }
+      widths[i] = width;
+      metadataCodePoints += codePointCount;
+      terminalColumns += width;
+    }
+    if (textCodePoints != metadataCodePoints) {
+      return ValidationResult.fail("compact metadata code point count does not match text");
+    }
+    if (spans.size() > cellMeta.length) return ValidationResult.fail("too many compact style spans");
     int previousEnd = 0;
     for (TerminalScreenProto.StyleSpan span : spans) {
       if (span.getStartCol() < previousEnd || span.getStartCol() < 0
-          || span.getEndCol() <= span.getStartCol() || span.getEndCol() > text.length()) {
+          || span.getEndCol() <= span.getStartCol() || span.getEndCol() > terminalColumns) {
         return ValidationResult.fail("invalid compact style span");
       }
       previousEnd = span.getEndCol();
     }
+    int col = 0;
+    for (int width : widths) {
+      if (width == 2 && !sameStyleAt(spans, col, col + 1)) {
+        return ValidationResult.fail("compact style span splits wide cell");
+      }
+      col += width;
+    }
     return ValidationResult.ok();
+  }
+
+  private static boolean sameStyleAt(java.util.List<TerminalScreenProto.StyleSpan> spans,
+                                     int first, int second) {
+    TerminalScreenProto.StyleSpan firstSpan = styleSpanAt(spans, first);
+    TerminalScreenProto.StyleSpan secondSpan = styleSpanAt(spans, second);
+    int firstStyle = firstSpan == null ? 0 : firstSpan.getStyleId();
+    int firstLink = firstSpan == null ? 0 : firstSpan.getLinkId();
+    int secondStyle = secondSpan == null ? 0 : secondSpan.getStyleId();
+    int secondLink = secondSpan == null ? 0 : secondSpan.getLinkId();
+    return firstStyle == secondStyle && firstLink == secondLink;
+  }
+
+  private static TerminalScreenProto.StyleSpan styleSpanAt(
+      java.util.List<TerminalScreenProto.StyleSpan> spans, int col) {
+    for (TerminalScreenProto.StyleSpan span : spans) {
+      if (span.getStartCol() > col) return null;
+      if (span.getStartCol() <= col && col < span.getEndCol()) return span;
+    }
+    return null;
+  }
+
+  private static boolean isWellFormedUtf16(String text) {
+    for (int index = 0; index < text.length(); index++) {
+      char ch = text.charAt(index);
+      if (Character.isHighSurrogate(ch)) {
+        if (++index >= text.length() || !Character.isLowSurrogate(text.charAt(index))) return false;
+      } else if (Character.isLowSurrogate(ch)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static boolean validateString(String s, int maxBytes) {

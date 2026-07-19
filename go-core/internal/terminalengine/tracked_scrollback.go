@@ -9,11 +9,12 @@ import (
 
 // HistoryLine 是带稳定 ID 的历史行，由 TrackedScrollback 维护。
 type HistoryLine struct {
-	ID      uint64
-	Version uint64
-	Wrapped bool
-	Cells   []headlessterm.Cell
-	bytes   int
+	HistorySeq uint64
+	ID         uint64
+	Version    uint64
+	Wrapped    bool
+	Cells      []headlessterm.Cell
+	bytes      int
 }
 
 // ScrollbackTrimEvent 在历史行因容量限制被丢弃时触发。
@@ -25,9 +26,9 @@ type ScrollbackTrimEvent struct {
 // Lines 中 HistoryLine 的 Cells 与 scrollback 内部共享且不可变（Push 时已
 // 拷贝，推出后不再修改）；切片本身是新分配的副本，可安全在锁外使用。
 type ScrollbackWindow struct {
-	FirstID uint64        // 当前最老可用行 ID
-	LastID  uint64        // 当前最新行 ID；历史为空时为 FirstID-1
-	Lines   []HistoryLine // 窗口内的行，按 ID 升序
+	FirstID uint64        // 当前最老可用 HistorySeq（兼容旧内部字段名）
+	LastID  uint64        // 当前最新 HistorySeq；历史为空时为 FirstID-1
+	Lines   []HistoryLine // 窗口内的行，按 HistorySeq 升序
 }
 
 // ScrollbackIndexWindow 是供版本索引使用的轻量窗口。它只复制 LineID，
@@ -36,11 +37,20 @@ type ScrollbackIndexWindow struct {
 	FirstID uint64
 	LastID  uint64
 	NextID  uint64
-	IDs     []uint64
+	Entries []HistoryIndexEntry
+	// IDs is retained for internal tests/diagnostics; it contains logical
+	// LineIDs, while ordering decisions must use Entries[].HistorySeq.
+	IDs []uint64
 }
 
-// TrackedScrollback 是 headless-term 的唯一 scrollback provider。
-// 它在同一 layout epoch 内为每一行分配单调递增的 ID，并在 trim 时通知调用方。
+type HistoryIndexEntry struct {
+	HistorySeq uint64
+	LineID     uint64
+}
+
+// TrackedScrollback 是 headless-term 的唯一 scrollback provider。LineID 来自
+// 屏幕行并永不在这里改写；firstID/nextID 仅保存严格递增的 HistorySeq（保留旧
+// 方法名以减小本次内部迁移范围）。
 type TrackedScrollback struct {
 	mu       sync.RWMutex
 	capacity int
@@ -121,21 +131,24 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	copy(cells, line.Cells)
 
 	historyLine := HistoryLine{
-		ID:      line.LineID,
-		Wrapped: line.Wrapped,
-		Version: line.LineVersion,
-		Cells:   cells,
-		bytes:   estimateHistoryLineBytes(cells),
+		HistorySeq: t.nextID,
+		ID:         line.LineID,
+		Wrapped:    line.Wrapped,
+		Version:    line.LineVersion,
+		Cells:      cells,
+		bytes:      estimateHistoryLineBytes(cells),
 	}
-	// Screen rows now own their identity before entering scrollback. Keep the
-	// historical high-water mark only for compatibility with page cursors; IDs
-	// are strictly increasing but may have gaps after row deletion/resize.
-	if historyLine.ID == 0 || (len(t.lines) > 0 && historyLine.ID <= t.lines[len(t.lines)-1].ID) {
-		historyLine.ID = t.nextID
+	if historyLine.ID == 0 {
+		// Buffer-created rows always have an ID. Keep the provider defensive for
+		// standalone callers/tests that construct a zero-value ScrollbackLine;
+		// this is allocation of an invalid/missing identity, never a rewrite of a
+		// valid LineID based on history order.
+		historyLine.ID = historyLine.HistorySeq
 	}
-	if historyLine.ID >= t.nextID {
-		t.nextID = historyLine.ID + 1
-	}
+	// LineID is a logical identity allocated by Buffer. History order is a
+	// separate sequence: reverse index, insert/delete and resize may legitimately
+	// push existing LineIDs in a non-monotonic order.
+	t.nextID++
 	t.lines = append(t.lines, historyLine)
 	t.bytes += historyLine.bytes
 
@@ -155,7 +168,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	t.lines = t.lines[:len(t.lines)-1]
 	t.bytes -= line.bytes
 	if len(t.lines) > 0 {
-		t.firstID = t.lines[0].ID
+		t.firstID = t.lines[0].HistorySeq
 	} else {
 		t.firstID = t.nextID
 	}
@@ -180,23 +193,33 @@ func (t *TrackedScrollback) Line(index int) headlessterm.ScrollbackLine {
 	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.ID, LineVersion: line.Version}
 }
 
-// LineByID 按 line ID 返回历史行；找不到返回 ok=false。
+// LineByID 按稳定逻辑 LineID 返回历史行；历史本身按 HistorySeq 排列，故不能
+// 用 ID 二分。
 func (t *TrackedScrollback) LineByID(id uint64) (HistoryLine, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if id < t.firstID || id >= t.nextID {
-		return HistoryLine{}, false
+	for _, line := range t.lines {
+		if line.ID == id {
+			return line, true
+		}
 	}
-	// Pop 后 nextID 不回退，后续 Push 会留下 ID 缺口；不能用 id-firstID
-	// 直接换算下标。二分保持分页/恢复查询在缺口后仍可用。
-	index := sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID >= id })
-	if index >= len(t.lines) || t.lines[index].ID != id {
+	return HistoryLine{}, false
+}
+
+// LineByHistorySeq returns the history entry selected by pagination/trim
+// cursor. It is distinct from LineByID because LineID is not ordered by time.
+func (t *TrackedScrollback) LineByHistorySeq(seq uint64) (HistoryLine, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	index := sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq >= seq })
+	if index >= len(t.lines) || t.lines[index].HistorySeq != seq {
 		return HistoryLine{}, false
 	}
 	return t.lines[index], true
 }
 
-// PageBefore 返回严格小于 beforeID 的最多 limit 行，按 ID 升序。
+// PageBefore returns rows strictly before the HistorySeq cursor, in entrance
+// order. The legacy parameter name remains only at this package boundary.
 func (t *TrackedScrollback) PageBefore(beforeID uint64, limit int) []HistoryLine {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -205,7 +228,7 @@ func (t *TrackedScrollback) PageBefore(beforeID uint64, limit int) []HistoryLine
 	}
 	end := len(t.lines)
 	if beforeID < t.nextID {
-		end = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID >= beforeID })
+		end = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq >= beforeID })
 	}
 	start := end - limit
 	if start < 0 {
@@ -216,7 +239,7 @@ func (t *TrackedScrollback) PageBefore(beforeID uint64, limit int) []HistoryLine
 	return result
 }
 
-// LinesAfter 一次 RLock 返回 ID 严格大于 lastLineID 的最新至多 limit 行
+// LinesAfter returns entries strictly after a HistorySeq cursor.
 // （不含 lastLineID）及当前窗口边界。行超过 limit 时保留最新段。
 // 调用方用返回的 FirstID 判断连续性：FirstID > lastLineID+1 表示
 // lastLineID 之后的部分行已被驱逐。limit<=0 时只返回边界。
@@ -229,7 +252,7 @@ func (t *TrackedScrollback) LinesAfter(lastLineID uint64, limit int) ScrollbackW
 	}
 	start := 0
 	if lastLineID >= t.firstID {
-		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID > lastLineID })
+		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq > lastLineID })
 	}
 	if len(t.lines)-start > limit {
 		start = len(t.lines) - limit
@@ -273,19 +296,21 @@ func (t *TrackedScrollback) IndexAfter(lastLineID uint64) ScrollbackIndexWindow 
 	}
 	start := 0
 	if lastLineID >= t.firstID {
-		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].ID > lastLineID })
+		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq > lastLineID })
 	}
+	w.Entries = make([]HistoryIndexEntry, len(t.lines)-start)
 	w.IDs = make([]uint64, len(t.lines)-start)
 	for i := start; i < len(t.lines); i++ {
+		w.Entries[i-start] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].ID}
 		w.IDs[i-start] = t.lines[i].ID
 	}
 	return w
 }
 
-// lastIDLocked 返回当前最新行 ID；历史为空时为 firstID-1。
+// lastIDLocked 返回当前最新 HistorySeq；历史为空时为 firstID-1。
 func (t *TrackedScrollback) lastIDLocked() uint64 {
 	if len(t.lines) > 0 {
-		return t.lines[len(t.lines)-1].ID
+		return t.lines[len(t.lines)-1].HistorySeq
 	}
 	return t.firstID - 1
 }
@@ -375,7 +400,7 @@ func (t *TrackedScrollback) trimToLimitsLocked() bool {
 	}
 	t.lines = t.lines[trimmed:]
 	if len(t.lines) > 0 {
-		t.firstID = t.lines[0].ID
+		t.firstID = t.lines[0].HistorySeq
 	} else {
 		t.firstID = t.nextID
 	}

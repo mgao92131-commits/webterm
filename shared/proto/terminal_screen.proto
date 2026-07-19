@@ -156,9 +156,20 @@ message LineData {
   uint64 line_id = 1;
   uint64 line_version = 2;
   bool wrapped = 3;
-  string text = 4; // compact path，非空时替代 runs
+  // Compact path：所有逻辑 Cell.Text 顺序拼接的 UTF-8。width=2 的 spacer
+  // 不写入 text；text 与 cell_meta 必须同时出现，非空时替代 runs。
+  string text = 4;
+  // Compact path 的样式范围，坐标单位始终是终端列，不是 UTF-8 字节、code point
+  // 或 Java UTF-16 offset。
   repeated StyleSpan style_spans = 5;
   repeated CellRun runs = 6;
+  // 仅历史行使用。LineID 是逻辑内容身份，history_seq 是该行进入
+  // scrollback 的严格递增顺序；ScreenLayout 永远只引用 line_id。
+  uint64 history_seq = 7;
+  // Compact path：每个逻辑 Cell 一个字节。bit 7 表示 Go 权威宽度（0=1 列，
+  // 1=2 列）；bit 0..6 是该 Cell.Text 的 Unicode code point 数量（1..127）。
+  // width=2 的第二列 spacer 不单独携带 metadata。
+  bytes cell_meta = 8;
 }
 
 message StyleSpan {

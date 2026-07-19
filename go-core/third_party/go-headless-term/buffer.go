@@ -128,9 +128,7 @@ func (b *Buffer) SetCell(row, col int, cell Cell) {
 		return
 	}
 	b.cells[row][col] = cell
-	b.markLineChanged(row)
-	b.dirtyRows[row] = true
-	b.markLineChanged(row)
+	b.MarkDirty(row, col)
 }
 
 // MarkDirty marks the row containing (row, col) as modified.
@@ -141,6 +139,11 @@ func (b *Buffer) MarkDirty(row, col int) {
 	if row < 0 || row >= b.rows || col < 0 || col >= b.cols {
 		return
 	}
+	// Cell() intentionally exposes a mutable pointer for the terminal hot path.
+	// MarkDirty is therefore also the single acknowledgement that the exported
+	// content of this row changed. Keeping the version bump here makes direct
+	// Cell writes visible to the incremental projector just like SetCell writes.
+	b.markLineChanged(row)
 	b.dirtyRows[row] = true
 }
 
@@ -463,6 +466,7 @@ func (b *Buffer) FillWithE() {
 			b.cells[row][col].Reset()
 			b.cells[row][col].Char = "E"
 		}
+		b.markLineChanged(row)
 	}
 	b.dirtyAll = true
 }

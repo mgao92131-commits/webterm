@@ -28,6 +28,20 @@ public final class RemoteTerminalModelTest {
     assertTrue(update.dirty.changedScreenRows.get(0));
   }
 
+  @Test public void blankSnapshotThenPromptPatchPublishesDirtyRenderUpdate() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(snapshot(1, line(101, 1, ""), line(102, 1, "")));
+    model.consumeRenderUpdate();
+    model.applyPatch(patch(1, 2, null,
+        Collections.singletonList(line(101, 2, "prompt$")), Collections.emptyList()));
+    RenderUpdate update = model.consumeRenderUpdate();
+    assertNotNull(update);
+    assertTrue(update.dirty.changedScreenRows.get(0));
+    assertEquals(101, update.snapshot.screen[0].id);
+    assertEquals("p", update.snapshot.screen[0].at(0).text);
+    assertEquals("$", update.snapshot.screen[0].at(6).text);
+  }
+
   @Test public void historyAppendCanReferenceFormerScreenLine() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applySnapshot(snapshot(1, line(101, 1, "a"), line(102, 1, "b")));
@@ -45,6 +59,24 @@ public final class RemoteTerminalModelTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applySnapshot(snapshot(1, line(101, 1, "a"), line(102, 1, "b")));
     model.applyPatch(patch(1, 2, new long[] {102, 999}, Collections.emptyList(), Collections.emptyList()));
+  }
+
+  @Test public void acceptsSameVersionIdenticalLineReplay() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(snapshot(1, line(101, 1, "a"), line(102, 1, "b")));
+    model.consumeRenderUpdate();
+    model.applyPatch(patch(1, 2, null, Collections.singletonList(line(101, 1, "a")),
+        Collections.emptyList()));
+    assertEquals(2, model.screenRevision);
+    assertNull("idempotent replay must not manufacture a render update", model.consumeRenderUpdate());
+  }
+
+  @Test(expected = RemoteTerminalModel.RevisionGapException.class)
+  public void rejectsSameVersionDifferentLineContent() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.applySnapshot(snapshot(1, line(101, 1, "a"), line(102, 1, "b")));
+    model.applyPatch(patch(1, 2, null, Collections.singletonList(line(101, 1, "x")),
+        Collections.emptyList()));
   }
 
   private static ScreenSnapshot snapshot(long revision, TerminalLine... screen) {

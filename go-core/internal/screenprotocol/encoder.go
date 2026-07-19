@@ -2,6 +2,9 @@ package screenprotocol
 
 import (
 	"fmt"
+	"strings"
+	"unicode/utf8"
+
 	"google.golang.org/protobuf/proto"
 
 	pb "webterm/go-core/internal/screenprotocol/generated"
@@ -14,21 +17,28 @@ func EncodeFrame(frame terminalengine.ScreenFrame) ([]byte, error) {
 	return EncodeFrameWithCompactLines(frame, true)
 }
 
-// EncodeFrameWithCompactLines emits compact text/span for simple ASCII rows. Complex
-// wide/combining rows continue to use CellRun; this is an encoding choice, not version
-// negotiation, because webterm.screen.v1 has one stable LineData schema.
+// EncodeFrameWithCompactLines emits the final Compact representation for every valid
+// line. CellRun remains available only when a caller explicitly disables Compact.
 func EncodeFrameWithCompactLines(frame terminalengine.ScreenFrame, compactLines bool) ([]byte, error) {
 	var envelope *pb.ScreenEnvelope
 	switch frame.Kind {
 	case terminalengine.FrameSnapshot:
+		snapshot, err := encodeSnapshot(frame, compactLines)
+		if err != nil {
+			return nil, fmt.Errorf("encode snapshot session=%q: %w", frame.SessionID, err)
+		}
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
-			Payload:         &pb.ScreenEnvelope_Snapshot{Snapshot: encodeSnapshot(frame, compactLines)},
+			Payload:         &pb.ScreenEnvelope_Snapshot{Snapshot: snapshot},
 		}
 	case terminalengine.FramePatch:
+		patch, err := encodePatch(frame, compactLines)
+		if err != nil {
+			return nil, fmt.Errorf("encode patch session=%q: %w", frame.SessionID, err)
+		}
 		envelope = &pb.ScreenEnvelope{
 			ProtocolVersion: 1,
-			Payload:         &pb.ScreenEnvelope_Patch{Patch: encodePatch(frame, compactLines)},
+			Payload:         &pb.ScreenEnvelope_Patch{Patch: patch},
 		}
 	default:
 		return nil, fmt.Errorf("unknown screen frame kind: %d", frame.Kind)
@@ -45,10 +55,14 @@ func EncodeHistoryPage(requestID string, epoch, revision uint64, page terminalen
 func EncodeHistoryPageWithCompactLines(requestID string, epoch, revision uint64,
 	page terminalengine.HistoryPageData, compactLines bool) ([]byte, error) {
 	w := page.Window
+	lines, err := encodeLineData(w.Lines, compactLines, 0)
+	if err != nil {
+		return nil, fmt.Errorf("encode history page request=%q: %w", requestID, err)
+	}
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_HistoryPage{HistoryPage: &pb.HistoryPage{
 		RequestId: requestID, LayoutEpoch: epoch, AsOfRevision: revision,
 		FirstAvailableLineId: w.FirstAvailableLineID, HasMoreBefore: w.HasMoreBefore,
-		Lines: encodeLineData(w.Lines, compactLines, 0), Styles: encodeStyles(page.Styles), Links: encodeLinks(page.Links),
+		Lines: lines, Styles: encodeStyles(page.Styles), Links: encodeLinks(page.Links),
 	}}})
 }
 
@@ -79,7 +93,15 @@ func EncodeEffect(instanceID string, revision uint64, effect terminalengine.Effe
 	return proto.Marshal(&pb.ScreenEnvelope{ProtocolVersion: 1, Payload: &pb.ScreenEnvelope_Effect{Effect: pbEffect}})
 }
 
-func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) *pb.ScreenSnapshot {
+func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) (*pb.ScreenSnapshot, error) {
+	screenLines, err := encodeLineData(frame.Screen, compactLines, frame.Cols)
+	if err != nil {
+		return nil, err
+	}
+	historyLines, err := encodeLineData(frame.History.Lines, compactLines, frame.Cols)
+	if err != nil {
+		return nil, err
+	}
 	return &pb.ScreenSnapshot{
 		SessionId:                   frame.SessionID,
 		InstanceId:                  frame.InstanceID,
@@ -88,9 +110,9 @@ func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) *pb.Scr
 		Geometry:                    encodeSize(frame.Rows, frame.Cols),
 		ActiveBuffer:                encodeBufferKind(frame.ActiveBuffer),
 		Layout:                      encodeLayout(frame.Screen),
-		ScreenLines:                 encodeLineData(frame.Screen, compactLines, frame.Cols),
-		HistoryTailIds:              lineIDs(frame.History.Lines),
-		HistoryTailLines:            encodeLineData(frame.History.Lines, compactLines, frame.Cols),
+		ScreenLines:                 screenLines,
+		HistoryTailIds:              historySeqs(frame.History.Lines),
+		HistoryTailLines:            historyLines,
 		DictionaryGeneration:        frame.DictionaryGeneration,
 		Styles:                      encodeStyles(frame.Styles),
 		Links:                       encodeLinks(frame.Links),
@@ -101,16 +123,20 @@ func encodeSnapshot(frame terminalengine.ScreenFrame, compactLines bool) *pb.Scr
 		WorkingDirectory:            proto.String(frame.WorkingDir),
 		FirstAvailableHistoryLineId: frame.History.FirstAvailableLineID,
 		HasMoreHistoryBefore:        frame.History.HasMoreBefore,
-	}
+	}, nil
 }
 
-func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) *pb.ScreenPatch {
+func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) (*pb.ScreenPatch, error) {
+	lineUpdates, err := encodeLineData(uniqueLineUpdates(frame.Screen, frame.History.Lines), compactLines, frame.Cols)
+	if err != nil {
+		return nil, err
+	}
 	patch := &pb.ScreenPatch{
 		InstanceId:           frame.InstanceID,
 		LayoutEpoch:          frame.Epoch,
 		BaseRevision:         frame.BaseRevision,
 		ScreenRevision:       frame.Seq,
-		LineUpdates:          encodeLineData(uniqueLineUpdates(frame.Screen, frame.History.Lines), compactLines, frame.Cols),
+		LineUpdates:          lineUpdates,
 		HistoryAppendIds:     frame.HistoryAppendIDs,
 		DictionaryGeneration: frame.DictionaryGeneration,
 		NewStyles:            encodeStyles(frame.Styles),
@@ -139,7 +165,7 @@ func encodePatch(frame terminalengine.ScreenFrame, compactLines bool) *pb.Screen
 	if frame.FirstAvailableHistoryLineIDChanged {
 		patch.HistoryTrimBeforeId = proto.Uint64(frame.History.FirstAvailableLineID)
 	}
-	return patch
+	return patch, nil
 }
 
 func encodeSize(rows, cols int) *pb.Size {
@@ -261,25 +287,29 @@ func encodeColorKind(k terminalengine.ColorKind) pb.ColorKind {
 	}
 }
 
-func encodeLineData(lines []terminalengine.Line, compactLines bool, columns int) []*pb.LineData {
+func encodeLineData(lines []terminalengine.Line, compactLines bool, columns int) ([]*pb.LineData, error) {
 	out := make([]*pb.LineData, len(lines))
 	for i, line := range lines {
 		encoded := &pb.LineData{
 			LineId:      line.ID,
 			LineVersion: line.Version,
+			HistorySeq:  line.HistorySeq,
 			Wrapped:     line.Wrapped,
 			Runs:        encodeCellRuns(line.Runs),
 		}
 		if compactLines {
-			if text, spans, ok := compactASCII(line.Runs, columns); ok {
-				encoded.Runs = nil
-				encoded.Text = text
-				encoded.StyleSpans = spans
+			text, meta, spans, err := compactLine(line.Runs, columns)
+			if err != nil {
+				return nil, fmt.Errorf("compact line id=%d row=%d: %w", line.ID, line.Row, err)
 			}
+			encoded.Runs = nil
+			encoded.Text = text
+			encoded.CellMeta = meta
+			encoded.StyleSpans = spans
 		}
 		out[i] = encoded
 	}
-	return out
+	return out, nil
 }
 
 func encodeLayout(lines []terminalengine.Line) *pb.ScreenLayout {
@@ -292,6 +322,14 @@ func lineIDs(lines []terminalengine.Line) []uint64 {
 		ids[i] = lines[i].ID
 	}
 	return ids
+}
+
+func historySeqs(lines []terminalengine.Line) []uint64 {
+	seqs := make([]uint64, len(lines))
+	for i := range lines {
+		seqs[i] = lines[i].HistorySeq
+	}
+	return seqs
 }
 
 func uniqueLineUpdates(groups ...[]terminalengine.Line) []terminalengine.Line {
@@ -308,71 +346,138 @@ func uniqueLineUpdates(groups ...[]terminalengine.Line) []terminalengine.Line {
 	return out
 }
 
-// compactASCII is deliberately narrow: Go remains authoritative for display width.
-// The compact form is used only when every visible cell is an ordinary one-column ASCII byte;
-// wide, combining and spacer cells use the established CellRun representation unchanged.
-func compactASCII(runs []terminalengine.CellRun, requestedColumns int) (string, []*pb.StyleSpan, bool) {
+type compactCell struct {
+	text    string
+	width   uint8
+	styleID uint32
+	linkID  uint32
+	present bool
+	spacer  bool
+}
+
+// compactLine converts the transport-neutral grid into UTF-8 text plus one
+// metadata byte per logical cell. The high metadata bit carries Go's already
+// resolved display width; the low seven bits carry the Cell.Text code point
+// count so Android never needs to infer grapheme boundaries or terminal width.
+func compactLine(runs []terminalengine.CellRun, requestedColumns int) (string, []byte, []*pb.StyleSpan, error) {
 	columns := requestedColumns
 	for _, run := range runs {
+		if run.Col < 0 {
+			return "", nil, nil, fmt.Errorf("negative run column: %d", run.Col)
+		}
 		end := run.Col
 		for _, cell := range run.Cells {
-			if cell.Width != 1 {
-				return "", nil, false
+			if cell.Width != 1 && cell.Width != 2 {
+				return "", nil, nil, fmt.Errorf("invalid cell width at col=%d: %d", end, cell.Width)
 			}
-			end++
+			end += int(cell.Width)
 		}
-		if end > columns {
+		if requestedColumns > 0 && end > requestedColumns {
+			return "", nil, nil, fmt.Errorf("run exceeds compact grid: end=%d columns=%d", end, requestedColumns)
+		}
+		if requestedColumns <= 0 && end > columns {
 			columns = end
 		}
 	}
-	if columns <= 0 {
-		return "", nil, false
+	if columns == 0 {
+		return "", nil, nil, nil
 	}
-	chars := make([]byte, columns)
-	styles := make([]uint32, columns)
-	links := make([]uint32, columns)
-	for i := range chars {
-		chars[i] = ' '
+	if columns < 0 || columns > maxCols {
+		return "", nil, nil, fmt.Errorf("invalid compact column count: %d", columns)
 	}
+
+	grid := make([]compactCell, columns)
 	for _, run := range runs {
 		col := run.Col
-		if col < 0 {
-			return "", nil, false
-		}
 		for _, cell := range run.Cells {
-			if col >= columns || cell.Width != 1 {
-				return "", nil, false
+			if cell.Width != 1 && cell.Width != 2 {
+				return "", nil, nil, fmt.Errorf("invalid cell width at col=%d: %d", col, cell.Width)
+			}
+			if col < 0 || col+int(cell.Width) > columns {
+				return "", nil, nil, fmt.Errorf("cell exceeds compact grid at col=%d width=%d columns=%d", col, cell.Width, columns)
+			}
+			if grid[col].present || grid[col].spacer {
+				return "", nil, nil, fmt.Errorf("overlapping logical cell at col=%d", col)
 			}
 			text := cell.Text
 			if text == "" {
 				text = " "
 			}
-			if len(text) != 1 || text[0] < 0x20 || text[0] > 0x7e {
-				return "", nil, false
+			if len(text) > maxCellTextBytes || !utf8.ValidString(text) {
+				return "", nil, nil, fmt.Errorf("invalid UTF-8 cell text at col=%d bytes=%d", col, len(text))
 			}
-			chars[col] = text[0]
-			styles[col] = cell.StyleID
-			links[col] = cell.LinkID
-			col++
+			codePoints := utf8.RuneCountInString(text)
+			if codePoints < 1 || codePoints > 127 {
+				return "", nil, nil, fmt.Errorf("invalid cell code point count at col=%d: %d", col, codePoints)
+			}
+			grid[col] = compactCell{text: text, width: cell.Width, styleID: cell.StyleID, linkID: cell.LinkID, present: true}
+			if cell.Width == 2 {
+				if grid[col+1].present || grid[col+1].spacer {
+					return "", nil, nil, fmt.Errorf("wide cell spacer collision at col=%d", col+1)
+				}
+				grid[col+1].spacer = true
+			}
+			col += int(cell.Width)
 		}
-	}
-	// 行尾默认空格在渲染、选择和布局上都等价于客户端补齐的 EMPTY；不把它们放上
-	// wire，避免大屏 Snapshot 为每一行重复传输整列空格。带 style/link 的空格仍是
-	// 可见/可交互状态，必须保留。
-	encodedColumns := columns
-	for encodedColumns > 0 {
-		last := encodedColumns - 1
-		if chars[last] != ' ' || styles[last] != 0 || links[last] != 0 {
-			break
-		}
-		encodedColumns--
 	}
 
+	// Default trailing cells are represented by Android's padded EMPTY cells.
+	// A spacer is never trimmable: it belongs to the preceding width=2 cell.
+	effectiveColumns := columns
+	for effectiveColumns > 0 {
+		last := grid[effectiveColumns-1]
+		if last.spacer || (last.present && (last.text != " " || last.width != 1 || last.styleID != 0 || last.linkID != 0)) {
+			break
+		}
+		effectiveColumns--
+	}
+	if effectiveColumns == 0 {
+		return "", nil, nil, nil
+	}
+
+	styles := make([]uint32, effectiveColumns)
+	links := make([]uint32, effectiveColumns)
+	var text strings.Builder
+	text.Grow(effectiveColumns)
+	meta := make([]byte, 0, effectiveColumns)
+	for col := 0; col < effectiveColumns; {
+		entry := grid[col]
+		if entry.spacer {
+			return "", nil, nil, fmt.Errorf("standalone wide-cell spacer at col=%d", col)
+		}
+		if !entry.present {
+			entry = compactCell{text: " ", width: 1, present: true}
+		}
+		if entry.width != 1 && entry.width != 2 || col+int(entry.width) > effectiveColumns {
+			return "", nil, nil, fmt.Errorf("invalid logical cell extent at col=%d width=%d", col, entry.width)
+		}
+		if entry.width == 2 && !grid[col+1].spacer {
+			return "", nil, nil, fmt.Errorf("wide cell missing spacer at col=%d", col+1)
+		}
+		codePoints := utf8.RuneCountInString(entry.text)
+		metaByte := byte(codePoints)
+		if entry.width == 2 {
+			metaByte |= 0x80
+		}
+		meta = append(meta, metaByte)
+		text.WriteString(entry.text)
+		for offset := 0; offset < int(entry.width); offset++ {
+			styles[col+offset] = entry.styleID
+			links[col+offset] = entry.linkID
+		}
+		col += int(entry.width)
+	}
+
+	spans := compactStyleSpans(styles, links)
+	return text.String(), meta, spans, nil
+}
+
+func compactStyleSpans(styles, links []uint32) []*pb.StyleSpan {
 	spans := make([]*pb.StyleSpan, 0)
-	for start := 0; start < encodedColumns; {
+	for start := 0; start < len(styles); {
 		style, link := styles[start], links[start]
 		end := start + 1
-		for end < encodedColumns && styles[end] == style && links[end] == link {
+		for end < len(styles) && styles[end] == style && links[end] == link {
 			end++
 		}
 		if style != 0 || link != 0 {
@@ -380,7 +485,7 @@ func compactASCII(runs []terminalengine.CellRun, requestedColumns int) (string, 
 		}
 		start = end
 	}
-	return string(chars[:encodedColumns]), spans, true
+	return spans
 }
 
 func encodeCellRuns(runs []terminalengine.CellRun) []*pb.CellRun {

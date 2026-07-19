@@ -3,6 +3,7 @@ package terminalengine
 import (
 	"image/color"
 	"math"
+	"reflect"
 	"runtime"
 	"testing"
 	"unsafe"
@@ -27,6 +28,27 @@ func TestTrackedScrollback_LineID(t *testing.T) {
 	}
 	if line.ID != 3 {
 		t.Fatalf("line.ID=3, got %d", line.ID)
+	}
+}
+
+func TestTrackedScrollback_PreservesNonMonotonicLineIDsAndAssignsHistorySeq(t *testing.T) {
+	sb := NewTrackedScrollback(100, nil)
+	for _, id := range []uint64{100, 7, 55} {
+		sb.Push(headlessterm.ScrollbackLine{LineID: id, LineVersion: 3,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()}})
+	}
+	w := sb.Window(10)
+	if got := historyIDs(w.Lines); !reflect.DeepEqual(got, []uint64{100, 7, 55}) {
+		t.Fatalf("LineIDs were rewritten: got %v", got)
+	}
+	for i, line := range w.Lines {
+		if want := uint64(i + 1); line.HistorySeq != want {
+			t.Fatalf("entry %d HistorySeq=%d, want %d", i, line.HistorySeq, want)
+		}
+	}
+	page := sb.PageBefore(math.MaxUint64, 10)
+	if got := historyIDs(page); !reflect.DeepEqual(got, []uint64{100, 7, 55}) {
+		t.Fatalf("HistorySeq pagination changed LineID order: %v", got)
 	}
 }
 

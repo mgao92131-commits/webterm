@@ -266,11 +266,12 @@ func exportHistoryLines(exp *exporter, lines []terminalengine.HistoryLine) []ter
 
 func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalengine.Line {
 	return terminalengine.Line{
-		ID:      hl.ID,
-		Version: hl.Version,
-		Row:     -1,
-		Wrapped: hl.Wrapped,
-		Runs:    exp.exportHistoryCells(hl.Cells),
+		ID:         hl.ID,
+		Version:    hl.Version,
+		HistorySeq: hl.HistorySeq,
+		Row:        -1,
+		Wrapped:    hl.Wrapped,
+		Runs:       exp.exportHistoryCells(hl.Cells),
 	}
 }
 
@@ -287,9 +288,9 @@ func historyWindowFromLines(lines []terminalengine.Line, firstAvailable uint64) 
 	}
 	return terminalengine.HistoryWindow{
 		FirstAvailableLineID: firstAvailable,
-		FirstIncludedLineID:  lines[0].ID,
-		LastIncludedLineID:   lines[len(lines)-1].ID,
-		HasMoreBefore:        lines[0].ID > firstAvailable,
+		FirstIncludedLineID:  lines[0].HistorySeq,
+		LastIncludedLineID:   lines[len(lines)-1].HistorySeq,
+		HasMoreBefore:        lines[0].HistorySeq > firstAvailable,
 		Lines:                lines,
 	}
 }

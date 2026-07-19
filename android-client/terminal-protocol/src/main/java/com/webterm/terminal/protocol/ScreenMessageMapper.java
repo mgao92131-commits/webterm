@@ -20,10 +20,18 @@ public final class ScreenMessageMapper {
     Map<Long, TerminalLine> lines = mapLines(pb.getScreenLinesList(), pb.getGeometry().getCols());
     List<TerminalLine> screen = resolveLayout(pb.getLayout().getLineIdsList(), lines);
     List<TerminalLine> historyLines = new ArrayList<>();
-    Map<Long, TerminalLine> history = mapLines(pb.getHistoryTailLinesList(), pb.getGeometry().getCols());
-    for (long id : pb.getHistoryTailIdsList()) {
-      TerminalLine line = history.get(id);
-      if (line == null) throw new IllegalArgumentException("snapshot history line data missing: " + id);
+    Map<Long, TerminalLine> history = new HashMap<>();
+    for (int i = 0; i < pb.getHistoryTailLinesCount(); i++) {
+      TerminalScreenProto.LineData data = pb.getHistoryTailLines(i);
+      TerminalLine line = mapLine(data, pb.getGeometry().getCols());
+      long seq = line.historySeq;
+      if (seq == 0 || history.put(seq, line) != null) {
+        throw new IllegalArgumentException("invalid snapshot history sequence");
+      }
+    }
+    for (long seq : pb.getHistoryTailIdsList()) {
+      TerminalLine line = history.get(seq);
+      if (line == null) throw new IllegalArgumentException("snapshot history line data missing: " + seq);
       historyLines.add(line);
     }
     return new ScreenSnapshot(
@@ -38,8 +46,8 @@ public final class ScreenMessageMapper {
         mapModes(pb.getModes()),
         mapPalette(pb.getPalette()),
         new HistoryWindow(pb.getFirstAvailableHistoryLineId(),
-            historyLines.isEmpty() ? 0 : historyLines.get(0).id,
-            historyLines.isEmpty() ? 0 : historyLines.get(historyLines.size() - 1).id,
+            historyLines.isEmpty() ? 0 : historyLines.get(0).historyOrder(),
+            historyLines.isEmpty() ? 0 : historyLines.get(historyLines.size() - 1).historyOrder(),
             pb.getHasMoreHistoryBefore(), historyLines),
         screen,
         mapStyles(pb.getStylesList()),
@@ -107,9 +115,10 @@ public final class ScreenMessageMapper {
   }
 
   private static TerminalLine mapLine(TerminalScreenProto.LineData pb, int columns) {
-    return new TerminalLine(pb.getLineId(), pb.getLineVersion(), pb.getWrapped(), pb.getText().isEmpty()
-        ? expandRuns(pb.getRunsList(), columns)
-        : expandCompact(pb.getText(), pb.getStyleSpansList(), columns));
+    boolean compact = !pb.getText().isEmpty() || !pb.getCellMeta().isEmpty();
+    return new TerminalLine(pb.getLineId(), pb.getLineVersion(), pb.getHistorySeq(), pb.getWrapped(), compact
+        ? expandCompact(pb.getText(), pb.getCellMeta().toByteArray(), pb.getStyleSpansList(), columns)
+        : expandRuns(pb.getRunsList(), columns));
   }
 
   private static Map<Long, TerminalLine> mapLines(List<TerminalScreenProto.LineData> data, int columns) {
@@ -132,32 +141,86 @@ public final class ScreenMessageMapper {
     return result;
   }
 
-  private static TerminalCell[] expandCompact(String text,
+  private static TerminalCell[] expandCompact(String text, byte[] cellMeta,
                                                List<TerminalScreenProto.StyleSpan> spans,
                                                int requestedColumns) {
-    int columns = Math.max(Math.max(0, requestedColumns), text.length());
+    if (text.isEmpty() != (cellMeta.length == 0)) {
+      throw new IllegalArgumentException("compact text and cell metadata must appear together");
+    }
+    int encodedColumns = 0;
+    for (byte rawMeta : cellMeta) {
+      int value = rawMeta & 0xff;
+      int codePointCount = value & 0x7f;
+      int width = (value & 0x80) != 0 ? 2 : 1;
+      if (codePointCount == 0) {
+        throw new IllegalArgumentException("compact cell metadata has zero code point count");
+      }
+      encodedColumns += width;
+    }
+    int columns = Math.max(Math.max(0, requestedColumns), encodedColumns);
     TerminalCell[] cells = new TerminalCell[columns];
     java.util.Arrays.fill(cells, TerminalCell.EMPTY);
     int spanIndex = 0;
-    for (int col = 0; col < text.length() && col < cells.length; col++) {
-      while (spanIndex < spans.size() && spans.get(spanIndex).getEndCol() <= col) spanIndex++;
+    int textOffset = 0;
+    int terminalCol = 0;
+    for (byte rawMeta : cellMeta) {
+      int value = rawMeta & 0xff;
+      int width = (value & 0x80) != 0 ? 2 : 1;
+      int codePointCount = value & 0x7f;
+      if (codePointCount == 0 || terminalCol + width > cells.length) {
+        throw new IllegalArgumentException("compact cell metadata exceeds terminal columns");
+      }
+      int textEnd = offsetByCodePoints(text, textOffset, codePointCount);
+      while (spanIndex < spans.size() && spans.get(spanIndex).getEndCol() <= terminalCol) spanIndex++;
       int styleId = 0;
       int linkId = 0;
       if (spanIndex < spans.size()) {
         TerminalScreenProto.StyleSpan span = spans.get(spanIndex);
-        if (span.getStartCol() <= col && col < span.getEndCol()) {
+        if (span.getStartCol() <= terminalCol && terminalCol < span.getEndCol()) {
           styleId = span.getStyleId();
           linkId = span.getLinkId();
         }
       }
-      char ch = text.charAt(col);
-      // Go 端会裁剪末尾默认空格；为了兼容旧帧与行内默认空格，这里也不为它们创建
-      // 短命 Cell。数组已预填 EMPTY，直接保留即可。
-      if (ch != ' ' || styleId != 0 || linkId != 0) {
-        cells[col] = new TerminalCell(String.valueOf(ch), (byte) 1, styleId, linkId);
+      String cellText = text.substring(textOffset, textEnd);
+      // Go 端会裁剪尾部默认空格；行内默认空格继续复用 EMPTY，避免为大面积空白
+      // 创建短命对象。宽度和字符簇边界完全由 Go 的 metadata 决定。
+      if (width == 1 && " ".equals(cellText) && styleId == 0 && linkId == 0) {
+        cells[terminalCol] = TerminalCell.EMPTY;
+      } else {
+        cells[terminalCol] = new TerminalCell(cellText, (byte) width, styleId, linkId);
       }
+      if (width == 2) cells[terminalCol + 1] = TerminalCell.SPACER;
+      textOffset = textEnd;
+      terminalCol += width;
+    }
+    if (textOffset != text.length()) {
+      throw new IllegalArgumentException("compact text has unconsumed code points");
     }
     return cells;
+  }
+
+  private static int offsetByCodePoints(String text, int offset, int count) {
+    if (offset < 0 || offset > text.length() || count <= 0) {
+      throw new IllegalArgumentException("invalid compact text offset");
+    }
+    int cursor = offset;
+    for (int i = 0; i < count; i++) {
+      if (cursor >= text.length()) {
+        throw new IllegalArgumentException("compact metadata exceeds text code points");
+      }
+      char ch = text.charAt(cursor);
+      if (Character.isHighSurrogate(ch)) {
+        if (cursor + 1 >= text.length() || !Character.isLowSurrogate(text.charAt(cursor + 1))) {
+          throw new IllegalArgumentException("malformed UTF-16 compact text");
+        }
+        cursor += 2;
+      } else if (Character.isLowSurrogate(ch)) {
+        throw new IllegalArgumentException("malformed UTF-16 compact text");
+      } else {
+        cursor++;
+      }
+    }
+    return cursor;
   }
 
   private static TerminalCell[] expandRuns(List<TerminalScreenProto.CellRun> runs, int requestedColumns) {

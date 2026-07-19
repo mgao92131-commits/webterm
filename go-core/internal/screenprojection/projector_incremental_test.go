@@ -72,10 +72,14 @@ func assertNewLine(t *testing.T, row int, a, b terminalengine.Line) {
 // 同一 Projector（同一字典）。
 func assertStateEquivalent(t *testing.T, a, b terminalengine.ScreenFrame) {
 	t.Helper()
-	if !reflect.DeepEqual(a.Screen, b.Screen) {
+	if !linesEquivalentIgnoringExportVersion(a.Screen, b.Screen) {
 		t.Fatalf("screen mismatch:\na=%v\nb=%v", a.Screen, b.Screen)
 	}
-	if !reflect.DeepEqual(a.History, b.History) {
+	if !linesEquivalentIgnoringExportVersion(a.History.Lines, b.History.Lines) ||
+		a.History.FirstAvailableLineID != b.History.FirstAvailableLineID ||
+		a.History.FirstIncludedLineID != b.History.FirstIncludedLineID ||
+		a.History.LastIncludedLineID != b.History.LastIncludedLineID ||
+		a.History.HasMoreBefore != b.History.HasMoreBefore {
 		t.Fatalf("history mismatch:\na=%v\nb=%v", a.History, b.History)
 	}
 	if a.Cursor != b.Cursor {
@@ -92,6 +96,19 @@ func assertStateEquivalent(t *testing.T, a, b terminalengine.ScreenFrame) {
 		t.Fatalf("metadata mismatch: title %q/%q cwd %q/%q",
 			a.Title, b.Title, a.WorkingDir, b.WorkingDir)
 	}
+}
+
+func linesEquivalentIgnoringExportVersion(a, b []terminalengine.Line) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Row != b[i].Row || a[i].Wrapped != b[i].Wrapped ||
+			!reflect.DeepEqual(a[i].Runs, b[i].Runs) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeLines 把行列表渲染为与字典无关的规范文本：StyleID 解析回样式
@@ -168,6 +185,45 @@ func TestProjector_CursorMoveReplacesOldAndNewRowsOnly(t *testing.T) {
 
 	// 新旧光标行的软光标渲染与全量路径逐格一致。
 	assertStateEquivalent(t, second, forceFullExport(p, 3))
+}
+
+func TestFrameDeriver_CursorDependentExportVersionEmitsChangedLine(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(100, nil)
+	engine := terminalengine.NewEngine(2, 4, sb)
+	// The reverse space is a live software cursor while the terminal cursor is
+	// on it, then becomes stale solely because the cursor moves away.
+	if err := engine.Write([]byte("\x1b[1;1H\x1b[7m \x1b[0m\x1b[1;1H")); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProjector(engine, sb, "s", "i")
+	var deriver FrameDeriver
+	baseline := deriver.FrameForState(p.ExportState(0, 1))
+	if len(baseline.Screen[0].Runs) == 0 {
+		t.Fatal("live software cursor was unexpectedly filtered")
+	}
+	if err := engine.Write([]byte("\x1b[2;1H")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(0, 2))
+	if patch.Kind != terminalengine.FramePatch {
+		t.Fatalf("kind=%v, want patch", patch.Kind)
+	}
+	var updated *terminalengine.Line
+	for i := range patch.Screen {
+		if patch.Screen[i].ID == baseline.Screen[0].ID {
+			updated = &patch.Screen[i]
+			break
+		}
+	}
+	if updated == nil {
+		t.Fatal("cursor-filtered row was omitted from patch")
+	}
+	if updated.Version <= baseline.Screen[0].Version {
+		t.Fatalf("export version=%d, want > previous %d", updated.Version, baseline.Screen[0].Version)
+	}
+	if styleAt(*updated, 0) != 0 {
+		t.Fatalf("stale software cursor remained exported: %+v", updated.Runs)
+	}
 }
 
 func TestProjector_IdleExportReusesAllLines(t *testing.T) {

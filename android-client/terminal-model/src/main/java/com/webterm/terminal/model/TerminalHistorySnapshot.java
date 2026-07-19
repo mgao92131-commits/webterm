@@ -86,7 +86,7 @@ public final class TerminalHistorySnapshot {
     for (TerminalHistory.HistoryChunk chunk : chunks) {
       for (int i = 0; i < chunk.size; i++) {
         TerminalLine line = chunk.lineAt(i);
-        map.put(line.id, line);
+        map.put(line.historyOrder(), line);
       }
     }
     return map;

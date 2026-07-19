@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
+	"webterm/go-core/internal/screenprotocol"
+	pb "webterm/go-core/internal/screenprotocol/generated"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -40,6 +44,42 @@ func TestProjector_PatchAfterBaseline(t *testing.T) {
 	}
 }
 
+// Regression for the blank-terminal startup path: a snapshot establishes the
+// stable layout first, then the shell prompt modifies an existing LineID. The
+// next frame must be a Patch containing LineData, not a silently empty delta.
+func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(100, nil)
+	engine := terminalengine.NewEngine(5, 24, sb)
+	p := NewProjector(engine, sb, "s", "i")
+	var deriver FrameDeriver
+	initial := deriver.FrameForState(p.ExportState(1, 1))
+	if initial.Kind != terminalengine.FrameSnapshot || len(initial.Screen) == 0 {
+		t.Fatal("empty terminal did not produce initial snapshot layout")
+	}
+	promptID := initial.Screen[0].ID
+	if err := engine.Write([]byte("user@host:~$ ")); err != nil {
+		t.Fatal(err)
+	}
+	patch := deriver.FrameForState(p.ExportState(1, 2))
+	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != 1 || patch.Layout != nil {
+		t.Fatalf("prompt frame kind/base/layout=%v/%d/%v, want patch/1/no layout", patch.Kind, patch.BaseRevision, patch.Layout)
+	}
+	if len(patch.Screen) != 1 || patch.Screen[0].ID != promptID || !strings.Contains(exportLineText(patch.Screen[0]), "user@host:~$") {
+		t.Fatalf("prompt LineData missing or wrong: %+v", patch.Screen)
+	}
+	encoded, err := screenprotocol.EncodeFrame(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.GetPatch() == nil || len(envelope.GetPatch().GetLineUpdates()) != 1 {
+		t.Fatalf("protobuf patch omitted prompt line: %+v", envelope.GetPatch())
+	}
+}
+
 func TestChangedScreenRows_UsesRevisionIndexWhenPresent(t *testing.T) {
 	old := terminalengine.ScreenFrame{Seq: 10, Screen: []terminalengine.Line{{Row: 0}, {Row: 1}}}
 	newState := old
@@ -50,6 +90,29 @@ func TestChangedScreenRows_UsesRevisionIndexWhenPresent(t *testing.T) {
 	rows := changedScreenRows(old, newState)
 	if len(rows) != 1 || rows[0].Row != 1 {
 		t.Fatalf("revision index selected rows=%+v, want only row 1", rows)
+	}
+}
+
+func TestFrameDeriver_LayoutReentryCarriesLineDataAfterHistoryPrune(t *testing.T) {
+	line := func(id, version uint64, row int, text string) terminalengine.Line {
+		return terminalengine.Line{ID: id, Version: version, Row: row,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: text, Width: 1}}}}}
+	}
+	old := terminalengine.ScreenFrame{
+		Version: 1, Kind: terminalengine.FrameSnapshot, InstanceID: "i", Epoch: 1, Seq: 1,
+		Rows: 2, Cols: 2,
+		Screen:  []terminalengine.Line{line(10, 1, 0, "x"), line(20, 1, 1, "y")},
+		History: terminalengine.HistoryWindow{Lines: []terminalengine.Line{line(30, 1, -1, "h")}},
+	}
+	current := old
+	current.Seq = 2
+	current.Screen = []terminalengine.Line{line(30, 1, 0, "h"), line(20, 1, 1, "y")}
+	patch := frameForBaseline(&old, current)
+	if patch.Kind != terminalengine.FramePatch || !sameLayout(patch.Layout, []uint64{30, 20}) {
+		t.Fatalf("patch kind/layout=%d/%v, want patch/[30 20]", patch.Kind, patch.Layout)
+	}
+	if len(patch.Screen) != 1 || patch.Screen[0].ID != 30 {
+		t.Fatalf("re-entered history line was not self-contained: %+v", patch.Screen)
 	}
 }
 
@@ -169,7 +232,7 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 	const historySize = 300
 
 	makeLine := func(id, version uint64, row int, text string) terminalengine.Line {
-		return terminalengine.Line{Row: row, ID: id, Version: version, Runs: []terminalengine.CellRun{{
+		return terminalengine.Line{Row: row, ID: id, Version: version, HistorySeq: id, Runs: []terminalengine.CellRun{{
 			Col:   0,
 			Cells: []terminalengine.Cell{{Text: text, Width: 1}},
 		}}}

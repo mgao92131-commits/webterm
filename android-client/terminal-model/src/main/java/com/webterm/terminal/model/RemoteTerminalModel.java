@@ -176,13 +176,29 @@ public final class RemoteTerminalModel {
     if (patch.newStyles != null) styles.putAll(patch.newStyles);
     if (patch.newLinks != null) links.putAll(patch.newLinks);
 
+    Map<Long, TerminalLine> historyLinesBySeq = new HashMap<>();
     for (TerminalLine line : patch.lineUpdates) {
-      lineStore.put(line.id, padOrCopyLine(line, columns));
+      TerminalLine normalized = padOrCopyLine(line, columns);
+      if (normalized.historySeq != 0) historyLinesBySeq.put(normalized.historySeq, normalized);
+      TerminalLine previous = lineStore.get(normalized.id);
+      // A same-version identical replay is intentionally a no-op. Do not
+      // replace the immutable object: otherwise an idempotent resume patch
+      // would create a fake dirty row and unnecessary redraw.
+      if (previous == null || normalized.version > previous.version) {
+        lineStore.put(normalized.id, normalized);
+      }
     }
 
-    for (long id : patch.historyAppendIds) {
-      TerminalLine line = lineStore.get(id);
-      if (line != null && line.id >= watermark) {
+    for (long seq : patch.historyAppendIds) {
+      TerminalLine line = historyLinesBySeq.get(seq);
+      if (line == null) {
+        int existing = history.findLineIndex(seq);
+        if (existing >= 0) line = history.lineAt(existing);
+      }
+      // Direct-model callers from before HistorySeq can still provide a LineID
+      // here. Wire frames always take the explicit HistorySeq path above.
+      if (line == null) line = lineStore.get(seq);
+      if (line != null && line.historyOrder() >= watermark) {
         if (putHistoryLine(line)) tailAppendedLines++;
       }
     }
@@ -263,7 +279,7 @@ public final class RemoteTerminalModel {
     long anchorId = history.isEmpty() ? -1 : history.firstLineId();
     List<TerminalLine> toPrepend = new ArrayList<>();
     for (TerminalLine line : page.lines) {
-      if (line.id != 0 && history.findLineIndex(line.id) < 0) {
+      if (line.id != 0 && line.historyOrder() != 0 && history.findLineIndex(line.historyOrder()) < 0) {
         TerminalLine normalized = padOrCopyLine(line, columns);
         lineStore.put(normalized.id, normalized);
         toPrepend.add(normalized);
@@ -359,25 +375,32 @@ public final class RemoteTerminalModel {
     }
     Set<Long> updateIds = new HashSet<>();
     for (TerminalLine line : patch.lineUpdates) {
+      TerminalLine normalized = padOrCopyLine(line, columns);
       TerminalLine previous = lineStore.get(line.id);
       if (line.id <= 0 || !updateIds.add(line.id)
-          || (previous != null && line.version <= previous.version)) {
+          || (previous != null && (line.version < previous.version
+              || (line.version == previous.version && !previous.sameContent(normalized))))) {
         throw new RevisionGapException("invalid line update");
       }
-      validateReferences(line, styles, patch.newStyles, links, patch.newLinks);
+      validateReferences(normalized, styles, patch.newStyles, links, patch.newLinks);
     }
     long watermark = patch.historyTrimBeforeId != null
         ? patch.historyTrimBeforeId : firstAvailableHistoryId;
+    Map<Long, TerminalLine> historyUpdates = new HashMap<>();
+    for (TerminalLine line : patch.lineUpdates) {
+      if (line.historySeq != 0) historyUpdates.put(line.historySeq, line);
+      else historyUpdates.put(line.id, line); // direct-model legacy fixture
+    }
     long previous = -1;
-    for (long id : patch.historyAppendIds) {
-      if (id <= 0 || id < watermark || (previous >= 0 && id <= previous)
-          || (history.findLineIndex(id) >= 0 && !updateIds.contains(id))) {
-        throw new RevisionGapException("invalid history append id");
+    for (long seq : patch.historyAppendIds) {
+      if (seq <= 0 || seq < watermark || (previous >= 0 && seq <= previous)
+          || (history.findLineIndex(seq) >= 0 && !historyUpdates.containsKey(seq))) {
+        throw new RevisionGapException("invalid history append sequence");
       }
-      if (!lineStore.containsKey(id) && !updateIds.contains(id)) {
+      if (!historyUpdates.containsKey(seq) && !lineStore.containsKey(seq)) {
         throw new RevisionGapException("history line data missing");
       }
-      previous = id;
+      previous = seq;
     }
     if (patch.layout != null) {
       for (long id : patch.layout) {
@@ -531,7 +554,7 @@ public final class RemoteTerminalModel {
    */
   private boolean putHistoryLine(TerminalLine line) {
     TerminalLine normalized = padOrCopyLine(line, columns);
-    if (!history.isEmpty() && normalized.id <= history.lastLineId()) {
+    if (!history.isEmpty() && normalized.historyOrder() <= history.lastLineId()) {
       boolean inserted = history.put(normalized);
       if (inserted) {
         historyBytes += estimateHistoryLineBytes(normalized);

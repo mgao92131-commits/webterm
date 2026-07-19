@@ -815,7 +815,7 @@ public final class TerminalSessionRuntime {
           // rows 取当前模型 geometry：patch 自身不携带 geometry，
           // 行索引上界只能相对本地投影校验（计划 §10.1）。
           ScreenMessageValidator.ValidationResult patchValidation =
-              ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows);
+              ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows, model.columns);
           if (!patchValidation.ok) {
             Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
                 "failureKind", "INVALID_PATCH",

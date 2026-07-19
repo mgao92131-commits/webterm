@@ -8,6 +8,8 @@ import java.util.Arrays;
 public final class TerminalLine {
   public final long id;
   public final long version;
+  /** Non-zero only for a scrollback entry; orders history independently of id. */
+  public final long historySeq;
   public final boolean wrapped;
   public final TerminalCell[] cells;
 
@@ -16,8 +18,13 @@ public final class TerminalLine {
   }
 
   public TerminalLine(long id, long version, boolean wrapped, TerminalCell[] cells) {
+    this(id, version, 0, wrapped, cells);
+  }
+
+  public TerminalLine(long id, long version, long historySeq, boolean wrapped, TerminalCell[] cells) {
     this.id = id;
     this.version = version;
+    this.historySeq = historySeq;
     this.wrapped = wrapped;
     this.cells = cells;
   }
@@ -37,14 +44,34 @@ public final class TerminalLine {
   }
 
   public TerminalLine withCells(TerminalCell[] newCells) {
-    return new TerminalLine(id, version, wrapped, newCells);
+    return new TerminalLine(id, version, historySeq, wrapped, newCells);
   }
 
   public TerminalLine withWrapped(boolean wrapped) {
-    return new TerminalLine(id, version, wrapped, cells);
+    return new TerminalLine(id, version, historySeq, wrapped, cells);
   }
 
   public TerminalLine withId(long id) {
-    return new TerminalLine(id, version, wrapped, cells);
+    return new TerminalLine(id, version, historySeq, wrapped, cells);
+  }
+
+  public TerminalLine withHistorySeq(long historySeq) {
+    return new TerminalLine(id, version, historySeq, wrapped, cells);
+  }
+
+  /** Legacy direct-model tests without a wire HistorySeq use the line id order. */
+  public long historyOrder() {
+    return historySeq != 0 ? historySeq : id;
+  }
+
+  /**
+   * Compares the wire-visible line payload without treating the object identity
+   * as meaningful. Same id/version data may be repeated by a recovery patch;
+   * accepting only an identical replay keeps that path idempotent while still
+   * detecting a broken producer that reuses a version for different cells.
+   */
+  public boolean sameContent(TerminalLine other) {
+    return other != null && id == other.id && version == other.version
+        && wrapped == other.wrapped && Arrays.equals(cells, other.cells);
   }
 }

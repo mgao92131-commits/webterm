@@ -84,8 +84,8 @@ func forceFullExportAt(p *Projector, epoch, seq uint64) terminalengine.ScreenFra
 func assertMonotoneIDs(t *testing.T, w terminalengine.HistoryWindow) {
 	t.Helper()
 	for i := 1; i < len(w.Lines); i++ {
-		if w.Lines[i].ID <= w.Lines[i-1].ID {
-			t.Fatalf("history window IDs not increasing at %d: %d -> %d", i, w.Lines[i-1].ID, w.Lines[i].ID)
+		if w.Lines[i].HistorySeq <= w.Lines[i-1].HistorySeq {
+			t.Fatalf("history sequences not increasing at %d: %d -> %d", i, w.Lines[i-1].HistorySeq, w.Lines[i].HistorySeq)
 		}
 	}
 	assertTrueBounds(t, w)
@@ -94,9 +94,9 @@ func assertMonotoneIDs(t *testing.T, w terminalengine.HistoryWindow) {
 func assertTrueBounds(t *testing.T, w terminalengine.HistoryWindow) {
 	t.Helper()
 	if len(w.Lines) > 0 {
-		if w.Lines[0].ID != w.FirstIncludedLineID || w.Lines[len(w.Lines)-1].ID != w.LastIncludedLineID {
+		if w.Lines[0].HistorySeq != w.FirstIncludedLineID || w.Lines[len(w.Lines)-1].HistorySeq != w.LastIncludedLineID {
 			t.Fatalf("window bounds mismatch: lines %d..%d, fields %d..%d",
-				w.Lines[0].ID, w.Lines[len(w.Lines)-1].ID, w.FirstIncludedLineID, w.LastIncludedLineID)
+				w.Lines[0].HistorySeq, w.Lines[len(w.Lines)-1].HistorySeq, w.FirstIncludedLineID, w.LastIncludedLineID)
 		}
 	} else if w.LastIncludedLineID != w.FirstIncludedLineID-1 {
 		t.Fatalf("empty window bounds wrong: %+v", w)
@@ -224,18 +224,18 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 		t.Fatalf("expected patch base=1, got %d (snapshot fallback?)", patch.BaseRevision)
 	}
 
-	// 滚入历史的 k 行都以 ID 追加；其中已存在于旧屏幕 layout 的行不重传内容。
+	// 滚入历史的 k 行都以 HistorySeq 追加，并携带其 LineID 的绑定数据。
 	if len(patch.HistoryAppendIDs) != k {
 		t.Fatalf("history append ids=%d, want %d", len(patch.HistoryAppendIDs), k)
 	}
 	wantIDs := state.History.Lines[len(state.History.Lines)-k:]
 	for i, id := range patch.HistoryAppendIDs {
-		if id != wantIDs[i].ID {
-			t.Fatalf("append id[%d]=%d, want %d", i, id, wantIDs[i].ID)
+		if id != wantIDs[i].HistorySeq {
+			t.Fatalf("append sequence[%d]=%d, want %d", i, id, wantIDs[i].HistorySeq)
 		}
 	}
-	if len(patch.History.Lines) >= k {
-		t.Fatalf("known screen lines must not be duplicated as history content: %d", len(patch.History.Lines))
+	if len(patch.History.Lines) != k {
+		t.Fatalf("history append must include seq-to-line bindings: %d", len(patch.History.Lines))
 	}
 
 	// 窗口旧端被裁 k 行：边界必须与新 State 完全一致。

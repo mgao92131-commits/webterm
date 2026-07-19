@@ -22,13 +22,17 @@ import (
 type ChangeIndex struct {
 	SnapshotBarrierRevision uint64
 	RowChangedRevision      []uint64
-	CursorChangedRevision   uint64
-	ModesChangedRevision    uint64
-	PaletteChangedRevision  uint64
-	TitleChangedRevision    uint64
-	CWDChangedRevision      uint64
-	StyleCreatedRevision    []uint64
-	LinkCreatedRevision     []uint64
+	// LayoutChangedRevision records the last export whose row-to-LineID map
+	// changed.  A resume patch must carry a layout whenever this is newer than
+	// the recipient baseline; line updates alone cannot move an existing LineID.
+	LayoutChangedRevision  uint64
+	CursorChangedRevision  uint64
+	ModesChangedRevision   uint64
+	PaletteChangedRevision uint64
+	TitleChangedRevision   uint64
+	CWDChangedRevision     uint64
+	StyleCreatedRevision   []uint64
+	LinkCreatedRevision    []uint64
 }
 
 // advanceBarrier 单调推进 snapshot 屏障（§4.2）。
@@ -61,6 +65,7 @@ type projectedMeta struct {
 	palette      paletteState
 	title        string
 	workingDir   string
+	layout       []uint64
 }
 
 // updateChangeIndexLocked 在一次权威状态合并后更新 ChangeIndex（持 p.mu 调用）。
@@ -82,6 +87,9 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 		for i := range idx.RowChangedRevision {
 			idx.RowChangedRevision[i] = seq
 		}
+	}
+	if !prev.valid || !sameLayout(prev.layout, screenLayout(s.screen)) {
+		idx.LayoutChangedRevision = seq
 	}
 	// 规则 1：dirty 行合并进投影时把对应 row revision 设为当前导出 revision。
 	// 不做内容比较——窗口内“变了又变回”的行允许在 resume patch 里冗余重发

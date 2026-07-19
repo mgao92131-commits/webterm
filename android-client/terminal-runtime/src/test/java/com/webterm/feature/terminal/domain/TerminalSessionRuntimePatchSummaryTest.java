@@ -135,9 +135,10 @@ public final class TerminalSessionRuntimePatchSummaryTest {
       pb.addLineUpdates(TestScreenFrames.line(row + 1L, 2, "x"));
     }
     for (int i = 0; i < historyAppend; i++) {
-      long id = 100L + i;
-      pb.addLineUpdates(TestScreenFrames.line(id, 1, "h"));
-      pb.addHistoryAppendIds(id);
+      long historySeq = 100L + i;
+      pb.addLineUpdates(TestScreenFrames.line(historySeq, 1, "h").toBuilder()
+          .setHistorySeq(historySeq).build());
+      pb.addHistoryAppendIds(historySeq);
     }
     return TerminalScreenProto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(1)
