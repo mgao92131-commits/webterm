@@ -657,6 +657,8 @@ public final class TerminalSessionRuntime {
         // ScreenEnvelope oneof fields in terminal_screen.proto.
         if (field == 11) return ScreenMailbox.MessageKind.SNAPSHOT;
         if (field == 12) return ScreenMailbox.MessageKind.PATCH;
+        if (field == 14) return ScreenMailbox.MessageKind.HISTORY_PAGE;
+        if (field == 15) return ScreenMailbox.MessageKind.HISTORY_TRIM;
         if (!input.skipField(tag)) break;
       }
     } catch (IOException | RuntimeException ignored) {

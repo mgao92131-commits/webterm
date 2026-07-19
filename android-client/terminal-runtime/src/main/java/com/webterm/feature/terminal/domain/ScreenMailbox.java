@@ -10,6 +10,8 @@ public final class ScreenMailbox {
   public enum MessageKind {
     SNAPSHOT,
     PATCH,
+    HISTORY_PAGE,
+    HISTORY_TRIM,
     OTHER,
     UNKNOWN
   }

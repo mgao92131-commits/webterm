@@ -33,8 +33,8 @@ type TerminalOptions struct {
 	// ScrollbackMaxLines/ScrollbackMaxBytes 是 scrollback 双上限；非正值使用默认。
 	ScrollbackMaxLines int
 	ScrollbackMaxBytes int
-	OnTitle       func()
-	OnInfoChanged func()
+	OnTitle            func()
+	OnInfoChanged      func()
 }
 
 type TerminalSession struct {
@@ -349,6 +349,33 @@ func (terminal *TerminalSession) ScreenRuntime() *terminalsession.Runtime {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
 	return terminal.runtime
+}
+
+// PTYOutputSnapshot 返回该会话 PTY 输出的累计事件数和字节数。
+func (terminal *TerminalSession) PTYOutputSnapshot() (events, bytes uint64) {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return 0, 0
+	}
+	return rt.PTYOutputSnapshot()
+}
+
+// ScreenWireSnapshots 返回所有已附加 screen channel 的发送字节累计。
+func (terminal *TerminalSession) ScreenWireSnapshots() map[string]ScreenWireSnapshot {
+	terminal.mu.RLock()
+	clients := make([]*terminalChannelRuntime, 0, len(terminal.clients))
+	for client := range terminal.clients {
+		clients = append(clients, client)
+	}
+	terminal.mu.RUnlock()
+
+	result := make(map[string]ScreenWireSnapshot, len(clients))
+	for _, client := range clients {
+		result[client.screenClientID] = client.ScreenWireSnapshot()
+	}
+	return result
 }
 
 // ProjectedScreenSnapshot exposes the authoritative screen-protocol frame for

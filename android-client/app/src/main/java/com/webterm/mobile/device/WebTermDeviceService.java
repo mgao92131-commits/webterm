@@ -47,6 +47,8 @@ import com.webterm.core.notifications.ConnectionStatusText;
 import com.webterm.core.relay.RelayService;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
+import com.webterm.core.session.traffic.NetworkTrafficStats;
+import com.webterm.core.session.traffic.UidTrafficTracker;
 
 import org.json.JSONObject;
 
@@ -107,6 +109,7 @@ public final class WebTermDeviceService extends Service {
     private NotificationController notifications;
     private PowerManager.WakeLock wakeLock;
     private ConnectivityManager.NetworkCallback networkCallback;
+    private UidTrafficTracker uidTrafficTracker;
 
     /** 当前存活的服务实例：本服务为未绑定的 started service，终端页/AppFlowCoordinator
      * 通过 uploadController() 访问上传控制器（页面重建后从 controller 重新订阅任务状态）。 */
@@ -135,6 +138,9 @@ public final class WebTermDeviceService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        uidTrafficTracker = new UidTrafficTracker();
+        uidTrafficTracker.start();
+        NetworkTrafficStats.registerUidTracker(uidTrafficTracker);
         ensureChannel();
         File receiveDir = resolveStagingDir();
         cleanupStaleParts(receiveDir);
@@ -295,6 +301,11 @@ public final class WebTermDeviceService extends Service {
     @Override
     public void onDestroy() {
         activeInstance = null;
+        NetworkTrafficStats.unregisterUidTracker();
+        if (uidTrafficTracker != null) {
+            uidTrafficTracker.stop();
+            uidTrafficTracker = null;
+        }
         // 共享连接不归本服务独占，仅解绑设备级监听，避免影响终端会话。
         for (DeviceConnection manager : managers.values()) {
             manager.setControlListener(null);

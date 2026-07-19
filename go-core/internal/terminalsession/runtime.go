@@ -68,6 +68,9 @@ type Runtime struct {
 	resumeExact    atomic.Uint64
 	resumePatch    atomic.Uint64
 	resumeSnapshot atomic.Uint64
+
+	ptyOutputEvents atomic.Uint64
+	ptyOutputBytes  atomic.Uint64
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -263,6 +266,11 @@ func (r *Runtime) Info() Version {
 		LayoutEpoch:    r.layoutEpoch,
 		ScreenRevision: r.screenRevision,
 	}
+}
+
+// PTYOutputSnapshot 返回 PTY 输出累计事件数和字节数。
+func (r *Runtime) PTYOutputSnapshot() (events, bytes uint64) {
+	return r.ptyOutputEvents.Load(), r.ptyOutputBytes.Load()
 }
 
 // AttachClient 附加一个 screen client。
@@ -680,6 +688,8 @@ func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDelive
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
+	r.ptyOutputEvents.Add(1)
+	r.ptyOutputBytes.Add(uint64(len(data)))
 	_ = r.engine.Write(data)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()

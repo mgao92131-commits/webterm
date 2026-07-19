@@ -54,6 +54,7 @@ func NewWithRuntime(addr string, app *app.App, configPath string, runtime Runtim
 	mux.HandleFunc("/control/connection/test", control.handleConnectionTest)
 	mux.HandleFunc("/control/sessions", control.handleSessions)
 	mux.HandleFunc("/control/sessions/", control.handleSessionDetail)
+	mux.HandleFunc("/control/traffic", control.handleTraffic)
 	control.server = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -253,6 +254,16 @@ func (control *Server) handleSessionDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+func (control *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions": control.app.Sessions().TrafficSnapshots(),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

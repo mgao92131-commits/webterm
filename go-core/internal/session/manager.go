@@ -57,6 +57,14 @@ type TerminalDefaults struct {
 	ScrollbackMaxBytes int
 }
 
+// SessionTrafficSnapshot 汇总单个会话的流量统计。
+type SessionTrafficSnapshot struct {
+	SessionID          string                        `json:"sessionId"`
+	PTYOutputEvents    uint64                        `json:"ptyOutputEvents"`
+	PTYOutputBytes     uint64                        `json:"ptyOutputBytes"`
+	ScreenWireByClient map[string]ScreenWireSnapshot `json:"screenWireByClient"`
+}
+
 func NewManager(defaults ...TerminalDefaults) *Manager {
 	config := TerminalDefaults{}
 	if len(defaults) > 0 {
@@ -82,6 +90,28 @@ func (manager *Manager) Count() int {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 	return len(manager.sessions)
+}
+
+// TrafficSnapshots 返回每个会话的 PTY 输出与 screen 协议发送字节累计。
+func (manager *Manager) TrafficSnapshots() []SessionTrafficSnapshot {
+	manager.mu.RLock()
+	sessions := make([]*TerminalSession, 0, len(manager.sessions))
+	for _, session := range manager.sessions {
+		sessions = append(sessions, session)
+	}
+	manager.mu.RUnlock()
+
+	result := make([]SessionTrafficSnapshot, 0, len(sessions))
+	for _, session := range sessions {
+		ptyEvents, ptyBytes := session.PTYOutputSnapshot()
+		result = append(result, SessionTrafficSnapshot{
+			SessionID:          session.ID(),
+			PTYOutputEvents:    ptyEvents,
+			PTYOutputBytes:     ptyBytes,
+			ScreenWireByClient: session.ScreenWireSnapshots(),
+		})
+	}
+	return result
 }
 
 func (manager *Manager) SetDefaults(defaults TerminalDefaults) {

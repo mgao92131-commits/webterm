@@ -66,6 +66,11 @@ func (handler *TerminalChannelHandler) Close() {
 	handler.runtime.Close()
 }
 
+// ScreenWireSnapshot 返回该 channel 已编码 screen 协议消息的字节累计。
+func (handler *TerminalChannelHandler) ScreenWireSnapshot() ScreenWireSnapshot {
+	return handler.runtime.ScreenWireSnapshot()
+}
+
 // ManagerChannelHandler 是 manager logical channel 的无 Socket 适配。
 // manager channel 当前只向 Android 推送列表变化，不消费 channel 内的上行帧。
 type ManagerChannelHandler struct {

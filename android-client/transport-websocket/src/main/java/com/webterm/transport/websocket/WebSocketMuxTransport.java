@@ -13,6 +13,7 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class WebSocketMuxTransport implements MuxTransport {
     private final OkHttpClient muxHttp;
@@ -37,6 +38,11 @@ public final class WebSocketMuxTransport implements MuxTransport {
 
     private Attempt currentAttempt;
     private int nextAttemptNumber;
+
+    private final AtomicLong rxFrames = new AtomicLong();
+    private final AtomicLong rxBytes = new AtomicLong();
+    private final AtomicLong txFrames = new AtomicLong();
+    private final AtomicLong txBytes = new AtomicLong();
 
     public WebSocketMuxTransport(OkHttpClient http, String wsUrl, String cookie, String subprotocol) {
         this.muxHttp = http.newBuilder()
@@ -90,7 +96,10 @@ public final class WebSocketMuxTransport implements MuxTransport {
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull okio.ByteString bytes) {
                 if (!isCurrent(attempt, webSocket)) return;
-                attempt.listener.onBinary(bytes.toByteArray());
+                byte[] payload = bytes.toByteArray();
+                rxFrames.incrementAndGet();
+                rxBytes.addAndGet(payload.length);
+                attempt.listener.onBinary(payload);
             }
 
             @Override
@@ -149,6 +158,12 @@ public final class WebSocketMuxTransport implements MuxTransport {
     }
 
     @Override
+    public TrafficSnapshot trafficSnapshot() {
+        return new TrafficSnapshot(
+            rxFrames.get(), rxBytes.get(), txFrames.get(), txBytes.get());
+    }
+
+    @Override
     public boolean sendText(String text) {
         Attempt attempt = connectedAttempt();
         int bytes = text == null ? 0 : text.length();
@@ -157,7 +172,12 @@ public final class WebSocketMuxTransport implements MuxTransport {
             return false;
         }
         boolean accepted = attempt.socket.send(text);
-        if (!accepted) logSendRejected(bytes);
+        if (accepted) {
+            txFrames.incrementAndGet();
+            txBytes.addAndGet(bytes);
+        } else {
+            logSendRejected(bytes);
+        }
         return accepted;
     }
 
@@ -170,7 +190,12 @@ public final class WebSocketMuxTransport implements MuxTransport {
             return false;
         }
         boolean accepted = attempt.socket.send(okio.ByteString.of(data));
-        if (!accepted) logSendRejected(bytes);
+        if (accepted) {
+            txFrames.incrementAndGet();
+            txBytes.addAndGet(bytes);
+        } else {
+            logSendRejected(bytes);
+        }
         return accepted;
     }
 

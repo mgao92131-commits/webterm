@@ -8,6 +8,9 @@ import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
+import com.webterm.core.session.traffic.NetworkTrafficStats;
+import com.webterm.terminal.model.TerminalRenderMetrics;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -67,8 +70,36 @@ public final class DiagnosticLogExporter {
                 }
                 output.closeEntry();
             }
+            output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
+            output.write(buildTrafficSummary().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
         }
         return archive;
+    }
+
+    private static String buildTrafficSummary() {
+        NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
+        TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
+        StringBuilder sb = new StringBuilder();
+        sb.append("WebTerm Network Traffic Summary\n");
+        sb.append("================================\n");
+        sb.append("uidRxBytes=").append(network.uid.rxBytes).append('\n');
+        sb.append("uidTxBytes=").append(network.uid.txBytes).append('\n');
+        sb.append("websocketRxFrames=").append(network.websocket.rxFrames).append('\n');
+        sb.append("websocketRxBytes=").append(network.websocket.rxBytes).append('\n');
+        sb.append("websocketTxFrames=").append(network.websocket.txFrames).append('\n');
+        sb.append("websocketTxBytes=").append(network.websocket.txBytes).append('\n');
+        sb.append("screenSnapshotCount=").append(screen.snapshotFrameCount).append('\n');
+        sb.append("screenSnapshotBytes=").append(screen.snapshotFrameBytes).append('\n');
+        sb.append("screenPatchCount=").append(screen.patchFrameCount).append('\n');
+        sb.append("screenPatchBytes=").append(screen.patchFrameBytes).append('\n');
+        sb.append("screenHistoryPageCount=").append(screen.historyPageFrameCount).append('\n');
+        sb.append("screenHistoryPageBytes=").append(screen.historyPageFrameBytes).append('\n');
+        sb.append("screenHistoryTrimCount=").append(screen.historyTrimFrameCount).append('\n');
+        sb.append("screenHistoryTrimBytes=").append(screen.historyTrimFrameBytes).append('\n');
+        sb.append("screenOtherCount=").append(screen.otherFrameCount).append('\n');
+        sb.append("screenOtherBytes=").append(screen.otherFrameBytes).append('\n');
+        return sb.toString();
     }
 
     private static void shareArchive(Activity activity, File archive) {
