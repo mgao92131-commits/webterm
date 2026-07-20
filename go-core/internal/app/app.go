@@ -57,6 +57,9 @@ func New(cfg config.Config, version string) *App {
 		"WEBTERM_IPC_ENDPOINT":    ipcEndpoint,
 		"WEBTERM_SHELL_INIT_DIR":  agenthooks.ShellInitDirAt(runtimeHookDir),
 		"WEBTERM_POWERSHELL_HOOK": filepath.Join(runtimeHookDir, "bin", "webterm-shell-hook.ps1"),
+		// hook 上报失败退避状态目录，按 runtime 隔离；CLI --hook-mode 维护其中按
+		// session 命名的状态文件，避免多 Agent / 多会话相互影响。
+		"WEBTERM_HOOK_STATE_DIR": filepath.Join(runtimeHookDir, "hook-state"),
 	}
 	if strings.HasPrefix(ipcEndpoint, "unix:") {
 		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。

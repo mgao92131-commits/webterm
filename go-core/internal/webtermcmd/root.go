@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -185,9 +186,14 @@ func newInternal() *cobra.Command {
 	internal := &cobra.Command{Use: "internal", Hidden: true}
 	var shellState, cwd, lastInput, inputKind, session, socket string
 	var pid int
+	var hookMode bool
 	update := &cobra.Command{Use: "session-update", Hidden: true, Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		if session == "" {
 			session = os.Getenv("WEBTERM_SESSION_ID")
+		}
+		if hookMode {
+			// Shell hook 专用路径：短超时、静默、自带失败退避，绝不阻塞或影响 shell。
+			return runSessionUpdateHookMode(session, socket)
 		}
 		if session == "" && pid == 0 {
 			pid = os.Getppid()
@@ -206,9 +212,102 @@ func newInternal() *cobra.Command {
 	update.Flags().StringVar(&session, "session", "", "指定会话 ID")
 	update.Flags().IntVar(&pid, "pid", 0, "根据进程号解析会话")
 	update.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
+	update.Flags().BoolVar(&hookMode, "hook-mode", false, "shell hook 专用：短超时、静默、失败退避")
 	internal.AddCommand(update)
 	return internal
 }
+
+// runSessionUpdateHookMode 由 shell prompt hook 以后台 fire-and-forget 方式调用。
+// 上报的元数据（cwd、最近命令等）通过环境变量传入，避免在生成脚本里对动态值做
+// shell 转义。成功即清除退避状态；失败则按指数退避记录，期间 hook 直接跳过启动
+// 子进程。无论成功失败都返回 nil（退出码 0）且不产生输出，保证不影响用户 shell。
+func runSessionUpdateHookMode(session, socket string) error {
+	statePath := hookStatePath(session)
+	if statePath != "" && withinHookBackoff(statePath) {
+		return nil
+	}
+	cwd := os.Getenv("WEBTERM_HOOK_CWD")
+	lastInput := os.Getenv("WEBTERM_HOOK_LAST_COMMAND")
+	shellState := os.Getenv("WEBTERM_HOOK_SHELL_STATE")
+	if shellState == "" {
+		shellState = "prompt"
+	}
+	inputKind := os.Getenv("WEBTERM_HOOK_INPUT_KIND")
+	if inputKind == "" {
+		inputKind = "shell"
+	}
+	env, err := localipc.NewRequest(localipc.KindEvent, localipc.TypeSessionUpdate, requestID(), localipc.SessionUpdate{SessionID: session, ShellState: shellState, CWD: cwd, LastInput: lastInput, InputKind: inputKind, Timestamp: time.Now().Unix()})
+	if err != nil {
+		return nil
+	}
+	if _, err = requestWithTimeout(endpoint(socket), env, hookDialTimeout, hookRequestTimeout, false); err == nil {
+		if statePath != "" {
+			clearHookBackoff(statePath)
+		}
+		return nil
+	}
+	if statePath != "" {
+		recordHookFailure(statePath)
+	}
+	return nil
+}
+
+// hookStatePath 返回当前 session 的 hook 退避状态文件路径；未配置
+// WEBTERM_HOOK_STATE_DIR 或缺少 session 时返回 ""（表示不启用退避）。
+func hookStatePath(session string) string {
+	dir := os.Getenv("WEBTERM_HOOK_STATE_DIR")
+	if dir == "" || session == "" {
+		return ""
+	}
+	return filepath.Join(dir, session)
+}
+
+// readHookBackoff 读取退避状态。文件缺失或损坏时返回零值（忽略并重新开始）。
+func readHookBackoff(path string) (nextRetryAt int64, failures int) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, 0
+	}
+	next, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0
+	}
+	if len(fields) > 1 {
+		failures, _ = strconv.Atoi(fields[1])
+	}
+	return next, failures
+}
+
+func withinHookBackoff(path string) bool {
+	next, _ := readHookBackoff(path)
+	return next > time.Now().Unix()
+}
+
+// recordHookFailure 原子地推进退避状态：失败次数加一并按表延长下次重试时间，
+// 超过表长后固定在最后一档。
+func recordHookFailure(path string) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	_, failures := readHookBackoff(path)
+	idx := failures
+	if idx >= len(hookBackoffSchedule) {
+		idx = len(hookBackoffSchedule) - 1
+	}
+	delay := hookBackoffSchedule[idx]
+	failures++
+	content := fmt.Sprintf("%d %d\n", time.Now().Unix()+delay, failures)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err == nil {
+		_ = os.Rename(tmp, path)
+	}
+}
+
+func clearHookBackoff(path string) { _ = os.Remove(path) }
 
 func newVersion() *cobra.Command {
 	return &cobra.Command{Use: "version", Short: "显示版本", Args: noArgs, Run: func(_ *cobra.Command, _ []string) { fmt.Println(Version) }}
@@ -284,29 +383,35 @@ func friendlyStatusError(value string) string {
 }
 
 const (
-	// 短请求（devices/notify/session-update）连接成功后整体读写限时。
-	shortRequestTimeout = 5 * time.Second
-	// send 是长连接流式传输，只限制等待首个响应信封的时间。
-	firstResponseTimeout = 15 * time.Second
+	// 普通短请求（devices/notify/手动 session-update）的连接与读写限时。
+	defaultDialTimeout   = 5 * time.Second
+	shortRequestTimeout  = 5 * time.Second
+	firstResponseTimeout = 15 * time.Second // send 长连接：仅限制等待首个响应信封
+	hookDialTimeout      = 150 * time.Millisecond
+	hookRequestTimeout   = 250 * time.Millisecond
 )
 
+// hookBackoffSchedule 是 shell hook 上报连续失败时的指数退避（秒）。失败次数
+// 超过表长后固定在最后一档；成功一次即清除状态、恢复正常上报。
+var hookBackoffSchedule = []int64{1, 2, 4, 8, 15, 30}
+
 func request(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error) {
-	return requestWithTimeout(ep, envelope, shortRequestTimeout, false)
+	return requestWithTimeout(ep, envelope, defaultDialTimeout, shortRequestTimeout, false)
 }
 
 func requestStream(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error) {
-	return requestWithTimeout(ep, envelope, firstResponseTimeout, true)
+	return requestWithTimeout(ep, envelope, defaultDialTimeout, firstResponseTimeout, true)
 }
 
 // clearAfterFirst 为 true 时，收到首个响应信封后清除 deadline，
 // 供 send 这类长连接流式传输使用；超时以 net.Error Timeout 形式返回。
-func requestWithTimeout(ep string, envelope localipc.Envelope, timeout time.Duration, clearAfterFirst bool) ([]localipc.Envelope, error) {
-	conn, err := localipc.Dial(ep, 5*time.Second)
+func requestWithTimeout(ep string, envelope localipc.Envelope, dialTimeout, ioTimeout time.Duration, clearAfterFirst bool) ([]localipc.Envelope, error) {
+	conn, err := localipc.Dial(ep, dialTimeout)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	if err = conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+	if err = conn.SetDeadline(time.Now().Add(ioTimeout)); err != nil {
 		return nil, err
 	}
 	data, _ := json.Marshal(envelope)
