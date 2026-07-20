@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -487,7 +488,11 @@ func (r *Runtime) waitReadDrained(ctx context.Context) {
 func (r *Runtime) drain(ctx context.Context) bool {
 	r.draining.Store(true)
 	if r.inputWriter != nil {
-		r.inputWriter.Close()
+		// Shutdown 等待 worker 结算所有排队输入（对未开始任务回调 Rejected）。
+		// 必须在下面的 drain barrier 入队之前完成，这样这些输入完成事件都排在
+		// barrier 之前，actor 会在 barrier 前处理完并逐一发出 InputAck，客户端
+		// 无需等待 60s 超时。ctx 超时则退化为后台结算（与既有尽力排空语义一致）。
+		_ = r.inputWriter.Shutdown(ctx)
 	}
 
 	// 1. 等待 PTY 输出排空。Unix 下子进程退出后 readLoop 会读到 EOF/EIO 退出；
@@ -761,9 +766,13 @@ func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteComplete
 		TerminalInstanceID: r.instanceID,
 		Status:             InputDeliveryUncertain,
 	}
-	if e.result.err == nil {
+	switch {
+	case e.result.err == nil:
 		result.Status = InputDeliveryWritten
-	} else {
+	case errors.Is(e.result.err, ErrInputWriterClosedBeforeWrite):
+		// 已入队但关闭前未开始写入：给出确定的 Rejected，而非让客户端等超时。
+		result.Status = InputDeliveryRejected
+	default:
 		result.Status = InputDeliveryUncertain
 	}
 	r.completeReliableInput(e.input, result)

@@ -1,10 +1,17 @@
 package terminalsession
 
 import (
+	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
 )
+
+// ErrInputWriterClosedBeforeWrite 表示任务已进入队列，但 InputWriter 在开始
+// 写入前关闭。Runtime 据此把这类可靠输入映射为 Rejected，使客户端无需等待
+// InputAck 超时即可得到确定结果。
+var ErrInputWriterClosedBeforeWrite = errors.New("input writer closed before write")
 
 const (
 	// PTY 输入使用很小的写入片段并主动让出时间，避免一次大粘贴瞬间灌满
@@ -50,6 +57,9 @@ type InputWriter struct {
 	jobs     chan inputWriteJob
 	stopCh   chan struct{}
 	stopOnce sync.Once
+	// doneCh 在 worker goroutine 退出（已结算所有排队任务）时关闭，
+	// Shutdown 借此等待每个已接受任务都拿到最终回调。
+	doneCh chan struct{}
 }
 
 func newInputWriter(writer io.Writer, config inputWriterConfig) *InputWriter {
@@ -73,6 +83,7 @@ func newInputWriter(writer io.Writer, config inputWriterConfig) *InputWriter {
 		config: config,
 		jobs:   make(chan inputWriteJob, config.maxJobs),
 		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
 	}
 	go w.run()
 	return w
@@ -118,15 +129,34 @@ func (w *InputWriter) Close() {
 	})
 }
 
+// Shutdown 停止接收新任务并等待 worker 结算完所有排队任务（对未开始任务回调
+// Rejected）后返回。正常终端退出路径应使用它，确保可靠输入在 drain barrier 之前
+// 全部拿到最终回调，从而都能发出 InputAck。ctx 超时后返回错误，但 worker 仍会
+// 在后台完成结算，回调不会重复执行；调用方不应在超时后再依赖同步语义。
+func (w *InputWriter) Shutdown(ctx context.Context) error {
+	w.Close()
+	select {
+	case <-w.doneCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (w *InputWriter) run() {
+	// doneCh 必须在 worker 结算完所有排队任务后才关闭，Shutdown 依赖它保证
+	// 每个已接受任务都拿到且仅拿到一次最终回调。
+	defer close(w.doneCh)
 	for {
 		select {
 		case <-w.stopCh:
+			w.settleQueuedJobs()
 			return
 		default:
 		}
 		select {
 		case <-w.stopCh:
+			w.settleQueuedJobs()
 			return
 		case job := <-w.jobs:
 			result := w.write(job.data)
@@ -137,6 +167,28 @@ func (w *InputWriter) run() {
 			if job.done != nil {
 				job.done(result)
 			}
+		}
+	}
+}
+
+// settleQueuedJobs 在 worker 退出前排空仍留在队列中、尚未开始写入的任务，
+// 对每个任务回调 ErrInputWriterClosedBeforeWrite（Runtime 映射为 Rejected），
+// 并归还计数。done 回调在锁外执行，避免回调重入 Runtime 时与 w.mu 形成死锁。
+// 已被主循环取出并正在写入的任务不在这里处理：write 会通过 stopCh 中断并返回
+// 部分写入结果（映射为 Uncertain），其回调由主循环负责，故每个任务恰好一次。
+func (w *InputWriter) settleQueuedJobs() {
+	for {
+		select {
+		case job := <-w.jobs:
+			w.mu.Lock()
+			w.pendingJobs--
+			w.pendingBytes -= len(job.data)
+			w.mu.Unlock()
+			if job.done != nil {
+				job.done(inputWriteResult{err: ErrInputWriterClosedBeforeWrite})
+			}
+		default:
+			return
 		}
 	}
 }

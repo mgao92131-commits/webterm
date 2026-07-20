@@ -140,3 +140,71 @@ func TestRuntimeDrainAndCloseTimeoutFallsBackToClose(t *testing.T) {
 		t.Fatalf("Close after drain timeout: %v", err)
 	}
 }
+
+// 进程退出后 DrainAndClose 必须让每个已接受的可靠输入都拿到最终结果：正在写入的
+// 以 Uncertain 结束，仍排队未开始的以 Rejected 结束，客户端无需等待 InputAck 超时。
+func TestRuntimeDrainSettlesQueuedReliableInput(t *testing.T) {
+	pty := newBlockingInputPTY()
+	r := NewRuntime("drain-reliable", pty, 2, 80)
+	t.Cleanup(func() { _ = r.Close() })
+	r.AttachClient(&ScreenClient{ID: "screen-1", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-1", true)
+	if !granted {
+		t.Fatal("expected layout lease")
+	}
+
+	results := make(chan InputDeliveryResult, 3)
+	submit := func(seq uint64, data string) {
+		r.WriteReliableSemanticInput("screen-1", leaseID, "android-1", seq,
+			terminalengine.SemanticInput{Kind: terminalengine.InputText, Data: data},
+			func(result InputDeliveryResult) { results <- result })
+	}
+
+	// seq=1 进入并阻塞在 PTY 写入中（in-flight）。
+	submit(1, "one\n")
+	<-pty.started
+	// seq=2,3 排在其后，尚未开始写入。
+	submit(2, "two\n")
+	submit(3, "three\n")
+	// 等三个任务都进入 InputWriter（in-flight 的 seq=1 也计入 pending）。
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.inputWriter.mu.Lock()
+		pending := r.inputWriter.pendingJobs
+		r.inputWriter.mu.Unlock()
+		if pending == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reliable inputs not all accepted, pending=%d", pending)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 先关 InputWriter 的 stopCh（seq=1 仍阻塞），再关闭 PTY：seq=1 的写入以错误
+	// 结束，readLoop 读到 EOF。随后 DrainAndClose 结算 seq=2,3 并排空。
+	r.inputWriter.Close()
+	pty.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.DrainAndClose(ctx); err != nil {
+		t.Fatalf("DrainAndClose: %v", err)
+	}
+
+	bySeq := map[uint64]InputDeliveryStatus{}
+	for i := 0; i < 3; i++ {
+		select {
+		case res := <-results:
+			bySeq[res.InputSeq] = res.Status
+		case <-time.After(time.Second):
+			t.Fatalf("expected 3 final reliable-input results, got %d (%v)", len(bySeq), bySeq)
+		}
+	}
+	if bySeq[1] != InputDeliveryUncertain {
+		t.Fatalf("seq=1 (in-flight) status=%v, want Uncertain", bySeq[1])
+	}
+	if bySeq[2] != InputDeliveryRejected || bySeq[3] != InputDeliveryRejected {
+		t.Fatalf("seq=2,3 (queued) status=%v/%v, want Rejected", bySeq[2], bySeq[3])
+	}
+}
