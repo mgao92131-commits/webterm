@@ -15,19 +15,23 @@ public final class UidTrafficTracker {
 
   /** 当前 UID 的累计收发字节。 */
   public static final class Snapshot {
-    public static final Snapshot ZERO = new Snapshot(0L, 0L);
+    public static final Snapshot ZERO = new Snapshot(0L, 0L, false);
 
     public final long rxBytes;
     public final long txBytes;
+    /** 底层 TrafficStats 是否返回有效读数；false 时 rxBytes/txBytes 不可信。 */
+    public final boolean supported;
 
-    public Snapshot(long rxBytes, long txBytes) {
+    public Snapshot(long rxBytes, long txBytes, boolean supported) {
       this.rxBytes = Math.max(0L, rxBytes);
       this.txBytes = Math.max(0L, txBytes);
+      this.supported = supported;
     }
 
     @Override
     public String toString() {
-      return "Snapshot{rxBytes=" + rxBytes + ", txBytes=" + txBytes + '}';
+      return "Snapshot{rxBytes=" + rxBytes + ", txBytes=" + txBytes
+          + ", supported=" + supported + '}';
     }
   }
 
@@ -67,7 +71,9 @@ public final class UidTrafficTracker {
       return Snapshot.ZERO;
     }
     Snapshot current = source.read();
-    return new Snapshot(current.rxBytes - baseRx, current.txBytes - baseTx);
+    long rx = current.rxBytes - baseRx;
+    long tx = current.txBytes - baseTx;
+    return new Snapshot(rx, tx, current.supported);
   }
 
   /**
@@ -87,10 +93,10 @@ public final class UidTrafficTracker {
       int uid = Process.myUid();
       long rx = TrafficStats.getUidRxBytes(uid);
       long tx = TrafficStats.getUidTxBytes(uid);
-      // TrafficStats 在某些设备或模拟器上可能返回 UNSUPPORTED(-1)。
+      boolean supported = rx >= 0L && tx >= 0L;
       if (rx < 0L) rx = 0L;
       if (tx < 0L) tx = 0L;
-      return new Snapshot(rx, tx);
+      return new Snapshot(rx, tx, supported);
     }
   }
 }

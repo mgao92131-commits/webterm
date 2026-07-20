@@ -270,6 +270,66 @@ public class WebSocketMuxTransportTest {
     }
 
     @Test
+    public void sendTextCountsUtf8BytesNotCharLength() {
+        when(socket.send(any(String.class))).thenReturn(true);
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        captor.getValue().onOpen(socket, mock(Response.class));
+
+        // "中" is 3 bytes in UTF-8, but String.length() returns 1.
+        assertTrue(transport.sendText("中文"));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(1L, snapshot.txFrames);
+        assertEquals(6L, snapshot.txBytes);
+    }
+
+    @Test
+    public void textReceptionCountsFramesAndUtf8Bytes() {
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener wsListener = captor.getValue();
+
+        wsListener.onOpen(socket, mock(Response.class));
+        wsListener.onMessage(socket, "hello");
+        wsListener.onMessage(socket, "中文");
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(2L, snapshot.rxFrames);
+        assertEquals(11L, snapshot.rxBytes); // 5 + 6
+    }
+
+    @Test
+    public void trafficAccumulatorSurvivesTransportRecreation() {
+        when(socket.send(any(String.class))).thenReturn(true);
+        MuxTransport.TrafficAccumulator accumulator = new MuxTransport.TrafficAccumulator();
+
+        WebSocketMuxTransport first = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        first.setTrafficAccumulator(accumulator);
+        first.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> firstCaptor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), firstCaptor.capture());
+        firstCaptor.getValue().onOpen(socket, mock(Response.class));
+        assertTrue(first.sendText("first"));
+
+        // Simulate reconnect: create a new transport using the same accumulator.
+        WebSocketMuxTransport second = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        second.setTrafficAccumulator(accumulator);
+        // Do not start second to avoid mock complexity; just verify accumulator totals.
+
+        MuxTransport.TrafficSnapshot snapshot = accumulator.snapshot();
+        assertEquals(1L, snapshot.txFrames);
+        assertEquals(5L, snapshot.txBytes);
+    }
+
+    @Test
     public void rejectedSendDoesNotCount() {
         when(socket.send(any(okio.ByteString.class))).thenReturn(false);
         WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");

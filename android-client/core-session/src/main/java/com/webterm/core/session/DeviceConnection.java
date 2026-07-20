@@ -112,7 +112,9 @@ public final class DeviceConnection {
         transport = transportFactory != null
             ? transportFactory.create(wsUrl, cookie, MUX_SUBPROTOCOL)
             : null;
-        NetworkTrafficStats.registerTransport(transport);
+        if (transport != null) {
+            transport.setTrafficAccumulator(NetworkTrafficStats.accumulatorForDevice(deviceId));
+        }
         Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
     }
 

@@ -587,6 +587,8 @@ public final class TerminalSessionRuntime {
         ScreenMessageValidator.validateEnvelopeSize(payload);
     if (state == State.CLOSED) return;
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
+    // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
+    TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payload.length);
     ScreenMailbox.Offer offer = screenMailbox.offer(
         messageEpoch, sourceConnection, payload, frameSize.ok, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
@@ -612,7 +614,6 @@ public final class TerminalSessionRuntime {
           if (message.connectionEpoch != connectionEpoch.get()
               || message.mailboxGeneration != screenMailbox.generation()
               || message.sourceConnection != connection) continue;
-          TerminalRenderMetrics.inboundScreenFrame(message.kind.ordinal(), message.payload.length);
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
@@ -642,6 +643,22 @@ public final class TerminalSessionRuntime {
               diagnosticFields("failureKind", e.getClass().getSimpleName()));
         }
       }
+    }
+  }
+
+  private static TerminalRenderMetrics.ScreenTrafficKind toScreenTrafficKind(
+      ScreenMailbox.MessageKind kind) {
+    switch (kind) {
+      case SNAPSHOT:
+        return TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT;
+      case PATCH:
+        return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
+      case HISTORY_PAGE:
+        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE;
+      case HISTORY_TRIM:
+        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM;
+      default:
+        return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
     }
   }
 

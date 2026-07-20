@@ -1,6 +1,8 @@
 package com.webterm.core.session.traffic;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -14,15 +16,16 @@ public class UidTrafficTrackerTest {
 
   @Test
   public void snapshotReturnsZeroBeforeStart() {
-    UidTrafficTracker tracker = new UidTrafficTracker(fixedSource(100L, 200L));
+    UidTrafficTracker tracker = new UidTrafficTracker(fixedSource(100L, 200L, true));
     UidTrafficTracker.Snapshot snapshot = tracker.snapshot();
     assertEquals(0L, snapshot.rxBytes);
     assertEquals(0L, snapshot.txBytes);
+    assertFalse(snapshot.supported);
   }
 
   @Test
   public void snapshotReturnsDifferenceSinceStart() {
-    MutableSource source = new MutableSource(100L, 200L);
+    MutableSource source = new MutableSource(100L, 200L, true);
     UidTrafficTracker tracker = new UidTrafficTracker(source);
     tracker.start();
 
@@ -30,6 +33,7 @@ public class UidTrafficTrackerTest {
     UidTrafficTracker.Snapshot snapshot = tracker.snapshot();
     assertEquals(150L, snapshot.rxBytes);
     assertEquals(260L, snapshot.txBytes);
+    assertTrue(snapshot.supported);
 
     // snapshot 不修改基准，再次调用应得到相同结果。
     UidTrafficTracker.Snapshot again = tracker.snapshot();
@@ -39,7 +43,7 @@ public class UidTrafficTrackerTest {
 
   @Test
   public void stopReturnsDifferenceAndResets() {
-    MutableSource source = new MutableSource(100L, 200L);
+    MutableSource source = new MutableSource(100L, 200L, true);
     UidTrafficTracker tracker = new UidTrafficTracker(source);
     tracker.start();
 
@@ -57,7 +61,7 @@ public class UidTrafficTrackerTest {
 
   @Test
   public void concurrentSnapshotsDoNotLoseData() throws InterruptedException {
-    MutableSource source = new MutableSource(0L, 0L);
+    MutableSource source = new MutableSource(0L, 0L, true);
     UidTrafficTracker tracker = new UidTrafficTracker(source);
     tracker.start();
 
@@ -103,16 +107,29 @@ public class UidTrafficTrackerTest {
   }
 
   @Test
-  public void negativeTrafficStatsTreatedAsZero() {
-    UidTrafficTracker tracker = new UidTrafficTracker(fixedSource(-1L, -1L));
+  public void negativeTrafficStatsTreatedAsZeroAndUnsupported() {
+    UidTrafficTracker tracker = new UidTrafficTracker(fixedSource(-1L, -1L, false));
     tracker.start();
     UidTrafficTracker.Snapshot snapshot = tracker.snapshot();
     assertEquals(0L, snapshot.rxBytes);
     assertEquals(0L, snapshot.txBytes);
+    assertFalse(snapshot.supported);
   }
 
-  private static UidTrafficTracker.Source fixedSource(long rx, long tx) {
-    return () -> new UidTrafficTracker.Snapshot(rx, tx);
+  @Test
+  public void unsupportedPropagatedToSnapshot() {
+    MutableSource source = new MutableSource(100L, 200L, false);
+    UidTrafficTracker tracker = new UidTrafficTracker(source);
+    tracker.start();
+    source.set(300L, 500L);
+    UidTrafficTracker.Snapshot snapshot = tracker.snapshot();
+    assertEquals(200L, snapshot.rxBytes);
+    assertEquals(300L, snapshot.txBytes);
+    assertFalse(snapshot.supported);
+  }
+
+  private static UidTrafficTracker.Source fixedSource(long rx, long tx, boolean supported) {
+    return () -> new UidTrafficTracker.Snapshot(rx, tx, supported);
   }
 
   private static void updateMax(AtomicLong target, long value) {
@@ -126,15 +143,21 @@ public class UidTrafficTrackerTest {
   private static final class MutableSource implements UidTrafficTracker.Source {
     private final AtomicLong rx = new AtomicLong();
     private final AtomicLong tx = new AtomicLong();
+    private volatile boolean supported;
 
-    MutableSource(long rx, long tx) {
+    MutableSource(long rx, long tx, boolean supported) {
       this.rx.set(rx);
       this.tx.set(tx);
+      this.supported = supported;
     }
 
     void set(long rx, long tx) {
       this.rx.set(rx);
       this.tx.set(tx);
+    }
+
+    void setSupported(boolean supported) {
+      this.supported = supported;
     }
 
     void add(long rxDelta, long txDelta) {
@@ -144,7 +167,7 @@ public class UidTrafficTrackerTest {
 
     @Override
     public UidTrafficTracker.Snapshot read() {
-      return new UidTrafficTracker.Snapshot(rx.get(), tx.get());
+      return new UidTrafficTracker.Snapshot(rx.get(), tx.get(), supported);
     }
   }
 }

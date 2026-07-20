@@ -61,20 +61,25 @@ public final class TerminalRenderMetrics {
   public static void mainThreadCallbackDelay(long nanos) {
     MAIN_CALLBACK_DELAY_NANOS.addAndGet(Math.max(0L, nanos));
   }
+  /** 屏幕协议消息的分类标记；不依赖其他模块枚举的 ordinal。 */
+  public enum ScreenTrafficKind {
+    SNAPSHOT, PATCH, HISTORY_PAGE, HISTORY_TRIM, OTHER
+  }
+
   /** Records only wire class and length; terminal contents never enter diagnostics. */
-  public static void inboundScreenFrame(int kind, int bytes) {
+  public static void inboundScreenFrame(ScreenTrafficKind kind, int bytes) {
     AtomicLong count;
     AtomicLong totalBytes;
-    if (kind == MessageKind.SNAPSHOT.ordinal()) {
+    if (kind == ScreenTrafficKind.SNAPSHOT) {
       count = SNAPSHOT_FRAME_COUNT;
       totalBytes = SNAPSHOT_FRAME_BYTES;
-    } else if (kind == MessageKind.PATCH.ordinal()) {
+    } else if (kind == ScreenTrafficKind.PATCH) {
       count = PATCH_FRAME_COUNT;
       totalBytes = PATCH_FRAME_BYTES;
-    } else if (kind == MessageKind.HISTORY_PAGE.ordinal()) {
+    } else if (kind == ScreenTrafficKind.HISTORY_PAGE) {
       count = HISTORY_PAGE_FRAME_COUNT;
       totalBytes = HISTORY_PAGE_FRAME_BYTES;
-    } else if (kind == MessageKind.HISTORY_TRIM.ordinal()) {
+    } else if (kind == ScreenTrafficKind.HISTORY_TRIM) {
       count = HISTORY_TRIM_FRAME_COUNT;
       totalBytes = HISTORY_TRIM_FRAME_BYTES;
     } else {
@@ -83,11 +88,6 @@ public final class TerminalRenderMetrics {
     }
     count.incrementAndGet();
     totalBytes.addAndGet(Math.max(0, bytes));
-  }
-
-  /** 与 ScreenMailbox.MessageKind 顺序保持一致的消息类型标记。 */
-  private enum MessageKind {
-    SNAPSHOT, PATCH, HISTORY_PAGE, HISTORY_TRIM, OTHER, UNKNOWN
   }
   public static void mailboxResidenceDuration(long nanos) {
     long safe = Math.max(0L, nanos);

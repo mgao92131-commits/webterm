@@ -48,6 +48,8 @@ public final class TerminalFragment extends Fragment {
     private final Handler bannerHandler = new Handler(Looper.getMainLooper());
     private View currentBanner;
     private ActivityResultLauncher<String[]> uploadLauncher;
+    private String pendingUploadConnectionKey;
+    private String pendingUploadSessionId;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -121,36 +123,60 @@ public final class TerminalFragment extends Fragment {
 
     public void requestFileUpload() {
         if (uploadLauncher == null) return;
-        if (uploadController() == null) {
+
+        FileUploadController controller = uploadController();
+        TerminalViewModel.TerminalSessionArgs args = currentArgs();
+
+        if (controller == null) {
             toast("上传服务未启动，请稍后重试");
             return;
         }
-        TerminalViewModel.TerminalSessionArgs args = currentArgs();
         if (args == null || args.sessionId == null || args.sessionId.isEmpty()) {
             toast("当前没有可上传的终端会话");
             return;
         }
+
+        pendingUploadConnectionKey =
+            UploadConnectionKeys.connectionKey(args.baseUrl, args.relayDeviceId);
+        pendingUploadSessionId = args.sessionId;
+
         uploadLauncher.launch(new String[]{"*/*"});
     }
 
     private void onUploadFileSelected(@Nullable Uri uri) {
+        String connectionKey = pendingUploadConnectionKey;
+        String sessionId = pendingUploadSessionId;
+
+        pendingUploadConnectionKey = null;
+        pendingUploadSessionId = null;
+
         if (uri == null) return;
+
         FileUploadController controller = uploadController();
-        TerminalViewModel.TerminalSessionArgs args = currentArgs();
-        if (controller == null || args == null) {
-            toast("上传服务未启动，请稍后重试");
+        if (controller == null
+            || connectionKey == null
+            || sessionId == null) {
+            toast("上传目标已经失效，请重新选择文件");
             return;
         }
+
         try {
             requireContext().getContentResolver().takePersistableUriPermission(
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignored) {
         }
+
         UploadDocumentMetadata.Metadata metadata = UploadDocumentMetadata.resolve(
             requireContext().getContentResolver(), uri);
-        String connectionKey = UploadConnectionKeys.connectionKey(args.baseUrl, args.relayDeviceId);
-        UploadTask task = controller.submit(connectionKey, args.sessionId, uri.toString(),
-            metadata.displayName, metadata.size);
+
+        UploadTask task = controller.submit(
+            connectionKey,
+            sessionId,
+            uri.toString(),
+            metadata.displayName,
+            metadata.size
+        );
+
         if (task == null) toast("已有上传任务进行中");
     }
 

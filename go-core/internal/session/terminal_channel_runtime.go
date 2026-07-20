@@ -52,6 +52,8 @@ type terminalChannelRuntime struct {
 type outboundMessage struct {
 	binary   []byte
 	priority FramePriority
+	// kind 用于 WriteFrame 成功后做分类字节统计；空字符串按 other 处理。
+	kind string
 }
 
 type initialScreenMessage struct {
@@ -160,8 +162,7 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocol.Handler
 		screenprotocol.WithPingCallback(func(screenRevision uint64) {
 			payload, err := screenprotocol.EncodePong(screenRevision)
 			if err == nil {
-				client.recordWireBytes("other", len(payload))
-				client.enqueueBinary(payload)
+				client.enqueueBinary(payload, "other")
 			}
 		}),
 	)
@@ -185,8 +186,7 @@ func (client *terminalChannelRuntime) SendInfo() {
 	info := client.session.Info()
 	payload, err := encodeTerminalInfo(info)
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinaryPriority(payload, FramePriorityHigh)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
 	}
 }
 
@@ -225,8 +225,7 @@ func (client *terminalChannelRuntime) SendExit(code int) {
 		Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
 	})
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinaryPriority(payload, FramePriorityHigh)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
 	}
 }
 
@@ -292,7 +291,7 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 }
 
 func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context, initial initialScreenMessage) bool {
-	payload, err := client.encodeInitialScreenSync(initial.sync)
+	payload, kind, err := client.encodeInitialScreenSync(initial.sync)
 	if err != nil {
 		initial.done(false)
 		if client.logger != nil {
@@ -301,28 +300,21 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 		client.Close()
 		return false
 	}
-	if initial.sync.Decision == "patch" {
-		client.recordWireBytes("patch", len(payload))
-	} else if initial.sync.Decision == "snapshot" {
-		client.recordWireBytes("snapshot", len(payload))
-	} else {
-		client.recordWireBytes("other", len(payload))
-	}
 	if client.logger != nil {
 		patchBytes, snapshotBytes := 0, 0
-		if initial.sync.Decision == "patch" {
+		if kind == "patch" {
 			patchBytes = len(payload)
-		} else if initial.sync.Decision == "snapshot" {
+		} else if kind == "snapshot" {
 			snapshotBytes = len(payload)
 		}
 		client.logger.Add("info", "screen-resume", fmt.Sprintf(
-			"resume_decision=%s resume_reason=%s client_revision=%d server_revision=%d snapshot_barrier_revision=%d changed_rows=%d history_append_lines=%d patch_bytes=%d snapshot_bytes=%d",
-			initial.sync.Decision, initial.sync.Reason, initial.sync.ClientRevision,
+			"resume_decision=%s actual_kind=%s resume_reason=%s client_revision=%d server_revision=%d snapshot_barrier_revision=%d changed_rows=%d history_append_lines=%d patch_bytes=%d snapshot_bytes=%d",
+			initial.sync.Decision, kind, initial.sync.Reason, initial.sync.ClientRevision,
 			initial.sync.ServerRevision, initial.sync.SnapshotBarrierRevision,
 			initial.sync.ChangedRows, initial.sync.HistoryAppendLines,
 			patchBytes, snapshotBytes))
 	}
-	if !client.writeMessage(ctx, outboundMessage{binary: payload}) {
+	if !client.writeMessage(ctx, outboundMessage{binary: payload, kind: kind}) {
 		initial.done(false)
 		return false
 	}
@@ -366,8 +358,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 			client.Close()
 			return false
 		}
-		client.recordWireBytes("snapshot", len(payload))
-		if !client.writeMessage(ctx, outboundMessage{binary: payload}) {
+		if !client.writeMessage(ctx, outboundMessage{binary: payload, kind: "snapshot"}) {
 			return false
 		}
 		client.screenMu.Lock()
@@ -379,8 +370,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	if frame.Kind == terminalengine.FrameSnapshot {
 		kind = "snapshot"
 	}
-	client.recordWireBytes(kind, len(payload))
-	return client.writeMessage(ctx, outboundMessage{binary: payload})
+	return client.writeMessage(ctx, outboundMessage{binary: payload, kind: kind})
 }
 
 func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
@@ -395,10 +385,6 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 }
 
 func (client *terminalChannelRuntime) writeMessage(ctx context.Context, message outboundMessage) bool {
-	if n := len(message.binary); n > 0 {
-		client.screenFrameCount.Add(1)
-		client.screenWireBytes.Add(uint64(n))
-	}
 	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	var err error
 	if prioritized, ok := client.sink.(PrioritizedChannelFrameSink); ok {
@@ -410,6 +396,12 @@ func (client *terminalChannelRuntime) writeMessage(ctx context.Context, message 
 	if err != nil {
 		client.Close()
 		return false
+	}
+	// 只在实际写入成功后累计，保证总字节 = 分类字节之和。
+	if n := len(message.binary); n > 0 {
+		client.screenFrameCount.Add(1)
+		client.screenWireBytes.Add(uint64(n))
+		client.recordWireBytes(message.kind, n)
 	}
 	return true
 }
@@ -480,8 +472,7 @@ func (client *terminalChannelRuntime) sendLayoutLease(result terminalsession.Lay
 	}
 	payload, err := proto.Marshal(envelope)
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinaryPriority(payload, FramePriorityHigh)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
 	}
 }
 
@@ -526,8 +517,7 @@ func (client *terminalChannelRuntime) sendInputAck(result terminalsession.InputD
 		}},
 	})
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinaryPriority(payload, FramePriorityHigh)
+		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
 	}
 }
 
@@ -576,22 +566,15 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 
 func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
 	if !client.writerStarted.Load() {
-		payload, err := client.encodeInitialScreenSync(syncMessage)
+		payload, kind, err := client.encodeInitialScreenSync(syncMessage)
 		if err != nil {
 			done(false)
 			return
 		}
-		if syncMessage.Decision == "patch" {
-			client.recordWireBytes("patch", len(payload))
-		} else if syncMessage.Decision == "snapshot" {
-			client.recordWireBytes("snapshot", len(payload))
-		} else {
-			client.recordWireBytes("other", len(payload))
-		}
 		client.screenMu.Lock()
 		client.screenDeriver.Seed(syncMessage.State)
 		client.screenMu.Unlock()
-		client.enqueueBinary(payload)
+		client.enqueueBinary(payload, kind)
 		done(true)
 		return
 	}
@@ -609,23 +592,25 @@ func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminal
 	}
 }
 
-func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, error) {
+// encodeInitialScreenSync 编码初始同步消息，并返回实际发送的消息类型（snapshot/patch/other）。
+func encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, string, error) {
 	return encodeInitialScreenSyncWith(syncMessage, screenprotocol.EncodeFrame)
 }
 
-func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, error) {
+func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, string, error) {
 	return encodeInitialScreenSyncWith(syncMessage, client.encodeFrame)
 }
 
 func encodeInitialScreenSyncWith(syncMessage terminalsession.InitialSync,
-	encode func(terminalengine.ScreenFrame) ([]byte, error)) ([]byte, error) {
+	encode func(terminalengine.ScreenFrame) ([]byte, error)) ([]byte, string, error) {
 	if syncMessage.Exact {
 		state := syncMessage.State
-		return screenprotocol.EncodeResumeAck(state.InstanceID, state.Epoch, state.Seq)
+		payload, err := screenprotocol.EncodeResumeAck(state.InstanceID, state.Epoch, state.Seq)
+		return payload, "other", err
 	}
 	patchBytes, err := encode(syncMessage.Frame)
 	if err != nil || syncMessage.Frame.Kind != terminalengine.FramePatch {
-		return patchBytes, err
+		return patchBytes, "patch", err
 	}
 	// 恢复慢路径同时编码候选 Patch 与 Snapshot。Patch 达到 Snapshot 的 80%
 	// 时直接发送自包含 Snapshot；比较只发生在 initial-sync，不进入在线热路径。
@@ -633,19 +618,18 @@ func encodeInitialScreenSyncWith(syncMessage terminalsession.InitialSync,
 	snapshot.Kind = terminalengine.FrameSnapshot
 	snapshotBytes, err := encode(snapshot)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(patchBytes)*10 >= len(snapshotBytes)*8 {
-		return snapshotBytes, nil
+		return snapshotBytes, "snapshot", nil
 	}
-	return patchBytes, nil
+	return patchBytes, "patch", nil
 }
 
 func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
 	payload, err := screenprotocol.EncodeEffect(instanceID, revision, effect)
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinary(payload)
+		client.enqueueBinary(payload, "other")
 	}
 }
 
@@ -653,16 +637,14 @@ func (client *terminalChannelRuntime) sendScreenHistory(requestID string, epoch,
 	payload, err := screenprotocol.EncodeHistoryPageWithCompactLines(
 		requestID, epoch, revision, page, client.compactLineEncoding.Load())
 	if err == nil {
-		client.recordWireBytes("historyPage", len(payload))
-		client.enqueueBinary(payload)
+		client.enqueueBinary(payload, "historyPage")
 	}
 }
 
 func (client *terminalChannelRuntime) sendScreenHistoryTrim(epoch, firstAvailableSeq uint64) {
 	payload, err := screenprotocol.EncodeHistoryTrim(epoch, firstAvailableSeq)
 	if err == nil {
-		client.recordWireBytes("other", len(payload))
-		client.enqueueBinary(payload)
+		client.enqueueBinary(payload, "other")
 	}
 }
 
@@ -708,24 +690,23 @@ func (client *terminalChannelRuntime) sendScreenFrameNow(frame, state terminalen
 			client.Close()
 			return
 		}
-		client.recordWireBytes("snapshot", len(payload))
 		client.screenDeriver.Seed(state)
-	} else {
-		kind := "patch"
-		if frame.Kind == terminalengine.FrameSnapshot {
-			kind = "snapshot"
-		}
-		client.recordWireBytes(kind, len(payload))
+		client.enqueueBinary(payload, "snapshot")
+		return
 	}
-	client.enqueueBinary(payload)
+	kind := "patch"
+	if frame.Kind == terminalengine.FrameSnapshot {
+		kind = "snapshot"
+	}
+	client.enqueueBinary(payload, kind)
 }
 
-func (client *terminalChannelRuntime) enqueueBinary(bytes []byte) {
-	client.enqueue(outboundMessage{binary: bytes})
+func (client *terminalChannelRuntime) enqueueBinary(bytes []byte, kind string) {
+	client.enqueue(outboundMessage{binary: bytes, kind: kind})
 }
 
-func (client *terminalChannelRuntime) enqueueBinaryPriority(bytes []byte, priority FramePriority) {
-	client.enqueue(outboundMessage{binary: bytes, priority: priority})
+func (client *terminalChannelRuntime) enqueueBinaryPriority(bytes []byte, priority FramePriority, kind string) {
+	client.enqueue(outboundMessage{binary: bytes, priority: priority, kind: kind})
 }
 
 func (client *terminalChannelRuntime) enqueue(message outboundMessage) {

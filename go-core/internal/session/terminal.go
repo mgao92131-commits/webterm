@@ -63,6 +63,8 @@ type TerminalSession struct {
 	onInfoChanged  func()
 	titleChanged   bool
 	manager        *Manager
+	// 已断开客户端的 screen 发送累计；避免重连后 /control/traffic 丢失历史流量。
+	screenWireHistory ScreenWireSnapshot
 }
 
 type Notification struct {
@@ -320,8 +322,21 @@ func (terminal *TerminalSession) Detach(client *terminalChannelRuntime) {
 	if client.ownerKey != "" && terminal.screenOwners[client.ownerKey] == client {
 		delete(terminal.screenOwners, client.ownerKey)
 	}
+	// 客户端断开前把其发送累计保留到会话历史，防止重连后统计消失。
+	terminal.screenWireHistory = mergeScreenWireSnapshot(terminal.screenWireHistory, client.ScreenWireSnapshot())
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+}
+
+func mergeScreenWireSnapshot(a, b ScreenWireSnapshot) ScreenWireSnapshot {
+	return ScreenWireSnapshot{
+		FrameCount:       a.FrameCount + b.FrameCount,
+		WireBytes:        a.WireBytes + b.WireBytes,
+		SnapshotBytes:    a.SnapshotBytes + b.SnapshotBytes,
+		PatchBytes:       a.PatchBytes + b.PatchBytes,
+		HistoryPageBytes: a.HistoryPageBytes + b.HistoryPageBytes,
+		OtherBytes:       a.OtherBytes + b.OtherBytes,
+	}
 }
 
 // AttachScreenClient 把 screen protocol 客户端附加到权威 Runtime。
@@ -362,18 +377,23 @@ func (terminal *TerminalSession) PTYOutputSnapshot() (events, bytes uint64) {
 	return rt.PTYOutputSnapshot()
 }
 
-// ScreenWireSnapshots 返回所有已附加 screen channel 的发送字节累计。
+// ScreenWireSnapshots 返回会话所有 screen channel 的发送字节累计，包含当前已连接客户端
+// 与已断开客户端的历史累计。
 func (terminal *TerminalSession) ScreenWireSnapshots() map[string]ScreenWireSnapshot {
 	terminal.mu.RLock()
 	clients := make([]*terminalChannelRuntime, 0, len(terminal.clients))
 	for client := range terminal.clients {
 		clients = append(clients, client)
 	}
+	history := terminal.screenWireHistory
 	terminal.mu.RUnlock()
 
-	result := make(map[string]ScreenWireSnapshot, len(clients))
+	result := make(map[string]ScreenWireSnapshot, len(clients)+1)
 	for _, client := range clients {
 		result[client.screenClientID] = client.ScreenWireSnapshot()
+	}
+	if history.FrameCount > 0 || history.WireBytes > 0 {
+		result["_disconnected"] = history
 	}
 	return result
 }

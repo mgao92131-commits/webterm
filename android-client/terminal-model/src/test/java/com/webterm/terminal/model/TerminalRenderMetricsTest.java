@@ -14,18 +14,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class TerminalRenderMetricsTest {
 
-  /**
-   * TerminalRenderMetrics.inboundScreenFrame 按 int kind 分类，
-   * 其内部 MessageKind 顺序与 ScreenMailbox.MessageKind 一致：
-   * 0=SNAPSHOT, 1=PATCH, 2=HISTORY_PAGE, 3=HISTORY_TRIM, 4=OTHER, 5=UNKNOWN。
-   */
-  private static final int SNAPSHOT = 0;
-  private static final int PATCH = 1;
-  private static final int HISTORY_PAGE = 2;
-  private static final int HISTORY_TRIM = 3;
-  private static final int OTHER = 4;
-  private static final int UNKNOWN = 5;
-
   @Before
   public void resetCounters() throws Exception {
     for (Field field : TerminalRenderMetrics.class.getDeclaredFields()) {
@@ -40,7 +28,7 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void classifySnapshot() {
-    TerminalRenderMetrics.inboundScreenFrame(SNAPSHOT, 100);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT, 100);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.snapshotFrameCount);
     assertEquals(100L, s.snapshotFrameBytes);
@@ -52,7 +40,7 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void classifyPatch() {
-    TerminalRenderMetrics.inboundScreenFrame(PATCH, 42);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.PATCH, 42);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.patchFrameCount);
     assertEquals(42L, s.patchFrameBytes);
@@ -61,7 +49,7 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void classifyHistoryPage() {
-    TerminalRenderMetrics.inboundScreenFrame(HISTORY_PAGE, 2048);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE, 2048);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.historyPageFrameCount);
     assertEquals(2048L, s.historyPageFrameBytes);
@@ -69,24 +57,23 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void classifyHistoryTrim() {
-    TerminalRenderMetrics.inboundScreenFrame(HISTORY_TRIM, 16);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM, 16);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.historyTrimFrameCount);
     assertEquals(16L, s.historyTrimFrameBytes);
   }
 
   @Test
-  public void classifyOtherAndUnknown() {
-    TerminalRenderMetrics.inboundScreenFrame(OTHER, 10);
-    TerminalRenderMetrics.inboundScreenFrame(UNKNOWN, 20);
+  public void classifyOther() {
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.OTHER, 10);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(2L, s.otherFrameCount);
-    assertEquals(30L, s.otherFrameBytes);
+    assertEquals(1L, s.otherFrameCount);
+    assertEquals(10L, s.otherFrameBytes);
   }
 
   @Test
   public void negativeBytesTreatedAsZero() {
-    TerminalRenderMetrics.inboundScreenFrame(SNAPSHOT, -50);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT, -50);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.snapshotFrameCount);
     assertEquals(0L, s.snapshotFrameBytes);
@@ -99,8 +86,14 @@ public class TerminalRenderMetricsTest {
     ExecutorService executor = Executors.newFixedThreadPool(threads);
     CountDownLatch latch = new CountDownLatch(threads);
 
+    TerminalRenderMetrics.ScreenTrafficKind[] kinds = {
+        TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT,
+        TerminalRenderMetrics.ScreenTrafficKind.PATCH,
+        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE,
+        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM
+    };
     for (int i = 0; i < threads; i++) {
-      final int kind = i % 4;
+      final TerminalRenderMetrics.ScreenTrafficKind kind = kinds[i % kinds.length];
       executor.execute(() -> {
         try {
           for (int j = 0; j < iterations; j++) {
