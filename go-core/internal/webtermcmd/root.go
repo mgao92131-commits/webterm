@@ -82,7 +82,7 @@ func newSend() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			responses, err := request(endpoint(socket), env)
+			responses, err := requestStream(endpoint(socket), env)
 			if err != nil {
 				return err
 			}
@@ -282,12 +282,33 @@ func friendlyStatusError(value string) string {
 		return value
 	}
 }
+
+const (
+	// 短请求（devices/notify/session-update）连接成功后整体读写限时。
+	shortRequestTimeout = 5 * time.Second
+	// send 是长连接流式传输，只限制等待首个响应信封的时间。
+	firstResponseTimeout = 15 * time.Second
+)
+
 func request(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error) {
+	return requestWithTimeout(ep, envelope, shortRequestTimeout, false)
+}
+
+func requestStream(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error) {
+	return requestWithTimeout(ep, envelope, firstResponseTimeout, true)
+}
+
+// clearAfterFirst 为 true 时，收到首个响应信封后清除 deadline，
+// 供 send 这类长连接流式传输使用；超时以 net.Error Timeout 形式返回。
+func requestWithTimeout(ep string, envelope localipc.Envelope, timeout time.Duration, clearAfterFirst bool) ([]localipc.Envelope, error) {
 	conn, err := localipc.Dial(ep, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	if err = conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
 	data, _ := json.Marshal(envelope)
 	if _, err = conn.Write(append(data, '\n')); err != nil {
 		return nil, err
@@ -302,6 +323,11 @@ func request(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error)
 			}
 			return nil, err
 		}
+		if clearAfterFirst && len(responses) == 0 {
+			if err = conn.SetDeadline(time.Time{}); err != nil {
+				return nil, err
+			}
+		}
 		if response.Error != "" {
 			return nil, errors.New(response.Error)
 		}
@@ -311,12 +337,17 @@ func request(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error)
 }
 func requestID() string { return fmt.Sprintf("req_%d", time.Now().UnixNano()) }
 func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, path[2:])
-		}
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
+		return path
 	}
-	return path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }
 func shortID(id string) string {
 	id = strings.TrimPrefix(id, "android_")

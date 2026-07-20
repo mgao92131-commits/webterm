@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,67 @@ func clearConfigEnv(t *testing.T) {
 		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES", "WEBTERM_AGENT_UPLOAD_MAX_BYTES",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
+	clearConfigEnv(t)
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, key := range []string{
+		"WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
+		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES",
+		"WEBTERM_AGENT_UPLOAD_MAX_BYTES",
+	} {
+		for _, value := range []string{"abc", "0", "-5"} {
+			t.Run(key+"="+value, func(t *testing.T) {
+				t.Setenv(key, value)
+				_, err := loadStrict(missing, false)
+				if err == nil {
+					t.Fatalf("%s=%s was accepted", key, value)
+				}
+				if !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), value) {
+					t.Fatalf("error %q should name %s and %q", err, key, value)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadStrictRejectsInvalidLegacyUploadEnv(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "abc")
+	_, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false)
+	if err == nil || !strings.Contains(err.Error(), "WEBTERM_MAX_UPLOAD_BYTES") || !strings.Contains(err.Error(), "abc") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadInvalidNumericEnvStillFallsBackToDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_SCROLLBACK_MAX_LINES", "abc")
+	t.Setenv("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "0")
+	cfg := Load(Options{})
+	if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines ||
+		cfg.Upload.MaxBytes != DefaultMaxUploadBytes {
+		t.Fatalf("lenient Load = %#v", cfg)
+	}
+}
+
+func TestLoadStrictRelayURLSchemeWhitelist(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, scheme := range []string{"http", "https", "ws", "wss"} {
+		t.Setenv("WEBTERM_AGENT_RELAY_URL", scheme+"://relay.example")
+		if _, err := loadStrict(missing, false); err != nil {
+			t.Fatalf("%s:// rejected: %v", scheme, err)
+		}
+	}
+	for _, rawURL := range []string{"ftp://relay.example", "file://relay.example/agent"} {
+		t.Setenv("WEBTERM_AGENT_RELAY_URL", rawURL)
+		_, err := loadStrict(missing, false)
+		if err == nil || !strings.Contains(err.Error(), "配置无效") {
+			t.Fatalf("%s should be rejected with 配置无效, got %v", rawURL, err)
+		}
 	}
 }

@@ -1,19 +1,15 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"webterm/go-core/internal/fsops"
 	"webterm/go-core/internal/infrastructure/pty"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -423,16 +419,34 @@ func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 
 func (terminal *TerminalSession) waitLoop() {
 	code, _ := terminal.process.Wait()
+
+	// 进程退出后先排空 PTY 尾部输出与最终投影，再广播 Exit，
+	// 保证客户端在收到 Exit 之前看到最终画面。超时兜底防止异常占用
+	// PTY 的进程树让会话永远无法关闭。
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	if terminal.runtime != nil {
-		_ = terminal.runtime.Close()
+		_ = terminal.runtime.DrainAndClose(ctx)
 	}
+	terminal.flushClientScreens(ctx)
+	terminal.broadcastExit(code)
 	// Wait only observes child termination. Close owns the backend handles and
 	// must still run on natural shell exit to release ConPTY/Job/pipes.
 	if terminal.process != nil {
 		_ = terminal.process.Close()
 	}
 	terminal.markClosed()
-	terminal.broadcastExit(code)
+}
+
+// flushClientScreens 等待各客户端尚未写出的最终屏幕帧完成 socket 写入，
+// 使 Exit 不会超过最后一帧先到达客户端。
+func (terminal *TerminalSession) flushClientScreens(ctx context.Context) {
+	terminal.mu.RLock()
+	clients := terminal.clientSnapshotLocked()
+	terminal.mu.RUnlock()
+	for _, client := range clients {
+		client.flushScreenPending(ctx)
+	}
 }
 
 func (terminal *TerminalSession) markClosed() {
@@ -524,167 +538,6 @@ func (terminal *TerminalSession) broadcastInfo() {
 	for _, client := range clients {
 		client.SendInfo()
 	}
-}
-
-// HandleCLICommand 处理 CLI 主动发起的命令请求。
-func (terminal *TerminalSession) HandleCLICommand(conn net.Conn, cmd protocol.CLICommand) {
-	switch cmd.Type {
-	case "download":
-		terminal.handleDownloadCommand(conn, cmd)
-	default:
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   cmd.Type + "_status",
-			Status: "failed",
-			Error:  "unknown_command",
-		})
-	}
-}
-
-func (terminal *TerminalSession) handleDownloadCommand(conn net.Conn, cmd protocol.CLICommand) {
-	terminal.mu.RLock()
-	if terminal.status == StatusClosed {
-		terminal.mu.RUnlock()
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "session_closed",
-		})
-		return
-	}
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-
-	if len(clients) == 0 {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "android_not_connected",
-		})
-		return
-	}
-
-	targetPath, err := fsops.ResolveCLIPath(cmd.CWD, cmd.FilePath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "invalid_path",
-		})
-		return
-	}
-
-	info, err := os.Stat(targetPath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "file_not_found",
-		})
-		return
-	}
-	if !info.Mode().IsRegular() {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "not_a_regular_file",
-		})
-		return
-	}
-
-	f, err := os.Open(targetPath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "permission_denied",
-		})
-		return
-	}
-	_ = f.Close()
-
-	downloadID := generateDownloadID()
-	task := &DownloadTask{
-		ID:        downloadID,
-		SessionID: terminal.id,
-		Path:      targetPath,
-		FileName:  filepath.Base(targetPath),
-		Size:      info.Size(),
-		StateChan: make(chan protocol.CLIResponse, 32),
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-	}
-	terminal.manager.AddDownloadTask(terminal.id, task)
-
-	writeCLIResponse(conn, protocol.CLIResponse{
-		Kind:       "response",
-		Type:       "download_status",
-		Status:     "preparing",
-		DownloadID: downloadID,
-		FilePath:   task.FileName,
-		TotalBytes: task.Size,
-	})
-
-	for {
-		select {
-		case event, ok := <-task.StateChan:
-			if !ok {
-				return
-			}
-			writeCLIResponse(conn, event)
-			if event.Status == "complete" || event.Status == "failed" {
-				terminal.manager.RemoveDownloadTask(downloadID)
-				return
-			}
-		case <-time.After(10 * time.Minute):
-			writeCLIResponse(conn, protocol.CLIResponse{
-				Kind:   "response",
-				Type:   "download_status",
-				Status: "failed",
-				Error:  "timeout",
-			})
-			terminal.manager.RemoveDownloadTask(downloadID)
-			return
-		}
-	}
-}
-
-// OnDownloadProgress 处理 Android 回传的下载进度。
-func (terminal *TerminalSession) OnDownloadProgress(downloadID string, current, total int64) {
-	task, ok := terminal.manager.PeekDownloadTask(downloadID)
-	if !ok {
-		return
-	}
-	select {
-	case task.StateChan <- protocol.CLIResponse{
-		Kind:             "response",
-		Type:             "download_status",
-		Status:           "progress",
-		DownloadID:       downloadID,
-		BytesTransferred: current,
-		TotalBytes:       total,
-	}:
-	default:
-		// 通道满则丢弃，避免阻塞终端
-	}
-}
-
-func writeCLIResponse(conn net.Conn, resp protocol.CLIResponse) {
-	if resp.Timestamp == 0 {
-		resp.Timestamp = time.Now().Unix()
-	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return
-	}
-	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, _ = conn.Write(append(data, '\n'))
 }
 
 func (terminal *TerminalSession) clientSnapshotLocked() []*terminalChannelRuntime {

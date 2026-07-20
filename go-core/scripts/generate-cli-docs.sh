@@ -27,13 +27,19 @@ render webterm.md ./cmd/webterm
 render webterm-send.md ./cmd/webterm send
 render webterm-devices.md ./cmd/webterm devices
 render webterm-notify.md ./cmd/webterm notify
+render webterm-completion.md ./cmd/webterm completion
 render webterm-agent.md ./cmd/webterm-agent
 append webterm-agent.md 'run' ./cmd/webterm-agent run
 append webterm-agent.md 'config init' ./cmd/webterm-agent config init
 append webterm-agent.md 'config show' ./cmd/webterm-agent config show
 append webterm-agent.md 'config validate' ./cmd/webterm-agent config validate
+append webterm-agent.md 'config path' ./cmd/webterm-agent config path
+append webterm-agent.md 'completion' ./cmd/webterm-agent completion
 render webterm-relay.md ./cmd/webterm-relay
 append webterm-relay.md 'run' ./cmd/webterm-relay run
 append webterm-relay.md 'config init' ./cmd/webterm-relay config init
 append webterm-relay.md 'config validate' ./cmd/webterm-relay config validate
+append webterm-relay.md 'config show' ./cmd/webterm-relay config show
+append webterm-relay.md 'config path' ./cmd/webterm-relay config path
+append webterm-relay.md 'completion' ./cmd/webterm-relay completion
 append webterm-relay.md 'admin create' ./cmd/webterm-relay admin create

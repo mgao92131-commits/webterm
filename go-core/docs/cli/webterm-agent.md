@@ -16,26 +16,30 @@ Available Commands:
   version     显示版本
 
 Flags:
-  -h, --help   help for webterm-agent
+  -c, --config string         配置文件路径
+  -h, --help                  help for webterm-agent
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
 
 Use "webterm-agent [command] --help" for more information about a command.
 
 
 ## run
 
-启动 Relay Runtime、Unix Socket 本地 IPC 与 PTY 会话。前提：配置中的 Relay URL 和 Secret 有效。
+启动 Relay Runtime、本地 IPC 与 PTY/ConPTY 会话。前提：配置中的 Relay URL 和 Secret 有效。
 
 Usage:
   webterm-agent run [flags]
 
 Examples:
   webterm-agent run
-  webterm-agent run --config ./agent.json --socket unix:/tmp/webterm.sock
+  webterm-agent run --config ./agent.json --ipc-endpoint unix:/tmp/webterm.sock
 
 Flags:
-  -c, --config string   配置文件路径
-  -h, --help            help for run
-      --socket string   覆盖 Unix Socket 路径
+  -h, --help   help for run
+
+Global Flags:
+  -c, --config string         配置文件路径
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
 
 
 ## config init
@@ -49,6 +53,10 @@ Flags:
       --force         覆盖已有配置
   -h, --help          help for init
       --path string   写入路径
+
+Global Flags:
+  -c, --config string         配置文件路径
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
 
 
 ## config show
@@ -64,6 +72,9 @@ Flags:
   -h, --help            help for show
       --json            以紧凑 JSON 输出
 
+Global Flags:
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+
 
 ## config validate
 
@@ -75,3 +86,34 @@ Usage:
 Flags:
   -c, --config string   配置文件路径
   -h, --help            help for validate
+
+Global Flags:
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+
+
+## config path
+
+显示默认配置路径
+
+Usage:
+  webterm-agent config path [flags]
+
+Flags:
+  -h, --help   help for path
+
+Global Flags:
+  -c, --config string         配置文件路径
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+
+
+## completion
+
+Usage:
+  webterm-agent completion [bash|zsh|fish|powershell] [flags]
+
+Flags:
+  -h, --help   help for completion
+
+Global Flags:
+  -c, --config string         配置文件路径
+      --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent

@@ -46,7 +46,6 @@ type Manager struct {
 	managerClients map[managerSink]struct{}
 	defaults       TerminalDefaults
 	sessionEnv     map[string]string
-	downloadTasks  *DownloadTaskRegistry
 }
 
 type TerminalDefaults struct {
@@ -76,7 +75,6 @@ func NewManager(defaults ...TerminalDefaults) *Manager {
 		processIndex:   NewProcessSessionIndex(),
 		managerClients: make(map[managerSink]struct{}),
 		defaults:       config,
-		downloadTasks:  NewDownloadTaskRegistry(),
 	}
 }
 
@@ -255,25 +253,4 @@ type managerSink interface {
 // 优先匹配 session 的 shell PID；否则匹配每层 PID 对应的 TTY 路径。
 func (manager *Manager) ResolveSessionForPID(pid int) (string, error) {
 	return manager.processIndex.Resolve(pid)
-}
-
-// AddDownloadTask 注册一个下载任务。
-func (manager *Manager) AddDownloadTask(sessionID string, task *DownloadTask) {
-	manager.downloadTasks.Add(sessionID, task)
-}
-
-// GetDownloadTask 首次消费返回任务，但不删除；任务会在完成/失败/超时后由 RemoveDownloadTask 删除。
-// 已过期或已被消费的任务返回 false。
-func (manager *Manager) GetDownloadTask(id string) (*DownloadTask, bool) {
-	return manager.downloadTasks.Consume(id)
-}
-
-// PeekDownloadTask 只读查询任务，不删除。用于接收 Android 进度回传。
-func (manager *Manager) PeekDownloadTask(id string) (*DownloadTask, bool) {
-	return manager.downloadTasks.Peek(id)
-}
-
-// RemoveDownloadTask 强制移除并关闭任务通道。
-func (manager *Manager) RemoveDownloadTask(id string) {
-	manager.downloadTasks.Remove(id)
 }

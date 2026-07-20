@@ -63,6 +63,38 @@ Flags:
   -h, --help            help for validate
 
 
+## config show
+
+显示配置
+
+Usage:
+  webterm-relay config show [flags]
+
+Flags:
+  -c, --config string   Relay 配置文件
+  -h, --help            help for show
+
+
+## config path
+
+显示默认配置路径
+
+Usage:
+  webterm-relay config path [flags]
+
+Flags:
+  -h, --help   help for path
+
+
+## completion
+
+Usage:
+  webterm-relay completion [bash|zsh|fish|powershell] [flags]
+
+Flags:
+  -h, --help   help for completion
+
+
 ## admin create
 
 创建管理员

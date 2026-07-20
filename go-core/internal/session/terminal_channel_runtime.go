@@ -264,7 +264,18 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-client.done:
-			return
+			// 关闭前排空已入队的控制消息（如 Exit）：send 缓冲与 done 同时
+			// 就绪时 select 随机选择，直接 return 会按概率丢失最后一帧。
+			for {
+				select {
+				case message := <-client.send:
+					if !client.writeMessage(ctx, message) {
+						return
+					}
+				default:
+					return
+				}
+			}
 		case message := <-client.send:
 			if !client.writeMessage(ctx, message) {
 				return

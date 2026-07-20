@@ -35,6 +35,18 @@ type relayConfig struct {
 	DevPrintOTP        bool                    `json:"-"`
 }
 
+// redactedSecret 与 Agent 侧 config.RedactedSecret 保持一致。
+const redactedSecret = "********"
+
+// Redacted 返回脱敏后的配置副本供 config show 输出；值拷贝，不修改原配置。
+func (cfg relayConfig) Redacted() relayConfig {
+	copy := cfg
+	if copy.SMTP.Password != "" {
+		copy.SMTP.Password = redactedSecret
+	}
+	return copy
+}
+
 func main() {
 	root := &cobra.Command{Use: "webterm-relay", Short: "运行 WebTerm Relay", SilenceErrors: true, SilenceUsage: true, Args: noArgs}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
@@ -115,7 +127,7 @@ func configCmd() *cobra.Command {
 		if err != nil {
 			return usageError{err}
 		}
-		return json.NewEncoder(os.Stdout).Encode(cfg)
+		return json.NewEncoder(os.Stdout).Encode(cfg.Redacted())
 	}}
 	validate := &cobra.Command{Use: "validate", Short: "校验配置", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		_, err := load(path)

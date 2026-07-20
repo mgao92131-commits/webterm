@@ -1,7 +1,6 @@
 package session
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"webterm/go-core/internal/protocol"
 )
 
 func TestManagerCreateListClose(t *testing.T) {
@@ -47,7 +44,8 @@ func TestManagerCreateListClose(t *testing.T) {
 }
 
 func TestManagerBroadcastsSessionLifecycle(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	sink := &recordingSink{}
 	manager.AttachManagerSink(sink)
 	defer manager.RemoveManagerSink(sink)
@@ -103,7 +101,8 @@ func (sink *recordingSink) all() []ManagerMessage {
 }
 
 func TestManagerTitleBroadcast(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	sink := &recordingSink{}
 	manager.AttachManagerSink(sink)
 	defer manager.RemoveManagerSink(sink)
@@ -116,8 +115,7 @@ func TestManagerTitleBroadcast(t *testing.T) {
 	defer terminal.Close()
 
 	// 往 stdin 写入命令，让 shell 执行并向 stdout 输出 OSC 标题更新转义序列
-	// 使用 printf 格式化八进制 \033 (ESC) 和 \007 (BEL)
-	cmdStr := "printf '\\033]0;IntegratedTitle\\007\\n'\r"
+	cmdStr := testTitleInput("IntegratedTitle")
 	if err := terminal.WriteInput([]byte(cmdStr)); err != nil {
 		t.Fatalf("WriteInput returned error: %v", err)
 	}
@@ -146,14 +144,15 @@ func TestManagerTitleBroadcast(t *testing.T) {
 }
 
 func TestManagerWorkingDirectoryComesFromRuntimeEffect(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	defer terminal.Close()
 
-	if err := terminal.WriteInput([]byte("printf '\\033]7;file://localhost/tmp\\007\\n'\r")); err != nil {
+	if err := terminal.WriteInput([]byte(testOSC7Input("file://localhost/tmp"))); err != nil {
 		t.Fatalf("WriteInput returned error: %v", err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -167,7 +166,8 @@ func TestManagerWorkingDirectoryComesFromRuntimeEffect(t *testing.T) {
 }
 
 func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
@@ -191,7 +191,7 @@ func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 	// 2. 通过子进程 PID 沿父进程链解析到 session
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "child.pid")
-	cmd := fmt.Sprintf("(sleep 3 & echo $! > %s)\r", pidFile)
+	cmd := testChildPIDInput(pidFile)
 	if err := terminal.WriteInput([]byte(cmd)); err != nil {
 		t.Fatalf("WriteInput returned error: %v", err)
 	}
@@ -227,75 +227,5 @@ func TestManagerSessionMapsAndPIDResolution(t *testing.T) {
 	}
 	if _, err := manager.ResolveSessionForPID(shellPID); err == nil {
 		t.Fatalf("expected error after closing session, got nil")
-	}
-}
-
-func TestDownloadTaskConsumeAndPeek(t *testing.T) {
-	manager := NewManager()
-
-	task := &DownloadTask{
-		ID:        "d_test",
-		SessionID: "s1",
-		Path:      "/tmp/test.txt",
-		FileName:  "test.txt",
-		Size:      1234,
-		StateChan: make(chan protocol.CLIResponse, 4),
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-	}
-	manager.AddDownloadTask("s1", task)
-
-	// Peek 可以重复读到任务
-	peek1, ok := manager.PeekDownloadTask("d_test")
-	if !ok || peek1.ID != "d_test" {
-		t.Fatalf("first Peek failed")
-	}
-	peek2, ok := manager.PeekDownloadTask("d_test")
-	if !ok || peek2.ID != "d_test" {
-		t.Fatalf("second Peek failed")
-	}
-
-	// 首次 Get 消费成功，任务仍保留（供 Peek 查找进度）
-	got, ok := manager.GetDownloadTask("d_test")
-	if !ok || got.ID != "d_test" || !got.consumed {
-		t.Fatalf("first Get should consume task")
-	}
-
-	// 再次 Get 应失败（一次性消费）
-	if _, ok := manager.GetDownloadTask("d_test"); ok {
-		t.Fatalf("second Get should fail")
-	}
-
-	// Peek 仍能查到任务，直到 RemoveDownloadTask 删除
-	if _, ok := manager.PeekDownloadTask("d_test"); !ok {
-		t.Fatalf("Peek after consume should still find task")
-	}
-
-	manager.RemoveDownloadTask("d_test")
-	if _, ok := manager.PeekDownloadTask("d_test"); ok {
-		t.Fatalf("Peek after remove should fail")
-	}
-}
-
-func TestDownloadTaskExpires(t *testing.T) {
-	manager := NewManager()
-
-	task := &DownloadTask{
-		ID:        "d_expired",
-		SessionID: "s1",
-		Path:      "/tmp/test.txt",
-		FileName:  "test.txt",
-		Size:      100,
-		StateChan: make(chan protocol.CLIResponse, 1),
-		CreatedAt: time.Now().Add(-20 * time.Minute),
-		ExpiresAt: time.Now().Add(-10 * time.Minute),
-	}
-	manager.AddDownloadTask("s1", task)
-
-	if _, ok := manager.GetDownloadTask("d_expired"); ok {
-		t.Fatalf("expired task should not be returned")
-	}
-	if _, ok := manager.PeekDownloadTask("d_expired"); ok {
-		t.Fatalf("expired task should not be peeked")
 	}
 }

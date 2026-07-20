@@ -1,23 +1,24 @@
 package session
 
 import (
-	"runtime"
 	"testing"
 	"time"
 )
 
 func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
 	}
 	defer terminal.Close()
 
-	if err := terminal.WriteInput([]byte("printf WEBTERM_GO_OK\\n\r")); err != nil {
+	if err := terminal.WriteInput([]byte(testEchoInput("WEBTERM_GO_OK"))); err != nil {
 		t.Fatalf("WriteInput returned error: %v", err)
 	}
 
@@ -50,10 +51,12 @@ func stringContains(value string, needle string) bool {
 }
 
 func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
@@ -67,10 +70,12 @@ func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
 }
 
 func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
@@ -87,10 +92,12 @@ func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
 }
 
 func TestTerminalSessionNotificationOverride(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
@@ -113,10 +120,7 @@ func TestTerminalSessionNotificationOverride(t *testing.T) {
 }
 
 func TestTerminalNaturalExitClosesProcessResources(t *testing.T) {
-	command, args := "/bin/sh", []string{"-c", "exit 0"}
-	if runtime.GOOS == "windows" {
-		command, args = "cmd.exe", []string{"/c", "exit", "0"}
-	}
+	command, args := testExitCommand(0)
 	terminal, err := NewTerminalSession(TerminalOptions{ID: "natural-exit", CWD: ".", Command: command, Args: args})
 	if err != nil {
 		t.Fatalf("NewTerminalSession: %v", err)

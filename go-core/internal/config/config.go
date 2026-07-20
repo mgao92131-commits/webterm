@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -161,7 +162,11 @@ func loadStrict(path string, explicit bool) (Config, error) {
 			cfg = mergeConfig(cfg, file)
 		}
 	}
-	cfg = mergeConfig(cfg, envConfig())
+	envCfg, err := envConfigStrict()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg = mergeConfig(cfg, envCfg)
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
 	if cfg.Relay.URL == "" {
 		return Config{}, fmt.Errorf("配置无效：relay.url 必须设置")
@@ -169,6 +174,11 @@ func loadStrict(path string, explicit bool) (Config, error) {
 	parsed, err := url.Parse(cfg.Relay.URL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return Config{}, fmt.Errorf("配置无效：relay.url 无效")
+	}
+	switch parsed.Scheme {
+	case "http", "https", "ws", "wss":
+	default:
+		return Config{}, fmt.Errorf("配置无效：relay.url 协议 %q 不支持，仅允许 http、https、ws、wss", parsed.Scheme)
 	}
 	if cfg.Relay.Secret == "" {
 		return Config{}, fmt.Errorf("配置无效：relay.secret 必须设置")
@@ -228,7 +238,19 @@ func readConfigFile(path string) Config {
 }
 
 func envConfig() Config {
-	return Config{
+	// Load 是遗留的宽松加载路径，没有 error 返回值；数字环境变量非法时
+	// 保持回退默认值的旧行为。严格报错由 LoadStrict 使用的 envConfigStrict 提供。
+	cfg, _ := envConfigStrict()
+	return cfg
+}
+
+// envConfigStrict 与 envConfig 读取相同的环境变量，但数字变量非空却无法
+// 解析为正整数时返回明确错误，而不是静默回退默认值。
+func envConfigStrict() (Config, error) {
+	lines, errLines := envIntStrict("WEBTERM_AGENT_SCROLLBACK_MAX_LINES")
+	scrollBytes, errBytes := envIntStrict("WEBTERM_AGENT_SCROLLBACK_MAX_BYTES")
+	uploadBytes, errUpload := envIntStrict("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "WEBTERM_MAX_UPLOAD_BYTES")
+	cfg := Config{
 		IPCEndpoint: envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_IPC_ENDPOINT"),
 		SocketPath:  envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_SOCKET_PATH"),
 		Relay: RelayConfig{
@@ -242,11 +264,12 @@ func envConfig() Config {
 			CWD:     env("WEBTERM_AGENT_SHELL_CWD"),
 		},
 		Scrollback: ScrollbackConfig{
-			MaxLines: int(envInt64("WEBTERM_AGENT_SCROLLBACK_MAX_LINES")),
-			MaxBytes: int(envInt64("WEBTERM_AGENT_SCROLLBACK_MAX_BYTES")),
+			MaxLines: int(lines),
+			MaxBytes: int(scrollBytes),
 		},
-		Upload: UploadConfig{MaxBytes: envIntCompat("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "WEBTERM_MAX_UPLOAD_BYTES")},
+		Upload: UploadConfig{MaxBytes: uploadBytes},
 	}
+	return cfg, errors.Join(errLines, errBytes, errUpload)
 }
 
 func mergeConfig(base Config, override Config) Config {
@@ -296,38 +319,37 @@ var deprecatedEnvWarnings sync.Map
 // The warning is deliberately emitted once per variable so long-running Agent
 // processes do not flood logs while making the migration visible.
 func envCompat(current string, legacy ...string) string {
+	_, value := envCompatKey(current, legacy...)
+	return value
+}
+
+// envCompatKey 与 envCompat 相同，但同时返回实际生效的变量名，
+// 供严格校验在报错时指名真正的来源变量。
+func envCompatKey(current string, legacy ...string) (string, string) {
 	if value := os.Getenv(current); value != "" {
-		return value
+		return current, value
 	}
 	for _, key := range legacy {
 		if value := os.Getenv(key); value != "" {
 			if _, loaded := deprecatedEnvWarnings.LoadOrStore(key, struct{}{}); !loaded {
 				fmt.Fprintf(os.Stderr, "警告：%s 已弃用，请改用 %s\n", key, current)
 			}
-			return value
+			return key, value
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func envInt64(key string) int64 {
-	raw := os.Getenv(key)
+// envIntStrict 读取正整数环境变量；变量非空但无法解析为正整数时返回
+// 包含变量名与原始值的错误，避免配置错误被静默吞掉。
+func envIntStrict(current string, legacy ...string) (int64, error) {
+	key, raw := envCompatKey(current, legacy...)
 	if raw == "" {
-		return 0
+		return 0, nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
-		return 0
+		return 0, fmt.Errorf("配置无效：%s 的值 %q 必须是正整数", key, raw)
 	}
-	return value
-}
-
-func envIntCompat(current string, legacy ...string) int64 {
-	if value := envCompat(current, legacy...); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err == nil && parsed > 0 {
-			return parsed
-		}
-	}
-	return 0
+	return value, nil
 }

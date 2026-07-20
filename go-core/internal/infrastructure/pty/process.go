@@ -3,6 +3,7 @@ package pty
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,9 +60,12 @@ func Start(opts Options) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	shellCmd, args, extraEnv, err := resolveCommand(opts)
+	shellCmd, args, extraEnv, warn, err := resolveCommand(opts)
 	if err != nil {
 		return nil, err
+	}
+	if warn != "" {
+		log.Printf("%s", warn)
 	}
 	b, err := startBackend(shellCmd, args, cwd, buildEnv(os.Environ(), opts.Env, extraEnv), cols, rows)
 	if err != nil {
@@ -166,33 +170,33 @@ func validateCWD(cwd string) (string, error) {
 	return abs, nil
 }
 
-func resolveCommand(opts Options) (string, []string, map[string]string, error) {
+// resolveCommand 解析最终启动的 shell 命令。warn 非空时表示 Hook 注入被跳过，
+// 由调用方负责上抛，不影响进程启动。
+func resolveCommand(opts Options) (string, []string, map[string]string, string, error) {
 	if opts.Command != "" {
-		return opts.Command, opts.Args, nil, nil
+		// 显式配置的 PowerShell 同样需要注入 Session Hook，否则 Agent hook 不生效。
+		if isPowerShell(opts.Command) {
+			if hook := powerShellHookPath(opts.Env); hook != "" {
+				args, warn := applyPowerShellHook(opts.Command, opts.Args, hook)
+				return opts.Command, args, nil, warn, nil
+			}
+		}
+		return opts.Command, opts.Args, nil, "", nil
 	}
 	if runtime.GOOS == "windows" {
-		powerShellArgs := func() []string {
-			hook := ""
-			if opts.Env != nil {
-				hook = opts.Env["WEBTERM_POWERSHELL_HOOK"]
-			}
-			if hook != "" {
-				if info, err := os.Stat(hook); err == nil && !info.IsDir() {
-					return []string{"-NoLogo", "-NoExit", "-Command", ". '" + strings.ReplaceAll(hook, "'", "''") + "'"}
-				}
-			}
-			return []string{"-NoLogo"}
-		}
+		hook := powerShellHookPath(opts.Env)
 		if pwsh, err := exec.LookPath("pwsh.exe"); err == nil {
-			return pwsh, powerShellArgs(), nil, nil
+			args, _ := applyPowerShellHook(pwsh, nil, hook)
+			return pwsh, args, nil, "", nil
 		}
 		if powershell, err := exec.LookPath("powershell.exe"); err == nil {
-			return powershell, powerShellArgs(), nil, nil
+			args, _ := applyPowerShellHook(powershell, nil, hook)
+			return powershell, args, nil, "", nil
 		}
 		if comspec := os.Getenv("ComSpec"); comspec != "" {
-			return comspec, nil, nil, nil
+			return comspec, nil, nil, "", nil
 		}
-		return "cmd.exe", nil, nil, nil
+		return "cmd.exe", nil, nil, "", nil
 	}
 	candidates := []string{os.Getenv("SHELL"), "/bin/zsh", "/bin/bash", "/bin/sh"}
 	for _, c := range candidates {
@@ -204,10 +208,71 @@ func resolveCommand(opts Options) (string, []string, map[string]string, error) {
 			if opts.Env != nil {
 				initDir = opts.Env[shellInitDirEnv]
 			}
-			return applyShellInit(c, initDir)
+			cmd, args, env, err := applyShellInit(c, initDir)
+			return cmd, args, env, "", err
 		}
 	}
-	return "", nil, nil, errors.New("no executable shell found")
+	return "", nil, nil, "", errors.New("no executable shell found")
+}
+
+// isPowerShell 判断命令是否为 PowerShell（pwsh 或 Windows PowerShell）。
+func isPowerShell(command string) bool {
+	switch strings.ToLower(filepath.Base(command)) {
+	case "pwsh.exe", "powershell.exe", "pwsh", "powershell":
+		return true
+	}
+	return false
+}
+
+// powerShellHookPath 返回有效的 Session Hook 脚本路径；未配置或文件不存在时返回空。
+func powerShellHookPath(env map[string]string) string {
+	if env == nil {
+		return ""
+	}
+	hook := env["WEBTERM_POWERSHELL_HOOK"]
+	if hook == "" {
+		return ""
+	}
+	if info, err := os.Stat(hook); err == nil && !info.IsDir() {
+		return hook
+	}
+	return ""
+}
+
+// applyPowerShellHook 把 Session Hook 注入到用户参数中并保留用户参数。
+// PowerShell 只允许一个 -Command，因此用户的其他参数放在注入的 -Command 之前。
+// 用户已显式使用 -Command 或 -File 时无法安全包装 Hook，原样返回参数并给出 warn。
+func applyPowerShellHook(command string, args []string, hookPath string) ([]string, string) {
+	hasNoLogo := false
+	hasNoExit := false
+	for _, arg := range args {
+		switch {
+		case strings.EqualFold(arg, "-NoLogo"):
+			hasNoLogo = true
+		case strings.EqualFold(arg, "-NoExit"):
+			hasNoExit = true
+		case strings.EqualFold(arg, "-Command"), strings.EqualFold(arg, "-File"):
+			if hookPath == "" {
+				return args, ""
+			}
+			warn := fmt.Sprintf("webterm: %s 已显式使用 %s，Session Hook 未注入", filepath.Base(command), arg)
+			return args, warn
+		}
+	}
+	injected := make([]string, 0, len(args)+4)
+	if !hasNoLogo {
+		injected = append(injected, "-NoLogo")
+	}
+	if hookPath == "" {
+		// 无 Hook 可注入时只保证安静的启动横幅。
+		return append(injected, args...), ""
+	}
+	if !hasNoExit {
+		injected = append(injected, "-NoExit")
+	}
+	injected = append(injected, args...)
+	injected = append(injected, "-Command", ". '"+strings.ReplaceAll(hookPath, "'", "''")+"'")
+	return injected, ""
 }
 
 func applyShellInit(shellCmd, initDir string) (string, []string, map[string]string, error) {

@@ -30,7 +30,8 @@ func waitForFrameCount(t *testing.T, client *terminalChannelRuntime, want uint64
 }
 
 func TestTerminalChannelRuntimeRecordsSnapshotAndPatchBytes(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
@@ -89,7 +90,8 @@ func TestTerminalChannelRuntimeRecordsSnapshotAndPatchBytes(t *testing.T) {
 }
 
 func TestTerminalChannelRuntimeRecordsHistoryPageAsOther(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
@@ -119,7 +121,8 @@ func TestTerminalChannelRuntimeRecordsHistoryPageAsOther(t *testing.T) {
 }
 
 func TestTerminalChannelRuntimeWriteMessageRecordsTotalBytes(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
@@ -142,7 +145,8 @@ func TestTerminalChannelRuntimeWriteMessageRecordsTotalBytes(t *testing.T) {
 }
 
 func TestTerminalChannelRuntimeConcurrentEnqueueDoesNotLoseBytes(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +40,66 @@ func TestLoadEnvironmentOverridesFile(t *testing.T) {
 	}
 	if cfg.StorePath != filepath.Join(filepath.Dir(path), "store.json") {
 		t.Fatalf("store path = %q", cfg.StorePath)
+	}
+}
+
+func TestRedactedMasksSMTPPassword(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_SMTP_PASSWORD", "")
+	path := filepath.Join(t.TempDir(), "relay.json")
+	if err := os.WriteFile(path, []byte(`{"smtp":{"host":"smtp.example","port":587,"username":"u","password":"file-secret","from":"noreply@example"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cfg.Redacted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "file-secret") {
+		t.Fatalf("redacted output leaks password: %s", data)
+	}
+	if !strings.Contains(string(data), redactedSecret) {
+		t.Fatalf("redacted output missing mask: %s", data)
+	}
+	if cfg.SMTP.Password != "file-secret" {
+		t.Fatal("Redacted mutated original config")
+	}
+}
+
+func TestRedactedMasksSMTPPasswordFromEnvironment(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_SMTP_PASSWORD", "env-secret")
+	path := filepath.Join(t.TempDir(), "relay.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SMTP.Password != "env-secret" {
+		t.Fatalf("env password not applied: %#v", cfg.SMTP)
+	}
+	data, err := json.Marshal(cfg.Redacted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "env-secret") {
+		t.Fatalf("redacted output leaks env password: %s", data)
+	}
+	if !strings.Contains(string(data), redactedSecret) {
+		t.Fatalf("redacted output missing mask: %s", data)
+	}
+	if cfg.SMTP.Password != "env-secret" {
+		t.Fatal("Redacted mutated original config")
+	}
+}
+
+func TestRedactedKeepsEmptyPasswordEmpty(t *testing.T) {
+	cfg := relayConfig{}
+	redacted := cfg.Redacted()
+	if redacted.SMTP.Password != "" {
+		t.Fatalf("empty password became %q", redacted.SMTP.Password)
 	}
 }

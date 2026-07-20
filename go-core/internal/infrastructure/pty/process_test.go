@@ -100,7 +100,7 @@ func TestResolveCommandReadsShellInitDirFromOpts(t *testing.T) {
 	}
 	t.Setenv("SHELL", "/bin/bash")
 
-	cmd, args, _, err := resolveCommand(Options{
+	cmd, args, _, _, err := resolveCommand(Options{
 		Env: map[string]string{shellInitDirEnv: tmp},
 	})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestResolveCommandReadsShellInitDirFromOpts(t *testing.T) {
 func TestResolveCommandNoShellInitDirWithoutEnv(t *testing.T) {
 	t.Setenv("SHELL", "/bin/bash")
 
-	cmd, args, _, err := resolveCommand(Options{})
+	cmd, args, _, _, err := resolveCommand(Options{})
 	if err != nil {
 		t.Fatalf("resolveCommand: %v", err)
 	}

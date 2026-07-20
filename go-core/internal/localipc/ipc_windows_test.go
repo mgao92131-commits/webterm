@@ -17,33 +17,43 @@ func TestNamedPipeListenAndDial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	done := make(chan error, 1)
+	expected := []byte("中文")
+	serverDone := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
-			done <- err
+			serverDone <- err
 			return
 		}
 		defer conn.Close()
-		_, err = io.Copy(conn, conn)
-		done <- err
+		data := make([]byte, len(expected))
+		if _, err := io.ReadFull(conn, data); err != nil {
+			serverDone <- err
+			return
+		}
+		_, err = conn.Write(data)
+		serverDone <- err
 	}()
 	client, err := Dial(endpoint, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	if _, err = client.Write([]byte("中文")); err != nil {
+	if _, err = client.Write(expected); err != nil {
 		t.Fatal(err)
 	}
-	buf := make([]byte, len("中文"))
+	buf := make([]byte, len(expected))
 	if _, err = io.ReadFull(client, buf); err != nil {
 		t.Fatal(err)
 	}
-	if string(buf) != "中文" {
-		t.Fatalf("got %q", buf)
+	for i := range expected {
+		if buf[i] != expected[i] {
+			t.Fatalf("byte %d: got %q want %q", i, buf[i], expected[i])
+		}
 	}
-	if err = <-done; err != nil && err != net.ErrClosed {
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-serverDone; err != nil && err != net.ErrClosed {
 		t.Fatal(err)
 	}
 }
