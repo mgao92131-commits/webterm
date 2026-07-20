@@ -112,6 +112,10 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
 		ProcThreadAttributeList: attributeList.List(),
 	}
+	// TEMP-DIAG: CI 诊断开关，验证子进程 std handles 来源后删除。
+	if os.Getenv("WEBTERM_PTY_DEBUG_STDHANDLES") == "1" {
+		startupInfo.Flags |= windows.STARTF_USESTDHANDLES
+	}
 	processInfo := new(windows.ProcessInformation)
 	if err := windows.CreateProcess(nil, commandLine, nil, nil, false,
 		windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT,
