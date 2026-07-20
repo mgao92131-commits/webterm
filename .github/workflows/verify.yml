@@ -68,6 +68,10 @@ jobs:
         with:
           go-version-file: go-core/go.mod
           cache-dependency-path: go-core/go.sum
+      # TEMP-DIAG: 定位 ConPTY 子进程 0xC0000142 根因，修复后删除该步骤。
+      - name: ConPTY launch diagnostics
+        continue-on-error: true
+        run: go test -v -count=1 -run 'TestConPTYLaunchDiagnostics' ./internal/infrastructure/pty
       - run: go test ./internal/localipc ./internal/infrastructure/pty ./internal/session
       - run: go build ./cmd/webterm ./cmd/webterm-agent
 

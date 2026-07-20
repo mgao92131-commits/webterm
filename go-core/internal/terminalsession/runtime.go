@@ -442,6 +442,47 @@ func (r *Runtime) DrainAndClose(ctx context.Context) error {
 	return nil
 }
 
+// waitReadDrained 等待 PTY 输出流排空：优先等 readLoop 退出（Unix EOF/EIO）；
+// ConPTY 等不 EOF 的平台以 100ms 连续静默（无新输出事件且队列已空）判定。
+// 调用方必须保证进程已退出（不会再有新输出），该假设由 waitLoop 的调用
+// 时序（process.Wait 之后）保证。
+func (r *Runtime) waitReadDrained(ctx context.Context) {
+	const (
+		tick        = 20 * time.Millisecond
+		quietNeeded = 5 // 5 * 20ms = 100ms 连续静默
+	)
+	select {
+	case <-r.readDone:
+		return
+	default:
+	}
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	lastEvents := r.ptyOutputEvents.Load()
+	quiet := 0
+	for {
+		select {
+		case <-r.readDone:
+			return
+		case <-r.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			events := r.ptyOutputEvents.Load()
+			if events == lastEvents && len(r.events) == 0 {
+				quiet++
+				if quiet >= quietNeeded {
+					return
+				}
+			} else {
+				quiet = 0
+				lastEvents = events
+			}
+		}
+	}
+}
+
 // drain 执行排空但不关闭 runtime；返回 false 表示 ctx 超时或被提前 Close。
 func (r *Runtime) drain(ctx context.Context) bool {
 	r.draining.Store(true)
@@ -449,14 +490,10 @@ func (r *Runtime) drain(ctx context.Context) bool {
 		r.inputWriter.Close()
 	}
 
-	// 1. 等待 readLoop 读完 PTY 尾部（EOF 或读错误后退出）。
-	select {
-	case <-r.readDone:
-	case <-r.stopCh:
-		return false
-	case <-ctx.Done():
-		return false
-	}
+	// 1. 等待 PTY 输出排空。Unix 下子进程退出后 readLoop 会读到 EOF/EIO 退出；
+	// Windows ConPTY 的输出管道不随子进程退出 EOF（conhost 存活至
+	// ClosePseudoConsole），因此以连续静默窗口兜底判定无更多输出。
+	r.waitReadDrained(ctx)
 
 	// 2. 屏障事件：actor 按 FIFO 处理到屏障时，之前所有 ptyOutputEvent 都已
 	// 写入引擎；在屏障内强制执行最后一次投影，保证最终画面先于 Exit 送达。
