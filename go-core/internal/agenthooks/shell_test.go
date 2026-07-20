@@ -13,3 +13,9 @@ func TestShellHookReportsCurrentDirectoryAtPrompt(t *testing.T) {
 		t.Fatal("shell hook must report $PWD even when shell history is empty")
 	}
 }
+
+func TestPowerShellHookReportsSessionUpdate(t *testing.T) {
+	if !strings.Contains(powerShellHookTemplate, "internal session-update") || !strings.Contains(powerShellHookTemplate, "function global:prompt") {
+		t.Fatal("PowerShell hook must update session metadata from prompt")
+	}
+}

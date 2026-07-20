@@ -1,6 +1,7 @@
 package session
 
 import (
+	"runtime"
 	"testing"
 	"time"
 )
@@ -108,5 +109,27 @@ func TestTerminalSessionNotificationOverride(t *testing.T) {
 	info = terminal.Info()
 	if info.Notification == nil || info.Notification.Importance != "quiet" || info.Notification.Message != "Running" {
 		t.Errorf("expected notification to be overridden, got %+v", info.Notification)
+	}
+}
+
+func TestTerminalNaturalExitClosesProcessResources(t *testing.T) {
+	command, args := "/bin/sh", []string{"-c", "exit 0"}
+	if runtime.GOOS == "windows" {
+		command, args = "cmd.exe", []string{"/c", "exit", "0"}
+	}
+	terminal, err := NewTerminalSession(TerminalOptions{ID: "natural-exit", CWD: ".", Command: command, Args: args})
+	if err != nil {
+		t.Fatalf("NewTerminalSession: %v", err)
+	}
+	defer terminal.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for terminal.Info().Status != StatusClosed && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if terminal.Info().Status != StatusClosed {
+		t.Fatal("natural exit did not close terminal")
+	}
+	if err := terminal.process.Resize(80, 24); err == nil {
+		t.Fatal("process resources remain open after natural exit")
 	}
 }

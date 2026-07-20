@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,41 +22,67 @@ import (
 
 const version = "0.1.0-dev"
 
+type usageError struct{ error }
+
 type relayConfig struct {
-	Listen             string `json:"listen"`
-	StorePath          string `json:"storePath"`
-	MaxPendingMessages int    `json:"maxPendingMessages"`
-	MaxPendingBytes    int64  `json:"maxPendingBytes"`
+	Listen             string                  `json:"listen"`
+	StorePath          string                  `json:"storePath"`
+	MaxPendingMessages int                     `json:"maxPendingMessages"`
+	MaxPendingBytes    int64                   `json:"maxPendingBytes"`
+	AllowRegistration  bool                    `json:"allowRegistration"`
+	RequireEmailOTP    bool                    `json:"requireEmailOtp"`
+	SMTP               relaycontrol.SMTPConfig `json:"smtp"`
+	DevPrintOTP        bool                    `json:"-"`
 }
 
 func main() {
-	root := &cobra.Command{Use: "webterm-relay", Short: "运行 WebTerm Relay", SilenceErrors: true, SilenceUsage: true}
-	root.AddCommand(run(), configCmd(), admin(), &cobra.Command{Use: "version", Run: func(_ *cobra.Command, _ []string) { fmt.Println(version) }}, completion(root))
+	root := &cobra.Command{Use: "webterm-relay", Short: "运行 WebTerm Relay", SilenceErrors: true, SilenceUsage: true, Args: noArgs}
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
+	runCommand := run()
+	// Keep existing service units working while the documented form is
+	// `webterm-relay run`.
+	root.RunE = func(cmd *cobra.Command, args []string) error { return runCommand.RunE(cmd, args) }
+	root.AddCommand(runCommand, configCmd(), admin(), &cobra.Command{Use: "version", Args: noArgs, Run: func(_ *cobra.Command, _ []string) { fmt.Println(version) }}, completion(root))
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		os.Exit(exitCode(err))
 	}
 }
+func exitCode(err error) int {
+	var usage usageError
+	if errors.As(err, &usage) || strings.HasPrefix(err.Error(), "unknown command ") {
+		return 2
+	}
+	return 1
+}
+func noArgs(_ *cobra.Command, args []string) error {
+	if len(args) != 0 {
+		return usageError{errors.New("此命令不接受位置参数")}
+	}
+	return nil
+}
 func run() *cobra.Command {
-	var path, listen, level, format string
-	cmd := &cobra.Command{Use: "run", Short: "启动 Relay", Long: "启动 WebTerm Relay。前提：配置文件有效且 Store 路径可写。", Example: "  webterm-relay run --config /etc/webterm/relay.json", RunE: func(_ *cobra.Command, _ []string) error {
+	var path, listen string
+	cmd := &cobra.Command{Use: "run", Short: "启动 Relay", Long: "启动 WebTerm Relay。前提：配置文件有效且 Store 路径可写。", Example: "  webterm-relay run --config /etc/webterm/relay.json", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		cfg, err := load(path)
 		if err != nil {
-			return err
+			return usageError{err}
 		}
 		if listen != "" {
 			cfg.Listen = listen
 		}
-		_ = level
-		_ = format
-		if relaycontrol.EmailOTPRequired() && !relaycontrol.OTPDeliveryConfigured() {
-			return errors.New("启用邮箱 OTP 时必须配置 SMTP")
+		cfg, err = validate(cfg, "")
+		if err != nil {
+			return usageError{err}
 		}
 		store, err := relaystore.NewPersistentStore(cfg.StorePath)
 		if err != nil {
 			return fmt.Errorf("open relay store: %w", err)
 		}
-		app := relayapp.New(relayapp.Config{Addr: cfg.Listen, MaxPendingMessages: cfg.MaxPendingMessages, MaxPendingBytes: cfg.MaxPendingBytes}, store, nil, nil)
+		app := relayapp.New(relayapp.Config{
+			Addr: cfg.Listen, MaxPendingMessages: cfg.MaxPendingMessages, MaxPendingBytes: cfg.MaxPendingBytes,
+			Control: &relaycontrol.Config{AllowRegistration: cfg.AllowRegistration, RequireEmailOTP: cfg.RequireEmailOTP, DevPrintOTP: cfg.DevPrintOTP, SMTP: cfg.SMTP},
+		}, store, nil, nil)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		fmt.Printf("webterm-relay %s listening on %s\n", version, cfg.Listen)
@@ -66,43 +94,49 @@ func run() *cobra.Command {
 	}}
 	cmd.Flags().StringVarP(&path, "config", "c", "", "Relay 配置文件")
 	cmd.Flags().StringVar(&listen, "listen", "", "临时覆盖监听地址")
-	cmd.Flags().StringVar(&level, "log-level", "info", "日志级别")
-	cmd.Flags().StringVar(&format, "log-format", "text", "text 或 json")
 	return cmd
 }
 func configCmd() *cobra.Command {
 	var path string
 	root := &cobra.Command{Use: "config", Short: "管理 Relay 配置"}
-	init := &cobra.Command{Use: "init", Short: "创建默认配置", RunE: func(_ *cobra.Command, _ []string) error {
+	var force bool
+	init := &cobra.Command{Use: "init", Short: "创建默认配置", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		target := path
 		if target == "" {
 			target = defaultPath()
 		}
-		if _, err := os.Stat(target); err == nil {
-			return errors.New("配置文件已存在；请先移除或指定其他 --path")
+		if _, err := os.Stat(target); err == nil && !force {
+			return usageError{errors.New("配置文件已存在；使用 --force 覆盖")}
 		}
 		return save(target, defaults())
 	}}
-	show := &cobra.Command{Use: "show", Short: "显示配置", RunE: func(_ *cobra.Command, _ []string) error {
+	show := &cobra.Command{Use: "show", Short: "显示配置", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		cfg, err := load(path)
 		if err != nil {
-			return err
+			return usageError{err}
 		}
 		return json.NewEncoder(os.Stdout).Encode(cfg)
 	}}
-	validate := &cobra.Command{Use: "validate", Short: "校验配置", RunE: func(_ *cobra.Command, _ []string) error { _, err := load(path); return err }}
+	validate := &cobra.Command{Use: "validate", Short: "校验配置", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
+		_, err := load(path)
+		if err != nil {
+			return usageError{err}
+		}
+		return nil
+	}}
 	for _, c := range []*cobra.Command{show, validate} {
 		c.Flags().StringVarP(&path, "config", "c", "", "Relay 配置文件")
 	}
 	init.Flags().StringVar(&path, "path", "", "配置写入路径")
-	root.AddCommand(init, show, validate, &cobra.Command{Use: "path", Short: "显示默认配置路径", Run: func(_ *cobra.Command, _ []string) { fmt.Println(defaultPath()) }})
+	init.Flags().BoolVar(&force, "force", false, "覆盖已有配置")
+	root.AddCommand(init, show, validate, &cobra.Command{Use: "path", Short: "显示默认配置路径", Args: noArgs, Run: func(_ *cobra.Command, _ []string) { fmt.Println(defaultPath()) }})
 	return root
 }
 func admin() *cobra.Command {
 	var path, user, passwordFile, role string
-	create := &cobra.Command{Use: "create", Short: "创建管理员", RunE: func(_ *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: "创建管理员", Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		if user == "" || passwordFile == "" {
-			return errors.New("--username 和 --password-file 必填")
+			return usageError{errors.New("--username 和 --password-file 必填")}
 		}
 		password, err := os.ReadFile(passwordFile)
 		if err != nil {
@@ -113,7 +147,7 @@ func admin() *cobra.Command {
 		}
 		cfg, err := load(path)
 		if err != nil {
-			return err
+			return usageError{err}
 		}
 		store, err := relaystore.NewPersistentStore(cfg.StorePath)
 		if err != nil {
@@ -131,7 +165,7 @@ func admin() *cobra.Command {
 	return root
 }
 func defaults() relayConfig {
-	return relayConfig{Listen: "127.0.0.1:19090", StorePath: "relay-store.json", MaxPendingMessages: 256, MaxPendingBytes: 4 * 1024 * 1024}
+	return relayConfig{Listen: "127.0.0.1:19090", StorePath: "relay-store.json", MaxPendingMessages: 256, MaxPendingBytes: 4 * 1024 * 1024, AllowRegistration: true}
 }
 func defaultPath() string {
 	if value := os.Getenv("WEBTERM_RELAY_CONFIG"); value != "" {
@@ -141,44 +175,125 @@ func defaultPath() string {
 }
 func load(path string) (relayConfig, error) {
 	cfg := defaults()
+	explicit := path != ""
+	configDir := ""
 	if path == "" {
 		path = defaultPath()
 	}
 	if data, err := os.ReadFile(path); err == nil {
+		configDir = filepath.Dir(path)
 		decoder := json.NewDecoder(strings.NewReader(string(data)))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&cfg); err != nil {
 			return cfg, fmt.Errorf("配置无效：%s: %w", path, err)
 		}
-	} else if !errors.Is(err, os.ErrNotExist) || os.Getenv("WEBTERM_RELAY_CONFIG") != "" {
+	} else if explicit || !errors.Is(err, os.ErrNotExist) || os.Getenv("WEBTERM_RELAY_CONFIG") != "" {
 		return cfg, fmt.Errorf("配置无效：%s: %w", path, err)
 	}
-	if value := os.Getenv("WEBTERM_RELAY_LISTEN"); value != "" {
-		cfg.Listen = value
+	if err := applyEnvironment(&cfg); err != nil {
+		return cfg, err
 	}
-	if value := os.Getenv("WEBTERM_RELAY_STORE_PATH"); value != "" {
-		cfg.StorePath = value
+	return validate(cfg, configDir)
+}
+
+func validate(cfg relayConfig, configDir string) (relayConfig, error) {
+	if cfg.Listen == "" {
+		return cfg, errors.New("server.listen 必须设置")
 	}
-	if cfg.Listen == "" || !strings.Contains(cfg.Listen, ":") {
+	if _, _, err := net.SplitHostPort(cfg.Listen); err != nil {
 		return cfg, errors.New("server.listen 无效")
 	}
 	if cfg.StorePath == "" {
 		return cfg, errors.New("storePath 必须设置")
 	}
+	storePath := cfg.StorePath
+	if configDir != "" && !filepath.IsAbs(storePath) {
+		storePath = filepath.Join(configDir, storePath)
+	}
+	absStore, err := filepath.Abs(storePath)
+	if err != nil {
+		return cfg, fmt.Errorf("storePath 无效: %w", err)
+	}
+	cfg.StorePath = absStore
+	if cfg.MaxPendingMessages <= 0 {
+		return cfg, errors.New("maxPendingMessages 必须大于 0")
+	}
 	if cfg.MaxPendingBytes <= 0 {
 		return cfg, errors.New("maxPendingBytes 必须大于 0")
 	}
+	if cfg.RequireEmailOTP && !cfg.DevPrintOTP && !cfg.SMTP.Configured() {
+		return cfg, errors.New("启用邮箱 OTP 时必须完整配置 smtp.host、smtp.port、smtp.username、smtp.password 和 smtp.from")
+	}
 	return cfg, nil
+}
+
+func applyEnvironment(cfg *relayConfig) error {
+	if value := os.Getenv("WEBTERM_RELAY_LISTEN"); value != "" {
+		cfg.Listen = value
+	} else if value := os.Getenv("WEBTERM_RELAY_ADDR"); value != "" {
+		fmt.Fprintln(os.Stderr, "警告：WEBTERM_RELAY_ADDR 已弃用，请改用 WEBTERM_RELAY_LISTEN")
+		cfg.Listen = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_STORE_PATH"); value != "" {
+		cfg.StorePath = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_PUBLIC_URL"); value != "" {
+		cfg.SMTP.PublicURL = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_SMTP_HOST"); value != "" {
+		cfg.SMTP.Host = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_SMTP_USERNAME"); value != "" {
+		cfg.SMTP.Username = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_SMTP_PASSWORD"); value != "" {
+		cfg.SMTP.Password = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_SMTP_FROM"); value != "" {
+		cfg.SMTP.From = value
+	}
+	if value := os.Getenv("WEBTERM_RELAY_SMTP_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil || port <= 0 {
+			return fmt.Errorf("smtp.port 无效")
+		}
+		cfg.SMTP.Port = port
+	}
+	if value := os.Getenv("WEBTERM_RELAY_ALLOW_REGISTRATION"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("allowRegistration 无效")
+		}
+		cfg.AllowRegistration = parsed
+	}
+	if value := os.Getenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("requireEmailOtp 无效")
+		}
+		cfg.RequireEmailOTP = parsed
+	}
+	if value := os.Getenv("WEBTERM_RELAY_DEV_PRINT_OTP"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("WEBTERM_RELAY_DEV_PRINT_OTP 无效")
+		}
+		cfg.DevPrintOTP = parsed
+	}
+	return nil
 }
 func save(path string, cfg relayConfig) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 func completion(root *cobra.Command) *cobra.Command {
-	return &cobra.Command{Use: "completion [bash|zsh|fish|powershell]", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	return &cobra.Command{Use: "completion [bash|zsh|fish|powershell]", Args: exactCompletionShell, RunE: func(_ *cobra.Command, a []string) error {
 		switch a[0] {
 		case "bash":
 			return root.GenBashCompletion(os.Stdout)
@@ -189,8 +304,12 @@ func completion(root *cobra.Command) *cobra.Command {
 		case "powershell":
 			return root.GenPowerShellCompletion(os.Stdout)
 		}
-		return errors.New("unsupported shell")
+		return usageError{errors.New("不支持的 shell；请选择 bash、zsh、fish 或 powershell")}
 	}}
 }
-
-var _ = strconv.IntSize
+func exactCompletionShell(_ *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return usageError{errors.New("需要提供一个 shell：bash、zsh、fish 或 powershell")}
+	}
+	return nil
+}

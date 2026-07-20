@@ -426,6 +426,11 @@ func (terminal *TerminalSession) waitLoop() {
 	if terminal.runtime != nil {
 		_ = terminal.runtime.Close()
 	}
+	// Wait only observes child termination. Close owns the backend handles and
+	// must still run on natural shell exit to release ConPTY/Job/pipes.
+	if terminal.process != nil {
+		_ = terminal.process.Close()
+	}
 	terminal.markClosed()
 	terminal.broadcastExit(code)
 }

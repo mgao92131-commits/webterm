@@ -172,6 +172,20 @@ func requireEmailOTP() bool {
 	return os.Getenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP") == "1"
 }
 
+func (server *Server) requireEmailOTP() bool {
+	if server.config != nil {
+		return server.config.RequireEmailOTP
+	}
+	return requireEmailOTP()
+}
+
+func (server *Server) allowRegistration() bool {
+	if server.config != nil {
+		return server.config.AllowRegistration
+	}
+	return true
+}
+
 func EmailOTPRequired() bool {
 	return requireEmailOTP()
 }

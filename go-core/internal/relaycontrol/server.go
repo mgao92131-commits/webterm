@@ -18,20 +18,44 @@ type Server struct {
 	tokenTTL        time.Duration
 	refreshTokenTTL time.Duration
 	otpSender       otpSender
+	config          *Config
+}
+
+// Config contains the Relay control-plane settings supplied by the owning
+// Relay process. A nil config preserves the environment-backed behavior used
+// by existing in-process callers and tests during the transition.
+type Config struct {
+	AllowRegistration bool
+	RequireEmailOTP   bool
+	DevPrintOTP       bool
+	SMTP              SMTPConfig
 }
 
 func New(store relaystore.ControlStore, registry relayrouter.AgentRegistry) *Server {
+	return NewWithConfig(store, registry, nil)
+}
+
+func NewWithConfig(store relaystore.ControlStore, registry relayrouter.AgentRegistry, config *Config) *Server {
+	sender := otpSender(envOTPSender{})
+	if config != nil {
+		sender = configuredOTPSender{config: config.SMTP, devPrint: config.DevPrintOTP}
+	}
 	return &Server{
 		store:           store,
 		registry:        registry,
 		tokenTTL:        24 * time.Hour,
 		refreshTokenTTL: 30 * 24 * time.Hour,
-		otpSender:       envOTPSender{},
+		otpSender:       sender,
+		config:          config,
 	}
 }
 
 func NewWithStreams(store relaystore.ControlStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController) *Server {
-	server := New(store, registry)
+	return NewWithStreamsConfig(store, registry, streams, nil)
+}
+
+func NewWithStreamsConfig(store relaystore.ControlStore, registry relayrouter.AgentRegistry, streams relayrouter.StreamController, config *Config) *Server {
+	server := NewWithConfig(store, registry, config)
 	server.streams = streams
 	return server
 }

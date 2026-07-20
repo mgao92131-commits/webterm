@@ -108,7 +108,7 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 	}
 	processInfo := new(windows.ProcessInformation)
 	if err := windows.CreateProcess(nil, commandLine, nil, nil, false,
-		windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT,
+		windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
 		&environment[0], cwd16, &startupInfo.StartupInfo, processInfo); err != nil {
 		_ = windows.CloseHandle(job)
 		_ = inputWrite.Close()
@@ -116,9 +116,9 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		windows.ClosePseudoConsole(pseudoConsole)
 		return nil, fmt.Errorf("start ConPTY child: %w", err)
 	}
-	_ = windows.CloseHandle(processInfo.Thread)
 	if err := windows.AssignProcessToJobObject(job, processInfo.Process); err != nil {
 		_ = windows.TerminateProcess(processInfo.Process, 1)
+		_ = windows.CloseHandle(processInfo.Thread)
 		_ = windows.CloseHandle(processInfo.Process)
 		_ = windows.CloseHandle(job)
 		_ = inputWrite.Close()
@@ -126,6 +126,17 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		windows.ClosePseudoConsole(pseudoConsole)
 		return nil, fmt.Errorf("assign ConPTY child to job: %w", err)
 	}
+	if _, err := windows.ResumeThread(processInfo.Thread); err != nil {
+		_ = windows.TerminateProcess(processInfo.Process, 1)
+		_ = windows.CloseHandle(processInfo.Thread)
+		_ = windows.CloseHandle(processInfo.Process)
+		_ = windows.CloseHandle(job)
+		_ = inputWrite.Close()
+		_ = outputRead.Close()
+		windows.ClosePseudoConsole(pseudoConsole)
+		return nil, fmt.Errorf("resume ConPTY child: %w", err)
+	}
+	_ = windows.CloseHandle(processInfo.Thread)
 
 	return &windowsBackend{
 		input:         inputWrite,

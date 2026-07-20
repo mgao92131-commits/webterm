@@ -52,10 +52,11 @@ func New(cfg config.Config, version string) *App {
 	})
 
 	sessionEnv := map[string]string{
-		"WEBTERM":                "1",
-		"WEBTERM_INTEGRATION":    "1",
-		"WEBTERM_IPC_ENDPOINT":   ipcEndpoint,
-		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDirAt(runtimeHookDir),
+		"WEBTERM":                 "1",
+		"WEBTERM_INTEGRATION":     "1",
+		"WEBTERM_IPC_ENDPOINT":    ipcEndpoint,
+		"WEBTERM_SHELL_INIT_DIR":  agenthooks.ShellInitDirAt(runtimeHookDir),
+		"WEBTERM_POWERSHELL_HOOK": filepath.Join(runtimeHookDir, "bin", "webterm-shell-hook.ps1"),
 	}
 	if strings.HasPrefix(ipcEndpoint, "unix:") {
 		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。

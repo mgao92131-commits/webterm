@@ -1,8 +1,6 @@
 package protocol
 
-// CLICommand 是 webterm CLI 主动发起的命令请求。
-// 与 HookEvent（shell hook 状态上报）不同，CLICommand 是命令-响应模型，
-// Agent 需要返回一个或多个 CLIResponse。
+// CLICommand 是内部文件下载任务的命令请求；本地 IPC 使用 localipc.Envelope。
 type CLICommand struct {
 	Kind       string `json:"kind"`                  // 固定为 "command"
 	Type       string `json:"type"`                  // 命令类型，例如 "download"

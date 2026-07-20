@@ -20,6 +20,7 @@ type Config struct {
 	StreamCleanupInterval time.Duration
 	MaxPendingMessages    int
 	MaxPendingBytes       int64
+	Control               *relaycontrol.Config
 }
 
 type App struct {
@@ -65,7 +66,7 @@ func NewWithEvents(config Config, store *relaystore.MemoryStore, registry *relay
 	}
 	app := &App{config: config, store: store, registry: registry, streams: streams, events: events}
 	mux := http.NewServeMux()
-	control := relaycontrol.NewWithStreams(store, registry, streams)
+	control := relaycontrol.NewWithStreamsConfig(store, registry, streams, config.Control)
 	metrics := relaymetrics.NewWithEvents(registry, streams, events)
 	httpGateway := relaygateway.NewHTTPGateway(store, registry, streams)
 	wsGateway := relaygateway.NewWSGateway(store, registry, streams)

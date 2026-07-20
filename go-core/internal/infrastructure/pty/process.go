@@ -171,11 +171,23 @@ func resolveCommand(opts Options) (string, []string, map[string]string, error) {
 		return opts.Command, opts.Args, nil, nil
 	}
 	if runtime.GOOS == "windows" {
+		powerShellArgs := func() []string {
+			hook := ""
+			if opts.Env != nil {
+				hook = opts.Env["WEBTERM_POWERSHELL_HOOK"]
+			}
+			if hook != "" {
+				if info, err := os.Stat(hook); err == nil && !info.IsDir() {
+					return []string{"-NoLogo", "-NoExit", "-Command", ". '" + strings.ReplaceAll(hook, "'", "''") + "'"}
+				}
+			}
+			return []string{"-NoLogo"}
+		}
 		if pwsh, err := exec.LookPath("pwsh.exe"); err == nil {
-			return pwsh, []string{"-NoLogo"}, nil, nil
+			return pwsh, powerShellArgs(), nil, nil
 		}
 		if powershell, err := exec.LookPath("powershell.exe"); err == nil {
-			return powershell, []string{"-NoLogo"}, nil, nil
+			return powershell, powerShellArgs(), nil, nil
 		}
 		if comspec := os.Getenv("ComSpec"); comspec != "" {
 			return comspec, nil, nil, nil

@@ -42,6 +42,9 @@ func ExitCode(err error) int {
 	if errors.As(err, &usage) {
 		return 2
 	}
+	if strings.HasPrefix(err.Error(), "unknown command ") {
+		return 2
+	}
 	return 1
 }
 
@@ -69,10 +72,10 @@ func newSend() *cobra.Command {
 			}
 			info, err := os.Stat(path)
 			if err != nil {
-				return fmt.Errorf("file_not_found")
+				return usageError{fmt.Errorf("未找到文件：%s", args[0])}
 			}
 			if !info.Mode().IsRegular() {
-				return fmt.Errorf("file_not_regular")
+				return usageError{fmt.Errorf("只能发送普通文件：%s", args[0])}
 			}
 			cwd, _ := os.Getwd()
 			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeSend, requestID(), localipc.SendRequest{FilePath: path, Device: device, CWD: cwd})
@@ -89,10 +92,10 @@ func newSend() *cobra.Command {
 					return err
 				}
 				if status.Status == "failed" || status.Status == "rejected" || status.Status == "cancelled" {
-					return errors.New(status.Error)
+					return errors.New(friendlyStatusError(status.Error))
 				}
-				if !quiet && (status.Status == "offered" || status.Status == "saved") {
-					fmt.Fprintln(os.Stdout, status.Status)
+				if !quiet {
+					fmt.Fprintln(os.Stdout, friendlySendStatus(status.Status))
 				}
 			}
 			return nil
@@ -107,7 +110,7 @@ func newSend() *cobra.Command {
 func newDevices() *cobra.Command {
 	var online, jsonOutput bool
 	var socket string
-	cmd := &cobra.Command{Use: "devices", Short: "查询 Android 设备", Long: "列出 Agent 已知的 Android 文件接收设备。前提：webterm-agent 正在运行。", Example: "  webterm devices\n  webterm devices --online\n  webterm devices --json", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "devices", Short: "查询 Android 设备", Long: "列出 Agent 已知的 Android 文件接收设备。前提：webterm-agent 正在运行。", Example: "  webterm devices\n  webterm devices --online\n  webterm devices --json", Args: noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDevices, requestID(), localipc.DevicesRequest{OnlineOnly: online})
 			if err != nil {
@@ -118,7 +121,7 @@ func newDevices() *cobra.Command {
 				return err
 			}
 			if len(responses) != 1 {
-				return errors.New("invalid_response")
+				return errors.New("Agent 返回了无效响应")
 			}
 			var result protocol.CLIResponse
 			if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
@@ -147,7 +150,7 @@ func newDevices() *cobra.Command {
 func newNotify() *cobra.Command {
 	var importance, message, source, session, socket string
 	var pid int
-	cmd := &cobra.Command{Use: "notify", Short: "发送 WebTerm 通知", Long: "向指定会话发送 alert、normal 或 quiet 通知。quiet 只更新会话信息，不弹系统通知。", Example: "  webterm notify --importance normal --message 'Codex 已完成任务' --source codex", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "notify", Short: "发送 WebTerm 通知", Long: "向指定会话发送 alert、normal 或 quiet 通知。quiet 只更新会话信息，不弹系统通知。", Example: "  webterm notify --importance normal --message 'Codex 已完成任务' --source codex", Args: noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if importance != "alert" && importance != "normal" && importance != "quiet" {
 				return usageError{errors.New("--importance 必须是 alert、normal 或 quiet")}
@@ -182,7 +185,7 @@ func newInternal() *cobra.Command {
 	internal := &cobra.Command{Use: "internal", Hidden: true}
 	var shellState, cwd, lastInput, inputKind, session, socket string
 	var pid int
-	update := &cobra.Command{Use: "session-update", Hidden: true, Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
+	update := &cobra.Command{Use: "session-update", Hidden: true, Args: noArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		if session == "" {
 			session = os.Getenv("WEBTERM_SESSION_ID")
 		}
@@ -208,10 +211,10 @@ func newInternal() *cobra.Command {
 }
 
 func newVersion() *cobra.Command {
-	return &cobra.Command{Use: "version", Short: "显示版本", Args: cobra.NoArgs, Run: func(_ *cobra.Command, _ []string) { fmt.Println(Version) }}
+	return &cobra.Command{Use: "version", Short: "显示版本", Args: noArgs, Run: func(_ *cobra.Command, _ []string) { fmt.Println(Version) }}
 }
 func newCompletion(root *cobra.Command) *cobra.Command {
-	cmd := &cobra.Command{Use: "completion [bash|zsh|fish|powershell]", Short: "生成 shell 补全脚本", Args: exactOne}
+	cmd := &cobra.Command{Use: "completion [bash|zsh|fish|powershell]", Short: "生成 shell 补全脚本", Args: exactCompletionShell}
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		switch args[0] {
 		case "bash":
@@ -232,6 +235,52 @@ func exactOne(_ *cobra.Command, args []string) error {
 		return usageError{errors.New("需要且只能提供一个文件")}
 	}
 	return nil
+}
+
+func exactCompletionShell(_ *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return usageError{errors.New("需要提供一个 shell：bash、zsh、fish 或 powershell")}
+	}
+	return nil
+}
+
+func noArgs(_ *cobra.Command, args []string) error {
+	if len(args) != 0 {
+		return usageError{errors.New("此命令不接受位置参数")}
+	}
+	return nil
+}
+
+func friendlySendStatus(status string) string {
+	switch status {
+	case "offered":
+		return "已向目标设备提供文件，等待接收。"
+	case "receiving":
+		return "目标设备正在接收文件。"
+	case "saved":
+		return "文件已保存到目标设备。"
+	case "completed":
+		return "文件发送完成。"
+	default:
+		return "文件发送状态：" + status
+	}
+}
+
+func friendlyStatusError(value string) string {
+	switch value {
+	case "file_not_found":
+		return "未找到要发送的文件"
+	case "file_not_regular":
+		return "只能发送普通文件"
+	case "session_not_found":
+		return "未找到对应会话；请确认 Agent 正在运行，或使用 --session/--pid 指定会话"
+	case "notification_not_delivered":
+		return "通知未送达目标设备"
+	case "":
+		return "Agent 拒绝了请求"
+	default:
+		return value
+	}
 }
 func request(ep string, envelope localipc.Envelope) ([]localipc.Envelope, error) {
 	conn, err := localipc.Dial(ep, 5*time.Second)

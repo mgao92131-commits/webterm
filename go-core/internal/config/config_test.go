@@ -40,6 +40,32 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadNewEnvironmentNamesOverrideDeprecatedNames(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("RELAY_URL", "https://legacy.example")
+	t.Setenv("RELAY_SECRET", "legacy-secret")
+	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "new-secret")
+	t.Setenv("WEBTERM_AGENT_DEVICE_NAME", "windows-agent")
+	cfg := Load(Options{})
+	if cfg.Relay.URL != "https://relay.example" || cfg.Relay.Secret != "new-secret" || cfg.Relay.DeviceName != "windows-agent" {
+		t.Fatalf("Relay = %#v", cfg.Relay)
+	}
+}
+
+func TestLoadStrictAllowsAbsentDefaultButRejectsAbsentExplicitConfig(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if _, err := loadStrict(missing, false); err != nil {
+		t.Fatalf("non-explicit missing config: %v", err)
+	}
+	if _, err := loadStrict(missing, true); err == nil {
+		t.Fatal("explicit missing config did not fail")
+	}
+}
+
 func TestRedactedMasksRelaySecret(t *testing.T) {
 	cfg := Config{Relay: RelayConfig{Secret: "relay-secret"}}
 	redacted := cfg.Redacted()
@@ -100,6 +126,10 @@ func clearConfigEnv(t *testing.T) {
 	for _, key := range []string{
 		"WEBTERM_IPC_ENDPOINT", "WEBTERM_SOCKET_PATH", "RELAY_URL", "RELAY_SECRET",
 		"DEVICE_NAME", "WEBTERM_RELAY_PROTOCOL", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
+		"WEBTERM_AGENT_CONFIG", "WEBTERM_AGENT_RELAY_URL", "WEBTERM_AGENT_RELAY_SECRET",
+		"WEBTERM_AGENT_DEVICE_NAME", "WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_AGENT_SHELL",
+		"WEBTERM_AGENT_SHELL_CWD", "WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
+		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES", "WEBTERM_AGENT_UPLOAD_MAX_BYTES",
 	} {
 		t.Setenv(key, "")
 	}

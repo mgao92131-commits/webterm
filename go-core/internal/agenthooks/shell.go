@@ -66,6 +66,26 @@ const zshRcTemplate = `# WebTerm zsh 初始化文件
 [ -f "{{.HookScript}}" ] && source "{{.HookScript}}"
 `
 
+const powerShellHookTemplate = `# WebTerm PowerShell hook: reports session metadata at every prompt.
+if ($env:WEBTERM_INTEGRATION -ne "1" -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_IPC_ENDPOINT)) { return }
+$script:WebTermBin = "{{.WebtermBin}}"
+if (-not (Test-Path $script:WebTermBin)) { $script:WebTermBin = "webterm" }
+function Invoke-WebTermSessionUpdate {
+  $last = ""
+  $history = Get-History -Count 1 -ErrorAction SilentlyContinue
+  if ($null -ne $history) { $last = $history.CommandLine }
+  & $script:WebTermBin internal session-update --shell-state prompt --cwd $PWD.Path --last-command $last --input-kind shell 2>$null
+}
+if (-not (Get-Variable -Name WebTermOriginalPrompt -Scope Global -ErrorAction SilentlyContinue)) {
+  $global:WebTermOriginalPrompt = $function:prompt
+  function global:prompt {
+    Invoke-WebTermSessionUpdate
+    if ($null -ne $global:WebTermOriginalPrompt) { return & $global:WebTermOriginalPrompt }
+    return "PS $($PWD.Path)> "
+  }
+}
+`
+
 // InstallShellHook 安装 shell hook 脚本和 bash 初始化文件。
 // webtermBin 是 webterm 二进制路径；为空时使用 PATH 中的 webterm。
 func InstallShellHook(webtermBin string) (string, string, error) {
@@ -83,6 +103,10 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 	hookPath := filepath.Join(binDir, "webterm-shell-hook.sh")
 	if err := os.WriteFile(hookPath, []byte(replaceShellHookTemplate(webtermBin)), 0o755); err != nil {
 		return "", "", fmt.Errorf("write shell hook: %w", err)
+	}
+	powerShellHookPath := filepath.Join(binDir, "webterm-shell-hook.ps1")
+	if err := os.WriteFile(powerShellHookPath, []byte(replacePowerShellHookTemplate(webtermBin)), 0o600); err != nil {
+		return "", "", fmt.Errorf("write PowerShell hook: %w", err)
 	}
 
 	initDir := ShellInitDirAt(runtimeBaseDir)
@@ -102,6 +126,10 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 		return "", "", fmt.Errorf("write zsh rc: %w", err)
 	}
 	return hookPath, bashRcPath, nil
+}
+
+func replacePowerShellHookTemplate(webtermBin string) string {
+	return strings.ReplaceAll(powerShellHookTemplate, "{{.WebtermBin}}", webtermBin)
 }
 
 func replaceShellHookTemplate(webtermBin string) string {

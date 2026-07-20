@@ -56,6 +56,21 @@ jobs:
       - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm-agent
       - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm
 
+  windows-runtime:
+    name: Windows IPC and ConPTY runtime
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go test ./internal/localipc ./internal/infrastructure/pty ./internal/session
+      - run: go build ./cmd/webterm ./cmd/webterm-agent
+
   android:
     name: Android test lint and build
     runs-on: ubuntu-latest
@@ -84,3 +99,16 @@ jobs:
         working-directory: go-core
       - run: scripts/generate-proto.sh
       - run: git diff --exit-code -- go-core/internal/screenprotocol/generated/terminal_screen.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenProto.java
+
+  generated-cli-docs:
+    name: Generated CLI docs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go generate ./cmd/...
+        working-directory: go-core
+      - run: git diff --exit-code -- go-core/docs/cli

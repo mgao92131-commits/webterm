@@ -33,20 +33,32 @@ cd ../android-client
 
 ```sh
 cd go-core
-RELAY_URL=http://relay.example:9001 \
-RELAY_SECRET='agent-secret' \
-DEVICE_NAME='my-mac' \
-go run ./cmd/webterm-agent
+WEBTERM_AGENT_RELAY_URL=http://relay.example:9001 \
+WEBTERM_AGENT_RELAY_SECRET='agent-secret' \
+WEBTERM_AGENT_DEVICE_NAME='my-mac' \
+go run ./cmd/webterm-agent run
 ```
+
+`webterm-agent` 不再监听本机 HTTP 控制端口。它只启动 Relay Runtime、
+本地 IPC 与 PTY；文件发送、设备查询和通知均通过 `webterm` 本地 CLI。
+可使用 `webterm-agent config init` 创建模板、`config validate` 校验配置。
+
+Relay 使用显式子命令启动，并通过一次性管理命令创建管理员：
+
+```sh
+cd go-core
+webterm-relay config init --path /etc/webterm/relay.json
+webterm-relay config validate --config /etc/webterm/relay.json
+webterm-relay admin create --config /etc/webterm/relay.json \
+  --username admin --password-file /run/secrets/webterm-admin-password
+webterm-relay run --config /etc/webterm/relay.json
+```
+
+完整参数、示例和退出码见 [CLI 文档](go-core/docs/cli/webterm.md)，
+配置字段与环境变量见 [Agent 配置](go-core/docs/agent-config.md) 和
+[Relay 配置](go-core/docs/relay-config.md)。
 
 Relay 默认监听 `127.0.0.1:19090`。部署时由 Nginx 只代理 `/api/` 和
 `/ws/`，不托管静态页面。
 
-## 部署
-
-```sh
-RELAY_BOOTSTRAP_PASSWORD='强密码' ./deploy.sh --dry-run
-RELAY_BOOTSTRAP_PASSWORD='强密码' ./deploy.sh
-```
-
-敏感信息只通过环境变量或被忽略的本地配置注入，不得提交到仓库。
+敏感信息应通过受限权限的配置文件或 Secret 文件注入，不得提交到仓库。

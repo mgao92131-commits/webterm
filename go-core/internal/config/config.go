@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
+	"webterm/go-core/internal/localipc"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -35,11 +37,18 @@ type Config struct {
 	IPCEndpoint string `json:"ipcEndpoint,omitempty"`
 	// SocketPath 是旧 WEBTERM_SOCKET_PATH / socketPath 配置的兼容字段；
 	// 新配置应改用 IPCEndpoint。
-	SocketPath string           `json:"socketPath,omitempty"`
-	Relay      RelayConfig      `json:"relay"`
-	Shell      ShellConfig      `json:"shell"`
-	Scrollback ScrollbackConfig `json:"scrollback"`
-	Upload     UploadConfig     `json:"upload"`
+	SocketPath string `json:"socketPath,omitempty"`
+	// Control is accepted only to allow one release of existing configurations
+	// to migrate; the Agent no longer starts a local HTTP control server.
+	Control    *LegacyControlConfig `json:"control,omitempty"`
+	Relay      RelayConfig          `json:"relay"`
+	Shell      ShellConfig          `json:"shell"`
+	Scrollback ScrollbackConfig     `json:"scrollback"`
+	Upload     UploadConfig         `json:"upload"`
+}
+
+type LegacyControlConfig struct {
+	Addr string `json:"addr,omitempty"`
 }
 
 type ScrollbackConfig struct {
@@ -73,6 +82,9 @@ func (cfg Config) Redacted() Config {
 
 func ResolvePath(configPath string) string {
 	if configPath != "" {
+		return configPath
+	}
+	if configPath := os.Getenv("WEBTERM_AGENT_CONFIG"); configPath != "" {
 		return configPath
 	}
 	base, err := os.UserConfigDir()
@@ -120,19 +132,34 @@ func Load(options Options) Config {
 // LoadStrict is used by the Agent CLI. Unlike the legacy in-process loader it
 // never treats a missing or malformed requested configuration file as defaults.
 func LoadStrict(options Options) (Config, error) {
+	path := options.ConfigPath
+	explicit := path != ""
+	if path == "" {
+		path = ResolvePath("")
+		// A path supplied through the new environment variable is an explicit
+		// operator choice, unlike the conventional default location.
+		explicit = os.Getenv("WEBTERM_AGENT_CONFIG") != ""
+	}
+	return loadStrict(path, explicit)
+}
+
+func loadStrict(path string, explicit bool) (Config, error) {
 	cfg := defaultConfig()
-	if options.ConfigPath != "" {
-		data, err := os.ReadFile(options.ConfigPath)
+	if path != "" {
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return Config{}, fmt.Errorf("配置无效：%s: %w", options.ConfigPath, err)
+			if explicit || !os.IsNotExist(err) {
+				return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+			}
+		} else {
+			var file Config
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&file); err != nil {
+				return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+			}
+			cfg = mergeConfig(cfg, file)
 		}
-		var file Config
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&file); err != nil {
-			return Config{}, fmt.Errorf("配置无效：%s: %w", options.ConfigPath, err)
-		}
-		cfg = mergeConfig(cfg, file)
 	}
 	cfg = mergeConfig(cfg, envConfig())
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
@@ -152,7 +179,23 @@ func LoadStrict(options Options) (Config, error) {
 	if cfg.Scrollback.MaxLines <= 0 || cfg.Scrollback.MaxBytes <= 0 {
 		return Config{}, fmt.Errorf("配置无效：scrollback 限制必须大于 0")
 	}
+	if _, err := localipc.Normalize(firstNonEmpty(cfg.IPCEndpoint, cfg.SocketPath)); err != nil {
+		return Config{}, fmt.Errorf("配置无效：ipc endpoint: %w", err)
+	}
 	return cfg, nil
+}
+
+// Default returns a template only; it deliberately never reads environment
+// variables, so `config init` cannot persist secrets from the caller.
+func Default() Config { return defaultConfig() }
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func defaultConfig() Config {
@@ -186,16 +229,23 @@ func readConfigFile(path string) Config {
 
 func envConfig() Config {
 	return Config{
-		IPCEndpoint: env("WEBTERM_IPC_ENDPOINT"),
-		SocketPath:  env("WEBTERM_SOCKET_PATH"),
+		IPCEndpoint: envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_IPC_ENDPOINT"),
+		SocketPath:  envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_SOCKET_PATH"),
 		Relay: RelayConfig{
-			URL:        env("RELAY_URL"),
-			Secret:     env("RELAY_SECRET"),
-			DeviceName: env("DEVICE_NAME"),
+			URL:        envCompat("WEBTERM_AGENT_RELAY_URL", "RELAY_URL"),
+			Secret:     envCompat("WEBTERM_AGENT_RELAY_SECRET", "RELAY_SECRET"),
+			DeviceName: envCompat("WEBTERM_AGENT_DEVICE_NAME", "DEVICE_NAME"),
 			Protocol:   env("WEBTERM_RELAY_PROTOCOL"),
 		},
-		Shell:  ShellConfig{Command: env("WEBTERM_SHELL")},
-		Upload: UploadConfig{MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES")},
+		Shell: ShellConfig{
+			Command: envCompat("WEBTERM_AGENT_SHELL", "WEBTERM_SHELL"),
+			CWD:     env("WEBTERM_AGENT_SHELL_CWD"),
+		},
+		Scrollback: ScrollbackConfig{
+			MaxLines: int(envInt64("WEBTERM_AGENT_SCROLLBACK_MAX_LINES")),
+			MaxBytes: int(envInt64("WEBTERM_AGENT_SCROLLBACK_MAX_BYTES")),
+		},
+		Upload: UploadConfig{MaxBytes: envIntCompat("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "WEBTERM_MAX_UPLOAD_BYTES")},
 	}
 }
 
@@ -240,6 +290,26 @@ func env(key string) string {
 	return os.Getenv(key)
 }
 
+var deprecatedEnvWarnings sync.Map
+
+// envCompat keeps the pre-Cobra environment names working for one release.
+// The warning is deliberately emitted once per variable so long-running Agent
+// processes do not flood logs while making the migration visible.
+func envCompat(current string, legacy ...string) string {
+	if value := os.Getenv(current); value != "" {
+		return value
+	}
+	for _, key := range legacy {
+		if value := os.Getenv(key); value != "" {
+			if _, loaded := deprecatedEnvWarnings.LoadOrStore(key, struct{}{}); !loaded {
+				fmt.Fprintf(os.Stderr, "警告：%s 已弃用，请改用 %s\n", key, current)
+			}
+			return value
+		}
+	}
+	return ""
+}
+
 func envInt64(key string) int64 {
 	raw := os.Getenv(key)
 	if raw == "" {
@@ -250,4 +320,14 @@ func envInt64(key string) int64 {
 		return 0
 	}
 	return value
+}
+
+func envIntCompat(current string, legacy ...string) int64 {
+	if value := envCompat(current, legacy...); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
 }
