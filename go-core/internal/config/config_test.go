@@ -10,9 +10,6 @@ import (
 func TestLoadRelayOnlyDefaults(t *testing.T) {
 	clearConfigEnv(t)
 	cfg := Load(Options{})
-	if cfg.Control.Addr != "127.0.0.1:18081" {
-		t.Fatalf("Control.Addr = %q", cfg.Control.Addr)
-	}
 	if cfg.Relay.Protocol != RelayProtocolV2 {
 		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
@@ -24,7 +21,6 @@ func TestLoadRelayOnlyDefaults(t *testing.T) {
 
 func TestLoadEnvOverridesDefaults(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("WEBTERM_CONTROL_ADDR", "127.0.0.1:19000")
 	t.Setenv("RELAY_URL", "https://relay.example")
 	t.Setenv("RELAY_SECRET", "secret")
 	t.Setenv("DEVICE_NAME", "test-mac")
@@ -39,8 +35,8 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	if cfg.Relay.Protocol != RelayProtocolV2 {
 		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
-	if cfg.Control.Addr != "127.0.0.1:19000" || cfg.Upload.MaxBytes != 2048 {
-		t.Fatalf("Control/Upload = %#v %#v", cfg.Control, cfg.Upload)
+	if cfg.Upload.MaxBytes != 2048 {
+		t.Fatalf("Upload = %#v", cfg.Upload)
 	}
 }
 
@@ -55,29 +51,12 @@ func TestRedactedMasksRelaySecret(t *testing.T) {
 	}
 }
 
-func TestMergeEditablePreservesRedactedSecretAndLimits(t *testing.T) {
-	current := Config{
-		Relay:      RelayConfig{URL: "https://old", Secret: "secret"},
-		Scrollback: ScrollbackConfig{MaxLines: 5000, MaxBytes: 1 << 20},
-	}
-	merged := MergeEditable(current, Config{
-		Relay: RelayConfig{URL: "https://new", Secret: RedactedSecret},
-	})
-	if merged.Relay.URL != "https://new" || merged.Relay.Secret != "secret" {
-		t.Fatalf("Relay = %#v", merged.Relay)
-	}
-	if merged.Scrollback != current.Scrollback {
-		t.Fatalf("Scrollback = %#v", merged.Scrollback)
-	}
-}
-
 func TestSaveAndLoadConfigFile(t *testing.T) {
 	clearConfigEnv(t)
 	path := filepath.Join(t.TempDir(), "WebTerm Agent", "config.json")
 	want := Config{
-		Relay:   RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
-		Control: ControlConfig{Addr: "127.0.0.1:18081"},
-		Shell:   ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
+		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
+		Shell: ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
 	}
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -119,7 +98,7 @@ func TestInvalidScrollbackFallsBackToDefaults(t *testing.T) {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"WEBTERM_SOCKET_PATH", "WEBTERM_CONTROL_ADDR", "RELAY_URL", "RELAY_SECRET",
+		"WEBTERM_IPC_ENDPOINT", "WEBTERM_SOCKET_PATH", "RELAY_URL", "RELAY_SECRET",
 		"DEVICE_NAME", "WEBTERM_RELAY_PROTOCOL", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
 	} {
 		t.Setenv(key, "")

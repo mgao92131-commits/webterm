@@ -26,7 +26,7 @@ type Runtime struct {
 	engine      *terminalengine.Engine
 	scrollback  *terminalengine.TrackedScrollback
 	projector   *screenprojection.Projector
-	pty         io.ReadWriteCloser
+	terminalIO  TerminalIO
 	inputWriter *InputWriter
 	ptyResizer  func(cols, rows int) error
 
@@ -172,8 +172,16 @@ type Version struct {
 	ScreenRevision uint64
 }
 
+// TerminalIO 是 Runtime 所需的终端字节流。Runtime 不拥有其关闭权；Process
+// 生命周期由 TerminalSession 统一管理，确保 Unix PTY 与 Windows ConPTY 的资源
+// 只会被关闭一次。
+type TerminalIO interface {
+	io.Reader
+	io.Writer
+}
+
 // NewRuntime 创建新的终端会话 runtime。
-func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Option) *Runtime {
+func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Option) *Runtime {
 	if id == "" {
 		id = randomID()
 	}
@@ -187,7 +195,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	r := &Runtime{
 		id:               id,
 		instanceID:       randomID(),
-		pty:              pty,
+		terminalIO:       terminalIO,
 		events:           make(chan event, 1024),
 		stopCh:           make(chan struct{}),
 		ptyReadCredits:   make(chan struct{}, ptyPendingByteLimit/ptyReadBufferSize),
@@ -215,7 +223,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
 	}
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
-		terminalengine.WithPTYWriter(pty),
+		terminalengine.WithPTYWriter(terminalIO),
 		terminalengine.WithBellHandler(func() {
 			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectBell})
 		}),
@@ -236,7 +244,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		}),
 	)
 	r.projector = screenprojection.NewProjector(r.engine, r.scrollback, id, r.instanceID)
-	r.inputWriter = newDefaultInputWriter(pty)
+	r.inputWriter = newDefaultInputWriter(terminalIO)
 	r.ptyReadBuffers.New = func() any {
 		return make([]byte, ptyReadBufferSize)
 	}
@@ -386,9 +394,6 @@ func (r *Runtime) Close() error {
 		if r.inputWriter != nil {
 			r.inputWriter.Close()
 		}
-		if r.pty != nil {
-			_ = r.pty.Close()
-		}
 	})
 	return nil
 }
@@ -412,7 +417,7 @@ func (r *Runtime) readLoop() {
 			return
 		}
 		buf := r.ptyReadBuffers.Get().([]byte)
-		n, err := r.pty.Read(buf)
+		n, err := r.terminalIO.Read(buf)
 		if n > 0 {
 			// ptyOutputEvent 独占这块缓冲，actor 完成 Engine.Write 后才归还；
 			// readLoop 因而无需为每次 Read 再分配和复制一次数据。
@@ -546,7 +551,7 @@ func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 		return
 	}
 	response := "\x1b]52;" + string(clipboard) + ";" + base64.StdEncoding.EncodeToString(e.data) + "\x1b\\"
-	_, _ = r.pty.Write([]byte(response))
+	_, _ = r.terminalIO.Write([]byte(response))
 }
 
 func (r *Runtime) handleEffect(effect terminalengine.Effect) {

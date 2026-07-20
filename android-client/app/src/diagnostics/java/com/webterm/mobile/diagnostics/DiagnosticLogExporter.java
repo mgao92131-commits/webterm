@@ -83,7 +83,7 @@ public final class DiagnosticLogExporter {
         sb.append("WebTerm Network Traffic Summary (Android only)\n");
         sb.append("===============================================\n");
         sb.append("NOTE: This file contains Android-side statistics only.\n");
-        sb.append("Go Agent/Relay PTY output and screen send stats are available separately at /control/traffic.\n\n");
+        sb.append("Go Agent/Relay PTY output and screen send stats are not exposed through the Agent local IPC.\n\n");
         sb.append("uidRxBytes=").append(network.uid.rxBytes).append('\n');
         sb.append("uidTxBytes=").append(network.uid.txBytes).append('\n');
         sb.append("uidSupported=").append(network.uid.supported).append('\n');

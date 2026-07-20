@@ -3,8 +3,6 @@ package session
 import (
 	"testing"
 	"time"
-
-	"webterm/go-core/internal/protocol"
 )
 
 func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
@@ -78,11 +76,7 @@ func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
 	}
 	defer terminal.Close()
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "meta",
-		SessionID: "s1",
-		CWD:       "/tmp/project with spaces",
-	})
+	terminal.ApplySessionUpdate("", "/tmp/project with spaces", "", "", 0)
 	if got := terminal.Info().CWD; got != "/tmp/project with spaces" {
 		t.Fatalf("session cwd=%q", got)
 	}
@@ -102,31 +96,17 @@ func TestTerminalSessionNotificationOverride(t *testing.T) {
 	}
 	defer terminal.Close()
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "notify",
-		SessionID: "s1",
-		Level:     "idle",
-		Message:   "Done",
-		Source:    "claude",
-		Timestamp: time.Now().Unix(),
-	})
+	terminal.ApplyNotification("normal", "Done", "claude", time.Now().Unix())
 
 	info := terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "idle" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
+	if info.Notification == nil || info.Notification.Importance != "normal" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
 		t.Fatalf("expected notification to be set, got %+v", info.Notification)
 	}
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "notify",
-		SessionID: "s1",
-		Level:     "running",
-		Message:   "Running",
-		Source:    "claude",
-		Timestamp: time.Now().Unix(),
-	})
+	terminal.ApplyNotification("quiet", "Running", "claude", time.Now().Unix())
 
 	info = terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "running" || info.Notification.Message != "Running" {
+	if info.Notification == nil || info.Notification.Importance != "quiet" || info.Notification.Message != "Running" {
 		t.Errorf("expected notification to be overridden, got %+v", info.Notification)
 	}
 }

@@ -170,7 +170,7 @@ func (manager *Manager) Create(cwd string) (*TerminalSession, error) {
 	}
 	terminal.manager = manager
 	manager.sessions[id] = terminal
-	manager.processIndex.Register(id, terminal.ShellPID(), terminal.TTYPath())
+	manager.processIndex.Register(id, terminal.ProcessIdentity())
 	info := terminal.Info()
 	manager.mu.Unlock()
 
@@ -192,7 +192,7 @@ func (manager *Manager) Close(id string) bool {
 		manager.mu.Unlock()
 		return false
 	}
-	manager.processIndex.Unregister(id, terminal.ShellPID(), terminal.TTYPath())
+	manager.processIndex.Unregister(id, terminal.ProcessIdentity())
 	terminal.Close()
 	delete(manager.sessions, id)
 	manager.mu.Unlock()

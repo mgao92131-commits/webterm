@@ -6,7 +6,6 @@ JQ="${JQ:-jq}"
 PYTHON="${PYTHON:-python3}"
 ADB_SERIAL="${ADB_SERIAL:-}"
 PACKAGE="${PACKAGE:-com.webterm.mobile.c2}"
-CONTROL_URL="${CONTROL_URL:-http://127.0.0.1:18082}"
 SESSION_ID="${SESSION_ID:-}"
 TITLE_CONTAINS="${TITLE_CONTAINS:-}"
 ITERATIONS="${ITERATIONS:-3}"
@@ -29,8 +28,8 @@ usage() {
   --exercise         执行重连等待、返回列表和重开流程（默认）
   --dry-run          打印将执行的 UI 操作，不点击手机
   --self-test        运行脚本内的 JSON/XML 解析测试
-  --session ID       指定 Agent 会话 ID；默认按标题唯一匹配
-  --title TEXT       用于匹配会话和 Android 卡片的标题片段
+  --session ID       记录目标会话 ID（可选，仅用于证据标识）
+  --title TEXT       用于匹配 Android 卡片的标题片段
   --iterations N     重复次数，默认 3
   --wait SECONDS     每轮保持终端打开、等待自然重连的时间，默认 65 秒
   --help             显示帮助
@@ -38,8 +37,6 @@ usage() {
 常用环境变量：
   ADB_SERIAL         adb devices 中的设备序列号；多设备时必须指定
   PACKAGE            Android 包名，默认 com.webterm.mobile.c2
-  CONTROL_URL        PC Agent 控制地址，默认 http://127.0.0.1:18082
-  MAX_CLIENTS        允许目标终端存在的最大 client 数，默认 1
   FAULT_COMMAND      可选故障注入命令；设置后替代自然重连等待
   ARTIFACT_DIR       证据目录；默认 /private/tmp/webterm-relay-resume-时间戳
 
@@ -78,25 +75,6 @@ is_non_negative_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]
 }
 
-session_value() {
-  local sessions_file="$1"
-  local session_id="$2"
-  local field="$3"
-  "$JQ" -er --arg id "$session_id" --arg field "$field" \
-    '.[] | select(.id == $id) | .[$field]' "$sessions_file"
-}
-
-select_session_id() {
-  local sessions_file="$1"
-  local title="$2"
-  "$JQ" -er --arg title "$title" '
-    [.[] | select((.termTitle // "") | contains($title))] as $matches
-    | if ($matches | length) == 1 then $matches[0].id
-      elif ($matches | length) == 0 then error("no matching session")
-      else error("multiple matching sessions") end
-  ' "$sessions_file"
-}
-
 find_card_center() {
   local xml_file="$1"
   local title="$2"
@@ -131,15 +109,8 @@ run_self_test() {
   local tmp
   tmp="$(mktemp -d /private/tmp/webterm-resume-script-test.XXXXXX)"
   trap 'rm -rf "$tmp"' RETURN
-  printf '%s\n' '[{"id":"s4","termTitle":"idle","clients":1},{"id":"s5","termTitle":"Starting | target-plan | main","clients":7}]' >"$tmp/sessions.json"
-  [[ "$(select_session_id "$tmp/sessions.json" target-plan)" == "s5" ]]
-  [[ "$(session_value "$tmp/sessions.json" s5 clients)" == "7" ]]
   printf '%s\n' '<?xml version="1.0"?><hierarchy><node clickable="true" bounds="[32,777][1048,956]"><node text="Starting | target-plan | main" clickable="false" bounds="[69,809][1011,860]"/></node></hierarchy>' >"$tmp/window.xml"
   [[ "$(find_card_center "$tmp/window.xml" target-plan)" == "540 866" ]]
-  if select_session_id "$tmp/sessions.json" missing >/dev/null 2>&1; then
-    echo "self-test failed: missing session unexpectedly matched" >&2
-    return 1
-  fi
   echo "repro relay Android resume script self-test ok"
 }
 
@@ -206,11 +177,6 @@ record_event() {
     '{time:$time,event:$event,sessionId:$session,iteration:$iteration}' >>"$EVENTS_FILE"
 }
 
-fetch_sessions() {
-  local output_file="$1"
-  curl -fsS --max-time 2 "$CONTROL_URL/control/sessions" >"$output_file"
-}
-
 dump_ui() {
   local output_file="$1"
   adb_cmd shell uiautomator dump /sdcard/webterm-resume-window.xml >/dev/null
@@ -227,12 +193,6 @@ capture_artifacts() {
   adb_cmd pull /sdcard/webterm-resume-window.xml "$dir/window.xml" >/dev/null 2>&1 || true
   adb_cmd shell screencap -p /sdcard/webterm-resume-screen.png >/dev/null 2>&1 || true
   adb_cmd pull /sdcard/webterm-resume-screen.png "$dir/screenshot.png" >/dev/null 2>&1 || true
-  curl -fsS --max-time 2 "$CONTROL_URL/control/sessions" >"$dir/sessions.json" 2>"$dir/sessions.error" || true
-  for endpoint in projected; do
-    curl -fsS --max-time 2 \
-      "$CONTROL_URL/control/sessions/$SESSION_ID/screen/$endpoint" \
-      >"$dir/$endpoint.json" 2>"$dir/$endpoint.error" || true
-  done
 }
 
 fail() {
@@ -249,37 +209,7 @@ fail() {
   exit 1
 }
 
-SESSIONS_FILE="$ARTIFACT_DIR/sessions-initial.json"
-fetch_sessions "$SESSIONS_FILE" || fail "Agent control endpoint is unavailable: $CONTROL_URL"
-if [[ -z "$SESSION_ID" ]]; then
-  SESSION_ID="$(select_session_id "$SESSIONS_FILE" "$TITLE_CONTAINS")" || \
-    fail "could not uniquely select a session by title: $TITLE_CONTAINS"
-fi
-SESSION_TITLE="$(session_value "$SESSIONS_FILE" "$SESSION_ID" termTitle)" || \
-  fail "session does not exist: $SESSION_ID"
-if [[ -z "$TITLE_CONTAINS" ]]; then
-  TITLE_CONTAINS="$SESSION_TITLE"
-fi
-
-check_agent_state() {
-  local label="$1"
-  local sessions_file="$ARTIFACT_DIR/sessions-$label.json"
-  fetch_sessions "$sessions_file" || fail "Agent sessions endpoint timed out" "$label"
-  local clients
-  clients="$(session_value "$sessions_file" "$SESSION_ID" clients)" || \
-    fail "target session disappeared" "$label"
-  printf '{"time":%s,"iteration":%s,"clients":%s}\n' \
-    "$(printf '%s' "$(timestamp)" | "$JQ" -R .)" "${label##*-}" "$clients" \
-    >>"$ARTIFACT_DIR/client-counts.jsonl"
-  if (( clients > MAX_CLIENTS )); then
-    fail "session $SESSION_ID has $clients clients; expected at most $MAX_CLIENTS" "$label"
-  fi
-  if ! curl -fsS --max-time 2 \
-    "$CONTROL_URL/control/sessions/$SESSION_ID/screen/projected" \
-    >"$ARTIFACT_DIR/projected-$label.json"; then
-    fail "projected screen endpoint did not respond within 2 seconds" "$label"
-  fi
-}
+SESSION_TITLE="$TITLE_CONTAINS"
 
 wait_for_card_and_get_center() {
   local iteration="$1"
@@ -325,7 +255,6 @@ echo "target session: $SESSION_ID"
 echo "target title:   $SESSION_TITLE"
 echo "artifacts:      $ARTIFACT_DIR"
 record_event "start"
-check_agent_state "preflight-0"
 capture_artifacts "preflight"
 
 if [[ "$MODE" == "check" ]]; then
@@ -363,7 +292,6 @@ if dump_ui "$initial_xml" 2>/dev/null \
     fi
     fail "Android did not complete the initial open within ${RECOVERY_TIMEOUT_SECONDS}s" "initial"
   fi
-  check_agent_state "initial-0"
 fi
 
 for ((iteration = 1; iteration <= ITERATIONS; iteration++)); do
@@ -377,7 +305,6 @@ for ((iteration = 1; iteration <= ITERATIONS; iteration++)); do
   fi
   # 保留故障/自然重连窗口的原始日志；后续为了精确识别重开事件会清空 logcat。
   adb_cmd logcat -d >"$ARTIFACT_DIR/reconnect-window-$iteration.log" 2>&1 || true
-  fetch_sessions "$ARTIFACT_DIR/reconnect-window-sessions-$iteration.json" || true
 
   echo "[$iteration/$ITERATIONS] returning to session cards"
   adb_cmd shell input keyevent BACK
@@ -397,7 +324,6 @@ for ((iteration = 1; iteration <= ITERATIONS; iteration++)); do
     fi
     fail "Android did not complete resume within ${RECOVERY_TIMEOUT_SECONDS}s" "$iteration"
   fi
-  check_agent_state "iteration-$iteration"
   capture_artifacts "iteration-$iteration"
   record_event "iteration-ok" "$iteration"
 done

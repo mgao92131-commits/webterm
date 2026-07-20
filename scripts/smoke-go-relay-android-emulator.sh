@@ -207,7 +207,6 @@ echo "[5/9] starting Go Agent"
   RELAY_SECRET="$agent_credential" \
   DEVICE_NAME="$DEVICE_NAME" \
   WEBTERM_RELAY_PROTOCOL=v2 \
-  WEBTERM_CONTROL_ADDR=127.0.0.1:0 \
   WEBTERM_SOCKET_PATH="$AGENT_SOCKET" \
   WEBTERM_SHELL=/bin/sh \
   "$AGENT_BIN" --mode relay

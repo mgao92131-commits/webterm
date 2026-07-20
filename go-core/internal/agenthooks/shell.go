@@ -13,16 +13,16 @@ const shellHookTemplate = `#!/usr/bin/env bash
 
 [ "${WEBTERM_INTEGRATION:-}" = "1" ] || return 0
 [ -n "${WEBTERM_SESSION_ID:-}" ] || return 0
-[ -S "${WEBTERM_SOCKET_PATH:-}" ] || return 0
+[ -n "${WEBTERM_IPC_ENDPOINT:-}" ] || return 0
 
 WEBTERM="{{.WebtermBin}}"
 [ -x "$WEBTERM" ] || WEBTERM="webterm"
 
-# 安全调用 webterm meta；每个提示符同时上报当前目录，避免 cd 后上传仍落到初始目录。
-webterm_meta() {
+# 每个提示符上报当前目录，避免 cd 后上传仍落到初始目录。
+webterm_session_update() {
   local text="$1"
   local kind="${2:-shell}"
-  "$WEBTERM" meta --quiet --cwd "$PWD" --last-command "$text" --input-kind "$kind"
+  "$WEBTERM" internal session-update --cwd "$PWD" --last-command "$text" --input-kind "$kind"
 }
 
 # Bash 使用 PROMPT_COMMAND
@@ -30,7 +30,7 @@ if [ -n "${BASH_VERSION:-}" ]; then
   __webterm_prompt_command() {
     local last
     last="$(history 1 2>/dev/null | sed 's/^[ ]*[0-9]*[ ]*//')"
-    webterm_meta "$last" "shell"
+    webterm_session_update "$last" "shell"
   }
   if [ -z "${PROMPT_COMMAND:-}" ]; then
     PROMPT_COMMAND='__webterm_prompt_command'
@@ -44,7 +44,7 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   __webterm_precmd() {
     local last
     last="$(fc -ln -1 2>/dev/null | sed 's/^[ ]*//')"
-    webterm_meta "$last" "shell"
+    webterm_session_update "$last" "shell"
   }
   if ! printf '%s\n' "${precmd_functions[@]}" | grep -qx '__webterm_precmd'; then
     precmd_functions+=(__webterm_precmd)

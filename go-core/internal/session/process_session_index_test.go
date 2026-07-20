@@ -1,6 +1,10 @@
 package session
 
-import "testing"
+import (
+	"testing"
+
+	"webterm/go-core/internal/infrastructure/pty"
+)
 
 func TestProcessSessionIndexResolvesParentAndTTY(t *testing.T) {
 	parents := map[int]int{300: 200, 200: 100, 100: 1}
@@ -9,8 +13,8 @@ func TestProcessSessionIndexResolvesParentAndTTY(t *testing.T) {
 		func(pid int) int { return parents[pid] },
 		func(pid int) string { return ttys[pid] },
 	)
-	index.Register("session-parent", 100, "/dev/pts/1")
-	index.Register("session-tty", 500, "/dev/pts/7")
+	index.Register("session-parent", pty.Identity{PID: 100, Backend: "unix-pty", TerminalKey: "/dev/pts/1"})
+	index.Register("session-tty", pty.Identity{PID: 500, Backend: "unix-pty", TerminalKey: "/dev/pts/7"})
 
 	if got, err := index.Resolve(300); err != nil || got != "session-parent" {
 		t.Fatalf("Resolve(parent chain) = %q, %v", got, err)
@@ -19,7 +23,7 @@ func TestProcessSessionIndexResolvesParentAndTTY(t *testing.T) {
 		t.Fatalf("Resolve(tty) = %q, %v", got, err)
 	}
 
-	index.Unregister("session-parent", 100, "/dev/pts/1")
+	index.Unregister("session-parent", pty.Identity{PID: 100, Backend: "unix-pty", TerminalKey: "/dev/pts/1"})
 	if _, err := index.Resolve(300); err == nil {
 		t.Fatal("cached child PID survived session unregister")
 	}

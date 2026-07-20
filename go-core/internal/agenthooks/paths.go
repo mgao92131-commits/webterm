@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // baseDir 返回 ~/.webterm 目录。
@@ -23,13 +24,9 @@ func hookBinDir() string {
 
 // RuntimeBaseDir 返回单个 Agent 实例独占的 shell integration 目录。
 // 多个本地 Agent 不能共享生成的 shell 初始化文件，否则最后启动的 checkout
-// 会把其他实例的新终端重定向到自己的 webterm CLI 和 socket。
-func RuntimeBaseDir(socketPath string) string {
-	abs, err := filepath.Abs(socketPath)
-	if err != nil {
-		abs = socketPath
-	}
-	sum := sha256.Sum256([]byte(abs))
+// 会把其他实例的新终端重定向到自己的 webterm CLI 和 IPC endpoint。
+func RuntimeBaseDir(endpoint string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(endpoint)))
 	return filepath.Join(baseDir(), "runtimes", fmt.Sprintf("%x", sum[:8]))
 }
 

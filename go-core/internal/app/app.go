@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"webterm/go-core/internal/agenthooks"
@@ -12,31 +13,35 @@ import (
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/fileupload"
+	"webterm/go-core/internal/localipc"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/session"
 )
 
 type App struct {
-	cfg             config.Config
-	version         string
-	sessions        *session.Manager
-	fileSend        *filesend.Service
-	fileUpload      *fileupload.Service
-	agentNotify     *agentnotify.Dispatcher
-	logger          *logs.Logger
-	mu              sync.RWMutex
-	restartRequired bool
-	socketPath      string
-	relay           RelayStatus
+	cfg         config.Config
+	version     string
+	sessions    *session.Manager
+	fileSend    *filesend.Service
+	fileUpload  *fileupload.Service
+	agentNotify *agentnotify.Dispatcher
+	logger      *logs.Logger
+	mu          sync.RWMutex
+	ipcEndpoint string
 }
 
 func New(cfg config.Config, version string) *App {
 	logger := logs.New(logs.DefaultCapacity)
-	socketPath := cfg.SocketPath
-	if socketPath == "" {
-		socketPath = defaultSocketPath()
+	endpointInput := cfg.IPCEndpoint
+	if endpointInput == "" {
+		endpointInput = cfg.SocketPath
 	}
-	runtimeHookDir := agenthooks.RuntimeBaseDir(socketPath)
+	ipcEndpoint, err := localipc.Normalize(endpointInput)
+	if err != nil {
+		logger.Add("warn", "ipc", fmt.Sprintf("invalid IPC endpoint %q; using default: %v", endpointInput, err))
+		ipcEndpoint = localipc.DefaultEndpoint()
+	}
+	runtimeHookDir := agenthooks.RuntimeBaseDir(ipcEndpoint)
 	installShellHook(logger, runtimeHookDir)
 
 	manager := session.NewManager(session.TerminalDefaults{
@@ -49,9 +54,12 @@ func New(cfg config.Config, version string) *App {
 	sessionEnv := map[string]string{
 		"WEBTERM":                "1",
 		"WEBTERM_INTEGRATION":    "1",
-		"WEBTERM_SOCKET_PATH":    socketPath,
-		"WEBTERM_CONTROL_ADDR":   cfg.Control.Addr,
+		"WEBTERM_IPC_ENDPOINT":   ipcEndpoint,
 		"WEBTERM_SHELL_INIT_DIR": agenthooks.ShellInitDirAt(runtimeHookDir),
+	}
+	if strings.HasPrefix(ipcEndpoint, "unix:") {
+		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。
+		sessionEnv["WEBTERM_SOCKET_PATH"] = strings.TrimPrefix(ipcEndpoint, "unix:")
 	}
 
 	if webtermBin, err := agenthooks.ResolveWebtermBinary(); err == nil && webtermBin != "" {
@@ -79,18 +87,13 @@ func New(cfg config.Config, version string) *App {
 		cfg:         cfg,
 		version:     version,
 		logger:      logger,
-		socketPath:  socketPath,
+		ipcEndpoint: ipcEndpoint,
 		sessions:    manager,
 		fileSend:    fileSendSvc,
 		fileUpload:  fileUploadSvc,
 		agentNotify: notificationDispatcher,
-		relay: RelayStatus{
-			Configured: cfg.Relay.URL != "",
-			Connected:  false,
-			URL:        cfg.Relay.URL,
-		},
 	}
-	application.Log("info", "core", fmt.Sprintf("relay-only app initialized socket=%s", socketPath))
+	application.Log("info", "core", fmt.Sprintf("relay-only app initialized ipc=%s", ipcEndpoint))
 	return application
 }
 
@@ -103,14 +106,6 @@ func installShellHook(logger *logs.Logger, runtimeHookDir string) {
 	if _, _, err := agenthooks.InstallShellHookAt(runtimeHookDir, webtermBin); err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("install shell hook failed: %v", err))
 	}
-}
-
-func defaultSocketPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.TempDir()
-	}
-	return filepath.Join(home, ".webterm", "webterm.sock")
 }
 
 func (app *App) Config() config.Config {
@@ -129,45 +124,7 @@ func (app *App) Log(level string, source string, message string) {
 	}
 }
 
-func (app *App) UpdateConfig(cfg config.Config) {
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	if cfg != app.cfg {
-		app.restartRequired = true
-	}
-	app.cfg = cfg
-	app.relay.Configured = cfg.Relay.URL != ""
-	app.relay.URL = cfg.Relay.URL
-	app.Log("info", "config", "relay configuration updated")
-}
-
-func (app *App) ApplyRuntimeConfig(cfg config.Config) {
-	app.mu.Lock()
-	app.cfg = cfg
-	app.restartRequired = false
-	app.relay.Configured = cfg.Relay.URL != ""
-	app.relay.URL = cfg.Relay.URL
-	app.relay.LastError = ""
-	app.mu.Unlock()
-
-	app.sessions.SetDefaults(session.TerminalDefaults{
-		CWD:                cfg.Shell.CWD,
-		Command:            cfg.Shell.Command,
-		ScrollbackMaxLines: cfg.Scrollback.MaxLines,
-		ScrollbackMaxBytes: cfg.Scrollback.MaxBytes,
-	})
-	if app.fileUpload != nil {
-		app.fileUpload.SetMaxUploadSize(cfg.Upload.MaxBytes)
-	}
-	app.Log("info", "runtime", "relay runtime configuration applied")
-}
-
 func (app *App) SetRuntimeStopped() {
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	app.relay.Connected = false
-	app.relay.DeviceID = ""
-	app.relay.LastError = ""
 	app.Log("info", "runtime", "runtime stopped")
 }
 
@@ -181,34 +138,13 @@ func (app *App) FileUploadService() *fileupload.Service { return app.fileUpload 
 
 func (app *App) AgentNotificationDispatcher() *agentnotify.Dispatcher { return app.agentNotify }
 
-func (app *App) SocketPath() string {
+func (app *App) IPCEndpoint() string {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
-	return app.socketPath
-}
-
-func (app *App) Status() Status {
-	app.mu.RLock()
-	relayStatus := app.relay
-	restartRequired := app.restartRequired
-	app.mu.RUnlock()
-	return Status{
-		Running:         true,
-		RestartRequired: restartRequired,
-		Version:         app.version,
-		Relay:           relayStatus,
-		Sessions: SessionStatus{
-			Count: app.sessions.Count(),
-		},
-	}
+	return app.ipcEndpoint
 }
 
 func (app *App) SetRelayConnected(connected bool, deviceID string, lastError string) {
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	app.relay.Connected = connected
-	app.relay.DeviceID = deviceID
-	app.relay.LastError = lastError
 	if connected {
 		app.Log("info", "relay", fmt.Sprintf("relay connected deviceId=%s", deviceID))
 	} else if lastError != "" {
@@ -221,24 +157,4 @@ func (app *App) SetRelayConnected(connected bool, deviceID string, lastError str
 func (app *App) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-type Status struct {
-	Running         bool          `json:"running"`
-	RestartRequired bool          `json:"restartRequired"`
-	Version         string        `json:"version"`
-	Relay           RelayStatus   `json:"relay"`
-	Sessions        SessionStatus `json:"sessions"`
-}
-
-type RelayStatus struct {
-	Configured bool   `json:"configured"`
-	Connected  bool   `json:"connected"`
-	DeviceID   string `json:"deviceId,omitempty"`
-	URL        string `json:"url,omitempty"`
-	LastError  string `json:"lastError,omitempty"`
-}
-
-type SessionStatus struct {
-	Count int `json:"count"`
 }

@@ -18,6 +18,28 @@ type reliableInputPTY struct {
 	data   bytes.Buffer
 }
 
+type closeTrackingTerminalIO struct {
+	closed atomic.Int64
+}
+
+func (p *closeTrackingTerminalIO) Read([]byte) (int, error)       { return 0, io.EOF }
+func (p *closeTrackingTerminalIO) Write(data []byte) (int, error) { return len(data), nil }
+func (p *closeTrackingTerminalIO) Close() error {
+	p.closed.Add(1)
+	return nil
+}
+
+func TestRuntimeCloseDoesNotCloseTerminalIO(t *testing.T) {
+	terminalIO := &closeTrackingTerminalIO{}
+	r := NewRuntime("runtime-close-owner", terminalIO, 2, 80)
+	if err := r.Close(); err != nil {
+		t.Fatalf("Runtime.Close: %v", err)
+	}
+	if got := terminalIO.closed.Load(); got != 0 {
+		t.Fatalf("Runtime.Close closed TerminalIO %d times, want 0", got)
+	}
+}
+
 func newReliableInputPTY() *reliableInputPTY {
 	return &reliableInputPTY{closed: make(chan struct{})}
 }

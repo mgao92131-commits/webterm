@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"webterm/go-core/internal/infrastructure/pty"
 )
 
 // ProcessSessionIndex 拥有 shell PID、TTY 与父进程解析缓存。
@@ -32,25 +34,25 @@ func newProcessSessionIndex(parentPID func(int) int, ttyPathByPID func(int) stri
 	}
 }
 
-func (index *ProcessSessionIndex) Register(sessionID string, shellPID int, tty string) {
+func (index *ProcessSessionIndex) Register(sessionID string, identity pty.Identity) {
 	index.mu.Lock()
 	defer index.mu.Unlock()
-	if shellPID > 0 {
-		index.shellPIDToSession[shellPID] = sessionID
+	if identity.PID > 0 {
+		index.shellPIDToSession[identity.PID] = sessionID
 	}
-	if tty != "" {
-		index.ttyToSession[tty] = sessionID
+	if identity.TerminalKey != "" {
+		index.ttyToSession[identity.TerminalKey] = sessionID
 	}
 }
 
-func (index *ProcessSessionIndex) Unregister(sessionID string, shellPID int, tty string) {
+func (index *ProcessSessionIndex) Unregister(sessionID string, identity pty.Identity) {
 	index.mu.Lock()
 	defer index.mu.Unlock()
-	if shellPID > 0 && index.shellPIDToSession[shellPID] == sessionID {
-		delete(index.shellPIDToSession, shellPID)
+	if identity.PID > 0 && index.shellPIDToSession[identity.PID] == sessionID {
+		delete(index.shellPIDToSession, identity.PID)
 	}
-	if tty != "" && index.ttyToSession[tty] == sessionID {
-		delete(index.ttyToSession, tty)
+	if identity.TerminalKey != "" && index.ttyToSession[identity.TerminalKey] == sessionID {
+		delete(index.ttyToSession, identity.TerminalKey)
 	}
 	for pid, resolvedSessionID := range index.resolvedPIDToSession {
 		if resolvedSessionID == sessionID {

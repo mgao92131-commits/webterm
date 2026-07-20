@@ -7,10 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
-
-	"github.com/creack/pty"
+	"sync"
 )
 
 const (
@@ -23,14 +21,18 @@ const (
 	DefaultRows = 30
 )
 
-// Process 封装 OS 进程 + PTY 的生命周期管理。
+// Process 是终端 OS 资源的唯一所有者。它向上层提供稳定的字节流和生命周期
+// 操作，不暴露 Unix PTY 文件或 Windows ConPTY 句柄。
 type Process struct {
-	cmd     *exec.Cmd
-	ptmx    *os.File
-	cols    int
-	rows    int
-	command string
-	cwd     string
+	backend backend
+
+	mu       sync.Mutex
+	cols     int
+	rows     int
+	command  string
+	cwd      string
+	closed   bool
+	closeErr error
 }
 
 // Options 定义进程启动参数。
@@ -43,7 +45,7 @@ type Options struct {
 	Env     map[string]string // 额外注入到子进程的环境变量
 }
 
-// Start 启动一个带 PTY 的新进程。
+// Start 启动一个带终端字节流的新进程。
 func Start(opts Options) (*Process, error) {
 	cols := opts.Cols
 	if cols <= 0 {
@@ -61,19 +63,12 @@ func Start(opts Options) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(shellCmd, args...)
-	cmd.Dir = cwd
-	cmd.Env = buildEnv(os.Environ(), opts.Env, extraEnv)
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	})
+	b, err := startBackend(shellCmd, args, cwd, buildEnv(os.Environ(), opts.Env, extraEnv), cols, rows)
 	if err != nil {
 		return nil, err
 	}
 	return &Process{
-		cmd:     cmd,
-		ptmx:    ptmx,
+		backend: b,
 		cols:    cols,
 		rows:    rows,
 		command: strings.Join(append([]string{shellCmd}, args...), " "),
@@ -81,17 +76,13 @@ func Start(opts Options) (*Process, error) {
 	}, nil
 }
 
-// Read 从 PTY 读取输出。
-func (p *Process) Read(buf []byte) (int, error) {
-	return p.ptmx.Read(buf)
-}
+// Read 从终端输出字节流读取数据。Close 必须解除被阻塞的 Read。
+func (p *Process) Read(buf []byte) (int, error) { return p.backend.Read(buf) }
 
-// Write 向 PTY 写入输入。
-func (p *Process) Write(data []byte) (int, error) {
-	return p.ptmx.Write(data)
-}
+// Write 向终端输入字节流写入数据。
+func (p *Process) Write(data []byte) (int, error) { return p.backend.Write(data) }
 
-// Resize 调整 PTY 窗口大小。
+// Resize 调整终端窗口大小。它与 Close 串行；仅在 OS 调整成功后提交几何状态。
 func (p *Process) Resize(cols int, rows int) error {
 	if cols < 10 || rows < 5 {
 		return nil
@@ -102,72 +93,56 @@ func (p *Process) Resize(cols int, rows int) error {
 	if rows > 200 {
 		rows = 200
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return errors.New("terminal process is closed")
+	}
+	if err := p.backend.Resize(cols, rows); err != nil {
+		return err
+	}
 	p.cols = cols
 	p.rows = rows
-	return pty.Setsize(p.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	return nil
 }
 
-// Wait 等待进程退出，返回退出码。
-func (p *Process) Wait() (int, error) {
-	err := p.cmd.Wait()
-	code := 0
-	if err != nil {
-		code = 1
-	}
-	return code, err
-}
+// Wait 等待进程退出并返回真实退出码。
+func (p *Process) Wait() (int, error) { return p.backend.Wait() }
 
-// Kill 强制终止进程。
-func (p *Process) Kill() {
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
-	}
-}
-
-// Close 关闭 PTY。
+// Close 终止该 Process 拥有的进程和 IO。它是幂等的，且与 Resize 串行。
 func (p *Process) Close() error {
-	return p.ptmx.Close()
-}
-
-// PID 返回底层 shell 进程的 PID。
-func (p *Process) PID() int {
-	if p.cmd == nil || p.cmd.Process == nil {
-		return 0
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return p.closeErr
 	}
-	return p.cmd.Process.Pid
+	p.closed = true
+	p.closeErr = p.backend.Close()
+	return p.closeErr
 }
 
-// TTYPath 返回 PTY slave 路径，例如 /dev/ttys004 或 /dev/pts/0。
-func (p *Process) TTYPath() string {
-	pid := p.PID()
-	if pid == 0 {
-		return ""
-	}
-	return getTTYPathByPID(pid)
-}
-
-// PTY 返回底层的 PTY 文件描述符。
-func (p *Process) PTY() *os.File {
-	return p.ptmx
-}
+// Identity 返回启动时固定的跨平台进程身份。
+func (p *Process) Identity() Identity { return p.backend.Identity() }
 
 // Command 返回完整命令行。
-func (p *Process) Command() string {
-	return p.command
-}
+func (p *Process) Command() string { return p.command }
 
 // CWD 返回工作目录。
-func (p *Process) CWD() string {
-	return p.cwd
+func (p *Process) CWD() string { return p.cwd }
+
+// Cols 返回最后一次成功设置的列数。
+func (p *Process) Cols() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cols
 }
 
-// Cols 返回列数。
-func (p *Process) Cols() int { return p.cols }
-
-// Rows 返回行数。
-func (p *Process) Rows() int { return p.rows }
-
-// --- helpers ---
+// Rows 返回最后一次成功设置的行数。
+func (p *Process) Rows() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.rows
+}
 
 func validateCWD(cwd string) (string, error) {
 	if cwd == "" {
@@ -196,6 +171,12 @@ func resolveCommand(opts Options) (string, []string, map[string]string, error) {
 		return opts.Command, opts.Args, nil, nil
 	}
 	if runtime.GOOS == "windows" {
+		if pwsh, err := exec.LookPath("pwsh.exe"); err == nil {
+			return pwsh, []string{"-NoLogo"}, nil, nil
+		}
+		if powershell, err := exec.LookPath("powershell.exe"); err == nil {
+			return powershell, []string{"-NoLogo"}, nil, nil
+		}
 		if comspec := os.Getenv("ComSpec"); comspec != "" {
 			return comspec, nil, nil, nil
 		}
@@ -261,7 +242,7 @@ func buildEnv(source []string, extra ...map[string]string) []string {
 func setEnv(env []string, key string, value string) []string {
 	prefix := key + "="
 	for i, item := range env {
-		if strings.HasPrefix(item, prefix) {
+		if envKeyMatches(item, key) {
 			env[i] = prefix + value
 			return env
 		}
@@ -270,48 +251,22 @@ func setEnv(env []string, key string, value string) []string {
 }
 
 func unsetEnv(env []string, key string) []string {
-	prefix := key + "="
 	filtered := env[:0]
 	for _, item := range env {
-		if !strings.HasPrefix(item, prefix) {
+		if !envKeyMatches(item, key) {
 			filtered = append(filtered, item)
 		}
 	}
 	return filtered
 }
 
-// getTTYPathByPID 查询指定 PID 的 TTY 设备路径。
-// 优先使用 /proc/<pid>/fd/0（Linux），回退到 ps -o tty=（通用）。
-func getTTYPathByPID(pid int) string {
-	if runtime.GOOS == "linux" {
-		if tty := linuxTTYPath(pid); tty != "" {
-			return tty
-		}
+func envKeyMatches(item, key string) bool {
+	itemKey, _, found := strings.Cut(item, "=")
+	if !found {
+		return false
 	}
-
-	out, err := exec.Command("ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return ""
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(itemKey, key)
 	}
-
-	tty := strings.TrimSpace(string(out))
-	if tty == "" || tty == "??" || tty == "?" {
-		return ""
-	}
-	if strings.HasPrefix(tty, "/dev/") {
-		return tty
-	}
-	return "/dev/" + tty
-}
-
-func linuxTTYPath(pid int) string {
-	path := fmt.Sprintf("/proc/%d/fd/0", pid)
-	target, err := os.Readlink(path)
-	if err != nil {
-		return ""
-	}
-	if strings.HasPrefix(target, "/dev/pts/") || strings.HasPrefix(target, "/dev/tty") {
-		return target
-	}
-	return ""
+	return itemKey == key
 }

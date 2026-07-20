@@ -38,32 +38,31 @@ type TerminalOptions struct {
 }
 
 type TerminalSession struct {
-	mu             sync.RWMutex
-	id             string
-	instance       string
-	termTitle      string
-	cwd            string
-	liveCwd        string
-	command        string
-	status         string
-	shellState     string
-	lastInput      *LastInput
-	notification   *Notification
-	cols           int
-	rows           int
-	createdAt      time.Time
-	activeAt       time.Time
-	runtime        *terminalsession.Runtime
-	process        *pty.Process
-	shellPid       int
-	ttyPath        string
-	clients        map[*terminalChannelRuntime]struct{}
-	screenOwners   map[string]*terminalChannelRuntime
-	onTitleChanged func()
-	onInfoChanged  func()
-	titleChanged   bool
-	manager        *Manager
-	// 已断开客户端的 screen 发送累计；避免重连后 /control/traffic 丢失历史流量。
+	mu              sync.RWMutex
+	id              string
+	instance        string
+	termTitle       string
+	cwd             string
+	liveCwd         string
+	command         string
+	status          string
+	shellState      string
+	lastInput       *LastInput
+	notification    *Notification
+	cols            int
+	rows            int
+	createdAt       time.Time
+	activeAt        time.Time
+	runtime         *terminalsession.Runtime
+	process         *pty.Process
+	processIdentity pty.Identity
+	clients         map[*terminalChannelRuntime]struct{}
+	screenOwners    map[string]*terminalChannelRuntime
+	onTitleChanged  func()
+	onInfoChanged   func()
+	titleChanged    bool
+	manager         *Manager
+	// 已断开客户端的 screen 发送累计；避免重连后诊断统计丢失历史流量。
 	screenWireHistory ScreenWireSnapshot
 }
 
@@ -99,26 +98,25 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	}
 
 	terminal := &TerminalSession{
-		id:             options.ID,
-		instance:       randomID(),
-		cwd:            process.CWD(),
-		command:        process.Command(),
-		status:         StatusRunning,
-		cols:           cols,
-		rows:           rows,
-		createdAt:      now,
-		activeAt:       now,
-		process:        process,
-		shellPid:       process.PID(),
-		ttyPath:        process.TTYPath(),
-		clients:        make(map[*terminalChannelRuntime]struct{}),
-		screenOwners:   make(map[string]*terminalChannelRuntime),
-		onTitleChanged: options.OnTitle,
-		onInfoChanged:  options.OnInfoChanged,
+		id:              options.ID,
+		instance:        randomID(),
+		cwd:             process.CWD(),
+		command:         process.Command(),
+		status:          StatusRunning,
+		cols:            cols,
+		rows:            rows,
+		createdAt:       now,
+		activeAt:        now,
+		process:         process,
+		processIdentity: process.Identity(),
+		clients:         make(map[*terminalChannelRuntime]struct{}),
+		screenOwners:    make(map[string]*terminalChannelRuntime),
+		onTitleChanged:  options.OnTitle,
+		onInfoChanged:   options.OnInfoChanged,
 	}
 	terminal.runtime = terminalsession.NewRuntime(
 		terminal.id,
-		process.PTY(),
+		process,
 		rows,
 		cols,
 		terminalsession.WithOnTitle(func(title string) {
@@ -165,13 +163,13 @@ func (terminal *TerminalSession) ID() string {
 func (terminal *TerminalSession) ShellPID() int {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
-	return terminal.shellPid
+	return terminal.processIdentity.PID
 }
 
-func (terminal *TerminalSession) TTYPath() string {
+func (terminal *TerminalSession) ProcessIdentity() pty.Identity {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
-	return terminal.ttyPath
+	return terminal.processIdentity
 }
 
 func (terminal *TerminalSession) Info() Info {
@@ -197,7 +195,7 @@ func (terminal *TerminalSession) Info() Info {
 		ShellState:        terminal.shellState,
 		LastCommand:       terminal.lastInputText(),
 		LastInputKind:     terminal.lastInputKind(),
-		TTY:               terminal.ttyPath,
+		TTY:               terminal.processIdentity.TerminalKey,
 		Notification:      terminal.notification,
 		Clients:           len(terminal.clients),
 		Cols:              terminal.cols,
@@ -254,12 +252,11 @@ func (terminal *TerminalSession) Close() {
 	clients := terminal.clientSnapshotLocked()
 	terminal.mu.Unlock()
 
-	if terminal.process != nil {
-		_ = terminal.process.Close()
-		terminal.process.Kill()
-	}
 	if terminal.runtime != nil {
 		_ = terminal.runtime.Close()
+	}
+	if terminal.process != nil {
+		_ = terminal.process.Close()
 	}
 	for _, client := range clients {
 		client.Close()
@@ -287,17 +284,31 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 	if rows > 200 {
 		rows = 200
 	}
+	terminal.mu.RLock()
+	if terminal.status == StatusClosed || terminal.process == nil {
+		terminal.mu.RUnlock()
+		return errors.New("terminal session is closed")
+	}
+	process := terminal.process
+	runtime := terminal.runtime
+	terminal.mu.RUnlock()
+
+	if err := process.Resize(cols, rows); err != nil {
+		return err
+	}
+
 	terminal.mu.Lock()
+	if terminal.status == StatusClosed || terminal.process != process {
+		terminal.mu.Unlock()
+		return errors.New("terminal session is closed")
+	}
 	terminal.cols = cols
 	terminal.rows = rows
-	if terminal.process != nil {
-		terminal.process.Resize(cols, rows)
-	}
-	if terminal.runtime != nil {
-		terminal.runtime.ResizeEngine(rows, cols)
-	}
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+	if runtime != nil {
+		runtime.ResizeEngine(rows, cols)
+	}
 	return nil
 }
 
@@ -412,6 +423,9 @@ func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 
 func (terminal *TerminalSession) waitLoop() {
 	code, _ := terminal.process.Wait()
+	if terminal.runtime != nil {
+		_ = terminal.runtime.Close()
+	}
 	terminal.markClosed()
 	terminal.broadcastExit(code)
 }
@@ -433,62 +447,69 @@ func (terminal *TerminalSession) broadcastExit(code int) {
 	}
 }
 
-func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
+// ApplyNotification updates the session card state. Device notifications are
+// dispatched separately by localipc so terminal screen traffic never carries
+// notification payloads.
+func (terminal *TerminalSession) ApplyNotification(importance, message, source string, timestamp int64) {
+	if timestamp == 0 {
+		timestamp = time.Now().Unix()
+	}
+	terminal.mu.Lock()
+	if terminal.status == StatusClosed {
+		terminal.mu.Unlock()
+		return
+	}
+	terminal.notification = &Notification{
+		Importance: importance,
+		Message:    message,
+		Source:     source,
+		Timestamp:  timestamp,
+	}
+	terminal.touchLocked()
+	onInfoChanged := terminal.onInfoChanged
+	terminal.mu.Unlock()
+	if onInfoChanged != nil {
+		onInfoChanged()
+	}
+	terminal.broadcastInfo()
+}
+
+// ApplySessionUpdate changes only terminal metadata and never triggers a
+// device notification.
+func (terminal *TerminalSession) ApplySessionUpdate(shellState, cwd, lastInput, inputKind string, timestamp int64) {
+	if timestamp == 0 {
+		timestamp = time.Now().Unix()
+	}
 	terminal.mu.Lock()
 	if terminal.status == StatusClosed {
 		terminal.mu.Unlock()
 		return
 	}
 	var runtimeCWD string
-	switch ev.Type {
-	case "notify", "agent_event":
-		terminal.notification = &Notification{
-			Level:      ev.Level,
-			Importance: ev.Importance,
-			Message:    ev.Message,
-			Source:     ev.Source,
-			Timestamp:  ev.Timestamp,
-		}
-		terminal.touchLocked()
-	case "state":
-		if ev.ShellState != "" {
-			terminal.shellState = ev.ShellState
-		}
-		terminal.touchLocked()
-	case "meta":
-		if ev.CWD != "" {
-			terminal.liveCwd = ev.CWD
-			runtimeCWD = ev.CWD
-		}
-		if ev.LastCommand != "" {
-			kind := ev.InputKind
-			if kind == "" {
-				kind = "shell"
-			}
-			terminal.lastInput = &LastInput{
-				Kind:      kind,
-				Text:      ev.LastCommand,
-				Timestamp: ev.Timestamp,
-			}
-		}
-		terminal.touchLocked()
+	if shellState != "" {
+		terminal.shellState = shellState
 	}
+	if cwd != "" {
+		terminal.liveCwd = cwd
+		runtimeCWD = cwd
+	}
+	if lastInput != "" {
+		if inputKind == "" {
+			inputKind = "shell"
+		}
+		terminal.lastInput = &LastInput{Kind: inputKind, Text: lastInput, Timestamp: timestamp}
+	}
+	terminal.touchLocked()
 	onInfoChanged := terminal.onInfoChanged
 	runtime := terminal.runtime
 	terminal.mu.Unlock()
 	if runtimeCWD != "" && runtime != nil {
 		runtime.SetWorkingDirectory(runtimeCWD)
 	}
-
 	if onInfoChanged != nil {
 		onInfoChanged()
 	}
-
-	if ev.Type == "notify" {
-		terminal.broadcastHook(ev)
-	} else {
-		terminal.broadcastInfo()
-	}
+	terminal.broadcastInfo()
 }
 
 func (terminal *TerminalSession) broadcastInfo() {
@@ -497,15 +518,6 @@ func (terminal *TerminalSession) broadcastInfo() {
 	terminal.mu.RUnlock()
 	for _, client := range clients {
 		client.SendInfo()
-	}
-}
-
-func (terminal *TerminalSession) broadcastHook(ev protocol.HookEvent) {
-	terminal.mu.RLock()
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-	for _, client := range clients {
-		client.SendHook(ev)
 	}
 }
 
@@ -604,18 +616,6 @@ func (terminal *TerminalSession) handleDownloadCommand(conn net.Conn, cmd protoc
 		ExpiresAt: time.Now().Add(10 * time.Minute),
 	}
 	terminal.manager.AddDownloadTask(terminal.id, task)
-
-	terminal.broadcastHook(protocol.HookEvent{
-		Type:       "download",
-		DownloadID: downloadID,
-		SessionID:  terminal.id,
-		FilePath:   task.FileName,
-		FileName:   task.FileName,
-		TotalBytes: task.Size,
-		FileSize:   task.Size,
-		Status:     "pending",
-		Timestamp:  time.Now().Unix(),
-	})
 
 	writeCLIResponse(conn, protocol.CLIResponse{
 		Kind:       "response",

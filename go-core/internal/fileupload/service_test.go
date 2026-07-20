@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/session"
 )
 
@@ -462,7 +461,7 @@ func TestUploadCWDSnapshotPinned(t *testing.T) {
 	svc := newService(manager, 0)
 
 	// 上传前 hook meta 上报 liveCwd=B，快照应优先使用 B 而不是初始目录 A。
-	terminal.ApplyHookEvent(protocol.HookEvent{Type: "meta", CWD: cwdB})
+	terminal.ApplySessionUpdate("", cwdB, "", "", 0)
 
 	release := make(chan struct{})
 	reader := &blockingReader{release: release, started: make(chan struct{}), data: []byte("pinned")}
@@ -481,7 +480,7 @@ func TestUploadCWDSnapshotPinned(t *testing.T) {
 
 	<-reader.started
 	// 上传已经开始（快照已固定），此时再把 liveCwd 改到 C，不应影响本次目标。
-	terminal.ApplyHookEvent(protocol.HookEvent{Type: "meta", CWD: cwdC})
+	terminal.ApplySessionUpdate("", cwdC, "", "", 0)
 	close(release)
 	<-done
 

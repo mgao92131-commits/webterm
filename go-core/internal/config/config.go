@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,9 +31,12 @@ type Options struct {
 
 // Config 是 relay-only PC Agent 的完整配置。
 type Config struct {
+	// IPCEndpoint 使用 unix:/absolute/path 或 npipe://./pipe/name。
+	IPCEndpoint string `json:"ipcEndpoint,omitempty"`
+	// SocketPath 是旧 WEBTERM_SOCKET_PATH / socketPath 配置的兼容字段；
+	// 新配置应改用 IPCEndpoint。
 	SocketPath string           `json:"socketPath,omitempty"`
 	Relay      RelayConfig      `json:"relay"`
-	Control    ControlConfig    `json:"control"`
 	Shell      ShellConfig      `json:"shell"`
 	Scrollback ScrollbackConfig `json:"scrollback"`
 	Upload     UploadConfig     `json:"upload"`
@@ -50,10 +56,6 @@ type RelayConfig struct {
 	Secret     string `json:"secret,omitempty"`
 	DeviceName string `json:"deviceName"`
 	Protocol   string `json:"protocol"`
-}
-
-type ControlConfig struct {
-	Addr string `json:"addr"`
 }
 
 type ShellConfig struct {
@@ -95,43 +97,6 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func MergeEditable(current Config, next Config) Config {
-	if next.SocketPath != "" {
-		current.SocketPath = next.SocketPath
-	}
-	if next.Relay.URL != "" {
-		current.Relay.URL = next.Relay.URL
-	}
-	if next.Relay.Secret != "" && next.Relay.Secret != RedactedSecret {
-		current.Relay.Secret = next.Relay.Secret
-	}
-	if next.Relay.DeviceName != "" {
-		current.Relay.DeviceName = next.Relay.DeviceName
-	}
-	if next.Relay.Protocol != "" {
-		current.Relay.Protocol = NormalizeRelayProtocol(next.Relay.Protocol)
-	}
-	if next.Control.Addr != "" {
-		current.Control.Addr = next.Control.Addr
-	}
-	if next.Shell.Command != "" {
-		current.Shell.Command = next.Shell.Command
-	}
-	if next.Shell.CWD != "" {
-		current.Shell.CWD = next.Shell.CWD
-	}
-	if next.Scrollback.MaxLines > 0 {
-		current.Scrollback.MaxLines = next.Scrollback.MaxLines
-	}
-	if next.Scrollback.MaxBytes > 0 {
-		current.Scrollback.MaxBytes = next.Scrollback.MaxBytes
-	}
-	if next.Upload.MaxBytes > 0 {
-		current.Upload.MaxBytes = next.Upload.MaxBytes
-	}
-	return current
-}
-
 func NormalizeRelayProtocol(string) string {
 	return RelayProtocolV2
 }
@@ -152,6 +117,44 @@ func Load(options Options) Config {
 	return cfg
 }
 
+// LoadStrict is used by the Agent CLI. Unlike the legacy in-process loader it
+// never treats a missing or malformed requested configuration file as defaults.
+func LoadStrict(options Options) (Config, error) {
+	cfg := defaultConfig()
+	if options.ConfigPath != "" {
+		data, err := os.ReadFile(options.ConfigPath)
+		if err != nil {
+			return Config{}, fmt.Errorf("配置无效：%s: %w", options.ConfigPath, err)
+		}
+		var file Config
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&file); err != nil {
+			return Config{}, fmt.Errorf("配置无效：%s: %w", options.ConfigPath, err)
+		}
+		cfg = mergeConfig(cfg, file)
+	}
+	cfg = mergeConfig(cfg, envConfig())
+	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
+	if cfg.Relay.URL == "" {
+		return Config{}, fmt.Errorf("配置无效：relay.url 必须设置")
+	}
+	parsed, err := url.Parse(cfg.Relay.URL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return Config{}, fmt.Errorf("配置无效：relay.url 无效")
+	}
+	if cfg.Relay.Secret == "" {
+		return Config{}, fmt.Errorf("配置无效：relay.secret 必须设置")
+	}
+	if cfg.Upload.MaxBytes <= 0 {
+		return Config{}, fmt.Errorf("配置无效：upload.maxBytes 必须大于 0")
+	}
+	if cfg.Scrollback.MaxLines <= 0 || cfg.Scrollback.MaxBytes <= 0 {
+		return Config{}, fmt.Errorf("配置无效：scrollback 限制必须大于 0")
+	}
+	return cfg, nil
+}
+
 func defaultConfig() Config {
 	cwd, _ := os.Getwd()
 	hostname, _ := os.Hostname()
@@ -160,8 +163,7 @@ func defaultConfig() Config {
 			DeviceName: hostname,
 			Protocol:   RelayProtocolV2,
 		},
-		Control: ControlConfig{Addr: "127.0.0.1:18081"},
-		Shell:   ShellConfig{CWD: cwd},
+		Shell: ShellConfig{CWD: cwd},
 		Scrollback: ScrollbackConfig{
 			MaxLines: DefaultScrollbackMaxLines,
 			MaxBytes: DefaultScrollbackMaxBytes,
@@ -184,20 +186,23 @@ func readConfigFile(path string) Config {
 
 func envConfig() Config {
 	return Config{
-		SocketPath: env("WEBTERM_SOCKET_PATH"),
+		IPCEndpoint: env("WEBTERM_IPC_ENDPOINT"),
+		SocketPath:  env("WEBTERM_SOCKET_PATH"),
 		Relay: RelayConfig{
 			URL:        env("RELAY_URL"),
 			Secret:     env("RELAY_SECRET"),
 			DeviceName: env("DEVICE_NAME"),
 			Protocol:   env("WEBTERM_RELAY_PROTOCOL"),
 		},
-		Control: ControlConfig{Addr: env("WEBTERM_CONTROL_ADDR")},
-		Shell:   ShellConfig{Command: env("WEBTERM_SHELL")},
-		Upload:  UploadConfig{MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES")},
+		Shell:  ShellConfig{Command: env("WEBTERM_SHELL")},
+		Upload: UploadConfig{MaxBytes: envInt64("WEBTERM_MAX_UPLOAD_BYTES")},
 	}
 }
 
 func mergeConfig(base Config, override Config) Config {
+	if override.IPCEndpoint != "" {
+		base.IPCEndpoint = override.IPCEndpoint
+	}
 	if override.SocketPath != "" {
 		base.SocketPath = override.SocketPath
 	}
@@ -212,9 +217,6 @@ func mergeConfig(base Config, override Config) Config {
 	}
 	if override.Relay.Protocol != "" {
 		base.Relay.Protocol = NormalizeRelayProtocol(override.Relay.Protocol)
-	}
-	if override.Control.Addr != "" {
-		base.Control.Addr = override.Control.Addr
 	}
 	if override.Shell.Command != "" {
 		base.Shell.Command = override.Shell.Command

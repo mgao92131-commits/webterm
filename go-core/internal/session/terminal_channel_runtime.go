@@ -9,7 +9,6 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"webterm/go-core/internal/logs"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/screenprotocol"
 	pb "webterm/go-core/internal/screenprotocol/generated"
@@ -209,14 +208,6 @@ func encodeTerminalInfo(info Info) ([]byte, error) {
 		},
 	}
 	return proto.Marshal(envelope)
-}
-
-func (client *terminalChannelRuntime) SendHook(ev protocol.HookEvent) {
-	if !client.ready.Load() {
-		return
-	}
-	// Agent hook notifications are not terminal screen state. Android receives
-	// terminal-native notifications through screen effects instead.
 }
 
 func (client *terminalChannelRuntime) SendExit(code int) {

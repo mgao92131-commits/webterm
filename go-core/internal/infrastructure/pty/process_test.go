@@ -1,13 +1,36 @@
+//go:build !windows
+
 package pty
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+type recordingBackend struct {
+	resizeErr  error
+	resizeCall int
+	closeCall  int
+}
+
+func (b *recordingBackend) Read([]byte) (int, error)       { return 0, io.EOF }
+func (b *recordingBackend) Write(data []byte) (int, error) { return len(data), nil }
+func (b *recordingBackend) Resize(int, int) error {
+	b.resizeCall++
+	return b.resizeErr
+}
+func (b *recordingBackend) Wait() (int, error) { return 0, nil }
+func (b *recordingBackend) Identity() Identity { return Identity{PID: 42, Backend: "test"} }
+func (b *recordingBackend) Close() error {
+	b.closeCall++
+	return nil
+}
 
 func TestApplyShellInitBash(t *testing.T) {
 	tmp := t.TempDir()
@@ -158,7 +181,6 @@ func TestStartAppliesShellInit(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer proc.Close()
-	defer proc.Kill()
 
 	buf := make([]byte, 4096)
 	var out []byte
@@ -176,4 +198,50 @@ func TestStartAppliesShellInit(t *testing.T) {
 		}
 	}
 	t.Fatalf("bash did not load webterm rc; output: %q", string(out))
+}
+
+func TestProcessCloseIsOwnedAndIdempotent(t *testing.T) {
+	backend := &recordingBackend{}
+	process := &Process{backend: backend, cols: 80, rows: 24}
+	if err := process.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if backend.closeCall != 1 {
+		t.Fatalf("backend Close calls = %d, want 1", backend.closeCall)
+	}
+	if err := process.Resize(100, 30); err == nil {
+		t.Fatal("Resize after Close succeeded")
+	}
+}
+
+func TestProcessResizeCommitsGeometryOnlyAfterBackendSuccess(t *testing.T) {
+	backend := &recordingBackend{resizeErr: errors.New("resize failed")}
+	process := &Process{backend: backend, cols: 80, rows: 24}
+	if err := process.Resize(100, 30); err == nil {
+		t.Fatal("Resize unexpectedly succeeded")
+	}
+	if got := process.Cols(); got != 80 {
+		t.Fatalf("Cols after failed Resize = %d, want 80", got)
+	}
+	if got := process.Rows(); got != 24 {
+		t.Fatalf("Rows after failed Resize = %d, want 24", got)
+	}
+}
+
+func TestProcessWaitReturnsRealExitCode(t *testing.T) {
+	proc, err := Start(Options{Command: "/bin/sh", Args: []string{"-c", "exit 23"}})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer proc.Close()
+	code, err := proc.Wait()
+	if err == nil {
+		t.Fatal("Wait error = nil, want exit error")
+	}
+	if code != 23 {
+		t.Fatalf("Wait exit code = %d, want 23", code)
+	}
 }

@@ -38,6 +38,24 @@ jobs:
           cache-dependency-path: go-core/go.sum
       - run: go test -race ./...
 
+  go-windows-build:
+    name: Windows cross build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      # Ubuntu 不能运行 Windows test binary；这里只验证所有生产包和两个发布入口
+      # 的 Windows 编译边界。ConPTY/Named Pipe 行为由后续 windows-latest 集成任务覆盖。
+      - run: GOOS=windows GOARCH=amd64 go build ./...
+      - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm-agent
+      - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm
+
   android:
     name: Android test lint and build
     runs-on: ubuntu-latest
