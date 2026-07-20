@@ -44,6 +44,10 @@ type Runtime struct {
 	draining atomic.Bool
 	// readDone 在 readLoop 退出时关闭（PTY EOF、读错误或 runtime 停止）。
 	readDone chan struct{}
+	// drainEOFUncertain 为 true 时表示无法依赖输出流产生真正的 EOF（process.BeginDrain
+	// 失败或 backend 不支持），waitReadDrained 退化为连续静默兜底。默认 false，即坚持
+	// 等待真 EOF，避免退出后延迟到达的尾部输出在静默窗口后被截断。
+	drainEOFUncertain atomic.Bool
 
 	layoutEpoch       uint64
 	screenRevision    uint64
@@ -443,8 +447,11 @@ func (r *Runtime) DrainAndClose(ctx context.Context) error {
 	return nil
 }
 
-// waitReadDrained 等待 PTY 输出流排空：优先等 readLoop 退出（Unix EOF/EIO）；
-// ConPTY 等不 EOF 的平台以 100ms 连续静默（无新输出事件且队列已空）判定。
+// waitReadDrained 等待 PTY 输出流排空：优先等 readLoop 退出读到真正的 EOF。
+// waitLoop 在调用 DrainAndClose 前已调用 process.BeginDrain：Unix 下 PTY 随子进程
+// 退出返回 EOF/EIO；Windows 下 BeginDrain 关闭伪控制台使 ConPTY 输出管道产生 EOF。
+// 因此正常路径都能命中 readDone。100ms 连续静默仅作为异常兜底（BeginDrain 失败、
+// backend 无法产生可靠 EOF，或排空上下文即将超时），不再是 Windows 的正常成功条件。
 // 调用方必须保证进程已退出（不会再有新输出），该假设由 waitLoop 的调用
 // 时序（process.Wait 之后）保证。
 func (r *Runtime) waitReadDrained(ctx context.Context) {
@@ -470,6 +477,12 @@ func (r *Runtime) waitReadDrained(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// 能拿到可靠 EOF 时坚持等待 readDone，不用静默窗口提前判定成功——否则
+			// 退出后延迟超过静默窗口才到达的尾部输出会被截断。仅在 drainEOFUncertain
+			// （无法获得真 EOF）时以连续静默作为兜底成功条件。
+			if !r.drainEOFUncertain.Load() {
+				continue
+			}
 			events := r.ptyOutputEvents.Load()
 			if events == lastEvents && len(r.events) == 0 {
 				quiet++
@@ -484,6 +497,10 @@ func (r *Runtime) waitReadDrained(ctx context.Context) {
 	}
 }
 
+// MarkDrainEOFUncertain 由会话在 process.BeginDrain 失败时调用，告知排空逻辑无法
+// 依赖真正的 EOF，应退化为连续静默窗口兜底。必须在 DrainAndClose 之前调用。
+func (r *Runtime) MarkDrainEOFUncertain() { r.drainEOFUncertain.Store(true) }
+
 // drain 执行排空但不关闭 runtime；返回 false 表示 ctx 超时或被提前 Close。
 func (r *Runtime) drain(ctx context.Context) bool {
 	r.draining.Store(true)
@@ -495,9 +512,10 @@ func (r *Runtime) drain(ctx context.Context) bool {
 		_ = r.inputWriter.Shutdown(ctx)
 	}
 
-	// 1. 等待 PTY 输出排空。Unix 下子进程退出后 readLoop 会读到 EOF/EIO 退出；
-	// Windows ConPTY 的输出管道不随子进程退出 EOF（conhost 存活至
-	// ClosePseudoConsole），因此以连续静默窗口兜底判定无更多输出。
+	// 1. 等待 PTY 输出排空。waitLoop 已在本调用前执行 process.BeginDrain：
+	// Unix 下 readLoop 读到 EOF/EIO 退出；Windows 下 BeginDrain 关闭伪控制台，
+	// ConPTY 输出管道随之产生 EOF，readLoop 读完尾部数据后退出。正常路径都命中
+	// readDone；连续静默窗口仅在无法获得真 EOF 时兜底。
 	r.waitReadDrained(ctx)
 
 	// 2. 屏障事件：actor 按 FIFO 处理到屏障时，之前所有 ptyOutputEvent 都已

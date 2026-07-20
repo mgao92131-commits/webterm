@@ -113,6 +113,10 @@ func (p *Process) Resize(cols int, rows int) error {
 // Wait 等待进程退出并返回真实退出码。
 func (p *Process) Wait() (int, error) { return p.backend.Wait() }
 
+// BeginDrain 在子进程退出后请求 backend 停止输出生产端、让输出流产生真正的 EOF，
+// 但保留输出读端与生命周期句柄（由 Close 释放）。幂等，可与 Close 并发。
+func (p *Process) BeginDrain() error { return p.backend.BeginDrain() }
+
 // Close 终止该 Process 拥有的进程和 IO。它是幂等的，且与 Resize 串行。
 func (p *Process) Close() error {
 	p.mu.Lock()

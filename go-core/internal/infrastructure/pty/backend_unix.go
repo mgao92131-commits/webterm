@@ -62,6 +62,10 @@ func (b *unixBackend) Wait() (int, error) {
 
 func (b *unixBackend) Identity() Identity { return b.identity }
 
+// BeginDrain 在 Unix 上是 no-op：子进程退出后 PTY 主端读取会自然返回 EOF/EIO，
+// Runtime 的 readLoop 据此结束，无需额外关闭步骤。
+func (b *unixBackend) BeginDrain() error { return nil }
+
 // Close 负责 Unix PTY 的底层资源及主 shell 进程。Process 负责保证它只执行一次。
 func (b *unixBackend) Close() error {
 	err := b.ptmx.Close()

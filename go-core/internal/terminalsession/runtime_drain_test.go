@@ -208,3 +208,57 @@ func TestRuntimeDrainSettlesQueuedReliableInput(t *testing.T) {
 		t.Fatalf("seq=2,3 (queued) status=%v/%v, want Rejected", bySeq[2], bySeq[3])
 	}
 }
+
+// 子进程退出后，尾部输出可能延迟超过静默窗口（>100ms）才到达。排空必须等待
+// 真正的 EOF（readDone），而不是在连续静默后提前判定成功，否则尾部会被截断。
+func TestRuntimeDrainAndCloseCapturesDelayedTailOutput(t *testing.T) {
+	outR, outW := io.Pipe()
+	inR, inW := io.Pipe()
+	pty := &benchFakePTY{reader: outR, writer: inW}
+	discardDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, inR)
+		close(discardDone)
+	}()
+
+	r := NewRuntime("drain-delayed", pty, 30, 100)
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = outW.Close()
+		_ = inW.Close()
+		<-discardDone
+	})
+
+	collector := &drainFrameCollector{}
+	r.AttachClient(&ScreenClient{ID: "c1", Send: collector.send})
+	deadline := time.Now().Add(2 * time.Second)
+	for len(collector.snapshot()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("initial snapshot not received")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 先写一段，随后静默 300ms（远超 100ms 静默窗口），再写结束标记并关闭产生 EOF。
+	go func() {
+		_, _ = io.WriteString(outW, "head\r\n")
+		time.Sleep(300 * time.Millisecond)
+		_, _ = io.WriteString(outW, "__DELAYED_END__\r\n")
+		_ = outW.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.DrainAndClose(ctx); err != nil {
+		t.Fatalf("DrainAndClose: %v", err)
+	}
+
+	frames := collector.snapshot()
+	if len(frames) == 0 {
+		t.Fatal("no frames received")
+	}
+	last := frames[len(frames)-1]
+	if text := drainFrameText(last); !strings.Contains(text, "__DELAYED_END__") {
+		t.Fatalf("delayed tail was truncated; final frame:\n%s", text)
+	}
+}

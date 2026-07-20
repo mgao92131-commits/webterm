@@ -20,5 +20,11 @@ type backend interface {
 	Resize(cols, rows int) error
 	Wait() (int, error)
 	Identity() Identity
+
+	// BeginDrain 在子进程退出后停止输出生产端，让输出流尽快产生 EOF，但保留
+	// 输出读端供 Runtime 读到真正的 EOF（而不是靠静默窗口猜测）。它只结束输出
+	// 生产，不释放进程/Job 等生命周期资源——那些由 Close 负责。必须幂等，且可
+	// 与 Close 并发调用。Unix PTY 在子进程退出后本就返回 EOF/EIO，可实现为 no-op。
+	BeginDrain() error
 	Close() error
 }

@@ -28,9 +28,13 @@ type windowsBackend struct {
 
 	closeOnce sync.Once
 	closeErr  error
-	waitOnce  sync.Once
-	waitCode  int
-	waitErr   error
+	drainOnce sync.Once
+	// pseudoOnce 保证 ClosePseudoConsole 在 BeginDrain 与 Close 之间恰好执行一次，
+	// 避免对同一 HPCON 句柄双重关闭。
+	pseudoOnce sync.Once
+	waitOnce   sync.Once
+	waitCode   int
+	waitErr    error
 }
 
 func startBackend(command string, args []string, cwd string, env []string, cols, rows int) (backend, error) {
@@ -187,8 +191,31 @@ func (b *windowsBackend) Wait() (int, error) {
 
 func (b *windowsBackend) Identity() Identity { return b.identity }
 
+// BeginDrain 在子进程退出后关闭输入写端并关闭伪控制台。关闭伪控制台会让 conhost
+// 释放输出管道的写端，使应用侧 outputRead 在读完管道中残留的尾部数据后读到真正的
+// EOF，从而无需依赖静默窗口猜测排空。输出读端、进程与 Job 句柄仍保留，由 Close
+// 最终释放。幂等，且可与 Close 并发调用。
+func (b *windowsBackend) BeginDrain() error {
+	b.drainOnce.Do(func() {
+		_ = b.input.Close()
+		b.closePseudoConsole()
+	})
+	return nil
+}
+
+// closePseudoConsole 恰好关闭一次伪控制台句柄，供 BeginDrain 与 Close 共用。
+func (b *windowsBackend) closePseudoConsole() {
+	b.pseudoOnce.Do(func() {
+		if b.pseudoConsole != 0 {
+			windows.ClosePseudoConsole(b.pseudoConsole)
+			b.pseudoConsole = 0
+		}
+	})
+}
+
 // Close 先关闭 Job Object 以终止整个子进程树，再关闭管道解除 Runtime 的 Read/Write。
-// Wait 独占 process handle，因此 Close 不会与 Wait 争抢同一个句柄。
+// Wait 独占 process handle，因此 Close 不会与 Wait 争抢同一个句柄。若 BeginDrain
+// 已先行关闭输入写端和伪控制台，这里对应的关闭为幂等 no-op。
 func (b *windowsBackend) Close() error {
 	b.closeOnce.Do(func() {
 		if b.job != 0 {
@@ -203,10 +230,7 @@ func (b *windowsBackend) Close() error {
 		if err := b.output.Close(); err != nil && !errors.Is(err, os.ErrClosed) && b.closeErr == nil {
 			b.closeErr = err
 		}
-		if b.pseudoConsole != 0 {
-			windows.ClosePseudoConsole(b.pseudoConsole)
-			b.pseudoConsole = 0
-		}
+		b.closePseudoConsole()
 	})
 	return b.closeErr
 }

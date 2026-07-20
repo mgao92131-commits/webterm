@@ -27,6 +27,7 @@ func (b *recordingBackend) Resize(int, int) error {
 }
 func (b *recordingBackend) Wait() (int, error) { return 0, nil }
 func (b *recordingBackend) Identity() Identity { return Identity{PID: 42, Backend: "test"} }
+func (b *recordingBackend) BeginDrain() error  { return nil }
 func (b *recordingBackend) Close() error {
 	b.closeCall++
 	return nil

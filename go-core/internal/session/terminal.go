@@ -425,6 +425,15 @@ func (terminal *TerminalSession) waitLoop() {
 	// PTY 的进程树让会话永远无法关闭。
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	// BeginDrain 停止输出生产端：Windows 上关闭伪控制台让输出管道产生真正的 EOF
+	// （Unix 为 no-op，PTY 本就随子进程退出 EOF）。必须在 DrainAndClose 之前调用，
+	// 这样 Runtime 的 readLoop 能读到真 EOF，而不是靠静默窗口猜测尾部已排空。
+	// BeginDrain 失败时告知 Runtime 退化为静默兜底。
+	if terminal.process != nil {
+		if err := terminal.process.BeginDrain(); err != nil && terminal.runtime != nil {
+			terminal.runtime.MarkDrainEOFUncertain()
+		}
+	}
 	if terminal.runtime != nil {
 		_ = terminal.runtime.DrainAndClose(ctx)
 	}
