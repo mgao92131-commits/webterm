@@ -108,13 +108,16 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 	// 注意：不要使用 CREATE_SUSPENDED + ResumeThread 来消除 Job 挂接窗口。
 	// 正常启动后立即挂 Job；启动到挂接之间的极短窗口内理论上有孙进程逃逸
 	// 的可能，但 KILL_ON_JOB_CLOSE 本就是兜底清理语义，该窗口可以接受。
+	// STARTF_USESTDHANDLES 必须设置：不设置时（即使 bInheritHandles=false），
+	// 子进程会继承父进程被重定向的 std handles（runner 上是管道），导致
+	// PowerShell 读写绕过伪控制台。置位后 std handles 为零值，子进程回退到
+	// 伪控制台句柄，输入输出均经过 ConPTY 管道。
 	startupInfo := windows.StartupInfoEx{
-		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
+		StartupInfo: windows.StartupInfo{
+			Cb:    uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
+			Flags: windows.STARTF_USESTDHANDLES,
+		},
 		ProcThreadAttributeList: attributeList.List(),
-	}
-	// TEMP-DIAG: CI 诊断开关，验证子进程 std handles 来源后删除。
-	if os.Getenv("WEBTERM_PTY_DEBUG_STDHANDLES") == "1" {
-		startupInfo.Flags |= windows.STARTF_USESTDHANDLES
 	}
 	processInfo := new(windows.ProcessInformation)
 	if err := windows.CreateProcess(nil, commandLine, nil, nil, false,

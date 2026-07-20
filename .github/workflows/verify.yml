@@ -68,10 +68,6 @@ jobs:
         with:
           go-version-file: go-core/go.mod
           cache-dependency-path: go-core/go.sum
-      # TEMP-DIAG: 验证 ConPTY 子进程 std handles 继承问题，修复后删除该步骤。
-      - name: ConPTY std handle diagnostics
-        continue-on-error: true
-        run: go test -v -count=1 -run 'TestConPTYStdHandleDiagnostics' ./internal/infrastructure/pty
       - run: go test ./internal/localipc ./internal/infrastructure/pty ./internal/session
       - run: go build ./cmd/webterm ./cmd/webterm-agent
 
