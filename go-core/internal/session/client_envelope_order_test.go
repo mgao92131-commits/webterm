@@ -85,7 +85,7 @@ func testHistoryPageData() terminalengine.HistoryPageData {
 func TestScreenWriter_ControlAndScreenInterleaveKeepsBothContracts(t *testing.T) {
 	client, socket, _ := newOrderTestClient(t)
 
-	client.sendScreenState(testScreenState(1, "one"))
+	client.sendScreenState(testScreenState(1, "one", 1))
 	select {
 	case <-socket.firstWriteStarted:
 	case <-time.After(time.Second):
@@ -95,10 +95,10 @@ func TestScreenWriter_ControlAndScreenInterleaveKeepsBothContracts(t *testing.T)
 	// Production order while the first write is blocked: effect, S2, trim,
 	// page, S3, exit. The mailbox keeps only S3.
 	client.sendScreenEffect("i1", 2, terminalengine.Effect{Kind: terminalengine.EffectTitle, Text: "t1"})
-	client.sendScreenState(testScreenState(2, "two"))
+	client.sendScreenState(testScreenState(2, "two", 2))
 	client.sendScreenHistoryTrim(1, 42)
 	client.sendScreenHistory("h-7", 1, 2, testHistoryPageData())
-	client.sendScreenState(testScreenState(3, "three"))
+	client.sendScreenState(testScreenState(3, "three", 3))
 	client.SendExit(0)
 	close(socket.releaseFirstWrite)
 
@@ -168,7 +168,7 @@ func TestScreenWriter_ControlAndScreenInterleaveKeepsBothContracts(t *testing.T)
 func TestScreenWriter_ScreenFloodNeverDropsOrReordersControl(t *testing.T) {
 	client, socket, _ := newOrderTestClient(t)
 
-	client.sendScreenState(testScreenState(1, "rev-1"))
+	client.sendScreenState(testScreenState(1, "rev-1", 1))
 	select {
 	case <-socket.firstWriteStarted:
 	case <-time.After(time.Second):
@@ -179,7 +179,7 @@ func TestScreenWriter_ScreenFloodNeverDropsOrReordersControl(t *testing.T) {
 	for i := 2; i <= floods+1; i++ {
 		// 每个状态携带不同内容：空 patch（与上一写出状态无差异）按契约被抑制，
 		// 本测试关心的是合并与顺序，不是空帧。
-		client.sendScreenState(testScreenState(uint64(i), fmt.Sprintf("rev-%d", i)))
+		client.sendScreenState(testScreenState(uint64(i), fmt.Sprintf("rev-%d", i), uint64(i)))
 		client.sendScreenEffect("i1", uint64(i), terminalengine.Effect{Kind: terminalengine.EffectBell})
 	}
 	close(socket.releaseFirstWrite)
@@ -241,15 +241,16 @@ func TestScreenWriter_ScreenFloodNeverDropsOrReordersControl(t *testing.T) {
 func TestScreenWriter_SuppressesEmptyPatch(t *testing.T) {
 	client, socket, _ := newOrderTestClient(t)
 
-	client.sendScreenState(testScreenState(1, "one"))
+	client.sendScreenState(testScreenState(1, "one", 1))
 	select {
 	case <-socket.firstWriteStarted:
 	case <-time.After(time.Second):
 		t.Fatal("initial screen write did not start")
 	}
 
-	// rev2 与 rev1 内容完全相同（bell/原值 title 类输出）：不得写出。
-	client.sendScreenState(testScreenState(2, "one"))
+	// rev2 与 rev1 内容完全相同（bell/原值 title 类输出）：内容 Version 不变，
+	// 按契约不得写出。
+	client.sendScreenState(testScreenState(2, "one", 1))
 	close(socket.releaseFirstWrite)
 
 	first := socket.waitWrite(t)
@@ -264,7 +265,7 @@ func TestScreenWriter_SuppressesEmptyPatch(t *testing.T) {
 	}
 
 	// 真实变化：patch base=1（最后实际写出的 revision），rev=3。
-	client.sendScreenState(testScreenState(3, "three"))
+	client.sendScreenState(testScreenState(3, "three", 3))
 	second := socket.waitWrite(t)
 	var secondEnv pb.ScreenEnvelope
 	if err := proto.Unmarshal(second, &secondEnv); err != nil {

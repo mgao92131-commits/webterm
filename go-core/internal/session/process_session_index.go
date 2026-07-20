@@ -2,10 +2,9 @@ package session
 
 import (
 	"fmt"
-	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
+
+	"webterm/go-core/internal/infrastructure/pty"
 )
 
 // ProcessSessionIndex 拥有 shell PID、TTY 与父进程解析缓存。
@@ -32,25 +31,25 @@ func newProcessSessionIndex(parentPID func(int) int, ttyPathByPID func(int) stri
 	}
 }
 
-func (index *ProcessSessionIndex) Register(sessionID string, shellPID int, tty string) {
+func (index *ProcessSessionIndex) Register(sessionID string, identity pty.Identity) {
 	index.mu.Lock()
 	defer index.mu.Unlock()
-	if shellPID > 0 {
-		index.shellPIDToSession[shellPID] = sessionID
+	if identity.PID > 0 {
+		index.shellPIDToSession[identity.PID] = sessionID
 	}
-	if tty != "" {
-		index.ttyToSession[tty] = sessionID
+	if identity.TerminalKey != "" {
+		index.ttyToSession[identity.TerminalKey] = sessionID
 	}
 }
 
-func (index *ProcessSessionIndex) Unregister(sessionID string, shellPID int, tty string) {
+func (index *ProcessSessionIndex) Unregister(sessionID string, identity pty.Identity) {
 	index.mu.Lock()
 	defer index.mu.Unlock()
-	if shellPID > 0 && index.shellPIDToSession[shellPID] == sessionID {
-		delete(index.shellPIDToSession, shellPID)
+	if identity.PID > 0 && index.shellPIDToSession[identity.PID] == sessionID {
+		delete(index.shellPIDToSession, identity.PID)
 	}
-	if tty != "" && index.ttyToSession[tty] == sessionID {
-		delete(index.ttyToSession, tty)
+	if identity.TerminalKey != "" && index.ttyToSession[identity.TerminalKey] == sessionID {
+		delete(index.ttyToSession, identity.TerminalKey)
 	}
 	for pid, resolvedSessionID := range index.resolvedPIDToSession {
 		if resolvedSessionID == sessionID {
@@ -101,31 +100,4 @@ func (index *ProcessSessionIndex) cachePath(path []int, sessionID string) {
 	index.mu.Lock()
 	index.resolvedPIDToSession[path[0]] = sessionID
 	index.mu.Unlock()
-}
-
-func getParentPID(pid int) int {
-	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return 0
-	}
-	parentPID, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	return parentPID
-}
-
-func getTTYPathByPID(pid int) string {
-	if pid <= 0 {
-		return ""
-	}
-	out, err := exec.Command("ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return ""
-	}
-	tty := strings.TrimSpace(string(out))
-	if tty == "" || tty == "??" || tty == "?" {
-		return ""
-	}
-	if strings.HasPrefix(tty, "/dev/") {
-		return tty
-	}
-	return "/dev/" + tty
 }

@@ -1,6 +1,7 @@
 package com.webterm.transport.websocket;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -206,5 +207,178 @@ public class WebSocketMuxTransportTest {
         assertTrue("stale failure must not disconnect the new socket", transport.isConnected());
         assertTrue("new socket must remain writable", transport.sendBinary(new byte[]{1}));
         verify(second).send(any(okio.ByteString.class));
+    }
+
+    @Test
+    public void receiveBinaryCountsFramesAndBytes() {
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener wsListener = captor.getValue();
+
+        wsListener.onOpen(socket, mock(Response.class));
+
+        byte[] first = new byte[]{1, 2, 3};
+        byte[] second = new byte[]{4, 5};
+        wsListener.onMessage(socket, okio.ByteString.of(first));
+        wsListener.onMessage(socket, okio.ByteString.of(second));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(2L, snapshot.rxFrames);
+        assertEquals(5L, snapshot.rxBytes);
+        assertEquals(0L, snapshot.txFrames);
+        assertEquals(0L, snapshot.txBytes);
+    }
+
+    @Test
+    public void sendBinaryCountsFramesAndBytes() {
+        when(socket.send(any(okio.ByteString.class))).thenReturn(true);
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        captor.getValue().onOpen(socket, mock(Response.class));
+
+        assertTrue(transport.sendBinary(new byte[]{1, 2, 3, 4}));
+        assertTrue(transport.sendBinary(new byte[]{5, 6}));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(0L, snapshot.rxFrames);
+        assertEquals(0L, snapshot.rxBytes);
+        assertEquals(2L, snapshot.txFrames);
+        assertEquals(6L, snapshot.txBytes);
+    }
+
+    @Test
+    public void sendTextCountsFramesAndLength() {
+        when(socket.send(any(String.class))).thenReturn(true);
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        captor.getValue().onOpen(socket, mock(Response.class));
+
+        assertTrue(transport.sendText("hello"));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(1L, snapshot.txFrames);
+        assertEquals(5L, snapshot.txBytes);
+    }
+
+    @Test
+    public void sendTextCountsUtf8BytesNotCharLength() {
+        when(socket.send(any(String.class))).thenReturn(true);
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        captor.getValue().onOpen(socket, mock(Response.class));
+
+        // "中" is 3 bytes in UTF-8, but String.length() returns 1.
+        assertTrue(transport.sendText("中文"));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(1L, snapshot.txFrames);
+        assertEquals(6L, snapshot.txBytes);
+    }
+
+    @Test
+    public void textReceptionCountsFramesAndUtf8Bytes() {
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener wsListener = captor.getValue();
+
+        wsListener.onOpen(socket, mock(Response.class));
+        wsListener.onMessage(socket, "hello");
+        wsListener.onMessage(socket, "中文");
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(2L, snapshot.rxFrames);
+        assertEquals(11L, snapshot.rxBytes); // 5 + 6
+    }
+
+    @Test
+    public void trafficAccumulatorSurvivesTransportRecreation() {
+        when(socket.send(any(String.class))).thenReturn(true);
+        MuxTransport.TrafficAccumulator accumulator = new MuxTransport.TrafficAccumulator();
+
+        WebSocketMuxTransport first = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        first.setTrafficAccumulator(accumulator);
+        first.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> firstCaptor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), firstCaptor.capture());
+        firstCaptor.getValue().onOpen(socket, mock(Response.class));
+        assertTrue(first.sendText("first"));
+
+        // Simulate reconnect: create a new transport using the same accumulator.
+        WebSocketMuxTransport second = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        second.setTrafficAccumulator(accumulator);
+        // Do not start second to avoid mock complexity; just verify accumulator totals.
+
+        MuxTransport.TrafficSnapshot snapshot = accumulator.snapshot();
+        assertEquals(1L, snapshot.txFrames);
+        assertEquals(5L, snapshot.txBytes);
+    }
+
+    @Test
+    public void rejectedSendDoesNotCount() {
+        when(socket.send(any(okio.ByteString.class))).thenReturn(false);
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http).newWebSocket(any(Request.class), captor.capture());
+        captor.getValue().onOpen(socket, mock(Response.class));
+
+        assertFalse(transport.sendBinary(new byte[]{1, 2, 3}));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(0L, snapshot.txFrames);
+        assertEquals(0L, snapshot.txBytes);
+    }
+
+    @Test
+    public void staleBinaryCallbackDoesNotCount() throws IOException {
+        WebSocket first = mock(WebSocket.class);
+        WebSocket second = mock(WebSocket.class);
+        when(http.newWebSocket(any(Request.class), any(WebSocketListener.class)))
+            .thenReturn(first, second);
+
+        WebSocketMuxTransport transport = new WebSocketMuxTransport(
+            http, "ws://example.com/ws", "", "proto");
+        transport.start(idleListener());
+        transport.close();
+        transport.start(idleListener());
+
+        ArgumentCaptor<WebSocketListener> captor = ArgumentCaptor.forClass(WebSocketListener.class);
+        verify(http, times(2)).newWebSocket(any(Request.class), captor.capture());
+        WebSocketListener oldListener = captor.getAllValues().get(0);
+        WebSocketListener newListener = captor.getAllValues().get(1);
+        newListener.onOpen(second, mock(Response.class));
+
+        oldListener.onMessage(first, okio.ByteString.of(new byte[]{1, 2, 3}));
+
+        MuxTransport.TrafficSnapshot snapshot = transport.trafficSnapshot();
+        assertEquals(0L, snapshot.rxFrames);
+        assertEquals(0L, snapshot.rxBytes);
+    }
+
+    private MuxTransport.Listener idleListener() {
+        return new MuxTransport.Listener() {
+            @Override public void onOpen() {}
+            @Override public void onText(String text) {}
+            @Override public void onBinary(byte[] data) {}
+            @Override public void onClosed(int code, String reason) {}
+            @Override public void onError(String message) {}
+        };
     }
 }

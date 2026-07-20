@@ -1,19 +1,15 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"webterm/go-core/internal/fsops"
 	"webterm/go-core/internal/infrastructure/pty"
-	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -33,36 +29,37 @@ type TerminalOptions struct {
 	// ScrollbackMaxLines/ScrollbackMaxBytes 是 scrollback 双上限；非正值使用默认。
 	ScrollbackMaxLines int
 	ScrollbackMaxBytes int
-	OnTitle       func()
-	OnInfoChanged func()
+	OnTitle            func()
+	OnInfoChanged      func()
 }
 
 type TerminalSession struct {
-	mu             sync.RWMutex
-	id             string
-	instance       string
-	termTitle      string
-	cwd            string
-	liveCwd        string
-	command        string
-	status         string
-	shellState     string
-	lastInput      *LastInput
-	notification   *Notification
-	cols           int
-	rows           int
-	createdAt      time.Time
-	activeAt       time.Time
-	runtime        *terminalsession.Runtime
-	process        *pty.Process
-	shellPid       int
-	ttyPath        string
-	clients        map[*terminalChannelRuntime]struct{}
-	screenOwners   map[string]*terminalChannelRuntime
-	onTitleChanged func()
-	onInfoChanged  func()
-	titleChanged   bool
-	manager        *Manager
+	mu              sync.RWMutex
+	id              string
+	instance        string
+	termTitle       string
+	cwd             string
+	liveCwd         string
+	command         string
+	status          string
+	shellState      string
+	lastInput       *LastInput
+	notification    *Notification
+	cols            int
+	rows            int
+	createdAt       time.Time
+	activeAt        time.Time
+	runtime         *terminalsession.Runtime
+	process         *pty.Process
+	processIdentity pty.Identity
+	clients         map[*terminalChannelRuntime]struct{}
+	screenOwners    map[string]*terminalChannelRuntime
+	onTitleChanged  func()
+	onInfoChanged   func()
+	titleChanged    bool
+	manager         *Manager
+	// 已断开客户端的 screen 发送累计；避免重连后诊断统计丢失历史流量。
+	screenWireHistory ScreenWireSnapshot
 }
 
 type Notification struct {
@@ -97,26 +94,25 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 	}
 
 	terminal := &TerminalSession{
-		id:             options.ID,
-		instance:       randomID(),
-		cwd:            process.CWD(),
-		command:        process.Command(),
-		status:         StatusRunning,
-		cols:           cols,
-		rows:           rows,
-		createdAt:      now,
-		activeAt:       now,
-		process:        process,
-		shellPid:       process.PID(),
-		ttyPath:        process.TTYPath(),
-		clients:        make(map[*terminalChannelRuntime]struct{}),
-		screenOwners:   make(map[string]*terminalChannelRuntime),
-		onTitleChanged: options.OnTitle,
-		onInfoChanged:  options.OnInfoChanged,
+		id:              options.ID,
+		instance:        randomID(),
+		cwd:             process.CWD(),
+		command:         process.Command(),
+		status:          StatusRunning,
+		cols:            cols,
+		rows:            rows,
+		createdAt:       now,
+		activeAt:        now,
+		process:         process,
+		processIdentity: process.Identity(),
+		clients:         make(map[*terminalChannelRuntime]struct{}),
+		screenOwners:    make(map[string]*terminalChannelRuntime),
+		onTitleChanged:  options.OnTitle,
+		onInfoChanged:   options.OnInfoChanged,
 	}
 	terminal.runtime = terminalsession.NewRuntime(
 		terminal.id,
-		process.PTY(),
+		process,
 		rows,
 		cols,
 		terminalsession.WithOnTitle(func(title string) {
@@ -163,13 +159,13 @@ func (terminal *TerminalSession) ID() string {
 func (terminal *TerminalSession) ShellPID() int {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
-	return terminal.shellPid
+	return terminal.processIdentity.PID
 }
 
-func (terminal *TerminalSession) TTYPath() string {
+func (terminal *TerminalSession) ProcessIdentity() pty.Identity {
 	terminal.mu.RLock()
 	defer terminal.mu.RUnlock()
-	return terminal.ttyPath
+	return terminal.processIdentity
 }
 
 func (terminal *TerminalSession) Info() Info {
@@ -195,7 +191,7 @@ func (terminal *TerminalSession) Info() Info {
 		ShellState:        terminal.shellState,
 		LastCommand:       terminal.lastInputText(),
 		LastInputKind:     terminal.lastInputKind(),
-		TTY:               terminal.ttyPath,
+		TTY:               terminal.processIdentity.TerminalKey,
 		Notification:      terminal.notification,
 		Clients:           len(terminal.clients),
 		Cols:              terminal.cols,
@@ -252,12 +248,11 @@ func (terminal *TerminalSession) Close() {
 	clients := terminal.clientSnapshotLocked()
 	terminal.mu.Unlock()
 
-	if terminal.process != nil {
-		_ = terminal.process.Close()
-		terminal.process.Kill()
-	}
 	if terminal.runtime != nil {
 		_ = terminal.runtime.Close()
+	}
+	if terminal.process != nil {
+		_ = terminal.process.Close()
 	}
 	for _, client := range clients {
 		client.Close()
@@ -285,17 +280,31 @@ func (terminal *TerminalSession) Resize(cols int, rows int) error {
 	if rows > 200 {
 		rows = 200
 	}
+	terminal.mu.RLock()
+	if terminal.status == StatusClosed || terminal.process == nil {
+		terminal.mu.RUnlock()
+		return errors.New("terminal session is closed")
+	}
+	process := terminal.process
+	runtime := terminal.runtime
+	terminal.mu.RUnlock()
+
+	if err := process.Resize(cols, rows); err != nil {
+		return err
+	}
+
 	terminal.mu.Lock()
+	if terminal.status == StatusClosed || terminal.process != process {
+		terminal.mu.Unlock()
+		return errors.New("terminal session is closed")
+	}
 	terminal.cols = cols
 	terminal.rows = rows
-	if terminal.process != nil {
-		terminal.process.Resize(cols, rows)
-	}
-	if terminal.runtime != nil {
-		terminal.runtime.ResizeEngine(rows, cols)
-	}
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+	if runtime != nil {
+		runtime.ResizeEngine(rows, cols)
+	}
 	return nil
 }
 
@@ -320,8 +329,21 @@ func (terminal *TerminalSession) Detach(client *terminalChannelRuntime) {
 	if client.ownerKey != "" && terminal.screenOwners[client.ownerKey] == client {
 		delete(terminal.screenOwners, client.ownerKey)
 	}
+	// 客户端断开前把其发送累计保留到会话历史，防止重连后统计消失。
+	terminal.screenWireHistory = mergeScreenWireSnapshot(terminal.screenWireHistory, client.ScreenWireSnapshot())
 	terminal.touchLocked()
 	terminal.mu.Unlock()
+}
+
+func mergeScreenWireSnapshot(a, b ScreenWireSnapshot) ScreenWireSnapshot {
+	return ScreenWireSnapshot{
+		FrameCount:       a.FrameCount + b.FrameCount,
+		WireBytes:        a.WireBytes + b.WireBytes,
+		SnapshotBytes:    a.SnapshotBytes + b.SnapshotBytes,
+		PatchBytes:       a.PatchBytes + b.PatchBytes,
+		HistoryPageBytes: a.HistoryPageBytes + b.HistoryPageBytes,
+		OtherBytes:       a.OtherBytes + b.OtherBytes,
+	}
 }
 
 // AttachScreenClient 把 screen protocol 客户端附加到权威 Runtime。
@@ -351,6 +373,38 @@ func (terminal *TerminalSession) ScreenRuntime() *terminalsession.Runtime {
 	return terminal.runtime
 }
 
+// PTYOutputSnapshot 返回该会话 PTY 输出的累计事件数和字节数。
+func (terminal *TerminalSession) PTYOutputSnapshot() (events, bytes uint64) {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return 0, 0
+	}
+	return rt.PTYOutputSnapshot()
+}
+
+// ScreenWireSnapshots 返回会话所有 screen channel 的发送字节累计，包含当前已连接客户端
+// 与已断开客户端的历史累计。
+func (terminal *TerminalSession) ScreenWireSnapshots() map[string]ScreenWireSnapshot {
+	terminal.mu.RLock()
+	clients := make([]*terminalChannelRuntime, 0, len(terminal.clients))
+	for client := range terminal.clients {
+		clients = append(clients, client)
+	}
+	history := terminal.screenWireHistory
+	terminal.mu.RUnlock()
+
+	result := make(map[string]ScreenWireSnapshot, len(clients)+1)
+	for _, client := range clients {
+		result[client.screenClientID] = client.ScreenWireSnapshot()
+	}
+	if history.FrameCount > 0 || history.WireBytes > 0 {
+		result["_disconnected"] = history
+	}
+	return result
+}
+
 // ProjectedScreenSnapshot exposes the authoritative screen-protocol frame for
 // local diagnostics.
 func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
@@ -365,8 +419,43 @@ func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 
 func (terminal *TerminalSession) waitLoop() {
 	code, _ := terminal.process.Wait()
-	terminal.markClosed()
+
+	// 进程退出后先排空 PTY 尾部输出与最终投影，再广播 Exit，
+	// 保证客户端在收到 Exit 之前看到最终画面。超时兜底防止异常占用
+	// PTY 的进程树让会话永远无法关闭。
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	// BeginDrain 停止输出生产端：Windows 上关闭伪控制台让输出管道产生真正的 EOF
+	// （Unix 为 no-op，PTY 本就随子进程退出 EOF）。必须在 DrainAndClose 之前调用，
+	// 这样 Runtime 的 readLoop 能读到真 EOF，而不是靠静默窗口猜测尾部已排空。
+	// BeginDrain 失败时告知 Runtime 退化为静默兜底。
+	if terminal.process != nil {
+		if err := terminal.process.BeginDrain(); err != nil && terminal.runtime != nil {
+			terminal.runtime.MarkDrainEOFUncertain()
+		}
+	}
+	if terminal.runtime != nil {
+		_ = terminal.runtime.DrainAndClose(ctx)
+	}
+	terminal.flushClientScreens(ctx)
 	terminal.broadcastExit(code)
+	// Wait only observes child termination. Close owns the backend handles and
+	// must still run on natural shell exit to release ConPTY/Job/pipes.
+	if terminal.process != nil {
+		_ = terminal.process.Close()
+	}
+	terminal.markClosed()
+}
+
+// flushClientScreens 等待各客户端尚未写出的最终屏幕帧完成 socket 写入，
+// 使 Exit 不会超过最后一帧先到达客户端。
+func (terminal *TerminalSession) flushClientScreens(ctx context.Context) {
+	terminal.mu.RLock()
+	clients := terminal.clientSnapshotLocked()
+	terminal.mu.RUnlock()
+	for _, client := range clients {
+		client.flushScreenPending(ctx)
+	}
 }
 
 func (terminal *TerminalSession) markClosed() {
@@ -386,62 +475,69 @@ func (terminal *TerminalSession) broadcastExit(code int) {
 	}
 }
 
-func (terminal *TerminalSession) ApplyHookEvent(ev protocol.HookEvent) {
+// ApplyNotification updates the session card state. Device notifications are
+// dispatched separately by localipc so terminal screen traffic never carries
+// notification payloads.
+func (terminal *TerminalSession) ApplyNotification(importance, message, source string, timestamp int64) {
+	if timestamp == 0 {
+		timestamp = time.Now().Unix()
+	}
+	terminal.mu.Lock()
+	if terminal.status == StatusClosed {
+		terminal.mu.Unlock()
+		return
+	}
+	terminal.notification = &Notification{
+		Importance: importance,
+		Message:    message,
+		Source:     source,
+		Timestamp:  timestamp,
+	}
+	terminal.touchLocked()
+	onInfoChanged := terminal.onInfoChanged
+	terminal.mu.Unlock()
+	if onInfoChanged != nil {
+		onInfoChanged()
+	}
+	terminal.broadcastInfo()
+}
+
+// ApplySessionUpdate changes only terminal metadata and never triggers a
+// device notification.
+func (terminal *TerminalSession) ApplySessionUpdate(shellState, cwd, lastInput, inputKind string, timestamp int64) {
+	if timestamp == 0 {
+		timestamp = time.Now().Unix()
+	}
 	terminal.mu.Lock()
 	if terminal.status == StatusClosed {
 		terminal.mu.Unlock()
 		return
 	}
 	var runtimeCWD string
-	switch ev.Type {
-	case "notify", "agent_event":
-		terminal.notification = &Notification{
-			Level:      ev.Level,
-			Importance: ev.Importance,
-			Message:    ev.Message,
-			Source:     ev.Source,
-			Timestamp:  ev.Timestamp,
-		}
-		terminal.touchLocked()
-	case "state":
-		if ev.ShellState != "" {
-			terminal.shellState = ev.ShellState
-		}
-		terminal.touchLocked()
-	case "meta":
-		if ev.CWD != "" {
-			terminal.liveCwd = ev.CWD
-			runtimeCWD = ev.CWD
-		}
-		if ev.LastCommand != "" {
-			kind := ev.InputKind
-			if kind == "" {
-				kind = "shell"
-			}
-			terminal.lastInput = &LastInput{
-				Kind:      kind,
-				Text:      ev.LastCommand,
-				Timestamp: ev.Timestamp,
-			}
-		}
-		terminal.touchLocked()
+	if shellState != "" {
+		terminal.shellState = shellState
 	}
+	if cwd != "" {
+		terminal.liveCwd = cwd
+		runtimeCWD = cwd
+	}
+	if lastInput != "" {
+		if inputKind == "" {
+			inputKind = "shell"
+		}
+		terminal.lastInput = &LastInput{Kind: inputKind, Text: lastInput, Timestamp: timestamp}
+	}
+	terminal.touchLocked()
 	onInfoChanged := terminal.onInfoChanged
 	runtime := terminal.runtime
 	terminal.mu.Unlock()
 	if runtimeCWD != "" && runtime != nil {
 		runtime.SetWorkingDirectory(runtimeCWD)
 	}
-
 	if onInfoChanged != nil {
 		onInfoChanged()
 	}
-
-	if ev.Type == "notify" {
-		terminal.broadcastHook(ev)
-	} else {
-		terminal.broadcastInfo()
-	}
+	terminal.broadcastInfo()
 }
 
 func (terminal *TerminalSession) broadcastInfo() {
@@ -451,188 +547,6 @@ func (terminal *TerminalSession) broadcastInfo() {
 	for _, client := range clients {
 		client.SendInfo()
 	}
-}
-
-func (terminal *TerminalSession) broadcastHook(ev protocol.HookEvent) {
-	terminal.mu.RLock()
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-	for _, client := range clients {
-		client.SendHook(ev)
-	}
-}
-
-// HandleCLICommand 处理 CLI 主动发起的命令请求。
-func (terminal *TerminalSession) HandleCLICommand(conn net.Conn, cmd protocol.CLICommand) {
-	switch cmd.Type {
-	case "download":
-		terminal.handleDownloadCommand(conn, cmd)
-	default:
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   cmd.Type + "_status",
-			Status: "failed",
-			Error:  "unknown_command",
-		})
-	}
-}
-
-func (terminal *TerminalSession) handleDownloadCommand(conn net.Conn, cmd protocol.CLICommand) {
-	terminal.mu.RLock()
-	if terminal.status == StatusClosed {
-		terminal.mu.RUnlock()
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "session_closed",
-		})
-		return
-	}
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-
-	if len(clients) == 0 {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "android_not_connected",
-		})
-		return
-	}
-
-	targetPath, err := fsops.ResolveCLIPath(cmd.CWD, cmd.FilePath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "invalid_path",
-		})
-		return
-	}
-
-	info, err := os.Stat(targetPath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "file_not_found",
-		})
-		return
-	}
-	if !info.Mode().IsRegular() {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "not_a_regular_file",
-		})
-		return
-	}
-
-	f, err := os.Open(targetPath)
-	if err != nil {
-		writeCLIResponse(conn, protocol.CLIResponse{
-			Kind:   "response",
-			Type:   "download_status",
-			Status: "failed",
-			Error:  "permission_denied",
-		})
-		return
-	}
-	_ = f.Close()
-
-	downloadID := generateDownloadID()
-	task := &DownloadTask{
-		ID:        downloadID,
-		SessionID: terminal.id,
-		Path:      targetPath,
-		FileName:  filepath.Base(targetPath),
-		Size:      info.Size(),
-		StateChan: make(chan protocol.CLIResponse, 32),
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-	}
-	terminal.manager.AddDownloadTask(terminal.id, task)
-
-	terminal.broadcastHook(protocol.HookEvent{
-		Type:       "download",
-		DownloadID: downloadID,
-		SessionID:  terminal.id,
-		FilePath:   task.FileName,
-		FileName:   task.FileName,
-		TotalBytes: task.Size,
-		FileSize:   task.Size,
-		Status:     "pending",
-		Timestamp:  time.Now().Unix(),
-	})
-
-	writeCLIResponse(conn, protocol.CLIResponse{
-		Kind:       "response",
-		Type:       "download_status",
-		Status:     "preparing",
-		DownloadID: downloadID,
-		FilePath:   task.FileName,
-		TotalBytes: task.Size,
-	})
-
-	for {
-		select {
-		case event, ok := <-task.StateChan:
-			if !ok {
-				return
-			}
-			writeCLIResponse(conn, event)
-			if event.Status == "complete" || event.Status == "failed" {
-				terminal.manager.RemoveDownloadTask(downloadID)
-				return
-			}
-		case <-time.After(10 * time.Minute):
-			writeCLIResponse(conn, protocol.CLIResponse{
-				Kind:   "response",
-				Type:   "download_status",
-				Status: "failed",
-				Error:  "timeout",
-			})
-			terminal.manager.RemoveDownloadTask(downloadID)
-			return
-		}
-	}
-}
-
-// OnDownloadProgress 处理 Android 回传的下载进度。
-func (terminal *TerminalSession) OnDownloadProgress(downloadID string, current, total int64) {
-	task, ok := terminal.manager.PeekDownloadTask(downloadID)
-	if !ok {
-		return
-	}
-	select {
-	case task.StateChan <- protocol.CLIResponse{
-		Kind:             "response",
-		Type:             "download_status",
-		Status:           "progress",
-		DownloadID:       downloadID,
-		BytesTransferred: current,
-		TotalBytes:       total,
-	}:
-	default:
-		// 通道满则丢弃，避免阻塞终端
-	}
-}
-
-func writeCLIResponse(conn net.Conn, resp protocol.CLIResponse) {
-	if resp.Timestamp == 0 {
-		resp.Timestamp = time.Now().Unix()
-	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return
-	}
-	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, _ = conn.Write(append(data, '\n'))
 }
 
 func (terminal *TerminalSession) clientSnapshotLocked() []*terminalChannelRuntime {

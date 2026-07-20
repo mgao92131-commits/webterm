@@ -3,22 +3,22 @@ package session
 import (
 	"testing"
 	"time"
-
-	"webterm/go-core/internal/protocol"
 )
 
 func TestTerminalSessionStartsShellAndCapturesOutput(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
 	}
 	defer terminal.Close()
 
-	if err := terminal.WriteInput([]byte("printf WEBTERM_GO_OK\\n\r")); err != nil {
+	if err := terminal.WriteInput([]byte(testEchoInput("WEBTERM_GO_OK"))); err != nil {
 		t.Fatalf("WriteInput returned error: %v", err)
 	}
 
@@ -51,10 +51,12 @@ func stringContains(value string, needle string) bool {
 }
 
 func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
@@ -68,21 +70,19 @@ func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
 }
 
 func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
 	}
 	defer terminal.Close()
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "meta",
-		SessionID: "s1",
-		CWD:       "/tmp/project with spaces",
-	})
+	terminal.ApplySessionUpdate("", "/tmp/project with spaces", "", "", 0)
 	if got := terminal.Info().CWD; got != "/tmp/project with spaces" {
 		t.Fatalf("session cwd=%q", got)
 	}
@@ -92,41 +92,48 @@ func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
 }
 
 func TestTerminalSessionNotificationOverride(t *testing.T) {
+	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
 		CWD:     ".",
-		Command: "/bin/sh",
+		Command: command,
+		Args:    args,
 	})
 	if err != nil {
 		t.Fatalf("NewTerminalSession returned error: %v", err)
 	}
 	defer terminal.Close()
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "notify",
-		SessionID: "s1",
-		Level:     "idle",
-		Message:   "Done",
-		Source:    "claude",
-		Timestamp: time.Now().Unix(),
-	})
+	terminal.ApplyNotification("normal", "Done", "claude", time.Now().Unix())
 
 	info := terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "idle" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
+	if info.Notification == nil || info.Notification.Importance != "normal" || info.Notification.Message != "Done" || info.Notification.Source != "claude" {
 		t.Fatalf("expected notification to be set, got %+v", info.Notification)
 	}
 
-	terminal.ApplyHookEvent(protocol.HookEvent{
-		Type:      "notify",
-		SessionID: "s1",
-		Level:     "running",
-		Message:   "Running",
-		Source:    "claude",
-		Timestamp: time.Now().Unix(),
-	})
+	terminal.ApplyNotification("quiet", "Running", "claude", time.Now().Unix())
 
 	info = terminal.Info()
-	if info.Notification == nil || info.Notification.Level != "running" || info.Notification.Message != "Running" {
+	if info.Notification == nil || info.Notification.Importance != "quiet" || info.Notification.Message != "Running" {
 		t.Errorf("expected notification to be overridden, got %+v", info.Notification)
+	}
+}
+
+func TestTerminalNaturalExitClosesProcessResources(t *testing.T) {
+	command, args := testExitCommand(0)
+	terminal, err := NewTerminalSession(TerminalOptions{ID: "natural-exit", CWD: ".", Command: command, Args: args})
+	if err != nil {
+		t.Fatalf("NewTerminalSession: %v", err)
+	}
+	defer terminal.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for terminal.Info().Status != StatusClosed && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if terminal.Info().Status != StatusClosed {
+		t.Fatal("natural exit did not close terminal")
+	}
+	if err := terminal.process.Resize(80, 24); err == nil {
+		t.Fatal("process resources remain open after natural exit")
 	}
 }

@@ -38,6 +38,39 @@ jobs:
           cache-dependency-path: go-core/go.sum
       - run: go test -race ./...
 
+  go-windows-build:
+    name: Windows cross build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      # Ubuntu 不能运行 Windows test binary；这里只验证所有生产包和两个发布入口
+      # 的 Windows 编译边界。ConPTY/Named Pipe 行为由后续 windows-latest 集成任务覆盖。
+      - run: GOOS=windows GOARCH=amd64 go build ./...
+      - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm-agent
+      - run: GOOS=windows GOARCH=amd64 go build ./cmd/webterm
+
+  windows-runtime:
+    name: Windows IPC and ConPTY runtime
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: go-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go test ./internal/localipc ./internal/infrastructure/pty ./internal/session
+      - run: go build ./cmd/webterm ./cmd/webterm-agent
+
   android:
     name: Android test lint and build
     runs-on: ubuntu-latest
@@ -64,5 +97,24 @@ jobs:
           cache-dependency-path: go-core/go.sum
       - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
         working-directory: go-core
+      # 仓库内置 protoc 仅支持 macOS arm64；CI 使用与生成物版本戳一致的 Linux 版。
+      - name: Install protoc 29.2
+        run: |
+          curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.2/protoc-29.2-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local
+          protoc --version
       - run: scripts/generate-proto.sh
       - run: git diff --exit-code -- go-core/internal/screenprotocol/generated/terminal_screen.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenProto.java
+
+  generated-cli-docs:
+    name: Generated CLI docs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go generate ./cmd/...
+        working-directory: go-core
+      - run: git diff --exit-code -- go-core/docs/cli

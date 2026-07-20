@@ -6,6 +6,7 @@ import android.util.Log;
 
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.contract.diagnostics.Diagnostics;
+import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.transport.api.MuxTransport;
 import com.webterm.transport.api.TransportFactory;
 
@@ -111,6 +112,9 @@ public final class DeviceConnection {
         transport = transportFactory != null
             ? transportFactory.create(wsUrl, cookie, MUX_SUBPROTOCOL)
             : null;
+        if (transport != null) {
+            transport.setTrafficAccumulator(NetworkTrafficStats.accumulatorForDevice(deviceId));
+        }
         Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
     }
 

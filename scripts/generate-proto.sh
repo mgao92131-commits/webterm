@@ -5,9 +5,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROTOS_DIR="$ROOT/shared/proto"
 GO_OUT_DIR="$ROOT/go-core/internal/screenprotocol/generated"
 JAVA_OUT_DIR="$ROOT/android-client/terminal-protocol/src/main/java"
-PROTOC="$ROOT/tools/protoc/bin/protoc"
+PROTOC="${PROTOC:-$ROOT/tools/protoc/bin/protoc}"
 
-if [[ ! -x "$PROTOC" ]]; then
+# 随仓库携带的 protoc 仅支持 macOS arm64；无法执行时（如 Linux CI）回退到
+# PATH 中的 protoc，调用方需保证版本一致（生成物含 protoc 版本戳）。
+if ! "$PROTOC" --version >/dev/null 2>&1; then
+  if command -v protoc >/dev/null 2>&1; then
+    PROTOC="$(command -v protoc)"
+  fi
+fi
+
+if [[ ! -x "$PROTOC" ]] || ! "$PROTOC" --version >/dev/null 2>&1; then
   echo "protoc not found at $PROTOC" >&2
   echo "Download it from https://github.com/protocolbuffers/protobuf/releases" >&2
   exit 1

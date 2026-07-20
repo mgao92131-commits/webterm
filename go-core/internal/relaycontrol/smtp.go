@@ -33,6 +33,43 @@ type smtpConfig struct {
 	publicURL string
 }
 
+// SMTPConfig is the file/env configuration consumed by the Relay command.
+// Keeping it exported lets relayapp pass the selected configuration to the
+// control plane without reconstructing process environment variables.
+type SMTPConfig struct {
+	Host      string `json:"host,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	From      string `json:"from,omitempty"`
+	PublicURL string `json:"publicUrl,omitempty"`
+}
+
+func (cfg SMTPConfig) configured() bool {
+	return cfg.Host != "" && cfg.Port > 0 && cfg.Username != "" && cfg.Password != "" && cfg.From != ""
+}
+
+func (cfg SMTPConfig) Configured() bool { return cfg.configured() }
+
+type configuredOTPSender struct {
+	config   SMTPConfig
+	devPrint bool
+}
+
+func (sender configuredOTPSender) SendOTP(toEmail string, purpose string, code string) error {
+	if sender.devPrint {
+		fmt.Printf("[Relay OTP] email=%s purpose=%s code=%s\n", toEmail, purpose, code)
+		return nil
+	}
+	if !sender.config.configured() {
+		return errors.New("otp delivery is not configured")
+	}
+	return sendSMTPOTP(smtpConfig{
+		host: sender.config.Host, port: sender.config.Port, username: sender.config.Username,
+		password: sender.config.Password, from: sender.config.From, publicURL: sender.config.PublicURL,
+	}, toEmail, purpose, code)
+}
+
 func smtpConfigFromEnv() smtpConfig {
 	port, _ := strconv.Atoi(firstEnv("WEBTERM_RELAY_SMTP_PORT", "SMTP_PORT"))
 	return smtpConfig{

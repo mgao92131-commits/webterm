@@ -43,6 +43,7 @@ PREFS_XML="$TMP_DIR/webterm.xml"
 RELAY_LOG="$TMP_DIR/relay.log"
 AGENT_LOG="$TMP_DIR/agent.log"
 AGENT_SOCKET="$TMP_DIR/webterm-agent.sock"
+ADMIN_PASSWORD_FILE="$TMP_DIR/admin-password"
 RELAY_PID=""
 AGENT_PID=""
 
@@ -168,11 +169,13 @@ echo "[2/9] building Go Relay and Agent"
 
 echo "[3/9] starting Go Relay"
 require_relay_port_free
-WEBTERM_RELAY_ADDR="$RELAY_ADDR" \
+printf '%s\n' "$RELAY_PASSWORD" >"$ADMIN_PASSWORD_FILE"
+WEBTERM_RELAY_LISTEN="$RELAY_ADDR" \
 WEBTERM_RELAY_STORE_PATH="$STORE_PATH" \
-WEBTERM_RELAY_BOOTSTRAP_USER="$RELAY_USER" \
-WEBTERM_RELAY_BOOTSTRAP_PASSWORD="$RELAY_PASSWORD" \
-"$RELAY_BIN" >"$RELAY_LOG" 2>&1 &
+"$RELAY_BIN" admin create --username "$RELAY_USER" --password-file "$ADMIN_PASSWORD_FILE"
+WEBTERM_RELAY_LISTEN="$RELAY_ADDR" \
+WEBTERM_RELAY_STORE_PATH="$STORE_PATH" \
+"$RELAY_BIN" run >"$RELAY_LOG" 2>&1 &
 RELAY_PID="$!"
 wait_for_http "http://$RELAY_ADDR/healthz"
 if ! kill -0 "$RELAY_PID" >/dev/null 2>&1; then
@@ -203,14 +206,13 @@ fi
 echo "[5/9] starting Go Agent"
 (
   cd "$GO_DIR"
-  RELAY_URL="http://$RELAY_ADDR" \
-  RELAY_SECRET="$agent_credential" \
-  DEVICE_NAME="$DEVICE_NAME" \
-  WEBTERM_RELAY_PROTOCOL=v2 \
-  WEBTERM_CONTROL_ADDR=127.0.0.1:0 \
-  WEBTERM_SOCKET_PATH="$AGENT_SOCKET" \
-  WEBTERM_SHELL=/bin/sh \
-  "$AGENT_BIN" --mode relay
+  WEBTERM_AGENT_RELAY_URL="http://$RELAY_ADDR" \
+  WEBTERM_AGENT_RELAY_SECRET="$agent_credential" \
+  WEBTERM_AGENT_DEVICE_NAME="$DEVICE_NAME" \
+	WEBTERM_RELAY_PROTOCOL=v2 \
+  WEBTERM_AGENT_SOCKET_PATH="$AGENT_SOCKET" \
+  WEBTERM_AGENT_SHELL=/bin/sh \
+  "$AGENT_BIN" run
 ) >"$AGENT_LOG" 2>&1 &
 AGENT_PID="$!"
 

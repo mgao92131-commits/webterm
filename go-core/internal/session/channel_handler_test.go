@@ -19,7 +19,8 @@ func (sink *recordingChannelSink) WriteFrame(_ context.Context, payload []byte, 
 }
 
 func TestTerminalChannelHandlerDirectFrameBoundary(t *testing.T) {
-	manager := NewManager(TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	shellCommand, _ := testShellCommand()
+	manager := NewManager(TerminalDefaults{Command: shellCommand, CWD: "."})
 	terminal, err := manager.Create(".")
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)

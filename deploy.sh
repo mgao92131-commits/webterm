@@ -24,11 +24,9 @@ for arg in "$@"; do
             DRY_RUN=1
             ;;
         --help|-h)
-            echo "Usage: RELAY_BOOTSTRAP_PASSWORD='强密码' ./deploy.sh [--dry-run]"
+            echo "Usage: ./deploy.sh [--dry-run]"
             echo ""
             echo "Environment:"
-            echo "  RELAY_BOOTSTRAP_USER            默认 admin"
-            echo "  RELAY_BOOTSTRAP_PASSWORD        必填"
             echo "  WEBTERM_RELAY_PUBLIC_URL        可选，生产域名"
             echo "  WEBTERM_RELAY_ALLOW_REGISTRATION 默认 1"
             echo "  WEBTERM_RELAY_REQUIRE_EMAIL_OTP 默认 0"
@@ -48,13 +46,6 @@ SERVER_IP="120.46.85.237"
 SERVER_USER="root"
 SERVER_PORT="22"
 
-if [ -z "${RELAY_BOOTSTRAP_PASSWORD:-}" ]; then
-    echo "❌ 错误: 请先设置 RELAY_BOOTSTRAP_PASSWORD，不能使用默认管理员密码部署。"
-    echo "示例: RELAY_BOOTSTRAP_USER=admin RELAY_BOOTSTRAP_PASSWORD='你的强密码' ./deploy.sh"
-    exit 1
-fi
-
-RELAY_BOOTSTRAP_USER="${RELAY_BOOTSTRAP_USER:-admin}"
 WEBTERM_RELAY_ALLOW_REGISTRATION="${WEBTERM_RELAY_ALLOW_REGISTRATION:-1}"
 WEBTERM_RELAY_REQUIRE_EMAIL_OTP="${WEBTERM_RELAY_REQUIRE_EMAIL_OTP:-0}"
 WEBTERM_RELAY_DEV_PRINT_OTP="${WEBTERM_RELAY_DEV_PRINT_OTP:-0}"
@@ -63,8 +54,6 @@ shell_quote() {
     printf '%q' "$1"
 }
 
-Q_RELAY_BOOTSTRAP_USER="$(shell_quote "$RELAY_BOOTSTRAP_USER")"
-Q_RELAY_BOOTSTRAP_PASSWORD="$(shell_quote "$RELAY_BOOTSTRAP_PASSWORD")"
 Q_WEBTERM_RELAY_PUBLIC_URL="$(shell_quote "${WEBTERM_RELAY_PUBLIC_URL:-}")"
 Q_WEBTERM_RELAY_ALLOW_REGISTRATION="$(shell_quote "$WEBTERM_RELAY_ALLOW_REGISTRATION")"
 Q_WEBTERM_RELAY_REQUIRE_EMAIL_OTP="$(shell_quote "$WEBTERM_RELAY_REQUIRE_EMAIL_OTP")"
@@ -101,8 +90,6 @@ REMOTE_COMMAND="
     rm -f webterm_deploy_temp.tar.gz && \
     mkdir -p data && \
     echo '🐳 正在启动 Docker Compose (Nginx + Go Relay)...' && \
-    export RELAY_BOOTSTRAP_USER=${Q_RELAY_BOOTSTRAP_USER} && \
-    export RELAY_BOOTSTRAP_PASSWORD=${Q_RELAY_BOOTSTRAP_PASSWORD} && \
     export WEBTERM_RELAY_PUBLIC_URL=${Q_WEBTERM_RELAY_PUBLIC_URL} && \
     export WEBTERM_RELAY_ALLOW_REGISTRATION=${Q_WEBTERM_RELAY_ALLOW_REGISTRATION} && \
     export WEBTERM_RELAY_REQUIRE_EMAIL_OTP=${Q_WEBTERM_RELAY_REQUIRE_EMAIL_OTP} && \
@@ -121,7 +108,6 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "目标服务器: ${SERVER_USER}@${SERVER_IP}:${SERVER_PORT}"
     echo "远程目录: ${REMOTE_DIR}"
     echo "将使用的关键配置:"
-    echo "  RELAY_BOOTSTRAP_USER=${RELAY_BOOTSTRAP_USER}"
     echo "  WEBTERM_RELAY_PUBLIC_URL=${WEBTERM_RELAY_PUBLIC_URL:-}"
     echo "  WEBTERM_RELAY_ALLOW_REGISTRATION=${WEBTERM_RELAY_ALLOW_REGISTRATION}"
     echo "  WEBTERM_RELAY_REQUIRE_EMAIL_OTP=${WEBTERM_RELAY_REQUIRE_EMAIL_OTP}"
@@ -167,10 +153,7 @@ echo "=========================================="
 echo "🎉 部署完成！"
 echo "Relay API 地址: http://${SERVER_IP}:9001"
 echo ""
-echo "⚠️  重要：请立即修改默认管理员密码！"
-echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP}"
-echo "  cd ${REMOTE_DIR}"
-echo "  export RELAY_BOOTSTRAP_USER=admin && export RELAY_BOOTSTRAP_PASSWORD=你的新密码 && docker compose down && docker compose up -d --build"
+echo "⚠️  Relay 不再在启动时创建管理员。请使用 webterm-relay admin create --password-file 创建一次性管理员。"
 echo ""
 echo "查看容器日志:"
 echo "  ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} 'cd ${REMOTE_DIR} && docker compose logs -f'"

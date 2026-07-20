@@ -9,20 +9,47 @@ import (
 
 const shellHookTemplate = `#!/usr/bin/env bash
 # WebTerm shell hook: 上报最近输入的 shell 命令和状态。
-# 被 bash / zsh 启动时 source。
+# 被 bash / zsh 启动时 source。上报为后台 fire-and-forget，绝不阻塞 prompt。
 
 [ "${WEBTERM_INTEGRATION:-}" = "1" ] || return 0
 [ -n "${WEBTERM_SESSION_ID:-}" ] || return 0
-[ -S "${WEBTERM_SOCKET_PATH:-}" ] || return 0
+[ -n "${WEBTERM_IPC_ENDPOINT:-}" ] || return 0
 
 WEBTERM="{{.WebtermBin}}"
 [ -x "$WEBTERM" ] || WEBTERM="webterm"
 
-# 安全调用 webterm meta；每个提示符同时上报当前目录，避免 cd 后上传仍落到初始目录。
-webterm_meta() {
+# 每个提示符上报当前目录，避免 cd 后上传仍落到初始目录。
+webterm_session_update() {
   local text="$1"
   local kind="${2:-shell}"
-  "$WEBTERM" meta --quiet --cwd "$PWD" --last-command "$text" --input-kind "$kind"
+  # 退避：Agent 故障期间按指数退避跳过上报，避免每个 prompt 都启动失败进程。
+  # 状态文件由 CLI 的 --hook-mode 维护（成功清除、失败延长），此处只读不写。
+  local wt_state_dir="${WEBTERM_HOOK_STATE_DIR:-}"
+  if [ -n "$wt_state_dir" ] && [ -n "${WEBTERM_SESSION_ID:-}" ]; then
+    local wt_state_file="$wt_state_dir/$WEBTERM_SESSION_ID"
+    if [ -f "$wt_state_file" ]; then
+      local wt_next
+      read -r wt_next _ < "$wt_state_file" 2>/dev/null || wt_next=""
+      case "$wt_next" in
+        ''|*[!0-9]*) : ;;
+        *)
+          if [ "$(date +%s)" -lt "$wt_next" ]; then
+            return 0
+          fi
+          ;;
+      esac
+    fi
+  fi
+  # 后台 fire-and-forget：在子 shell 中后台运行，交互式 shell 不跟踪该作业，
+  # 因此不会打印 "[1] Done"；输出全部丢弃，失败绝不影响 prompt。元数据经
+  # 环境变量传入，避免对动态值（cwd/最近命令）做 shell 转义。
+  (
+    WEBTERM_HOOK_CWD="$PWD" \
+    WEBTERM_HOOK_LAST_COMMAND="$text" \
+    WEBTERM_HOOK_INPUT_KIND="$kind" \
+    WEBTERM_HOOK_SHELL_STATE="prompt" \
+    "$WEBTERM" internal session-update --hook-mode >/dev/null 2>&1 &
+  )
 }
 
 # Bash 使用 PROMPT_COMMAND
@@ -30,7 +57,7 @@ if [ -n "${BASH_VERSION:-}" ]; then
   __webterm_prompt_command() {
     local last
     last="$(history 1 2>/dev/null | sed 's/^[ ]*[0-9]*[ ]*//')"
-    webterm_meta "$last" "shell"
+    webterm_session_update "$last" "shell"
   }
   if [ -z "${PROMPT_COMMAND:-}" ]; then
     PROMPT_COMMAND='__webterm_prompt_command'
@@ -44,7 +71,7 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   __webterm_precmd() {
     local last
     last="$(fc -ln -1 2>/dev/null | sed 's/^[ ]*//')"
-    webterm_meta "$last" "shell"
+    webterm_session_update "$last" "shell"
   }
   if ! printf '%s\n' "${precmd_functions[@]}" | grep -qx '__webterm_precmd'; then
     precmd_functions+=(__webterm_precmd)
@@ -66,6 +93,55 @@ const zshRcTemplate = `# WebTerm zsh 初始化文件
 [ -f "{{.HookScript}}" ] && source "{{.HookScript}}"
 `
 
+const powerShellHookTemplate = `# WebTerm PowerShell hook: reports session metadata at every prompt (non-blocking).
+if ($env:WEBTERM_INTEGRATION -ne "1" -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_IPC_ENDPOINT)) { return }
+$script:WebTermBin = "{{.WebtermBin}}"
+if (-not (Test-Path $script:WebTermBin)) { $script:WebTermBin = "webterm" }
+# 退避状态由 CLI 的 --hook-mode 维护（成功清除、失败延长）；此处只读，故障期间跳过启动子进程。
+function Test-WebTermHookBackoff {
+  $stateDir = $env:WEBTERM_HOOK_STATE_DIR
+  if ([string]::IsNullOrWhiteSpace($stateDir) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID)) { return $false }
+  $stateFile = Join-Path $stateDir $env:WEBTERM_SESSION_ID
+  if (-not (Test-Path $stateFile)) { return $false }
+  $line = Get-Content $stateFile -TotalCount 1 -ErrorAction SilentlyContinue
+  if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+  $next = 0
+  try { $next = [long](($line -split '\s+')[0]) } catch { return $false }
+  return ([DateTimeOffset]::Now.ToUnixTimeSeconds() -lt $next)
+}
+function Invoke-WebTermSessionUpdate {
+  if (Test-WebTermHookBackoff) { return }
+  $last = ""
+  $history = Get-History -Count 1 -ErrorAction SilentlyContinue
+  if ($null -ne $history) { $last = $history.CommandLine }
+  # 后台启动、不等待、不弹窗、输出不连接终端：失败绝不影响 prompt。
+  # 元数据经环境变量传入，避免对动态值做命令行转义。
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $script:WebTermBin
+    $psi.Arguments = "internal session-update --hook-mode"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.EnvironmentVariables["WEBTERM_HOOK_CWD"] = $PWD.Path
+    $psi.EnvironmentVariables["WEBTERM_HOOK_LAST_COMMAND"] = $last
+    $psi.EnvironmentVariables["WEBTERM_HOOK_INPUT_KIND"] = "shell"
+    $psi.EnvironmentVariables["WEBTERM_HOOK_SHELL_STATE"] = "prompt"
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($null -ne $proc) { $proc.Dispose() }
+  } catch { }
+}
+if (-not (Get-Variable -Name WebTermOriginalPrompt -Scope Global -ErrorAction SilentlyContinue)) {
+  $global:WebTermOriginalPrompt = $function:prompt
+  function global:prompt {
+    Invoke-WebTermSessionUpdate
+    if ($null -ne $global:WebTermOriginalPrompt) { return & $global:WebTermOriginalPrompt }
+    return "PS $($PWD.Path)> "
+  }
+}
+`
+
 // InstallShellHook 安装 shell hook 脚本和 bash 初始化文件。
 // webtermBin 是 webterm 二进制路径；为空时使用 PATH 中的 webterm。
 func InstallShellHook(webtermBin string) (string, string, error) {
@@ -83,6 +159,10 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 	hookPath := filepath.Join(binDir, "webterm-shell-hook.sh")
 	if err := os.WriteFile(hookPath, []byte(replaceShellHookTemplate(webtermBin)), 0o755); err != nil {
 		return "", "", fmt.Errorf("write shell hook: %w", err)
+	}
+	powerShellHookPath := filepath.Join(binDir, "webterm-shell-hook.ps1")
+	if err := os.WriteFile(powerShellHookPath, []byte(replacePowerShellHookTemplate(webtermBin)), 0o600); err != nil {
+		return "", "", fmt.Errorf("write PowerShell hook: %w", err)
 	}
 
 	initDir := ShellInitDirAt(runtimeBaseDir)
@@ -102,6 +182,10 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 		return "", "", fmt.Errorf("write zsh rc: %w", err)
 	}
 	return hookPath, bashRcPath, nil
+}
+
+func replacePowerShellHookTemplate(webtermBin string) string {
+	return strings.ReplaceAll(powerShellHookTemplate, "{{.WebtermBin}}", webtermBin)
 }
 
 func replaceShellHookTemplate(webtermBin string) string {

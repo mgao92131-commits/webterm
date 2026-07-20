@@ -212,6 +212,9 @@ func dumpScreen(t *testing.T, data []byte) {
 		t.Logf("patch base=%d rev=%d", p.Patch.BaseRevision, p.Patch.ScreenRevision)
 	}
 	for r, line := range lines {
+		if line.GetText() != "" {
+			t.Logf("row %d compact: %q", r, line.GetText())
+		}
 		for _, run := range line.Runs {
 			var texts []string
 			for _, cell := range run.Cells {
@@ -264,7 +267,7 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 	go client.writeLoop(ctx)
 	defer client.Close()
 
-	client.sendScreenState(testScreenState(1, "one"))
+	client.sendScreenState(testScreenState(1, "one", 1))
 	select {
 	case <-socket.firstWriteStarted:
 	case <-time.After(time.Second):
@@ -273,8 +276,8 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 
 	// The first snapshot is still blocked in the socket. These intermediate
 	// states must collapse to revision 3, not create a patch chain 1 -> 2 -> 3.
-	client.sendScreenState(testScreenState(2, "two"))
-	client.sendScreenState(testScreenState(3, "three"))
+	client.sendScreenState(testScreenState(2, "two", 2))
+	client.sendScreenState(testScreenState(3, "three", 3))
 	close(socket.releaseFirstWrite)
 
 	first := socket.waitWrite(t)
@@ -299,8 +302,8 @@ func TestScreenWriter_CoalescesBlockedSocketToLatestRevision(t *testing.T) {
 func TestScreenWriter_EncodeFailureImmediatelyFallsBackToSnapshot(t *testing.T) {
 	sink := &recordingChannelSink{frames: make(chan []byte, 2)}
 	client := newOwnedTerminalChannelRuntime(nil, sink, "")
-	baseline := testScreenState(1, "one")
-	state := testScreenState(2, "two")
+	baseline := testScreenState(1, "one", 1)
+	state := testScreenState(2, "two", 2)
 	client.screenDeriver.Seed(baseline)
 	client.screenPending = state
 	client.hasScreenData = true
@@ -329,8 +332,8 @@ func TestScreenWriter_EncodeFailureImmediatelyFallsBackToSnapshot(t *testing.T) 
 func TestScreenWriter_ClosesChannelWhenSnapshotFallbackAlsoFails(t *testing.T) {
 	sink := &recordingChannelSink{frames: make(chan []byte, 2)}
 	client := newOwnedTerminalChannelRuntime(nil, sink, "")
-	client.screenDeriver.Seed(testScreenState(1, "one"))
-	client.screenPending = testScreenState(2, "two")
+	client.screenDeriver.Seed(testScreenState(1, "one", 1))
+	client.screenPending = testScreenState(2, "two", 2)
 	client.hasScreenData = true
 	client.encodeFrame = func(terminalengine.ScreenFrame) ([]byte, error) {
 		return nil, errors.New("injected encode failure")
@@ -360,7 +363,7 @@ func TestScreenWriter_InitialSyncCommitsOnlyAfterSocketWrite(t *testing.T) {
 	go client.writeLoop(ctx)
 	defer client.Close()
 
-	state := testScreenState(7, "seven")
+	state := testScreenState(7, "seven", 7)
 	state.Kind = terminalengine.FrameSnapshot
 	committed := make(chan bool, 1)
 	client.sendInitialScreenSync(terminalsession.InitialSync{Frame: state, State: state}, func(written bool) {
@@ -387,7 +390,7 @@ func TestScreenWriter_InitialSyncCommitsOnlyAfterSocketWrite(t *testing.T) {
 	}
 
 	// 提交后的实时状态必须从实际写出的 revision 7 派生。
-	client.sendScreenState(testScreenState(9, "nine"))
+	client.sendScreenState(testScreenState(9, "nine", 9))
 	if err := proto.Unmarshal(socket.waitWrite(t), &env); err != nil {
 		t.Fatal(err)
 	}
@@ -396,12 +399,16 @@ func TestScreenWriter_InitialSyncCommitsOnlyAfterSocketWrite(t *testing.T) {
 	}
 }
 
-func testScreenState(revision uint64, text string) terminalengine.ScreenFrame {
+// testScreenState 构造合成屏幕状态。增量同步契约（screenprojection.changedLinesByID）
+// 以稳定行 ID + 内容 Version 判定变化：行 ID 必须在状态间保持稳定，文本行变化
+// 时 contentVersion 必须递增；内容未变时保持原 Version（与投影器行为一致），
+// 否则空 patch 抑制契约无法被触发。
+func testScreenState(revision uint64, text string, contentVersion uint64) terminalengine.ScreenFrame {
 	screen := make([]terminalengine.Line, 5)
 	for row := range screen {
-		screen[row] = terminalengine.Line{Row: row}
+		screen[row] = terminalengine.Line{ID: uint64(row + 1), Row: row, Version: 1}
 	}
-	screen[0] = terminalengine.Line{Row: 0, Runs: []terminalengine.CellRun{{
+	screen[0] = terminalengine.Line{ID: 1, Row: 0, Version: contentVersion, Runs: []terminalengine.CellRun{{
 		Col: 0, Cells: []terminalengine.Cell{{Text: text, Width: 1}},
 	}}}
 	return terminalengine.ScreenFrame{
@@ -520,6 +527,10 @@ func screenContains(data []byte, text string) bool {
 		return false
 	}
 	for _, line := range lines {
+		// Compact 编码（当前默认）把整行文本放在 LineData.Text，Runs 为空。
+		if strings.Contains(line.GetText(), text) {
+			return true
+		}
 		for _, run := range line.Runs {
 			var sb strings.Builder
 			for _, cell := range run.Cells {

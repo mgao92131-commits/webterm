@@ -4,15 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestLoadRelayOnlyDefaults(t *testing.T) {
 	clearConfigEnv(t)
 	cfg := Load(Options{})
-	if cfg.Control.Addr != "127.0.0.1:18081" {
-		t.Fatalf("Control.Addr = %q", cfg.Control.Addr)
-	}
 	if cfg.Relay.Protocol != RelayProtocolV2 {
 		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
@@ -24,7 +22,6 @@ func TestLoadRelayOnlyDefaults(t *testing.T) {
 
 func TestLoadEnvOverridesDefaults(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("WEBTERM_CONTROL_ADDR", "127.0.0.1:19000")
 	t.Setenv("RELAY_URL", "https://relay.example")
 	t.Setenv("RELAY_SECRET", "secret")
 	t.Setenv("DEVICE_NAME", "test-mac")
@@ -39,8 +36,34 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	if cfg.Relay.Protocol != RelayProtocolV2 {
 		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
-	if cfg.Control.Addr != "127.0.0.1:19000" || cfg.Upload.MaxBytes != 2048 {
-		t.Fatalf("Control/Upload = %#v %#v", cfg.Control, cfg.Upload)
+	if cfg.Upload.MaxBytes != 2048 {
+		t.Fatalf("Upload = %#v", cfg.Upload)
+	}
+}
+
+func TestLoadNewEnvironmentNamesOverrideDeprecatedNames(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("RELAY_URL", "https://legacy.example")
+	t.Setenv("RELAY_SECRET", "legacy-secret")
+	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "new-secret")
+	t.Setenv("WEBTERM_AGENT_DEVICE_NAME", "windows-agent")
+	cfg := Load(Options{})
+	if cfg.Relay.URL != "https://relay.example" || cfg.Relay.Secret != "new-secret" || cfg.Relay.DeviceName != "windows-agent" {
+		t.Fatalf("Relay = %#v", cfg.Relay)
+	}
+}
+
+func TestLoadStrictAllowsAbsentDefaultButRejectsAbsentExplicitConfig(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if _, err := loadStrict(missing, false); err != nil {
+		t.Fatalf("non-explicit missing config: %v", err)
+	}
+	if _, err := loadStrict(missing, true); err == nil {
+		t.Fatal("explicit missing config did not fail")
 	}
 }
 
@@ -55,29 +78,12 @@ func TestRedactedMasksRelaySecret(t *testing.T) {
 	}
 }
 
-func TestMergeEditablePreservesRedactedSecretAndLimits(t *testing.T) {
-	current := Config{
-		Relay:      RelayConfig{URL: "https://old", Secret: "secret"},
-		Scrollback: ScrollbackConfig{MaxLines: 5000, MaxBytes: 1 << 20},
-	}
-	merged := MergeEditable(current, Config{
-		Relay: RelayConfig{URL: "https://new", Secret: RedactedSecret},
-	})
-	if merged.Relay.URL != "https://new" || merged.Relay.Secret != "secret" {
-		t.Fatalf("Relay = %#v", merged.Relay)
-	}
-	if merged.Scrollback != current.Scrollback {
-		t.Fatalf("Scrollback = %#v", merged.Scrollback)
-	}
-}
-
 func TestSaveAndLoadConfigFile(t *testing.T) {
 	clearConfigEnv(t)
 	path := filepath.Join(t.TempDir(), "WebTerm Agent", "config.json")
 	want := Config{
-		Relay:   RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
-		Control: ControlConfig{Addr: "127.0.0.1:18081"},
-		Shell:   ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
+		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
+		Shell: ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
 	}
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -119,9 +125,75 @@ func TestInvalidScrollbackFallsBackToDefaults(t *testing.T) {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"WEBTERM_SOCKET_PATH", "WEBTERM_CONTROL_ADDR", "RELAY_URL", "RELAY_SECRET",
+		"WEBTERM_IPC_ENDPOINT", "WEBTERM_SOCKET_PATH", "RELAY_URL", "RELAY_SECRET",
 		"DEVICE_NAME", "WEBTERM_RELAY_PROTOCOL", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
+		"WEBTERM_AGENT_CONFIG", "WEBTERM_AGENT_RELAY_URL", "WEBTERM_AGENT_RELAY_SECRET",
+		"WEBTERM_AGENT_DEVICE_NAME", "WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_AGENT_SHELL",
+		"WEBTERM_AGENT_SHELL_CWD", "WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
+		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES", "WEBTERM_AGENT_UPLOAD_MAX_BYTES",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
+	clearConfigEnv(t)
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, key := range []string{
+		"WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
+		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES",
+		"WEBTERM_AGENT_UPLOAD_MAX_BYTES",
+	} {
+		for _, value := range []string{"abc", "0", "-5"} {
+			t.Run(key+"="+value, func(t *testing.T) {
+				t.Setenv(key, value)
+				_, err := loadStrict(missing, false)
+				if err == nil {
+					t.Fatalf("%s=%s was accepted", key, value)
+				}
+				if !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), value) {
+					t.Fatalf("error %q should name %s and %q", err, key, value)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadStrictRejectsInvalidLegacyUploadEnv(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "abc")
+	_, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false)
+	if err == nil || !strings.Contains(err.Error(), "WEBTERM_MAX_UPLOAD_BYTES") || !strings.Contains(err.Error(), "abc") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadInvalidNumericEnvStillFallsBackToDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_SCROLLBACK_MAX_LINES", "abc")
+	t.Setenv("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "0")
+	cfg := Load(Options{})
+	if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines ||
+		cfg.Upload.MaxBytes != DefaultMaxUploadBytes {
+		t.Fatalf("lenient Load = %#v", cfg)
+	}
+}
+
+func TestLoadStrictRelayURLSchemeWhitelist(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, scheme := range []string{"http", "https", "ws", "wss"} {
+		t.Setenv("WEBTERM_AGENT_RELAY_URL", scheme+"://relay.example")
+		if _, err := loadStrict(missing, false); err != nil {
+			t.Fatalf("%s:// rejected: %v", scheme, err)
+		}
+	}
+	for _, rawURL := range []string{"ftp://relay.example", "file://relay.example/agent"} {
+		t.Setenv("WEBTERM_AGENT_RELAY_URL", rawURL)
+		_, err := loadStrict(missing, false)
+		if err == nil || !strings.Contains(err.Error(), "配置无效") {
+			t.Fatalf("%s should be rejected with 配置无效, got %v", rawURL, err)
+		}
 	}
 }

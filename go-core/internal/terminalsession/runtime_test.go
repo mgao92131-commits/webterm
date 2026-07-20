@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,28 @@ type reliableInputPTY struct {
 	closed chan struct{}
 	writes atomic.Int64
 	data   bytes.Buffer
+}
+
+type closeTrackingTerminalIO struct {
+	closed atomic.Int64
+}
+
+func (p *closeTrackingTerminalIO) Read([]byte) (int, error)       { return 0, io.EOF }
+func (p *closeTrackingTerminalIO) Write(data []byte) (int, error) { return len(data), nil }
+func (p *closeTrackingTerminalIO) Close() error {
+	p.closed.Add(1)
+	return nil
+}
+
+func TestRuntimeCloseDoesNotCloseTerminalIO(t *testing.T) {
+	terminalIO := &closeTrackingTerminalIO{}
+	r := NewRuntime("runtime-close-owner", terminalIO, 2, 80)
+	if err := r.Close(); err != nil {
+		t.Fatalf("Runtime.Close: %v", err)
+	}
+	if got := terminalIO.closed.Load(); got != 0 {
+		t.Fatalf("Runtime.Close closed TerminalIO %d times, want 0", got)
+	}
 }
 
 func newReliableInputPTY() *reliableInputPTY {
@@ -69,6 +92,99 @@ func TestNewRuntimeInitialVersions(t *testing.T) {
 	}
 	if info.InstanceID == "" {
 		t.Fatal("instance id must be assigned")
+	}
+}
+
+func TestPTYOutputAccumulatesEventsAndBytes(t *testing.T) {
+	outR, outW := io.Pipe()
+	inR, inW := io.Pipe()
+	pty := &benchFakePTY{reader: outR, writer: inW}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, inR)
+		close(done)
+	}()
+
+	r := NewRuntime("s1", pty, 5, 10)
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = outW.Close()
+		_ = inW.Close()
+		<-done
+	})
+
+	if events, bytes := r.PTYOutputSnapshot(); events != 0 || bytes != 0 {
+		t.Fatalf("initial pty output events=%d bytes=%d, want 0 0", events, bytes)
+	}
+
+	data := []byte("hello pty output")
+	if _, err := outW.Write(data); err != nil {
+		t.Fatalf("write pty: %v", err)
+	}
+
+	// 等待 actor 处理事件。
+	for {
+		events, bytes := r.PTYOutputSnapshot()
+		if events == 1 && bytes == uint64(len(data)) {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatal("pty closed before output processed")
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestPTYOutputAccumulatesConcurrently(t *testing.T) {
+	outR, outW := io.Pipe()
+	inR, inW := io.Pipe()
+	pty := &benchFakePTY{reader: outR, writer: inW}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, inR)
+		close(done)
+	}()
+
+	r := NewRuntime("s1", pty, 5, 10)
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = outW.Close()
+		_ = inW.Close()
+		<-done
+	})
+
+	const goroutines = 8
+	const iterations = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				_, _ = outW.Write([]byte("x"))
+			}
+		}()
+	}
+	wg.Wait()
+
+	// 等待所有输出被处理。
+	wantEvents := uint64(goroutines * iterations)
+	for {
+		events, bytes := r.PTYOutputSnapshot()
+		if events == wantEvents {
+			if bytes != wantEvents {
+				t.Fatalf("pty output bytes=%d, want %d", bytes, wantEvents)
+			}
+			break
+		}
+		select {
+		case <-done:
+			t.Fatalf("pty closed early: events=%d want %d", events, wantEvents)
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

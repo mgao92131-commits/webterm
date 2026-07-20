@@ -12,6 +12,7 @@ import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 public final class WebSocketMuxTransport implements MuxTransport {
@@ -37,6 +38,7 @@ public final class WebSocketMuxTransport implements MuxTransport {
 
     private Attempt currentAttempt;
     private int nextAttemptNumber;
+    private TrafficAccumulator trafficAccumulator;
 
     public WebSocketMuxTransport(OkHttpClient http, String wsUrl, String cookie, String subprotocol) {
         this.muxHttp = http.newBuilder()
@@ -45,6 +47,12 @@ public final class WebSocketMuxTransport implements MuxTransport {
         this.wsUrl = wsUrl;
         this.cookie = cookie;
         this.subprotocol = subprotocol;
+        this.trafficAccumulator = new TrafficAccumulator();
+    }
+
+    @Override
+    public void setTrafficAccumulator(TrafficAccumulator accumulator) {
+        this.trafficAccumulator = accumulator != null ? accumulator : new TrafficAccumulator();
     }
 
     @Override
@@ -84,13 +92,20 @@ public final class WebSocketMuxTransport implements MuxTransport {
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
                 if (!isCurrent(attempt, webSocket)) return;
+                if (trafficAccumulator != null) {
+                    trafficAccumulator.recordRx(text == null ? 0 : text.getBytes(StandardCharsets.UTF_8).length);
+                }
                 attempt.listener.onText(text);
             }
 
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull okio.ByteString bytes) {
                 if (!isCurrent(attempt, webSocket)) return;
-                attempt.listener.onBinary(bytes.toByteArray());
+                byte[] payload = bytes.toByteArray();
+                if (trafficAccumulator != null) {
+                    trafficAccumulator.recordRx(payload.length);
+                }
+                attempt.listener.onBinary(payload);
             }
 
             @Override
@@ -149,15 +164,24 @@ public final class WebSocketMuxTransport implements MuxTransport {
     }
 
     @Override
+    public TrafficSnapshot trafficSnapshot() {
+        return trafficAccumulator != null ? trafficAccumulator.snapshot() : TrafficSnapshot.ZERO;
+    }
+
+    @Override
     public boolean sendText(String text) {
         Attempt attempt = connectedAttempt();
-        int bytes = text == null ? 0 : text.length();
+        int bytes = text == null ? 0 : text.getBytes(StandardCharsets.UTF_8).length;
         if (attempt == null) {
             logSendRejected(bytes);
             return false;
         }
         boolean accepted = attempt.socket.send(text);
-        if (!accepted) logSendRejected(bytes);
+        if (accepted && trafficAccumulator != null) {
+            trafficAccumulator.recordTx(bytes);
+        } else if (!accepted) {
+            logSendRejected(bytes);
+        }
         return accepted;
     }
 
@@ -170,7 +194,11 @@ public final class WebSocketMuxTransport implements MuxTransport {
             return false;
         }
         boolean accepted = attempt.socket.send(okio.ByteString.of(data));
-        if (!accepted) logSendRejected(bytes);
+        if (accepted && trafficAccumulator != null) {
+            trafficAccumulator.recordTx(bytes);
+        } else if (!accepted) {
+            logSendRejected(bytes);
+        }
         return accepted;
     }
 

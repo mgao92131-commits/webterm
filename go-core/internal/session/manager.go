@@ -46,7 +46,6 @@ type Manager struct {
 	managerClients map[managerSink]struct{}
 	defaults       TerminalDefaults
 	sessionEnv     map[string]string
-	downloadTasks  *DownloadTaskRegistry
 }
 
 type TerminalDefaults struct {
@@ -55,6 +54,14 @@ type TerminalDefaults struct {
 	// Scrollback 双上限；非正值使用 terminalengine 默认值。
 	ScrollbackMaxLines int
 	ScrollbackMaxBytes int
+}
+
+// SessionTrafficSnapshot 汇总单个会话的流量统计。
+type SessionTrafficSnapshot struct {
+	SessionID          string                        `json:"sessionId"`
+	PTYOutputEvents    uint64                        `json:"ptyOutputEvents"`
+	PTYOutputBytes     uint64                        `json:"ptyOutputBytes"`
+	ScreenWireByClient map[string]ScreenWireSnapshot `json:"screenWireByClient"`
 }
 
 func NewManager(defaults ...TerminalDefaults) *Manager {
@@ -68,7 +75,6 @@ func NewManager(defaults ...TerminalDefaults) *Manager {
 		processIndex:   NewProcessSessionIndex(),
 		managerClients: make(map[managerSink]struct{}),
 		defaults:       config,
-		downloadTasks:  NewDownloadTaskRegistry(),
 	}
 }
 
@@ -82,6 +88,28 @@ func (manager *Manager) Count() int {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 	return len(manager.sessions)
+}
+
+// TrafficSnapshots 返回每个会话的 PTY 输出与 screen 协议发送字节累计。
+func (manager *Manager) TrafficSnapshots() []SessionTrafficSnapshot {
+	manager.mu.RLock()
+	sessions := make([]*TerminalSession, 0, len(manager.sessions))
+	for _, session := range manager.sessions {
+		sessions = append(sessions, session)
+	}
+	manager.mu.RUnlock()
+
+	result := make([]SessionTrafficSnapshot, 0, len(sessions))
+	for _, session := range sessions {
+		ptyEvents, ptyBytes := session.PTYOutputSnapshot()
+		result = append(result, SessionTrafficSnapshot{
+			SessionID:          session.ID(),
+			PTYOutputEvents:    ptyEvents,
+			PTYOutputBytes:     ptyBytes,
+			ScreenWireByClient: session.ScreenWireSnapshots(),
+		})
+	}
+	return result
 }
 
 func (manager *Manager) SetDefaults(defaults TerminalDefaults) {
@@ -140,7 +168,7 @@ func (manager *Manager) Create(cwd string) (*TerminalSession, error) {
 	}
 	terminal.manager = manager
 	manager.sessions[id] = terminal
-	manager.processIndex.Register(id, terminal.ShellPID(), terminal.TTYPath())
+	manager.processIndex.Register(id, terminal.ProcessIdentity())
 	info := terminal.Info()
 	manager.mu.Unlock()
 
@@ -162,7 +190,7 @@ func (manager *Manager) Close(id string) bool {
 		manager.mu.Unlock()
 		return false
 	}
-	manager.processIndex.Unregister(id, terminal.ShellPID(), terminal.TTYPath())
+	manager.processIndex.Unregister(id, terminal.ProcessIdentity())
 	terminal.Close()
 	delete(manager.sessions, id)
 	manager.mu.Unlock()
@@ -225,25 +253,4 @@ type managerSink interface {
 // 优先匹配 session 的 shell PID；否则匹配每层 PID 对应的 TTY 路径。
 func (manager *Manager) ResolveSessionForPID(pid int) (string, error) {
 	return manager.processIndex.Resolve(pid)
-}
-
-// AddDownloadTask 注册一个下载任务。
-func (manager *Manager) AddDownloadTask(sessionID string, task *DownloadTask) {
-	manager.downloadTasks.Add(sessionID, task)
-}
-
-// GetDownloadTask 首次消费返回任务，但不删除；任务会在完成/失败/超时后由 RemoveDownloadTask 删除。
-// 已过期或已被消费的任务返回 false。
-func (manager *Manager) GetDownloadTask(id string) (*DownloadTask, bool) {
-	return manager.downloadTasks.Consume(id)
-}
-
-// PeekDownloadTask 只读查询任务，不删除。用于接收 Android 进度回传。
-func (manager *Manager) PeekDownloadTask(id string) (*DownloadTask, bool) {
-	return manager.downloadTasks.Peek(id)
-}
-
-// RemoveDownloadTask 强制移除并关闭任务通道。
-func (manager *Manager) RemoveDownloadTask(id string) {
-	manager.downloadTasks.Remove(id)
 }

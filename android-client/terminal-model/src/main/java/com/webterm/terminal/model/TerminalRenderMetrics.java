@@ -25,6 +25,10 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong SNAPSHOT_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong PATCH_FRAME_COUNT = new AtomicLong();
   private static final AtomicLong PATCH_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong HISTORY_PAGE_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_PAGE_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong HISTORY_TRIM_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_TRIM_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong OTHER_FRAME_COUNT = new AtomicLong();
   private static final AtomicLong OTHER_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong MAILBOX_RESIDENCE_NANOS = new AtomicLong();
@@ -57,16 +61,27 @@ public final class TerminalRenderMetrics {
   public static void mainThreadCallbackDelay(long nanos) {
     MAIN_CALLBACK_DELAY_NANOS.addAndGet(Math.max(0L, nanos));
   }
+  /** 屏幕协议消息的分类标记；不依赖其他模块枚举的 ordinal。 */
+  public enum ScreenTrafficKind {
+    SNAPSHOT, PATCH, HISTORY_PAGE, HISTORY_TRIM, OTHER
+  }
+
   /** Records only wire class and length; terminal contents never enter diagnostics. */
-  public static void inboundScreenFrame(int kind, int bytes) {
+  public static void inboundScreenFrame(ScreenTrafficKind kind, int bytes) {
     AtomicLong count;
     AtomicLong totalBytes;
-    if (kind == 0) {
+    if (kind == ScreenTrafficKind.SNAPSHOT) {
       count = SNAPSHOT_FRAME_COUNT;
       totalBytes = SNAPSHOT_FRAME_BYTES;
-    } else if (kind == 1) {
+    } else if (kind == ScreenTrafficKind.PATCH) {
       count = PATCH_FRAME_COUNT;
       totalBytes = PATCH_FRAME_BYTES;
+    } else if (kind == ScreenTrafficKind.HISTORY_PAGE) {
+      count = HISTORY_PAGE_FRAME_COUNT;
+      totalBytes = HISTORY_PAGE_FRAME_BYTES;
+    } else if (kind == ScreenTrafficKind.HISTORY_TRIM) {
+      count = HISTORY_TRIM_FRAME_COUNT;
+      totalBytes = HISTORY_TRIM_FRAME_BYTES;
     } else {
       count = OTHER_FRAME_COUNT;
       totalBytes = OTHER_FRAME_BYTES;
@@ -87,8 +102,9 @@ public final class TerminalRenderMetrics {
         RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
         PROTOBUF_PARSE_COUNT.get(), MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get(),
         SNAPSHOT_FRAME_COUNT.get(), SNAPSHOT_FRAME_BYTES.get(), PATCH_FRAME_COUNT.get(),
-        PATCH_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(), OTHER_FRAME_BYTES.get(),
-        MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get());
+        PATCH_FRAME_BYTES.get(), HISTORY_PAGE_FRAME_COUNT.get(), HISTORY_PAGE_FRAME_BYTES.get(),
+        HISTORY_TRIM_FRAME_COUNT.get(), HISTORY_TRIM_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(),
+        OTHER_FRAME_BYTES.get(), MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get());
   }
 
   private static void updateMax(AtomicLong counter, long value) {
@@ -115,6 +131,10 @@ public final class TerminalRenderMetrics {
     public final long snapshotFrameBytes;
     public final long patchFrameCount;
     public final long patchFrameBytes;
+    public final long historyPageFrameCount;
+    public final long historyPageFrameBytes;
+    public final long historyTrimFrameCount;
+    public final long historyTrimFrameBytes;
     public final long otherFrameCount;
     public final long otherFrameBytes;
     public final long mailboxResidenceNanos;
@@ -126,6 +146,8 @@ public final class TerminalRenderMetrics {
              long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
              long modelApplyNanos, long mainThreadCallbackDelayNanos, long snapshotFrameCount,
              long snapshotFrameBytes, long patchFrameCount, long patchFrameBytes,
+             long historyPageFrameCount, long historyPageFrameBytes,
+             long historyTrimFrameCount, long historyTrimFrameBytes,
              long otherFrameCount, long otherFrameBytes, long mailboxResidenceNanos,
              long mailboxResidenceMaxNanos) {
       this.modelChangeCount = modelChangeCount;
@@ -146,6 +168,10 @@ public final class TerminalRenderMetrics {
       this.snapshotFrameBytes = snapshotFrameBytes;
       this.patchFrameCount = patchFrameCount;
       this.patchFrameBytes = patchFrameBytes;
+      this.historyPageFrameCount = historyPageFrameCount;
+      this.historyPageFrameBytes = historyPageFrameBytes;
+      this.historyTrimFrameCount = historyTrimFrameCount;
+      this.historyTrimFrameBytes = historyTrimFrameBytes;
       this.otherFrameCount = otherFrameCount;
       this.otherFrameBytes = otherFrameBytes;
       this.mailboxResidenceNanos = mailboxResidenceNanos;

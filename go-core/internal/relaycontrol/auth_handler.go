@@ -33,12 +33,12 @@ func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	if requireEmailOTP() && user.EmailVerifiedAt.IsZero() {
+	if server.requireEmailOTP() && user.EmailVerifiedAt.IsZero() {
 		writeError(w, http.StatusForbidden, "email not verified")
 		return
 	}
 	deviceID := clientDeviceID(r)
-	if requireEmailOTP() && !server.isTrustedDevice(user.ID, deviceID) {
+	if server.requireEmailOTP() && !server.isTrustedDevice(user.ID, deviceID) {
 		if deviceID == "" {
 			deviceID = newClientDeviceID()
 		}
@@ -87,6 +87,10 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !server.allowRegistration() {
+		writeError(w, http.StatusForbidden, "registration is disabled")
+		return
+	}
 	var req struct {
 		Email    string `json:"email"`
 		Username string `json:"username"`
@@ -113,7 +117,7 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	emailVerificationRequired := requireEmailOTP()
+	emailVerificationRequired := server.requireEmailOTP()
 	if emailVerificationRequired {
 		if err := server.sendVerificationCode(user, verifyEmailPurpose, "", false); err != nil {
 			writeStoreError(w, err)

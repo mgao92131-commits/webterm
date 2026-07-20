@@ -138,7 +138,13 @@ func (gateway *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 已写出 Agent 的终态响应。若 body 尚未结束，关闭客户端流并通知 Agent，
 		// 然后等待发送 goroutine 退出，避免遗留读取 goroutine。
 		select {
-		case <-bodyDone:
+		case err := <-bodyDone:
+			// 客户端取消时 responseCtx 随 r.Context() 一同取消，body 读错误与
+			// responseDone 几乎同时就绪；此时 body 未完整发出，仍必须通知 Agent
+			// 中止该 stream，不能静默返回。
+			if err != nil {
+				_ = sender.SendFrame(context.Background(), relaycore.NewFrame(relaycore.FrameTypeStreamClose, handle.ID, 0, nil))
+			}
 			return
 		default:
 			_ = r.Body.Close()

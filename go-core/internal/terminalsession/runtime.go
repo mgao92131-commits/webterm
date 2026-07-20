@@ -1,9 +1,11 @@
 package terminalsession
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -26,7 +28,7 @@ type Runtime struct {
 	engine      *terminalengine.Engine
 	scrollback  *terminalengine.TrackedScrollback
 	projector   *screenprojection.Projector
-	pty         io.ReadWriteCloser
+	terminalIO  TerminalIO
 	inputWriter *InputWriter
 	ptyResizer  func(cols, rows int) error
 
@@ -37,6 +39,15 @@ type Runtime struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	stopped  bool
+	// draining 在 DrainAndClose 开始后置位：拒绝新的用户输入，readLoop 继续
+	// 读 PTY 尾部直到 EOF。
+	draining atomic.Bool
+	// readDone 在 readLoop 退出时关闭（PTY EOF、读错误或 runtime 停止）。
+	readDone chan struct{}
+	// drainEOFUncertain 为 true 时表示无法依赖输出流产生真正的 EOF（process.BeginDrain
+	// 失败或 backend 不支持），waitReadDrained 退化为连续静默兜底。默认 false，即坚持
+	// 等待真 EOF，避免退出后延迟到达的尾部输出在静默窗口后被截断。
+	drainEOFUncertain atomic.Bool
 
 	layoutEpoch       uint64
 	screenRevision    uint64
@@ -68,6 +79,9 @@ type Runtime struct {
 	resumeExact    atomic.Uint64
 	resumePatch    atomic.Uint64
 	resumeSnapshot atomic.Uint64
+
+	ptyOutputEvents atomic.Uint64
+	ptyOutputBytes  atomic.Uint64
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -169,8 +183,16 @@ type Version struct {
 	ScreenRevision uint64
 }
 
+// TerminalIO 是 Runtime 所需的终端字节流。Runtime 不拥有其关闭权；Process
+// 生命周期由 TerminalSession 统一管理，确保 Unix PTY 与 Windows ConPTY 的资源
+// 只会被关闭一次。
+type TerminalIO interface {
+	io.Reader
+	io.Writer
+}
+
 // NewRuntime 创建新的终端会话 runtime。
-func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Option) *Runtime {
+func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Option) *Runtime {
 	if id == "" {
 		id = randomID()
 	}
@@ -184,9 +206,10 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 	r := &Runtime{
 		id:               id,
 		instanceID:       randomID(),
-		pty:              pty,
+		terminalIO:       terminalIO,
 		events:           make(chan event, 1024),
 		stopCh:           make(chan struct{}),
+		readDone:         make(chan struct{}),
 		ptyReadCredits:   make(chan struct{}, ptyPendingByteLimit/ptyReadBufferSize),
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
@@ -212,7 +235,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
 	}
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
-		terminalengine.WithPTYWriter(pty),
+		terminalengine.WithPTYWriter(terminalIO),
 		terminalengine.WithBellHandler(func() {
 			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectBell})
 		}),
@@ -233,7 +256,7 @@ func NewRuntime(id string, pty io.ReadWriteCloser, rows, cols int, options ...Op
 		}),
 	)
 	r.projector = screenprojection.NewProjector(r.engine, r.scrollback, id, r.instanceID)
-	r.inputWriter = newDefaultInputWriter(pty)
+	r.inputWriter = newDefaultInputWriter(terminalIO)
 	r.ptyReadBuffers.New = func() any {
 		return make([]byte, ptyReadBufferSize)
 	}
@@ -265,6 +288,11 @@ func (r *Runtime) Info() Version {
 	}
 }
 
+// PTYOutputSnapshot 返回 PTY 输出累计事件数和字节数。
+func (r *Runtime) PTYOutputSnapshot() (events, bytes uint64) {
+	return r.ptyOutputEvents.Load(), r.ptyOutputBytes.Load()
+}
+
 // AttachClient 附加一个 screen client。
 func (r *Runtime) AttachClient(c *ScreenClient) {
 	r.postEvent(clientAttachEvent{client: c})
@@ -277,11 +305,17 @@ func (r *Runtime) DetachClient(clientID string) {
 
 // WriteInput 写入语义输入。
 func (r *Runtime) WriteInput(clientID string, data []byte) {
+	if r.draining.Load() {
+		return
+	}
 	r.postEvent(inputEvent{clientID: clientID, data: data})
 }
 
 // WriteSemanticInput 由权威引擎按当前模式编码输入。
 func (r *Runtime) WriteSemanticInput(clientID, leaseID string, input terminalengine.SemanticInput) {
+	if r.draining.Load() {
+		return
+	}
 	r.postEvent(semanticInputEvent{clientID: clientID, leaseID: leaseID, input: input})
 }
 
@@ -289,6 +323,17 @@ func (r *Runtime) WriteSemanticInput(clientID, leaseID string, input terminaleng
 // InputWriter。done 只在完整 PTY 写入结束后调用；重复 seq 不会重复写入。
 func (r *Runtime) WriteReliableSemanticInput(clientID, leaseID, clientInstanceID string,
 	inputSeq uint64, input terminalengine.SemanticInput, done func(InputDeliveryResult)) {
+	if r.draining.Load() {
+		if done != nil {
+			done(InputDeliveryResult{
+				ClientInstanceID:   clientInstanceID,
+				InputSeq:           inputSeq,
+				TerminalInstanceID: r.instanceID,
+				Status:             InputDeliveryRejected,
+			})
+		}
+		return
+	}
 	r.postEvent(semanticInputEvent{
 		clientID: clientID, leaseID: leaseID, clientInstanceID: clientInstanceID,
 		inputSeq: inputSeq, input: input, done: done,
@@ -297,6 +342,9 @@ func (r *Runtime) WriteReliableSemanticInput(clientID, leaseID, clientInstanceID
 
 // Resize 处理 resize 请求。
 func (r *Runtime) Resize(clientID, leaseID string, cols, rows int) {
+	if r.draining.Load() {
+		return
+	}
 	r.postEvent(resizeEvent{clientID: clientID, leaseID: leaseID, cols: cols, rows: rows})
 }
 
@@ -306,6 +354,9 @@ func (r *Runtime) RequestHistory(clientID, requestID string, beforeSeq uint64, l
 }
 
 func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, data []byte) {
+	if r.draining.Load() {
+		return
+	}
 	r.postEvent(clipboardResponseEvent{clientID: clientID, requestID: requestID, allowed: allowed, data: append([]byte(nil), data...)})
 }
 
@@ -378,11 +429,113 @@ func (r *Runtime) Close() error {
 		if r.inputWriter != nil {
 			r.inputWriter.Close()
 		}
-		if r.pty != nil {
-			_ = r.pty.Close()
-		}
 	})
 	return nil
+}
+
+// DrainAndClose 在终端进程退出后排空尾部输出：停止接收新输入，等待 readLoop
+// 读到 PTY EOF，让 actor 处理完已排队事件并强制执行最后一次投影，最后关闭
+// runtime。调用方必须在关闭 PTY 句柄（process.Close）之前调用，否则 readLoop
+// 尚未读完的尾部数据和已排队事件会被提前丢弃。ctx 超时保证异常情况下（如
+// 子进程树占用 PTY 不退出）不会永久阻塞；超时后仍退化为立即 Close。
+func (r *Runtime) DrainAndClose(ctx context.Context) error {
+	drained := r.drain(ctx)
+	_ = r.Close()
+	if !drained {
+		return ctx.Err()
+	}
+	return nil
+}
+
+// waitReadDrained 等待 PTY 输出流排空：优先等 readLoop 退出读到真正的 EOF。
+// waitLoop 在调用 DrainAndClose 前已调用 process.BeginDrain：Unix 下 PTY 随子进程
+// 退出返回 EOF/EIO；Windows 下 BeginDrain 关闭伪控制台使 ConPTY 输出管道产生 EOF。
+// 因此正常路径都能命中 readDone。100ms 连续静默仅作为异常兜底（BeginDrain 失败、
+// backend 无法产生可靠 EOF，或排空上下文即将超时），不再是 Windows 的正常成功条件。
+// 调用方必须保证进程已退出（不会再有新输出），该假设由 waitLoop 的调用
+// 时序（process.Wait 之后）保证。
+func (r *Runtime) waitReadDrained(ctx context.Context) {
+	const (
+		tick        = 20 * time.Millisecond
+		quietNeeded = 5 // 5 * 20ms = 100ms 连续静默
+	)
+	select {
+	case <-r.readDone:
+		return
+	default:
+	}
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	lastEvents := r.ptyOutputEvents.Load()
+	quiet := 0
+	for {
+		select {
+		case <-r.readDone:
+			return
+		case <-r.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// 能拿到可靠 EOF 时坚持等待 readDone，不用静默窗口提前判定成功——否则
+			// 退出后延迟超过静默窗口才到达的尾部输出会被截断。仅在 drainEOFUncertain
+			// （无法获得真 EOF）时以连续静默作为兜底成功条件。
+			if !r.drainEOFUncertain.Load() {
+				continue
+			}
+			events := r.ptyOutputEvents.Load()
+			if events == lastEvents && len(r.events) == 0 {
+				quiet++
+				if quiet >= quietNeeded {
+					return
+				}
+			} else {
+				quiet = 0
+				lastEvents = events
+			}
+		}
+	}
+}
+
+// MarkDrainEOFUncertain 由会话在 process.BeginDrain 失败时调用，告知排空逻辑无法
+// 依赖真正的 EOF，应退化为连续静默窗口兜底。必须在 DrainAndClose 之前调用。
+func (r *Runtime) MarkDrainEOFUncertain() { r.drainEOFUncertain.Store(true) }
+
+// drain 执行排空但不关闭 runtime；返回 false 表示 ctx 超时或被提前 Close。
+func (r *Runtime) drain(ctx context.Context) bool {
+	r.draining.Store(true)
+	if r.inputWriter != nil {
+		// Shutdown 等待 worker 结算所有排队输入（对未开始任务回调 Rejected）。
+		// 必须在下面的 drain barrier 入队之前完成，这样这些输入完成事件都排在
+		// barrier 之前，actor 会在 barrier 前处理完并逐一发出 InputAck，客户端
+		// 无需等待 60s 超时。ctx 超时则退化为后台结算（与既有尽力排空语义一致）。
+		_ = r.inputWriter.Shutdown(ctx)
+	}
+
+	// 1. 等待 PTY 输出排空。waitLoop 已在本调用前执行 process.BeginDrain：
+	// Unix 下 readLoop 读到 EOF/EIO 退出；Windows 下 BeginDrain 关闭伪控制台，
+	// ConPTY 输出管道随之产生 EOF，readLoop 读完尾部数据后退出。正常路径都命中
+	// readDone；连续静默窗口仅在无法获得真 EOF 时兜底。
+	r.waitReadDrained(ctx)
+
+	// 2. 屏障事件：actor 按 FIFO 处理到屏障时，之前所有 ptyOutputEvent 都已
+	// 写入引擎；在屏障内强制执行最后一次投影，保证最终画面先于 Exit 送达。
+	barrier := make(chan struct{})
+	select {
+	case r.events <- drainBarrierEvent{done: barrier}:
+	case <-r.stopCh:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case <-barrier:
+		return true
+	case <-r.stopCh:
+		return false
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (r *Runtime) postEvent(ev event) {
@@ -397,6 +550,7 @@ func (r *Runtime) postEvent(ev event) {
 }
 
 func (r *Runtime) readLoop() {
+	defer close(r.readDone)
 	for {
 		// 先占用预算再读。actor 消费 ptyOutputEvent 并归还缓冲后才释放 credit，
 		// 因此 readLoop 在最多 8 MiB 待处理输出时停止 Read，让背压回传至 PTY。
@@ -404,7 +558,7 @@ func (r *Runtime) readLoop() {
 			return
 		}
 		buf := r.ptyReadBuffers.Get().([]byte)
-		n, err := r.pty.Read(buf)
+		n, err := r.terminalIO.Read(buf)
 		if n > 0 {
 			// ptyOutputEvent 独占这块缓冲，actor 完成 Engine.Write 后才归还；
 			// readLoop 因而无需为每次 Read 再分配和复制一次数据。
@@ -498,6 +652,11 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
 		r.handleProjectionFlush(e)
+	case drainBarrierEvent:
+		// 进程退出后的排空屏障：此前所有 PTY 输出已写入引擎，强制最后一次
+		// 投影后再放行 DrainAndClose，保证最终画面先于 Exit 送达客户端。
+		r.flushProjectionNow()
+		close(e.done)
 	case resizeEngineEvent:
 		r.engine.Resize(e.rows, e.cols)
 		r.commitEngineSignals()
@@ -538,7 +697,7 @@ func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 		return
 	}
 	response := "\x1b]52;" + string(clipboard) + ";" + base64.StdEncoding.EncodeToString(e.data) + "\x1b\\"
-	_, _ = r.pty.Write([]byte(response))
+	_, _ = r.terminalIO.Write([]byte(response))
 }
 
 func (r *Runtime) handleEffect(effect terminalengine.Effect) {
@@ -625,9 +784,13 @@ func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteComplete
 		TerminalInstanceID: r.instanceID,
 		Status:             InputDeliveryUncertain,
 	}
-	if e.result.err == nil {
+	switch {
+	case e.result.err == nil:
 		result.Status = InputDeliveryWritten
-	} else {
+	case errors.Is(e.result.err, ErrInputWriterClosedBeforeWrite):
+		// 已入队但关闭前未开始写入：给出确定的 Rejected，而非让客户端等超时。
+		result.Status = InputDeliveryRejected
+	default:
 		result.Status = InputDeliveryUncertain
 	}
 	r.completeReliableInput(e.input, result)
@@ -680,6 +843,8 @@ func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDelive
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
+	r.ptyOutputEvents.Add(1)
+	r.ptyOutputBytes.Add(uint64(len(data)))
 	_ = r.engine.Write(data)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
@@ -1087,6 +1252,12 @@ type clientInitialSyncResultEvent struct {
 
 type projectionFlushEvent struct {
 	token uint64
+}
+
+// drainBarrierEvent 是 DrainAndClose 投递的 FIFO 屏障；done 在 actor 完成
+// 最后一次投影后关闭。
+type drainBarrierEvent struct {
+	done chan struct{}
 }
 
 type resizeEngineEvent struct {

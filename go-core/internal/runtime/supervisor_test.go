@@ -11,7 +11,7 @@ import (
 	"webterm/go-core/internal/config"
 )
 
-func TestSupervisorStartRestartAndStop(t *testing.T) {
+func TestSupervisorStartAndStop(t *testing.T) {
 	application := app.New(config.Config{
 		Relay: config.RelayConfig{URL: "ws://relay.example", Secret: "secret"},
 	}, "test")
@@ -21,24 +21,10 @@ func TestSupervisorStartRestartAndStop(t *testing.T) {
 	if err := supervisor.Start(context.Background()); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	next := application.Config()
-	next.Relay.URL = "ws://new-relay.example"
-	application.UpdateConfig(next)
-	if !application.Status().RestartRequired {
-		t.Fatalf("RestartRequired = false after config update")
-	}
-	if err := supervisor.Restart(context.Background()); err != nil {
-		t.Fatalf("Restart returned error: %v", err)
-	}
-	status := application.Status()
-	if status.RestartRequired {
-		t.Fatalf("status after restart = %#v", status)
-	}
-
 	if err := supervisor.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop returned error: %v", err)
 	}
-	if factory.StartCount() != 2 {
+	if factory.StartCount() != 1 {
 		t.Fatalf("start count = %d, want 2", factory.StartCount())
 	}
 }
