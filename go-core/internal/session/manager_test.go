@@ -12,12 +12,12 @@ import (
 
 func TestManagerCreateListClose(t *testing.T) {
 	manager := NewManager()
-	first, err := manager.Create("/tmp")
+	first, err := manager.Create(t.TempDir())
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	defer first.Close()
-	second, err := manager.Create("/var")
+	second, err := manager.Create(t.TempDir())
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}

@@ -102,13 +102,18 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		return nil, err
 	}
 
+	// 注意：不要使用 CREATE_SUSPENDED + ResumeThread 来消除 Job 挂接窗口。
+	// PSEUDOCONSOLE 与挂起启动的组合在 Windows Server 上会让子进程控制台
+	// 初始化失败（0xC0000142 STATUS_DLL_INIT_FAILED，进程刚启动即退出）。
+	// 正常启动后立即挂 Job；启动到挂接之间的极短窗口内理论上有孙进程逃逸
+	// 的可能，但 KILL_ON_JOB_CLOSE 本就是兜底清理语义，该窗口可以接受。
 	startupInfo := windows.StartupInfoEx{
 		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
 		ProcThreadAttributeList: attributeList.List(),
 	}
 	processInfo := new(windows.ProcessInformation)
 	if err := windows.CreateProcess(nil, commandLine, nil, nil, false,
-		windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_SUSPENDED,
+		windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT,
 		&environment[0], cwd16, &startupInfo.StartupInfo, processInfo); err != nil {
 		_ = windows.CloseHandle(job)
 		_ = inputWrite.Close()
@@ -116,9 +121,9 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		windows.ClosePseudoConsole(pseudoConsole)
 		return nil, fmt.Errorf("start ConPTY child: %w", err)
 	}
+	_ = windows.CloseHandle(processInfo.Thread)
 	if err := windows.AssignProcessToJobObject(job, processInfo.Process); err != nil {
 		_ = windows.TerminateProcess(processInfo.Process, 1)
-		_ = windows.CloseHandle(processInfo.Thread)
 		_ = windows.CloseHandle(processInfo.Process)
 		_ = windows.CloseHandle(job)
 		_ = inputWrite.Close()
@@ -126,17 +131,6 @@ func startBackend(command string, args []string, cwd string, env []string, cols,
 		windows.ClosePseudoConsole(pseudoConsole)
 		return nil, fmt.Errorf("assign ConPTY child to job: %w", err)
 	}
-	if _, err := windows.ResumeThread(processInfo.Thread); err != nil {
-		_ = windows.TerminateProcess(processInfo.Process, 1)
-		_ = windows.CloseHandle(processInfo.Thread)
-		_ = windows.CloseHandle(processInfo.Process)
-		_ = windows.CloseHandle(job)
-		_ = inputWrite.Close()
-		_ = outputRead.Close()
-		windows.ClosePseudoConsole(pseudoConsole)
-		return nil, fmt.Errorf("resume ConPTY child: %w", err)
-	}
-	_ = windows.CloseHandle(processInfo.Thread)
 
 	return &windowsBackend{
 		input:         inputWrite,

@@ -97,6 +97,12 @@ jobs:
           cache-dependency-path: go-core/go.sum
       - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
         working-directory: go-core
+      # 仓库内置 protoc 仅支持 macOS arm64；CI 使用与生成物版本戳一致的 Linux 版。
+      - name: Install protoc 29.2
+        run: |
+          curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.2/protoc-29.2-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local
+          protoc --version
       - run: scripts/generate-proto.sh
       - run: git diff --exit-code -- go-core/internal/screenprotocol/generated/terminal_screen.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenProto.java
 
