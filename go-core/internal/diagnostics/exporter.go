@@ -1,0 +1,255 @@
+package diagnostics
+
+import (
+	"archive/zip"
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"webterm/go-core/internal/logs"
+)
+
+const (
+	// DefaultExportMaxBytes 是 events.jsonl 的大小预算（方案 §9 的 4 MiB 上限）。
+	DefaultExportMaxBytes = int64(4) << 20
+	// DefaultExportMaxEvents 是导出事件条数上限。
+	DefaultExportMaxEvents = 1000
+	exportDirName          = "diagnostics"
+)
+
+// ExportOptions 控制一次本地诊断导出。
+type ExportOptions struct {
+	// LogDir 是 agent.jsonl 所在目录（通常 ~/.webterm/logs）。
+	LogDir string
+	// OutDir 是 ZIP 输出目录（通常 ~/.webterm/diagnostics）；为空时使用 LogDir 同级 diagnostics。
+	OutDir string
+	// MaxBytes/MaxEvents 是事件预算；非正值取默认值。
+	MaxBytes  int64
+	MaxEvents int
+	Manifest  Manifest
+	// Metrics/State 来自运行中 Agent 的只读快照；nil 表示离线导出，对应文件写入 unavailable 说明。
+	Metrics map[string]any
+	State   any
+	// RingEntries 是内存 Ring 中可能尚未落盘的最新事件（可为空），按 seq 与磁盘事件去重。
+	RingEntries []logs.Entry
+	// now 可注入测试时钟；nil 用真实时间。
+	now func() time.Time
+}
+
+// ExportResult 描述导出产物。
+type ExportResult struct {
+	Path      string `json:"path"`
+	Events    int    `json:"events"`
+	Truncated bool   `json:"truncated"`
+}
+
+// Export 生成 webterm-agent-diagnostics-<ts>.zip：
+// manifest.json / events.jsonl / metrics.json / state.json / summary.txt。
+// 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
+func Export(options ExportOptions) (ExportResult, error) {
+	if options.LogDir == "" {
+		return ExportResult{}, fmt.Errorf("log dir is required")
+	}
+	if options.MaxBytes <= 0 {
+		options.MaxBytes = DefaultExportMaxBytes
+	}
+	if options.MaxEvents <= 0 {
+		options.MaxEvents = DefaultExportMaxEvents
+	}
+	now := time.Now
+	if options.now != nil {
+		now = options.now
+	}
+	outDir := options.OutDir
+	if outDir == "" {
+		outDir = filepath.Join(filepath.Dir(options.LogDir), exportDirName)
+	}
+
+	entries, err := readLogEntries(options.LogDir)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	entries = mergeRingEntries(entries, options.RingEntries)
+	events, truncated := trimEntries(entries, options.MaxEvents, options.MaxBytes)
+
+	manifest := options.Manifest
+	if manifest.SchemaVersion == 0 {
+		manifest.SchemaVersion = 1
+	}
+	manifest.ExportedAt = now().UTC()
+	manifest.Truncated = truncated
+	manifest.LiveState = options.Metrics != nil || options.State != nil
+
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		return ExportResult{}, fmt.Errorf("create diagnostics dir: %w", err)
+	}
+	path := filepath.Join(outDir,
+		fmt.Sprintf("webterm-agent-diagnostics-%s.zip", now().UTC().Format("20060102-150405")))
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return ExportResult{}, fmt.Errorf("create export zip: %w", err)
+	}
+	defer file.Close()
+
+	writer := zip.NewWriter(file)
+	write := func(name string, data []byte) error {
+		entry, err := writer.Create(name)
+		if err != nil {
+			return err
+		}
+		_, err = entry.Write(data)
+		return err
+	}
+
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return ExportResult{}, fmt.Errorf("encode manifest: %w", err)
+	}
+	if err := write("manifest.json", manifestJSON); err != nil {
+		return ExportResult{}, fmt.Errorf("write manifest: %w", err)
+	}
+
+	eventsJSONL, err := encodeEntriesJSONL(events)
+	if err != nil {
+		return ExportResult{}, fmt.Errorf("encode events: %w", err)
+	}
+	if err := write("events.jsonl", eventsJSONL); err != nil {
+		return ExportResult{}, fmt.Errorf("write events: %w", err)
+	}
+
+	var metricsJSON []byte
+	if options.Metrics == nil {
+		metricsJSON = jsonOrUnavailable(nil)
+	} else {
+		metricsJSON = jsonOrUnavailable(options.Metrics)
+	}
+	if err := write("metrics.json", metricsJSON); err != nil {
+		return ExportResult{}, fmt.Errorf("write metrics: %w", err)
+	}
+	if err := write("state.json", jsonOrUnavailable(options.State)); err != nil {
+		return ExportResult{}, fmt.Errorf("write state: %w", err)
+	}
+	if err := write("summary.txt", []byte(BuildSummary(manifest, events, options.Metrics, options.State))); err != nil {
+		return ExportResult{}, fmt.Errorf("write summary: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return ExportResult{}, fmt.Errorf("finalize zip: %w", err)
+	}
+	return ExportResult{Path: path, Events: len(events), Truncated: truncated}, nil
+}
+
+// readLogEntries 按从旧到新顺序读取 agent.jsonl 的备份与当前文件。
+func readLogEntries(logDir string) ([]logs.Entry, error) {
+	var paths []string
+	for i := logs.DefaultLogBackups; i >= 1; i-- {
+		paths = append(paths, filepath.Join(logDir, fmt.Sprintf("agent.jsonl.%d", i)))
+	}
+	paths = append(paths, filepath.Join(logDir, "agent.jsonl"))
+
+	seen := make(map[uint64]struct{})
+	var entries []logs.Entry
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("open log file %s: %w", path, err)
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64*1024), 1<<20)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
+			}
+			var entry logs.Entry
+			if err := json.Unmarshal(line, &entry); err != nil {
+				continue // 跳过崩溃造成的半行，不中断导出
+			}
+			if _, dup := seen[entry.Seq]; dup {
+				continue
+			}
+			seen[entry.Seq] = struct{}{}
+			entries = append(entries, entry)
+		}
+		file.Close()
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Seq < entries[j].Seq })
+	return entries, nil
+}
+
+// mergeRingEntries 把内存 Ring 事件并入磁盘事件，按 seq 去重。
+func mergeRingEntries(disk []logs.Entry, ring []logs.Entry) []logs.Entry {
+	if len(ring) == 0 {
+		return disk
+	}
+	seen := make(map[uint64]struct{}, len(disk))
+	for _, entry := range disk {
+		seen[entry.Seq] = struct{}{}
+	}
+	merged := disk
+	for _, entry := range ring {
+		if _, dup := seen[entry.Seq]; dup {
+			continue
+		}
+		seen[entry.Seq] = struct{}{}
+		merged = append(merged, entry)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Seq < merged[j].Seq })
+	return merged
+}
+
+// trimEntries 保留最新的事件：先按条数，再按编码后字节预算截断最旧记录。
+func trimEntries(entries []logs.Entry, maxEvents int, maxBytes int64) ([]logs.Entry, bool) {
+	truncated := false
+	if len(entries) > maxEvents {
+		entries = entries[len(entries)-maxEvents:]
+		truncated = true
+	}
+	// 从 newest 端累计字节，超出预算则丢弃最旧。
+	total := int64(0)
+	keepFrom := 0
+	for i := len(entries) - 1; i >= 0; i-- {
+		line, err := json.Marshal(entries[i])
+		if err != nil {
+			continue
+		}
+		total += int64(len(line)) + 1
+		if total > maxBytes {
+			keepFrom = i + 1
+			truncated = true
+			break
+		}
+	}
+	return entries[keepFrom:], truncated
+}
+
+func encodeEntriesJSONL(entries []logs.Entry) ([]byte, error) {
+	var out []byte
+	for _, entry := range entries {
+		line, err := json.Marshal(entry)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, line...)
+		out = append(out, '\n')
+	}
+	return out, nil
+}
+
+func jsonOrUnavailable(value any) []byte {
+	if value == nil {
+		return []byte(`{"unavailable":true,"reason":"agent not running or endpoint unreachable"}`)
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return []byte(`{"unavailable":true,"reason":"encode failed"}`)
+	}
+	return data
+}

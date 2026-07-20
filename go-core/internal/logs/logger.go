@@ -1,18 +1,22 @@
 package logs
 
 import (
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-const DefaultCapacity = 500
+const DefaultCapacity = 1000
 
 type Entry struct {
-	Seq     uint64    `json:"seq"`
-	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`
-	Source  string    `json:"source"`
-	Message string    `json:"message"`
+	Seq     uint64         `json:"seq"`
+	Time    time.Time      `json:"time"`
+	Level   string         `json:"level"`
+	Source  string         `json:"source"`
+	Event   string         `json:"event,omitempty"`
+	Fields  map[string]any `json:"fields,omitempty"`
+	Message string         `json:"message,omitempty"`
 }
 
 type Logger struct {
@@ -21,6 +25,9 @@ type Logger struct {
 	capacity    int
 	entries     []Entry
 	subscribers map[chan Entry]struct{}
+	sink        *FileSink
+	limiter     *RateLimiter
+	droppedLogs atomic.Uint64
 }
 
 func New(capacity int) *Logger {
@@ -31,16 +38,71 @@ func New(capacity int) *Logger {
 		nextSeq:     1,
 		capacity:    capacity,
 		subscribers: make(map[chan Entry]struct{}),
+		limiter:     NewRateLimiter(DefaultRateLimitWindow, nil),
 	}
 }
 
+// SetSink 安装本地 JSONL 落盘；nil 表示只保留内存 Ring。
+func (logger *Logger) SetSink(sink *FileSink) {
+	logger.mu.Lock()
+	logger.sink = sink
+	logger.mu.Unlock()
+}
+
+// SetRateLimiter 替换事件限流器；nil 表示关闭限流（测试用）。
+func (logger *Logger) SetRateLimiter(limiter *RateLimiter) {
+	logger.mu.Lock()
+	logger.limiter = limiter
+	logger.mu.Unlock()
+}
+
+// SubscriberDropped 返回因订阅者阻塞而被丢弃的事件总数。
+func (logger *Logger) SubscriberDropped() uint64 {
+	return logger.droppedLogs.Load()
+}
+
+// Event 写入一条结构化事件；限流窗口内的重复事件只累计不写入。
+// 返回值 Seq==0 表示本次被限流抑制。
+func (logger *Logger) Event(level string, source string, event string, fields map[string]any) Entry {
+	logger.mu.Lock()
+	limiter := logger.limiter
+	logger.mu.Unlock()
+	if limiter != nil {
+		decision := limiter.Check(source, event, fields)
+		if decision.summary != nil {
+			s := decision.summary
+			logger.add("info", s.source, "event_suppressed", map[string]any{
+				"originalEvent":   s.event,
+				"suppressedCount": s.suppressed,
+				"windowMs":        s.windowMs,
+			}, "")
+		}
+		if !decision.allowed {
+			return Entry{}
+		}
+	}
+	return logger.add(level, source, event, fields, "")
+}
+
+// Message 兼容旧代码的自由文本入口；新代码统一使用 Event。
+func (logger *Logger) Message(level string, source string, message string) Entry {
+	return logger.Add(level, source, message)
+}
+
 func (logger *Logger) Add(level string, source string, message string) Entry {
+	return logger.add(level, source, "", nil, message)
+}
+
+func (logger *Logger) add(level string, source string, event string,
+	fields map[string]any, message string) Entry {
 	logger.mu.Lock()
 	entry := Entry{
 		Seq:     logger.nextSeq,
 		Time:    time.Now().UTC(),
 		Level:   normalize(level, "info"),
 		Source:  normalize(source, "core"),
+		Event:   event,
+		Fields:  fields,
 		Message: message,
 	}
 	logger.nextSeq++
@@ -53,12 +115,20 @@ func (logger *Logger) Add(level string, source string, message string) Entry {
 	for subscriber := range logger.subscribers {
 		subscribers = append(subscribers, subscriber)
 	}
+	sink := logger.sink
 	logger.mu.Unlock()
 
+	// 同步落盘：事件频率低，省去异步队列；崩溃前的信息更容易真正写入。
+	if sink != nil {
+		if err := sink.Write(entry); err != nil {
+			_, _ = os.Stderr.WriteString("webterm log sink: " + err.Error() + "\n")
+		}
+	}
 	for _, subscriber := range subscribers {
 		select {
 		case subscriber <- entry:
 		default:
+			logger.droppedLogs.Add(1)
 		}
 	}
 	return entry
