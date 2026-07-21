@@ -57,7 +57,7 @@ feat(diagnostics): adapt network traffic investigation to Local IPC architecture
 
 - Go：`go test ./...`（30 包 ok）、`go vet ./...`、`go test -race ./...`（30 包 ok）、`go generate` 后 `docs/cli` 无 diff、`GOOS=windows go build ./...` 及三个 cmd 均 OK。
 - Android：`testDebugUnitTest`（全模块）+ `:terminal-model:test` + `lintDebug` + `assembleDebug` + `assembleDiag` 均 BUILD SUCCESSFUL。
-- CI（`.github/workflows/verify.yml`）：android job 已含 `assembleDiag`；windows-runtime 先 `go build ./cmd/webterm ./cmd/webterm-agent` 预热构建缓存，再把 localipc/pty/session 三个测试包拆成独立 `go test -v` 步骤。此前 Windows CI 失败经静态分析最大嫌疑是 main 上已有的 pty PowerShell hook 测试 flaky（该测试运行时现场 go build 且 deadline 90s），拆步骤+预热用于定位与规避，需待下次 CI 运行确认。
+- CI（`.github/workflows/verify.yml`）：android job 已含 `assembleDiag`；windows-runtime 先 `go build ./cmd/webterm ./cmd/webterm-agent` 预热构建缓存，再把 localipc/pty/session 三个测试包拆成独立 `go test -v` 步骤。此前 Windows CI 稳定失败的根因已定位并修复：PowerShell hook spawn 上报子进程后立即返回 prompt，子进程在 ConPTY 会话内初始化阶段静默死亡（main 同样存在，非测试 flaky）；修复为 hook 模板有界等待 `WaitForExit(2000)`，修复后整轮 CI 全绿并经 rerun 二次确认。
 - 详见 `docs/reports/diagnostics-after-win10-acceptance.md`。
 
 ## 行为变化与验收

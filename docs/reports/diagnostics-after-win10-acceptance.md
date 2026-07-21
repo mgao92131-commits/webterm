@@ -80,7 +80,7 @@
 - **lint 基线过期**：`lint-baseline.xml` 有 26 条已被 main（Windows 合并）修复的过期条目；非本迁移引入，建议后续刷新基线。
 - **行为修复（任务 6b，提交 `9f245683`）改动了状态机**（resync 抑制 / resize 去重 / sessionId 归一 / 重连守卫），已用 main 既有 Mailbox/Resize/Resync/Recovery 测试 + 增强的 diagnostics 测试覆盖，但属行为变更，PR 审查宜重点关注，**合并前需真机验收**。
 - **Go 诊断摘要中未埋点分组**：Mux/Relay 计数已接入，但 Mailbox/Input/Resync/ProjectionSkippedNoClient/耗时桶未接（见 §8）；这些分组在快照中带 `"instrumented": false` 标记、CLI 显示 not instrumented，不再以恒 0 冒充真实观测。
-- **Windows CI 失败（待确认）**：windows-runtime job 失败，经静态分析最大嫌疑是 main 上已有的 pty PowerShell hook 测试 flaky——该测试运行时现场 `go build ./cmd/webterm` 且 deadline 90s，CI 预热前容易超时。已在 CI 中先 `go build ./cmd/webterm ./cmd/webterm-agent` 预热缓存，并把 localipc/pty/session 三个测试包拆成独立 `go test -v` 步骤以便定位；是否根治需待下次 CI 运行确认（见 §11）。
+- **Windows CI 失败（已根治）**：根因不是测试 flaky。远程插桩证明 PowerShell hook 以 `[System.Diagnostics.Process]::Start` 启动 `webterm internal session-update` 后立即返回 prompt 时，子进程在 ConPTY 会话的初始化阶段静默死亡（无投递、无退避失败记录），仅第一个上报存活；父进程等待子进程退出时则 100% 正常。修复为 hook 模板中有界等待 `WaitForExit(2000)`（正常 ~25ms），见 §11。
 
 ## 10. 提交历史（相对 main）
 1. `docs: plan diagnostics migration after Windows architecture merge`
@@ -121,7 +121,12 @@
 - windows-runtime：先 `go build ./cmd/webterm ./cmd/webterm-agent`（预热缓存；pty 的 PowerShell hook 测试运行时会现场 build），再把 localipc/pty/session 三个测试包拆成独立 `go test -v` 步骤。
 - android job 增加 `assembleDiag`。
 
-### 11.4 验证结果
+### 11.4 Windows hook 根因修复（agenthooks）
+- 针对 windows-runtime 持续失败做远程插桩（画面采集 + hook 内部探针 + 子进程退出码），逐层排除后确认：`powershell_hook_integration_windows_test.go` 失败的根因是 hook 模板 spawn `webterm.exe` 后立即返回（无论立即 `Dispose` 还是交 GC 回收），子进程在 ConPTY 会话内初始化阶段静默死亡，第二次及以后的上报全部丢失；main 上同样存在（该 job 随 win10 合并加入 CI 后从未通过）。
+- 修复：`webterm-shell-hook.ps1` 模板在 spawn 后有界等待 `WaitForExit(2000)` 再释放（正常 ~25ms，prompt 不会被无限阻塞）；`shell_test.go` 的断言从「禁止 WaitForExit」改为「要求 WaitForExit(2000) 有界等待」。
+- 集成测试保留更新时间线日志与超时画面 dump，移除全部临时探针。
+
+### 11.5 验证结果
 - Go：`go test ./...` 与 `go test -race ./...` 全绿。
 - Android：`testDebugUnitTest` + `assembleDiag` 通过。
-- Windows CI：仍失败一次；经静态分析最大嫌疑是 main 上已有的 pty PowerShell hook 测试 flaky（运行时现场 go build 且 deadline 90s），已通过 CI 预热构建并拆步骤定位，需待下次 CI 运行确认。
+- Windows CI：修复前 5/5 稳定失败（main 同样失败），WaitForExit 模式 2/2 通过；最终修复提交后整轮 CI 全绿，并经 rerun 二次确认。
