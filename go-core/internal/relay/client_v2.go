@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -13,6 +14,7 @@ import (
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 )
@@ -31,6 +33,10 @@ type V2Client struct {
 	router  *application.SessionRouter
 	http    *HTTPProxy
 	streams *StreamMultiplexer
+
+	// connected 标记本次 runOnce 的 realtime plane 是否注册成功，用于在 Run 循环
+	// 区分“连接成功后断开”与“连接失败”两类计数（仅旁路指标，不影响重连流程）。
+	connected atomic.Bool
 
 	writeLocks sync.Map // map[*websocket.Conn]*sync.Mutex，两个 plane 绝不共享写锁
 }
@@ -68,11 +74,19 @@ func (client *V2Client) Run(ctx context.Context) error {
 	}
 	delay := time.Second
 	for {
+		client.connected.Store(false)
+		diagnostics.Default.RelayConnectCount.Add(1)
 		err := client.runOnce(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if client.connected.Load() {
+			diagnostics.Default.RelayDisconnectCount.Add(1)
+		} else {
+			diagnostics.Default.RelayConnectFailureCount.Add(1)
+		}
 		client.app.SetRelayConnected(false, "", errString(err))
+		diagnostics.Default.RelayReconnectCount.Add(1)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -141,6 +155,7 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, pl
 	switch stringValue(msg["type"]) {
 	case v2AgentRegisteredMessage:
 		if plane == agentPlaneRealtime {
+			client.connected.Store(true)
 			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
 		}
 		return nil

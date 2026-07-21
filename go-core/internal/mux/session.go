@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	termsession "webterm/go-core/internal/session"
@@ -46,6 +48,10 @@ type Session struct {
 	onControl ControlHandler
 	logger    *logs.Logger
 	writer    *PhysicalWriter
+
+	// rx 计数：物理连接成功读取到的帧数与字节数（readLoop 内累计）。
+	rxFrames atomic.Uint64
+	rxBytes  atomic.Uint64
 }
 
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
@@ -77,6 +83,8 @@ func (s *Session) readLoop(ctx context.Context) error {
 			s.log("warn", "mux_read_failed", "error=%T", err)
 			return err
 		}
+		s.rxFrames.Add(1)
+		s.rxBytes.Add(uint64(len(data)))
 		switch msgType {
 		case termsession.MessageText:
 			s.handleControlMessage(ctx, data)
@@ -133,10 +141,12 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 
 	oldByID, oldByRoute := s.registry.Replace(entry)
 	if oldByID != nil {
+		diagnostics.Default.MuxChannelReplacedCount.Add(1)
 		s.log("info", "mux_channel_replaced", "channelId=%s reason=id", tunnelID)
 		oldByID.handler.Close()
 	}
 	if oldByRoute != nil && oldByRoute != oldByID {
+		diagnostics.Default.MuxChannelReplacedCount.Add(1)
 		s.log("info", "mux_channel_replaced", "channelId=%s reason=route", tunnelID)
 		oldByRoute.handler.Close()
 	}
@@ -146,6 +156,7 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 		handler.Close()
 		return
 	}
+	diagnostics.Default.MuxChannelOpenedCount.Add(1)
 	s.log("info", "mux_channel_open", "channelId=%s", tunnelID)
 
 	go func() {
@@ -235,6 +246,7 @@ func (s *Session) logWriteError(err error) {
 	if err == nil {
 		return
 	}
+	diagnostics.Default.MuxWriterFailureCount.Add(1)
 	event := "writer_failed"
 	if errors.Is(err, context.DeadlineExceeded) {
 		event = "writer_timeout"
@@ -251,6 +263,26 @@ func (s *Session) log(level, event, format string, args ...any) {
 		message += " " + fmt.Sprintf(format, args...)
 	}
 	s.logger.Add(level, "mux", message)
+}
+
+// PhysicalTraffic 是 mux 物理连接累计收发帧数与字节数。
+// 发送字节仅在物理写入成功后累计；接收字节在成功读取后累计。
+type PhysicalTraffic struct {
+	RxFrames uint64 `json:"rxFrames"`
+	RxBytes  uint64 `json:"rxBytes"`
+	TxFrames uint64 `json:"txFrames"`
+	TxBytes  uint64 `json:"txBytes"`
+}
+
+// TrafficSnapshot 返回物理连接收发统计：rx 来自 Session 读循环，tx 来自 PhysicalWriter。
+func (s *Session) TrafficSnapshot() PhysicalTraffic {
+	txFrames, txBytes := s.writer.TxSnapshot()
+	return PhysicalTraffic{
+		RxFrames: s.rxFrames.Load(),
+		RxBytes:  s.rxBytes.Load(),
+		TxFrames: txFrames,
+		TxBytes:  txBytes,
+	}
 }
 
 type channelSink struct {
