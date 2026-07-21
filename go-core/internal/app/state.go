@@ -7,7 +7,8 @@ import (
 // DiagnosticsRelayState 是 relay 连接的只读诊断状态。
 type DiagnosticsRelayState struct {
 	State string `json:"state"`
-	// DeviceID 经 SafeID 脱敏；LastError 只存 RelayErrorKind 枚举值，不含原始错误文本。
+	// DeviceID 默认经 HashID 脱敏（与 DiagnosticsView 对 DeviceName 的策略一致）；
+	// LastError 只存 RelayErrorKind 枚举值，不含原始错误文本。
 	DeviceID  string `json:"deviceId,omitempty"`
 	LastError string `json:"lastError,omitempty"`
 }
@@ -26,7 +27,9 @@ type DiagnosticsState struct {
 }
 
 // relayState 在锁内读取当前 relay 连接状态并归一化为 state 字符串。
-func (app *App) relayState() DiagnosticsRelayState {
+// DeviceID 默认哈希：relay 分配的 deviceId 可能以主机名等可识别信息为基础，
+// 默认诊断输出不应原文暴露；includePaths 为 true 时恢复完整值。
+func (app *App) relayState(includePaths bool) DiagnosticsRelayState {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	state := "unconfigured"
@@ -35,16 +38,24 @@ func (app *App) relayState() DiagnosticsRelayState {
 	} else if app.relayConfigured {
 		state = "disconnected"
 	}
+	deviceID := ""
+	if app.relayDeviceID != "" {
+		if includePaths {
+			deviceID = app.relayDeviceID
+		} else {
+			deviceID = logs.HashID(app.relayDeviceID)
+		}
+	}
 	return DiagnosticsRelayState{
 		State:     state,
-		DeviceID:  logs.SafeID(app.relayDeviceID),
+		DeviceID:  deviceID,
 		LastError: string(app.relayLastErrorKind),
 	}
 }
 
 // relayDiagnostics 返回摘要用的 relay 状态 map。
-func (app *App) relayDiagnostics() map[string]any {
-	relay := app.relayState()
+func (app *App) relayDiagnostics(includePaths bool) map[string]any {
+	relay := app.relayState(includePaths)
 	return map[string]any{
 		"state":     relay.State,
 		"deviceId":  relay.DeviceID,
@@ -81,7 +92,7 @@ func (app *App) DiagnosticsState(includePaths bool) DiagnosticsState {
 
 	return DiagnosticsState{
 		RunID:     app.runID,
-		Relay:     app.relayState(),
+		Relay:     app.relayState(includePaths),
 		Mux:       DiagnosticsMuxState{SubscriberDroppedLogs: dropped},
 		Terminals: terminals,
 	}

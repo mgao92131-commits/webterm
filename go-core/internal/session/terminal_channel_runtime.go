@@ -398,7 +398,7 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	// RateLimiter 豁免名单中，不参与 5 秒限流。
 	client.logger.Event("error", "session", "screen_encode_failed", map[string]any{
 		"stage":        stage,
-		"reason":       classifyScreenEncodeError(err),
+		"reason":       classifyScreenError(err),
 		"revision":     state.Seq,
 		"rows":         state.Rows,
 		"cols":         state.Cols,
@@ -408,9 +408,9 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	})
 }
 
-// classifyScreenEncodeError 把屏幕编码错误归一化为有限稳定枚举，避免把动态错误
-// 文本当作 reason 记录。仅做子串匹配用于分类，分类结果本身不含任何原始文本。
-func classifyScreenEncodeError(err error) string {
+// classifyScreenError 把屏幕编解码/分发错误归一化为有限稳定枚举，避免把动态
+// 错误文本当作 reason 记录。仅做子串匹配用于分类，分类结果本身不含任何原始文本。
+func classifyScreenError(err error) string {
 	if err == nil {
 		return "unknown"
 	}
@@ -497,7 +497,12 @@ func (client *terminalChannelRuntime) handleScreenBinary(frame []byte) {
 	}
 	if err := client.screenHandler.HandleMessage(frame); err != nil {
 		if client.logger != nil {
-			client.logger.Add("warn", "session", fmt.Sprintf("screen protocol handler: %v", err))
+			// 结构化事件 + 稳定枚举：解码/分发失败也不记录原始错误文本，
+			// 与 screen_encode_failed 保持一致的脱敏策略。
+			client.logger.Event("warn", "session", "screen_handler_failed", map[string]any{
+				"reason": classifyScreenError(err),
+				"bytes":  len(frame),
+			})
 		}
 	}
 }

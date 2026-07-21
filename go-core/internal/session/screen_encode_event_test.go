@@ -85,8 +85,49 @@ func TestLogScreenEncodeFailureNotRateLimited(t *testing.T) {
 	}
 }
 
-// TestClassifyScreenEncodeError 分类函数只返回有限稳定枚举。
-func TestClassifyScreenEncodeError(t *testing.T) {
+// TestHandleScreenBinaryFailureStructured screen 协议解码/分发失败也走结构化
+// screen_handler_failed 事件：Message 为空、reason 为稳定枚举、不记录原始错误文本。
+func TestHandleScreenBinaryFailureStructured(t *testing.T) {
+	terminal, _ := newScreenTestTerminal(t)
+	logger := logs.New(100)
+	logger.SetRateLimiter(nil)
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen, logger)
+
+	// 非法帧：不是合法 ScreenEnvelope protobuf，handler 解码失败。
+	client.handleScreenBinary([]byte{0xff, 0xfe, 0xfd, 0x00, 0x01})
+
+	var found *logs.Entry
+	entries := logger.Recent(0)
+	for i := range entries {
+		if entries[i].Event == "screen_handler_failed" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected a screen_handler_failed event, got %+v", entries)
+	}
+	if found.Message != "" {
+		t.Errorf("handler event must have empty Message, got %q", found.Message)
+	}
+	reason, _ := found.Fields["reason"].(string)
+	allowed := map[string]struct{}{
+		"invalid_state": {}, "serialization_failed": {}, "size_limit": {},
+		"unsupported_value": {}, "internal": {}, "unknown": {},
+	}
+	if _, ok := allowed[reason]; !ok {
+		t.Errorf("reason = %q, not in stable enum", reason)
+	}
+	encoded, _ := json.Marshal(found.Fields)
+	for _, leaked := range []string{"proto:", "wiretype", "field"} {
+		if strings.Contains(strings.ToLower(string(encoded)), leaked) {
+			t.Errorf("handler fields leak raw error text %q: %s", leaked, encoded)
+		}
+	}
+}
+
+// TestClassifyScreenError 分类函数只返回有限稳定枚举。
+func TestClassifyScreenError(t *testing.T) {
 	cases := map[string]string{
 		"":                                               "unknown",
 		"proto: field exceeds max size":                  "size_limit",
@@ -104,8 +145,8 @@ func TestClassifyScreenEncodeError(t *testing.T) {
 		if msg != "" {
 			err = errors.New(msg)
 		}
-		if got := classifyScreenEncodeError(err); got != want {
-			t.Errorf("classifyScreenEncodeError(%q) = %q, want %q", msg, got, want)
+		if got := classifyScreenError(err); got != want {
+			t.Errorf("classifyScreenError(%q) = %q, want %q", msg, got, want)
 		}
 	}
 	// 分类结果必须落在有限稳定枚举集合内，绝不回显动态文本。
@@ -114,9 +155,9 @@ func TestClassifyScreenEncodeError(t *testing.T) {
 		"unsupported_value": {}, "internal": {}, "unknown": {},
 	}
 	for msg := range cases {
-		got := classifyScreenEncodeError(errors.New(msg))
+		got := classifyScreenError(errors.New(msg))
 		if _, ok := allowed[got]; !ok {
-			t.Errorf("classifyScreenEncodeError(%q) returned %q, not in stable enum", msg, got)
+			t.Errorf("classifyScreenError(%q) returned %q, not in stable enum", msg, got)
 		}
 	}
 }

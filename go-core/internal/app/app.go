@@ -288,7 +288,7 @@ func (app *App) DiagnosticsSummary(includePaths bool) map[string]any {
 			"platform":    runtime.GOOS,
 			"arch":        runtime.GOARCH,
 		},
-		"relay":   app.relayDiagnostics(),
+		"relay":   app.relayDiagnostics(includePaths),
 		"metrics": diagnostics.Default.Snapshot(),
 		"sessions": map[string]any{
 			"count": app.sessions.Count(),

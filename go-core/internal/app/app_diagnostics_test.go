@@ -379,6 +379,32 @@ func TestDiagnosticsSessionTrafficEmpty(t *testing.T) {
 	}
 }
 
+// TestDiagnosticsRelayDeviceIDRedaction relay deviceId 默认哈希，includePaths 恢复；
+// 空 deviceId 保持为空（omitempty），不哈希成占位值。
+func TestDiagnosticsRelayDeviceIDRedaction(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "my-identifiable-device", RelayErrorNone)
+
+	if got := application.DiagnosticsState(false).Relay.DeviceID; got != logs.HashID("my-identifiable-device") {
+		t.Errorf("default relay deviceId = %q, want hashed", got)
+	}
+	if got := application.DiagnosticsState(true).Relay.DeviceID; got != "my-identifiable-device" {
+		t.Errorf("includePaths relay deviceId = %q, want raw", got)
+	}
+	// 摘要 relay 段同样默认脱敏。
+	summary := application.DiagnosticsSummary(false)
+	relay, _ := summary["relay"].(map[string]any)
+	if relay["deviceId"] == "my-identifiable-device" {
+		t.Errorf("summary relay deviceId leaks raw value: %v", relay["deviceId"])
+	}
+
+	// 空 deviceId 保持空。
+	empty := newTestApp(config.Default())
+	if got := empty.DiagnosticsState(false).Relay.DeviceID; got != "" {
+		t.Errorf("empty deviceId = %q, want empty", got)
+	}
+}
+
 // readZipEntry 读取诊断包中单个文件的文本内容。
 func readZipEntry(t *testing.T, zipPath string, name string) string {
 	t.Helper()
