@@ -29,17 +29,24 @@ func TestDiagnosticsSummaryRedactsSecret(t *testing.T) {
 	cfg.Relay.Secret = "super-secret"
 	application := newTestApp(cfg)
 
-	summary := application.DiagnosticsSummary(false)
-
-	cfgSection, ok := summary["config"].(config.Config)
-	if !ok {
-		t.Fatalf("config section missing or wrong type: %T", summary["config"])
-	}
-	if cfgSection.Relay.Secret != config.RedactedSecret {
-		t.Errorf("relay secret not redacted: %q", cfgSection.Relay.Secret)
-	}
-	if cfgSection.Relay.Secret == "super-secret" {
-		t.Errorf("raw relay secret leaked into diagnostics summary")
+	// Secret 在默认与 includePaths 两种模式下都不能出现。
+	for _, includePaths := range []bool{false, true} {
+		summary := application.DiagnosticsSummary(includePaths)
+		encoded, err := json.Marshal(summary)
+		if err != nil {
+			t.Fatalf("marshal summary: %v", err)
+		}
+		if strings.Contains(string(encoded), "super-secret") {
+			t.Errorf("raw relay secret leaked (includePaths=%v): %s", includePaths, encoded)
+		}
+		cfgSection, ok := summary["config"].(map[string]any)
+		if !ok {
+			t.Fatalf("config section missing or wrong type: %T", summary["config"])
+		}
+		relay, _ := cfgSection["relay"].(map[string]any)
+		if relay["secret"] != config.RedactedSecret {
+			t.Errorf("relay secret not redacted (includePaths=%v): %v", includePaths, relay["secret"])
+		}
 	}
 }
 
@@ -63,6 +70,105 @@ func TestDiagnosticsSummaryOmitsInputBody(t *testing.T) {
 		if _, has := entry["lastCommand"]; has {
 			t.Errorf("session summary must not include lastCommand")
 		}
+	}
+}
+
+// TestDiagnosticsSummaryDefaultRedaction 验证默认摘要不泄露 Relay URL、DeviceName、
+// Shell CWD、IPC 完整路径、自由文本日志中的路径以及项目目录名；
+// includePaths 模式下恢复允许显示的完整值，但 Secret 任何模式下都不出现。
+func TestDiagnosticsSummaryDefaultRedaction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Relay.URL = "wss://relay.secret-host.example:8443/agent"
+	cfg.Relay.Secret = "super-secret"
+	cfg.Relay.DeviceName = "my-secret-device-name"
+	cfg.Shell.CWD = "/home/user/confidential-project"
+	cfg.Shell.Command = "/usr/local/bin/fish"
+	cfg.IPCEndpoint = "unix:/run/webterm/agent.sock"
+
+	application := newTestApp(cfg)
+	application.ipcEndpoint = "unix:/run/webterm/agent.sock"
+	// 自由文本日志包含路径、socket 与 Relay 地址。
+	application.logger.Add("error", "test",
+		"open /home/user/confidential-project/data.sock failed, dial wss://relay.secret-host.example:8443/agent")
+
+	leaks := []string{
+		"relay.secret-host.example",       // Relay URL 主机
+		"my-secret-device-name",           // DeviceName
+		"/home/user/confidential-project", // Shell CWD / 日志路径
+		"/run/webterm/agent.sock",         // IPC 完整路径
+		"/usr/local/bin/fish",             // Shell Command
+		"data.sock",                       // 自由文本日志中的路径
+		"super-secret",                    // Secret（任何模式都不允许）
+	}
+
+	defaultSummary := application.DiagnosticsSummary(false)
+	defaultJSON, err := json.Marshal(defaultSummary)
+	if err != nil {
+		t.Fatalf("marshal default summary: %v", err)
+	}
+	for _, leaked := range leaks {
+		if strings.Contains(string(defaultJSON), leaked) {
+			t.Errorf("default summary leaks %q", leaked)
+		}
+	}
+
+	// includePaths 恢复完整值（Secret 除外）。
+	fullSummary := application.DiagnosticsSummary(true)
+	fullJSON, err := json.Marshal(fullSummary)
+	if err != nil {
+		t.Fatalf("marshal full summary: %v", err)
+	}
+	for _, restored := range []string{
+		"relay.secret-host.example",
+		"my-secret-device-name",
+		"/home/user/confidential-project",
+		"/run/webterm/agent.sock",
+		"/usr/local/bin/fish",
+	} {
+		if !strings.Contains(string(fullJSON), restored) {
+			t.Errorf("includePaths summary should restore %q", restored)
+		}
+	}
+	if strings.Contains(string(fullJSON), "super-secret") {
+		t.Error("includePaths summary must never restore relay secret")
+	}
+}
+
+// TestDiagnosticsSummaryRedactsFreeTextLogMessage 单独确认默认模式下自由文本
+// Message 被占位符替换，且结构化 Event 字段保留。
+func TestDiagnosticsSummaryRedactsFreeTextLogMessage(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.logger.Add("error", "test", "sensitive body /var/lib/secret/file.txt")
+	application.logger.Event("info", "test", "relay_connected", map[string]any{"attempt": 3})
+
+	summary := application.DiagnosticsSummary(false)
+	logSection, _ := summary["logs"].(map[string]any)
+	recent, _ := logSection["recent"].([]logs.Entry)
+	if len(recent) != 2 {
+		t.Fatalf("recent entries = %d, want 2", len(recent))
+	}
+	for _, entry := range recent {
+		if strings.Contains(entry.Message, "/var/lib/secret") {
+			t.Errorf("free-text message leaked path: %q", entry.Message)
+		}
+		if entry.Event == "relay_connected" {
+			if entry.Message != "" {
+				t.Errorf("structured event should keep empty message, got %q", entry.Message)
+			}
+			if entry.Fields["attempt"] != 3 {
+				t.Errorf("structured event field lost: %v", entry.Fields)
+			}
+		}
+	}
+	// 自由文本条目必须被占位符替换。
+	found := false
+	for _, entry := range recent {
+		if entry.Message == logs.RedactedMessagePlaceholder {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a redacted free-text placeholder in default summary")
 	}
 }
 
@@ -110,8 +216,11 @@ func TestSessionSummaryRedaction(t *testing.T) {
 	if _, has := redacted["cwd"]; has {
 		t.Error("redacted summary must not include full cwd")
 	}
-	if redacted["cwdBaseName"] != "secret-project" {
-		t.Errorf("cwdBaseName = %v, want secret-project", redacted["cwdBaseName"])
+	if _, has := redacted["cwdBaseName"]; has {
+		t.Error("redacted summary must not include cwd basename (project dir name is sensitive)")
+	}
+	if strings.Contains(string(encoded), "secret-project") {
+		t.Errorf("redacted session summary leaks cwd basename: %s", encoded)
 	}
 	if redacted["cwdHash"] != logs.HashID(info.CWD) {
 		t.Errorf("cwdHash = %v, want %v", redacted["cwdHash"], logs.HashID(info.CWD))

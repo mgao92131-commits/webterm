@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"webterm/go-core/internal/localipc"
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -79,6 +81,115 @@ func (cfg Config) Redacted() Config {
 		copy.Relay.Secret = RedactedSecret
 	}
 	return copy
+}
+
+// DiagnosticsView 返回专供诊断导出/摘要使用的配置视图（方案 §3.3 脱敏策略）。
+// 与 Redacted 不同，它默认 redact 所有可能定位用户机器或身份的字段：
+//
+//	Relay.Secret     → ********（任何模式下都不恢复）
+//	Relay.URL        → 只保留 scheme（如 wss），不含主机/路径
+//	Relay.DeviceName → 短哈希
+//	IPCEndpoint      → 只保留类型（unix/npipe）
+//	SocketPath       → 只保留类型
+//	Shell.Command    → "default" 或短哈希
+//	Shell.CWD        → 短哈希
+//	Control.Addr     → 不输出
+//
+// 仅当 includePaths 为 true（CLI --include-paths 显式开启）时才恢复完整路径与地址。
+// 返回 map[string]any 而非 Config，避免遗漏字段时默认泄露。
+func (cfg Config) DiagnosticsView(includePaths bool) map[string]any {
+	relay := map[string]any{
+		"secret":     diagnosticsSecret(cfg.Relay.Secret),
+		"url":        diagnosticsRelayURL(cfg.Relay.URL, includePaths),
+		"deviceName": diagnosticsString(cfg.Relay.DeviceName, includePaths),
+		"protocol":   cfg.Relay.Protocol,
+	}
+	shell := map[string]any{
+		"command": diagnosticsCommand(cfg.Shell.Command, includePaths),
+		"cwd":     diagnosticsString(cfg.Shell.CWD, includePaths),
+	}
+	view := map[string]any{
+		"ipcEndpoint": diagnosticsEndpoint(cfg.IPCEndpoint, includePaths),
+		"relay":       relay,
+		"shell":       shell,
+		"scrollback": map[string]any{
+			"maxLines": cfg.Scrollback.MaxLines,
+			"maxBytes": cfg.Scrollback.MaxBytes,
+		},
+		"upload": map[string]any{
+			"maxBytes": cfg.Upload.MaxBytes,
+		},
+	}
+	if cfg.SocketPath != "" {
+		view["socketPath"] = diagnosticsEndpoint(cfg.SocketPath, includePaths)
+	}
+	// Control 是仅供迁移的遗留配置；默认完全不输出，includePaths 时才暴露地址。
+	if cfg.Control != nil && cfg.Control.Addr != "" && includePaths {
+		view["control"] = map[string]any{"addr": cfg.Control.Addr}
+	}
+	return view
+}
+
+// diagnosticsSecret 永远脱敏 Secret：非空返回占位符，空返回空串。
+func diagnosticsSecret(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return RedactedSecret
+}
+
+// diagnosticsRelayURL 默认只保留 URL 的 scheme（如 "wss"），既保留诊断所需的
+// 传输类型信息，又不泄露主机与路径；includePaths 时恢复完整 URL。
+func diagnosticsRelayURL(rawURL string, includePaths bool) string {
+	if rawURL == "" {
+		return ""
+	}
+	if includePaths {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" {
+		return logs.HashID(rawURL)
+	}
+	return parsed.Scheme
+}
+
+// diagnosticsCommand 默认把 shell command 折叠为 "default"（空命令）或短哈希，
+// 避免暴露用户的自定义 shell 命令行；includePaths 时恢复完整命令。
+func diagnosticsCommand(command string, includePaths bool) string {
+	if command == "" {
+		return "default"
+	}
+	if includePaths {
+		return command
+	}
+	return logs.HashID(command)
+}
+
+// diagnosticsString 默认对值做短哈希，includePaths 时恢复原值；空值保持空串。
+func diagnosticsString(value string, includePaths bool) string {
+	if value == "" {
+		return ""
+	}
+	if includePaths {
+		return value
+	}
+	return logs.HashID(value)
+}
+
+// diagnosticsEndpoint 默认只保留 IPC endpoint 的类型前缀（unix/npipe），
+// 不含具体路径；includePaths 时恢复完整 endpoint。
+func diagnosticsEndpoint(endpoint string, includePaths bool) string {
+	if endpoint == "" {
+		return ""
+	}
+	if includePaths {
+		return endpoint
+	}
+	if idx := strings.Index(endpoint, ":"); idx > 0 {
+		return endpoint[:idx]
+	}
+	return logs.HashID(endpoint)
 }
 
 func ResolvePath(configPath string) string {

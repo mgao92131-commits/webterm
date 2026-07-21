@@ -39,6 +39,9 @@ type ExportOptions struct {
 	// Metrics/State 来自运行中 Agent 的只读快照；nil 表示离线导出，对应文件写入 unavailable 说明。
 	Metrics map[string]any
 	State   any
+	// IncludePaths 控制导出事件的脱敏：false（默认）把自由文本 Message 与路径类
+	// Field 折叠；true 时才放行原文（对应 CLI --include-paths）。
+	IncludePaths bool
 	// RingEntries 是内存 Ring 中可能尚未落盘的最新事件（可为空），按 seq 与磁盘事件去重。
 	RingEntries []logs.Entry
 	// now 可注入测试时钟；nil 用真实时间。
@@ -81,6 +84,9 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	entries = mergeRingEntries(entries, options.RingEntries)
 	events, truncated := trimEntries(entries, options.MaxEvents, options.MaxBytes)
+	// 默认折叠自由文本 Message 与路径类 Field，诊断包不泄露原始错误正文与路径；
+	// --include-paths 时才放行原文。
+	events = logs.SanitizeEntries(events, options.IncludePaths)
 
 	manifest := options.Manifest
 	if manifest.SchemaVersion == 0 {

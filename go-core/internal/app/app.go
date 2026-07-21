@@ -294,25 +294,48 @@ func (app *App) DiagnosticsSummary(includePaths bool) map[string]any {
 			"count": app.sessions.Count(),
 			"list":  sessionSummaries,
 		},
-		"sessionTraffic": app.sessions.TrafficSnapshots(),
+		"sessionTraffic": app.DiagnosticsSessionTraffic(includePaths),
 		"logs": map[string]any{
 			"recentLimit":       diagnosticsRecentLogLimit,
 			"recentCount":       len(recentLogs),
 			"subscriberDropped": app.logger.SubscriberDropped(),
-			"recent":            recentLogs,
+			// 自由文本 Message 与路径类 Field 默认折叠；--include-paths 才放行原文。
+			"recent": logs.SanitizeEntries(recentLogs, includePaths),
 		},
-		"config": app.Config().Redacted(),
+		"config": app.Config().DiagnosticsView(includePaths),
 	}
 }
 
-// sessionSummary 生成单个会话的摘要条目。默认 id/termTitle 走 HashID、cwd 只保留
-// basename+哈希；includePaths 时恢复完整 id/termTitle/cwd。
+// DiagnosticsSessionTraffic 返回按会话聚合的流量统计（供诊断摘要与导出 ZIP 共用）。
+// 默认会话 ID 经 HashID 脱敏；includePaths 时恢复完整 ID。流量快照只含计数与
+// 字节累计，不含终端输入正文、CWD、Title 或 LastCommand——screenWireByClient 的
+// 键是随机的 screenClientID，不携带用户身份信息，原样保留。
+func (app *App) DiagnosticsSessionTraffic(includePaths bool) []map[string]any {
+	snapshots := app.sessions.TrafficSnapshots()
+	out := make([]map[string]any, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		sessionID := logs.HashID(snapshot.SessionID)
+		if includePaths {
+			sessionID = snapshot.SessionID
+		}
+		out = append(out, map[string]any{
+			"sessionId":          sessionID,
+			"ptyOutputEvents":    snapshot.PTYOutputEvents,
+			"ptyOutputBytes":     snapshot.PTYOutputBytes,
+			"screenWireByClient": snapshot.ScreenWireByClient,
+		})
+	}
+	return out
+}
+
+// sessionSummary 生成单个会话的摘要条目。默认 id/termTitle/cwd 全部走 HashID
+// 脱敏（项目目录名本身也可能是敏感信息，因此默认不再输出 basename）；
+// includePaths 时恢复完整 id/termTitle/cwd。
 func sessionSummary(info session.Info, includePaths bool) map[string]any {
 	entry := map[string]any{
 		"id":           logs.HashID(info.ID),
 		"instanceId":   logs.HashID(info.InstanceID),
 		"termTitle":    logs.HashID(info.TermTitle),
-		"cwdBaseName":  filepath.Base(info.CWD),
 		"cwdHash":      logs.HashID(info.CWD),
 		"status":       info.Status,
 		"shellState":   info.ShellState,
@@ -369,9 +392,10 @@ func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path str
 			Platform:     runtime.GOOS,
 			Architecture: runtime.GOARCH,
 		},
-		Metrics:     diagnostics.Default.Snapshot(),
-		State:       app.DiagnosticsState(includePaths),
-		RingEntries: app.logger.Recent(diagnosticsRingLimit),
+		Metrics:      diagnostics.Default.Snapshot(),
+		State:        app.DiagnosticsState(includePaths),
+		RingEntries:  app.logger.Recent(diagnosticsRingLimit),
+		IncludePaths: includePaths,
 	})
 	if err != nil {
 		return "", err
