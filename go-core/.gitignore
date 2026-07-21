@@ -1,2 +1,12 @@
 .gocache/
+
+# 构建产物
+bin/
+*.test
 webterm
+webterm-agent
+webterm-relay
+webterm-*-smoke
+
+# 运行日志
+*.log
