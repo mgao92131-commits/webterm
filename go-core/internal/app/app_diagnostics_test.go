@@ -306,6 +306,79 @@ func TestExportDiagnosticsRedactsTerminalIdentity(t *testing.T) {
 	}
 }
 
+// TestExportSessionTrafficRedaction 默认导出的 session-traffic.json 中会话 ID 已哈希，
+// includePaths 恢复完整 ID；任何模式下都不含 LastCommand/RecentInputLines/终端正文，
+// 但保留 PTY 与 ScreenWire 计量字段。
+func TestExportSessionTrafficRedaction(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.sessions = session.NewManager(session.TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	terminal, err := application.Sessions().Create(t.TempDir())
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	sessionID := terminal.ID()
+	defer application.Sessions().Close(sessionID)
+	hashedID := logs.HashID(sessionID)
+
+	// 默认：会话 ID 哈希，原文不出现。
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	traffic := readZipEntry(t, path, "session-traffic.json")
+	if strings.Contains(traffic, sessionID) {
+		t.Errorf("redacted session-traffic.json leaks raw session id %q", sessionID)
+	}
+	if !strings.Contains(traffic, hashedID) {
+		t.Errorf("redacted session-traffic.json should contain hashed id %q: %s", hashedID, traffic)
+	}
+	for _, forbidden := range []string{"lastCommand", "recentInputLines", "termTitle"} {
+		if strings.Contains(traffic, forbidden) {
+			t.Errorf("session-traffic.json must not contain %q", forbidden)
+		}
+	}
+
+	// 字段存在性：PTY 与 ScreenWire 计量。
+	var decoded []map[string]any
+	if err := json.Unmarshal([]byte(traffic), &decoded); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if len(decoded) != 1 {
+		t.Fatalf("decoded traffic len=%d, want 1", len(decoded))
+	}
+	for _, key := range []string{"ptyOutputEvents", "ptyOutputBytes", "screenWireByClient"} {
+		if _, ok := decoded[0][key]; !ok {
+			t.Errorf("session-traffic.json missing field %q", key)
+		}
+	}
+
+	// includePaths：恢复完整会话 ID。
+	fullPath, err := application.ExportDiagnostics(t.TempDir(), true)
+	if err != nil {
+		t.Fatalf("export includePaths: %v", err)
+	}
+	fullTraffic := readZipEntry(t, fullPath, "session-traffic.json")
+	if !strings.Contains(fullTraffic, sessionID) {
+		t.Errorf("includePaths session-traffic.json should contain raw id %q", sessionID)
+	}
+}
+
+// TestDiagnosticsSessionTrafficEmpty 无活跃会话时返回空（非 nil）切片，JSON 为 []。
+func TestDiagnosticsSessionTrafficEmpty(t *testing.T) {
+	application := newTestApp(config.Default())
+	traffic := application.DiagnosticsSessionTraffic(false)
+	if traffic == nil || len(traffic) != 0 {
+		t.Fatalf("empty sessions should yield empty non-nil slice, got %#v", traffic)
+	}
+	data, err := json.Marshal(traffic)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("empty traffic JSON = %s, want []", data)
+	}
+}
+
 // readZipEntry 读取诊断包中单个文件的文本内容。
 func readZipEntry(t *testing.T, zipPath string, name string) string {
 	t.Helper()

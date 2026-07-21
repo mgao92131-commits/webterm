@@ -39,6 +39,9 @@ type ExportOptions struct {
 	// Metrics/State 来自运行中 Agent 的只读快照；nil 表示离线导出，对应文件写入 unavailable 说明。
 	Metrics map[string]any
 	State   any
+	// SessionTraffic 是按会话聚合的流量快照（由调用方在 App 层完成脱敏后传入）；
+	// nil 表示不可用（离线导出），session-traffic.json 写入 available=false。
+	SessionTraffic any
 	// IncludePaths 控制导出事件的脱敏：false（默认）把自由文本 Message 与路径类
 	// Field 折叠；true 时才放行原文（对应 CLI --include-paths）。
 	IncludePaths bool
@@ -56,7 +59,7 @@ type ExportResult struct {
 }
 
 // Export 生成 webterm-agent-diagnostics-<时间戳>-<毫秒>-<随机>.zip：
-// manifest.json / events.jsonl / metrics.json / state.json / summary.txt。
+// manifest.json / events.jsonl / metrics.json / state.json / session-traffic.json / summary.txt。
 // 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
 // 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
@@ -156,6 +159,12 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	if err := write("state.json", jsonOrUnavailable(options.State)); err != nil {
 		return ExportResult{}, fmt.Errorf("write state: %w", err)
+	}
+	// session-traffic.json：按会话的 PTY 输出与 screen 协议字节累计（调用方已脱敏
+	// 会话 ID）。nil 表示离线导出/不可用，写入与 metrics/state 一致的 unavailable 说明；
+	// 运行中但无活跃会话时是空数组。
+	if err := write("session-traffic.json", jsonOrUnavailable(options.SessionTraffic)); err != nil {
+		return ExportResult{}, fmt.Errorf("write session traffic: %w", err)
 	}
 	if err := write("summary.txt", []byte(BuildSummary(manifest, events, options.Metrics, options.State))); err != nil {
 		return ExportResult{}, fmt.Errorf("write summary: %w", err)

@@ -392,10 +392,12 @@ func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path str
 			Platform:     runtime.GOOS,
 			Architecture: runtime.GOARCH,
 		},
-		Metrics:      diagnostics.Default.Snapshot(),
-		State:        app.DiagnosticsState(includePaths),
-		RingEntries:  app.logger.Recent(diagnosticsRingLimit),
-		IncludePaths: includePaths,
+		Metrics: diagnostics.Default.Snapshot(),
+		State:   app.DiagnosticsState(includePaths),
+		// App 层负责脱敏会话 ID（默认哈希），exporter 不理解 Session 结构。
+		SessionTraffic: app.DiagnosticsSessionTraffic(includePaths),
+		RingEntries:    app.logger.Recent(diagnosticsRingLimit),
+		IncludePaths:   includePaths,
 	})
 	if err != nil {
 		return "", err

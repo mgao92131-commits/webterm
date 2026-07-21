@@ -80,7 +80,7 @@ func TestExportProducesCompleteZip(t *testing.T) {
 	}
 
 	entries := readZip(t, result.Path)
-	for _, name := range []string{"manifest.json", "events.jsonl", "metrics.json", "state.json", "summary.txt"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "metrics.json", "state.json", "session-traffic.json", "summary.txt"} {
 		if _, ok := entries[name]; !ok {
 			t.Fatalf("zip missing %s", name)
 		}
@@ -214,5 +214,69 @@ func TestTrimEntriesRespectsEventCountBudget(t *testing.T) {
 	kept, truncated := trimEntries(entries, 5, DefaultExportMaxBytes)
 	if !truncated || len(kept) != 5 || kept[0].Seq != 16 {
 		t.Fatalf("kept=%d first=%d truncated=%v, want 5/16/true", len(kept), kept[0].Seq, truncated)
+	}
+}
+
+// TestExportSessionTrafficOfflineUnavailable 离线导出（SessionTraffic==nil）时
+// session-traffic.json 仍存在，并写入 unavailable 说明。
+func TestExportSessionTrafficOfflineUnavailable(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeEntries(t, logDir, 2, "")
+
+	result, err := Export(ExportOptions{LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest()})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	entries := readZip(t, result.Path)
+	raw, ok := entries["session-traffic.json"]
+	if !ok {
+		t.Fatal("zip missing session-traffic.json")
+	}
+	var unavailable map[string]any
+	if err := json.Unmarshal([]byte(raw), &unavailable); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if unavailable["unavailable"] != true {
+		t.Errorf("offline session-traffic.json should be unavailable: %s", raw)
+	}
+}
+
+// TestExportSessionTrafficIncluded 传入 SessionTraffic 时写入可解析的 JSON。
+func TestExportSessionTrafficIncluded(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeEntries(t, logDir, 2, "")
+
+	traffic := []map[string]any{
+		{
+			"sessionId":       "abcd1234",
+			"ptyOutputEvents": uint64(7),
+			"ptyOutputBytes":  uint64(2048),
+			"screenWireByClient": map[string]any{
+				"c1": map[string]any{"frameCount": uint64(3), "wireBytes": uint64(900)},
+			},
+		},
+	}
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		SessionTraffic: traffic,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	entries := readZip(t, result.Path)
+	var decoded []map[string]any
+	if err := json.Unmarshal([]byte(entries["session-traffic.json"]), &decoded); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if len(decoded) != 1 || decoded[0]["sessionId"] != "abcd1234" {
+		t.Fatalf("decoded session traffic = %+v", decoded)
+	}
+	if decoded[0]["ptyOutputBytes"] != float64(2048) {
+		t.Errorf("ptyOutputBytes = %v", decoded[0]["ptyOutputBytes"])
+	}
+	if _, ok := decoded[0]["screenWireByClient"]; !ok {
+		t.Error("screenWireByClient missing")
 	}
 }
