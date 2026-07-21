@@ -84,6 +84,7 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 			"WEBTERM_SESSION_ID":      "hook-e2e-test",
 			"WEBTERM_IPC_ENDPOINT":    endpoint,
 			"WEBTERM_HOOK_STATE_DIR":  hookStateDir,
+			"WEBTERM_HOOK_DEBUG":      hookDebugLog,
 		},
 	})
 	if err != nil {
@@ -161,12 +162,20 @@ func instrumentPowerShellHook(t *testing.T, hookPath, debugLog string) {
 	}
 	content := string(data)
 
-	old := "  if ($null -ne $history) { $last = $history.CommandLine }"
+	// 探针 1：prompt 函数入口，区分"prompt 未再触发"与"Invoke 内部失败"。
+	old := "  function global:prompt {\n    Invoke-WebTermSessionUpdate"
+	if !strings.Contains(content, old) {
+		t.Fatalf("hook 脚本缺少 prompt 函数定义，模板可能已变化")
+	}
+	content = strings.Replace(content, old,
+		"  function global:prompt {\n    if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} prompt fired\" -f (Get-Date)) }\n    Invoke-WebTermSessionUpdate", 1)
+
+	old = "  if ($null -ne $history) { $last = $history.CommandLine }"
 	if !strings.Contains(content, old) {
 		t.Fatalf("hook 脚本缺少 history 捕获行，模板可能已变化")
 	}
 	content = strings.Replace(content, old, old+
-		"\n  if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} invoke last=[{1}]\" -f (Get-Date), $last) }", 1)
+		"\n  if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} invoke last=[{1}] bin=[{2}]\" -f (Get-Date), $last, $script:WebTermBin) }", 1)
 
 	old = "    if ($null -ne $proc) { $proc.Dispose() }"
 	if !strings.Contains(content, old) {
