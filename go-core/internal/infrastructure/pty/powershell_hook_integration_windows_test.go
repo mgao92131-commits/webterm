@@ -61,6 +61,12 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 	hookDebugLog := filepath.Join(tempDir, "hook-debug.log")
 	instrumentPowerShellHook(t, hookPath, hookDebugLog)
 	hookStateDir := filepath.Join(tempDir, "hookstate")
+	// 无论成败都 dump hook 调试日志：成功路径也需要子进程退出码证据来定位根因。
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(hookDebugLog); err == nil {
+			t.Logf("hook 调试日志:\n%s", data)
+		}
+	})
 
 	// 起本地 IPC 服务端接收 session_update 信封。
 	endpoint := fmt.Sprintf("npipe://./pipe/webterm-hook-test-%d", os.Getpid())
