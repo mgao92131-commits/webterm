@@ -18,7 +18,14 @@ public final class DiagnosticSanitizer {
             || normalized.contains("body")
             || normalized.contains("content")
             || normalized.contains("terminaltext")
-            || normalized.contains("inputtext");
+            || normalized.contains("inputtext")
+            // 服务器地址与设备/通道标识：原始值一律脱敏；
+            // 可关联场景应使用 deviceHash/channelHash/serverHash（不以 id 结尾，不受影响）。
+            || normalized.equals("server")
+            || normalized.contains("serverurl")
+            || normalized.contains("baseurl")
+            || normalized.endsWith("deviceid")
+            || normalized.endsWith("channelid");
     }
 
     private static String normalize(String key) {

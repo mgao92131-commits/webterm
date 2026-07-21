@@ -12,6 +12,7 @@ import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
+import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -27,6 +28,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -35,9 +39,17 @@ import java.util.TimeZone;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-/** Debug/Diag 专用：只导出有界的本地诊断日志，不包含终端正文或 PTY 捕获。 */
+/**
+ * Debug/Diag 专用：只导出有界的本地诊断日志，不包含终端正文或 PTY 捕获。
+ * 导出包脱敏：server/deviceId/channelId 一律以每次导出随机 salt 的哈希形式输出，
+ * 包内同一标识哈希一致、跨包不可关联；日志文件内的标识在写入时已用进程级 salt 哈希化。
+ * 写入先落 .tmp、完成后 rename，失败删除临时文件；历史导出包最多保留 {@link #MAX_ARCHIVES} 个。
+ */
 public final class DiagnosticLogExporter {
     private static final int BUFFER_SIZE = 8 * 1024;
+    /** 历史导出包保留上限。 */
+    static final int MAX_ARCHIVES = 5;
+    private static final String ARCHIVE_PREFIX = "webterm-diagnostics-";
 
     private DiagnosticLogExporter() {}
 
@@ -58,39 +70,91 @@ public final class DiagnosticLogExporter {
     }
 
     private static File createArchive(Activity activity) throws IOException {
+        // 导出前强制 trim：保证 ZIP 只含预算内的日志，且日志目录回落到容量约束内。
+        DiagnosticLogFiles.trim(activity);
         List<File> logs = DiagnosticLogFiles.list(activity);
 
         File exportDir = new File(activity.getCacheDir(), "diagnostics-export");
         if (!exportDir.exists() && !exportDir.mkdirs()) {
             throw new IOException("cannot create export directory");
         }
-        String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
-        File archive = new File(exportDir, "webterm-diagnostics-" + timestamp + ".zip");
-        try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(archive))) {
-            byte[] buffer = new byte[BUFFER_SIZE];
-            for (File log : logs) {
-                if (!log.isFile()) continue;
-                output.putNextEntry(new ZipEntry(log.getName()));
-                try (BufferedInputStream input = new BufferedInputStream(new FileInputStream(log))) {
-                    int count;
-                    while ((count = input.read(buffer)) != -1) {
-                        output.write(buffer, 0, count);
+        File archive = new File(exportDir, newArchiveName());
+        File temp = new File(exportDir, archive.getName() + ".tmp");
+        // 每次导出随机 salt：包内同一标识哈希一致，跨导出包不可关联。
+        String salt = DiagnosticIdHasher.randomSalt();
+        try {
+            try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(temp))) {
+                byte[] buffer = new byte[BUFFER_SIZE];
+                for (File log : logs) {
+                    if (!log.isFile()) continue;
+                    output.putNextEntry(new ZipEntry(log.getName()));
+                    try (BufferedInputStream input = new BufferedInputStream(new FileInputStream(log))) {
+                        int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            output.write(buffer, 0, count);
+                        }
                     }
+                    output.closeEntry();
                 }
+                output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
+                output.write(buildTrafficSummary(salt).getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 output.closeEntry();
+                try {
+                    writeJsonEntry(output, "manifest.json", buildManifestJson(activity));
+                    writeJsonEntry(output, "android-metrics.json", buildMetricsJson(salt));
+                    writeJsonEntry(output, "android-state.json", buildStateJson(activity));
+                } catch (JSONException e) {
+                    throw new IOException("failed to build diagnostics json", e);
+                }
             }
-            output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
-            output.write(buildTrafficSummary().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            output.closeEntry();
-            try {
-                writeJsonEntry(output, "manifest.json", buildManifestJson(activity));
-                writeJsonEntry(output, "android-metrics.json", buildMetricsJson());
-                writeJsonEntry(output, "android-state.json", buildStateJson(activity));
-            } catch (JSONException e) {
-                throw new IOException("failed to build diagnostics json", e);
+        } catch (IOException | RuntimeException e) {
+            // 失败清理临时文件，目录里不留半成品。
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
+            throw e;
+        }
+        if (!temp.renameTo(archive)) {
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
+            throw new IOException("cannot finalize diagnostics archive");
+        }
+        pruneOldArchives(exportDir);
+        return archive;
+    }
+
+    /** 毫秒时间戳 + 随机后缀，保证并发导出文件名不冲突、同秒不覆盖。 */
+    static String newArchiveName() {
+        String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date());
+        String suffix = DiagnosticIdHasher.randomSalt().substring(0, 8);
+        return ARCHIVE_PREFIX + timestamp + "-" + suffix + ".zip";
+    }
+
+    /** 历史导出包最多保留 MAX_ARCHIVES 个（按修改时间保留最新）；顺带清理残留的 .tmp。 */
+    static void pruneOldArchives(File exportDir) {
+        File[] files = exportDir.listFiles();
+        if (files == null) return;
+        List<File> archives = new ArrayList<>();
+        for (File file : files) {
+            String name = file.getName();
+            if (name.endsWith(".tmp")) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
+            } else if (name.startsWith(ARCHIVE_PREFIX) && name.endsWith(".zip")) {
+                archives.add(file);
             }
         }
-        return archive;
+        if (archives.size() <= MAX_ARCHIVES) return;
+        Collections.sort(archives, new Comparator<File>() {
+            @Override
+            public int compare(File f1, File f2) {
+                return Long.compare(f1.lastModified(), f2.lastModified());
+            }
+        });
+        int toDelete = archives.size() - MAX_ARCHIVES;
+        for (int i = 0; i < toDelete; i++) {
+            //noinspection ResultOfMethodCallIgnored
+            archives.get(i).delete();
+        }
     }
 
     private static void writeJsonEntry(ZipOutputStream output, String name, JSONObject json)
@@ -117,8 +181,8 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    /** android-metrics.json：网络流量、渲染指标与恢复指标快照。 */
-    private static JSONObject buildMetricsJson() throws JSONException {
+    /** android-metrics.json：网络流量、渲染指标与恢复指标快照；标识全部哈希化。 */
+    static JSONObject buildMetricsJson(String salt) throws JSONException {
         JSONObject json = new JSONObject();
 
         NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
@@ -137,8 +201,8 @@ public final class DiagnosticLogExporter {
         for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
             MuxTransport.TrafficSnapshot s = e.getValue();
             JSONObject device = new JSONObject();
-            device.put("server", NetworkTrafficStats.serverOfKey(e.getKey()));
-            device.put("device", NetworkTrafficStats.deviceOfKey(e.getKey()));
+            device.put("serverHash", DiagnosticIdHasher.hash(salt, NetworkTrafficStats.serverOfKey(e.getKey())));
+            device.put("deviceHash", DiagnosticIdHasher.hash(salt, NetworkTrafficStats.deviceOfKey(e.getKey())));
             device.put("rxFrames", s.rxFrames);
             device.put("rxBytes", s.rxBytes);
             device.put("txFrames", s.txFrames);
@@ -230,14 +294,15 @@ public final class DiagnosticLogExporter {
         }
     }
 
-    private static String buildTrafficSummary() {
+    static String buildTrafficSummary(String salt) {
         NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
         TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
         StringBuilder sb = new StringBuilder();
         sb.append("WebTerm Network Traffic Summary (Android only)\n");
         sb.append("===============================================\n");
         sb.append("NOTE: This file contains Android-side statistics only.\n");
-        sb.append("Go Agent/Relay PTY output and screen send stats are not exposed through the Agent local IPC.\n\n");
+        sb.append("For Go Agent statistics, run `webterm diagnostics summary` or\n");
+        sb.append("`webterm diagnostics export` in a terminal on the computer running the Agent.\n\n");
         sb.append("uidRxBytes=").append(network.uid.rxBytes).append('\n');
         sb.append("uidTxBytes=").append(network.uid.txBytes).append('\n');
         sb.append("uidSupported=").append(network.uid.supported).append('\n');
@@ -249,8 +314,8 @@ public final class DiagnosticLogExporter {
             sb.append("\n[WebSocket by device]\n");
             for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
                 MuxTransport.TrafficSnapshot s = e.getValue();
-                sb.append("server=").append(NetworkTrafficStats.serverOfKey(e.getKey()))
-                  .append(" device=").append(NetworkTrafficStats.deviceOfKey(e.getKey()))
+                sb.append("serverHash=").append(DiagnosticIdHasher.hash(salt, NetworkTrafficStats.serverOfKey(e.getKey())))
+                  .append(" deviceHash=").append(DiagnosticIdHasher.hash(salt, NetworkTrafficStats.deviceOfKey(e.getKey())))
                   .append(" rxFrames=").append(s.rxFrames)
                   .append(" rxBytes=").append(s.rxBytes)
                   .append(" txFrames=").append(s.txFrames)
@@ -279,6 +344,7 @@ public final class DiagnosticLogExporter {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("application/zip");
         send.putExtra(Intent.EXTRA_SUBJECT, "WebTerm 诊断日志");
+        send.putExtra(Intent.EXTRA_TEXT, "导出包已脱敏：服务器地址与设备/通道标识均以哈希形式呈现。");
         send.putExtra(Intent.EXTRA_STREAM, uri);
         send.setClipData(ClipData.newRawUri("WebTerm 诊断日志", uri));
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
