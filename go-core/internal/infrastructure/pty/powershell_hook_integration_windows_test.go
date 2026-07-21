@@ -4,6 +4,7 @@ package pty_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,14 +83,19 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = proc.Close() })
 	// 持续排空 ConPTY 输出，避免管道缓冲写满后 PowerShell 阻塞。
-	go func() { _, _ = io.Copy(io.Discard, proc) }()
+	// 同时保留一份输出用于失败诊断（runner 上无法本地复现，超时时需要看到画面）。
+	var screenBuf lockedBuffer
+	go func() { _, _ = io.Copy(io.MultiWriter(io.Discard, &screenBuf), proc) }()
 
 	// CI runner 上 Windows PowerShell 首次启动较慢，放宽整体超时。
+	start := time.Now()
 	deadline := time.After(90 * time.Second)
 	sentEcho := false
 	for {
 		select {
 		case update := <-updates:
+			t.Logf("%.1fs 收到 update: shell_state=%s input_kind=%s last_input=%q",
+				time.Since(start).Seconds(), update.ShellState, update.InputKind, update.LastInput)
 			if !sentEcho {
 				// 收到初始 prompt 的上报即证明 hook 注入成功，此时写入命令。
 				sentEcho = true
@@ -113,12 +120,44 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 				update.ShellState, update.InputKind, update.CWD, update.LastInput)
 			return
 		case <-deadline:
+			t.Logf("超时前 ConPTY 画面尾部:\n%s", screenBuf.Tail(4<<10))
 			if !sentEcho {
 				t.Fatal("超时：未收到初始 prompt 的 session_update，hook 注入可能未生效")
 			}
 			t.Fatal("超时：未收到 last_input 非空的 session_update")
 		}
 	}
+}
+
+// lockedBuffer 收集 ConPTY 输出，供超时诊断读取；并发写安全。
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// 只保留尾部，避免长跑测试内存膨胀。
+	const maxKeep = 64 << 10
+	if b.buf.Len()+len(p) > maxKeep {
+		drop := b.buf.Len() + len(p) - maxKeep
+		if drop > b.buf.Len() {
+			drop = b.buf.Len()
+		}
+		b.buf.Next(drop)
+	}
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) Tail(n int) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	data := b.buf.Bytes()
+	if len(data) > n {
+		data = data[len(data)-n:]
+	}
+	return string(data)
 }
 
 // serveSessionUpdates 接受 IPC 连接，解码 session_update 信封并回 OK 响应。
