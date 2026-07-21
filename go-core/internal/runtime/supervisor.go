@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/direct"
 	"webterm/go-core/internal/relay"
 )
 
@@ -42,11 +44,29 @@ func NewWithFactory(application *app.App, factory Factory) *Supervisor {
 	return &Supervisor{app: application, factory: factory}
 }
 
+// DefaultFactory 按配置模式选择唯一的 Runner：
+//
+//   - ModeDirect：只启动 Direct Server（Android 直连）；
+//   - ModeRelay：只启动 Relay Client（经中转服务器）。
+//
+// 两种模式互斥，绝不存在同时启动 Direct 与 Relay 的路径；未知模式返回错误。
 func DefaultFactory(cfg config.Config, app *app.App) (Runner, error) {
-	return RunnerFunc(func(ctx context.Context) error {
-		cfg.Relay.Protocol = config.NormalizeRelayProtocol(cfg.Relay.Protocol)
-		return relay.NewV2(cfg.Relay, app).Run(ctx)
-	}), nil
+	switch cfg.Mode.Normalize() {
+	case config.ModeDirect:
+		return direct.New(cfg.Direct, app), nil
+	case config.ModeRelay:
+		return RunnerFunc(func(ctx context.Context) error {
+			cfg.Relay.Protocol = config.NormalizeRelayProtocol(cfg.Relay.Protocol)
+			return relay.NewV2(cfg.Relay, app).Run(ctx)
+		}), nil
+	default:
+		return nil, fmt.Errorf("不支持的 Agent 模式：%q（支持的模式：direct、relay）", cfg.Mode)
+	}
+}
+
+// modeLabel 返回当前接入模式（"direct" 或 "relay"），用于日志区分两种 Runtime。
+func (supervisor *Supervisor) modeLabel() string {
+	return string(supervisor.app.Config().Mode.Normalize())
 }
 
 func (supervisor *Supervisor) Start(ctx context.Context) error {
@@ -70,11 +90,11 @@ func (supervisor *Supervisor) Start(ctx context.Context) error {
 	case <-done:
 		err := supervisor.finish(done)
 		if err != nil {
-			supervisor.app.Log("error", "runtime", "relay runtime failed during startup: "+err.Error())
+			supervisor.app.Log("error", "runtime", supervisor.modeLabel()+" runtime failed during startup: "+err.Error())
 		}
 		return err
 	case <-time.After(100 * time.Millisecond):
-		supervisor.app.Log("info", "runtime", "relay runtime started")
+		supervisor.app.Log("info", "runtime", supervisor.modeLabel()+" runtime started")
 		return nil
 	}
 }
@@ -96,11 +116,11 @@ func (supervisor *Supervisor) Stop(ctx context.Context) error {
 	case <-done:
 		err := supervisor.finish(done)
 		if err != nil {
-			supervisor.app.Log("error", "runtime", "relay runtime stopped with error: "+err.Error())
+			supervisor.app.Log("error", "runtime", supervisor.modeLabel()+" runtime stopped with error: "+err.Error())
 		}
 		return err
 	case <-ctx.Done():
-		supervisor.app.Log("warn", "runtime", "relay runtime stop canceled: "+ctx.Err().Error())
+		supervisor.app.Log("warn", "runtime", supervisor.modeLabel()+" runtime stop canceled: "+ctx.Err().Error())
 		return ctx.Err()
 	case <-time.After(5 * time.Second):
 		supervisor.app.Log("error", "runtime", "runtime stop timed out")
@@ -126,10 +146,10 @@ func (supervisor *Supervisor) Wait(ctx context.Context) error {
 }
 
 func (supervisor *Supervisor) startLocked(cfg config.Config) error {
-	supervisor.app.Log("info", "runtime", "starting relay runtime")
+	supervisor.app.Log("info", "runtime", "starting "+supervisor.modeLabel()+" runtime")
 	runner, err := supervisor.factory(cfg, supervisor.app)
 	if err != nil {
-		supervisor.app.Log("error", "runtime", "relay runtime factory failed: "+err.Error())
+		supervisor.app.Log("error", "runtime", supervisor.modeLabel()+" runtime factory failed: "+err.Error())
 		return err
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
