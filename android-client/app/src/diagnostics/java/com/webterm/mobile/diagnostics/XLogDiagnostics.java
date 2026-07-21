@@ -34,8 +34,9 @@ public final class XLogDiagnostics {
      * 初始化诊断日志。所有应用启动共享同一组固定文件名（webterm.log 与
      * webterm.log.bak.1~3）：XLog 的 {@link FileSizeBackupStrategy2} 在单个文件超过
      * {@link #MAX_FILE_BYTES} 时滚动，并在滚动时删除最旧的 .bak.{@link #MAX_BACKUP_INDEX}，
-     * 因此目录在 XLog 层就恒定为「≤4 文件、合计约 ≤4 MiB + 单条日志误差」的真上限，
-     * 不再依赖周期 trim 才回落到预算内。周期 trim 仅用于清理旧版本遗留文件。
+     * 因此正常运行下目录维持「1 个主文件 + 最多 3 个备份」。旧版本升级迁移期间若
+     * 目录已有按启动命名的遗留文件，可能在周期 trim 前短暂超过 4 个文件；启动、
+     * 周期与导出前 trim 会清理遗留文件，导出前保证回落到 ≤4 文件/≤4 MiB 预算。
      */
     public static synchronized boolean init(Context context) {
         if (initialized) {

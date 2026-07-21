@@ -47,16 +47,26 @@
 
 ## 5. 容量边界（缓存/指标均有界）
 - 日志文件：单文件 1 MiB × 3 备份；导出 events 4 MiB / 1000 条预算。
-- Android 诊断日志：固定全局文件（`webterm.log` + `.bak.1~3`）由 XLog 在 1 MiB 滚动时删除最旧备份，≤4 文件 / ≤4 MiB（+单条日志误差）为源头硬上限；启动/每 60s 周期/导出前 trim 仅兜底清理旧版本遗留的按启动命名文件。
+- Android 诊断日志：正常运行使用固定的 1 个主日志（`webterm.log`）加最多 3 个备份（`.bak.1~3`），由 XLog 在 1 MiB 滚动时删除最旧备份；**旧版本升级迁移期间可能短暂存在额外的按启动命名遗留日志**，启动/每 60s 周期/导出前 trim 会清理遗留文件，**导出前保证回落到 ≤4 文件 / ≤4 MiB（+单条日志误差）预算**。
 - 限流器状态表：Go `logs.RateLimiter` 与 Android `DiagnosticRateLimiter` 均 4096 上限 + 回收（含边界测试）。
 - 指标均为固定字段 atomic 计数器 / 有界直方图，无新增无界 goroutine/channel/map，无逐帧落盘。
 
 ## 6. 安全与脱敏
 - 日志/诊断输出不记录：终端输入正文、Cookie、Token、Relay Secret、SMTP 密码、文件内容。
-- config 经 `Redacted()`（Relay Secret→`********`）用于 `config show`；诊断摘要/导出改用 `Config.DiagnosticsView(includePaths)`（Relay URL→scheme、DeviceName/Shell Command/CWD→短哈希、IPC 只保留类型、Control.Addr 不输出、Secret 任何模式都脱敏，见 §11.6）；ID 类经 `SafeID/HashID`；错误仅记分类枚举（Relay 错误为 `RelayErrorKind`：dial_failed/tls_failed/auth_rejected/protocol_failed/connection_closed/timeout/unknown；原始错误文本不进 agent.jsonl/events.jsonl/state.json/summary；`SafeEnum` 已无调用方并删除）。
-- `DiagnosticsSummary`/`DiagnosticsState` 默认脱敏：session id/termTitle → HashID，cwd → 仅 `cwdHash`（合并后加固移除 `cwdBaseName`，见 §11.6），ipcEndpoint 只保留 unix/npipe 类型；自由文本日志 Message 与路径类 Field 默认折叠（`logs.SanitizeEntries`）；CLI `--include-paths` 恢复完整值。Android 导出包默认脱敏：`DiagnosticIdHasher`（SHA-256(salt+value) 截断 12 hex），事件写 `deviceHash`/`channelHash`（进程级 salt），导出 JSON 写 `serverHash`/`deviceHash`（每包独立 salt），不含原始 URL/设备/通道标识。
+
+### 6.1 隐私边界（本地原始日志 / 默认导出 / --include-paths 的区别）
+- **`agent.jsonl`（本机私有原始运维日志）**：文件权限 0600（目录 0700）。为保留排障信息，部分自由文本运维日志（如启动告警、relay 运行时 supervisor、shell hook 安装错误）**仍可能包含本地文件路径、IPC endpoint 地址和原始系统错误**。该文件仅供本机排障，**不得直接对外分享**。
+- **默认 diagnostics export（`events.jsonl` 等）**：会经过脱敏处理——路径类 Field 与自由文本 Message 默认折叠（`logs.SanitizeEntries`），会话/设备身份默认哈希。默认导出包不含原始路径、Relay URL、设备名或自由文本错误正文。
+- **`--include-paths`**：可能恢复完整路径、地址以及部分原始本地诊断内容。**导出的诊断包在分享前需要人工检查**。注意：会话/设备**身份标识始终哈希，不随 `--include-paths` 恢复**（该参数只针对路径与地址）；写入时即定型的日志事件也无法回溯还原。
+
+### 6.2 具体脱敏规则
+- config 经 `Redacted()`（Relay Secret→`********`）用于 `config show`；诊断摘要/导出改用 `Config.DiagnosticsView(includePaths)`（Relay URL→scheme、DeviceName/Shell Command/CWD→短哈希、IPC 只保留类型、Control.Addr 不输出、Secret 任何模式都脱敏，见 §11.6）。
+- ID 类经 `SafeID/HashID`：**会话身份、设备身份、路径和地址默认脱敏**；临时协议标识（如 mux channelId）可能保留原文，用于事件关联。Relay 设备标识一律记 `deviceHash`（HashID），不记原文、不随 `--include-paths` 恢复。
+- Relay/screen 错误经分类枚举记录（Relay 错误为 `RelayErrorKind`：dial_failed/tls_failed/auth_rejected/protocol_failed/connection_closed/timeout/unknown；screen 失败为 `classifyScreenError` 枚举），这些路径的原始错误文本不进入诊断事件与默认导出；`SafeEnum` 已无调用方并删除。（注：本机 `agent.jsonl` 的其它自由文本运维日志见 §6.1。）
+- `DiagnosticsSummary`/`DiagnosticsState` 默认脱敏：session id/termTitle → HashID，cwd → 仅 `cwdHash`（合并后加固移除 `cwdBaseName`，见 §11.6），ipcEndpoint 只保留 unix/npipe 类型。Android 导出包默认脱敏：`DiagnosticIdHasher`（SHA-256(salt+value) 截断 12 hex），事件写 `deviceHash`/`channelHash`（进程级 salt），导出 JSON 写 `serverHash`/`deviceHash`（每包独立 salt），不含原始 URL/设备/通道标识。
 - 会话诊断项排除 `RecentInputLines`/`LastCommand`；异常处理仅上报异常类型不含正文。
 - 日志目录 0700、文件 0600；导出 ZIP 0600。
+
 
 ## 7. 全部测试结果
 **Go（go-core）**
@@ -107,7 +117,7 @@
 
 ### 11.1 Go（go-core）修改摘要
 - mux 日志全部从自由文本 `logger.Add` 改为 `logger.Event`（享受 5s 限流），事件名稳定（`mux_read_failed`/`mux_channel_replaced`/`mux_writer_failed` 等），reason 为错误分类枚举，channelId 经 SafeID，原始错误文本不再进日志；summary 事件名统计因此真正生效。
-- Relay 错误改为分类枚举 `RelayErrorKind`（dial_failed/tls_failed/auth_rejected/protocol_failed/connection_closed/timeout/unknown），`SetRelayConnected` 只存 kind；原始 err.Error() 不再进入 agent.jsonl/events.jsonl/state.json/summary；`logs.SafeEnum` 已无调用方并删除。
+- Relay 错误改为分类枚举 `RelayErrorKind`（dial_failed/tls_failed/auth_rejected/protocol_failed/connection_closed/timeout/unknown），`SetRelayConnected` 只存 kind；该路径原始 err.Error() 不再进入诊断事件与导出（events.jsonl/state.json/summary）；`logs.SafeEnum` 已无调用方并删除。（本机 `agent.jsonl` 的其它自由文本运维日志见 §6.1。）
 - `App.Shutdown()` 先 `logger.SetSink(nil)` 再 `sink.ClosePermanent()`；FileSink 永久关闭后 Write 返回 ErrSinkClosed 不再重开文件；普通 Close 保留惰性重开（rotate 用）。
 - `DiagnosticsSummary`/`DiagnosticsState` 默认脱敏：session id/termTitle → HashID，cwd → cwdBaseName+cwdHash，ipcEndpoint → 只保留 unix/npipe 类型；CLI `webterm diagnostics summary|export` 新增 `--include-paths` 恢复完整值（CLI 文档已重新生成）。
 - 导出 ZIP 原子化：文件名毫秒+随机后缀，先写 .tmp 再 rename，失败删临时文件，历史最多保留 5 个。
@@ -117,7 +127,7 @@
 ### 11.2 Android（android-client）修改摘要
 - `DiagnosticRateLimiter` 接入 `Diagnostics` 门面：`log()` 写 sink 前 tryPass，discriminator 只从白名单字段构造，过窗后下一条附 suppressedCount；新增 `errorUnthrottled` 等不限流入口。
 - `stopAllDevices()` 逐连接 unregister NetworkTrafficStats；新增 `clearAll()`；重连不清零。
-- 日志容量：改用固定全局滚动文件（`webterm.log` + `.bak.1~3`），XLog `FileSizeBackupStrategy2` 在滚动时删除最旧备份，目录恒定 ≤4 文件/约 ≤4 MiB（+单条日志误差）的硬上限；启动/每 60s 周期（daemon 线程）/导出前 trim 退化为兜底，仅清理旧版本遗留的按启动命名文件。周期 trim 执行器幂等（重复初始化先停旧 executor 再重建，不泄漏线程），并提供 `shutdownForTest()` 关闭入口。
+- 日志容量：改用固定全局滚动文件（`webterm.log` + `.bak.1~3`），XLog `FileSizeBackupStrategy2` 在滚动时删除最旧备份，正常运行维持 1 主 + ≤3 备份；旧版本升级迁移期间可能短暂存在遗留的按启动命名文件，启动/每 60s 周期（daemon 线程）/导出前 trim 负责清理，导出前保证回落到 ≤4 文件/约 ≤4 MiB（+单条日志误差）预算。周期 trim 执行器幂等（重复初始化先停旧 executor 再重建，不泄漏线程），并提供 `shutdownForTest()` 关闭入口。
 - 导出脱敏：新增 `DiagnosticIdHasher`（SHA-256(salt+value) 截断 12 hex）；DeviceConnection 事件字段写 `deviceHash`/`channelHash`（进程级 salt）；exporter 输出 `serverHash`/`deviceHash`（每包独立 salt）；Sanitizer 补 server/deviceId/channelId 键；默认导出包不含原始 URL/设备/通道标识。
 - ZIP 原子导出：毫秒+随机后缀、tmp+rename、失败清理、历史保留 5 个；分享提示已脱敏。
 - 导出说明文案改为指引 Go Agent 统计用 `webterm diagnostics summary|export`。
@@ -144,7 +154,7 @@
 - **诊断包含会话流量**（`feat(diagnostics): include session traffic in exports`）：导出 ZIP 新增 `session-traffic.json`（PTY 输出事件/字节、screen wire 字节），由 App 层 `DiagnosticsSessionTraffic(includePaths)` 脱敏会话 ID；离线导出写 unavailable，无活跃会话写空数组。
 - **摘要重写为强类型快照**（`fix(diagnostics): rebuild summary from typed snapshots`）：`summary.txt` 累计值改来自 `metrics.json`/`state.json`/`session-traffic.json`，未埋点分组显示 `Not instrumented` 而非 0，Events 只用于导出条数/是否截断/最近错误事件类型（明确为窗口观测），不再把限流后的日志条数当成系统总次数。
 - **Screen 失败事件结构化**（`fix(diagnostics): structure screen failure events`）：screen 编码/初始同步失败改走 `screen_encode_failed` 结构化事件 + `classifyScreenEncodeError` 稳定枚举，不记录 `err.Error()`；初始 resume 决策改为 `screen_resume_decision` 结构化事件；`screen_encode_failed` 明确属关键失败、不受 5s 限流。
-- **Android 日志全局上限**（`fix(android): enforce global diagnostic log bounds`）：改用固定全局滚动文件（`webterm.log` + `.bak.1~3`），XLog 滚动时删最旧备份，恒定 ≤4 文件/约 ≤4 MiB 的源头硬上限；周期 trim 退化为遗留文件兜底，执行器幂等并新增 `shutdownForTest()`；删除死代码 `LaunchLogFileNameGenerator`。
+- **Android 日志全局上限**（`fix(android): enforce global diagnostic log bounds`）：改用固定全局滚动文件（`webterm.log` + `.bak.1~3`），XLog 滚动时删最旧备份，正常运行维持 1 主 + ≤3 备份；旧版本升级迁移期间可能短暂存在遗留日志，导出前 trim 保证回落到预算；周期 trim 执行器幂等并新增 `shutdownForTest()`；删除死代码 `LaunchLogFileNameGenerator`。
 - **未埋点指标能力声明**（`refactor(diagnostics): simplify capability reporting`）：删除未埋点的 Mailbox/Input/Resync/Projection 计数与四个耗时直方图的占位字段，改为轻量 `capabilities` 声明（均为 `false`），未埋点能力不再以恒 0 冒充观测、也不再分配无用对象。
 - **文档收尾**（`docs: finalize diagnostics post-merge acceptance`）：删除临时 `docs/pr-body.md`，迁移计划归档至 `docs/archive/` 并标注 Historical，本报告更新为合并后最终版，真机验收如实标记为 pending（§12）。
 

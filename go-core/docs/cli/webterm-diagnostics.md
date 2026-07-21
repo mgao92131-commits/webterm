@@ -31,7 +31,7 @@ Examples:
 
 Flags:
   -h, --help            help for summary
-      --include-paths   显示完整会话 ID、标题、目录与 IPC 路径（默认脱敏）
+      --include-paths   包含完整本地路径和地址（会话 ID、标题、目录与 IPC 路径），默认脱敏。输出可能带有敏感的本机诊断信息，分享前请人工检查（设备身份始终脱敏，不受此选项影响）
       --json            输出 JSON
       --socket string   覆盖 Agent 本地 IPC 路径
 
@@ -50,6 +50,6 @@ Examples:
 
 Flags:
   -h, --help            help for export
-      --include-paths   诊断包中包含完整会话 ID、标题与目录（默认脱敏）
+      --include-paths   诊断包中包含完整本地路径和地址（会话 ID、标题与目录），默认脱敏。输出可能带有敏感的本机诊断信息，分享前请人工检查（设备身份始终脱敏，不受此选项影响）
   -o, --output string   诊断包输出目录（支持 ~ 与 Windows 路径）
       --socket string   覆盖 Agent 本地 IPC 路径
