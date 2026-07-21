@@ -206,7 +206,6 @@ func startAgent(ctx context.Context, relayURL string, credential string, cwd str
 		"RELAY_URL="+relayURL,
 		"RELAY_SECRET="+credential,
 		"DEVICE_NAME=Go Agent",
-		"WEBTERM_RELAY_PROTOCOL=v2",
 		"WEBTERM_SHELL="+shell,
 	)
 	var output bytes.Buffer

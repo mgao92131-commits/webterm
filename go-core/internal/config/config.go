@@ -70,6 +70,11 @@ type RelayConfig struct {
 	URL        string `json:"url"`
 	Secret     string `json:"secret,omitempty"`
 	DeviceName string `json:"deviceName"`
+	// Protocol 仅为读取旧配置的兼容字段：loadStrict 使用 DisallowUnknownFields，
+	// 若缺少该字段，携带 "protocol":"v2" 的旧配置文件会解析失败。运行时固定使用
+	// Relay v2，本字段不参与任何协议选择，也不写入新配置（omitempty + 默认空）。
+	// DEPRECATION-REMOVE(v0.2.0)：确认线上配置已无 protocol 键后删除。
+	Protocol string `json:"protocol,omitempty"`
 }
 
 type ShellConfig struct {
