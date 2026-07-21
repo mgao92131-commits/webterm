@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/screenprotocol"
@@ -296,6 +297,7 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 	payload, kind, err := client.encodeInitialScreenSync(initial.sync)
 	if err != nil {
 		initial.done(false)
+		diagnostics.Default.ScreenEncodeFailureCount.Add(1)
 		if client.logger != nil {
 			client.logger.Add("error", "session", fmt.Sprintf("encode initial screen sync failed: %v", err))
 		}
@@ -377,6 +379,10 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 
 func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	state terminalengine.ScreenFrame, err error) {
+	diagnostics.Default.ScreenEncodeFailureCount.Add(1)
+	if stage == "snapshot_fallback" || stage == "snapshot_fallback_immediate" {
+		diagnostics.Default.SnapshotFallbackCount.Add(1)
+	}
 	if client.logger == nil {
 		return
 	}

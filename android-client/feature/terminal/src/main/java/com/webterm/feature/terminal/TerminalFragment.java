@@ -25,6 +25,7 @@ import androidx.lifecycle.ViewModelProvider;
 
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
+import com.webterm.core.api.SessionIds;
 import com.webterm.core.fileupload.FileUploadController;
 import com.webterm.core.fileupload.UploadTask;
 import com.webterm.feature.terminal.upload.UploadConnectionKeys;
@@ -138,7 +139,8 @@ public final class TerminalFragment extends Fragment {
 
         pendingUploadConnectionKey =
             UploadConnectionKeys.connectionKey(args.baseUrl, args.relayDeviceId);
-        pendingUploadSessionId = args.sessionId;
+        pendingUploadSessionId =
+            SessionIds.local(args.sessionId, args.relayDeviceId);
 
         uploadLauncher.launch(new String[]{"*/*"});
     }

@@ -102,7 +102,8 @@ public final class TerminalSessionRuntime {
     void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                         boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
     void sendFocusInput(boolean focused);
-    void requestResize(int cols, int rows);
+    /** 返回 true 表示 resize 已被本地发送队列接受；false 表示当前无可用通道，调用方不得记录"已发送"。 */
+    boolean requestResize(int cols, int rows);
     /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
     boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit);
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
@@ -180,7 +181,9 @@ public final class TerminalSessionRuntime {
     return Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "TerminalModel-" + sessionId);
       t.setUncaughtExceptionHandler((thread, ex) -> {
-        // TODO: 上报非致命错误
+        // 仅上报异常类型，避免异常正文携带终端内容进入诊断。
+        Diagnostics.warn("terminal_runtime", "model_executor_uncaught",
+            java.util.Map.of("exceptionType", ex.getClass().getSimpleName()));
       });
       return t;
     });
@@ -606,7 +609,7 @@ public final class TerminalSessionRuntime {
         try {
           if (drain.fence != null) {
             onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
-                drain.fence.overflowCount);
+                drain.fence.discardedMessages, drain.fence.overflowCount);
             continue;
           }
           ScreenMailbox.Message message = drain.message;
@@ -692,10 +695,21 @@ public final class TerminalSessionRuntime {
 
   private void onMailboxOverflow(@NonNull String reason,
                                  long discardedBytes,
+                                 long discardedMessages,
                                  long overflowCount) {
     TerminalResumeMetrics.screenMailboxOverflow(reason, discardedBytes, overflowCount);
     boolean wasRecovering = resyncCoordinator.isRecovering();
+    // 先推进状态机再读诊断字段，suppressedOverflowCount 才包含本次 overflow。
     resyncCoordinator.onMailboxOverflow(reason);
+    Diagnostics.warn("screen_protocol", "screen_mailbox_overflow", diagnosticFields(
+        "reason", reason,
+        "discardedBytes", discardedBytes,
+        "discardedMessages", discardedMessages,
+        "overflowCount", overflowCount,
+        "pendingMessages", screenMailbox.pendingMessages(),
+        "pendingBytes", screenMailbox.pendingBytes(),
+        "recoveringState", resyncCoordinator.stateName(),
+        "suppressedOverflowCount", resyncCoordinator.suppressedOverflowCount()));
     if (!wasRecovering) TerminalResumeMetrics.resync(reason);
   }
 

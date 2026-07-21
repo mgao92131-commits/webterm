@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"webterm/go-core/internal/diagnostics"
 	termsession "webterm/go-core/internal/session"
 )
 
@@ -48,6 +49,8 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 	select {
 	case queue <- request:
 	case <-ctx.Done():
+		// 排队阶段被 ctx 拒绝（队列满/超时），计入 writer 队列拒绝指标。
+		diagnostics.Default.WriterQueueRejectedCount.Add(1)
 		return ctx.Err()
 	}
 	select {

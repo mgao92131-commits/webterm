@@ -225,20 +225,32 @@ public class DiagnosticsTest {
             "instanceId", "inst_123",
             "clientId", "cli_456",
             "channelId", "chan_789",
+            "channelHash", "chan_hash",
+            "deviceId", "dev_raw",
+            "deviceHash", "dev_hash",
+            "server", "https://relay.example.com",
+            "serverHash", "srv_hash",
             "layoutEpoch", 10,
-            "screenRevision", 5,
             "transportGeneration", 2
         );
         Diagnostics.info("test", "safe_fields", fields);
         assertEquals(1, testSink.records.size());
         TestSink.Record record = testSink.records.get(0);
-        
+
         assertTrue(record.formatted.contains("instanceId=inst_123"));
         assertTrue(record.formatted.contains("clientId=cli_456"));
-        assertTrue(record.formatted.contains("channelId=chan_789"));
         assertTrue(record.formatted.contains("layoutEpoch=10"));
-        assertTrue(record.formatted.contains("screenRevision=5"));
         assertTrue(record.formatted.contains("transportGeneration=2"));
+        // 原始标识脱敏；对应的 *Hash 字段保留用于关联。
+        assertTrue(record.formatted.contains("channelId=[REDACTED]"));
+        assertTrue(record.formatted.contains("deviceId=[REDACTED]"));
+        assertTrue(record.formatted.contains("server=[REDACTED]"));
+        assertTrue(record.formatted.contains("channelHash=chan_hash"));
+        assertTrue(record.formatted.contains("deviceHash=dev_hash"));
+        assertTrue(record.formatted.contains("serverHash=srv_hash"));
+        assertFalse(record.formatted.contains("chan_789"));
+        assertFalse(record.formatted.contains("dev_raw"));
+        assertFalse(record.formatted.contains("relay.example.com"));
     }
 
     static class MyComplexObject {
@@ -285,15 +297,17 @@ public class DiagnosticsTest {
         int threadsCount = 10;
         int iterations = 100;
         ExecutorService executor = Executors.newFixedThreadPool(threadsCount);
-        
+
         for (int i = 0; i < threadsCount; i++) {
+            final int threadIndex = i;
             executor.submit(() -> {
                 for (int j = 0; j < iterations; j++) {
-                    Diagnostics.info("concurrent", "event", Map.of("key", "val"));
+                    // 事件名按线程与序号互不相同：各自独占限流窗口，验证并发下不丢已放行事件。
+                    Diagnostics.info("concurrent", "event-" + threadIndex + "-" + j, Map.of("key", "val"));
                 }
             });
         }
-        
+
         executor.shutdown();
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
         assertEquals(threadsCount * iterations, testSink.records.size());

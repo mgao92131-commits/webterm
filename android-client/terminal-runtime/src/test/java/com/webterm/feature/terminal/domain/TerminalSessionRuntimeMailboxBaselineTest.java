@@ -117,7 +117,7 @@ public final class TerminalSessionRuntimeMailboxBaselineTest {
     public void sendFocusInput(boolean focused) {}
 
     @Override
-    public void requestResize(int cols, int rows) {}
+    public boolean requestResize(int cols, int rows) { return true; }
 
     @Override
     public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {

@@ -28,6 +28,9 @@ render webterm-send.md ./cmd/webterm send
 render webterm-devices.md ./cmd/webterm devices
 render webterm-notify.md ./cmd/webterm notify
 render webterm-completion.md ./cmd/webterm completion
+render webterm-diagnostics.md ./cmd/webterm diagnostics
+append webterm-diagnostics.md 'summary' ./cmd/webterm diagnostics summary
+append webterm-diagnostics.md 'export' ./cmd/webterm diagnostics export
 render webterm-agent.md ./cmd/webterm-agent
 append webterm-agent.md 'run' ./cmd/webterm-agent run
 append webterm-agent.md 'config init' ./cmd/webterm-agent config init

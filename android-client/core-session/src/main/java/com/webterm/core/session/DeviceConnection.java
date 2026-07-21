@@ -5,6 +5,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.transport.api.MuxTransport;
@@ -113,7 +114,8 @@ public final class DeviceConnection {
             ? transportFactory.create(wsUrl, cookie, MUX_SUBPROTOCOL)
             : null;
         if (transport != null) {
-            transport.setTrafficAccumulator(NetworkTrafficStats.accumulatorForDevice(deviceId));
+            transport.setTrafficAccumulator(
+                NetworkTrafficStats.accumulatorForConnection(baseUrl, deviceId));
         }
         Log.i(TAG, "using relay websocket transport for " + deviceId + " generation=" + generation);
     }
@@ -374,8 +376,13 @@ public final class DeviceConnection {
         return activeChannelCount == 0 && !controlPlane.hasListener();
     }
 
-    String deviceId() {
+    public String deviceId() {
         return deviceId;
+    }
+
+    /** 归一化后的 Relay 服务器地址（诊断流量统计按 baseUrl+deviceId 隔离累计）。 */
+    public String baseUrl() {
+        return baseUrl;
     }
 
     public void start() {
@@ -508,6 +515,14 @@ public final class DeviceConnection {
     }
 
     private void reconnectTransport(String reason, boolean autoStart) {
+        if (physicalConnecting) {
+            // 当前 generation 已有在途连接（例如 drain 循环中上一帧刚触发重建）。
+            // 重复重建只会串联创建多个 Transport，其中只有一个能活到 ws_open；
+            // 在途连接失败时仍由断线/超时路径退避重连。
+            Log.i(TAG, "skip duplicate transport reconnect for " + deviceId
+                + " reason=" + reason + " generation=" + transportGeneration);
+            return;
+        }
         boolean wasDesired = physicalDesired;
         Log.i(TAG, "reconnect transport for " + deviceId + " reason=" + reason
             + " channels=" + channelRegistry.size() + " generation=" + (transportGeneration + 1));
@@ -552,7 +567,7 @@ public final class DeviceConnection {
                                          TunnelSendCallback callback) {
         if (channelId == null || channelId.isEmpty() || payload == null) {
             Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
-                "channelId", channelId == null ? "" : channelId,
+                "channelHash", DiagnosticIdHasher.processHash(channelId),
                 "failureKind", "INVALID_FRAME"));
             notifySendResult(callback, TunnelSendResult.CHANNEL_NOT_OPEN);
             return false;
@@ -561,7 +576,7 @@ public final class DeviceConnection {
             result -> notifySendResult(callback, mapSendResult(result)));
         if (offer.result != MuxOutboundQueue.Result.LOCAL_ACCEPTED) {
             Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
-                "channelId", channelId,
+                "channelHash", DiagnosticIdHasher.processHash(channelId),
                 "failureKind", offer.result.name()));
             notifySendResult(callback, mapSendResult(offer.result));
             return false;
@@ -733,7 +748,7 @@ public final class DeviceConnection {
             LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.channelId);
             if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPEN) {
                 Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
-                    "channelId", frame.channelId,
+                    "channelHash", DiagnosticIdHasher.processHash(frame.channelId),
                     "failureKind", "CHANNEL_NOT_OPEN"));
                 frame.completion.onResult(MuxOutboundQueue.Result.CHANNEL_NOT_OPEN);
                 continue;
@@ -744,7 +759,7 @@ public final class DeviceConnection {
             }
             frame.completion.onResult(MuxOutboundQueue.Result.TRANSPORT_REJECTED);
             Diagnostics.warn("device_connection", "outbound_queue_rejected", physicalFields(
-                "channelId", frame.channelId,
+                "channelHash", DiagnosticIdHasher.processHash(frame.channelId),
                 "failureKind", "TRANSPORT_REJECTED"));
             reconnectTransport("tunnel frame enqueue rejected", true);
         }
@@ -801,7 +816,8 @@ public final class DeviceConnection {
 
     private Map<String, Object> physicalFields(Object... pairs) {
         java.util.HashMap<String, Object> fields = new java.util.HashMap<>();
-        fields.put("deviceId", deviceId);
+        // 诊断字段只写进程级 hash，原始 deviceId/channelId 不落日志（随导出包外发）。
+        fields.put("deviceHash", DiagnosticIdHasher.processHash(deviceId));
         fields.put("transportGeneration", transportGeneration);
         fields.put("activeChannelCount", activeChannelCount);
         addFields(fields, pairs);
@@ -810,8 +826,8 @@ public final class DeviceConnection {
 
     private Map<String, Object> channelFields(LogicalChannelRegistry.Channel channel, Object... pairs) {
         java.util.HashMap<String, Object> fields = new java.util.HashMap<>();
-        fields.put("deviceId", deviceId);
-        fields.put("channelId", channel.id);
+        fields.put("deviceHash", DiagnosticIdHasher.processHash(deviceId));
+        fields.put("channelHash", DiagnosticIdHasher.processHash(channel.id));
         fields.put("transportGeneration", transportGeneration);
         fields.put("activeChannelCount", activeChannelCount);
         addFields(fields, pairs);

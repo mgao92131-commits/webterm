@@ -179,7 +179,7 @@ public final class TerminalSessionRuntimeRegistryTest {
                                          boolean shift, boolean alt, boolean ctrl, boolean meta,
                                          boolean pressed) {}
     @Override public void sendFocusInput(boolean focused) {}
-    @Override public void requestResize(int cols, int rows) {}
+    @Override public boolean requestResize(int cols, int rows) { return true; }
     @Override public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq,
                                                 int limit) { return false; }
     @Override public void acquireLayout(boolean interactive) {}

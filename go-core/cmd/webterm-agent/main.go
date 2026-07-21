@@ -18,7 +18,12 @@ import (
 	agentruntime "webterm/go-core/internal/runtime"
 )
 
-const version = "0.1.0-dev"
+// 版本三元组，构建时可经 -ldflags 注入；诊断导出与事件均以此为准。
+var (
+	version   = "0.1.0-dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
+)
 
 type usageError struct{ error }
 
@@ -83,7 +88,8 @@ func runAgent(configPath, ipcEndpoint string) error {
 		cfg.IPCEndpoint = ipcEndpoint
 		cfg.SocketPath = ""
 	}
-	application := app.New(cfg, version)
+	application := app.NewWithBuildInfo(cfg, app.BuildInfo{Version: version, GitCommit: gitCommit, BuildTime: buildTime})
+	defer application.Shutdown()
 	supervisor := agentruntime.New(application)
 	ipc := localipc.NewServer(application.IPCEndpoint(), application)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

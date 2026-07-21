@@ -244,7 +244,11 @@ public final class WebSocketMuxTransport implements MuxTransport {
 
     private static String safeHost(String url) {
         try {
-            return okhttp3.HttpUrl.get(url).host();
+            // OkHttp HttpUrl 只接受 http/https；ws/wss 需要先改写 scheme 再解析。
+            String httpUrl = url.startsWith("wss://") ? "https://" + url.substring(6)
+                : url.startsWith("ws://") ? "http://" + url.substring(5)
+                : url;
+            return okhttp3.HttpUrl.get(httpUrl).host();
         } catch (RuntimeException ignored) {
             return "invalid";
         }

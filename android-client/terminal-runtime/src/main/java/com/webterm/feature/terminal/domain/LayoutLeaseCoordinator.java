@@ -35,6 +35,11 @@ public final class LayoutLeaseCoordinator {
   private int retryAttempt;
   private volatile int latestCols;
   private volatile int latestRows;
+  /** 会话级"已发送"尺寸：页面重建（新 Controller）不会丢失，避免重复下发相同 resize。 */
+  private volatile int lastSentCols;
+  private volatile int lastSentRows;
+  private volatile String lastSentLeaseId = "";
+  private volatile TerminalSessionRuntime.ScreenConnection lastSentConnection;
 
   public LayoutLeaseCoordinator(TerminalSessionRuntime.TimeoutScheduler scheduler,
                                 Executor executor,
@@ -76,8 +81,8 @@ public final class LayoutLeaseCoordinator {
     latestCols = cols;
     latestRows = rows;
     TerminalSessionRuntime.ScreenConnection connection = environment.connection();
-    if (environment.isTerminalConnected() && hasLease() && connection != null) {
-      connection.requestResize(cols, rows);
+    if (environment.isTerminalConnected() && connection != null) {
+      sendResizeIfNeeded(connection);
     }
   }
 
@@ -113,9 +118,7 @@ public final class LayoutLeaseCoordinator {
     TerminalSessionRuntime.ScreenConnection connection = environment.connection();
     if (connection != null) {
       connection.setLayoutLeaseId(leaseId);
-      if (hasLease() && latestCols > 0 && latestRows > 0) {
-        connection.requestResize(latestCols, latestRows);
-      }
+      sendResizeIfNeeded(connection);
     }
     long token = generation.get();
     if (hasLease()) scheduleRenewal(token, leaseId, expiresAtMs);
@@ -226,6 +229,26 @@ public final class LayoutLeaseCoordinator {
   private void updateConnectionLease() {
     TerminalSessionRuntime.ScreenConnection connection = environment.connection();
     if (connection != null) connection.setLayoutLeaseId(leaseId);
+  }
+
+  /**
+   * 同租约、同连接、同尺寸不重复下发；只有新租约、新物理连接或尺寸真正
+   * 变化时才发送一次，并把"已发送"状态提升到会话级（跨页面重建存活）。
+   * 发送未被本地队列接受时不记录 lastSent，后续相同请求会重试。
+   */
+  private void sendResizeIfNeeded(@NonNull TerminalSessionRuntime.ScreenConnection connection) {
+    if (!hasLease() || latestCols <= 0 || latestRows <= 0) return;
+    if (connection == lastSentConnection
+        && leaseId.equals(lastSentLeaseId)
+        && latestCols == lastSentCols && latestRows == lastSentRows) {
+      return;
+    }
+    if (connection.requestResize(latestCols, latestRows)) {
+      lastSentConnection = connection;
+      lastSentLeaseId = leaseId;
+      lastSentCols = latestCols;
+      lastSentRows = latestRows;
+    }
   }
 
   private void notifyReady() {

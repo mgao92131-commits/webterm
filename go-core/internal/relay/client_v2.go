@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -13,6 +14,7 @@ import (
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 )
@@ -31,6 +33,10 @@ type V2Client struct {
 	router  *application.SessionRouter
 	http    *HTTPProxy
 	streams *StreamMultiplexer
+
+	// connected 标记本次 runOnce 的 realtime plane 是否注册成功，用于在 Run 循环
+	// 区分“连接成功后断开”与“连接失败”两类计数（仅旁路指标，不影响重连流程）。
+	connected atomic.Bool
 
 	writeLocks sync.Map // map[*websocket.Conn]*sync.Mutex，两个 plane 绝不共享写锁
 }
@@ -68,11 +74,19 @@ func (client *V2Client) Run(ctx context.Context) error {
 	}
 	delay := time.Second
 	for {
+		client.connected.Store(false)
+		diagnostics.Default.RelayConnectCount.Add(1)
 		err := client.runOnce(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		client.app.SetRelayConnected(false, "", errString(err))
+		if client.connected.Load() {
+			diagnostics.Default.RelayDisconnectCount.Add(1)
+		} else {
+			diagnostics.Default.RelayConnectFailureCount.Add(1)
+		}
+		client.app.SetRelayConnected(false, "", ClassifyRelayError(err))
+		diagnostics.Default.RelayReconnectCount.Add(1)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -87,13 +101,13 @@ func (client *V2Client) Run(ctx context.Context) error {
 func (client *V2Client) runOnce(ctx context.Context) error {
 	relayURL, err := agentWebSocketURL(client.cfg.URL)
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorDialFailed, err)
 	}
 	realtimeConn, _, err := websocket.Dial(ctx, relayURL, &websocket.DialOptions{
 		CompressionMode: websocket.CompressionNoContextTakeover,
 	})
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorDialFailed, err)
 	}
 	realtimeConn.SetReadLimit(8 << 20)
 	defer realtimeConn.Close(websocket.StatusNormalClosure, "")
@@ -105,7 +119,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	}
 	bulkConn, _, err := websocket.Dial(ctx, relayURL, nil)
 	if err != nil {
-		return fmt.Errorf("connect bulk plane: %w", err)
+		return markRelayError(app.RelayErrorDialFailed, fmt.Errorf("connect bulk plane: %w", err))
 	}
 	bulkConn.SetReadLimit(8 << 20)
 	defer bulkConn.Close(websocket.StatusNormalClosure, "")
@@ -118,7 +132,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	go func() { errCh <- client.readLoop(ctx, realtimeConn) }()
 	go func() { errCh <- client.readLoop(ctx, bulkConn) }()
-	return <-errCh
+	return markRelayError(app.RelayErrorConnectionClosed, <-errCh)
 }
 
 func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, plane string) error {
@@ -128,26 +142,29 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, pl
 		"deviceName": client.cfg.DeviceName,
 		"plane":      plane,
 	}); err != nil {
-		return err
+		return markRelayError(app.RelayErrorConnectionClosed, err)
 	}
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorConnectionClosed, err)
 	}
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
-		return errors.New("bad register response")
+		return markRelayError(app.RelayErrorProtocolFailed, errors.New("bad register response"))
 	}
 	switch stringValue(msg["type"]) {
 	case v2AgentRegisteredMessage:
 		if plane == agentPlaneRealtime {
-			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
+			client.connected.Store(true)
+			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), app.RelayErrorNone)
 		}
 		return nil
 	case v2AgentErrorMessage:
-		return fmt.Errorf("relay error: %s", stringValue(msg["message"]))
+		return markRelayError(app.RelayErrorAuthRejected,
+			fmt.Errorf("relay error: %s", stringValue(msg["message"])))
 	default:
-		return fmt.Errorf("unexpected register response: %s", stringValue(msg["type"]))
+		return markRelayError(app.RelayErrorProtocolFailed,
+			fmt.Errorf("unexpected register response: %s", stringValue(msg["type"])))
 	}
 }
 

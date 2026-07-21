@@ -45,11 +45,13 @@ public final class ScreenMailbox {
   public static final class Fence {
     public final String reason;
     public final long discardedBytes;
+    public final long discardedMessages;
     public final long overflowCount;
 
-    Fence(String reason, long discardedBytes, long overflowCount) {
+    Fence(String reason, long discardedBytes, long discardedMessages, long overflowCount) {
       this.reason = reason;
       this.discardedBytes = discardedBytes;
+      this.discardedMessages = discardedMessages;
       this.overflowCount = overflowCount;
     }
   }
@@ -83,6 +85,7 @@ public final class ScreenMailbox {
   private boolean fencePending;
   private String fenceReason = "";
   private long fenceBytes;
+  private long fenceMessages;
   private long fenceOverflows;
 
   public ScreenMailbox(int maxMessages, long maxBytes) {
@@ -106,12 +109,14 @@ public final class ScreenMailbox {
                   retainedSnapshot.enqueuedAtNanos);
       long discarded = pendingBytes + payload.length
           - (snapshot == null ? 0L : snapshot.payload.length);
+      long discardedMessages = messages.size() + 1L - (snapshot == null ? 0L : 1L);
       messages.clear();
       pendingBytes = 0L;
       generation++;
       fencePending = true;
       fenceOverflows++;
       fenceBytes = Math.max(fenceBytes, discarded);
+      fenceMessages += discardedMessages;
       fenceReason = !validFrameSize
           ? "screen mailbox rejected oversized frame"
           : (nextBytes > maxBytes
@@ -135,10 +140,11 @@ public final class ScreenMailbox {
 
   public synchronized Drain poll() {
     if (fencePending) {
-      Fence fence = new Fence(fenceReason, fenceBytes, fenceOverflows);
+      Fence fence = new Fence(fenceReason, fenceBytes, fenceMessages, fenceOverflows);
       fencePending = false;
       fenceReason = "";
       fenceBytes = 0L;
+      fenceMessages = 0L;
       fenceOverflows = 0L;
       return new Drain(null, fence);
     }
@@ -174,6 +180,7 @@ public final class ScreenMailbox {
     fencePending = false;
     fenceReason = "";
     fenceBytes = 0L;
+    fenceMessages = 0L;
     fenceOverflows = 0L;
   }
 
@@ -183,6 +190,10 @@ public final class ScreenMailbox {
 
   synchronized int pendingMessages() {
     return messages.size();
+  }
+
+  synchronized long pendingBytes() {
+    return pendingBytes;
   }
 
   @Nullable

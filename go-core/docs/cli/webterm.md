@@ -10,6 +10,7 @@ Usage:
 Available Commands:
   completion  生成 shell 补全脚本
   devices     查询 Android 设备
+  diagnostics 查询或导出 Agent 诊断信息
   help        Help about any command
   notify      发送 WebTerm 通知
   send        发送文件到 Android 设备

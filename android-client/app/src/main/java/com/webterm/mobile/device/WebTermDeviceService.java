@@ -370,6 +370,8 @@ public final class WebTermDeviceService extends Service {
             configs.remove(key);
             if (manager != null) {
                 manager.setControlListener(null);
+                // 设备从配置中彻底移除时清理其流量累计器；重连/Transport 重建不会走到这里。
+                NetworkTrafficStats.unregisterConnection(manager.baseUrl(), manager.deviceId());
                 registry.releaseIfIdle(manager);
             }
         }
@@ -411,6 +413,9 @@ public final class WebTermDeviceService extends Service {
         preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, false).apply();
         for (DeviceConnection manager : managers.values()) {
             manager.setControlListener(null);
+            // 「全部停止」是显式终止：清理每个连接的流量累计器，避免历史连接常驻统计；
+            // 重连/Transport 重建不经过此路径，不会被清零。
+            NetworkTrafficStats.unregisterConnection(manager.baseUrl(), manager.deviceId());
             registry.releaseIfIdle(manager);
         }
         managers.clear();
