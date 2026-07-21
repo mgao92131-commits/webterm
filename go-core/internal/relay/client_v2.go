@@ -11,11 +11,11 @@ import (
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/agentrouter"
 	"webterm/go-core/internal/app"
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/config"
 	"webterm/go-core/internal/diagnostics"
-	"webterm/go-core/internal/mux"
 	"webterm/go-core/internal/relaycore"
 )
 
@@ -42,19 +42,9 @@ type V2Client struct {
 }
 
 func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
-	router := application.NewSessionRouterWithMux(appInstance.Sessions(), mux.MuxServeAdapter, appInstance.Logs())
-	router.SetControlHandler(func(ctx context.Context, _ application.MuxSession, msg map[string]any) {
-		if appInstance.Logs() != nil {
-			appInstance.Logs().Add("debug", "relay", "mux control message type="+stringValue(msg["type"]))
-		}
-	})
-	// 在 SetControlHandler 之后注入，使 file_send.* 优先分发到 FileSendService，
-	// 其余控制消息继续落到上面的 debug logger。
-	router.SetFileSendService(appInstance.FileSendService())
-	// 注入 Relay 上传服务；缺少该注入时上传路由会返回 503。
-	router.SetFileUploadService(appInstance.FileUploadService())
-	// agent_notification.ack 链到 Dispatcher（清 pending），顺序在 file_send 之后无冲突。
-	router.SetAgentNotificationDispatcher(appInstance.AgentNotificationDispatcher())
+	// SessionRouter 的完整装配（Mux、控制消息、文件传输、通知）统一由 agentrouter
+	// 提供，Direct Server 复用同一份装配逻辑。
+	router := agentrouter.New(appInstance, "relay")
 	client := &V2Client{
 		cfg:    cfg,
 		app:    appInstance,
