@@ -18,6 +18,18 @@ public interface HomeHost extends RelayNavigator {
 	RelayStatusBinding bindRelayStatus(RelayService service, TextView subtitle,
 	                                  StatusIndicatorView status);
 	void showSettingsDialog();
+
+    /** Open the “添加直连设备” dialog. */
+    void showAddDirectDeviceDialog();
+
+    /** Edit a persisted Direct device (re-validates credentials before saving). */
+    void editDirectDevice(ServerConfig server);
+
+    /** Force-refresh the cookie and rebuild the connection for a Direct device. */
+    void reconnectDirectDevice(ServerConfig server);
+
+    /** Delete a persisted Direct device (Android-side only; does not touch Agent sessions). */
+    void deleteDirectDevice(ServerConfig server);
     void showTerminal(ServerConfig server, String sessionId, String termTitle,
                       String createdAt, String instanceId, String cwd);
 

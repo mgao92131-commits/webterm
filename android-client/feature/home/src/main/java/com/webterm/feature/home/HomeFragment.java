@@ -90,6 +90,9 @@ public final class HomeFragment extends Fragment {
 		HomeScreenBuilder.HomeResult home = HomeScreenBuilder.buildHome(
 			requireActivity(),
 			() -> {
+                if (mHost != null) mHost.showAddDirectDeviceDialog();
+            },
+			() -> {
                 if (mHost != null) mHost.showSettingsDialog();
             },
             () -> {
@@ -136,10 +139,22 @@ public final class HomeFragment extends Fragment {
                 new LinearLayout.LayoutParams(-1, -2));
             return;
         }
+        DirectCardActions directActions = new DirectCardActions() {
+            @Override public void onEditDirect(ServerConfig s) {
+                if (mHost != null) mHost.editDirectDevice(s);
+            }
+            @Override public void onReconnectDirect(ServerConfig s) {
+                if (mHost != null) mHost.reconnectDirectDevice(s);
+            }
+            @Override public void onDeleteDirect(ServerConfig s) {
+                if (mHost != null) mHost.deleteDirectDevice(s);
+            }
+        };
         for (ServerConfig server : allDevices) {
 			mSessionList.addView(HomeScreenBuilder.deviceCard(
 				requireActivity(), server,
-				(v) -> mViewModel.selectServer(server)
+				(v) -> mViewModel.selectServer(server),
+				directActions
 			));
         }
     }

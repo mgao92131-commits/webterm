@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
@@ -19,14 +20,24 @@ import com.webterm.ui.common.UIUtils;
 public final class HomeScreenBuilder {
     private HomeScreenBuilder() {}
 
-	public static HomeResult buildHome(Activity activity, Runnable onSettings, Runnable onRefresh, Runnable onRelaySettings,
+    // 三点菜单项 ID（避免裸数字）。
+    private static final int MENU_ADD_DIRECT = 1;
+    private static final int MENU_RELAY = 2;
+    private static final int MENU_REFRESH = 3;
+    private static final int MENU_SETTINGS = 4;
+    private static final int MENU_CRASH_LOGS = 5;
+    private static final int MENU_DIAGNOSTIC_LOGS = 6;
+
+	public static HomeResult buildHome(Activity activity, Runnable onAddDirectDevice, Runnable onSettings,
+                                     Runnable onRefresh, Runnable onRelaySettings,
                                      Runnable onCrashLogs, boolean canShareDiagnosticLogs,
                                      Runnable onDiagnosticLogs) {
-		return buildTopLevel(activity, "WebTerm", "中转设备", onSettings, onRefresh, onRelaySettings,
-                onCrashLogs, canShareDiagnosticLogs, onDiagnosticLogs);
+		return buildTopLevel(activity, "WebTerm", "设备列表", onAddDirectDevice, onSettings, onRefresh,
+                onRelaySettings, onCrashLogs, canShareDiagnosticLogs, onDiagnosticLogs);
 	}
 
-	private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText, Runnable onSettings,
+	private static HomeResult buildTopLevel(Activity activity, String titleText, String subtitleText,
+                                          Runnable onAddDirectDevice, Runnable onSettings,
                                           Runnable onRefresh, Runnable onRelaySettings, Runnable onCrashLogs,
                                           boolean canShareDiagnosticLogs, Runnable onDiagnosticLogs) {
         LinearLayout root = new LinearLayout(activity);
@@ -81,27 +92,32 @@ public final class HomeScreenBuilder {
         moreBtn.setPadding(0, 0, 0, 0);
         moreBtn.setOnClickListener((v) -> {
             PopupMenu popup = new PopupMenu(activity, moreBtn);
-			popup.getMenu().add(0, 1, 0, "终端设置");
-			popup.getMenu().add(0, 2, 1, "中转服务");
-			popup.getMenu().add(0, 3, 2, "刷新设备");
-			popup.getMenu().add(0, 4, 3, "导出崩溃日志");
+			popup.getMenu().add(0, MENU_ADD_DIRECT, 0, "添加直连设备");
+			popup.getMenu().add(0, MENU_RELAY, 1, "中转服务");
+			popup.getMenu().add(0, MENU_REFRESH, 2, "刷新设备");
+			popup.getMenu().add(0, MENU_SETTINGS, 3, "终端设置");
+			popup.getMenu().add(0, MENU_CRASH_LOGS, 4, "导出崩溃日志");
 			if (canShareDiagnosticLogs) {
-				popup.getMenu().add(0, 5, 4, "导出诊断日志");
+				popup.getMenu().add(0, MENU_DIAGNOSTIC_LOGS, 5, "导出诊断日志");
 			}
 			popup.setOnMenuItemClickListener((item) -> {
-				if (item.getItemId() == 1) {
-					onSettings.run();
+				int id = item.getItemId();
+				if (id == MENU_ADD_DIRECT) {
+					onAddDirectDevice.run();
 					return true;
-				} else if (item.getItemId() == 2) {
+				} else if (id == MENU_RELAY) {
 					onRelaySettings.run();
 					return true;
-				} else if (item.getItemId() == 3) {
+				} else if (id == MENU_REFRESH) {
 					onRefresh.run();
 					return true;
-				} else if (item.getItemId() == 4) {
+				} else if (id == MENU_SETTINGS) {
+					onSettings.run();
+					return true;
+				} else if (id == MENU_CRASH_LOGS) {
                     onCrashLogs.run();
                     return true;
-                } else if (item.getItemId() == 5) {
+                } else if (id == MENU_DIAGNOSTIC_LOGS) {
                     onDiagnosticLogs.run();
                     return true;
                 }
@@ -135,7 +151,7 @@ public final class HomeScreenBuilder {
 
     public static TextView emptyState(Activity activity) {
         TextView empty = new TextView(activity);
-		empty.setText("暂无在线设备\n请先配置中转服务并启动 PC Agent");
+		empty.setText("暂无设备\n可从右上角菜单添加直连设备，或配置中转服务");
         empty.setTextColor(DesignTokens.TEXT_TERTIARY);
         empty.setTextSize(DesignTokens.TEXT_BODY_SIZE);
         empty.setGravity(Gravity.CENTER);
@@ -143,7 +159,8 @@ public final class HomeScreenBuilder {
         return empty;
     }
 
-	public static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick) {
+	public static View deviceCard(Activity activity, ServerConfig server, View.OnClickListener onClick,
+                                 DirectCardActions directActions) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
@@ -156,17 +173,19 @@ public final class HomeScreenBuilder {
         card.setBackground(UIUtils.panelBackground(activity));
         card.setOnClickListener(onClick);
 
-        TextView badge = new TextView(activity);
-		badge.setText("R");
-		int badgeTextColor = DesignTokens.INFO;
-        badge.setTextColor(badgeTextColor);
-        badge.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
-        badge.setTypeface(DesignTokens.fontGeistSansSemibold(activity));
-        badge.setGravity(Gravity.CENTER);
+        boolean direct = server.isDirectDevice();
+        int accent = direct ? DesignTokens.SUCCESS : DesignTokens.INFO;
+
+        ImageView badge = new ImageView(activity);
+        badge.setImageResource(direct
+            ? com.webterm.feature.home.R.drawable.ic_device_direct
+            : com.webterm.feature.home.R.drawable.ic_device_relay);
+        badge.setColorFilter(accent);
+        int badgePadding = UIUtils.dp(activity, DesignTokens.SPACE_2);
+        badge.setPadding(badgePadding, badgePadding, badgePadding, badgePadding);
         GradientDrawable badgeBg = new GradientDrawable();
         badgeBg.setShape(GradientDrawable.RECTANGLE);
-		int badgeBgColor = DesignTokens.withAlpha(DesignTokens.INFO, 0x4D);
-        badgeBg.setColor(badgeBgColor);
+        badgeBg.setColor(DesignTokens.withAlpha(accent, 0x4D));
         badgeBg.setCornerRadius(UIUtils.dp(activity, DesignTokens.RADIUS_SM));
         badge.setBackground(badgeBg);
         LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(UIUtils.dp(activity, DesignTokens.DEVICE_BADGE_SIZE), UIUtils.dp(activity, DesignTokens.DEVICE_BADGE_SIZE));
@@ -183,19 +202,67 @@ public final class HomeScreenBuilder {
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView detail = new TextView(activity);
-		detail.setText("中转设备 · Relay");
+		detail.setText(direct ? "直连设备 · Direct" : "中转设备 · Relay");
         detail.setTextColor(DesignTokens.TEXT_SECONDARY);
         detail.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
         detail.setSingleLine(true);
         detail.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        TextView address = new TextView(activity);
+        address.setText(displayAddress(server));
+        address.setTextColor(DesignTokens.TEXT_TERTIARY);
+        address.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        address.setSingleLine(true);
+        address.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         textArea.addView(name, new LinearLayout.LayoutParams(-1, -2));
         textArea.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        textArea.addView(address, new LinearLayout.LayoutParams(-1, -2));
         card.addView(textArea, new LinearLayout.LayoutParams(0, -2, 1));
+
+        // Direct 卡片右侧三点菜单：编辑 / 重新连接 / 删除。
+        if (direct && directActions != null) {
+            ImageButton moreBtn = new ImageButton(activity);
+            moreBtn.setImageResource(com.webterm.feature.home.R.drawable.ic_more_vert);
+            moreBtn.setColorFilter(DesignTokens.TEXT_SECONDARY);
+            moreBtn.setBackground(UIUtils.iconButtonBackground(activity, 18));
+            moreBtn.setPadding(0, 0, 0, 0);
+            moreBtn.setOnClickListener((v) -> {
+                PopupMenu popup = new PopupMenu(activity, moreBtn);
+                popup.getMenu().add(0, 1, 0, "编辑");
+                popup.getMenu().add(0, 2, 1, "重新连接");
+                popup.getMenu().add(0, 3, 2, "删除");
+                popup.setOnMenuItemClickListener((item) -> {
+                    int id = item.getItemId();
+                    if (id == 1) {
+                        directActions.onEditDirect(server);
+                        return true;
+                    } else if (id == 2) {
+                        directActions.onReconnectDirect(server);
+                        return true;
+                    } else if (id == 3) {
+                        directActions.onDeleteDirect(server);
+                        return true;
+                    }
+                    return false;
+                });
+                popup.show();
+            });
+            LinearLayout.LayoutParams moreLp = new LinearLayout.LayoutParams(
+                UIUtils.dp(activity, 36), UIUtils.dp(activity, 36));
+            moreLp.setMargins(UIUtils.dp(activity, DesignTokens.SPACE_2), 0, 0, 0);
+            card.addView(moreBtn, moreLp);
+        }
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, UIUtils.dp(activity, DesignTokens.SPACE_3));
         card.setLayoutParams(lp);
         return card;
+    }
+
+    /** 卡片附加信息：去掉协议前缀后的 host[:port]，Direct 显示地址、Relay 显示中转服务器。 */
+    private static String displayAddress(ServerConfig server) {
+        String url = server.getUrl();
+        if (url == null || url.isEmpty()) return "";
+        return url.replaceFirst("^https?://", "");
     }
 
     private static GradientDrawable outlineBackground(Activity activity, int radius) {
