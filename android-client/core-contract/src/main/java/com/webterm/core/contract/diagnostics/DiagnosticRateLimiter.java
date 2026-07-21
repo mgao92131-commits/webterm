@@ -14,6 +14,9 @@ import java.util.function.LongSupplier;
 public final class DiagnosticRateLimiter {
     public static final long DEFAULT_WINDOW_MILLIS = 5000L;
 
+    /** 状态表默认容量上限；超出时回收，保证内存有界。 */
+    private static final int DEFAULT_MAX_WINDOWS = 4096;
+
     private static final class Window {
         long windowStart;
         /** 当前窗口内被抑制的条数。 */
@@ -25,6 +28,8 @@ public final class DiagnosticRateLimiter {
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
     private final LongSupplier clock;
     private final long windowMillis;
+    /** 状态表容量上限。包内可见以便测试调小；默认 {@link #DEFAULT_MAX_WINDOWS}。 */
+    int maxWindows = DEFAULT_MAX_WINDOWS;
 
     public DiagnosticRateLimiter() {
         this(System::currentTimeMillis, DEFAULT_WINDOW_MILLIS);
@@ -42,16 +47,44 @@ public final class DiagnosticRateLimiter {
      */
     public boolean tryPass(String area, String event, String discriminator) {
         Window window = windows.computeIfAbsent(keyOf(area, event, discriminator), k -> new Window());
+        boolean allowed;
         synchronized (window) {
             long now = clock.getAsLong();
             if (now - window.windowStart >= windowMillis) {
                 window.lastWindowSuppressed = window.suppressed;
                 window.suppressed = 0;
                 window.windowStart = now;
-                return true;
+                allowed = true;
+            } else {
+                window.suppressed++;
+                allowed = false;
             }
-            window.suppressed++;
-            return false;
+        }
+        if (windows.size() > maxWindows) {
+            evict();
+        }
+        return allowed;
+    }
+
+    /**
+     * 状态表超限时回收容量：先删过期窗口；仍超上限时删到一半。
+     * 诊断限流在内存有界与精确计数之间取前者，被回收的 key 再次出现会开启新窗口。
+     */
+    private void evict() {
+        long now = clock.getAsLong();
+        windows.entrySet().removeIf(entry -> {
+            synchronized (entry.getValue()) {
+                return now - entry.getValue().windowStart >= windowMillis;
+            }
+        });
+        if (windows.size() <= maxWindows) {
+            return;
+        }
+        int target = maxWindows / 2;
+        java.util.Iterator<String> iterator = windows.keySet().iterator();
+        while (windows.size() > target && iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
         }
     }
 
@@ -69,6 +102,11 @@ public final class DiagnosticRateLimiter {
             window.lastWindowSuppressed = 0;
             return count;
         }
+    }
+
+    /** 测试用：返回当前窗口记录数量。 */
+    int windowCount() {
+        return windows.size();
     }
 
     private static String keyOf(String area, String event, String discriminator) {

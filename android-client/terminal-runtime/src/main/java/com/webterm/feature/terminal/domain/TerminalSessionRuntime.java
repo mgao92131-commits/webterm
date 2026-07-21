@@ -181,7 +181,9 @@ public final class TerminalSessionRuntime {
     return Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "TerminalModel-" + sessionId);
       t.setUncaughtExceptionHandler((thread, ex) -> {
-        // TODO: 上报非致命错误
+        // 仅上报异常类型，避免异常正文携带终端内容进入诊断。
+        Diagnostics.warn("terminal_runtime", "model_executor_uncaught",
+            java.util.Map.of("exceptionType", ex.getClass().getSimpleName()));
       });
       return t;
     });

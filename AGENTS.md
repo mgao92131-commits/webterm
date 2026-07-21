@@ -30,7 +30,11 @@ WebTerm 是 Android-only、Relay-only 的远程终端项目。正式组件只有
 - `go-core/internal/mux`：Android 单 WS 多通道复用。
 - `go-core/internal/relay*`：Relay/Agent 中转、认证、存储和指标。
 - `go-core/internal/agenthooks`、`agentnotify`、`hook`：AI Agent hook 与通知。
+- `go-core/internal/logs`：结构化事件日志（内存 Ring + 本地 `agent.jsonl` 1 MiB×3 滚动 + 5s 限流，限流状态表容量有界）；新埋点用 `logger.Event`，ID 类字段经 `SafeID/HashID`。
+- `go-core/internal/diagnostics`：进程级指标（`diagnostics.Default`）与本地导出；`webterm diagnostics summary|export` 经 Local IPC 查询/导出诊断包（manifest/events/metrics/state/summary）。
 - `android-client/core-session`、`core-relay`、`feature/*`：Android 连接与业务 UI。
+
+诊断约定：正常路径只计数（metrics/snapshot），状态变化与异常才写事件；禁止记录终端正文、输入正文与凭据；日志与诊断包落在按 endpoint 隔离的 runtime 目录下；Agent 版本经 `-ldflags -X main.version/gitCommit/buildTime` 注入。诊断查询/导出统一走 Local IPC（Unix socket / Windows named pipe），不再有本地 HTTP 控制端口。
 
 ## 验证命令
 

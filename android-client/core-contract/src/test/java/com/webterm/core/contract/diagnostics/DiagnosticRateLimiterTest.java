@@ -79,4 +79,13 @@ public class DiagnosticRateLimiterTest {
     public void suppressedSinceLastWithoutAnyEventReturnsZero() {
         assertEquals(0, limiter.suppressedSinceLast("none", "none", null));
     }
+
+    @Test
+    public void statesAreBoundedByMaxWindows() {
+        limiter.maxWindows = 16;
+        for (int i = 0; i < 200; i++) {
+            limiter.tryPass("area", "event", "d" + i);
+        }
+        assertTrue("windows should stay bounded", limiter.windowCount() <= limiter.maxWindows + 1);
+    }
 }
