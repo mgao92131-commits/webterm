@@ -178,3 +178,16 @@ diagnostics 的底层数据源（`diagnostics.Default` 指标注册表、`app.Di
 3. **本地未提交改动**不在迁移范围（见 §3），需人工决定是否先提交。
 4. **Android Gradle 任务名**：diagnostics variant 的精确测试/lint 任务名需在对应任务中用 `./gradlew tasks` 核实并记录。
 5. 旧 `/control/diagnostics` 的字段（runId/buildInfo/metrics/state）在 Local IPC 下的命名与 envelope 类型设计，留待任务 4 确定，需与现有 CLI 子命令风格一致。
+
+---
+
+## 11. 后记：验收后整改（本计划与现状的偏差）
+
+迁移验收完成后又进行了一轮代码整改（详见 `docs/reports/diagnostics-after-win10-acceptance.md` §11）。以下各点以整改后代码为准，本计划上文相应描述仅作历史记录：
+
+- mux 物理流量统计（`mux.Session.TrafficSnapshot`/`PhysicalTraffic`/`PhysicalWriter.TxSnapshot`）已作为死代码删除；§4 分组 B 与 §6 提交 6 中的「物理连接收发」指标不再存在，mux 只保留通道/写失败计数与 `logger.Event` 结构化事件。
+- Android `DiagnosticRateLimiter` 已接入 `Diagnostics` 门面（原计划「接线延后」的事项已完成），另有 `errorUnthrottled` 等不限流入口。
+- Go `logs.SafeEnum` 已删除（无调用方）；Relay 错误改为 `RelayErrorKind` 分类枚举，原始错误文本不进日志/状态/摘要。
+- Android 日志容量从「导出时 planDeletions 清理」改为运行时强约束（启动 trim + 每 60s 周期 trim + 导出前强制 trim）；导出包字段默认脱敏为 `serverHash`/`deviceHash`/`channelHash`。
+- 未埋点指标组（mailbox/input/resync/projectionSkippedNoClient/耗时桶）在快照中带 `"instrumented": false` 标记，CLI 显示 not instrumented。
+- 导出 ZIP（Go 与 Android 两侧）均已原子化：毫秒+随机后缀、tmp+rename、失败清理、历史保留 5 个。
