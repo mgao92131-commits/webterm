@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -55,6 +56,12 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 		t.Fatalf("PowerShell hook 脚本不存在: %s", hookPath)
 	}
 
+	// CI 诊断：在 hook 脚本中注入调试埋点，定位"第二次上报为何消失"。
+	// 记录每次 Invoke 的时间与捕获到的 last 命令、子进程 spawn 结果、catch 到的异常。
+	hookDebugLog := filepath.Join(tempDir, "hook-debug.log")
+	instrumentPowerShellHook(t, hookPath, hookDebugLog)
+	hookStateDir := filepath.Join(tempDir, "hookstate")
+
 	// 起本地 IPC 服务端接收 session_update 信封。
 	endpoint := fmt.Sprintf("npipe://./pipe/webterm-hook-test-%d", os.Getpid())
 	listener, err := localipc.Listen(endpoint)
@@ -76,6 +83,7 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 			"WEBTERM_INTEGRATION":     "1",
 			"WEBTERM_SESSION_ID":      "hook-e2e-test",
 			"WEBTERM_IPC_ENDPOINT":    endpoint,
+			"WEBTERM_HOOK_STATE_DIR":  hookStateDir,
 		},
 	})
 	if err != nil {
@@ -102,6 +110,7 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 				if _, err := proc.Write([]byte("echo hello\r")); err != nil {
 					t.Fatalf("写入 PTY 失败: %v", err)
 				}
+				t.Logf("%.1fs 已写入 echo hello", time.Since(start).Seconds())
 				continue
 			}
 			if update.LastInput == "" {
@@ -121,12 +130,62 @@ func TestPowerShellSessionHookReportsPromptOverIPC(t *testing.T) {
 			return
 		case <-deadline:
 			t.Logf("超时前 ConPTY 画面尾部:\n%s", screenBuf.Tail(4<<10))
+			if data, err := os.ReadFile(hookDebugLog); err == nil {
+				t.Logf("hook 调试日志:\n%s", data)
+			} else {
+				t.Logf("hook 调试日志不可读: %v", err)
+			}
+			if entries, err := os.ReadDir(hookStateDir); err == nil {
+				for _, e := range entries {
+					data, _ := os.ReadFile(filepath.Join(hookStateDir, e.Name()))
+					t.Logf("hook 退避状态 %s: %s", e.Name(), data)
+				}
+			} else {
+				t.Logf("hook 退避状态目录不可读: %v", err)
+			}
 			if !sentEcho {
 				t.Fatal("超时：未收到初始 prompt 的 session_update，hook 注入可能未生效")
 			}
 			t.Fatal("超时：未收到 last_input 非空的 session_update")
 		}
 	}
+}
+
+// instrumentPowerShellHook 在生成的 hook 脚本里注入 CI 调试埋点（仅测试使用）。
+// 埋点经 WEBTERM_HOOK_DEBUG 环境变量指定的文件输出，避免污染 ConPTY 画面。
+func instrumentPowerShellHook(t *testing.T, hookPath, debugLog string) {
+	t.Helper()
+	data, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("读取 hook 脚本失败: %v", err)
+	}
+	content := string(data)
+
+	old := "  if ($null -ne $history) { $last = $history.CommandLine }"
+	if !strings.Contains(content, old) {
+		t.Fatalf("hook 脚本缺少 history 捕获行，模板可能已变化")
+	}
+	content = strings.Replace(content, old, old+
+		"\n  if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} invoke last=[{1}]\" -f (Get-Date), $last) }", 1)
+
+	old = "    if ($null -ne $proc) { $proc.Dispose() }"
+	if !strings.Contains(content, old) {
+		t.Fatalf("hook 脚本缺少 spawn 行，模板可能已变化")
+	}
+	content = strings.Replace(content, old,
+		"    if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} spawned\" -f (Get-Date)) }\n"+old, 1)
+
+	old = "  } catch { }"
+	if !strings.Contains(content, old) {
+		t.Fatalf("hook 脚本缺少 catch 行，模板可能已变化")
+	}
+	content = strings.Replace(content, old,
+		"  } catch { if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} catch: $($_.Exception.Message)\" -f (Get-Date)) } }", 1)
+
+	if err := os.WriteFile(hookPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("写入插桩 hook 脚本失败: %v", err)
+	}
+	t.Logf("hook 调试日志路径: %s", debugLog)
 }
 
 // lockedBuffer 收集 ConPTY 输出，供超时诊断读取；并发写安全。
