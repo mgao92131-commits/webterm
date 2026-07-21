@@ -40,11 +40,7 @@ func TestAgentMetricsCounters(t *testing.T) {
 		"relayConnectCount":        2,
 		"relayReconnectCount":      1,
 		"muxChannelOpenedCount":    3,
-		"resyncFailedCount":        1,
-		"inputDuplicateCount":      4,
-		"mailboxDiscardedBytes":    128,
 		"relayDisconnectCount":     0,
-		"inputWrittenCount":        0,
 		"snapshotFallbackCount":    0,
 		"writerQueueRejectedCount": 0,
 	}
@@ -58,23 +54,48 @@ func TestAgentMetricsCounters(t *testing.T) {
 		}
 	}
 
-	encode, ok := snapshot["screenEncodeDuration"].(map[string]uint64)
+	// 未埋点分组收进嵌套 map 并标记 instrumented=false。
+	resync, ok := snapshot["resync"].(map[string]any)
+	if !ok || resync["instrumented"] != false {
+		t.Fatalf("resync group missing instrumented=false: %v", snapshot["resync"])
+	}
+	if resync["failed"] != uint64(1) {
+		t.Fatalf("resync.failed = %v, want 1", resync["failed"])
+	}
+	input, ok := snapshot["input"].(map[string]any)
+	if !ok || input["instrumented"] != false || input["duplicate"] != uint64(4) {
+		t.Fatalf("input group = %v", snapshot["input"])
+	}
+	mailbox, ok := snapshot["mailbox"].(map[string]any)
+	if !ok || mailbox["instrumented"] != false || mailbox["discardedBytes"] != uint64(128) {
+		t.Fatalf("mailbox group = %v", snapshot["mailbox"])
+	}
+	projection, ok := snapshot["projection"].(map[string]any)
+	if !ok || projection["instrumented"] != false {
+		t.Fatalf("projection group = %v", snapshot["projection"])
+	}
+
+	durations, ok := snapshot["durations"].(map[string]any)
+	if !ok || durations["instrumented"] != false {
+		t.Fatalf("durations group missing instrumented=false: %v", snapshot["durations"])
+	}
+	encode, ok := durations["screenEncode"].(map[string]uint64)
 	if !ok {
-		t.Fatalf("screenEncodeDuration missing or wrong type: %v", snapshot["screenEncodeDuration"])
+		t.Fatalf("durations.screenEncode missing or wrong type: %v", durations["screenEncode"])
 	}
 	if encode["bucketLe16Ms"] != 1 || encode["bucketLe4Ms"] != 0 {
-		t.Fatalf("screenEncodeDuration buckets = %v", encode)
+		t.Fatalf("screenEncode buckets = %v", encode)
 	}
-	pty, ok := snapshot["ptyWriteDuration"].(map[string]uint64)
+	pty, ok := durations["ptyWrite"].(map[string]uint64)
 	if !ok {
-		t.Fatalf("ptyWriteDuration missing or wrong type: %v", snapshot["ptyWriteDuration"])
+		t.Fatalf("durations.ptyWrite missing or wrong type: %v", durations["ptyWrite"])
 	}
 	if pty["bucketLe4Ms"] != 1 {
-		t.Fatalf("ptyWriteDuration buckets = %v", pty)
+		t.Fatalf("ptyWrite buckets = %v", pty)
 	}
 	for _, label := range DurationBucketLabels {
 		if _, ok := encode[label]; !ok {
-			t.Fatalf("screenEncodeDuration missing label %q", label)
+			t.Fatalf("screenEncode missing label %q", label)
 		}
 	}
 }

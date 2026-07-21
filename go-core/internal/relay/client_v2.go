@@ -85,7 +85,7 @@ func (client *V2Client) Run(ctx context.Context) error {
 		} else {
 			diagnostics.Default.RelayConnectFailureCount.Add(1)
 		}
-		client.app.SetRelayConnected(false, "", errString(err))
+		client.app.SetRelayConnected(false, "", ClassifyRelayError(err))
 		diagnostics.Default.RelayReconnectCount.Add(1)
 		select {
 		case <-ctx.Done():
@@ -101,13 +101,13 @@ func (client *V2Client) Run(ctx context.Context) error {
 func (client *V2Client) runOnce(ctx context.Context) error {
 	relayURL, err := agentWebSocketURL(client.cfg.URL)
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorDialFailed, err)
 	}
 	realtimeConn, _, err := websocket.Dial(ctx, relayURL, &websocket.DialOptions{
 		CompressionMode: websocket.CompressionNoContextTakeover,
 	})
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorDialFailed, err)
 	}
 	realtimeConn.SetReadLimit(8 << 20)
 	defer realtimeConn.Close(websocket.StatusNormalClosure, "")
@@ -119,7 +119,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	}
 	bulkConn, _, err := websocket.Dial(ctx, relayURL, nil)
 	if err != nil {
-		return fmt.Errorf("connect bulk plane: %w", err)
+		return markRelayError(app.RelayErrorDialFailed, fmt.Errorf("connect bulk plane: %w", err))
 	}
 	bulkConn.SetReadLimit(8 << 20)
 	defer bulkConn.Close(websocket.StatusNormalClosure, "")
@@ -132,7 +132,7 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	go func() { errCh <- client.readLoop(ctx, realtimeConn) }()
 	go func() { errCh <- client.readLoop(ctx, bulkConn) }()
-	return <-errCh
+	return markRelayError(app.RelayErrorConnectionClosed, <-errCh)
 }
 
 func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, plane string) error {
@@ -142,27 +142,29 @@ func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, pl
 		"deviceName": client.cfg.DeviceName,
 		"plane":      plane,
 	}); err != nil {
-		return err
+		return markRelayError(app.RelayErrorConnectionClosed, err)
 	}
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		return err
+		return markRelayError(app.RelayErrorConnectionClosed, err)
 	}
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
-		return errors.New("bad register response")
+		return markRelayError(app.RelayErrorProtocolFailed, errors.New("bad register response"))
 	}
 	switch stringValue(msg["type"]) {
 	case v2AgentRegisteredMessage:
 		if plane == agentPlaneRealtime {
 			client.connected.Store(true)
-			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), "")
+			client.app.SetRelayConnected(true, stringValue(msg["deviceId"]), app.RelayErrorNone)
 		}
 		return nil
 	case v2AgentErrorMessage:
-		return fmt.Errorf("relay error: %s", stringValue(msg["message"]))
+		return markRelayError(app.RelayErrorAuthRejected,
+			fmt.Errorf("relay error: %s", stringValue(msg["message"])))
 	default:
-		return fmt.Errorf("unexpected register response: %s", stringValue(msg["type"]))
+		return markRelayError(app.RelayErrorProtocolFailed,
+			fmt.Errorf("unexpected register response: %s", stringValue(msg["type"])))
 	}
 }
 

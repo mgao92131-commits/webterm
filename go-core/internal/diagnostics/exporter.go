@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"archive/zip"
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,7 +20,10 @@ const (
 	DefaultExportMaxBytes = int64(4) << 20
 	// DefaultExportMaxEvents 是导出事件条数上限。
 	DefaultExportMaxEvents = 1000
-	exportDirName          = "diagnostics"
+	// exportKeepCount 是诊断包历史保留上限；导出成功后删除最旧的超出部分。
+	exportKeepCount  = 5
+	exportDirName    = "diagnostics"
+	exportFilePrefix = "webterm-agent-diagnostics-"
 )
 
 // ExportOptions 控制一次本地诊断导出。
@@ -47,8 +52,9 @@ type ExportResult struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// Export 生成 webterm-agent-diagnostics-<ts>.zip：
+// Export 生成 webterm-agent-diagnostics-<时间戳>-<毫秒>-<随机>.zip：
 // manifest.json / events.jsonl / metrics.json / state.json / summary.txt。
+// 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
 // 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
 	if options.LogDir == "" {
@@ -87,13 +93,25 @@ func Export(options ExportOptions) (ExportResult, error) {
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return ExportResult{}, fmt.Errorf("create diagnostics dir: %w", err)
 	}
-	path := filepath.Join(outDir,
-		fmt.Sprintf("webterm-agent-diagnostics-%s.zip", now().UTC().Format("20060102-150405")))
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+
+	// 文件名精确到毫秒并带随机后缀，同秒并发导出不会冲突；
+	// 先写 .tmp 再原子 rename，任何失败都不留残缺 ZIP。
+	exportTime := now().UTC()
+	path := filepath.Join(outDir, fmt.Sprintf("%s%s-%03d-%s.zip",
+		exportFilePrefix, exportTime.Format("20060102-150405"),
+		exportTime.Nanosecond()/int(time.Millisecond), randomExportSuffix()))
+	tmpPath := path + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return ExportResult{}, fmt.Errorf("create export zip: %w", err)
 	}
-	defer file.Close()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = file.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	writer := zip.NewWriter(file)
 	write := func(name string, data []byte) error {
@@ -140,7 +158,37 @@ func Export(options ExportOptions) (ExportResult, error) {
 	if err := writer.Close(); err != nil {
 		return ExportResult{}, fmt.Errorf("finalize zip: %w", err)
 	}
+	if err := file.Close(); err != nil {
+		return ExportResult{}, fmt.Errorf("close export zip: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return ExportResult{}, fmt.Errorf("commit export zip: %w", err)
+	}
+	committed = true
+	cleanupOldExports(outDir, exportKeepCount)
 	return ExportResult{Path: path, Events: len(events), Truncated: truncated}, nil
+}
+
+// randomExportSuffix 返回 4 个十六进制字符的随机后缀，避免同毫秒文件名冲突。
+func randomExportSuffix() string {
+	var buf [2]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "0000"
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+// cleanupOldExports 只保留最近 keep 个诊断包（文件名时间戳字典序即时间序），
+// 删除失败静默忽略——清理是尽力而为，不影响本次导出结果。
+func cleanupOldExports(outDir string, keep int) {
+	matches, err := filepath.Glob(filepath.Join(outDir, exportFilePrefix+"*.zip"))
+	if err != nil || len(matches) <= keep {
+		return
+	}
+	sort.Strings(matches)
+	for _, stale := range matches[:len(matches)-keep] {
+		_ = os.Remove(stale)
+	}
 }
 
 // readLogEntries 按从旧到新顺序读取 agent.jsonl 的备份与当前文件。

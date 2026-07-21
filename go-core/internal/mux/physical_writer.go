@@ -2,7 +2,6 @@ package mux
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"webterm/go-core/internal/diagnostics"
@@ -25,10 +24,6 @@ type PhysicalWriter struct {
 	highWrites chan physicalWrite
 	dataWrites chan physicalWrite
 	done       chan struct{}
-
-	// tx 计数：仅在物理写入成功后累计（见 perform）。
-	txFrames atomic.Uint64
-	txBytes  atomic.Uint64
 }
 
 func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
@@ -105,15 +100,5 @@ func (writer *PhysicalWriter) perform(request physicalWrite) {
 	writeCtx, cancel := context.WithTimeout(request.ctx, 10*time.Second)
 	err := writer.conn.Write(writeCtx, request.msgType, request.data)
 	cancel()
-	if err == nil {
-		// 只有真正写入成功后才累计发送帧数与字节数。
-		writer.txFrames.Add(1)
-		writer.txBytes.Add(uint64(len(request.data)))
-	}
 	request.result <- err
-}
-
-// TxSnapshot 返回物理连接累计发送帧数与字节数（仅成功写入）。
-func (writer *PhysicalWriter) TxSnapshot() (frames, bytes uint64) {
-	return writer.txFrames.Load(), writer.txBytes.Load()
 }

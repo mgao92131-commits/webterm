@@ -70,9 +70,12 @@ type SessionUpdate struct {
 
 // DiagnosticsRequest 请求运行中 Agent 的诊断摘要或诊断包导出。
 // Action 为 summary 或 export；export 时 ExportPath 指定输出目录（空则由 Agent 选择默认位置）。
+// IncludePaths 为 true 时恢复完整 session id / termTitle / cwd / ipcEndpoint
+// （对应 CLI 的 --include-paths 显式选项；默认脱敏）。
 type DiagnosticsRequest struct {
-	Action     string `json:"action"`
-	ExportPath string `json:"export_path,omitempty"`
+	Action       string `json:"action"`
+	ExportPath   string `json:"export_path,omitempty"`
+	IncludePaths bool   `json:"include_paths,omitempty"`
 }
 
 // DiagnosticsResponse 是 diagnostics 命令的响应。

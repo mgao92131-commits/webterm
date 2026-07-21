@@ -18,14 +18,20 @@ type fakeApplication struct {
 	summary    map[string]any
 	exportPath string
 	exportErr  error
+	// 记录请求是否携带 include_paths，供断言默认脱敏/显式恢复。
+	gotIncludePaths bool
 }
 
 func (f *fakeApplication) Sessions() *session.Manager                           { return nil }
 func (f *fakeApplication) FileSendService() *filesend.Service                   { return nil }
 func (f *fakeApplication) AgentNotificationDispatcher() *agentnotify.Dispatcher { return nil }
 func (f *fakeApplication) Log(level, source, message string)                    {}
-func (f *fakeApplication) DiagnosticsSummary() map[string]any                   { return f.summary }
-func (f *fakeApplication) ExportDiagnostics(exportDir string) (string, error) {
+func (f *fakeApplication) DiagnosticsSummary(includePaths bool) map[string]any {
+	f.gotIncludePaths = includePaths
+	return f.summary
+}
+func (f *fakeApplication) ExportDiagnostics(exportDir string, includePaths bool) (string, error) {
+	f.gotIncludePaths = includePaths
 	return f.exportPath, f.exportErr
 }
 
@@ -128,5 +134,20 @@ func TestDiagnosticsRequiresCommandKind(t *testing.T) {
 	response := diagnosticsRoundTrip(t, app, envelope)
 	if response.Error != "invalid_kind" {
 		t.Fatalf("expected invalid_kind, got %q", response.Error)
+	}
+}
+
+// TestDiagnosticsIncludePathsThreaded include_paths 必须原样传给 Application：
+// 默认 false（脱敏），显式开启后恢复完整值。
+func TestDiagnosticsIncludePathsThreaded(t *testing.T) {
+	app := &fakeApplication{summary: map[string]any{}}
+	diagnosticsRoundTrip(t, app, mustDiagnosticsRequest(t, DiagnosticsRequest{Action: DiagnosticsActionSummary}))
+	if app.gotIncludePaths {
+		t.Fatal("include_paths must default to false")
+	}
+	diagnosticsRoundTrip(t, app, mustDiagnosticsRequest(t, DiagnosticsRequest{
+		Action: DiagnosticsActionSummary, IncludePaths: true}))
+	if !app.gotIncludePaths {
+		t.Fatal("include_paths=true not propagated to Application")
 	}
 }

@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
-	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -48,10 +49,6 @@ type Session struct {
 	onControl ControlHandler
 	logger    *logs.Logger
 	writer    *PhysicalWriter
-
-	// rx 计数：物理连接成功读取到的帧数与字节数（readLoop 内累计）。
-	rxFrames atomic.Uint64
-	rxBytes  atomic.Uint64
 }
 
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
@@ -80,11 +77,9 @@ func (s *Session) readLoop(ctx context.Context) error {
 	for {
 		msgType, data, err := s.conn.Read(ctx)
 		if err != nil {
-			s.log("warn", "mux_read_failed", "error=%T", err)
+			s.event("warn", "mux_read_failed", map[string]any{"reason": errorKind(err)})
 			return err
 		}
-		s.rxFrames.Add(1)
-		s.rxBytes.Add(uint64(len(data)))
 		switch msgType {
 		case termsession.MessageText:
 			s.handleControlMessage(ctx, data)
@@ -97,7 +92,10 @@ func (s *Session) readLoop(ctx context.Context) error {
 func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 	msg, err := s.codec.Decode(data)
 	if err != nil {
-		s.log("warn", "mux_control_decode_failed", "payloadBytes=%d error=%T", len(data), err)
+		s.event("warn", "mux_control_decode_failed", map[string]any{
+			"reason":       "protocol",
+			"payloadBytes": len(data),
+		})
 		return
 	}
 	switch msg.Type {
@@ -142,12 +140,18 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 	oldByID, oldByRoute := s.registry.Replace(entry)
 	if oldByID != nil {
 		diagnostics.Default.MuxChannelReplacedCount.Add(1)
-		s.log("info", "mux_channel_replaced", "channelId=%s reason=id", tunnelID)
+		s.event("info", "mux_channel_replaced", map[string]any{
+			"channelId": logs.SafeID(tunnelID),
+			"reason":    "id",
+		})
 		oldByID.handler.Close()
 	}
 	if oldByRoute != nil && oldByRoute != oldByID {
 		diagnostics.Default.MuxChannelReplacedCount.Add(1)
-		s.log("info", "mux_channel_replaced", "channelId=%s reason=route", tunnelID)
+		s.event("info", "mux_channel_replaced", map[string]any{
+			"channelId": logs.SafeID(tunnelID),
+			"reason":    "route",
+		})
 		oldByRoute.handler.Close()
 	}
 
@@ -157,7 +161,7 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 		return
 	}
 	diagnostics.Default.MuxChannelOpenedCount.Add(1)
-	s.log("info", "mux_channel_open", "channelId=%s", tunnelID)
+	s.event("info", "mux_channel_open", map[string]any{"channelId": logs.SafeID(tunnelID)})
 
 	go func() {
 		handler.Run(ctx)
@@ -173,7 +177,10 @@ func (s *Session) handleBinaryFrame(data []byte) {
 	frame, err := protocol.DecodeTunnelFrame(data)
 	if err != nil || frame.MsgType != protocol.MsgTypeWSData {
 		if err != nil {
-			s.log("warn", "mux_binary_decode_failed", "payloadBytes=%d error=%T", len(data), err)
+			s.event("warn", "mux_binary_decode_failed", map[string]any{
+				"reason":       "protocol",
+				"payloadBytes": len(data),
+			})
 		}
 		return
 	}
@@ -186,7 +193,7 @@ func (s *Session) handleBinaryFrame(data []byte) {
 func (s *Session) closeChannel(id string) {
 	entry := s.registry.Remove(id)
 	if entry != nil {
-		s.log("info", "mux_channel_closed", "channelId=%s", id)
+		s.event("info", "mux_channel_closed", map[string]any{"channelId": logs.SafeID(id)})
 		entry.handler.Close()
 	}
 }
@@ -247,42 +254,38 @@ func (s *Session) logWriteError(err error) {
 		return
 	}
 	diagnostics.Default.MuxWriterFailureCount.Add(1)
-	event := "writer_failed"
+	event := "mux_writer_failed"
 	if errors.Is(err, context.DeadlineExceeded) {
-		event = "writer_timeout"
+		event = "mux_writer_timeout"
 	}
-	s.log("warn", event, "error=%T", err)
+	s.event("warn", event, map[string]any{"reason": errorKind(err)})
 }
 
-func (s *Session) log(level, event, format string, args ...any) {
+// event 统一走 Logger.Event：事件名稳定、字段经脱敏构造、由 5 秒窗口限流。
+// 原始错误文本（可能含地址等信息）不进日志，只保留 errorKind 分类。
+func (s *Session) event(level, event string, fields map[string]any) {
 	if s.logger == nil {
 		return
 	}
-	message := event
-	if format != "" {
-		message += " " + fmt.Sprintf(format, args...)
-	}
-	s.logger.Add(level, "mux", message)
+	s.logger.Event(level, "mux", event, fields)
 }
 
-// PhysicalTraffic 是 mux 物理连接累计收发帧数与字节数。
-// 发送字节仅在物理写入成功后累计；接收字节在成功读取后累计。
-type PhysicalTraffic struct {
-	RxFrames uint64 `json:"rxFrames"`
-	RxBytes  uint64 `json:"rxBytes"`
-	TxFrames uint64 `json:"txFrames"`
-	TxBytes  uint64 `json:"txBytes"`
-}
-
-// TrafficSnapshot 返回物理连接收发统计：rx 来自 Session 读循环，tx 来自 PhysicalWriter。
-func (s *Session) TrafficSnapshot() PhysicalTraffic {
-	txFrames, txBytes := s.writer.TxSnapshot()
-	return PhysicalTraffic{
-		RxFrames: s.rxFrames.Load(),
-		RxBytes:  s.rxBytes.Load(),
-		TxFrames: txFrames,
-		TxBytes:  txBytes,
+// errorKind 把错误归类为少量稳定枚举，作为事件 reason 字段。
+// 协议解析失败不由本函数归类，调用点直接写 reason=protocol。
+func errorKind(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, net.ErrClosed), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "closed"
 	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	return "unknown"
 }
 
 type channelSink struct {

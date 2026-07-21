@@ -34,15 +34,6 @@ func SafeID(value string) string {
 	return value
 }
 
-// SafeEnum 记录枚举型小字符串（状态、原因分类），超长截断。
-func SafeEnum(value string) string {
-	const maxEnumLen = 48
-	if len(value) > maxEnumLen {
-		return value[:maxEnumLen]
-	}
-	return value
-}
-
 // SafeCount 记录计数值。
 func SafeCount(value int) int {
 	return value

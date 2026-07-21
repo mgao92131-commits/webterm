@@ -48,7 +48,8 @@ type App struct {
 	relayConnected  bool
 	relayConfigured bool
 	relayDeviceID   string
-	relayLastError  string
+	// relayLastErrorKind 只存 RelayErrorKind 枚举，绝不存原始错误文本。
+	relayLastErrorKind RelayErrorKind
 }
 
 func New(cfg config.Config, version string) *App {
@@ -203,18 +204,27 @@ func (app *App) IPCEndpoint() string {
 	return app.ipcEndpoint
 }
 
-func (app *App) SetRelayConnected(connected bool, deviceID string, lastError string) {
+// SetRelayConnected 更新 relay 连接诊断状态。errKind 只接受 RelayErrorKind
+// 枚举；原始错误文本不得传入（其中可能含 URL、token 或服务器消息）。
+func (app *App) SetRelayConnected(connected bool, deviceID string, errKind RelayErrorKind) {
 	app.mu.Lock()
 	app.relayConnected = connected
 	app.relayDeviceID = deviceID
-	app.relayLastError = lastError
+	app.relayLastErrorKind = errKind
 	app.mu.Unlock()
+	if app.logger == nil {
+		return
+	}
 	if connected {
-		app.Log("info", "relay", fmt.Sprintf("relay connected deviceId=%s", deviceID))
-	} else if lastError != "" {
-		app.Log("warn", "relay", fmt.Sprintf("relay disconnected error=%s", lastError))
+		app.logger.Event("info", "relay", "relay_connected", map[string]any{
+			"deviceId": logs.SafeID(deviceID),
+		})
+	} else if errKind != RelayErrorNone {
+		app.logger.Event("warn", "relay", "relay_disconnected", map[string]any{
+			"reason": string(errKind),
+		})
 	} else {
-		app.Log("info", "relay", "relay disconnected")
+		app.logger.Event("info", "relay", "relay_disconnected", nil)
 	}
 }
 
@@ -224,14 +234,19 @@ func (app *App) RunID() string { return app.runID }
 // BuildInfo 返回构建时注入的版本信息。
 func (app *App) BuildInfo() BuildInfo { return app.buildInfo }
 
-// Shutdown 关闭诊断日志文件句柄；幂等，关闭失败不阻塞 Agent 退出。
+// Shutdown 永久关闭诊断日志落盘：先把 logger 的 sink 摘下来（其后的日志只进
+// 内存 Ring），再永久关闭文件句柄（迟到的 Write 返回错误而不是重开文件）。
+// 幂等，关闭失败不阻塞 Agent 退出。
 func (app *App) Shutdown() {
 	app.mu.Lock()
 	sink := app.sink
 	app.sink = nil
 	app.mu.Unlock()
+	if app.logger != nil {
+		app.logger.SetSink(nil)
+	}
 	if sink != nil {
-		_ = sink.Close()
+		_ = sink.ClosePermanent()
 	}
 }
 
@@ -245,27 +260,22 @@ const diagnosticsRecentLogLimit = 100
 
 // DiagnosticsSummary 构建运行中 Agent 的只读诊断快照（满足 localipc.Application）。
 // 仅包含计数、状态与脱敏配置；不包含终端输入正文、Secret 等敏感内容。
-func (app *App) DiagnosticsSummary() map[string]any {
+// 默认对 session id / termTitle / cwd / ipcEndpoint 脱敏（哈希或只保留类型）；
+// includePaths 为 true 时（CLI --include-paths 显式开启）恢复完整值。
+func (app *App) DiagnosticsSummary(includePaths bool) map[string]any {
 	sessions := app.sessions.List()
 	sessionSummaries := make([]map[string]any, 0, len(sessions))
 	for _, info := range sessions {
 		// 仅保留状态与计量字段；排除 RecentInputLines/LastCommand 等输入正文。
-		sessionSummaries = append(sessionSummaries, map[string]any{
-			"id":           info.ID,
-			"instanceId":   logs.HashID(info.InstanceID),
-			"termTitle":    info.TermTitle,
-			"cwd":          info.CWD,
-			"status":       info.Status,
-			"shellState":   info.ShellState,
-			"clients":      info.Clients,
-			"cols":         info.Cols,
-			"rows":         info.Rows,
-			"createdAt":    info.CreatedAt,
-			"lastActiveAt": info.LastActiveAt,
-		})
+		sessionSummaries = append(sessionSummaries, sessionSummary(info, includePaths))
 	}
 
 	recentLogs := app.logger.Recent(diagnosticsRecentLogLimit)
+
+	ipcEndpoint := endpointKind(app.IPCEndpoint())
+	if includePaths {
+		ipcEndpoint = app.IPCEndpoint()
+	}
 
 	return map[string]any{
 		"agent": map[string]any{
@@ -273,7 +283,7 @@ func (app *App) DiagnosticsSummary() map[string]any {
 			"runId":       app.runID,
 			"gitCommit":   app.buildInfo.GitCommit,
 			"buildTime":   app.buildInfo.BuildTime,
-			"ipcEndpoint": app.IPCEndpoint(),
+			"ipcEndpoint": ipcEndpoint,
 			"pid":         os.Getpid(),
 			"platform":    runtime.GOOS,
 			"arch":        runtime.GOARCH,
@@ -295,14 +305,48 @@ func (app *App) DiagnosticsSummary() map[string]any {
 	}
 }
 
+// sessionSummary 生成单个会话的摘要条目。默认 id/termTitle 走 HashID、cwd 只保留
+// basename+哈希；includePaths 时恢复完整 id/termTitle/cwd。
+func sessionSummary(info session.Info, includePaths bool) map[string]any {
+	entry := map[string]any{
+		"id":           logs.HashID(info.ID),
+		"instanceId":   logs.HashID(info.InstanceID),
+		"termTitle":    logs.HashID(info.TermTitle),
+		"cwdBaseName":  filepath.Base(info.CWD),
+		"cwdHash":      logs.HashID(info.CWD),
+		"status":       info.Status,
+		"shellState":   info.ShellState,
+		"clients":      info.Clients,
+		"cols":         info.Cols,
+		"rows":         info.Rows,
+		"createdAt":    info.CreatedAt,
+		"lastActiveAt": info.LastActiveAt,
+	}
+	if includePaths {
+		entry["id"] = info.ID
+		entry["termTitle"] = info.TermTitle
+		entry["cwd"] = info.CWD
+	}
+	return entry
+}
+
+// endpointKind 只保留 IPC endpoint 的类型前缀（unix/npipe），不含具体路径。
+func endpointKind(endpoint string) string {
+	if idx := strings.Index(endpoint, ":"); idx > 0 {
+		return endpoint[:idx]
+	}
+	return endpoint
+}
+
 // diagnosticsRingLimit 是诊断包导出时从内存 Ring 携带的事件条数上限。
 const diagnosticsRingLimit = 5000
 
 // ExportDiagnostics 生成诊断包 ZIP 并返回实际输出路径（满足 localipc.Application）。
 // 复用任务 1 的 diagnostics.Export：磁盘日志由 FileSink 写入与导出读取同一目录；
 // 无磁盘日志时仍包含内存 Ring 事件、指标与状态（diagnostics.Export 对缺失日志容错）。
+// 默认 state.json 中的会话 id/termTitle 已脱敏；includePaths 为 true 时恢复完整值。
 // 任何失败都以 error 返回（并 recover 兜底），绝不影响 Agent 主循环。
-func (app *App) ExportDiagnostics(exportDir string) (path string, err error) {
+func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path string, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			path = ""
@@ -326,7 +370,7 @@ func (app *App) ExportDiagnostics(exportDir string) (path string, err error) {
 			Architecture: runtime.GOARCH,
 		},
 		Metrics:     diagnostics.Default.Snapshot(),
-		State:       app.DiagnosticsState(),
+		State:       app.DiagnosticsState(includePaths),
 		RingEntries: app.logger.Recent(diagnosticsRingLimit),
 	})
 	if err != nil {

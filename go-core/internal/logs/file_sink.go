@@ -2,6 +2,7 @@ package logs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,9 @@ const (
 	logFileName       = "agent.jsonl"
 )
 
+// ErrSinkClosed 是 FileSink 被永久关闭后 Write 返回的错误。
+var ErrSinkClosed = errors.New("logs: file sink permanently closed")
+
 // FileSink 把每条 Entry 以一行 JSON 同步写入本地滚动文件。
 // 写入由互斥锁保护；事件频率低，不引入异步日志队列，
 // 这样 Agent 崩溃前的最后几条信息更容易真正落盘。
@@ -26,6 +30,8 @@ type FileSink struct {
 	backups  int
 	file     *os.File
 	size     int64
+	// permanentlyClosed 为 true 时 Write 返回 ErrSinkClosed，不再惰性重开。
+	permanentlyClosed bool
 }
 
 // NewFileSink 打开（必要时创建）dir 下的 agent.jsonl；目录权限 0700，文件 0600。
@@ -58,6 +64,7 @@ func (sink *FileSink) Path() string {
 }
 
 // Write 追加一行 JSON（行末换行）；超过大小上限先轮转再写。
+// 永久关闭后返回 ErrSinkClosed，绝不重开文件。
 func (sink *FileSink) Write(entry Entry) error {
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -67,6 +74,9 @@ func (sink *FileSink) Write(entry Entry) error {
 
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
+	if sink.permanentlyClosed {
+		return ErrSinkClosed
+	}
 	if sink.file == nil {
 		if err := sink.openCurrent(); err != nil {
 			return err
@@ -85,10 +95,24 @@ func (sink *FileSink) Write(entry Entry) error {
 	return err
 }
 
-// Close 关闭当前文件；之后的 Write 会惰性重开。
+// Close 关闭当前文件；之后的 Write 会惰性重开（供测试与轮转路径使用）。
+// 需要“关闭后绝不重开”的关停语义时用 ClosePermanent。
 func (sink *FileSink) Close() error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
+	return sink.closeLocked()
+}
+
+// ClosePermanent 永久关闭 sink：关闭当前文件并禁止任何后续写入，
+// Write 一律返回 ErrSinkClosed，不会经 openCurrent 重开。幂等。
+func (sink *FileSink) ClosePermanent() error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.permanentlyClosed = true
+	return sink.closeLocked()
+}
+
+func (sink *FileSink) closeLocked() error {
 	if sink.file == nil {
 		return nil
 	}

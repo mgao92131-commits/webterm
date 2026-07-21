@@ -19,7 +19,7 @@ Use "webterm diagnostics [command] --help" for more information about a command.
 
 ## summary
 
-显示运行中 Agent 的状态、指标、会话、日志与脱敏配置摘要。
+显示运行中 Agent 的状态、指标、会话、日志与脱敏配置摘要。默认对会话 ID、标题、目录与 IPC 路径脱敏。
 
 Usage:
   webterm diagnostics summary [flags]
@@ -27,16 +27,18 @@ Usage:
 Examples:
   webterm diagnostics summary
   webterm diagnostics summary --json
+  webterm diagnostics summary --include-paths
 
 Flags:
   -h, --help            help for summary
+      --include-paths   显示完整会话 ID、标题、目录与 IPC 路径（默认脱敏）
       --json            输出 JSON
       --socket string   覆盖 Agent 本地 IPC 路径
 
 
 ## export
 
-导出运行中 Agent 的诊断包（ZIP），包含日志事件、指标、状态与摘要。
+导出运行中 Agent 的诊断包（ZIP），包含日志事件、指标、状态与摘要。默认对会话 ID、标题与目录脱敏。
 
 Usage:
   webterm diagnostics export [flags]
@@ -44,8 +46,10 @@ Usage:
 Examples:
   webterm diagnostics export
   webterm diagnostics export --output ~/Desktop
+  webterm diagnostics export --include-paths
 
 Flags:
   -h, --help            help for export
+      --include-paths   诊断包中包含完整会话 ID、标题与目录（默认脱敏）
   -o, --output string   诊断包输出目录（支持 ~ 与 Windows 路径）
       --socket string   覆盖 Agent 本地 IPC 路径

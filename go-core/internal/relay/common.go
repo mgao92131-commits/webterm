@@ -54,10 +54,3 @@ func stringValue(value any) string {
 	}
 	return fmt.Sprint(value)
 }
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}

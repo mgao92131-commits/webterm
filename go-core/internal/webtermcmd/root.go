@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -190,10 +191,10 @@ func newDiagnostics() *cobra.Command {
 
 func newDiagnosticsSummary() *cobra.Command {
 	var socket string
-	var jsonOutput bool
-	cmd := &cobra.Command{Use: "summary", Short: "显示 Agent 诊断摘要", Long: "显示运行中 Agent 的状态、指标、会话、日志与脱敏配置摘要。", Example: "  webterm diagnostics summary\n  webterm diagnostics summary --json", Args: noArgs,
+	var jsonOutput, includePaths bool
+	cmd := &cobra.Command{Use: "summary", Short: "显示 Agent 诊断摘要", Long: "显示运行中 Agent 的状态、指标、会话、日志与脱敏配置摘要。默认对会话 ID、标题、目录与 IPC 路径脱敏。", Example: "  webterm diagnostics summary\n  webterm diagnostics summary --json\n  webterm diagnostics summary --include-paths", Args: noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionSummary})
+			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionSummary, IncludePaths: includePaths})
 			if err != nil {
 				return err
 			}
@@ -216,13 +217,15 @@ func newDiagnosticsSummary() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "输出 JSON")
+	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "显示完整会话 ID、标题、目录与 IPC 路径（默认脱敏）")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
 }
 
 func newDiagnosticsExport() *cobra.Command {
 	var socket, output string
-	cmd := &cobra.Command{Use: "export", Short: "导出 Agent 诊断包", Long: "导出运行中 Agent 的诊断包（ZIP），包含日志事件、指标、状态与摘要。", Example: "  webterm diagnostics export\n  webterm diagnostics export --output ~/Desktop", Args: noArgs,
+	var includePaths bool
+	cmd := &cobra.Command{Use: "export", Short: "导出 Agent 诊断包", Long: "导出运行中 Agent 的诊断包（ZIP），包含日志事件、指标、状态与摘要。默认对会话 ID、标题与目录脱敏。", Example: "  webterm diagnostics export\n  webterm diagnostics export --output ~/Desktop\n  webterm diagnostics export --include-paths", Args: noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			exportDir := ""
 			if output != "" {
@@ -232,7 +235,7 @@ func newDiagnosticsExport() *cobra.Command {
 				}
 				exportDir = abs
 			}
-			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionExport, ExportPath: exportDir})
+			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionExport, ExportPath: exportDir, IncludePaths: includePaths})
 			if err != nil {
 				return err
 			}
@@ -252,6 +255,7 @@ func newDiagnosticsExport() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "诊断包输出目录（支持 ~ 与 Windows 路径）")
+	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "诊断包中包含完整会话 ID、标题与目录（默认脱敏）")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
 }
@@ -283,7 +287,7 @@ func printDiagnosticsSummary(w io.Writer, summary map[string]any) {
 		fmt.Fprintf(w, "Logs\trecent=%v subscriberDropped=%v\n", logSection["recentCount"], logSection["subscriberDropped"])
 	}
 	fmt.Fprintln(w, "\n[metrics]")
-	printJSONBlock(w, summary["metrics"])
+	printMetricsBlock(w, summary["metrics"])
 	fmt.Fprintln(w, "\n[sessionTraffic]")
 	printJSONBlock(w, summary["sessionTraffic"])
 	fmt.Fprintln(w, "\n[config (redacted)]")
@@ -297,6 +301,32 @@ func printJSONBlock(w io.Writer, value any) {
 		return
 	}
 	fmt.Fprintln(w, string(data))
+}
+
+// printMetricsBlock 输出指标。标记 "instrumented": false 的分组在生产代码中
+// 尚无埋点、恒为 0，以 "not instrumented" 单行说明，避免误读为真实观测。
+func printMetricsBlock(w io.Writer, metrics any) {
+	groups, ok := metrics.(map[string]any)
+	if !ok {
+		printJSONBlock(w, metrics)
+		return
+	}
+	flat := make(map[string]any, len(groups))
+	var notInstrumented []string
+	for key, value := range groups {
+		if sub, ok := value.(map[string]any); ok {
+			if flag, ok := sub["instrumented"].(bool); ok && !flag {
+				notInstrumented = append(notInstrumented, key)
+				continue
+			}
+		}
+		flat[key] = value
+	}
+	printJSONBlock(w, flat)
+	if len(notInstrumented) > 0 {
+		sort.Strings(notInstrumented)
+		fmt.Fprintf(w, "not instrumented: %s\n", strings.Join(notInstrumented, ", "))
+	}
 }
 
 func newInternal() *cobra.Command {

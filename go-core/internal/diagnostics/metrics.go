@@ -103,36 +103,52 @@ func NewAgentMetrics() *AgentMetrics {
 // Default 是进程级默认指标实例。
 var Default = NewAgentMetrics()
 
-// Snapshot 返回 JSON 友好的平铺指标 map：计数器为 uint64，
-// 耗时桶展开为 {"bucketLe4Ms":..,"bucketLe8Ms":..,...} 的嵌套 map。
+// Snapshot 返回 JSON 友好的指标 map。生产代码已有埋点的计数器平铺为 uint64；
+// 尚未埋点的分组（mailbox/input/resync/projection/耗时桶）收进嵌套 map 并标记
+// "instrumented": false，避免把恒 0 的值误读为真实观测——等埋点接入后再移除标记。
 func (m *AgentMetrics) Snapshot() map[string]any {
 	return map[string]any{
-		"relayConnectCount":              m.RelayConnectCount.Load(),
-		"relayDisconnectCount":           m.RelayDisconnectCount.Load(),
-		"relayReconnectCount":            m.RelayReconnectCount.Load(),
-		"relayConnectFailureCount":       m.RelayConnectFailureCount.Load(),
-		"muxChannelOpenedCount":          m.MuxChannelOpenedCount.Load(),
-		"muxChannelReplacedCount":        m.MuxChannelReplacedCount.Load(),
-		"muxWriterFailureCount":          m.MuxWriterFailureCount.Load(),
-		"resyncStartedCount":             m.ResyncStartedCount.Load(),
-		"resyncCompletedCount":           m.ResyncCompletedCount.Load(),
-		"resyncFailedCount":              m.ResyncFailedCount.Load(),
-		"snapshotFallbackCount":          m.SnapshotFallbackCount.Load(),
-		"screenEncodeFailureCount":       m.ScreenEncodeFailureCount.Load(),
-		"projectionSkippedNoClientCount": m.ProjectionSkippedNoClientCount.Load(),
-		"writerQueueRejectedCount":       m.WriterQueueRejectedCount.Load(),
-		"mailboxOverflowCount":           m.MailboxOverflowCount.Load(),
-		"mailboxDiscardedMessages":       m.MailboxDiscardedMessages.Load(),
-		"mailboxDiscardedBytes":          m.MailboxDiscardedBytes.Load(),
-		"inputSubmittedCount":            m.InputSubmittedCount.Load(),
-		"inputWrittenCount":              m.InputWrittenCount.Load(),
-		"inputRejectedCount":             m.InputRejectedCount.Load(),
-		"inputUncertainCount":            m.InputUncertainCount.Load(),
-		"inputDuplicateCount":            m.InputDuplicateCount.Load(),
-		"screenEncodeDuration":           durationSnapshot(m.ScreenEncodeDuration),
-		"screenWriteDuration":            durationSnapshot(m.ScreenWriteDuration),
-		"projectionExportDuration":       durationSnapshot(m.ProjectionExportDuration),
-		"ptyWriteDuration":               durationSnapshot(m.PtyWriteDuration),
+		"relayConnectCount":        m.RelayConnectCount.Load(),
+		"relayDisconnectCount":     m.RelayDisconnectCount.Load(),
+		"relayReconnectCount":      m.RelayReconnectCount.Load(),
+		"relayConnectFailureCount": m.RelayConnectFailureCount.Load(),
+		"muxChannelOpenedCount":    m.MuxChannelOpenedCount.Load(),
+		"muxChannelReplacedCount":  m.MuxChannelReplacedCount.Load(),
+		"muxWriterFailureCount":    m.MuxWriterFailureCount.Load(),
+		"snapshotFallbackCount":    m.SnapshotFallbackCount.Load(),
+		"screenEncodeFailureCount": m.ScreenEncodeFailureCount.Load(),
+		"writerQueueRejectedCount": m.WriterQueueRejectedCount.Load(),
+		"mailbox": map[string]any{
+			"instrumented":      false,
+			"overflowCount":     m.MailboxOverflowCount.Load(),
+			"discardedMessages": m.MailboxDiscardedMessages.Load(),
+			"discardedBytes":    m.MailboxDiscardedBytes.Load(),
+		},
+		"input": map[string]any{
+			"instrumented": false,
+			"submitted":    m.InputSubmittedCount.Load(),
+			"written":      m.InputWrittenCount.Load(),
+			"rejected":     m.InputRejectedCount.Load(),
+			"uncertain":    m.InputUncertainCount.Load(),
+			"duplicate":    m.InputDuplicateCount.Load(),
+		},
+		"resync": map[string]any{
+			"instrumented": false,
+			"started":      m.ResyncStartedCount.Load(),
+			"completed":    m.ResyncCompletedCount.Load(),
+			"failed":       m.ResyncFailedCount.Load(),
+		},
+		"projection": map[string]any{
+			"instrumented":         false,
+			"skippedNoClientCount": m.ProjectionSkippedNoClientCount.Load(),
+		},
+		"durations": map[string]any{
+			"instrumented":     false,
+			"screenEncode":     durationSnapshot(m.ScreenEncodeDuration),
+			"screenWrite":      durationSnapshot(m.ScreenWriteDuration),
+			"projectionExport": durationSnapshot(m.ProjectionExportDuration),
+			"ptyWrite":         durationSnapshot(m.PtyWriteDuration),
+		},
 	}
 }
 
