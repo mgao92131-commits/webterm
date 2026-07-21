@@ -51,6 +51,7 @@ public class ServerConfig {
     public void setCookie(String cookie) { this.cookie = cookie; }
     public void setUsername(String username) { this.username = username; }
     public void setPassword(String password) { this.password = password; }
+    public void setName(String name) { this.name = name; }
 
     public JSONObject toJSON() throws JSONException {
         JSONObject obj = new JSONObject();

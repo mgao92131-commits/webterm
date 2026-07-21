@@ -45,6 +45,13 @@ public final class DeviceConnectionRegistry {
 
     private DeviceConnection getOrCreate(String key, String baseUrl, String cookie, String deviceId) {
         DeviceConnection manager = managers.get(key);
+        // 键不变但地址/设备身份变化（如编辑 Direct 设备改了 IP）：matches() 不含 Cookie，
+        // 因此这里只在 baseUrl/deviceId 变化时停掉旧连接并按新地址重建；仅 Cookie 变化走 updateCookie。
+        if (manager != null && !manager.matches(baseUrl, cookie, deviceId)) {
+            manager.stop();
+            managers.remove(key);
+            manager = null;
+        }
         if (manager == null) {
             HandlerThread eventThread = new HandlerThread(
                 "WebTerm-DeviceConnection-" + Integer.toHexString(key.hashCode()));

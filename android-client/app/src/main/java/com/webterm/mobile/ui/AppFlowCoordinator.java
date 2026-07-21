@@ -901,18 +901,28 @@ public final class AppFlowCoordinator implements
     @Override
     public void updateDirectDevice(String oldConfigId, String normalizedUrl, String username,
                                    String password, DirectDeviceDialog.Callback callback) {
+        // 编辑去重需排除自身，否则“只改密码”会被误判为重复。
+        if (serverConfigs.containsDirectDevice(normalizedUrl, username, oldConfigId)) {
+            callback.onError("该地址和账户已经添加");
+            return;
+        }
         api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
                 mainHandler.post(() -> {
-                    // 替换为新配置（新 configId）：旧连接键随之失效并被后台服务清理，
-                    // 新连接以新地址建立。
-                    serverConfigs.removeDirectDevice(oldConfigId);
-                    String id = "direct_" + java.util.UUID.randomUUID();
                     String name = directDeviceDisplayName(normalizedUrl);
-                    serverConfigs.addDirectDevice(new ServerConfig(
-                        id, name, normalizedUrl, cookie, username, password,
-                        false, false, ""));
+                    // 先按旧地址清理本地 Runtime 与缓存（此时配置尚未被原位改写）。
+                    ServerConfig target = findDirectServerById(oldConfigId);
+                    remoteTerminalIntegration.closeServer(oldConfigId);
+                    if (target != null) removeCachedTerminalsForServer(target);
+                    // 原位更新，保持 configId（从而 connectionKey）不变；地址变化由
+                    // DeviceConnectionRegistry 在下次 forDirectDevice 时重建连接。
+                    boolean updated = serverConfigs.updateDirectDevice(
+                        oldConfigId, normalizedUrl, cookie, username, password, name);
+                    if (!updated) {
+                        callback.onError("设备不存在，请重新添加");
+                        return;
+                    }
                     refreshHomeDevices();
                     WebTermDeviceService.refresh(mActivity);
                     callback.onSuccess(name);
@@ -930,6 +940,15 @@ public final class AppFlowCoordinator implements
                 mainHandler.post(() -> callback.onError(mapDirectLoginError(code)));
             }
         });
+    }
+
+    /** 在持久化配置中按 configId 查找 Direct 设备。 */
+    private ServerConfig findDirectServerById(String configId) {
+        if (configId == null || configId.isEmpty()) return null;
+        for (ServerConfig server : serverConfigs.directDevices()) {
+            if (configId.equals(server.getId())) return server;
+        }
+        return null;
     }
 
     public void reconnectDirectDevice(ServerConfig server) {
@@ -966,11 +985,15 @@ public final class AppFlowCoordinator implements
         if (server == null || mActivity == null) return;
         new android.app.AlertDialog.Builder(mActivity)
             .setTitle("删除直连设备")
-            .setMessage("确定删除该直连设备吗？\n这不会关闭电脑上的终端会话。")
+            .setMessage("确定删除该直连设备吗？\n这不会关闭电脑上的终端会话，但会关闭手机上的当前连接和缓存页面。")
             .setPositiveButton("删除", (dialog, which) -> {
+                // 仅清理 Android 本地 Runtime / 缓存 / 配置与连接，不调用远程 Session DELETE，
+                // 因此 PC 上已打开的 PTY 会话不受影响。
+                remoteTerminalIntegration.closeServer(server.getId());
+                removeCachedTerminalsForServer(server);
                 serverConfigs.removeDirectDevice(server.getId());
-                refreshHomeDevices();
                 WebTermDeviceService.refresh(mActivity);
+                refreshHomeDevices();
             })
             .setNegativeButton("取消", null)
             .show();

@@ -147,4 +147,66 @@ public class ServerConfigManagerTest {
             assertTrue(config.isDirectDevice());
         }
     }
+
+    // ── C3：编辑保持 configId / 去重排除自身 ──────────────────────
+
+    @Test
+    public void updateDirectDevicePreservesConfigId() {
+        ServerConfigStore store = mock(ServerConfigStore.class);
+        ServerConfig config = direct("direct_1", "http://192.168.1.20:8080", "admin");
+        when(store.loadServers()).thenReturn(Arrays.asList(config));
+        ServerConfigManager manager = new ServerConfigManager(store);
+        manager.load();
+
+        assertTrue(manager.updateDirectDevice("direct_1", "http://10.0.0.5:8080", "new-cookie",
+            "admin2", "pw2", "新名字"));
+
+        assertEquals(1, manager.directDevices().size());
+        ServerConfig updated = manager.directDevices().get(0);
+        // configId 保持不变，connectionKey 因而稳定。
+        assertEquals("direct_1", updated.getId());
+        assertEquals("http://10.0.0.5:8080", updated.getUrl());
+        assertEquals("new-cookie", updated.getCookie());
+        assertEquals("admin2", updated.getUsername());
+        assertEquals("新名字", updated.getName());
+        verify(store).saveServers(anyList());
+    }
+
+    @Test
+    public void updateDirectDeviceMissingIdFails() {
+        ServerConfigStore store = mock(ServerConfigStore.class);
+        when(store.loadServers()).thenReturn(Arrays.asList(direct("direct_1", "http://a", "u")));
+        ServerConfigManager manager = new ServerConfigManager(store);
+        manager.load();
+        assertFalse(manager.updateDirectDevice("nope", "http://b", "c", "u", "p", "n"));
+    }
+
+    @Test
+    public void editingSelfIsNotDuplicate() {
+        ServerConfigStore store = mock(ServerConfigStore.class);
+        when(store.loadServers()).thenReturn(
+            Arrays.asList(direct("direct_1", "http://192.168.1.20:8080", "admin")));
+        ServerConfigManager manager = new ServerConfigManager(store);
+        manager.load();
+
+        // 不排除自身时，相同 URL+账户算重复。
+        assertTrue(manager.containsDirectDevice("http://192.168.1.20:8080", "admin"));
+        // 编辑自身（排除自己的 configId）时，只改密码不算重复。
+        assertFalse(manager.containsDirectDevice("http://192.168.1.20:8080", "admin", "direct_1"));
+    }
+
+    @Test
+    public void editingToAnotherDevicesIdentityIsDuplicate() {
+        ServerConfigStore store = mock(ServerConfigStore.class);
+        when(store.loadServers()).thenReturn(Arrays.asList(
+            direct("direct_1", "http://a", "u1"),
+            direct("direct_2", "http://b", "u2")));
+        ServerConfigManager manager = new ServerConfigManager(store);
+        manager.load();
+
+        // direct_2 改成 direct_1 的 URL+账户应被判为重复。
+        assertTrue(manager.containsDirectDevice("http://a", "u1", "direct_2"));
+        // direct_2 保持自己的身份则不重复。
+        assertFalse(manager.containsDirectDevice("http://b", "u2", "direct_2"));
+    }
 }
