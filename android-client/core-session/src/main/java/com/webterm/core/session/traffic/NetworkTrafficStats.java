@@ -68,6 +68,14 @@ public final class NetworkTrafficStats {
     accumulatorsByDevice.remove(connectionKey(baseUrl, deviceId));
   }
 
+  /**
+   * 清空全部连接累计器（含按服务器区分的历史连接）。
+   * 用于用户清除诊断数据与测试复位；重连/Transport 重建不得调用，统计必须连续。
+   */
+  public static void clearAll() {
+    accumulatorsByDevice.clear();
+  }
+
   /** websocketByDevice 的 key 形如 "normalizedBaseUrl\ndeviceId"；此方法还原服务器部分。 */
   public static String serverOfKey(String key) {
     if (key == null) return "";

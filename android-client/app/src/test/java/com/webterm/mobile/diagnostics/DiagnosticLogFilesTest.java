@@ -96,6 +96,37 @@ public class DiagnosticLogFilesTest {
     }
 
     @Test
+    public void planDeletions_oldFilesAtBudgetThenNewSessionWrites() throws IOException {
+        // 边界：上次 trim 后旧文件正好满额（4 个/4 MiB），本次启动主文件写满 1 MiB。
+        // 只需删最旧一个文件即回到 4 文件/4 MiB 预算内。
+        List<File> files = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            files.add(logFile("webterm-old-s" + i + ".log", 1024 * 1024, i));
+        }
+        files.add(logFile("webterm-new.log", 1024 * 1024, 4));
+
+        List<File> deletions = DiagnosticLogFiles.planDeletions(files);
+
+        assertEquals(List.of("webterm-old-s0.log"), namesOf(deletions));
+    }
+
+    @Test
+    public void planDeletions_oldFilesAtBudgetNewSessionRollsBackup() throws IOException {
+        // 边界：旧文件满额，本次启动主文件 + 一个 .bak 各写满 1 MiB（合计 6 MiB/6 文件）。
+        // 从最旧开始连删两个后回到 4 文件/4 MiB。
+        List<File> files = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            files.add(logFile("webterm-old-s" + i + ".log", 1024 * 1024, i));
+        }
+        files.add(logFile("webterm-new.log", 1024 * 1024, 4));
+        files.add(logFile("webterm-new.log.bak.1", 1024 * 1024, 5));
+
+        List<File> deletions = DiagnosticLogFiles.planDeletions(files);
+
+        assertEquals(List.of("webterm-old-s0.log", "webterm-old-s1.log"), namesOf(deletions));
+    }
+
+    @Test
     public void planDeletions_emptyInputDeletesNothing() {
         // 空目录（无日志文件）：不应产生任何删除。
         assertTrue(DiagnosticLogFiles.planDeletions(new ArrayList<>()).isEmpty());

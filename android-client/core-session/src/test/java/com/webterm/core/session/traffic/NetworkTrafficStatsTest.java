@@ -60,4 +60,47 @@ public final class NetworkTrafficStatsTest {
     assertEquals("https://relay-f.test", NetworkTrafficStats.serverOfKey(foundKey));
     assertEquals("d2", NetworkTrafficStats.deviceOfKey(foundKey));
   }
+
+  @Test
+  public void unregisterConnectionRemovesOnlyThatServerDevicePair() {
+    // 模拟 stopAllDevices 的逐连接清理：同 deviceId 挂在多台服务器上时，只清对应连接。
+    MuxTransport.TrafficAccumulator a = NetworkTrafficStats.accumulatorForConnection(
+        "https://relay-g.test/", "d3");
+    MuxTransport.TrafficAccumulator b = NetworkTrafficStats.accumulatorForConnection(
+        "https://relay-h.test/", "d3");
+    a.recordTx(11);
+    b.recordTx(22);
+
+    NetworkTrafficStats.unregisterConnection("https://relay-g.test/", "d3");
+
+    boolean foundA = false;
+    MuxTransport.TrafficSnapshot snapshotB = null;
+    for (java.util.Map.Entry<String, MuxTransport.TrafficSnapshot> e
+        : NetworkTrafficStats.snapshot().websocketByDevice.entrySet()) {
+      if ("https://relay-g.test".equals(NetworkTrafficStats.serverOfKey(e.getKey()))) {
+        foundA = true;
+      }
+      if ("https://relay-h.test".equals(NetworkTrafficStats.serverOfKey(e.getKey()))) {
+        snapshotB = e.getValue();
+      }
+    }
+    org.junit.Assert.assertFalse("已注销的连接不应再出现在快照里", foundA);
+    org.junit.Assert.assertNotNull("另一服务器同 deviceId 的累计器必须保留", snapshotB);
+    assertEquals("清理其他连接不得清零保留连接的统计", 22L, snapshotB.txBytes);
+  }
+
+  @Test
+  public void clearAllRemovesEveryConnectionAccumulator() {
+    NetworkTrafficStats.accumulatorForConnection("https://relay-i.test/", "d4").recordTx(5);
+    NetworkTrafficStats.accumulatorForConnection("https://relay-j.test/", "d4").recordRx(6);
+
+    NetworkTrafficStats.clearAll();
+
+    org.junit.Assert.assertTrue(
+        NetworkTrafficStats.snapshot().websocketByDevice.isEmpty());
+    // 清空后同连接重新累计从零开始。
+    MuxTransport.TrafficAccumulator recreated = NetworkTrafficStats.accumulatorForConnection(
+        "https://relay-i.test/", "d4");
+    assertEquals(0L, recreated.snapshot().txBytes);
+  }
 }
