@@ -129,7 +129,12 @@ function Invoke-WebTermSessionUpdate {
     $psi.EnvironmentVariables["WEBTERM_HOOK_INPUT_KIND"] = "shell"
     $psi.EnvironmentVariables["WEBTERM_HOOK_SHELL_STATE"] = "prompt"
     $proc = [System.Diagnostics.Process]::Start($psi)
-    if ($null -ne $proc) { $proc.Dispose() }
+    # 刻意不立即 Dispose：Process 对象持有子进程的进程句柄与重定向管道。
+    # 在部分 Windows 环境（如 ConPTY 会话内的 CI runner）上，Start 后立刻
+    # Dispose 会让子进程在初始化阶段静默失败，上报整条丢失（集成测试
+    # TestPowerShellSessionHookReportsPromptOverIPC 曾因此稳定超时）。
+    # 子进程约几十毫秒内退出，Process 对象随后由 GC 终结器回收，
+    # 既不阻塞 prompt，也不会无限累积句柄。
   } catch { }
 }
 if (-not (Get-Variable -Name WebTermOriginalPrompt -Scope Global -ErrorAction SilentlyContinue)) {
