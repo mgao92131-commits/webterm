@@ -182,7 +182,18 @@ func instrumentPowerShellHook(t *testing.T, hookPath, debugLog string) {
 		t.Fatalf("hook 脚本缺少 spawn 行，模板可能已变化")
 	}
 	content = strings.Replace(content, old,
-		"    if ($env:WEBTERM_HOOK_DEBUG) { Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value (\"{0:HH:mm:ss.fff} spawned\" -f (Get-Date)) }\n"+old, 1)
+		`    if ($env:WEBTERM_HOOK_DEBUG) {
+      Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value ("{0:HH:mm:ss.fff} spawned pid={1}" -f (Get-Date), $proc.Id)
+      $childExited = $proc.WaitForExit(3000)
+      if ($childExited) {
+        $childOut = $proc.StandardOutput.ReadToEnd()
+        $childErr = $proc.StandardError.ReadToEnd()
+        Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value ("{0:HH:mm:ss.fff} child exit={1} out=[{2}] err=[{3}]" -f (Get-Date), $proc.ExitCode, $childOut, $childErr)
+      } else {
+        Add-Content -Path $env:WEBTERM_HOOK_DEBUG -Value ("{0:HH:mm:ss.fff} child still running after 3s" -f (Get-Date))
+      }
+    }
+`+old, 1)
 
 	old = "  } catch { }"
 	if !strings.Contains(content, old) {
