@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/agentnotify"
@@ -20,19 +23,42 @@ import (
 	"webterm/go-core/internal/session"
 )
 
+// BuildInfo 是构建时注入的版本三元组，诊断导出与事件均以此为准。
+type BuildInfo struct {
+	Version   string `json:"version"`
+	GitCommit string `json:"gitCommit"`
+	BuildTime string `json:"buildTime"`
+}
+
 type App struct {
 	cfg         config.Config
 	version     string
+	buildInfo   BuildInfo
+	runID       string
 	sessions    *session.Manager
 	fileSend    *filesend.Service
 	fileUpload  *fileupload.Service
 	agentNotify *agentnotify.Dispatcher
 	logger      *logs.Logger
+	sink        *logs.FileSink
 	mu          sync.RWMutex
 	ipcEndpoint string
+
+	// relay 连接状态（由 SetRelayConnected 更新），仅供诊断只读快照使用。
+	relayConnected  bool
+	relayConfigured bool
+	relayDeviceID   string
+	relayLastError  string
 }
 
 func New(cfg config.Config, version string) *App {
+	return NewWithBuildInfo(cfg, BuildInfo{Version: version, GitCommit: "unknown", BuildTime: "unknown"})
+}
+
+func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
+	if buildInfo.Version == "" {
+		buildInfo.Version = "0.1.0-dev"
+	}
 	logger := logs.New(logs.DefaultCapacity)
 	endpointInput := cfg.IPCEndpoint
 	if endpointInput == "" {
@@ -45,6 +71,16 @@ func New(cfg config.Config, version string) *App {
 	}
 	runtimeHookDir := agenthooks.RuntimeBaseDir(ipcEndpoint)
 	installShellHook(logger, runtimeHookDir)
+
+	// 本地 JSONL 落盘：与 ExportDiagnostics 读取的日志目录一致（按 runtime 隔离）。
+	// 落盘是非关键能力，失败时降级为仅内存 Ring，不阻塞 Agent 启动。
+	var sink *logs.FileSink
+	if fileSink, sinkErr := logs.NewFileSink(filepath.Join(runtimeHookDir, "logs"), 0, -1); sinkErr != nil {
+		logger.Add("warn", "diagnostics", fmt.Sprintf("log file sink unavailable: %v", sinkErr))
+	} else {
+		sink = fileSink
+		logger.SetSink(sink)
+	}
 
 	manager := session.NewManager(session.TerminalDefaults{
 		CWD:                cfg.Shell.CWD,
@@ -90,17 +126,34 @@ func New(cfg config.Config, version string) *App {
 	}
 
 	application := &App{
-		cfg:         cfg,
-		version:     version,
-		logger:      logger,
-		ipcEndpoint: ipcEndpoint,
-		sessions:    manager,
-		fileSend:    fileSendSvc,
-		fileUpload:  fileUploadSvc,
-		agentNotify: notificationDispatcher,
+		cfg:             cfg,
+		version:         buildInfo.Version,
+		buildInfo:       buildInfo,
+		runID:           newRunID(),
+		logger:          logger,
+		sink:            sink,
+		ipcEndpoint:     ipcEndpoint,
+		sessions:        manager,
+		fileSend:        fileSendSvc,
+		fileUpload:      fileUploadSvc,
+		agentNotify:     notificationDispatcher,
+		relayConfigured: cfg.Relay.URL != "",
 	}
-	application.Log("info", "core", fmt.Sprintf("relay-only app initialized ipc=%s", ipcEndpoint))
+	application.Log("info", "core", fmt.Sprintf("relay-only app initialized ipc=%s runId=%s", ipcEndpoint, application.runID))
 	return application
+}
+
+// newRunID 生成单次运行的诊断关联 ID（毫秒时间戳 + 随机后缀）。
+func newRunID() string {
+	return fmt.Sprintf("%d-%s", time.Now().UnixMilli(), randomSuffix())
+}
+
+func randomSuffix() string {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "00000000"
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 func installShellHook(logger *logs.Logger, runtimeHookDir string) {
@@ -151,12 +204,34 @@ func (app *App) IPCEndpoint() string {
 }
 
 func (app *App) SetRelayConnected(connected bool, deviceID string, lastError string) {
+	app.mu.Lock()
+	app.relayConnected = connected
+	app.relayDeviceID = deviceID
+	app.relayLastError = lastError
+	app.mu.Unlock()
 	if connected {
 		app.Log("info", "relay", fmt.Sprintf("relay connected deviceId=%s", deviceID))
 	} else if lastError != "" {
 		app.Log("warn", "relay", fmt.Sprintf("relay disconnected error=%s", lastError))
 	} else {
 		app.Log("info", "relay", "relay disconnected")
+	}
+}
+
+// RunID 返回本次运行的诊断关联 ID。
+func (app *App) RunID() string { return app.runID }
+
+// BuildInfo 返回构建时注入的版本信息。
+func (app *App) BuildInfo() BuildInfo { return app.buildInfo }
+
+// Shutdown 关闭诊断日志文件句柄；幂等，关闭失败不阻塞 Agent 退出。
+func (app *App) Shutdown() {
+	app.mu.Lock()
+	sink := app.sink
+	app.sink = nil
+	app.mu.Unlock()
+	if sink != nil {
+		_ = sink.Close()
 	}
 }
 
@@ -170,7 +245,6 @@ const diagnosticsRecentLogLimit = 100
 
 // DiagnosticsSummary 构建运行中 Agent 的只读诊断快照（满足 localipc.Application）。
 // 仅包含计数、状态与脱敏配置；不包含终端输入正文、Secret 等敏感内容。
-// Mux/Relay 计数器在任务 5 接入业务埋点前为 0，runId/buildInfo 在任务 7 接入生命周期后补充。
 func (app *App) DiagnosticsSummary() map[string]any {
 	sessions := app.sessions.List()
 	sessionSummaries := make([]map[string]any, 0, len(sessions))
@@ -196,11 +270,15 @@ func (app *App) DiagnosticsSummary() map[string]any {
 	return map[string]any{
 		"agent": map[string]any{
 			"version":     app.version,
+			"runId":       app.runID,
+			"gitCommit":   app.buildInfo.GitCommit,
+			"buildTime":   app.buildInfo.BuildTime,
 			"ipcEndpoint": app.IPCEndpoint(),
 			"pid":         os.Getpid(),
 			"platform":    runtime.GOOS,
 			"arch":        runtime.GOARCH,
 		},
+		"relay":   app.relayDiagnostics(),
 		"metrics": diagnostics.Default.Snapshot(),
 		"sessions": map[string]any{
 			"count": app.sessions.Count(),
@@ -221,8 +299,8 @@ func (app *App) DiagnosticsSummary() map[string]any {
 const diagnosticsRingLimit = 5000
 
 // ExportDiagnostics 生成诊断包 ZIP 并返回实际输出路径（满足 localipc.Application）。
-// 复用任务 1 的 diagnostics.Export：磁盘日志目录在 FileSink 尚未接入（任务 7）时为空，
-// 此时导出仍包含内存 Ring 事件、指标与状态；diagnostics.Export 对缺失日志文件是容错的。
+// 复用任务 1 的 diagnostics.Export：磁盘日志由 FileSink 写入与导出读取同一目录；
+// 无磁盘日志时仍包含内存 Ring 事件、指标与状态（diagnostics.Export 对缺失日志容错）。
 // 任何失败都以 error 返回（并 recover 兜底），绝不影响 Agent 主循环。
 func (app *App) ExportDiagnostics(exportDir string) (path string, err error) {
 	defer func() {
@@ -241,11 +319,14 @@ func (app *App) ExportDiagnostics(exportDir string) (path string, err error) {
 		OutDir: exportDir,
 		Manifest: diagnostics.Manifest{
 			Version:      app.version,
+			GitCommit:    app.buildInfo.GitCommit,
+			BuildTime:    app.buildInfo.BuildTime,
+			RunID:        app.runID,
 			Platform:     runtime.GOOS,
 			Architecture: runtime.GOARCH,
 		},
 		Metrics:     diagnostics.Default.Snapshot(),
-		State:       app.DiagnosticsSummary(),
+		State:       app.DiagnosticsState(),
 		RingEntries: app.logger.Recent(diagnosticsRingLimit),
 	})
 	if err != nil {

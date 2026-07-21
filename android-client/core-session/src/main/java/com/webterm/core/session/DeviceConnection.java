@@ -375,8 +375,13 @@ public final class DeviceConnection {
         return activeChannelCount == 0 && !controlPlane.hasListener();
     }
 
-    String deviceId() {
+    public String deviceId() {
         return deviceId;
+    }
+
+    /** 归一化后的 Relay 服务器地址（诊断流量统计按 baseUrl+deviceId 隔离累计）。 */
+    public String baseUrl() {
+        return baseUrl;
     }
 
     public void start() {
