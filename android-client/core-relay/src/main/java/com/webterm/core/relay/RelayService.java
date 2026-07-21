@@ -6,6 +6,7 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
 import com.webterm.data.http.WebTermApi;
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
@@ -279,19 +280,29 @@ public final class RelayService {
 
     // ── Login / Register / OTP ───────────────────────────────────
 
-    public void onLogin(String email, String password, WebTermApi.ExtendedLoginCallback callback) {
-        String baseUrl = relayBaseUrl();
-        String oldCookie = relayMasterConfig != null ? relayMasterConfig.getCookie() : "";
+    /**
+     * 用户在登录页发起登录。本次请求地址以传入的 {@code baseUrl} 为准（已在 UI 层规范化），
+     * 不再内部推断；只有与已保存服务器是同一地址时才携带旧 Cookie，
+     * 避免把旧服务器的凭证发送给新服务器。
+     */
+    public void onLogin(String baseUrl, String email, String password, WebTermApi.ExtendedLoginCallback callback) {
+        String oldCookie = reusableCookieFor(
+            relayMasterConfig != null ? relayMasterConfig.getUrl() : "",
+            relayMasterConfig != null ? relayMasterConfig.getCookie() : "",
+            baseUrl);
         api.login(baseUrl, oldCookie, email, password, callback);
     }
 
-    public void onRegister(String email, String username, String password, WebTermApi.ExtendedLoginCallback callback) {
-        String baseUrl = relayBaseUrl();
-        api.register(baseUrl, email, username, password, callback);
+    /**
+     * 用户在注册页发起注册。username 留空，由 Go Relay 回退使用 email，
+     * 同时兼容要求 username 字段的历史后端。
+     */
+    public void onRegister(String baseUrl, String email, String password, WebTermApi.RegisterCallback callback) {
+        api.register(baseUrl, email, "", password, callback);
     }
 
-    public void onVerifyOtp(String email, String code, String targetDeviceId, String cookie, WebTermApi.LoginCallback callback) {
-        String baseUrl = relayBaseUrl();
+    /** OTP 验证必须使用发起登录时的同一 {@code baseUrl}，由调用方固定传入。 */
+    public void onVerifyOtp(String baseUrl, String email, String code, String targetDeviceId, String cookie, WebTermApi.LoginCallback callback) {
         api.verifyOtp(baseUrl, email, code, targetDeviceId, cookie, callback);
     }
 
@@ -302,11 +313,32 @@ public final class RelayService {
         return ServerConfigStore.DEFAULT_URL;
     }
 
+    /**
+     * 仅当已保存服务器与本次认证地址规范化后一致时才复用旧 Cookie。
+     * 纯函数，便于单测。
+     */
+    static String reusableCookieFor(String savedUrl, String savedCookie, String targetUrl) {
+        if (savedCookie == null || savedCookie.isEmpty()) return "";
+        if (WebTermUrls.sameBaseUrl(savedUrl, targetUrl)) return savedCookie;
+        return "";
+    }
+
     public void saveRelayLogin(String url, String username, String password, String cookie) {
+        boolean serverChanged = relayMasterConfig != null
+            && relayMasterConfig.getUrl() != null && !relayMasterConfig.getUrl().isEmpty()
+            && !WebTermUrls.sameBaseUrl(relayMasterConfig.getUrl(), url);
         ServerConfig master = ensureRelayMasterConfig(url);
         master.setUsername(username);
         master.setPassword(password);
         master.setCookie(cookie);
+        if (serverChanged) {
+            // 切换到新服务器：旧服务器派生的设备缓存不能继续展示在新服务器下。
+            relayDevices.clear();
+            devicesLoaded = false;
+            devicesFetchInFlight = false;
+            httpAuthFailures = 0;
+            notifyDeviceListener();
+        }
         if (host != null) host.saveServers();
     }
 

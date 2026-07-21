@@ -227,6 +227,77 @@ func TestRelayControlRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) 
 	}
 }
 
+func TestRelayControlLoginAcceptsPlainUsername(t *testing.T) {
+	store := relaystore.NewMemoryStore()
+	// 管理员账号通过 CLI 以非邮箱用户名创建（webterm-relay admin create --username admin）。
+	if _, err := store.CreateUser("admin", "secret-password", "admin"); err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	handler := New(store, relayrouter.NewRegistry()).Handler()
+
+	// username 字段登录：兼容管理员与历史用户名账号。
+	login := postJSON(t, handler, "/api/auth/login", map[string]any{
+		"username": "admin",
+		"password": "secret-password",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("username login status = %d body=%s", login.Code, login.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(login.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	if body["username"] != "admin" || body["role"] != "admin" {
+		t.Fatalf("login response = %#v, want admin username/role", body)
+	}
+	if cookie := findCookie(login, relaycore.AuthCookieName); cookie == nil || cookie.Value == "" {
+		t.Fatalf("username login should issue auth cookie: %#v", login.Result().Cookies())
+	}
+
+	// 错误密码仍然被拒绝。
+	wrong := postJSON(t, handler, "/api/auth/login", map[string]any{
+		"username": "admin",
+		"password": "wrong-password",
+	}, nil)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status = %d body=%s", wrong.Code, wrong.Body.String())
+	}
+}
+
+func TestRelayControlVerifyOTPRejectsEmailVerifyCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	response := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", response.Code, response.Body.String())
+	}
+	if sender.count() != 1 || sender.last().purpose != verifyEmailPurpose {
+		t.Fatalf("otp sends = %#v, want email verify send", sender.sends)
+	}
+	emailVerifyCode := sender.last().code
+
+	// 注册邮箱验证码不能用于 new_device 的 verify-otp 接口：两种用途不得混用。
+	verify := postJSON(t, handler, "/api/auth/verify-otp", map[string]any{
+		"email":            "owner@example.com",
+		"code":             emailVerifyCode,
+		"target_device_id": "client-1",
+	}, nil)
+	if verify.Code != http.StatusUnauthorized {
+		t.Fatalf("verify-otp with email_verify code status = %d body=%s", verify.Code, verify.Body.String())
+	}
+	if access := findCookie(verify, relaycore.AuthCookieName); access != nil {
+		t.Fatalf("email_verify code must not issue a session: %#v", verify.Result().Cookies())
+	}
+}
+
 func TestRelayControlLoginRequiresOTPForUntrustedDevice(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	store := relaystore.NewMemoryStore()

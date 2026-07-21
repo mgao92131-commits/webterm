@@ -160,11 +160,16 @@ public final class WebTermApi {
         });
     }
 
-    public void register(String baseUrl, String email, String username, String password, ExtendedLoginCallback callback) {
+    /**
+     * 提交普通注册。Go Relay 注册接口创建账号后只返回用户 JSON，不签发认证 Cookie，
+     * 因此这里 2xx 即视为“账号创建成功”，通过 {@link RegisterCallback#onAccountCreated}
+     * 回传结果（含是否需要邮箱验证），由上层决定是否自动登录。
+     */
+    public void register(String baseUrl, String email, String username, String password, RegisterCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("email", email);
-            body.put("username", username);
+            body.put("username", username != null && !username.isEmpty() ? username : email);
             body.put("password", password);
         } catch (JSONException e) {
             callback.onError(e.getMessage());
@@ -179,35 +184,27 @@ public final class WebTermApi {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Register failed: " + e.getMessage());
+                callback.onError("注册失败: " + e.getMessage());
             }
 
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
+                    String text = response.body() != null ? response.body().string() : "";
                     if (!response.isSuccessful()) {
-                        String bodyStr = response.body() != null ? response.body().string() : "";
-                        String msg = parseErrorMessage(bodyStr);
-                        if (msg.isEmpty()) msg = "Register failed: " + response.code();
+                        String msg = parseErrorMessage(text);
+                        if (msg.isEmpty()) msg = "注册失败: " + response.code();
                         callback.onError(msg);
                         return;
                     }
-                    String text = response.body().string();
-                    JSONObject json = null;
+                    boolean emailVerificationRequired = false;
                     try {
-                        json = new JSONObject(text);
-                    } catch (JSONException ignored) {}
-                    String mergedCookie = parseAndMergeCookies(null, response);
-                    if (json != null && json.optBoolean("otp_required", false)) {
-                        String targetDeviceId = json.optString("target_device_id", "");
-                        callback.onOtpRequired(targetDeviceId, mergedCookie);
-                        return;
+                        JSONObject json = new JSONObject(text);
+                        emailVerificationRequired = json.optBoolean("emailVerificationRequired", false);
+                    } catch (JSONException ignored) {
+                        // 空或非 JSON 响应：账号以 2xx 创建成功，按无需邮箱验证处理。
                     }
-                    if (mergedCookie.isEmpty()) {
-                        callback.onError("Register did not return an auth cookie.");
-                        return;
-                    }
-                    callback.onReady(baseUrl, mergedCookie);
+                    callback.onAccountCreated(baseUrl, emailVerificationRequired);
                 }
             }
         });
@@ -619,6 +616,18 @@ public final class WebTermApi {
 
     public interface ExtendedLoginCallback extends LoginCallback {
         void onOtpRequired(String targetDeviceId, String cookie);
+    }
+
+    /** 注册结果回调：注册接口本身不签发 Cookie，仅代表账号是否创建成功。 */
+    public interface RegisterCallback {
+        /**
+         * 账号创建成功。
+         *
+         * @param baseUrl                   本次注册使用的规范化服务器地址
+         * @param emailVerificationRequired 服务端是否要求先完成邮箱验证
+         */
+        void onAccountCreated(String baseUrl, boolean emailVerificationRequired);
+        void onError(String message);
     }
 
     public interface SessionCreateCallback {

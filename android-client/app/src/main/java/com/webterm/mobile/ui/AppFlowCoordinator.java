@@ -341,10 +341,12 @@ public final class AppFlowCoordinator implements
     }
 
     private View buildRelayLoginView(Activity activity) {
-        String savedEmail = mRelayService.masterConfig() != null
-            ? mRelayService.masterConfig().getUsername() : "";
+        ServerConfig master = mRelayService.masterConfig();
+        String savedUrl = master != null && master.getUrl() != null && !master.getUrl().isEmpty()
+            ? master.getUrl() : ServerConfigStore.DEFAULT_URL;
+        String savedEmail = master != null ? master.getUsername() : "";
         RelayLoginScreenBuilder.RelayLoginScreen screen =
-            RelayLoginScreenBuilder.buildLogin(mRelayUiState, savedEmail);
+            RelayLoginScreenBuilder.buildLogin(mRelayUiState, savedUrl, savedEmail);
         mScreenMode = ScreenMode.RELAY_LOGIN;
         installRootInsets(activity, screen.root, 0, 0, 0, dp(activity, 16), true, true);
         return screen.root;

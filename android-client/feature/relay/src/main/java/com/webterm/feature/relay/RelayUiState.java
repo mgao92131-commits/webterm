@@ -126,8 +126,8 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     }
 
     @Override
-    public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onLogin(email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+    public void onLogin(String baseUrl, String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onLogin(baseUrl, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
                 if (cookie != null && !cookie.isEmpty()) {
@@ -149,19 +149,38 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     }
 
     @Override
-    public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onRegister(email, username, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+    public void onRegister(String baseUrl, String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onRegister(baseUrl, email, password, new com.webterm.data.http.WebTermApi.RegisterCallback() {
             @Override
-            public void onReady(String url, String cookie) {
-                if (cookie != null && !cookie.isEmpty()) {
-                    relayService.saveRelayLogin(url, email, password, cookie);
+            public void onAccountCreated(String url, boolean emailVerificationRequired) {
+                if (emailVerificationRequired) {
+                    // 注册成功但需先完成邮箱验证；不得调用 new_device 的 verify-otp 接口。
+                    // TODO(email-verify): 后端补充 /api/auth/verify-email 后，在此接入邮箱验证码界面。
+                    callback.onEmailVerificationRequired(
+                        "注册成功。该服务器要求邮箱验证，请在邮箱中完成验证后返回登录页登录。");
+                    return;
                 }
-                callback.onLoginSuccess(url, cookie);
-            }
+                // 注册成功后用同一 baseUrl、email、password 自动登录以取得认证 Cookie。
+                relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+                    @Override
+                    public void onReady(String loginUrl, String cookie) {
+                        if (cookie != null && !cookie.isEmpty()) {
+                            relayService.saveRelayLogin(loginUrl, email, password, cookie);
+                        }
+                        callback.onLoginSuccess(loginUrl, cookie);
+                    }
 
-            @Override
-            public void onOtpRequired(String targetDeviceId, String cookie) {
-                // Register typically doesn't require OTP
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {
+                        callback.onEmailVerificationRequired(
+                            "账号已创建。该服务器要求设备验证，请返回登录页输入验证码后登录。");
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        callback.onError("账号已创建，但自动登录失败，请返回登录页重试。");
+                    }
+                });
             }
 
             @Override
@@ -172,8 +191,8 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     }
 
     @Override
-    public void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onVerifyOtp(email, code, targetDeviceId, cookie, new com.webterm.data.http.WebTermApi.LoginCallback() {
+    public void onVerifyOtp(String baseUrl, String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onVerifyOtp(baseUrl, email, code, targetDeviceId, cookie, new com.webterm.data.http.WebTermApi.LoginCallback() {
             @Override
             public void onReady(String url, String newCookie) {
                 if (newCookie != null && !newCookie.isEmpty()) {

@@ -11,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
 
@@ -18,9 +19,9 @@ public final class RelayLoginScreenBuilder {
 
     public interface Host {
         Activity activity();
-        void onLogin(String email, String password, LoginScreenCallback callback);
-        void onRegister(String email, String username, String password, LoginScreenCallback callback);
-        void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
+        void onLogin(String baseUrl, String email, String password, LoginScreenCallback callback);
+        void onRegister(String baseUrl, String email, String password, LoginScreenCallback callback);
+        void onVerifyOtp(String baseUrl, String email, String password, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
         void onBackToHome();
     }
 
@@ -28,6 +29,11 @@ public final class RelayLoginScreenBuilder {
         void onOtpRequired(String targetDeviceId, String cookie);
         void onLoginSuccess(String url, String cookie);
         void onError(String message);
+        /**
+         * 注册成功但需要邮箱验证（或需要回到登录页完成设备验证）时的中性提示，
+         * 不代表失败；默认无操作以兼容旧实现。
+         */
+        default void onEmailVerificationRequired(String message) {}
     }
 
     public static final class RelayLoginScreen {
@@ -40,7 +46,7 @@ public final class RelayLoginScreenBuilder {
         }
     }
 
-    public static RelayLoginScreen buildLogin(Host host, String savedEmail) {
+    public static RelayLoginScreen buildLogin(Host host, String savedUrl, String savedEmail) {
         Activity activity = host.activity();
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -100,6 +106,14 @@ public final class RelayLoginScreenBuilder {
         spacer1.setLayoutParams(new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, DesignTokens.SPACE_6)));
         content.addView(spacer1);
 
+        // 中转服务器地址输入框
+        EditText urlInput = UIUtils.createInput(activity, "中转服务器地址");
+        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        if (savedUrl != null && !savedUrl.isEmpty()) {
+            urlInput.setText(savedUrl);
+        }
+        content.addView(urlInput, UIUtils.matchWrap(activity));
+
         // 邮箱输入框
         EditText emailInput = UIUtils.createInput(activity, "邮箱地址");
         emailInput.setInputType(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
@@ -152,10 +166,12 @@ public final class RelayLoginScreenBuilder {
         final boolean[] isOtpMode = {false};
         final String[] targetDeviceId = {""};
         final String[] otpCookie = {""};
+        // 本次认证上下文：进入 OTP 模式后固定，OTP 必须发往登录时的同一服务器。
+        final String[] authBaseUrl = {""};
+        final String[] authEmail = {""};
 
         // === 事件绑定 ===
         submitBtn.setOnClickListener(v -> {
-            String email = emailInput.getText().toString().trim();
             String password = passwordInput.getText().toString();
 
             if (isOtpMode[0]) {
@@ -170,7 +186,7 @@ public final class RelayLoginScreenBuilder {
                 msgText.setText("验证中...");
                 msgText.setTextColor(DesignTokens.WARNING);
                 msgText.setVisibility(View.VISIBLE);
-                host.onVerifyOtp(email, password, code, targetDeviceId[0], otpCookie[0], new LoginScreenCallback() {
+                host.onVerifyOtp(authBaseUrl[0], authEmail[0], password, code, targetDeviceId[0], otpCookie[0], new LoginScreenCallback() {
                     @Override
                     public void onOtpRequired(String tdId, String cookie) {}
                     @Override
@@ -188,6 +204,15 @@ public final class RelayLoginScreenBuilder {
                     }
                 });
             } else {
+                WebTermUrls.BaseUrlCheck urlCheck = WebTermUrls.validateBaseUrl(urlInput.getText().toString());
+                if (!urlCheck.valid) {
+                    msgText.setText(urlCheck.error);
+                    msgText.setTextColor(DesignTokens.DANGER);
+                    msgText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                String baseUrl = urlCheck.normalized;
+                String email = emailInput.getText().toString().trim();
                 if (email.isEmpty() || password.isEmpty()) {
                     msgText.setText("请输入邮箱和密码");
                     msgText.setTextColor(DesignTokens.DANGER);
@@ -198,13 +223,18 @@ public final class RelayLoginScreenBuilder {
                 msgText.setText("登录中...");
                 msgText.setTextColor(DesignTokens.WARNING);
                 msgText.setVisibility(View.VISIBLE);
-                host.onLogin(email, password, new LoginScreenCallback() {
+                host.onLogin(baseUrl, email, password, new LoginScreenCallback() {
                     @Override
                     public void onOtpRequired(String tdId, String cookie) {
                         activity.runOnUiThread(() -> {
                             isOtpMode[0] = true;
                             targetDeviceId[0] = tdId;
                             otpCookie[0] = cookie;
+                            authBaseUrl[0] = baseUrl;
+                            authEmail[0] = email;
+                            // 验证码阶段锁定账号与服务器，避免 OTP 被发送到不同服务器。
+                            urlInput.setEnabled(false);
+                            emailInput.setEnabled(false);
                             passwordInput.setVisibility(View.GONE);
                             otpInput.setVisibility(View.VISIBLE);
                             submitBtn.setText("验证并登录");
@@ -232,8 +262,10 @@ public final class RelayLoginScreenBuilder {
         });
 
         registerLink.setOnClickListener(v -> {
-            // 切换到注册页面
-            RelayLoginScreen regScreen = buildRegister(host, emailInput.getText().toString().trim());
+            // 切换到注册页面，保留当前 URL 与邮箱
+            RelayLoginScreen regScreen = buildRegister(host,
+                urlInput.getText().toString().trim(),
+                emailInput.getText().toString().trim());
             root.removeAllViews();
             // 将注册页面内容移入当前 root
             LinearLayout regRoot = regScreen.root;
@@ -243,7 +275,7 @@ public final class RelayLoginScreenBuilder {
         return new RelayLoginScreen(root, () -> {});
     }
 
-    public static RelayLoginScreen buildRegister(Host host, String prefillEmail) {
+    public static RelayLoginScreen buildRegister(Host host, String prefillUrl, String prefillEmail) {
         Activity activity = host.activity();
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -293,16 +325,19 @@ public final class RelayLoginScreenBuilder {
         spacer1.setLayoutParams(new LinearLayout.LayoutParams(-1, UIUtils.dp(activity, DesignTokens.SPACE_6)));
         content.addView(spacer1);
 
+        EditText urlInput = UIUtils.createInput(activity, "中转服务器地址");
+        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        if (prefillUrl != null && !prefillUrl.isEmpty()) {
+            urlInput.setText(prefillUrl);
+        }
+        content.addView(urlInput, UIUtils.matchWrap(activity));
+
         EditText emailInput = UIUtils.createInput(activity, "邮箱地址");
         emailInput.setInputType(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         if (prefillEmail != null && !prefillEmail.isEmpty()) {
             emailInput.setText(prefillEmail);
         }
         content.addView(emailInput, UIUtils.matchWrap(activity));
-
-        EditText usernameInput = UIUtils.createInput(activity, "用户名");
-        usernameInput.setInputType(InputType.TYPE_CLASS_TEXT);
-        content.addView(usernameInput, UIUtils.matchWrap(activity));
 
         EditText passwordInput = UIUtils.createInput(activity, "密码");
         passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -335,10 +370,17 @@ public final class RelayLoginScreenBuilder {
         root.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
 
         submitBtn.setOnClickListener(v -> {
+            WebTermUrls.BaseUrlCheck urlCheck = WebTermUrls.validateBaseUrl(urlInput.getText().toString());
+            if (!urlCheck.valid) {
+                msgText.setText(urlCheck.error);
+                msgText.setTextColor(DesignTokens.DANGER);
+                msgText.setVisibility(View.VISIBLE);
+                return;
+            }
+            String baseUrl = urlCheck.normalized;
             String email = emailInput.getText().toString().trim();
-            String username = usernameInput.getText().toString().trim();
             String password = passwordInput.getText().toString();
-            if (email.isEmpty() || username.isEmpty() || password.isEmpty()) {
+            if (email.isEmpty() || password.isEmpty()) {
                 msgText.setText("请填写所有字段");
                 msgText.setTextColor(DesignTokens.DANGER);
                 msgText.setVisibility(View.VISIBLE);
@@ -348,12 +390,30 @@ public final class RelayLoginScreenBuilder {
             msgText.setText("注册中...");
             msgText.setTextColor(DesignTokens.WARNING);
             msgText.setVisibility(View.VISIBLE);
-            host.onRegister(email, username, password, new LoginScreenCallback() {
+            host.onRegister(baseUrl, email, password, new LoginScreenCallback() {
                 @Override
                 public void onOtpRequired(String tdId, String cookie) {}
                 @Override
                 public void onLoginSuccess(String url, String cookie) {
                     activity.runOnUiThread(() -> host.onBackToHome());
+                }
+                @Override
+                public void onEmailVerificationRequired(String message) {
+                    activity.runOnUiThread(() -> {
+                        msgText.setText(message);
+                        msgText.setTextColor(DesignTokens.SUCCESS);
+                        msgText.setVisibility(View.VISIBLE);
+                        // 账号已创建但尚未登录：按钮变为返回登录，保留 URL 与邮箱。
+                        submitBtn.setText("返回登录");
+                        submitBtn.setEnabled(true);
+                        submitBtn.setOnClickListener(back -> {
+                            RelayLoginScreen loginScreen = buildLogin(host,
+                                urlInput.getText().toString().trim(),
+                                emailInput.getText().toString().trim());
+                            root.removeAllViews();
+                            root.addView(loginScreen.root, new LinearLayout.LayoutParams(-1, -1));
+                        });
+                    });
                 }
                 @Override
                 public void onError(String message) {
@@ -368,7 +428,9 @@ public final class RelayLoginScreenBuilder {
         });
 
         loginLink.setOnClickListener(v -> {
-            RelayLoginScreen loginScreen = buildLogin(host, emailInput.getText().toString().trim());
+            RelayLoginScreen loginScreen = buildLogin(host,
+                urlInput.getText().toString().trim(),
+                emailInput.getText().toString().trim());
             root.removeAllViews();
             root.addView(loginScreen.root, new LinearLayout.LayoutParams(-1, -1));
         });
