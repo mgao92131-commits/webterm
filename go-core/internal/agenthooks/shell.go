@@ -114,7 +114,7 @@ function Invoke-WebTermSessionUpdate {
   $last = ""
   $history = Get-History -Count 1 -ErrorAction SilentlyContinue
   if ($null -ne $history) { $last = $history.CommandLine }
-  # 后台启动、不等待、不弹窗、输出不连接终端：失败绝不影响 prompt。
+  # 后台启动、不弹窗、输出不连接终端；启动后短等退出（见下方注释），失败绝不影响 prompt。
   # 元数据经环境变量传入，避免对动态值做命令行转义。
   try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -129,12 +129,16 @@ function Invoke-WebTermSessionUpdate {
     $psi.EnvironmentVariables["WEBTERM_HOOK_INPUT_KIND"] = "shell"
     $psi.EnvironmentVariables["WEBTERM_HOOK_SHELL_STATE"] = "prompt"
     $proc = [System.Diagnostics.Process]::Start($psi)
-    # 刻意不立即 Dispose：Process 对象持有子进程的进程句柄与重定向管道。
-    # 在部分 Windows 环境（如 ConPTY 会话内的 CI runner）上，Start 后立刻
-    # Dispose 会让子进程在初始化阶段静默失败，上报整条丢失（集成测试
-    # TestPowerShellSessionHookReportsPromptOverIPC 曾因此稳定超时）。
-    # 子进程约几十毫秒内退出，Process 对象随后由 GC 终结器回收，
-    # 既不阻塞 prompt，也不会无限累积句柄。
+    if ($null -ne $proc) {
+      # 必须短等子进程退出：spawn 后立即返回 prompt（含仅去掉 Dispose、交由 GC
+      # 回收的写法）会让子进程在 ConPTY 会话内初始化阶段静默死亡——进程从未执行，
+      # 上报整条丢失且无任何失败记录（CI runner 上 5/5 稳定复现，本地 Win10 不
+      # 复现）。等待期间 PowerShell 管线保持安静，子进程可正常完成初始化。
+      # 正常退出约几十毫秒；hook-mode CLI 自身有亚秒级超时，2s 封顶兜底，
+      # prompt 不会被无限阻塞。
+      try { [void]$proc.WaitForExit(2000) } catch { }
+      try { $proc.Dispose() } catch { }
+    }
   } catch { }
 }
 if (-not (Get-Variable -Name WebTermOriginalPrompt -Scope Global -ErrorAction SilentlyContinue)) {

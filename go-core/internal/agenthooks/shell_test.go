@@ -40,10 +40,12 @@ func TestPowerShellHookIsNonBlockingWithBackoff(t *testing.T) {
 		t.Fatal("PowerShell hook must not show a window for the background CLI")
 	}
 	if !strings.Contains(powerShellHookTemplate, "[System.Diagnostics.Process]::Start") {
-		t.Fatal("PowerShell hook must launch the CLI without waiting for it")
+		t.Fatal("PowerShell hook must launch the CLI via Process.Start")
 	}
-	if strings.Contains(powerShellHookTemplate, "WaitForExit") {
-		t.Fatal("PowerShell hook must not wait for the CLI to exit")
+	// 必须有界等待：ConPTY 会话内 spawn 后立即返回会让子进程初始化静默失败
+	// （runner 上稳定复现），WaitForExit(2000) 保证正常 ~25ms 返回且 prompt 不被无限阻塞。
+	if !strings.Contains(powerShellHookTemplate, "WaitForExit(2000)") {
+		t.Fatal("PowerShell hook must wait for the CLI with a bounded 2s timeout")
 	}
 	if !strings.Contains(powerShellHookTemplate, "Test-WebTermHookBackoff") {
 		t.Fatal("PowerShell hook must consult backoff state before launching the CLI")
