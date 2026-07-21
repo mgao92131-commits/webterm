@@ -2,8 +2,12 @@ package com.webterm.mobile.diagnostics;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -11,6 +15,10 @@ import androidx.core.content.FileProvider;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -22,6 +30,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -72,8 +81,134 @@ public final class DiagnosticLogExporter {
             output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
             output.write(buildTrafficSummary().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             output.closeEntry();
+            try {
+                writeJsonEntry(output, "manifest.json", buildManifestJson(activity));
+                writeJsonEntry(output, "android-metrics.json", buildMetricsJson());
+                writeJsonEntry(output, "android-state.json", buildStateJson(activity));
+            } catch (JSONException e) {
+                throw new IOException("failed to build diagnostics json", e);
+            }
         }
         return archive;
+    }
+
+    private static void writeJsonEntry(ZipOutputStream output, String name, JSONObject json)
+        throws IOException {
+        output.putNextEntry(new ZipEntry(name));
+        output.write(json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        output.closeEntry();
+    }
+
+    private static String isoNow() {
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return format.format(new Date());
+    }
+
+    /** manifest.json：导出包 schema 版本、导出时间、应用版本与设备信息。 */
+    private static JSONObject buildManifestJson(Context context) throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("schemaVersion", 1);
+        json.put("exportedAt", isoNow());
+        json.put("appVersion", appVersionName(context));
+        json.put("device", Build.MANUFACTURER + " " + Build.MODEL);
+        json.put("sdkInt", Build.VERSION.SDK_INT);
+        return json;
+    }
+
+    /**
+     * android-metrics.json：网络流量与渲染指标快照。
+     * 注：恢复指标（resume）段依赖增强版 TerminalResumeMetrics.snapshot()，待任务 6 迁移后补充。
+     */
+    private static JSONObject buildMetricsJson() throws JSONException {
+        JSONObject json = new JSONObject();
+
+        NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
+        JSONObject uid = new JSONObject();
+        uid.put("rxBytes", network.uid.rxBytes);
+        uid.put("txBytes", network.uid.txBytes);
+        uid.put("supported", network.uid.supported);
+        json.put("uid", uid);
+        JSONObject websocket = new JSONObject();
+        websocket.put("rxFrames", network.websocket.rxFrames);
+        websocket.put("rxBytes", network.websocket.rxBytes);
+        websocket.put("txFrames", network.websocket.txFrames);
+        websocket.put("txBytes", network.websocket.txBytes);
+        json.put("websocket", websocket);
+        JSONArray byDevice = new JSONArray();
+        for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
+            MuxTransport.TrafficSnapshot s = e.getValue();
+            JSONObject device = new JSONObject();
+            device.put("server", NetworkTrafficStats.serverOfKey(e.getKey()));
+            device.put("device", NetworkTrafficStats.deviceOfKey(e.getKey()));
+            device.put("rxFrames", s.rxFrames);
+            device.put("rxBytes", s.rxBytes);
+            device.put("txFrames", s.txFrames);
+            device.put("txBytes", s.txBytes);
+            byDevice.put(device);
+        }
+        json.put("byDevice", byDevice);
+
+        TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
+        JSONObject render = new JSONObject();
+        render.put("modelChangeCount", screen.modelChangeCount);
+        render.put("uiCallbackScheduleCount", screen.uiCallbackScheduleCount);
+        render.put("uiCallbackCoalescedCount", screen.uiCallbackCoalescedCount);
+        render.put("renderRequestCount", screen.renderRequestCount);
+        render.put("vsyncRenderCount", screen.vsyncRenderCount);
+        render.put("fullInvalidateCount", screen.fullInvalidateCount);
+        render.put("partialInvalidateCount", screen.partialInvalidateCount);
+        render.put("dirtyRowCount", screen.dirtyRowCount);
+        render.put("renderDurationNanos", screen.renderDurationNanos);
+        render.put("renderDurationMaxNanos", screen.renderDurationMaxNanos);
+        render.put("protobufParseNanos", screen.protobufParseNanos);
+        render.put("protobufParseCount", screen.protobufParseCount);
+        render.put("modelApplyNanos", screen.modelApplyNanos);
+        render.put("mainThreadCallbackDelayNanos", screen.mainThreadCallbackDelayNanos);
+        render.put("snapshotFrameCount", screen.snapshotFrameCount);
+        render.put("snapshotFrameBytes", screen.snapshotFrameBytes);
+        render.put("patchFrameCount", screen.patchFrameCount);
+        render.put("patchFrameBytes", screen.patchFrameBytes);
+        render.put("historyPageFrameCount", screen.historyPageFrameCount);
+        render.put("historyPageFrameBytes", screen.historyPageFrameBytes);
+        render.put("historyTrimFrameCount", screen.historyTrimFrameCount);
+        render.put("historyTrimFrameBytes", screen.historyTrimFrameBytes);
+        render.put("otherFrameCount", screen.otherFrameCount);
+        render.put("otherFrameBytes", screen.otherFrameBytes);
+        render.put("mailboxResidenceNanos", screen.mailboxResidenceNanos);
+        render.put("mailboxResidenceMaxNanos", screen.mailboxResidenceMaxNanos);
+        json.put("render", render);
+        return json;
+    }
+
+    /** android-state.json：导出时的本地状态摘要（当前时间、日志文件数与总字节）。 */
+    private static JSONObject buildStateJson(Context context) throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("generatedAt", isoNow());
+        List<File> logs = DiagnosticLogFiles.list(context);
+        int fileCount = 0;
+        for (File log : logs) {
+            if (log.isFile()) fileCount++;
+        }
+        json.put("logFileCount", fileCount);
+        json.put("logTotalBytes", DiagnosticLogFiles.totalBytes(context));
+        return json;
+    }
+
+    /** BuildConfig 未生成（buildFeatures.buildConfig=false），版本号从 PackageManager 读取。 */
+    private static String appVersionName(Context context) {
+        PackageManager pm = context.getPackageManager();
+        try {
+            PackageInfo info;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                info = pm.getPackageInfo(context.getPackageName(), PackageManager.PackageInfoFlags.of(0));
+            } else {
+                info = pm.getPackageInfo(context.getPackageName(), 0);
+            }
+            return info.versionName != null ? info.versionName : "unknown";
+        } catch (PackageManager.NameNotFoundException e) {
+            return "unknown";
+        }
     }
 
     private static String buildTrafficSummary() {
@@ -95,7 +230,8 @@ public final class DiagnosticLogExporter {
             sb.append("\n[WebSocket by device]\n");
             for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
                 MuxTransport.TrafficSnapshot s = e.getValue();
-                sb.append("device=").append(e.getKey())
+                sb.append("server=").append(NetworkTrafficStats.serverOfKey(e.getKey()))
+                  .append(" device=").append(NetworkTrafficStats.deviceOfKey(e.getKey()))
                   .append(" rxFrames=").append(s.rxFrames)
                   .append(" rxBytes=").append(s.rxBytes)
                   .append(" txFrames=").append(s.txFrames)

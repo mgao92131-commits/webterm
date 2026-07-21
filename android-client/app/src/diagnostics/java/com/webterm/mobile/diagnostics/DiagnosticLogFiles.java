@@ -16,6 +16,9 @@ public final class DiagnosticLogFiles {
     private static final String LOG_DIR_NAME = "diagnostics";
     /** 每次启动一份日志；旧版产生的 .bak.* 仍按原启动批次整体保留或清理。 */
     private static final int MAX_LOG_SESSIONS = 4;
+    /** 日志总量预算：最多 4 个文件、合计不超过 4 MiB，与单文件 1 MiB 滚动预算一致。 */
+    static final int MAX_LOG_FILES = 4;
+    static final long MAX_TOTAL_BYTES = 4L * 1024 * 1024;
 
     private DiagnosticLogFiles() {}
 
@@ -69,34 +72,68 @@ public final class DiagnosticLogFiles {
 
     public static void trim(Context context) {
         try {
-            List<File> files = list(context);
-            Map<String, List<File>> sessions = new LinkedHashMap<>();
-            for (File file : files) {
-                if (!file.isFile()) continue;
-                String session = sessionKey(file.getName());
-                List<File> sessionFiles = sessions.get(session);
-                if (sessionFiles == null) {
-                    sessionFiles = new ArrayList<>();
-                    sessions.put(session, sessionFiles);
-                }
-                sessionFiles.add(file);
-            }
-            if (sessions.size() <= MAX_LOG_SESSIONS) {
-                return;
-            }
-            int sessionsToDelete = sessions.size() - MAX_LOG_SESSIONS;
-            int deleted = 0;
-            for (List<File> sessionFiles : sessions.values()) {
-                if (deleted++ >= sessionsToDelete) break;
-                for (File file : sessionFiles) {
-                    if (!file.delete()) {
-                        Log.w(TAG, "Failed to trim old log file: " + file.getAbsolutePath());
-                    }
+            List<File> deletions = planDeletions(list(context));
+            for (File file : deletions) {
+                if (!file.delete()) {
+                    Log.w(TAG, "Failed to trim old log file: " + file.getAbsolutePath());
                 }
             }
         } catch (Throwable t) {
             Log.w(TAG, "Error trimming diagnostic files", t);
         }
+    }
+
+    /**
+     * 给定按 lastModified 从旧到新排序的文件列表，计算应删除的集合。
+     * 两类约束同时生效并取并集：
+     * 1. 启动批次约束：按 sessionKey 分组，只保留最近 MAX_LOG_SESSIONS 批；
+     * 2. 总量约束：文件数不超过 MAX_LOG_FILES 且合计不超过 MAX_TOTAL_BYTES，
+     *    超出时从最旧文件开始删（.bak.n 与主文件同等对待）。
+     */
+    static List<File> planDeletions(List<File> sortedOldestFirst) {
+        List<File> files = new ArrayList<>();
+        for (File file : sortedOldestFirst) {
+            if (file.isFile()) {
+                files.add(file);
+            }
+        }
+        List<File> deletions = new ArrayList<>();
+
+        // 约束 1：超出的最旧批次整体删除。
+        Map<String, List<File>> sessions = new LinkedHashMap<>();
+        for (File file : files) {
+            String session = sessionKey(file.getName());
+            List<File> sessionFiles = sessions.get(session);
+            if (sessionFiles == null) {
+                sessionFiles = new ArrayList<>();
+                sessions.put(session, sessionFiles);
+            }
+            sessionFiles.add(file);
+        }
+        List<File> survivors = new ArrayList<>(files);
+        if (sessions.size() > MAX_LOG_SESSIONS) {
+            int sessionsToDelete = sessions.size() - MAX_LOG_SESSIONS;
+            int deleted = 0;
+            for (List<File> sessionFiles : sessions.values()) {
+                if (deleted++ >= sessionsToDelete) break;
+                deletions.addAll(sessionFiles);
+                survivors.removeAll(sessionFiles);
+            }
+        }
+
+        // 约束 2：幸存文件仍超总量/数量时，从最旧开始逐个删。
+        long totalBytes = 0;
+        for (File file : survivors) {
+            totalBytes += file.length();
+        }
+        int index = 0;
+        while (index < survivors.size()
+            && (survivors.size() - index > MAX_LOG_FILES || totalBytes > MAX_TOTAL_BYTES)) {
+            File oldest = survivors.get(index++);
+            totalBytes -= oldest.length();
+            deletions.add(oldest);
+        }
+        return deletions;
     }
 
     /** XLog 的文件大小备份命名为 {@code <base>.bak.<n>}，它们必须归入同一启动批次。 */
