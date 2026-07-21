@@ -108,7 +108,8 @@ public final class RemoteTerminalIntegration {
     // not be delivered before the page can consume its model and metadata effects.
     if (!runtime.hasConnection()) {
       connection = screenConnectionFactory.create(
-          args.baseUrl, args.cookie, args.sessionId, args.relayDeviceId);
+          args.baseUrl, args.cookie, args.sessionId,
+          args.serverConfigId, args.directDevice, args.relayDeviceId);
       runtime.attachConnection(connection);
     } else {
       connection = null; // live channel is retained and owned by runtime
@@ -336,14 +337,15 @@ public final class RemoteTerminalIntegration {
           currentArgs.baseUrl, cookie, currentArgs.sessionId,
           currentArgs.termTitle, currentArgs.createdAt,
           currentArgs.instanceId, currentArgs.relayDevice, currentArgs.relayDeviceId,
-          currentArgs.cwd, currentArgs.serverConfigId, currentArgs.authIdentity
+          currentArgs.cwd, currentArgs.serverConfigId, currentArgs.authIdentity,
+          currentArgs.connectionKey, currentArgs.directDevice
       );
     }
     if (runtime != null) {
       runtime.suspendConnection();
       connection = screenConnectionFactory.create(
           currentArgs.baseUrl, currentArgs.cookie, currentArgs.sessionId,
-          currentArgs.relayDeviceId);
+          currentArgs.serverConfigId, currentArgs.directDevice, currentArgs.relayDeviceId);
       runtime.attachConnection(connection);
       connection.connect(80, 24);
     }

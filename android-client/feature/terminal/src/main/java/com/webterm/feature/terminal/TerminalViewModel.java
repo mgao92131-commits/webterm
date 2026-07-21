@@ -69,20 +69,25 @@ public final class TerminalViewModel extends ViewModel {
         public final String cwd;
         public final String serverConfigId;
         public final String authIdentity;
+        /** 统一连接身份：Direct 为 direct:{configId}，Relay 为 baseUrl+deviceId。 */
+        public final String connectionKey;
+        public final boolean directDevice;
 
         public TerminalSessionArgs(String baseUrl, String cookie, String sessionId,
                                     String termTitle,
                                     String createdAt, String instanceId,
                                     boolean relayDevice, String relayDeviceId, String cwd) {
             this(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId, relayDevice,
-                relayDeviceId, cwd, baseUrl, "default");
+                relayDeviceId, cwd, baseUrl, "default",
+                com.webterm.core.api.DeviceConnectionKeys.relay(baseUrl, relayDeviceId), false);
         }
 
         public TerminalSessionArgs(String baseUrl, String cookie, String sessionId,
                                     String termTitle,
                                     String createdAt, String instanceId,
                                     boolean relayDevice, String relayDeviceId, String cwd,
-                                    String serverConfigId, String authIdentity) {
+                                    String serverConfigId, String authIdentity,
+                                    String connectionKey, boolean directDevice) {
             this.baseUrl = baseUrl;
             this.cookie = cookie;
             this.sessionId = sessionId;
@@ -94,6 +99,8 @@ public final class TerminalViewModel extends ViewModel {
             this.cwd = cwd;
             this.serverConfigId = serverConfigId;
             this.authIdentity = authIdentity;
+            this.connectionKey = connectionKey;
+            this.directDevice = directDevice;
         }
     }
 }

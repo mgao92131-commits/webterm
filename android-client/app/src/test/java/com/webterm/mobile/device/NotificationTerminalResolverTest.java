@@ -23,6 +23,43 @@ public class NotificationTerminalResolverTest {
             false, true, deviceId);
     }
 
+    private static ServerConfig directDevice(String configId, String url) {
+        return new ServerConfig(configId, "直连", url, "cookie", "admin", "pw",
+            false, false, "");
+    }
+
+    @Test
+    public void resolvesPersistedDirectDevice() {
+        ServerConfig direct = directDevice("direct_1", "http://192.168.1.20:8080");
+        NotificationTerminalResolver.Result result = NotificationTerminalResolver.resolve(
+            DeviceConnectionKeys.direct("direct_1", "http://192.168.1.20:8080"),
+            Arrays.asList(direct), Collections.emptyList(), true);
+        assertEquals(NotificationTerminalResolver.ResolveStatus.RESOLVED, result.status);
+        assertSame(direct, result.server);
+    }
+
+    @Test
+    public void unknownDirectKeyIsNotFound() {
+        ServerConfig direct = directDevice("direct_1", "http://192.168.1.20:8080");
+        NotificationTerminalResolver.Result result = NotificationTerminalResolver.resolve(
+            DeviceConnectionKeys.direct("direct_other", "http://192.168.1.20:8080"),
+            Arrays.asList(direct), Collections.emptyList(), true);
+        assertEquals(NotificationTerminalResolver.ResolveStatus.NOT_FOUND, result.status);
+        assertNull(result.server);
+    }
+
+    @Test
+    public void directKeyDoesNotMismatchSameUrlRelay() {
+        // 同 URL 下 Direct 与 Relay Master 共存：Direct key 只命中 Direct 配置。
+        ServerConfig direct = directDevice("direct_1", "http://same.example");
+        ServerConfig master = relayMaster("http://same.example");
+        NotificationTerminalResolver.Result result = NotificationTerminalResolver.resolve(
+            DeviceConnectionKeys.direct("direct_1", "http://same.example"),
+            Arrays.asList(direct, master), Collections.emptyList(), true);
+        assertEquals(NotificationTerminalResolver.ResolveStatus.RESOLVED, result.status);
+        assertSame(direct, result.server);
+    }
+
     @Test
     public void resolvesOnlineRelayDevice() {
         ServerConfig master = relayMaster("https://relay.example");

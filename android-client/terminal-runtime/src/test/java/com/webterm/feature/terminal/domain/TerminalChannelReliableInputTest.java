@@ -36,7 +36,7 @@ public final class TerminalChannelReliableInputTest {
     AtomicInteger uncertain = new AtomicInteger();
 
     TerminalChannel channel = new TerminalChannel(
-        handler, registry, "https://relay.example", "", "s1", "d1");
+        handler, registry, "https://relay.example", "", "s1", "cfg-1", false, "d1");
     setField(channel, "deviceConnection", connection);
     setField(channel, "channelId", "screen-1");
     channel.setListener(new TerminalSessionRuntime.ScreenConnection.Listener() {

@@ -28,7 +28,6 @@ import com.webterm.ui.common.UIUtils;
 import com.webterm.core.api.SessionIds;
 import com.webterm.core.fileupload.FileUploadController;
 import com.webterm.core.fileupload.UploadTask;
-import com.webterm.feature.terminal.upload.UploadConnectionKeys;
 import com.webterm.feature.terminal.upload.UploadDocumentMetadata;
 
 import org.json.JSONObject;
@@ -88,6 +87,16 @@ public final class TerminalFragment extends Fragment {
         // Read terminal arguments and start the terminal
         Bundle args = getArguments();
         if (args != null && args.containsKey("baseUrl")) {
+            String relayDeviceId = args.getString("relayDeviceId", "");
+            boolean directDevice = args.getBoolean("directDevice", false);
+            String connectionKey = args.getString("connectionKey", "");
+            if (connectionKey.isEmpty()) {
+                connectionKey = com.webterm.core.api.DeviceConnectionKeys.resolve(
+                    directDevice,
+                    args.getString("serverConfigId", ""),
+                    args.getString("baseUrl", ""),
+                    relayDeviceId);
+            }
             TerminalViewModel.TerminalSessionArgs sessionArgs =
                 new TerminalViewModel.TerminalSessionArgs(
                     args.getString("baseUrl"),
@@ -97,10 +106,12 @@ public final class TerminalFragment extends Fragment {
                     args.getString("createdAt", ""),
                     args.getString("instanceId", ""),
                     args.getBoolean("relayDevice", false),
-                    args.getString("relayDeviceId", ""),
+                    relayDeviceId,
                     args.getString("cwd", ""),
                     args.getString("serverConfigId", args.getString("baseUrl", "")),
-                    args.getString("authIdentity", "default")
+                    args.getString("authIdentity", "default"),
+                    connectionKey,
+                    directDevice
                 );
             mViewModel.setSessionArgs(sessionArgs);
 
@@ -137,8 +148,9 @@ public final class TerminalFragment extends Fragment {
             return;
         }
 
-        pendingUploadConnectionKey =
-            UploadConnectionKeys.connectionKey(args.baseUrl, args.relayDeviceId);
+        // 上传任务键直接复用统一 connectionKey（Direct 为 direct:{configId}），
+        // 与后台服务 EndpointResolver 的索引保持一致。
+        pendingUploadConnectionKey = args.connectionKey;
         pendingUploadSessionId =
             SessionIds.local(args.sessionId, args.relayDeviceId);
 
