@@ -18,9 +18,13 @@ func summaryTestInput() SummaryInput {
 		Metrics: map[string]any{
 			"relayConnectCount":     uint64(5),
 			"muxWriterFailureCount": uint64(2),
-			"mailbox":               map[string]any{"instrumented": false, "overflowCount": uint64(0)},
-			"input":                 map[string]any{"instrumented": false},
-			"durations":             map[string]any{"instrumented": false},
+			"capabilities": map[string]any{
+				"mailboxMetrics":    false,
+				"inputMetrics":      false,
+				"resyncMetrics":     false,
+				"projectionMetrics": false,
+				"durationMetrics":   false,
+			},
 		},
 		State: map[string]any{
 			"relay":     map[string]any{"state": "connected", "lastError": ""},
@@ -60,16 +64,16 @@ func TestBuildSummaryUsesTypedSnapshots(t *testing.T) {
 	}
 }
 
-// TestBuildSummaryMarksNotInstrumented 未埋点分组必须显示 not instrumented，
+// TestBuildSummaryMarksNotInstrumented 未埋点能力必须显示 not instrumented，
 // 而不是 0。
 func TestBuildSummaryMarksNotInstrumented(t *testing.T) {
 	summary := BuildSummary(summaryTestInput())
-	if !strings.Contains(summary, "Not instrumented (no data collected): durations, input, mailbox") {
-		t.Errorf("summary must list not-instrumented groups:\n%s", summary)
+	if !strings.Contains(summary, "Not instrumented (no data collected): durationMetrics, inputMetrics, mailboxMetrics, projectionMetrics, resyncMetrics") {
+		t.Errorf("summary must list not-instrumented capabilities:\n%s", summary)
 	}
-	// 未埋点分组不应以零值计数形式出现。
-	if strings.Contains(summary, "overflowCount: 0") {
-		t.Errorf("uninstrumented group must not render zero counts:\n%s", summary)
+	// 未埋点能力不应以零值计数形式出现。
+	if strings.Contains(summary, "overflowCount: 0") || strings.Contains(summary, "mailboxMetrics: 0") {
+		t.Errorf("uninstrumented capability must not render zero counts:\n%s", summary)
 	}
 }
 

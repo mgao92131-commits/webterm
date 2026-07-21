@@ -1,4 +1,8 @@
-# Diagnostics 迁移计划（Windows 架构合并之后）
+# Historical migration plan: Diagnostics 迁移计划（Windows 架构合并之后）
+
+> **状态：历史归档（Historical migration plan）**。本迁移已合入 `main` 并完成后续加固。
+> 本文档仅作为迁移决策与过程的历史记录保留，其中的「准备迁移/待办」口吻不再代表当前状态；
+> 当前行为以 `docs/reports/diagnostics-after-win10-acceptance.md` 为准。
 
 > 集成分支：`integrate/network-diagnostics-after-win10`（基于最新 `main`）
 > 迁移来源（只读）：`origin/diagnostics/network-traffic-investigation`

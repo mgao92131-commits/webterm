@@ -70,7 +70,7 @@ func BuildSummary(input SummaryInput) string {
 }
 
 // writeMetricsSection 输出已埋点计数（来自 metrics.json 的累计值），并把
-// 尚未埋点的分组显式标记为 not instrumented，绝不展示为 0。
+// capabilities 中声明为 false 的未埋点能力显式标记为 not instrumented，绝不展示为 0。
 func writeMetricsSection(sb *strings.Builder, metrics map[string]any) {
 	if metrics == nil {
 		sb.WriteString("Instrumented metrics: unavailable (agent not running)\n")
@@ -79,11 +79,15 @@ func writeMetricsSection(sb *strings.Builder, metrics map[string]any) {
 	flat := make(map[string]any)
 	var notInstrumented []string
 	for key, value := range metrics {
-		if group, ok := value.(map[string]any); ok {
-			if flag, ok := group["instrumented"].(bool); ok && !flag {
-				notInstrumented = append(notInstrumented, key)
-				continue
+		if key == "capabilities" {
+			if caps, ok := value.(map[string]any); ok {
+				for capName, enabled := range caps {
+					if flag, ok := enabled.(bool); ok && !flag {
+						notInstrumented = append(notInstrumented, capName)
+					}
+				}
 			}
+			continue
 		}
 		flat[key] = value
 	}

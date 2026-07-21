@@ -303,8 +303,8 @@ func printJSONBlock(w io.Writer, value any) {
 	fmt.Fprintln(w, string(data))
 }
 
-// printMetricsBlock 输出指标。标记 "instrumented": false 的分组在生产代码中
-// 尚无埋点、恒为 0，以 "not instrumented" 单行说明，避免误读为真实观测。
+// printMetricsBlock 输出指标。capabilities 中声明为 false 的能力在生产代码中
+// 尚无埋点，以 "not instrumented" 单行说明，避免把占位零值误读为真实观测。
 func printMetricsBlock(w io.Writer, metrics any) {
 	groups, ok := metrics.(map[string]any)
 	if !ok {
@@ -314,11 +314,15 @@ func printMetricsBlock(w io.Writer, metrics any) {
 	flat := make(map[string]any, len(groups))
 	var notInstrumented []string
 	for key, value := range groups {
-		if sub, ok := value.(map[string]any); ok {
-			if flag, ok := sub["instrumented"].(bool); ok && !flag {
-				notInstrumented = append(notInstrumented, key)
-				continue
+		if key == "capabilities" {
+			if caps, ok := value.(map[string]any); ok {
+				for capName, enabled := range caps {
+					if flag, ok := enabled.(bool); ok && !flag {
+						notInstrumented = append(notInstrumented, capName)
+					}
+				}
 			}
+			continue
 		}
 		flat[key] = value
 	}
