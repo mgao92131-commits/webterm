@@ -31,7 +31,7 @@ func New() *cobra.Command {
 		SilenceUsage:  true,
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
-	root.AddCommand(newSend(), newDevices(), newNotify(), newVersion(), newCompletion(root), newInternal())
+	root.AddCommand(newSend(), newDevices(), newNotify(), newDiagnostics(), newVersion(), newCompletion(root), newInternal())
 	return root
 }
 
@@ -180,6 +180,123 @@ func newNotify() *cobra.Command {
 	cmd.Flags().IntVar(&pid, "pid", 0, "根据调用进程解析会话")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
+}
+
+func newDiagnostics() *cobra.Command {
+	diagnostics := &cobra.Command{Use: "diagnostics", Short: "查询或导出 Agent 诊断信息", Long: "通过正在运行的 webterm-agent 本地 IPC 查询诊断摘要或导出诊断包。前提：webterm-agent 正在运行。"}
+	diagnostics.AddCommand(newDiagnosticsSummary(), newDiagnosticsExport())
+	return diagnostics
+}
+
+func newDiagnosticsSummary() *cobra.Command {
+	var socket string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "summary", Short: "显示 Agent 诊断摘要", Long: "显示运行中 Agent 的状态、指标、会话、日志与脱敏配置摘要。", Example: "  webterm diagnostics summary\n  webterm diagnostics summary --json", Args: noArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionSummary})
+			if err != nil {
+				return err
+			}
+			responses, err := request(endpoint(socket), env)
+			if err != nil {
+				return diagnosticsConnError(err, socket)
+			}
+			if len(responses) != 1 {
+				return errors.New("Agent 返回了无效响应")
+			}
+			var result localipc.DiagnosticsResponse
+			if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.NewEncoder(os.Stdout).Encode(result.Summary)
+			}
+			printDiagnosticsSummary(os.Stdout, result.Summary)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "输出 JSON")
+	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
+	return cmd
+}
+
+func newDiagnosticsExport() *cobra.Command {
+	var socket, output string
+	cmd := &cobra.Command{Use: "export", Short: "导出 Agent 诊断包", Long: "导出运行中 Agent 的诊断包（ZIP），包含日志事件、指标、状态与摘要。", Example: "  webterm diagnostics export\n  webterm diagnostics export --output ~/Desktop", Args: noArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			exportDir := ""
+			if output != "" {
+				abs, err := filepath.Abs(expandPath(output))
+				if err != nil {
+					return usageError{err}
+				}
+				exportDir = abs
+			}
+			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionExport, ExportPath: exportDir})
+			if err != nil {
+				return err
+			}
+			responses, err := requestWithTimeout(endpoint(socket), env, defaultDialTimeout, diagnosticsExportTimeout, false)
+			if err != nil {
+				return diagnosticsConnError(err, socket)
+			}
+			if len(responses) != 1 {
+				return errors.New("Agent 返回了无效响应")
+			}
+			var result localipc.DiagnosticsResponse
+			if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "诊断包已导出：%s\n", result.ExportPath)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "", "诊断包输出目录（支持 ~ 与 Windows 路径）")
+	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
+	return cmd
+}
+
+// diagnosticsConnError 为诊断请求失败补充“Agent 是否在运行”的明确提示。
+func diagnosticsConnError(err error, socket string) error {
+	return fmt.Errorf("诊断请求失败：%w（若 Agent 未运行，请先启动 webterm-agent；endpoint=%s）", err, endpoint(socket))
+}
+
+// printDiagnosticsSummary 以人类可读形式输出诊断摘要的关键部分；
+// metrics/sessionTraffic/config 以缩进 JSON 输出，避免脆弱的深层字段导航。
+func printDiagnosticsSummary(w io.Writer, summary map[string]any) {
+	if agent, ok := summary["agent"].(map[string]any); ok {
+		fmt.Fprintf(w, "Agent\tversion=%v ipc=%v pid=%v platform=%v/%v\n",
+			agent["version"], agent["ipcEndpoint"], agent["pid"], agent["platform"], agent["arch"])
+	}
+	if sessions, ok := summary["sessions"].(map[string]any); ok {
+		fmt.Fprintf(w, "Sessions\tcount=%v\n", sessions["count"])
+		if list, ok := sessions["list"].([]any); ok {
+			for _, item := range list {
+				if s, ok := item.(map[string]any); ok {
+					fmt.Fprintf(w, "  - id=%v title=%v status=%v clients=%v size=%vx%v\n",
+						s["id"], s["termTitle"], s["status"], s["clients"], s["cols"], s["rows"])
+				}
+			}
+		}
+	}
+	if logSection, ok := summary["logs"].(map[string]any); ok {
+		fmt.Fprintf(w, "Logs\trecent=%v subscriberDropped=%v\n", logSection["recentCount"], logSection["subscriberDropped"])
+	}
+	fmt.Fprintln(w, "\n[metrics]")
+	printJSONBlock(w, summary["metrics"])
+	fmt.Fprintln(w, "\n[sessionTraffic]")
+	printJSONBlock(w, summary["sessionTraffic"])
+	fmt.Fprintln(w, "\n[config (redacted)]")
+	printJSONBlock(w, summary["config"])
+}
+
+func printJSONBlock(w io.Writer, value any) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", value)
+		return
+	}
+	fmt.Fprintln(w, string(data))
 }
 
 func newInternal() *cobra.Command {
@@ -384,11 +501,12 @@ func friendlyStatusError(value string) string {
 
 const (
 	// 普通短请求（devices/notify/手动 session-update）的连接与读写限时。
-	defaultDialTimeout   = 5 * time.Second
-	shortRequestTimeout  = 5 * time.Second
-	firstResponseTimeout = 15 * time.Second // send 长连接：仅限制等待首个响应信封
-	hookDialTimeout      = 150 * time.Millisecond
-	hookRequestTimeout   = 250 * time.Millisecond
+	defaultDialTimeout       = 5 * time.Second
+	shortRequestTimeout      = 5 * time.Second
+	firstResponseTimeout     = 15 * time.Second // send 长连接：仅限制等待首个响应信封
+	diagnosticsExportTimeout = 30 * time.Second // 诊断包导出（写 ZIP）放宽到 30 秒
+	hookDialTimeout          = 150 * time.Millisecond
+	hookRequestTimeout       = 250 * time.Millisecond
 )
 
 // hookBackoffSchedule 是 shell hook 上报连续失败时的指数退避（秒）。失败次数

@@ -18,6 +18,13 @@ const (
 	TypeDevices       = "devices"
 	TypeNotify        = "notify"
 	TypeSessionUpdate = "session_update"
+	TypeDiagnostics   = "diagnostics"
+)
+
+// diagnostics 命令的子动作。
+const (
+	DiagnosticsActionSummary = "summary"
+	DiagnosticsActionExport  = "export"
 )
 
 // Envelope is the only wire shape accepted by the local IPC service.
@@ -59,6 +66,21 @@ type SessionUpdate struct {
 	LastInput  string `json:"last_input,omitempty"`
 	InputKind  string `json:"input_kind,omitempty"`
 	Timestamp  int64  `json:"timestamp,omitempty"`
+}
+
+// DiagnosticsRequest 请求运行中 Agent 的诊断摘要或诊断包导出。
+// Action 为 summary 或 export；export 时 ExportPath 指定输出目录（空则由 Agent 选择默认位置）。
+type DiagnosticsRequest struct {
+	Action     string `json:"action"`
+	ExportPath string `json:"export_path,omitempty"`
+}
+
+// DiagnosticsResponse 是 diagnostics 命令的响应。
+// summary 动作返回 Summary；export 动作返回生成的 ExportPath。
+type DiagnosticsResponse struct {
+	Action     string         `json:"action"`
+	Summary    map[string]any `json:"summary,omitempty"`
+	ExportPath string         `json:"export_path,omitempty"`
 }
 
 func DecodePayload(raw json.RawMessage, target any) error {

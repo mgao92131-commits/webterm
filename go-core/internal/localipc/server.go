@@ -28,6 +28,11 @@ type Application interface {
 	FileSendService() *filesend.Service
 	AgentNotificationDispatcher() *agentnotify.Dispatcher
 	Log(level, source, message string)
+	// DiagnosticsSummary 返回运行中 Agent 的只读诊断快照（已脱敏）。
+	DiagnosticsSummary() map[string]any
+	// ExportDiagnostics 生成诊断包并返回实际输出路径；exportDir 为空时使用默认位置。
+	// 实现必须保证失败时返回 error 而非 panic，且不影响 Agent 主循环。
+	ExportDiagnostics(exportDir string) (string, error)
 }
 
 type Server struct {
@@ -165,6 +170,17 @@ func (s *Server) dispatch(ctx context.Context, conn net.Conn, envelope Envelope)
 			return
 		}
 		s.writePayload(conn, envelope.RequestID, TypeSessionUpdate, map[string]string{"status": "ok"})
+	case TypeDiagnostics:
+		if envelope.Kind != KindCommand {
+			s.writeError(conn, envelope.RequestID, "invalid_kind")
+			return
+		}
+		var request DiagnosticsRequest
+		if err := DecodePayload(envelope.Payload, &request); err != nil {
+			s.writeError(conn, envelope.RequestID, "invalid_payload")
+			return
+		}
+		s.handleDiagnostics(conn, envelope.RequestID, request)
 	default:
 		s.writeError(conn, envelope.RequestID, "unknown_type")
 	}
@@ -236,6 +252,37 @@ func (s *Server) handleSessionUpdate(update SessionUpdate) error {
 	}
 	terminal.ApplySessionUpdate(update.ShellState, update.CWD, update.LastInput, update.InputKind, update.Timestamp)
 	return nil
+}
+
+// handleDiagnostics 处理诊断摘要查询与诊断包导出。本方法运行在连接 goroutine 内，
+// 额外 recover 以确保诊断导出中的任何意外都不会影响 Agent 主循环。
+func (s *Server) handleDiagnostics(conn net.Conn, requestID string, request DiagnosticsRequest) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.app.Log("warn", "localipc", fmt.Sprintf("diagnostics panic: %v", recovered))
+			s.writeError(conn, requestID, "diagnostics_internal_error")
+		}
+	}()
+	switch request.Action {
+	case DiagnosticsActionSummary, "":
+		s.writePayload(conn, requestID, TypeDiagnostics, DiagnosticsResponse{
+			Action:  DiagnosticsActionSummary,
+			Summary: s.app.DiagnosticsSummary(),
+		})
+	case DiagnosticsActionExport:
+		path, err := s.app.ExportDiagnostics(request.ExportPath)
+		if err != nil {
+			s.app.Log("warn", "localipc", fmt.Sprintf("diagnostics export failed: %v", err))
+			s.writeError(conn, requestID, "export_failed")
+			return
+		}
+		s.writePayload(conn, requestID, TypeDiagnostics, DiagnosticsResponse{
+			Action:     DiagnosticsActionExport,
+			ExportPath: path,
+		})
+	default:
+		s.writeError(conn, requestID, "invalid_action")
+	}
 }
 
 func (s *Server) handleSend(conn net.Conn, requestID string, request SendRequest) {

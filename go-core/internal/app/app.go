@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
 	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/agentnotify"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/fileupload"
 	"webterm/go-core/internal/localipc"
@@ -161,4 +163,93 @@ func (app *App) SetRelayConnected(connected bool, deviceID string, lastError str
 func (app *App) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// diagnosticsRecentLogLimit 是诊断摘要中携带的最近日志条数上限。
+const diagnosticsRecentLogLimit = 100
+
+// DiagnosticsSummary 构建运行中 Agent 的只读诊断快照（满足 localipc.Application）。
+// 仅包含计数、状态与脱敏配置；不包含终端输入正文、Secret 等敏感内容。
+// Mux/Relay 计数器在任务 5 接入业务埋点前为 0，runId/buildInfo 在任务 7 接入生命周期后补充。
+func (app *App) DiagnosticsSummary() map[string]any {
+	sessions := app.sessions.List()
+	sessionSummaries := make([]map[string]any, 0, len(sessions))
+	for _, info := range sessions {
+		// 仅保留状态与计量字段；排除 RecentInputLines/LastCommand 等输入正文。
+		sessionSummaries = append(sessionSummaries, map[string]any{
+			"id":           info.ID,
+			"instanceId":   logs.HashID(info.InstanceID),
+			"termTitle":    info.TermTitle,
+			"cwd":          info.CWD,
+			"status":       info.Status,
+			"shellState":   info.ShellState,
+			"clients":      info.Clients,
+			"cols":         info.Cols,
+			"rows":         info.Rows,
+			"createdAt":    info.CreatedAt,
+			"lastActiveAt": info.LastActiveAt,
+		})
+	}
+
+	recentLogs := app.logger.Recent(diagnosticsRecentLogLimit)
+
+	return map[string]any{
+		"agent": map[string]any{
+			"version":     app.version,
+			"ipcEndpoint": app.IPCEndpoint(),
+			"pid":         os.Getpid(),
+			"platform":    runtime.GOOS,
+			"arch":        runtime.GOARCH,
+		},
+		"metrics": diagnostics.Default.Snapshot(),
+		"sessions": map[string]any{
+			"count": app.sessions.Count(),
+			"list":  sessionSummaries,
+		},
+		"sessionTraffic": app.sessions.TrafficSnapshots(),
+		"logs": map[string]any{
+			"recentLimit":       diagnosticsRecentLogLimit,
+			"recentCount":       len(recentLogs),
+			"subscriberDropped": app.logger.SubscriberDropped(),
+			"recent":            recentLogs,
+		},
+		"config": app.Config().Redacted(),
+	}
+}
+
+// diagnosticsRingLimit 是诊断包导出时从内存 Ring 携带的事件条数上限。
+const diagnosticsRingLimit = 5000
+
+// ExportDiagnostics 生成诊断包 ZIP 并返回实际输出路径（满足 localipc.Application）。
+// 复用任务 1 的 diagnostics.Export：磁盘日志目录在 FileSink 尚未接入（任务 7）时为空，
+// 此时导出仍包含内存 Ring 事件、指标与状态；diagnostics.Export 对缺失日志文件是容错的。
+// 任何失败都以 error 返回（并 recover 兜底），绝不影响 Agent 主循环。
+func (app *App) ExportDiagnostics(exportDir string) (path string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			path = ""
+			err = fmt.Errorf("diagnostics export panic: %v", recovered)
+		}
+	}()
+	baseDir := agenthooks.RuntimeBaseDir(app.IPCEndpoint())
+	logDir := filepath.Join(baseDir, "logs")
+	if exportDir == "" {
+		exportDir = filepath.Join(baseDir, "diagnostics")
+	}
+	result, err := diagnostics.Export(diagnostics.ExportOptions{
+		LogDir: logDir,
+		OutDir: exportDir,
+		Manifest: diagnostics.Manifest{
+			Version:      app.version,
+			Platform:     runtime.GOOS,
+			Architecture: runtime.GOARCH,
+		},
+		Metrics:     diagnostics.Default.Snapshot(),
+		State:       app.DiagnosticsSummary(),
+		RingEntries: app.logger.Recent(diagnosticsRingLimit),
+	})
+	if err != nil {
+		return "", err
+	}
+	return result.Path, nil
 }
