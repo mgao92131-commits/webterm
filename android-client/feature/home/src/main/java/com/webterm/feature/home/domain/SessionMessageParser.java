@@ -42,7 +42,9 @@ public final class SessionMessageParser {
                 }
             } else if ("session-closed".equals(type)) {
                 String id = msg.optString("id");
-                if (id != null) listener.onMonitorSessionClosed(id);
+                if (!id.isEmpty()) {
+                    listener.onMonitorSessionClosed(id);
+                }
             } else if ("error".equals(type)) {
                 listener.onMonitorError(msg.optString("message"));
             }

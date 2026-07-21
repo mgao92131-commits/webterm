@@ -53,9 +53,65 @@ public class SessionMessageParserTest {
         assertEquals("top", listener.session.optString("termTitle"));
     }
 
+    @Test
+    public void dispatchMessagePrefixesRelaySessionListIds() {
+        RecordingListener listener = new RecordingListener();
+
+        SessionMessageParser.dispatchMessage(
+            "{\"type\":\"sessions\",\"data\":[{\"id\":\"s1\"},{\"id\":\"s2\"}]}",
+            listener,
+            "d1"
+        );
+
+        assertNotNull(listener.sessions);
+        assertEquals("d1:s1", listener.sessions.optJSONObject(0).optString("id"));
+        assertEquals("d1:s2", listener.sessions.optJSONObject(1).optString("id"));
+    }
+
+    @Test
+    public void dispatchMessagePrefixesClosedRelaySessionId() {
+        RecordingListener listener = new RecordingListener();
+
+        SessionMessageParser.dispatchMessage(
+            "{\"type\":\"session-closed\",\"id\":\"s1\"}",
+            listener,
+            "d1"
+        );
+
+        assertEquals("d1:s1", listener.closedSessionId);
+    }
+
+    @Test
+    public void dispatchMessageDoesNotDoublePrefixCanonicalSessionId() {
+        RecordingListener listener = new RecordingListener();
+
+        SessionMessageParser.dispatchMessage(
+            "{\"type\":\"session\",\"data\":{\"id\":\"d1:s1\"}}",
+            listener,
+            "d1"
+        );
+
+        assertNotNull(listener.session);
+        assertEquals("d1:s1", listener.session.optString("id"));
+    }
+
+    @Test
+    public void dispatchMessageDeliversManagerError() {
+        RecordingListener listener = new RecordingListener();
+
+        SessionMessageParser.dispatchMessage(
+            "{\"type\":\"error\",\"message\":\"temporary failure\"}",
+            listener
+        );
+
+        assertEquals("temporary failure", listener.errorMessage);
+    }
+
     private static final class RecordingListener implements SessionMessageParser.Listener {
         JSONArray sessions;
         JSONObject session;
+        String closedSessionId;
+        String errorMessage;
 
         @Override
         public void onMonitorSessions(JSONArray sessions) {
@@ -69,10 +125,12 @@ public class SessionMessageParserTest {
 
         @Override
         public void onMonitorSessionClosed(String sessionId) {
+            closedSessionId = sessionId;
         }
 
         @Override
         public void onMonitorError(String errorMsg) {
+            errorMessage = errorMsg;
         }
     }
 }
