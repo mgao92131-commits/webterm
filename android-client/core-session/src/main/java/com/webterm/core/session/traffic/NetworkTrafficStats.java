@@ -1,5 +1,6 @@
 package com.webterm.core.session.traffic;
 
+import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.MuxTransport;
 
 import java.util.LinkedHashMap;
@@ -40,7 +41,16 @@ public final class NetworkTrafficStats {
    * 同一 deviceId 在 Transport 重建后返回同一实例，保证统计连续。
    */
   public static MuxTransport.TrafficAccumulator accumulatorForDevice(String deviceId) {
-    String key = deviceId == null ? "" : deviceId;
+    return accumulatorForConnection("", deviceId);
+  }
+
+  /**
+   * 获取或创建指定连接（服务器 + 设备）的 TrafficAccumulator。
+   * Key 包含归一化 baseUrl：deviceId 相同（或都为空，例如 relay master 监控连接）
+   * 的不同服务器连接不会共享同一累计器。
+   */
+  public static MuxTransport.TrafficAccumulator accumulatorForConnection(String baseUrl, String deviceId) {
+    String key = connectionKey(baseUrl, deviceId);
     MuxTransport.TrafficAccumulator existing = accumulatorsByDevice.get(key);
     if (existing != null) return existing;
     MuxTransport.TrafficAccumulator created = new MuxTransport.TrafficAccumulator();
@@ -50,7 +60,31 @@ public final class NetworkTrafficStats {
 
   /** 注销指定设备的累计器；设备彻底移除时调用。 */
   public static void unregisterDevice(String deviceId) {
-    accumulatorsByDevice.remove(deviceId == null ? "" : deviceId);
+    unregisterConnection("", deviceId);
+  }
+
+  /** 注销指定连接（服务器 + 设备）的累计器。 */
+  public static void unregisterConnection(String baseUrl, String deviceId) {
+    accumulatorsByDevice.remove(connectionKey(baseUrl, deviceId));
+  }
+
+  /** websocketByDevice 的 key 形如 "normalizedBaseUrl\ndeviceId"；此方法还原服务器部分。 */
+  public static String serverOfKey(String key) {
+    if (key == null) return "";
+    int separator = key.indexOf('\n');
+    return separator < 0 ? "" : key.substring(0, separator);
+  }
+
+  /** websocketByDevice 的 key 形如 "normalizedBaseUrl\ndeviceId"；此方法还原设备部分。 */
+  public static String deviceOfKey(String key) {
+    if (key == null) return "";
+    int separator = key.indexOf('\n');
+    return separator < 0 ? key : key.substring(separator + 1);
+  }
+
+  private static String connectionKey(String baseUrl, String deviceId) {
+    return WebTermUrls.normalizeBaseUrl(baseUrl) + "\n"
+        + (deviceId == null ? "" : deviceId);
   }
 
   /** 注册当前 UID 流量跟踪器。 */
