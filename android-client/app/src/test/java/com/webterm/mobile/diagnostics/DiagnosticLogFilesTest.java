@@ -131,4 +131,43 @@ public class DiagnosticLogFilesTest {
         // 空目录（无日志文件）：不应产生任何删除。
         assertTrue(DiagnosticLogFiles.planDeletions(new ArrayList<>()).isEmpty());
     }
+
+    @Test
+    public void planDeletions_fixedGlobalFilesAtBudgetDeleteNothing() throws IOException {
+        // 固定全局文件：webterm.log + .bak.1~3 共 4 个、合计正好 4 MiB。
+        // 单一启动批次且正好满预算，两个约束都未超出，不删。
+        List<File> files = new ArrayList<>();
+        files.add(logFile("webterm.log", 1024 * 1024, 0));
+        files.add(logFile("webterm.log.bak.1", 1024 * 1024, 1));
+        files.add(logFile("webterm.log.bak.2", 1024 * 1024, 2));
+        files.add(logFile("webterm.log.bak.3", 1024 * 1024, 3));
+
+        assertTrue(DiagnosticLogFiles.planDeletions(files).isEmpty());
+    }
+
+    @Test
+    public void planDeletions_fixedGlobalPlusLegacyRetainsCurrent() throws IOException {
+        // 固定全局 4 文件已满预算，另有旧版本遗留批次：trim 删遗留批次、保留当前全局文件。
+        List<File> files = new ArrayList<>();
+        files.add(logFile("webterm-20260101-000000-000.log", 1024 * 1024, 0));
+        files.add(logFile("webterm.log", 1024 * 1024, 1));
+        files.add(logFile("webterm.log.bak.1", 1024 * 1024, 2));
+        files.add(logFile("webterm.log.bak.2", 1024 * 1024, 3));
+        files.add(logFile("webterm.log.bak.3", 1024 * 1024, 4));
+
+        List<File> deletions = DiagnosticLogFiles.planDeletions(files);
+
+        // 遗留批次（最旧）被清退，当前固定全局文件全部保留。
+        assertEquals(List.of("webterm-20260101-000000-000.log"), namesOf(deletions));
+    }
+
+    @Test
+    public void sessionKey_groupsXlogBackupsWithTheirBase() {
+        // XLog 备份 <base>.bak.<n> 归入同一批次键。
+        assertEquals("webterm.log", DiagnosticLogFiles.sessionKey("webterm.log.bak.3"));
+        assertEquals("webterm.log", DiagnosticLogFiles.sessionKey("webterm.log"));
+        // 旧版本按启动命名的文件仍按各自启动归组。
+        assertEquals("webterm-20260717-141302-000.log",
+            DiagnosticLogFiles.sessionKey("webterm-20260717-141302-000.log.bak.3"));
+    }
 }

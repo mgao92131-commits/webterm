@@ -17,7 +17,7 @@
 
 ### Android（android-client）
 - **网络流量统计**（任务 2）：`NetworkTrafficStats` 累计器键升级为「归一化 baseUrl + deviceId」，按服务器/设备隔离、重连续累计；`serverOfKey/deviceOfKey`。WebSocket 收发帧/字节、UID 流量（-1→supported=false）main 已具备。
-- **诊断日志导出与限流**（任务 3）：`DiagnosticRateLimiter`（线程安全，状态表容量有界；整改轮已接入 `Diagnostics` 门面：`log()` 写 sink 前 tryPass、discriminator 只从白名单字段构造、过窗后下一条附 suppressedCount，另有 `errorUnthrottled` 等不限流入口）；XLog 1 MiB×3 滚动；日志容量为运行时强约束（启动 trim + 每 60s 周期 trim + 导出前强制 trim，≤4 文件/4 MiB）；`DiagnosticLogExporter` ZIP 原子导出（日志 + `network-traffic-summary.txt` + manifest/android-metrics/android-state JSON），导出默认脱敏（事件写 `deviceHash`/`channelHash`，导出包写 `serverHash`/`deviceHash`，每包独立 salt）。
+- **诊断日志导出与限流**（任务 3）：`DiagnosticRateLimiter`（线程安全，状态表容量有界；整改轮已接入 `Diagnostics` 门面：`log()` 写 sink 前 tryPass、discriminator 只从白名单字段构造、过窗后下一条附 suppressedCount，另有 `errorUnthrottled` 等不限流入口）；XLog 1 MiB×3 滚动（固定全局文件 `webterm.log` + `.bak.1~3`，滚动时删除最旧备份，≤4 文件/4 MiB 为源头硬上限）；启动/每 60s/导出前 trim 仅兜底清理旧版本遗留文件；`DiagnosticLogExporter` ZIP 原子导出（日志 + `network-traffic-summary.txt` + manifest/android-metrics/android-state JSON），导出默认脱敏（事件写 `deviceHash`/`channelHash`，导出包写 `serverHash`/`deviceHash`，每包独立 salt）。
 - **Runtime/Resume 指标**（任务 6）：`TerminalResumeMetrics.snapshot()` + 17 字段 `Snapshot`；`android-metrics.json` 补 resume 段。
 - **连接/恢复行为修复**（任务 6b，用户决定单独迁移）：resync 防风暴、resize 去重（`requestResize` 返回 boolean）、`SessionIds.local` sessionId 归一化、DeviceConnection 重连守卫。
 - **生命周期**（任务 7）：设备从配置彻底移除时 `unregisterConnection` 清理累计器；UID tracker 注册/注销与诊断导出入口 main 已具备（验证后无需改）。
@@ -43,7 +43,7 @@
 
 ## 5. 容量边界（缓存/指标均有界）
 - 日志文件：单文件 1 MiB × 3 备份；导出 events 4 MiB / 1000 条预算。
-- Android 诊断日志：≤4 文件 / ≤4 MiB 为运行时强约束（启动 trim + 每 60s 周期 trim + 导出前强制 trim，+单条日志误差）；XLog 1 MiB×3。
+- Android 诊断日志：固定全局文件（`webterm.log` + `.bak.1~3`）由 XLog 在 1 MiB 滚动时删除最旧备份，≤4 文件 / ≤4 MiB（+单条日志误差）为源头硬上限；启动/每 60s 周期/导出前 trim 仅兜底清理旧版本遗留的按启动命名文件。
 - 限流器状态表：Go `logs.RateLimiter` 与 Android `DiagnosticRateLimiter` 均 4096 上限 + 回收（含边界测试）。
 - 指标均为固定字段 atomic 计数器 / 有界直方图，无新增无界 goroutine/channel/map，无逐帧落盘。
 
@@ -112,7 +112,7 @@
 ### 11.2 Android（android-client）修改摘要
 - `DiagnosticRateLimiter` 接入 `Diagnostics` 门面：`log()` 写 sink 前 tryPass，discriminator 只从白名单字段构造，过窗后下一条附 suppressedCount；新增 `errorUnthrottled` 等不限流入口。
 - `stopAllDevices()` 逐连接 unregister NetworkTrafficStats；新增 `clearAll()`；重连不清零。
-- 日志容量：XLog 无滚动回调，采用启动 trim + 每 60s 周期 trim（daemon 线程）+ 导出前强制 trim，保证运行时目录 ≤4 文件/4 MiB（+单条日志误差）。
+- 日志容量：改用固定全局滚动文件（`webterm.log` + `.bak.1~3`），XLog `FileSizeBackupStrategy2` 在滚动时删除最旧备份，目录恒定 ≤4 文件/约 ≤4 MiB（+单条日志误差）的硬上限；启动/每 60s 周期（daemon 线程）/导出前 trim 退化为兜底，仅清理旧版本遗留的按启动命名文件。周期 trim 执行器幂等（重复初始化先停旧 executor 再重建，不泄漏线程），并提供 `shutdownForTest()` 关闭入口。
 - 导出脱敏：新增 `DiagnosticIdHasher`（SHA-256(salt+value) 截断 12 hex）；DeviceConnection 事件字段写 `deviceHash`/`channelHash`（进程级 salt）；exporter 输出 `serverHash`/`deviceHash`（每包独立 salt）；Sanitizer 补 server/deviceId/channelId 键；默认导出包不含原始 URL/设备/通道标识。
 - ZIP 原子导出：毫秒+随机后缀、tmp+rename、失败清理、历史保留 5 个；分享提示已脱敏。
 - 导出说明文案改为指引 Go Agent 统计用 `webterm diagnostics summary|export`。

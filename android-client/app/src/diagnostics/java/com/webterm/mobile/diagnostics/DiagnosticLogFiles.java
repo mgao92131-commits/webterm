@@ -14,7 +14,10 @@ import java.util.Map;
 public final class DiagnosticLogFiles {
     private static final String TAG = "DiagnosticLogFiles";
     private static final String LOG_DIR_NAME = "diagnostics";
-    /** 每次启动一份日志；旧版产生的 .bak.* 仍按原启动批次整体保留或清理。 */
+    /**
+     * 启动批次保留上限。当前版本使用固定全局文件名（webterm.log + .bak.1~3），
+     * 只占一个批次；该约束主要用于把旧版本「按启动命名」的遗留批次整体清退。
+     */
     private static final int MAX_LOG_SESSIONS = 4;
     /** 日志总量预算：最多 4 个文件、合计不超过 4 MiB，与单文件 1 MiB 滚动预算一致。 */
     static final int MAX_LOG_FILES = 4;
