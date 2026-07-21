@@ -10,6 +10,10 @@ import (
 const DefaultCapacity = 1000
 
 type Entry struct {
+	// RunID 标识产生该条目的 Agent 运行。每次进程启动 runID 不同，因此不同
+	// 运行即使 Seq 相同也不会被诊断导出误判为重复。旧版本写出的条目没有该
+	// 字段（反序列化为空串），导出器按内容指纹兼容处理。
+	RunID   string         `json:"runId,omitempty"`
 	Seq     uint64         `json:"seq"`
 	Time    time.Time      `json:"time"`
 	Level   string         `json:"level"`
@@ -21,6 +25,7 @@ type Entry struct {
 
 type Logger struct {
 	mu          sync.Mutex
+	runID       string
 	nextSeq     uint64
 	capacity    int
 	entries     []Entry
@@ -30,11 +35,19 @@ type Logger struct {
 	droppedLogs atomic.Uint64
 }
 
+// New 创建不带运行标识的 Logger（RunID 为空），供测试或无 App 场景使用。
 func New(capacity int) *Logger {
+	return NewWithRunID(capacity, "")
+}
+
+// NewWithRunID 创建携带本次 Agent 运行标识的 Logger；写入的每条 Entry 自动
+// 带上 runID，使诊断导出能区分不同运行、避免重启后 Seq 复位造成的去重冲突。
+func NewWithRunID(capacity int, runID string) *Logger {
 	if capacity <= 0 {
 		capacity = DefaultCapacity
 	}
 	return &Logger{
+		runID:       runID,
 		nextSeq:     1,
 		capacity:    capacity,
 		subscribers: make(map[chan Entry]struct{}),
@@ -97,6 +110,7 @@ func (logger *Logger) add(level string, source string, event string,
 	fields map[string]any, message string) Entry {
 	logger.mu.Lock()
 	entry := Entry{
+		RunID:   logger.runID,
 		Seq:     logger.nextSeq,
 		Time:    time.Now().UTC(),
 		Level:   normalize(level, "info"),

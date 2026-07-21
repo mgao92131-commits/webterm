@@ -60,7 +60,10 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 	if buildInfo.Version == "" {
 		buildInfo.Version = "0.1.0-dev"
 	}
-	logger := logs.New(logs.DefaultCapacity)
+	// 先生成本次运行标识，再创建 Logger：写入的每条日志自动携带 runID，
+	// 诊断导出据此区分不同运行，避免 Agent 重启后 Seq 复位造成去重冲突。
+	runID := newRunID()
+	logger := logs.NewWithRunID(logs.DefaultCapacity, runID)
 	endpointInput := cfg.IPCEndpoint
 	if endpointInput == "" {
 		endpointInput = cfg.SocketPath
@@ -130,7 +133,7 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 		cfg:             cfg,
 		version:         buildInfo.Version,
 		buildInfo:       buildInfo,
-		runID:           newRunID(),
+		runID:           runID,
 		logger:          logger,
 		sink:            sink,
 		ipcEndpoint:     ipcEndpoint,
