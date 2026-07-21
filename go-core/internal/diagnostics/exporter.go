@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"webterm/go-core/internal/logs"
@@ -39,6 +41,12 @@ type ExportOptions struct {
 	// Metrics/State 来自运行中 Agent 的只读快照；nil 表示离线导出，对应文件写入 unavailable 说明。
 	Metrics map[string]any
 	State   any
+	// SessionTraffic 是按会话聚合的流量快照（由调用方在 App 层完成脱敏后传入）；
+	// nil 表示不可用（离线导出），session-traffic.json 写入 available=false。
+	SessionTraffic any
+	// IncludePaths 控制导出事件的脱敏：false（默认）把自由文本 Message 与路径类
+	// Field 折叠；true 时才放行原文（对应 CLI --include-paths）。
+	IncludePaths bool
 	// RingEntries 是内存 Ring 中可能尚未落盘的最新事件（可为空），按 seq 与磁盘事件去重。
 	RingEntries []logs.Entry
 	// now 可注入测试时钟；nil 用真实时间。
@@ -53,7 +61,7 @@ type ExportResult struct {
 }
 
 // Export 生成 webterm-agent-diagnostics-<时间戳>-<毫秒>-<随机>.zip：
-// manifest.json / events.jsonl / metrics.json / state.json / summary.txt。
+// manifest.json / events.jsonl / metrics.json / state.json / session-traffic.json / summary.txt。
 // 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
 // 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
@@ -81,6 +89,9 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	entries = mergeRingEntries(entries, options.RingEntries)
 	events, truncated := trimEntries(entries, options.MaxEvents, options.MaxBytes)
+	// 默认折叠自由文本 Message 与路径类 Field，诊断包不泄露原始错误正文与路径；
+	// --include-paths 时才放行原文。
+	events = logs.SanitizeEntries(events, options.IncludePaths)
 
 	manifest := options.Manifest
 	if manifest.SchemaVersion == 0 {
@@ -151,7 +162,20 @@ func Export(options ExportOptions) (ExportResult, error) {
 	if err := write("state.json", jsonOrUnavailable(options.State)); err != nil {
 		return ExportResult{}, fmt.Errorf("write state: %w", err)
 	}
-	if err := write("summary.txt", []byte(BuildSummary(manifest, events, options.Metrics, options.State))); err != nil {
+	// session-traffic.json：按会话的 PTY 输出与 screen 协议字节累计（调用方已脱敏
+	// 会话 ID）。nil 表示离线导出/不可用，写入与 metrics/state 一致的 unavailable 说明；
+	// 运行中但无活跃会话时是空数组。
+	if err := write("session-traffic.json", jsonOrUnavailable(options.SessionTraffic)); err != nil {
+		return ExportResult{}, fmt.Errorf("write session traffic: %w", err)
+	}
+	summary := BuildSummary(SummaryInput{
+		Manifest:       manifest,
+		Events:         events,
+		Metrics:        options.Metrics,
+		State:          options.State,
+		SessionTraffic: options.SessionTraffic,
+	})
+	if err := write("summary.txt", []byte(summary)); err != nil {
 		return ExportResult{}, fmt.Errorf("write summary: %w", err)
 	}
 
@@ -199,7 +223,7 @@ func readLogEntries(logDir string) ([]logs.Entry, error) {
 	}
 	paths = append(paths, filepath.Join(logDir, "agent.jsonl"))
 
-	seen := make(map[uint64]struct{})
+	seen := make(map[string]struct{})
 	var entries []logs.Entry
 	for _, path := range paths {
 		file, err := os.Open(path)
@@ -220,37 +244,73 @@ func readLogEntries(logDir string) ([]logs.Entry, error) {
 			if err := json.Unmarshal(line, &entry); err != nil {
 				continue // 跳过崩溃造成的半行，不中断导出
 			}
-			if _, dup := seen[entry.Seq]; dup {
+			key := entryKey(entry)
+			if _, dup := seen[key]; dup {
 				continue
 			}
-			seen[entry.Seq] = struct{}{}
+			seen[key] = struct{}{}
 			entries = append(entries, entry)
 		}
 		file.Close()
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Seq < entries[j].Seq })
+	sort.Slice(entries, func(i, j int) bool { return entryLess(entries[i], entries[j]) })
 	return entries, nil
 }
 
-// mergeRingEntries 把内存 Ring 事件并入磁盘事件，按 seq 去重。
+// mergeRingEntries 把内存 Ring 事件并入磁盘事件，按 entryKey 去重。
 func mergeRingEntries(disk []logs.Entry, ring []logs.Entry) []logs.Entry {
 	if len(ring) == 0 {
 		return disk
 	}
-	seen := make(map[uint64]struct{}, len(disk))
+	seen := make(map[string]struct{}, len(disk))
 	for _, entry := range disk {
-		seen[entry.Seq] = struct{}{}
+		seen[entryKey(entry)] = struct{}{}
 	}
 	merged := disk
 	for _, entry := range ring {
-		if _, dup := seen[entry.Seq]; dup {
+		key := entryKey(entry)
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[entry.Seq] = struct{}{}
+		seen[key] = struct{}{}
 		merged = append(merged, entry)
 	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Seq < merged[j].Seq })
+	sort.Slice(merged, func(i, j int) bool { return entryLess(merged[i], merged[j]) })
 	return merged
+}
+
+// entryKey 返回导出去重键。带 RunID 的条目以 RunID+Seq 为键：不同运行相同 Seq
+// 的事件互不覆盖，同一运行磁盘与 Ring 中的同一条目只保留一次。无 RunID 的旧版
+// 条目以内容指纹（time+seq+source+event+message）为键：相同 seq 的旧日志互不
+// 覆盖，完全相同的磁盘/Ring 副本只保留一次。
+func entryKey(entry logs.Entry) string {
+	if entry.RunID != "" {
+		return "r\x00" + entry.RunID + "\x00" + strconv.FormatUint(entry.Seq, 10)
+	}
+	hash := fnv.New64a()
+	hash.Write([]byte("legacy\x00"))
+	hash.Write([]byte(strconv.FormatInt(entry.Time.UnixNano(), 10)))
+	hash.Write([]byte{0})
+	hash.Write([]byte(strconv.FormatUint(entry.Seq, 10)))
+	hash.Write([]byte{0})
+	hash.Write([]byte(entry.Source))
+	hash.Write([]byte{0})
+	hash.Write([]byte(entry.Event))
+	hash.Write([]byte{0})
+	hash.Write([]byte(entry.Message))
+	return "l\x00" + strconv.FormatUint(hash.Sum64(), 16)
+}
+
+// entryLess 以时间为主排序；同一时间按 RunID 区分，同一运行同一时间再按 Seq。
+// 时间优先保证多运行混合时截断逻辑仍保留“按时间最新”的事件。
+func entryLess(a, b logs.Entry) bool {
+	if !a.Time.Equal(b.Time) {
+		return a.Time.Before(b.Time)
+	}
+	if a.RunID != b.RunID {
+		return a.RunID < b.RunID
+	}
+	return a.Seq < b.Seq
 }
 
 // trimEntries 保留最新的事件：先按条数，再按编码后字节预算截断最旧记录。

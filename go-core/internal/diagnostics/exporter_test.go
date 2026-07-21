@@ -80,7 +80,7 @@ func TestExportProducesCompleteZip(t *testing.T) {
 	}
 
 	entries := readZip(t, result.Path)
-	for _, name := range []string{"manifest.json", "events.jsonl", "metrics.json", "state.json", "summary.txt"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "metrics.json", "state.json", "session-traffic.json", "summary.txt"} {
 		if _, ok := entries[name]; !ok {
 			t.Fatalf("zip missing %s", name)
 		}
@@ -214,5 +214,253 @@ func TestTrimEntriesRespectsEventCountBudget(t *testing.T) {
 	kept, truncated := trimEntries(entries, 5, DefaultExportMaxBytes)
 	if !truncated || len(kept) != 5 || kept[0].Seq != 16 {
 		t.Fatalf("kept=%d first=%d truncated=%v, want 5/16/true", len(kept), kept[0].Seq, truncated)
+	}
+}
+
+// TestExportSessionTrafficOfflineUnavailable 离线导出（SessionTraffic==nil）时
+// session-traffic.json 仍存在，并写入 unavailable 说明。
+func TestExportSessionTrafficOfflineUnavailable(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeEntries(t, logDir, 2, "")
+
+	result, err := Export(ExportOptions{LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest()})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	entries := readZip(t, result.Path)
+	raw, ok := entries["session-traffic.json"]
+	if !ok {
+		t.Fatal("zip missing session-traffic.json")
+	}
+	var unavailable map[string]any
+	if err := json.Unmarshal([]byte(raw), &unavailable); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if unavailable["unavailable"] != true {
+		t.Errorf("offline session-traffic.json should be unavailable: %s", raw)
+	}
+}
+
+// TestExportSessionTrafficIncluded 传入 SessionTraffic 时写入可解析的 JSON。
+func TestExportSessionTrafficIncluded(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeEntries(t, logDir, 2, "")
+
+	traffic := []map[string]any{
+		{
+			"sessionId":       "abcd1234",
+			"ptyOutputEvents": uint64(7),
+			"ptyOutputBytes":  uint64(2048),
+			"screenWireByClient": map[string]any{
+				"c1": map[string]any{"frameCount": uint64(3), "wireBytes": uint64(900)},
+			},
+		},
+	}
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		SessionTraffic: traffic,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	entries := readZip(t, result.Path)
+	var decoded []map[string]any
+	if err := json.Unmarshal([]byte(entries["session-traffic.json"]), &decoded); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if len(decoded) != 1 || decoded[0]["sessionId"] != "abcd1234" {
+		t.Fatalf("decoded session traffic = %+v", decoded)
+	}
+	if decoded[0]["ptyOutputBytes"] != float64(2048) {
+		t.Errorf("ptyOutputBytes = %v", decoded[0]["ptyOutputBytes"])
+	}
+	if _, ok := decoded[0]["screenWireByClient"]; !ok {
+		t.Error("screenWireByClient missing")
+	}
+}
+
+// writeRunEntries 用携带 runID 的 logger 向 logDir 写入 count 条事件。
+func writeRunEntries(t *testing.T, logDir string, runID string, count int) {
+	t.Helper()
+	sink, err := logs.NewFileSink(logDir, 0, -1)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	logger := logs.NewWithRunID(10000, runID)
+	logger.SetRateLimiter(nil)
+	logger.SetSink(sink)
+	for i := 0; i < count; i++ {
+		logger.Event("info", "test", "some_event", map[string]any{"i": i})
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("close sink: %v", err)
+	}
+}
+
+// writeRawEntries 直接把条目以 JSONL 追加写入 agent.jsonl（用于精确控制
+// RunID/Time 的跨运行与旧版兼容场景）。
+func writeRawEntries(t *testing.T, logDir string, entries []logs.Entry) {
+	t.Helper()
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	file, err := os.OpenFile(filepath.Join(logDir, "agent.jsonl"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer file.Close()
+	for _, entry := range entries {
+		line, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		if _, err := file.Write(append(line, '\n')); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+	}
+}
+
+func countEventLines(t *testing.T, zipPath string) int {
+	t.Helper()
+	raw := readZip(t, zipPath)["events.jsonl"]
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0
+	}
+	return len(strings.Split(trimmed, "\n"))
+}
+
+// TestExportDedupeAcrossRunsKeepsSameSeq 不同运行相同 Seq 的事件必须同时保留：
+// 运行 A（run-a，seq 1..5）在磁盘，运行 B（run-b，seq 1..3）在 Ring，导出应为 8 条。
+func TestExportDedupeAcrossRunsKeepsSameSeq(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeRunEntries(t, logDir, "run-a", 5)
+
+	base := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	var ring []logs.Entry
+	for i := 1; i <= 3; i++ {
+		ring = append(ring, logs.Entry{
+			RunID: "run-b", Seq: uint64(i), Time: base.Add(time.Duration(10+i) * time.Second),
+			Level: "info", Source: "test", Event: "some_event",
+		})
+	}
+
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		RingEntries: ring, MaxEvents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if result.Events != 8 {
+		t.Fatalf("events = %d, want 8 (5 from run-a + 3 from run-b, same seq kept)", result.Events)
+	}
+}
+
+// TestExportDedupeCurrentRunDiskAndRing 当前运行磁盘与 Ring 的同一条目只保留一次：
+// 磁盘与 Ring 都是 run-b seq 1..3，导出应为 3 条而不是 6 条。
+func TestExportDedupeCurrentRunDiskAndRing(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	writeRunEntries(t, logDir, "run-b", 3)
+
+	base := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	var ring []logs.Entry
+	for i := 1; i <= 3; i++ {
+		ring = append(ring, logs.Entry{
+			RunID: "run-b", Seq: uint64(i), Time: base.Add(time.Duration(i) * time.Second),
+			Level: "info", Source: "test", Event: "some_event",
+		})
+	}
+
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		RingEntries: ring, MaxEvents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if result.Events != 3 {
+		t.Fatalf("events = %d, want 3 (disk+ring same run deduped)", result.Events)
+	}
+}
+
+// TestExportLegacyEntriesWithoutRunID 旧版无 RunID 日志兼容：相同 Seq 但时间/内容
+// 不同视为不同事件；完全相同的磁盘/Ring 副本只保留一次。
+func TestExportLegacyEntriesWithoutRunID(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)
+	// 两条旧日志：seq 相同，但时间与内容不同 → 都应保留。
+	writeRawEntries(t, logDir, []logs.Entry{
+		{Seq: 1, Time: t1, Level: "info", Source: "test", Event: "legacy_event", Message: "first"},
+		{Seq: 1, Time: t2, Level: "info", Source: "test", Event: "legacy_event", Message: "second"},
+	})
+
+	// Ring 携带第一条的完全相同副本 → 应被去重。
+	ring := []logs.Entry{
+		{Seq: 1, Time: t1, Level: "info", Source: "test", Event: "legacy_event", Message: "first"},
+	}
+
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		RingEntries: ring, MaxEvents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if result.Events != 2 {
+		t.Fatalf("events = %d, want 2 (same-seq legacy distinct, identical copy deduped)", result.Events)
+	}
+}
+
+// TestExportTruncationKeepsNewestAcrossRuns 多运行混合时，MaxEvents 仍按时间保留
+// 最新事件（运行 B 更晚，应全部保留，运行 A 的旧事件被截断）。
+func TestExportTruncationKeepsNewestAcrossRuns(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	var disk []logs.Entry
+	// run-a：较早的 5 条。
+	for i := 1; i <= 5; i++ {
+		disk = append(disk, logs.Entry{
+			RunID: "run-a", Seq: uint64(i), Time: base.Add(time.Duration(i) * time.Second),
+			Level: "info", Source: "test", Event: "ev_a",
+		})
+	}
+	// run-b：较晚的 3 条（seq 与 run-a 重叠）。
+	for i := 1; i <= 3; i++ {
+		disk = append(disk, logs.Entry{
+			RunID: "run-b", Seq: uint64(i), Time: base.Add(time.Duration(100+i) * time.Second),
+			Level: "info", Source: "test", Event: "ev_b",
+		})
+	}
+	writeRawEntries(t, logDir, disk)
+
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		MaxEvents: 3, MaxBytes: DefaultExportMaxBytes,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if result.Events != 3 || !result.Truncated {
+		t.Fatalf("events = %d truncated = %v, want 3/true", result.Events, result.Truncated)
+	}
+	// 保留的应全部是时间最新的 run-b 事件。
+	lines := strings.Split(strings.TrimSpace(readZip(t, result.Path)["events.jsonl"]), "\n")
+	for _, line := range lines {
+		var entry logs.Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("invalid line: %v", err)
+		}
+		if entry.RunID != "run-b" {
+			t.Errorf("kept event runId = %q, want run-b (newest by time)", entry.RunID)
+		}
 	}
 }

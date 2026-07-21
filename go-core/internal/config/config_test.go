@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"webterm/go-core/internal/logs"
 )
 
 func TestLoadRelayOnlyDefaults(t *testing.T) {
@@ -75,6 +77,102 @@ func TestRedactedMasksRelaySecret(t *testing.T) {
 	}
 	if cfg.Relay.Secret != "relay-secret" {
 		t.Fatal("Redacted mutated original config")
+	}
+}
+
+func diagnosticsTestConfig() Config {
+	return Config{
+		IPCEndpoint: "unix:/run/webterm/agent.sock",
+		SocketPath:  "/run/webterm/legacy.sock",
+		Control:     &LegacyControlConfig{Addr: "127.0.0.1:9999"},
+		Relay: RelayConfig{
+			URL:        "wss://relay.secret-host.example:8443/agent",
+			Secret:     "super-secret",
+			DeviceName: "my-secret-device",
+			Protocol:   RelayProtocolV2,
+		},
+		Shell: ShellConfig{Command: "/usr/local/bin/fish", CWD: "/home/user/confidential"},
+	}
+}
+
+// TestDiagnosticsViewDefaultRedacts 默认视图脱敏 URL/DeviceName/CWD/Command/IPC，
+// 且不输出 Control.Addr；Secret 永远脱敏。
+func TestDiagnosticsViewDefaultRedacts(t *testing.T) {
+	view := diagnosticsTestConfig().DiagnosticsView(false)
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("marshal view: %v", err)
+	}
+	text := string(encoded)
+	for _, leaked := range []string{
+		"relay.secret-host.example", "my-secret-device", "/home/user/confidential",
+		"/usr/local/bin/fish", "/run/webterm/agent.sock", "/run/webterm/legacy.sock",
+		"127.0.0.1:9999", "super-secret",
+	} {
+		if strings.Contains(text, leaked) {
+			t.Errorf("default diagnostics view leaks %q: %s", leaked, text)
+		}
+	}
+
+	relay := view["relay"].(map[string]any)
+	if relay["url"] != "wss" {
+		t.Errorf("relay.url default = %v, want scheme-only wss", relay["url"])
+	}
+	if relay["secret"] != RedactedSecret {
+		t.Errorf("relay.secret = %v, want redacted", relay["secret"])
+	}
+	if relay["deviceName"] != logs.HashID("my-secret-device") {
+		t.Errorf("relay.deviceName should be hashed: %v", relay["deviceName"])
+	}
+	if view["ipcEndpoint"] != "unix" {
+		t.Errorf("ipcEndpoint default = %v, want type-only unix", view["ipcEndpoint"])
+	}
+	shell := view["shell"].(map[string]any)
+	if shell["cwd"] != logs.HashID("/home/user/confidential") {
+		t.Errorf("shell.cwd should be hashed: %v", shell["cwd"])
+	}
+	if shell["command"] != logs.HashID("/usr/local/bin/fish") {
+		t.Errorf("shell.command should be hashed: %v", shell["command"])
+	}
+	if _, has := view["control"]; has {
+		t.Error("default view must not output control addr")
+	}
+}
+
+// TestDiagnosticsViewIncludePathsRestores includePaths 恢复完整值，但 Secret 仍脱敏，
+// Control.Addr 也在 includePaths 下恢复。
+func TestDiagnosticsViewIncludePathsRestores(t *testing.T) {
+	view := diagnosticsTestConfig().DiagnosticsView(true)
+	relay := view["relay"].(map[string]any)
+	if relay["url"] != "wss://relay.secret-host.example:8443/agent" {
+		t.Errorf("includePaths should restore relay url: %v", relay["url"])
+	}
+	if relay["deviceName"] != "my-secret-device" {
+		t.Errorf("includePaths should restore deviceName: %v", relay["deviceName"])
+	}
+	if relay["secret"] != RedactedSecret {
+		t.Errorf("secret must stay redacted even with includePaths: %v", relay["secret"])
+	}
+	shell := view["shell"].(map[string]any)
+	if shell["cwd"] != "/home/user/confidential" || shell["command"] != "/usr/local/bin/fish" {
+		t.Errorf("includePaths should restore shell: %v", shell)
+	}
+	if view["ipcEndpoint"] != "unix:/run/webterm/agent.sock" {
+		t.Errorf("includePaths should restore ipcEndpoint: %v", view["ipcEndpoint"])
+	}
+	control, has := view["control"].(map[string]any)
+	if !has || control["addr"] != "127.0.0.1:9999" {
+		t.Errorf("includePaths should restore control addr: %v", view["control"])
+	}
+}
+
+// TestDiagnosticsViewEmptyCommandIsDefault 空 shell command 折叠为 "default"。
+func TestDiagnosticsViewEmptyCommandIsDefault(t *testing.T) {
+	cfg := Config{Shell: ShellConfig{Command: ""}}
+	view := cfg.DiagnosticsView(false)
+	shell := view["shell"].(map[string]any)
+	if shell["command"] != "default" {
+		t.Errorf("empty command default = %v, want default", shell["command"])
 	}
 }
 

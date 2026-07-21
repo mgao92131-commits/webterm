@@ -39,23 +39,25 @@ func TestDiagnosticsSummaryAgentNotRunning(t *testing.T) {
 	}
 }
 
-// TestPrintDiagnosticsSummaryMarksNotInstrumented 未埋点的指标分组必须显示
+// TestPrintDiagnosticsSummaryMarksNotInstrumented 未埋点的指标能力必须显示
 // not instrumented，而不是把恒 0 的计数当真实观测输出。
 func TestPrintDiagnosticsSummaryMarksNotInstrumented(t *testing.T) {
 	summary := map[string]any{
 		"metrics": map[string]any{
 			"relayConnectCount": 1,
-			"mailbox":           map[string]any{"instrumented": false, "overflowCount": 0},
-			"input":             map[string]any{"instrumented": false, "submitted": 0},
+			"capabilities": map[string]any{
+				"mailboxMetrics": false,
+				"inputMetrics":   false,
+			},
 		},
 	}
 	var buf bytes.Buffer
 	printDiagnosticsSummary(&buf, summary)
 	out := buf.String()
-	if !strings.Contains(out, "not instrumented: input, mailbox") {
+	if !strings.Contains(out, "not instrumented: inputMetrics, mailboxMetrics") {
 		t.Errorf("output missing not-instrumented note\noutput:\n%s", out)
 	}
-	if strings.Contains(out, "overflowCount") {
+	if strings.Contains(out, "overflowCount") || strings.Contains(out, "mailboxMetrics\": 0") {
 		t.Errorf("uninstrumented counters should not be dumped verbatim\noutput:\n%s", out)
 	}
 	if !strings.Contains(out, "relayConnectCount") {

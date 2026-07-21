@@ -2,6 +2,18 @@ package logs
 
 import "testing"
 
+// TestLoggerStampsRunID NewWithRunID 写入的每条 Entry 携带 runID；New 不带（空串）。
+func TestLoggerStampsRunID(t *testing.T) {
+	withRun := NewWithRunID(10, "run-x")
+	if entry := withRun.Add("info", "test", "m"); entry.RunID != "run-x" {
+		t.Errorf("entry.RunID = %q, want run-x", entry.RunID)
+	}
+	plain := New(10)
+	if entry := plain.Add("info", "test", "m"); entry.RunID != "" {
+		t.Errorf("New() entry.RunID = %q, want empty", entry.RunID)
+	}
+}
+
 func TestLoggerKeepsRecentEntriesAndPublishes(t *testing.T) {
 	logger := New(2)
 	events, cancel := logger.Subscribe(1)

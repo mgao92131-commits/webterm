@@ -217,7 +217,7 @@ func newDiagnosticsSummary() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "输出 JSON")
-	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "显示完整会话 ID、标题、目录与 IPC 路径（默认脱敏）")
+	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "包含完整本地路径和地址（会话 ID、标题、目录与 IPC 路径），默认脱敏。输出可能带有敏感的本机诊断信息，分享前请人工检查（设备身份始终脱敏，不受此选项影响）")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
 }
@@ -255,7 +255,7 @@ func newDiagnosticsExport() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "诊断包输出目录（支持 ~ 与 Windows 路径）")
-	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "诊断包中包含完整会话 ID、标题与目录（默认脱敏）")
+	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "诊断包中包含完整本地路径和地址（会话 ID、标题与目录），默认脱敏。输出可能带有敏感的本机诊断信息，分享前请人工检查（设备身份始终脱敏，不受此选项影响）")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
 }
@@ -303,8 +303,8 @@ func printJSONBlock(w io.Writer, value any) {
 	fmt.Fprintln(w, string(data))
 }
 
-// printMetricsBlock 输出指标。标记 "instrumented": false 的分组在生产代码中
-// 尚无埋点、恒为 0，以 "not instrumented" 单行说明，避免误读为真实观测。
+// printMetricsBlock 输出指标。capabilities 中声明为 false 的能力在生产代码中
+// 尚无埋点，以 "not instrumented" 单行说明，避免把占位零值误读为真实观测。
 func printMetricsBlock(w io.Writer, metrics any) {
 	groups, ok := metrics.(map[string]any)
 	if !ok {
@@ -314,11 +314,15 @@ func printMetricsBlock(w io.Writer, metrics any) {
 	flat := make(map[string]any, len(groups))
 	var notInstrumented []string
 	for key, value := range groups {
-		if sub, ok := value.(map[string]any); ok {
-			if flag, ok := sub["instrumented"].(bool); ok && !flag {
-				notInstrumented = append(notInstrumented, key)
-				continue
+		if key == "capabilities" {
+			if caps, ok := value.(map[string]any); ok {
+				for capName, enabled := range caps {
+					if flag, ok := enabled.(bool); ok && !flag {
+						notInstrumented = append(notInstrumented, capName)
+					}
+				}
 			}
+			continue
 		}
 		flat[key] = value
 	}

@@ -29,17 +29,24 @@ func TestDiagnosticsSummaryRedactsSecret(t *testing.T) {
 	cfg.Relay.Secret = "super-secret"
 	application := newTestApp(cfg)
 
-	summary := application.DiagnosticsSummary(false)
-
-	cfgSection, ok := summary["config"].(config.Config)
-	if !ok {
-		t.Fatalf("config section missing or wrong type: %T", summary["config"])
-	}
-	if cfgSection.Relay.Secret != config.RedactedSecret {
-		t.Errorf("relay secret not redacted: %q", cfgSection.Relay.Secret)
-	}
-	if cfgSection.Relay.Secret == "super-secret" {
-		t.Errorf("raw relay secret leaked into diagnostics summary")
+	// Secret 在默认与 includePaths 两种模式下都不能出现。
+	for _, includePaths := range []bool{false, true} {
+		summary := application.DiagnosticsSummary(includePaths)
+		encoded, err := json.Marshal(summary)
+		if err != nil {
+			t.Fatalf("marshal summary: %v", err)
+		}
+		if strings.Contains(string(encoded), "super-secret") {
+			t.Errorf("raw relay secret leaked (includePaths=%v): %s", includePaths, encoded)
+		}
+		cfgSection, ok := summary["config"].(map[string]any)
+		if !ok {
+			t.Fatalf("config section missing or wrong type: %T", summary["config"])
+		}
+		relay, _ := cfgSection["relay"].(map[string]any)
+		if relay["secret"] != config.RedactedSecret {
+			t.Errorf("relay secret not redacted (includePaths=%v): %v", includePaths, relay["secret"])
+		}
 	}
 }
 
@@ -63,6 +70,105 @@ func TestDiagnosticsSummaryOmitsInputBody(t *testing.T) {
 		if _, has := entry["lastCommand"]; has {
 			t.Errorf("session summary must not include lastCommand")
 		}
+	}
+}
+
+// TestDiagnosticsSummaryDefaultRedaction 验证默认摘要不泄露 Relay URL、DeviceName、
+// Shell CWD、IPC 完整路径、自由文本日志中的路径以及项目目录名；
+// includePaths 模式下恢复允许显示的完整值，但 Secret 任何模式下都不出现。
+func TestDiagnosticsSummaryDefaultRedaction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Relay.URL = "wss://relay.secret-host.example:8443/agent"
+	cfg.Relay.Secret = "super-secret"
+	cfg.Relay.DeviceName = "my-secret-device-name"
+	cfg.Shell.CWD = "/home/user/confidential-project"
+	cfg.Shell.Command = "/usr/local/bin/fish"
+	cfg.IPCEndpoint = "unix:/run/webterm/agent.sock"
+
+	application := newTestApp(cfg)
+	application.ipcEndpoint = "unix:/run/webterm/agent.sock"
+	// 自由文本日志包含路径、socket 与 Relay 地址。
+	application.logger.Add("error", "test",
+		"open /home/user/confidential-project/data.sock failed, dial wss://relay.secret-host.example:8443/agent")
+
+	leaks := []string{
+		"relay.secret-host.example",       // Relay URL 主机
+		"my-secret-device-name",           // DeviceName
+		"/home/user/confidential-project", // Shell CWD / 日志路径
+		"/run/webterm/agent.sock",         // IPC 完整路径
+		"/usr/local/bin/fish",             // Shell Command
+		"data.sock",                       // 自由文本日志中的路径
+		"super-secret",                    // Secret（任何模式都不允许）
+	}
+
+	defaultSummary := application.DiagnosticsSummary(false)
+	defaultJSON, err := json.Marshal(defaultSummary)
+	if err != nil {
+		t.Fatalf("marshal default summary: %v", err)
+	}
+	for _, leaked := range leaks {
+		if strings.Contains(string(defaultJSON), leaked) {
+			t.Errorf("default summary leaks %q", leaked)
+		}
+	}
+
+	// includePaths 恢复完整值（Secret 除外）。
+	fullSummary := application.DiagnosticsSummary(true)
+	fullJSON, err := json.Marshal(fullSummary)
+	if err != nil {
+		t.Fatalf("marshal full summary: %v", err)
+	}
+	for _, restored := range []string{
+		"relay.secret-host.example",
+		"my-secret-device-name",
+		"/home/user/confidential-project",
+		"/run/webterm/agent.sock",
+		"/usr/local/bin/fish",
+	} {
+		if !strings.Contains(string(fullJSON), restored) {
+			t.Errorf("includePaths summary should restore %q", restored)
+		}
+	}
+	if strings.Contains(string(fullJSON), "super-secret") {
+		t.Error("includePaths summary must never restore relay secret")
+	}
+}
+
+// TestDiagnosticsSummaryRedactsFreeTextLogMessage 单独确认默认模式下自由文本
+// Message 被占位符替换，且结构化 Event 字段保留。
+func TestDiagnosticsSummaryRedactsFreeTextLogMessage(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.logger.Add("error", "test", "sensitive body /var/lib/secret/file.txt")
+	application.logger.Event("info", "test", "relay_connected", map[string]any{"attempt": 3})
+
+	summary := application.DiagnosticsSummary(false)
+	logSection, _ := summary["logs"].(map[string]any)
+	recent, _ := logSection["recent"].([]logs.Entry)
+	if len(recent) != 2 {
+		t.Fatalf("recent entries = %d, want 2", len(recent))
+	}
+	for _, entry := range recent {
+		if strings.Contains(entry.Message, "/var/lib/secret") {
+			t.Errorf("free-text message leaked path: %q", entry.Message)
+		}
+		if entry.Event == "relay_connected" {
+			if entry.Message != "" {
+				t.Errorf("structured event should keep empty message, got %q", entry.Message)
+			}
+			if entry.Fields["attempt"] != 3 {
+				t.Errorf("structured event field lost: %v", entry.Fields)
+			}
+		}
+	}
+	// 自由文本条目必须被占位符替换。
+	found := false
+	for _, entry := range recent {
+		if entry.Message == logs.RedactedMessagePlaceholder {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a redacted free-text placeholder in default summary")
 	}
 }
 
@@ -110,8 +216,11 @@ func TestSessionSummaryRedaction(t *testing.T) {
 	if _, has := redacted["cwd"]; has {
 		t.Error("redacted summary must not include full cwd")
 	}
-	if redacted["cwdBaseName"] != "secret-project" {
-		t.Errorf("cwdBaseName = %v, want secret-project", redacted["cwdBaseName"])
+	if _, has := redacted["cwdBaseName"]; has {
+		t.Error("redacted summary must not include cwd basename (project dir name is sensitive)")
+	}
+	if strings.Contains(string(encoded), "secret-project") {
+		t.Errorf("redacted session summary leaks cwd basename: %s", encoded)
 	}
 	if redacted["cwdHash"] != logs.HashID(info.CWD) {
 		t.Errorf("cwdHash = %v, want %v", redacted["cwdHash"], logs.HashID(info.CWD))
@@ -194,6 +303,167 @@ func TestExportDiagnosticsRedactsTerminalIdentity(t *testing.T) {
 	fullState := readZipEntry(t, fullPath, "state.json")
 	if !strings.Contains(fullState, sessionID) {
 		t.Errorf("includePaths export should contain raw session id %q", sessionID)
+	}
+}
+
+// TestExportSessionTrafficRedaction 默认导出的 session-traffic.json 中会话 ID 已哈希，
+// includePaths 恢复完整 ID；任何模式下都不含 LastCommand/RecentInputLines/终端正文，
+// 但保留 PTY 与 ScreenWire 计量字段。
+func TestExportSessionTrafficRedaction(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.sessions = session.NewManager(session.TerminalDefaults{Command: "/bin/sh", CWD: "."})
+	terminal, err := application.Sessions().Create(t.TempDir())
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	sessionID := terminal.ID()
+	defer application.Sessions().Close(sessionID)
+	hashedID := logs.HashID(sessionID)
+
+	// 默认：会话 ID 哈希，原文不出现。
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	traffic := readZipEntry(t, path, "session-traffic.json")
+	if strings.Contains(traffic, sessionID) {
+		t.Errorf("redacted session-traffic.json leaks raw session id %q", sessionID)
+	}
+	if !strings.Contains(traffic, hashedID) {
+		t.Errorf("redacted session-traffic.json should contain hashed id %q: %s", hashedID, traffic)
+	}
+	for _, forbidden := range []string{"lastCommand", "recentInputLines", "termTitle"} {
+		if strings.Contains(traffic, forbidden) {
+			t.Errorf("session-traffic.json must not contain %q", forbidden)
+		}
+	}
+
+	// 字段存在性：PTY 与 ScreenWire 计量。
+	var decoded []map[string]any
+	if err := json.Unmarshal([]byte(traffic), &decoded); err != nil {
+		t.Fatalf("session-traffic.json not parseable: %v", err)
+	}
+	if len(decoded) != 1 {
+		t.Fatalf("decoded traffic len=%d, want 1", len(decoded))
+	}
+	for _, key := range []string{"ptyOutputEvents", "ptyOutputBytes", "screenWireByClient"} {
+		if _, ok := decoded[0][key]; !ok {
+			t.Errorf("session-traffic.json missing field %q", key)
+		}
+	}
+
+	// includePaths：恢复完整会话 ID。
+	fullPath, err := application.ExportDiagnostics(t.TempDir(), true)
+	if err != nil {
+		t.Fatalf("export includePaths: %v", err)
+	}
+	fullTraffic := readZipEntry(t, fullPath, "session-traffic.json")
+	if !strings.Contains(fullTraffic, sessionID) {
+		t.Errorf("includePaths session-traffic.json should contain raw id %q", sessionID)
+	}
+}
+
+// TestDiagnosticsSessionTrafficEmpty 无活跃会话时返回空（非 nil）切片，JSON 为 []。
+func TestDiagnosticsSessionTrafficEmpty(t *testing.T) {
+	application := newTestApp(config.Default())
+	traffic := application.DiagnosticsSessionTraffic(false)
+	if traffic == nil || len(traffic) != 0 {
+		t.Fatalf("empty sessions should yield empty non-nil slice, got %#v", traffic)
+	}
+	data, err := json.Marshal(traffic)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("empty traffic JSON = %s, want []", data)
+	}
+}
+
+// TestDiagnosticsRelayDeviceHashAlwaysRedacted relay 设备身份（deviceId）一律哈希：
+// 默认与 includePaths 都不出现原文；空 deviceId 保持为空（omitempty），不哈希成占位值。
+func TestDiagnosticsRelayDeviceHashAlwaysRedacted(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "my-identifiable-device", RelayErrorNone)
+
+	want := logs.HashID("my-identifiable-device")
+	for _, includePaths := range []bool{false, true} {
+		if got := application.DiagnosticsState(includePaths).Relay.DeviceHash; got != want {
+			t.Errorf("relay deviceHash (includePaths=%v) = %q, want %q", includePaths, got, want)
+		}
+	}
+	// 设备身份任何模式下都不恢复原文（--include-paths 只针对路径/地址）。
+	stateJSON, _ := json.Marshal(application.DiagnosticsState(true))
+	if strings.Contains(string(stateJSON), "my-identifiable-device") {
+		t.Errorf("state leaks raw device id even with includePaths: %s", stateJSON)
+	}
+
+	// 摘要 relay 段同样只含哈希。
+	summary := application.DiagnosticsSummary(false)
+	relay, _ := summary["relay"].(map[string]any)
+	if relay["deviceHash"] != want {
+		t.Errorf("summary relay deviceHash = %v, want %q", relay["deviceHash"], want)
+	}
+
+	// 空 deviceId 保持空。
+	empty := newTestApp(config.Default())
+	if got := empty.DiagnosticsState(false).Relay.DeviceHash; got != "" {
+		t.Errorf("empty deviceHash = %q, want empty", got)
+	}
+}
+
+// TestRelayConnectedEventUsesDeviceHash relay_connected 事件写 deviceHash（哈希），
+// 不记录 deviceId 原文。
+func TestRelayConnectedEventUsesDeviceHash(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "desktop-gaoming", RelayErrorNone)
+
+	entries := application.Logs().Recent(0)
+	var connected *logs.Entry
+	for i := range entries {
+		if entries[i].Event == "relay_connected" {
+			connected = &entries[i]
+		}
+	}
+	if connected == nil {
+		t.Fatal("expected a relay_connected event")
+	}
+	if _, has := connected.Fields["deviceId"]; has {
+		t.Errorf("relay_connected must not carry raw deviceId field: %v", connected.Fields)
+	}
+	if connected.Fields["deviceHash"] != logs.HashID("desktop-gaoming") {
+		t.Errorf("deviceHash = %v, want %q", connected.Fields["deviceHash"], logs.HashID("desktop-gaoming"))
+	}
+	encoded, _ := json.Marshal(connected)
+	if strings.Contains(string(encoded), "desktop-gaoming") {
+		t.Errorf("relay_connected event leaks raw device id: %s", encoded)
+	}
+}
+
+// TestDefaultSummaryAndExportOmitDeviceID 默认 summary 与导出包（events/state/summary）
+// 都不出现 Device ID 原文。
+func TestDefaultSummaryAndExportOmitDeviceID(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "desktop-gaoming", RelayErrorNone)
+
+	// 默认摘要 JSON 不含原文。
+	summaryJSON, err := json.Marshal(application.DiagnosticsSummary(false))
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(summaryJSON), "desktop-gaoming") {
+		t.Errorf("default summary leaks raw device id: %s", summaryJSON)
+	}
+
+	// 默认导出包的 events.jsonl / state.json / summary.txt 均不含原文。
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	for _, name := range []string{"events.jsonl", "state.json", "summary.txt"} {
+		content := readZipEntry(t, path, name)
+		if strings.Contains(content, "desktop-gaoming") {
+			t.Errorf("exported %s leaks raw device id: %s", name, content)
+		}
 	}
 }
 
