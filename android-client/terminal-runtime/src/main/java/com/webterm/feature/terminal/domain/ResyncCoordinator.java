@@ -23,6 +23,7 @@ public final class ResyncCoordinator {
   private int attempt;
   private long generation;
   private String reason = "";
+  private int suppressedOverflowCount;
 
   public ResyncCoordinator(TerminalSessionRuntime.TimeoutScheduler scheduler,
                            Executor executor,
@@ -41,6 +42,7 @@ public final class ResyncCoordinator {
   public boolean start(@NonNull String reason) {
     if (state != State.IDLE) return false;
     attempt = 0;
+    suppressedOverflowCount = 0;
     this.reason = reason;
     state = State.WAITING_SNAPSHOT;
     generation++;
@@ -55,11 +57,11 @@ public final class ResyncCoordinator {
       return;
     }
     if (state == State.RECONNECT_REQUIRED) return;
+    // 已在等待权威 snapshot 或已安排退避重试：重复 overflow 只更新统计，
+    // 不立即重发 resync、也不顺延等待超时——否则一次拥塞会在快照在途期间
+    // 连续触发多个全量快照（resync 风暴），退避重试路径仍照常兜底。
     this.reason = reason;
-    state = State.WAITING_SNAPSHOT;
-    generation++;
-    actions.sendResync(reason);
-    armWaitTimeout();
+    suppressedOverflowCount++;
   }
 
   public void onInvalidSnapshot(@NonNull String reason) {
@@ -73,12 +75,14 @@ public final class ResyncCoordinator {
   public void onAuthoritativeSnapshot() {
     state = State.IDLE;
     attempt = 0;
+    suppressedOverflowCount = 0;
     generation++;
   }
 
   public void reset() {
     state = State.IDLE;
     attempt = 0;
+    suppressedOverflowCount = 0;
     generation++;
     reason = "";
   }
@@ -90,6 +94,17 @@ public final class ResyncCoordinator {
   @NonNull
   public String reason() {
     return reason;
+  }
+
+  /** 本轮恢复期间被抑制的重复 overflow 次数（随 start/reset 清零）。 */
+  public int suppressedOverflowCount() {
+    return suppressedOverflowCount;
+  }
+
+  /** 诊断日志用的状态名。 */
+  @NonNull
+  public String stateName() {
+    return state.name();
   }
 
   private void scheduleRetry(String reason) {

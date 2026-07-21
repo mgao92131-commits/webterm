@@ -787,6 +787,28 @@ public class DeviceConnectionRecoveryTest {
     }
 
     @Test
+    public void consecutiveTransportRejectionsTriggerOnlyOneReconnect() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+        transport.sendBinaryResult = false;
+        AtomicReference<DeviceConnection.TunnelSendResult> first = new AtomicReference<>();
+        AtomicReference<DeviceConnection.TunnelSendResult> second = new AtomicReference<>();
+
+        assertTrue(connection.tryEnqueueTunnelFrame(channelId, new byte[] {1}, true, first::set));
+        assertTrue(connection.tryEnqueueTunnelFrame(channelId, new byte[] {2}, true, second::set));
+
+        assertEquals(DeviceConnection.TunnelSendResult.TRANSPORT_REJECTED, first.get());
+        assertEquals("consecutive rejections must not chain transport rebuilds",
+                2, transport.startCount);
+        assertEquals("old transport is closed exactly once", 1, transport.closeCount);
+    }
+
+    @Test
     public void localQueueFullDoesNotReconnectSharedPhysicalMux() {
         FakeMuxTransport transport = new FakeMuxTransport();
         DeviceConnection connection = new DeviceConnection(

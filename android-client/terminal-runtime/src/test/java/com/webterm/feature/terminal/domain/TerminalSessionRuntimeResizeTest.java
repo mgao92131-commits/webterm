@@ -87,6 +87,62 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   @Test
+  public void sameSizeResizeWithSameLeaseAndConnection_isSentOnlyOnce() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    grantLease("lease-1");
+    runtime.requestResize(60, 52);
+    assertEquals(1, connection.resizes.size());
+
+    // 模拟页面重建：新 Controller 的 sentCols/sentRows 回到 -1，会把相同尺寸再请求一遍。
+    runtime.requestResize(60, 52);
+    runtime.requestResize(60, 52);
+    assertEquals("同租约同连接的同尺寸 resize 必须按会话级去重", 1, connection.resizes.size());
+
+    runtime.requestResize(80, 40);
+    assertEquals("尺寸真正变化时正常下发", 2, connection.resizes.size());
+    assertEquals(80, connection.resizes.get(1)[0]);
+    assertEquals(40, connection.resizes.get(1)[1]);
+  }
+
+  @Test
+  public void newLeaseGrant_resendsLatestSizeOnce() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    grantLease("lease-1");
+    runtime.requestResize(60, 52);
+    assertEquals(1, connection.resizes.size());
+
+    // 租约被撤销后重新授予新租约：即使尺寸没变也要补发一次。
+    respondLease("", "", false, 0L); // 非请求撤销
+    assertFalse(runtime.hasLayoutLease());
+    // 推进撤销后的退避队列（含已失效的旧超时/续期任务），直到重新发起租约申请。
+    while (connection.layoutRequestIds.size() < 2 && !leaseScheduler.tasks.isEmpty()) {
+      leaseScheduler.runNext();
+    }
+    assertEquals(2, connection.layoutRequestIds.size());
+    grantLease("lease-2");
+    assertEquals("新租约应补发一次最新尺寸", 2, connection.resizes.size());
+    assertEquals(60, connection.resizes.get(1)[0]);
+    assertEquals(52, connection.resizes.get(1)[1]);
+  }
+
+  @Test
+  public void failedResizeSend_isNotMarkedSentAndRetriedOnNextRequest() {
+    connection.listener.onScreenMessage(snapshot(1).toByteArray());
+    grantLease("lease-1");
+
+    connection.resizeAccepted = false; // 模拟本地队列满/连接停止导致发送被拒
+    runtime.requestResize(60, 52);
+    assertEquals(1, connection.resizes.size());
+
+    connection.resizeAccepted = true;
+    runtime.requestResize(60, 52);
+    assertEquals("发送失败不得标记已发送，相同尺寸必须重试", 2, connection.resizes.size());
+
+    runtime.requestResize(60, 52);
+    assertEquals("发送成功后才按会话级去重", 2, connection.resizes.size());
+  }
+
+  @Test
   public void deniedLayoutLease_retriesAndRecoversWithoutReconnect() {
     connection.listener.onScreenMessage(snapshot(1).toByteArray());
     assertEquals(1, connection.layoutRequestIds.size());
@@ -451,7 +507,7 @@ public final class TerminalSessionRuntimeResizeTest {
   }
 
   @Test
-  public void mailboxOverflowDuringResync_resendsResyncAndDoesNotFreeze() {
+  public void mailboxOverflowDuringResync_doesNotResendAndDoesNotFreeze() {
     QueuingExecutor modelExecutor = new QueuingExecutor();
     runtime = new TerminalSessionRuntime("s1", new RemoteTerminalModel(),
         modelExecutor, Runnable::run, scheduler);
@@ -465,13 +521,15 @@ public final class TerminalSessionRuntimeResizeTest {
 
     // The awaited snapshot is in flight inside the mailbox when a burst of
     // 64 more frames overflows it. Clearing the queue must not freeze the
-    // session: the state machine has to resend resync with a fresh generation.
+    // session, but it also must not resend resync: one resync is already
+    // pending, and the retained authoritative snapshot can still release
+    // the fence. Repeated overflows only accumulate suppression stats.
     connection.listener.onScreenMessage(snapshot(2).toByteArray());
     for (int i = 0; i < 64; i++) {
       connection.listener.onScreenMessage(patch(0, 2).toByteArray());
     }
     modelExecutor.runAll();
-    assertEquals("overflow while waiting must resend resync", 2, connection.resyncRequests);
+    assertEquals("overflow while waiting must not resend resync", 1, connection.resyncRequests);
     assertEquals("the in-flight authoritative snapshot survives the patch burst", 2,
         runtime.model().screenRevision);
 
@@ -566,6 +624,7 @@ public final class TerminalSessionRuntimeResizeTest {
     int reconnectRequests;
     String historyRequestId = "";
     String leaseId = "";
+    boolean resizeAccepted = true;
     final List<String> layoutRequestIds = new ArrayList<>();
     boolean historyRequestAccepted = true;
     Listener listener;
@@ -604,8 +663,9 @@ public final class TerminalSessionRuntimeResizeTest {
     public void sendFocusInput(boolean focused) {}
 
     @Override
-    public void requestResize(int cols, int rows) {
+    public boolean requestResize(int cols, int rows) {
       resizes.add(new int[]{cols, rows});
+      return resizeAccepted;
     }
 
     @Override

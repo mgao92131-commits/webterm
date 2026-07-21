@@ -509,6 +509,14 @@ public final class DeviceConnection {
     }
 
     private void reconnectTransport(String reason, boolean autoStart) {
+        if (physicalConnecting) {
+            // 当前 generation 已有在途连接（例如 drain 循环中上一帧刚触发重建）。
+            // 重复重建只会串联创建多个 Transport，其中只有一个能活到 ws_open；
+            // 在途连接失败时仍由断线/超时路径退避重连。
+            Log.i(TAG, "skip duplicate transport reconnect for " + deviceId
+                + " reason=" + reason + " generation=" + transportGeneration);
+            return;
+        }
         boolean wasDesired = physicalDesired;
         Log.i(TAG, "reconnect transport for " + deviceId + " reason=" + reason
             + " channels=" + channelRegistry.size() + " generation=" + (transportGeneration + 1));

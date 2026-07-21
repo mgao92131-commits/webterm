@@ -158,12 +158,12 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public void requestResize(int cols, int rows) {
+  public boolean requestResize(int cols, int rows) {
     // 先记录最新尺寸（重连后 hello 也会用到），通道不可用时不发但状态保持真实。
     this.columns = clamp(cols, 10, 500);
     this.rows = clamp(rows, 5, 200);
-    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    deviceConnection.sendTunnelFrame(channelId,
+    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return false;
+    return deviceConnection.sendTunnelFrame(channelId,
         ScreenMessageBuilder.resize(layoutLeaseId, this.columns, this.rows), true);
   }
 
