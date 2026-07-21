@@ -121,6 +121,10 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     // ── HomeHost ─────────────────────────────────────────────────
 
 	@Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
+    @Override public void showAddDirectDeviceDialog() { coordinator.showAddDirectDeviceDialog(); }
+    @Override public void editDirectDevice(ServerConfig server) { coordinator.editDirectDevice(server); }
+    @Override public void reconnectDirectDevice(ServerConfig server) { coordinator.reconnectDirectDevice(server); }
+    @Override public void deleteDirectDevice(ServerConfig server) { coordinator.deleteDirectDevice(server); }
     @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
     @Override public void navigateHome() { coordinator.navigateToHome(); }

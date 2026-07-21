@@ -8,12 +8,17 @@ WebTerm 是个人使用的 Android 远程终端系统，只包含三个正式组
 
 ## 正式链路
 
+PC Agent 支持两种互相独立的接入模式（`--mode direct` / `--mode relay`，默认 relay）：
+
 ```text
-Android -- HTTPS + /ws/sessions --> Go Relay -- /ws/agent --> Go PC Agent --> PTY
+Direct: Android -- HTTP + /ws/sessions --> Go PC Agent --> PTY
+Relay:  Android -- HTTPS + /ws/sessions --> Go Relay -- /ws/agent --> Go PC Agent --> PTY
 ```
 
-终端使用 `webterm.mux.v1` 复用通道，具体终端通道只接受
-`webterm.screen.v1` Protobuf。所有远程终端访问统一经 Relay。
+两种模式不自动切换、不回落。终端均使用 `webterm.mux.v1` 复用通道，具体终端
+通道只接受 `webterm.screen.v1` Protobuf；Direct 与 Relay 复用同一套 Mux 与
+SessionRouter。Direct 经 HttpOnly Cookie `webterm_token` 认证，只适合可信局域网，
+公网访问须经 HTTPS 反向代理或 VPN。
 
 ## 构建与测试
 
@@ -31,16 +36,29 @@ cd ../android-client
 
 ## 启动
 
+Relay 模式（默认）：
+
 ```sh
 cd go-core
 WEBTERM_AGENT_RELAY_URL=http://relay.example:9001 \
 WEBTERM_AGENT_RELAY_SECRET='agent-secret' \
 WEBTERM_AGENT_DEVICE_NAME='my-mac' \
-go run ./cmd/webterm-agent run
+go run ./cmd/webterm-agent run --mode relay
 ```
 
-`webterm-agent` 不再监听本机 HTTP 控制端口。它只启动 Relay Runtime、
-本地 IPC 与 PTY；文件发送、设备查询和通知均通过 `webterm` 本地 CLI。
+Direct 模式（Android 直连；局域网内监听 `0.0.0.0:8080`）：
+
+```sh
+cd go-core
+WEBTERM_AGENT_MODE=direct \
+WEBTERM_AGENT_DIRECT_ADDR=0.0.0.0:8080 \
+WEBTERM_AGENT_DIRECT_USERNAME='admin' \
+WEBTERM_AGENT_DIRECT_PASSWORD='your-password' \
+go run ./cmd/webterm-agent run --mode direct
+```
+
+`webterm-agent` 按 mode 只启动 Direct Server 或 Relay Client 之一（绝不两者同时），
+并启动本地 IPC 与 PTY；文件发送、设备查询和通知均通过 `webterm` 本地 CLI。
 可使用 `webterm-agent config init` 创建模板、`config validate` 校验配置。
 
 Relay 使用显式子命令启动，并通过一次性管理命令创建管理员：
