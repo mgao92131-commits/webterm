@@ -231,6 +231,7 @@ func clearConfigEnv(t *testing.T) {
 		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES", "WEBTERM_AGENT_UPLOAD_MAX_BYTES",
 		"WEBTERM_AGENT_MODE", "WEBTERM_AGENT_DIRECT_ADDR",
 		"WEBTERM_AGENT_DIRECT_USERNAME", "WEBTERM_AGENT_DIRECT_PASSWORD",
+		"WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE",
 	} {
 		t.Setenv(key, "")
 	}
@@ -376,12 +377,12 @@ func TestRelayDoesNotRequireDirectConfig(t *testing.T) {
 // direct 模式缺少 addr/username/password 任一项都必须失败。
 func TestDirectRequiresFields(t *testing.T) {
 	clearConfigEnv(t)
+	// addr 有默认值（127.0.0.1:8080），不再强制要求；username/password 仍必填。
 	cases := []struct {
 		name string
 		body string
 		want string
 	}{
-		{"addr", `{"mode":"direct","direct":{"username":"admin","password":"pw"}}`, "direct.addr"},
 		{"username", `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","password":"pw"}}`, "direct.username"},
 		{"password", `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","username":"admin"}}`, "direct.password"},
 	}
@@ -394,6 +395,43 @@ func TestDirectRequiresFields(t *testing.T) {
 				t.Fatalf("err = %v, want mention of %s", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestDirectDefaultsAddr 未设置 addr 时使用默认回环地址。
+func TestDirectDefaultsAddr(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, `{"mode":"direct","direct":{"username":"admin","password":"pw"}}`)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("direct config without addr rejected: %v", err)
+	}
+	if cfg.Direct.Addr != DefaultDirectAddr {
+		t.Fatalf("Direct.Addr = %q, want default %q", cfg.Direct.Addr, DefaultDirectAddr)
+	}
+}
+
+// TestDirectInsecureRemoteGate 非回环明文监听必须显式 allowInsecureRemote。
+func TestDirectInsecureRemoteGate(t *testing.T) {
+	clearConfigEnv(t)
+	// 回环地址默认允许。
+	loopback := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","username":"admin","password":"pw"}}`)
+	if _, err := loadStrict(loopback, true, ""); err != nil {
+		t.Fatalf("loopback listen rejected: %v", err)
+	}
+	// 非回环地址未显式允许时被拒绝。
+	wildcard := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw"}}`)
+	if _, err := loadStrict(wildcard, true, ""); err == nil || !strings.Contains(err.Error(), "allowInsecureRemote") {
+		t.Fatalf("wildcard listen should require allowInsecureRemote, got %v", err)
+	}
+	lan := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"192.168.1.20:8080","username":"admin","password":"pw"}}`)
+	if _, err := loadStrict(lan, true, ""); err == nil {
+		t.Fatal("LAN listen should require allowInsecureRemote")
+	}
+	// 显式允许后通过。
+	allowed := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw","allowInsecureRemote":true}}`)
+	if _, err := loadStrict(allowed, true, ""); err != nil {
+		t.Fatalf("wildcard listen with allowInsecureRemote rejected: %v", err)
 	}
 }
 
@@ -460,14 +498,14 @@ func TestModeFlagOverridesConfig(t *testing.T) {
 func TestModeEnvSelectsDirect(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("WEBTERM_AGENT_MODE", "direct")
-	t.Setenv("WEBTERM_AGENT_DIRECT_ADDR", "0.0.0.0:8080")
+	t.Setenv("WEBTERM_AGENT_DIRECT_ADDR", "127.0.0.1:8080")
 	t.Setenv("WEBTERM_AGENT_DIRECT_USERNAME", "admin")
 	t.Setenv("WEBTERM_AGENT_DIRECT_PASSWORD", "pw")
 	cfg, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false, "")
 	if err != nil {
 		t.Fatalf("env direct config rejected: %v", err)
 	}
-	if cfg.Mode != ModeDirect || cfg.Direct.Addr != "0.0.0.0:8080" {
+	if cfg.Mode != ModeDirect || cfg.Direct.Addr != "127.0.0.1:8080" {
 		t.Fatalf("cfg = %#v", cfg)
 	}
 }

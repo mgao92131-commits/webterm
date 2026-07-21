@@ -3,6 +3,7 @@ package direct
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -139,4 +140,91 @@ func mustRequestNoCookie(t *testing.T) *http.Request {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	return req
+}
+
+// TestConcurrentRotateOnlyOneSucceeds 并发刷新同一 Token 时，原子旋转保证只有
+// 一个请求成功，其余拿到 ok=false。
+func TestConcurrentRotateOnlyOneSucceeds(t *testing.T) {
+	auth := NewAuthenticator("admin", "s3cret")
+	token := auth.Issue()
+
+	const n = 16
+	var wg sync.WaitGroup
+	successes := make(chan bool, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, ok := auth.Rotate(token)
+			successes <- ok
+		}()
+	}
+	wg.Wait()
+	close(successes)
+
+	count := 0
+	for ok := range successes {
+		if ok {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("concurrent rotate successes = %d, want exactly 1", count)
+	}
+	// 旧 Token 已失效。
+	if auth.Validate(token) {
+		t.Fatal("old token should be invalidated after rotation")
+	}
+}
+
+func TestLoginLimiterBlocksAfterThreshold(t *testing.T) {
+	limiter := NewLoginLimiter()
+	ip := "192.168.1.50"
+	for i := 0; i < 5; i++ {
+		if !limiter.Allow(ip) {
+			t.Fatalf("attempt %d should be allowed before threshold", i)
+		}
+		limiter.RecordFailure(ip)
+	}
+	if limiter.Allow(ip) {
+		t.Fatal("should be blocked after 5 failures")
+	}
+	// 其它 IP 不受影响。
+	if !limiter.Allow("10.0.0.9") {
+		t.Fatal("unrelated IP should not be blocked")
+	}
+}
+
+func TestLoginLimiterSuccessClears(t *testing.T) {
+	limiter := NewLoginLimiter()
+	ip := "192.168.1.51"
+	for i := 0; i < 4; i++ {
+		limiter.RecordFailure(ip)
+	}
+	limiter.RecordSuccess(ip)
+	// 成功后计数清零：再失败 4 次仍未达阈值。
+	for i := 0; i < 4; i++ {
+		limiter.RecordFailure(ip)
+	}
+	if !limiter.Allow(ip) {
+		t.Fatal("success should reset the failure counter")
+	}
+}
+
+func TestLoginLimiterBanExpires(t *testing.T) {
+	limiter := NewLoginLimiter()
+	base := time.Now()
+	limiter.now = func() time.Time { return base }
+	ip := "192.168.1.52"
+	for i := 0; i < 5; i++ {
+		limiter.RecordFailure(ip)
+	}
+	if limiter.Allow(ip) {
+		t.Fatal("should be blocked immediately after threshold")
+	}
+	// 推进到封禁期之后。
+	limiter.now = func() time.Time { return base.Add(limiter.banDuration + time.Second) }
+	if !limiter.Allow(ip) {
+		t.Fatal("ban should expire after banDuration")
+	}
 }

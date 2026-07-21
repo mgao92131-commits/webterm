@@ -96,6 +96,25 @@ public final class DirectDeviceDialog {
 
         int fieldGap = UIUtils.dp(activity, DesignTokens.SPACE_3);
         container.addView(addressInput, fieldLayoutParams(fieldGap));
+
+        // 非本机明文连接风险提示（不阻止，仅告知）。
+        final TextView riskWarning = new TextView(activity);
+        riskWarning.setText("此连接不会加密。局域网内其他设备可能截获账户和会话信息。建议仅在可信网络、VPN 或 HTTPS 反向代理下使用。");
+        riskWarning.setTextColor(DesignTokens.WARNING);
+        riskWarning.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        riskWarning.setVisibility(View.GONE);
+        LinearLayout.LayoutParams riskLp = new LinearLayout.LayoutParams(-1, -2);
+        riskLp.setMargins(0, 0, 0, fieldGap);
+        container.addView(riskWarning, riskLp);
+        refreshRiskWarning(addressInput.getText().toString(), riskWarning);
+        addressInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                refreshRiskWarning(s.toString(), riskWarning);
+            }
+        });
+
         container.addView(usernameInput, fieldLayoutParams(fieldGap));
         container.addView(passwordInput, fieldLayoutParams(fieldGap));
 
@@ -195,6 +214,21 @@ public final class DirectDeviceDialog {
     private static void showError(TextView errorText, String message) {
         errorText.setText(message);
         errorText.setVisibility(View.VISIBLE);
+    }
+
+    /** 地址为非本机的明文 http:// 时显示风险提示；https 或回环地址不提示。 */
+    private static void refreshRiskWarning(String addressText, TextView riskWarning) {
+        DirectDeviceAddressNormalizer.Result result =
+            DirectDeviceAddressNormalizer.normalize(addressText);
+        boolean risky = result.ok
+            && result.url.startsWith("http://")
+            && !isLoopbackHost(result.host);
+        riskWarning.setVisibility(risky ? View.VISIBLE : View.GONE);
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        if (host == null) return false;
+        return host.equals("127.0.0.1") || host.equals("::1") || host.equals("localhost");
     }
 
     private static void setSubmitting(Activity activity, boolean submitting, String idleLabel,

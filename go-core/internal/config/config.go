@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -79,13 +80,21 @@ type Config struct {
 	Upload     UploadConfig         `json:"upload"`
 }
 
+// DefaultDirectAddr 是 Direct 模式的默认监听地址（仅本机回环）。
+const DefaultDirectAddr = "127.0.0.1:8080"
+
 // DirectConfig 是 Direct 模式（Android 直连 PC Agent）的监听与登录配置。
 type DirectConfig struct {
 	// Addr 是 HTTP/WebSocket 监听地址，例如 127.0.0.1:8080 或 0.0.0.0:8080。
-	Addr string `json:"addr"`
+	// 未设置时默认 127.0.0.1:8080（仅本机）。
+	Addr string `json:"addr,omitempty"`
 	// Username / Password 用于 Android 登录认证。
 	Username string `json:"username"`
 	Password string `json:"password,omitempty"`
+	// AllowInsecureRemote 显式允许在非回环地址上明文监听。Direct 使用明文 HTTP，
+	// 监听 0.0.0.0 / 局域网 IP 等非本机地址时，必须显式设为 true 以确认已知晓
+	// 局域网内其他设备可能截获账户与会话信息的风险。
+	AllowInsecureRemote bool `json:"allowInsecureRemote,omitempty"`
 }
 
 type LegacyControlConfig struct {
@@ -151,9 +160,10 @@ func (cfg Config) DiagnosticsView(includePaths bool) map[string]any {
 	}
 	// Direct 视图：password 永远脱敏；addr/username 默认哈希，includePaths 时恢复。
 	direct := map[string]any{
-		"addr":     diagnosticsString(cfg.Direct.Addr, includePaths),
-		"username": diagnosticsString(cfg.Direct.Username, includePaths),
-		"password": diagnosticsSecret(cfg.Direct.Password),
+		"addr":                diagnosticsString(cfg.Direct.Addr, includePaths),
+		"username":            diagnosticsString(cfg.Direct.Username, includePaths),
+		"password":            diagnosticsSecret(cfg.Direct.Password),
+		"allowInsecureRemote": cfg.Direct.AllowInsecureRemote,
 	}
 	view := map[string]any{
 		"mode":        string(cfg.Mode.Normalize()),
@@ -333,10 +343,32 @@ func loadStrict(path string, explicit bool, modeOverride string) (Config, error)
 	}
 	cfg.Mode = cfg.Mode.Normalize()
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
+	if cfg.Direct.Addr == "" {
+		cfg.Direct.Addr = DefaultDirectAddr
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// isLoopbackListenAddress 判断 Direct 监听地址是否为本机回环。回环地址（127.0.0.0/8、
+// ::1、localhost）默认允许明文监听；其它地址（0.0.0.0、::、局域网 IP、主机名等）
+// 需要显式 allowInsecureRemote。
+func isLoopbackListenAddress(addr string) bool {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.TrimSpace(host)
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // validate 按模式校验配置：direct 只校验 Direct 字段，relay 只校验 Relay 字段，
@@ -345,14 +377,15 @@ func loadStrict(path string, explicit bool, modeOverride string) (Config, error)
 func (cfg Config) validate() error {
 	switch cfg.Mode {
 	case ModeDirect:
-		if cfg.Direct.Addr == "" {
-			return fmt.Errorf("配置无效：direct.addr 必须设置")
-		}
 		if cfg.Direct.Username == "" {
 			return fmt.Errorf("配置无效：direct.username 必须设置")
 		}
 		if cfg.Direct.Password == "" {
 			return fmt.Errorf("配置无效：direct.password 必须设置")
+		}
+		// 明文 Direct 监听非回环地址（0.0.0.0、局域网 IP 等）必须显式确认风险。
+		if !cfg.Direct.AllowInsecureRemote && !isLoopbackListenAddress(cfg.Direct.Addr) {
+			return fmt.Errorf("配置无效：明文 Direct 监听非本机地址 %q 必须显式设置 direct.allowInsecureRemote=true", cfg.Direct.Addr)
 		}
 	case ModeRelay:
 		if cfg.Relay.URL == "" {
@@ -403,6 +436,9 @@ func defaultConfig() Config {
 	hostname, _ := os.Hostname()
 	return Config{
 		Mode: ModeRelay,
+		Direct: DirectConfig{
+			Addr: DefaultDirectAddr,
+		},
 		Relay: RelayConfig{
 			DeviceName: hostname,
 			Protocol:   RelayProtocolV2,
@@ -446,9 +482,10 @@ func envConfigStrict() (Config, error) {
 		IPCEndpoint: envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_IPC_ENDPOINT"),
 		SocketPath:  envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_SOCKET_PATH"),
 		Direct: DirectConfig{
-			Addr:     env("WEBTERM_AGENT_DIRECT_ADDR"),
-			Username: env("WEBTERM_AGENT_DIRECT_USERNAME"),
-			Password: env("WEBTERM_AGENT_DIRECT_PASSWORD"),
+			Addr:                env("WEBTERM_AGENT_DIRECT_ADDR"),
+			Username:            env("WEBTERM_AGENT_DIRECT_USERNAME"),
+			Password:            env("WEBTERM_AGENT_DIRECT_PASSWORD"),
+			AllowInsecureRemote: envBool("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE"),
 		},
 		Relay: RelayConfig{
 			URL:        envCompat("WEBTERM_AGENT_RELAY_URL", "RELAY_URL"),
@@ -488,6 +525,9 @@ func mergeConfig(base Config, override Config) Config {
 	if override.Direct.Password != "" {
 		base.Direct.Password = override.Direct.Password
 	}
+	if override.Direct.AllowInsecureRemote {
+		base.Direct.AllowInsecureRemote = true
+	}
 	if override.Relay.URL != "" {
 		base.Relay.URL = override.Relay.URL
 	}
@@ -520,6 +560,16 @@ func mergeConfig(base Config, override Config) Config {
 
 func env(key string) string {
 	return os.Getenv(key)
+}
+
+// envBool 解析布尔环境变量：true/1 视为 true，其余（含空）为 false。
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "true", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 var deprecatedEnvWarnings sync.Map

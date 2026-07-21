@@ -37,20 +37,22 @@ const sessionBodyLimit = 1 << 20
 // 优雅退出。不重新实现 Mux、终端帧、Session CRUD 或文件传输——这些全部复用
 // 经 agentrouter 装配的 SessionRouter。
 type Server struct {
-	cfg    config.DirectConfig
-	app    *app.App
-	router *application.SessionRouter
-	auth   *Authenticator
+	cfg     config.DirectConfig
+	app     *app.App
+	router  *application.SessionRouter
+	auth    *Authenticator
+	limiter *LoginLimiter
 }
 
 // New 创建 Direct Server。SessionRouter 的完整装配（Mux、控制消息、文件传输、
 // 通知）由 agentrouter 统一提供，与 Relay Client 共享同一份逻辑。
 func New(cfg config.DirectConfig, appInstance *app.App) *Server {
 	return &Server{
-		cfg:    cfg,
-		app:    appInstance,
-		router: agentrouter.New(appInstance, "direct"),
-		auth:   NewAuthenticator(cfg.Username, cfg.Password),
+		cfg:     cfg,
+		app:     appInstance,
+		router:  agentrouter.New(appInstance, "direct"),
+		auth:    NewAuthenticator(cfg.Username, cfg.Password),
+		limiter: NewLoginLimiter(),
 	}
 }
 
@@ -70,7 +72,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	s.app.Log("info", "direct", "direct server listening addr="+listener.Addr().String())
 
-	server := &http.Server{Handler: s.routes()}
+	// ReadHeaderTimeout 缓解 slowloris；不设较短的 WriteTimeout，因为文件发送/下载
+	// 可能是长时间流式响应。WebSocket 连接被劫持后不受 IdleTimeout 影响。
+	server := &http.Server{
+		Handler:           s.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
 	serveErr := make(chan error, 1)
 	go func() {
 		err := server.Serve(listener)
@@ -112,6 +121,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	// 登录失败限流：被封禁时返回与密码错误相同的通用错误，不泄露限流状态。
+	ip := clientIP(r)
+	if !s.limiter.Allow(ip) {
+		s.writeError(w, http.StatusUnauthorized, "账户或密码错误")
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, loginBodyLimit))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "请求体无效")
@@ -127,13 +142,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, ok := s.auth.Authenticate(req.Username, req.Password)
 	if !ok {
+		s.limiter.RecordFailure(ip)
 		s.app.Log("warn", "direct", "direct login failed")
 		s.writeError(w, http.StatusUnauthorized, "账户或密码错误")
 		return
 	}
+	s.limiter.RecordSuccess(ip)
 	setAuthCookie(w, token, s.auth.ttl)
 	s.app.Log("info", "direct", "direct login ok")
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": s.cfg.Username})
+}
+
+// clientIP 从请求远端地址提取 IP（Direct 面向局域网，RemoteAddr 即客户端 IP）。
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 // handleRefresh 处理 POST /api/auth/refresh：校验当前 Cookie 并旋转出新 Token。

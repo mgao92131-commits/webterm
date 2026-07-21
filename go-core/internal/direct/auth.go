@@ -85,16 +85,24 @@ func (auth *Authenticator) Validate(token string) bool {
 	return true
 }
 
-// Rotate 在旧 Token 有效时将其失效并签发新 Token（Token 旋转）。旧 Token
-// 无效时返回 ok=false，且不签发新 Token。
+// Rotate 在旧 Token 有效时将其失效并签发新 Token（Token 旋转）。整个“校验-删除-
+// 签发”在同一个临界区内完成，保证并发刷新时只有一个请求能旋转成功，其余拿到
+// ok=false（客户端据此重新登录）。旧 Token 无效或过期时返回 ok=false 且不签发。
 func (auth *Authenticator) Rotate(token string) (string, bool) {
-	if !auth.Validate(token) {
+	if token == "" {
 		return "", false
 	}
 	auth.mu.Lock()
+	defer auth.mu.Unlock()
+	expiry, ok := auth.tokens[token]
+	if !ok || !auth.now().Before(expiry) {
+		delete(auth.tokens, token)
+		return "", false
+	}
 	delete(auth.tokens, token)
-	auth.mu.Unlock()
-	return auth.Issue(), true
+	newToken := randomToken()
+	auth.tokens[newToken] = auth.now().Add(auth.ttl)
+	return newToken, true
 }
 
 // randomToken 生成 32 字节（64 个十六进制字符）的安全随机 Token。
@@ -105,6 +113,79 @@ func randomToken() string {
 		panic("direct: crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(buf)
+}
+
+// LoginLimiter 是内存型登录失败限流器，按远端 IP 计数：window 内累计 maxAttempts
+// 次失败后封禁 banDuration；成功登录清除该 IP 记录；过期记录在每次访问时顺手清理。
+type LoginLimiter struct {
+	maxAttempts int
+	window      time.Duration
+	banDuration time.Duration
+
+	mu      sync.Mutex
+	records map[string]*loginRecord
+	now     func() time.Time
+}
+
+type loginRecord struct {
+	attempts     int
+	firstSeen    time.Time
+	blockedUntil time.Time
+}
+
+func NewLoginLimiter() *LoginLimiter {
+	return &LoginLimiter{
+		maxAttempts: 5,
+		window:      5 * time.Minute,
+		banDuration: 30 * time.Second,
+		records:     make(map[string]*loginRecord),
+		now:         time.Now,
+	}
+}
+
+// Allow 判断该 IP 当前是否允许登录尝试（未被封禁）。
+func (limiter *LoginLimiter) Allow(ip string) bool {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	limiter.cleanupLocked()
+	rec := limiter.records[ip]
+	if rec == nil {
+		return true
+	}
+	return !limiter.now().Before(rec.blockedUntil)
+}
+
+// RecordFailure 记录一次失败；达到阈值后封禁并重置计数。
+func (limiter *LoginLimiter) RecordFailure(ip string) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	now := limiter.now()
+	rec := limiter.records[ip]
+	if rec == nil || now.Sub(rec.firstSeen) > limiter.window {
+		rec = &loginRecord{firstSeen: now}
+		limiter.records[ip] = rec
+	}
+	rec.attempts++
+	if rec.attempts >= limiter.maxAttempts {
+		rec.blockedUntil = now.Add(limiter.banDuration)
+		rec.attempts = 0
+	}
+}
+
+// RecordSuccess 成功登录后清除该 IP 的失败记录。
+func (limiter *LoginLimiter) RecordSuccess(ip string) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	delete(limiter.records, ip)
+}
+
+func (limiter *LoginLimiter) cleanupLocked() {
+	now := limiter.now()
+	for ip, rec := range limiter.records {
+		if now.Sub(rec.firstSeen) > limiter.window && !now.Before(rec.blockedUntil) {
+			delete(limiter.records, ip)
+		}
+	}
 }
 
 // setAuthCookie 写入 HttpOnly 会话 Cookie。Direct 面向可信局域网、本次不内置
