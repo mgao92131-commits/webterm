@@ -44,7 +44,6 @@ func NewWithFactory(application *app.App, factory Factory) *Supervisor {
 
 func DefaultFactory(cfg config.Config, app *app.App) (Runner, error) {
 	return RunnerFunc(func(ctx context.Context) error {
-		cfg.Relay.Protocol = config.NormalizeRelayProtocol(cfg.Relay.Protocol)
 		return relay.NewV2(cfg.Relay, app).Run(ctx)
 	}), nil
 }

@@ -13,9 +13,6 @@ import (
 func TestLoadRelayOnlyDefaults(t *testing.T) {
 	clearConfigEnv(t)
 	cfg := Load(Options{})
-	if cfg.Relay.Protocol != RelayProtocolV2 {
-		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
-	}
 	if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines ||
 		cfg.Scrollback.MaxBytes != DefaultScrollbackMaxBytes {
 		t.Fatalf("Scrollback = %#v", cfg.Scrollback)
@@ -27,16 +24,12 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	t.Setenv("RELAY_URL", "https://relay.example")
 	t.Setenv("RELAY_SECRET", "secret")
 	t.Setenv("DEVICE_NAME", "test-mac")
-	t.Setenv("WEBTERM_RELAY_PROTOCOL", "legacy")
 	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "2048")
 
 	cfg := Load(Options{})
 	if cfg.Relay.URL != "https://relay.example" || cfg.Relay.Secret != "secret" ||
 		cfg.Relay.DeviceName != "test-mac" {
 		t.Fatalf("Relay = %#v", cfg.Relay)
-	}
-	if cfg.Relay.Protocol != RelayProtocolV2 {
-		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
 	if cfg.Upload.MaxBytes != 2048 {
 		t.Fatalf("Upload = %#v", cfg.Upload)
@@ -89,7 +82,6 @@ func diagnosticsTestConfig() Config {
 			URL:        "wss://relay.secret-host.example:8443/agent",
 			Secret:     "super-secret",
 			DeviceName: "my-secret-device",
-			Protocol:   RelayProtocolV2,
 		},
 		Shell: ShellConfig{Command: "/usr/local/bin/fish", CWD: "/home/user/confidential"},
 	}
@@ -180,7 +172,7 @@ func TestSaveAndLoadConfigFile(t *testing.T) {
 	clearConfigEnv(t)
 	path := filepath.Join(t.TempDir(), "WebTerm Agent", "config.json")
 	want := Config{
-		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
+		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac"},
 		Shell: ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
 	}
 	if err := Save(path, want); err != nil {
@@ -224,7 +216,7 @@ func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"WEBTERM_IPC_ENDPOINT", "WEBTERM_SOCKET_PATH", "RELAY_URL", "RELAY_SECRET",
-		"DEVICE_NAME", "WEBTERM_RELAY_PROTOCOL", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
+		"DEVICE_NAME", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
 		"WEBTERM_AGENT_CONFIG", "WEBTERM_AGENT_RELAY_URL", "WEBTERM_AGENT_RELAY_SECRET",
 		"WEBTERM_AGENT_DEVICE_NAME", "WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_AGENT_SHELL",
 		"WEBTERM_AGENT_SHELL_CWD", "WEBTERM_AGENT_SCROLLBACK_MAX_LINES",

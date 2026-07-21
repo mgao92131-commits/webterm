@@ -186,7 +186,7 @@ func startAgent(ctx context.Context, relayURL string, credential string, cwd str
 	done := make(chan error, 1)
 	if agentPath == "" {
 		agentCfg := config.Config{
-			Relay: config.RelayConfig{URL: relayURL, Secret: credential, DeviceName: "Go Agent", Protocol: config.RelayProtocolV2},
+			Relay: config.RelayConfig{URL: relayURL, Secret: credential, DeviceName: "Go Agent"},
 			Shell: config.ShellConfig{Command: shell, CWD: cwd},
 		}
 		agentApp := app.New(agentCfg, "smoke")

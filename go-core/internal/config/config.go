@@ -17,8 +17,6 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
-const RelayProtocolV2 = "v2"
-
 const RedactedSecret = "********"
 
 // DefaultMaxUploadBytes 是单个上传文件的默认大小上限（100 MiB）。
@@ -40,9 +38,14 @@ type Config struct {
 	IPCEndpoint string `json:"ipcEndpoint,omitempty"`
 	// SocketPath 是旧 WEBTERM_SOCKET_PATH / socketPath 配置的兼容字段；
 	// 新配置应改用 IPCEndpoint。
+	// DEPRECATION-REMOVE(v0.2.0)：v0.1.0 起仅保留一个版本用于迁移。删除前需确认
+	// 线上配置已无 socketPath 键——因 loadStrict 使用 DisallowUnknownFields，
+	// 直接移除该字段会使仍携带 socketPath 的旧配置文件解析失败。
 	SocketPath string `json:"socketPath,omitempty"`
 	// Control is accepted only to allow one release of existing configurations
 	// to migrate; the Agent no longer starts a local HTTP control server.
+	// DEPRECATION-REMOVE(v0.2.0)：同 SocketPath，移除该字段会因 DisallowUnknownFields
+	// 拒绝仍携带 control 键的旧配置文件，须在确认无存量配置后删除。
 	Control    *LegacyControlConfig `json:"control,omitempty"`
 	Relay      RelayConfig          `json:"relay"`
 	Shell      ShellConfig          `json:"shell"`
@@ -67,7 +70,6 @@ type RelayConfig struct {
 	URL        string `json:"url"`
 	Secret     string `json:"secret,omitempty"`
 	DeviceName string `json:"deviceName"`
-	Protocol   string `json:"protocol"`
 }
 
 type ShellConfig struct {
@@ -102,7 +104,6 @@ func (cfg Config) DiagnosticsView(includePaths bool) map[string]any {
 		"secret":     diagnosticsSecret(cfg.Relay.Secret),
 		"url":        diagnosticsRelayURL(cfg.Relay.URL, includePaths),
 		"deviceName": diagnosticsString(cfg.Relay.DeviceName, includePaths),
-		"protocol":   cfg.Relay.Protocol,
 	}
 	shell := map[string]any{
 		"command": diagnosticsCommand(cfg.Shell.Command, includePaths),
@@ -221,17 +222,12 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func NormalizeRelayProtocol(string) string {
-	return RelayProtocolV2
-}
-
 func Load(options Options) Config {
 	cfg := defaultConfig()
 	if options.ConfigPath != "" {
 		cfg = mergeConfig(cfg, readConfigFile(options.ConfigPath))
 	}
 	cfg = mergeConfig(cfg, envConfig())
-	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
 	if cfg.Scrollback.MaxLines <= 0 {
 		cfg.Scrollback.MaxLines = DefaultScrollbackMaxLines
 	}
@@ -278,7 +274,6 @@ func loadStrict(path string, explicit bool) (Config, error) {
 		return Config{}, err
 	}
 	cfg = mergeConfig(cfg, envCfg)
-	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
 	if cfg.Relay.URL == "" {
 		return Config{}, fmt.Errorf("配置无效：relay.url 必须设置")
 	}
@@ -325,7 +320,6 @@ func defaultConfig() Config {
 	return Config{
 		Relay: RelayConfig{
 			DeviceName: hostname,
-			Protocol:   RelayProtocolV2,
 		},
 		Shell: ShellConfig{CWD: cwd},
 		Scrollback: ScrollbackConfig{
@@ -368,7 +362,6 @@ func envConfigStrict() (Config, error) {
 			URL:        envCompat("WEBTERM_AGENT_RELAY_URL", "RELAY_URL"),
 			Secret:     envCompat("WEBTERM_AGENT_RELAY_SECRET", "RELAY_SECRET"),
 			DeviceName: envCompat("WEBTERM_AGENT_DEVICE_NAME", "DEVICE_NAME"),
-			Protocol:   env("WEBTERM_RELAY_PROTOCOL"),
 		},
 		Shell: ShellConfig{
 			Command: envCompat("WEBTERM_AGENT_SHELL", "WEBTERM_SHELL"),
@@ -399,9 +392,6 @@ func mergeConfig(base Config, override Config) Config {
 	if override.Relay.DeviceName != "" {
 		base.Relay.DeviceName = override.Relay.DeviceName
 	}
-	if override.Relay.Protocol != "" {
-		base.Relay.Protocol = NormalizeRelayProtocol(override.Relay.Protocol)
-	}
 	if override.Shell.Command != "" {
 		base.Shell.Command = override.Shell.Command
 	}
@@ -429,6 +419,9 @@ var deprecatedEnvWarnings sync.Map
 // envCompat keeps the pre-Cobra environment names working for one release.
 // The warning is deliberately emitted once per variable so long-running Agent
 // processes do not flood logs while making the migration visible.
+// DEPRECATION-REMOVE(v0.2.0)：legacy 形参（RELAY_URL/RELAY_SECRET/DEVICE_NAME/
+// WEBTERM_SOCKET_PATH/WEBTERM_SHELL 等旧变量名）仅保留一个版本，届时删除 legacy
+// 分支并改用直接读取 current 变量。
 func envCompat(current string, legacy ...string) string {
 	_, value := envCompatKey(current, legacy...)
 	return value
