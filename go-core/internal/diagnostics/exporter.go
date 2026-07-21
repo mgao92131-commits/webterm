@@ -166,7 +166,14 @@ func Export(options ExportOptions) (ExportResult, error) {
 	if err := write("session-traffic.json", jsonOrUnavailable(options.SessionTraffic)); err != nil {
 		return ExportResult{}, fmt.Errorf("write session traffic: %w", err)
 	}
-	if err := write("summary.txt", []byte(BuildSummary(manifest, events, options.Metrics, options.State))); err != nil {
+	summary := BuildSummary(SummaryInput{
+		Manifest:       manifest,
+		Events:         events,
+		Metrics:        options.Metrics,
+		State:          options.State,
+		SessionTraffic: options.SessionTraffic,
+	})
+	if err := write("summary.txt", []byte(summary)); err != nil {
 		return ExportResult{}, fmt.Errorf("write summary: %w", err)
 	}
 
