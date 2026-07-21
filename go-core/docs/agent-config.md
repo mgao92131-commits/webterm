@@ -19,24 +19,36 @@ webterm-agent config show --effective --config ./agent.json
 
 ## 字段
 
-配置文件字段包括 `mode`、`ipcEndpoint`、`direct.addr`、`direct.username`、`direct.password`、`relay.url`、`relay.secret`、`relay.deviceName`、`shell.command`、`shell.cwd`、`scrollback.maxLines`、`scrollback.maxBytes` 与 `upload.maxBytes`。旧的 `control` 字段只为迁移而接受，运行时会忽略它；不会再启动 HTTP 控制服务。
+配置文件字段包括 `mode`、`ipcEndpoint`、`direct.addr`、`direct.username`、`direct.password`、`direct.allowInsecureRemote`、`relay.url`、`relay.secret`、`relay.deviceName`、`shell.command`、`shell.cwd`、`scrollback.maxLines`、`scrollback.maxBytes` 与 `upload.maxBytes`。旧的 `control` 字段只为迁移而接受，运行时会忽略它；不会再启动 HTTP 控制服务。
 
-Direct 模式示例：
+Direct 模式示例（局域网监听，需显式确认明文风险）：
 
 ```json
 {
   "mode": "direct",
-  "direct": { "addr": "0.0.0.0:8080", "username": "admin", "password": "your-password" }
+  "direct": {
+    "addr": "0.0.0.0:8080",
+    "username": "admin",
+    "password": "strong-password",
+    "allowInsecureRemote": true
+  }
 }
 ```
 
-`direct.password` 与 `relay.secret` 一样在 `config show` 和日志中脱敏为 `********`。HTTP Direct 只适合可信局域网；默认监听 `127.0.0.1:8080`，局域网可配 `0.0.0.0:8080`，公网访问须经 HTTPS 反向代理或 VPN。
+`direct.addr` 缺省为 `127.0.0.1:8080`（仅本机回环）。Direct 使用明文 HTTP：监听回环地址
+（`127.0.0.0/8`、`::1`、`localhost`）默认允许；监听任何非回环地址（`0.0.0.0`、`::`、
+局域网 IP、主机名等）必须显式设置 `direct.allowInsecureRemote=true`，以确认已知晓
+局域网内其他设备可能截获账户与会话信息的风险。公网访问须经 HTTPS 反向代理或 VPN。
+
+`direct.password` 与 `relay.secret` 一样在 `config show` 和日志中脱敏为 `********`。
+登录失败按远端 IP 限流（5 分钟内 5 次失败后短暂封禁），错误响应统一为「账户或密码错误」，
+不区分密码错误与被限流；日志不记录用户名、密码或 Token。
 
 环境变量：
 
 - `WEBTERM_AGENT_CONFIG`
 - `WEBTERM_AGENT_MODE`
-- `WEBTERM_AGENT_DIRECT_ADDR`、`WEBTERM_AGENT_DIRECT_USERNAME`、`WEBTERM_AGENT_DIRECT_PASSWORD`
+- `WEBTERM_AGENT_DIRECT_ADDR`、`WEBTERM_AGENT_DIRECT_USERNAME`、`WEBTERM_AGENT_DIRECT_PASSWORD`、`WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE`
 - `WEBTERM_AGENT_RELAY_URL`、`WEBTERM_AGENT_RELAY_SECRET`、`WEBTERM_AGENT_DEVICE_NAME`
 - `WEBTERM_AGENT_SOCKET_PATH`
 - `WEBTERM_AGENT_SHELL`、`WEBTERM_AGENT_SHELL_CWD`
