@@ -13,6 +13,7 @@ import android.widget.Toast;
 import androidx.core.content.FileProvider;
 
 import com.webterm.core.session.traffic.NetworkTrafficStats;
+import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
 
@@ -116,10 +117,7 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    /**
-     * android-metrics.json：网络流量与渲染指标快照。
-     * 注：恢复指标（resume）段依赖增强版 TerminalResumeMetrics.snapshot()，待任务 6 迁移后补充。
-     */
+    /** android-metrics.json：网络流量、渲染指标与恢复指标快照。 */
     private static JSONObject buildMetricsJson() throws JSONException {
         JSONObject json = new JSONObject();
 
@@ -178,6 +176,27 @@ public final class DiagnosticLogExporter {
         render.put("mailboxResidenceNanos", screen.mailboxResidenceNanos);
         render.put("mailboxResidenceMaxNanos", screen.mailboxResidenceMaxNanos);
         json.put("render", render);
+
+        TerminalResumeMetrics.Snapshot resume = TerminalResumeMetrics.snapshot();
+        JSONObject resumeJson = new JSONObject();
+        resumeJson.put("pageReattachCount", resume.pageReattachCount);
+        resumeJson.put("exactResumeCount", resume.exactResumeCount);
+        resumeJson.put("cumulativePatchCount", resume.cumulativePatchCount);
+        resumeJson.put("snapshotCount", resume.snapshotCount);
+        resumeJson.put("resyncCount", resume.resyncCount);
+        resumeJson.put("syncTimeoutCount", resume.syncTimeoutCount);
+        resumeJson.put("hotToWarmCount", resume.hotToWarmCount);
+        resumeJson.put("warmToColdCount", resume.warmToColdCount);
+        resumeJson.put("leaseAcquireCount", resume.leaseAcquireCount);
+        resumeJson.put("leaseDeniedCount", resume.leaseDeniedCount);
+        resumeJson.put("leaseRetryCount", resume.leaseRetryCount);
+        resumeJson.put("leaseRenewCount", resume.leaseRenewCount);
+        resumeJson.put("leaseRevokedCount", resume.leaseRevokedCount);
+        resumeJson.put("leaseStaleResponseCount", resume.leaseStaleResponseCount);
+        resumeJson.put("mailboxOverflowCount", resume.mailboxOverflowCount);
+        resumeJson.put("mailboxRecoveredCount", resume.mailboxRecoveredCount);
+        resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
+        json.put("resume", resumeJson);
         return json;
     }
 
