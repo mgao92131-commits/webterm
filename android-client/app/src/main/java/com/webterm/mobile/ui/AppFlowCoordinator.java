@@ -155,8 +155,10 @@ public final class AppFlowCoordinator implements
             @Override
             public void onAuthenticated(ServerConfig server) { saveServers(); }
             @Override
-            public void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, boolean isRelayDevice, String relayDeviceId) {
-                showTerminal(baseUrl, cookie, sessionId, termTitle, "", "", isRelayDevice, relayDeviceId, "");
+            public void onOpenTerminal(ServerConfig server, String sessionId, String termTitle) {
+                mSelectedServer = server;
+                showTerminal(server, server.getUrl(), server.getCookie(), sessionId, termTitle,
+                    "", "", server.isRelayDevice(), server.getDeviceId(), "");
             }
             @Override
             public void onRemoveCachedTerminal(String baseUrl, String sessionId) {
@@ -241,7 +243,7 @@ public final class AppFlowCoordinator implements
 
     // ── Navigation methods ─────────────────────────────────────────
 
-    public void navigateToTerminal(String baseUrl, String cookie, String sessionId,
+    public void navigateToTerminal(ServerConfig identity, String baseUrl, String cookie, String sessionId,
                                    String termTitle,
                                    String createdAt, String instanceId,
                                    boolean relayDevice, String relayDeviceId, String cwd) {
@@ -255,7 +257,10 @@ public final class AppFlowCoordinator implements
         args.putBoolean("relayDevice", relayDevice);
         args.putString("relayDeviceId", relayDeviceId != null ? relayDeviceId : "");
         args.putString("cwd", cwd != null ? cwd : "");
-        ServerConfig identityServer = mSelectedServer;
+        ServerConfig identityServer = identity;
+        boolean directDevice = identityServer != null && identityServer.isDirectDevice()
+            && WebTermUrls.normalizeBaseUrl(identityServer.getUrl()).equals(
+                WebTermUrls.normalizeBaseUrl(baseUrl));
         if (identityServer != null
             && WebTermUrls.normalizeBaseUrl(identityServer.getUrl()).equals(
                 WebTermUrls.normalizeBaseUrl(baseUrl))) {
@@ -265,6 +270,13 @@ public final class AppFlowCoordinator implements
             args.putString("serverConfigId", WebTermUrls.normalizeBaseUrl(baseUrl));
             args.putString("authIdentity", "default");
         }
+        // 统一身份：connectionKey 由 resolve() 一次性计算，后续模块只消费、不再推导。
+        args.putBoolean("directDevice", directDevice);
+        args.putString("connectionKey", DeviceConnectionKeys.resolve(
+            directDevice,
+            identityServer != null ? identityServer.getId() : "",
+            baseUrl,
+            relayDeviceId));
         if (mNavController != null) {
             mNavController.navigate(R.id.terminalFragment, args);
         }
@@ -427,12 +439,15 @@ public final class AppFlowCoordinator implements
 
 	// ── Terminal ─────────────────────────────────────────────────────
 
-	void showTerminal(String baseUrl, String cookie, String sessionId, String termTitle,
+	void showTerminal(ServerConfig identity, String baseUrl, String cookie, String sessionId, String termTitle,
                       String createdAt, String instanceId, boolean relayDevice, String relayDeviceId, String cwd) {
-		currentTerminalConnectionKey = DeviceConnectionKeys.forDevice(baseUrl, relayDeviceId);
+		boolean directDevice = identity != null && identity.isDirectDevice()
+            && WebTermUrls.normalizeBaseUrl(identity.getUrl()).equals(WebTermUrls.normalizeBaseUrl(baseUrl));
+		currentTerminalConnectionKey = DeviceConnectionKeys.resolve(
+            directDevice, identity != null ? identity.getId() : "", baseUrl, relayDeviceId);
         currentTerminalSessionId = sessionId == null ? "" : sessionId;
         if (activityResumed) terminalFocus.setVisible(currentTerminalConnectionKey, currentTerminalSessionId);
-        navigateToTerminal(baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
+        navigateToTerminal(identity, baseUrl, cookie, sessionId, termTitle, createdAt, instanceId,
             relayDevice, relayDeviceId, cwd);
     }
 
@@ -474,7 +489,7 @@ public final class AppFlowCoordinator implements
     public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle,
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
-        showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
+        showTerminal(server, server.getUrl(), server.getCookie(), sessionId, termTitle, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
     }
 
     public void requestOpenTerminalFromNotification(String connectionKey, String sessionId) {
@@ -499,7 +514,7 @@ public final class AppFlowCoordinator implements
                 || !pending.sessionId.equals(currentTerminalSessionId)) {
                 ServerConfig server = result.server;
                 mSelectedServer = server;
-                showTerminal(server.getUrl(), server.getCookie(), pending.sessionId, "Terminal",
+                showTerminal(server, server.getUrl(), server.getCookie(), pending.sessionId, "Terminal",
                     "", "", server.isRelayDevice(), server.getDeviceId(), "");
             }
             clearNotificationOpenRequest(pending);

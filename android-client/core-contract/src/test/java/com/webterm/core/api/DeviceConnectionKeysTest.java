@@ -56,4 +56,33 @@ public class DeviceConnectionKeysTest {
             DeviceConnectionKeys.relay(URL, "d1"));
         assertEquals(DeviceConnectionKeys.relay(URL, "d1"), DeviceConnectionKeys.forDevice(URL, "d1"));
     }
+
+    // ── resolve()：统一入口 ───────────────────────────────────────
+
+    @Test
+    public void resolveDirectReturnsDirectKey() {
+        assertEquals("direct:direct_1",
+            DeviceConnectionKeys.resolve(true, "direct_1", URL, ""));
+    }
+
+    @Test
+    public void resolveRelayPreservesRelayFormat() {
+        assertEquals(WebTermUrls.normalizeBaseUrl(URL) + "\n" + "d1",
+            DeviceConnectionKeys.resolve(false, "direct_1", URL, "d1"));
+    }
+
+    @Test
+    public void resolveDoesNotInferDirectFromEmptyDeviceId() {
+        // directDevice=false 即便 deviceId 为空也走 Relay 键，绝不“推断”成 Direct。
+        String relayEmpty = DeviceConnectionKeys.resolve(false, "cfg", URL, "");
+        assertEquals(WebTermUrls.normalizeBaseUrl(URL) + "\n", relayEmpty);
+        assertNotEquals(DeviceConnectionKeys.resolve(true, "cfg", URL, ""), relayEmpty);
+    }
+
+    @Test
+    public void resolveSameUrlDirectRelayDistinct() {
+        assertNotEquals(
+            DeviceConnectionKeys.resolve(true, "cfg", URL, ""),
+            DeviceConnectionKeys.resolve(false, "cfg", URL, ""));
+    }
 }
