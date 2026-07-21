@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -297,10 +298,8 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 	payload, kind, err := client.encodeInitialScreenSync(initial.sync)
 	if err != nil {
 		initial.done(false)
-		diagnostics.Default.ScreenEncodeFailureCount.Add(1)
-		if client.logger != nil {
-			client.logger.Add("error", "session", fmt.Sprintf("encode initial screen sync failed: %v", err))
-		}
+		// 结构化 screen_encode_failed 事件（含计数与稳定枚举），不记录原始错误文本。
+		client.logScreenEncodeFailure("initial_sync", initial.sync.State, err)
 		client.Close()
 		return false
 	}
@@ -311,12 +310,20 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 		} else if kind == "snapshot" {
 			snapshotBytes = len(payload)
 		}
-		client.logger.Add("info", "screen-resume", fmt.Sprintf(
-			"resume_decision=%s actual_kind=%s resume_reason=%s client_revision=%d server_revision=%d snapshot_barrier_revision=%d changed_rows=%d history_append_lines=%d patch_bytes=%d snapshot_bytes=%d",
-			initial.sync.Decision, kind, initial.sync.Reason, initial.sync.ClientRevision,
-			initial.sync.ServerRevision, initial.sync.SnapshotBarrierRevision,
-			initial.sync.ChangedRows, initial.sync.HistoryAppendLines,
-			patchBytes, snapshotBytes))
+		// 结构化 resume 决策事件：只记录数值与稳定枚举（Decision/Reason 本身是
+		// 服务端生成的枚举，不含终端正文），不记录自由文本。
+		client.logger.Event("info", "screen-resume", "screen_resume_decision", map[string]any{
+			"decision":                initial.sync.Decision,
+			"actualKind":              kind,
+			"reason":                  initial.sync.Reason,
+			"clientRevision":          initial.sync.ClientRevision,
+			"serverRevision":          initial.sync.ServerRevision,
+			"snapshotBarrierRevision": initial.sync.SnapshotBarrierRevision,
+			"changedRows":             initial.sync.ChangedRows,
+			"historyAppendLines":      initial.sync.HistoryAppendLines,
+			"patchBytes":              patchBytes,
+			"snapshotBytes":           snapshotBytes,
+		})
 	}
 	if !client.writeMessage(ctx, outboundMessage{binary: payload, kind: kind}) {
 		initial.done(false)
@@ -386,10 +393,49 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	if client.logger == nil {
 		return
 	}
-	client.logger.Add("error", "session", fmt.Sprintf(
-		"screen_encode_failure stage=%s revision=%d rows=%d cols=%d styles=%d links=%d history_lines=%d error=%v",
-		stage, state.Seq, state.Rows, state.Cols, len(state.Styles), len(state.Links),
-		len(state.History.Lines), err))
+	// 结构化事件 + 稳定错误枚举：绝不记录 err.Error()（其中可能含协议内容、
+	// 路径或底层运行信息）。screen_encode_failed 属关键失败事件，已在
+	// RateLimiter 豁免名单中，不参与 5 秒限流。
+	client.logger.Event("error", "session", "screen_encode_failed", map[string]any{
+		"stage":        stage,
+		"reason":       classifyScreenEncodeError(err),
+		"revision":     state.Seq,
+		"rows":         state.Rows,
+		"cols":         state.Cols,
+		"styles":       len(state.Styles),
+		"links":        len(state.Links),
+		"historyLines": len(state.History.Lines),
+	})
+}
+
+// classifyScreenEncodeError 把屏幕编码错误归一化为有限稳定枚举，避免把动态错误
+// 文本当作 reason 记录。仅做子串匹配用于分类，分类结果本身不含任何原始文本。
+func classifyScreenEncodeError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "exceeds max size"),
+		strings.Contains(msg, "message too large"),
+		strings.Contains(msg, "size limit"):
+		return "size_limit"
+	case strings.Contains(msg, "unsupported"):
+		return "unsupported_value"
+	case strings.Contains(msg, "unknown screen frame kind"),
+		strings.Contains(msg, "negative run column"),
+		strings.Contains(msg, "invalid cell width"),
+		strings.Contains(msg, "run exceeds compact grid"),
+		strings.Contains(msg, "invalid compact column count"):
+		return "invalid_state"
+	case strings.Contains(msg, "proto:"),
+		strings.Contains(msg, "marshal"):
+		return "serialization_failed"
+	case strings.Contains(msg, "internal"):
+		return "internal"
+	default:
+		return "unknown"
+	}
 }
 
 func (client *terminalChannelRuntime) writeMessage(ctx context.Context, message outboundMessage) bool {
