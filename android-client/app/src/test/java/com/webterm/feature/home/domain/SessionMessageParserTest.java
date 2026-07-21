@@ -7,12 +7,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
-public class ServerSessionMonitorTest {
+public class SessionMessageParserTest {
     @Test
     public void dispatchMessageDeliversSessionTitleUpdates() {
         RecordingListener listener = new RecordingListener();
 
-        ServerSessionMonitor.dispatchMessage(
+        SessionMessageParser.dispatchMessage(
             "{\"type\":\"session\",\"data\":{\"id\":\"mac:s1\",\"termTitle\":\"vim README.md\",\"cwd\":\"/tmp\"}}",
             listener
         );
@@ -27,7 +27,7 @@ public class ServerSessionMonitorTest {
     public void dispatchMessageDeliversSessionListsWithTitles() {
         RecordingListener listener = new RecordingListener();
 
-        ServerSessionMonitor.dispatchMessage(
+        SessionMessageParser.dispatchMessage(
             "{\"type\":\"sessions\",\"data\":[{\"id\":\"mac:s1\",\"termTitle\":\"zsh\"},{\"id\":\"mac:s2\",\"termTitle\":\"top\"}]}",
             listener
         );
@@ -42,7 +42,7 @@ public class ServerSessionMonitorTest {
     public void dispatchMessagePrefixesRelaySessionIds() {
         RecordingListener listener = new RecordingListener();
 
-        ServerSessionMonitor.dispatchMessage(
+        SessionMessageParser.dispatchMessage(
             "{\"type\":\"session\",\"data\":{\"id\":\"s2\",\"termTitle\":\"top\"}}",
             listener,
             "d1"
@@ -53,17 +53,9 @@ public class ServerSessionMonitorTest {
         assertEquals("top", listener.session.optString("termTitle"));
     }
 
-    private static final class RecordingListener implements ServerSessionMonitor.Listener {
+    private static final class RecordingListener implements SessionMessageParser.Listener {
         JSONArray sessions;
         JSONObject session;
-
-        @Override
-        public void onMonitorConnected() {
-        }
-
-        @Override
-        public void onMonitorPollingFallback() {
-        }
 
         @Override
         public void onMonitorSessions(JSONArray sessions) {
@@ -77,10 +69,6 @@ public class ServerSessionMonitorTest {
 
         @Override
         public void onMonitorSessionClosed(String sessionId) {
-        }
-
-        @Override
-        public void onMonitorDevices(JSONArray devices) {
         }
 
         @Override
