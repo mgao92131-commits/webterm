@@ -14,9 +14,11 @@ public final class ServerConfigManager {
 	public synchronized void load() {
 		servers.clear();
 		for (ServerConfig server : store.loadServers()) {
-			if (server != null && server.isRelayMaster()) {
-				servers.add(server);
-			}
+			if (server == null) continue;
+			// Relay Device 是运行时生成的临时对象，不持久化。
+			if (server.isRelayDevice()) continue;
+			// 保留 Relay Master 与 Direct 设备。
+			servers.add(server);
 		}
     }
 
@@ -26,6 +28,52 @@ public final class ServerConfigManager {
 
     public List<ServerConfig> servers() {
         return servers;
+    }
+
+    /** 添加一个 Direct 设备并立即持久化。 */
+    public synchronized void addDirectDevice(ServerConfig config) {
+        if (config == null) return;
+        servers.add(config);
+        store.saveServers(servers);
+    }
+
+    /** 按 configId 删除 Direct 设备（不会影响 Relay Master），返回是否删除成功。 */
+    public synchronized boolean removeDirectDevice(String configId) {
+        String id = safe(configId);
+        if (id.isEmpty()) return false;
+        boolean removed = false;
+        for (int i = servers.size() - 1; i >= 0; i--) {
+            ServerConfig server = servers.get(i);
+            if (server.isDirectDevice() && id.equals(safe(server.getId()))) {
+                servers.remove(i);
+                removed = true;
+            }
+        }
+        if (removed) store.saveServers(servers);
+        return removed;
+    }
+
+    /** 判断是否已存在相同 URL + 账户的 Direct 设备，用于添加前去重。 */
+    public synchronized boolean containsDirectDevice(String normalizedUrl, String username) {
+        String url = normalizeUrl(normalizedUrl);
+        String user = safe(username).trim();
+        for (ServerConfig server : servers) {
+            if (server.isDirectDevice()
+                && normalizeUrl(server.getUrl()).equals(url)
+                && safe(server.getUsername()).trim().equals(user)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 返回所有持久化的 Direct 设备（不含 Relay Master / Relay Device）。 */
+    public synchronized List<ServerConfig> directDevices() {
+        List<ServerConfig> result = new ArrayList<>();
+        for (ServerConfig server : servers) {
+            if (server.isDirectDevice()) result.add(server);
+        }
+        return result;
     }
 
     /**

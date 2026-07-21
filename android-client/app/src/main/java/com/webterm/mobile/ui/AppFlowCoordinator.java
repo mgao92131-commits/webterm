@@ -37,8 +37,10 @@ import com.webterm.core.notifications.TerminalFocusStore;
 import com.webterm.feature.terminal.domain.RemoteTerminalIntegration;
 import com.webterm.mobile.recovery.NetworkRecoveryController;
 import com.webterm.mobile.device.NotificationTerminalResolver;
+import com.webterm.mobile.device.WebTermDeviceService;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
+import com.webterm.mobile.ui.dialog.DirectDeviceDialog;
 import com.webterm.mobile.ui.dialog.SettingsDialogHelper;
 import com.webterm.feature.home.DeviceSessionsFragment;
 import com.webterm.feature.home.HomeFragment;
@@ -60,7 +62,7 @@ import dagger.hilt.android.scopes.ActivityScoped;
 
 @ActivityScoped
 public final class AppFlowCoordinator implements
-	SettingsDialogHelper.Host, RelayService.Host {
+	SettingsDialogHelper.Host, RelayService.Host, DirectDeviceDialog.Host {
 
     private static final String TAG = "AppFlowCoordinator";
     public static final int REQUEST_CODE_DOWNLOAD_DIR = 0x1001;
@@ -805,6 +807,166 @@ public final class AppFlowCoordinator implements
     // ── Helpers ────────────────────────────────────────────────────
 
     public void showSettingsDialog() { SettingsDialogHelper.show(this); }
+
+    // ── 添加直连设备 ─────────────────────────────────────────────
+
+    public void showAddDirectDeviceDialog() {
+        DirectDeviceDialog.show(this);
+    }
+
+    @Override
+    public void submitDirectDevice(String normalizedUrl, String username, String password,
+                                   DirectDeviceDialog.Callback callback) {
+        // 去重：相同 URL + 账户视为同一 Direct 设备。
+        if (serverConfigs.containsDirectDevice(normalizedUrl, username)) {
+            callback.onError("该地址和账户已经添加");
+            return;
+        }
+        api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String baseUrl, String cookie) {
+                mainHandler.post(() -> {
+                    String id = "direct_" + java.util.UUID.randomUUID();
+                    String name = directDeviceDisplayName(normalizedUrl);
+                    ServerConfig config = new ServerConfig(
+                        id, name, normalizedUrl, cookie, username, password,
+                        false, false, "");
+                    serverConfigs.addDirectDevice(config);
+                    if (mHomeFragment == null) mHomeFragment = findHomeFragment();
+                    if (mHomeFragment != null) mHomeFragment.refreshDevices();
+                    // 触发后台服务重新加载设备并建立 Direct 连接，无需重启 App。
+                    WebTermDeviceService.refresh(mActivity);
+                    callback.onSuccess(name);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> callback.onError(
+                    message == null || message.isEmpty() ? "连接失败" : message));
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                mainHandler.post(() -> callback.onError(mapDirectLoginError(code)));
+            }
+        });
+    }
+
+    /** 设备名优先取主机名/IP（登录响应暂未返回设备名）。 */
+    private static String directDeviceDisplayName(String normalizedUrl) {
+        try {
+            String host = android.net.Uri.parse(normalizedUrl).getHost();
+            if (host != null && !host.isEmpty()) return host;
+        } catch (Exception ignored) {
+        }
+        return normalizedUrl;
+    }
+
+    /** 将登录 HTTP 状态码映射为面向用户的错误文案（计划 §21.1）。 */
+    private static String mapDirectLoginError(int code) {
+        switch (code) {
+            case 401:
+            case 403:
+                return "账户或密码错误";
+            case 404:
+                return "该地址不是 WebTerm Direct Agent";
+            case 0:
+                return "无法连接到该地址，请确认 Agent 已开启 Direct 模式";
+            default:
+                return "连接失败（HTTP " + code + "）";
+        }
+    }
+
+    public void editDirectDevice(ServerConfig server) {
+        if (server == null) return;
+        DirectDeviceDialog.showForEdit(this, server);
+    }
+
+    @Override
+    public void updateDirectDevice(String oldConfigId, String normalizedUrl, String username,
+                                   String password, DirectDeviceDialog.Callback callback) {
+        api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String baseUrl, String cookie) {
+                mainHandler.post(() -> {
+                    // 替换为新配置（新 configId）：旧连接键随之失效并被后台服务清理，
+                    // 新连接以新地址建立。
+                    serverConfigs.removeDirectDevice(oldConfigId);
+                    String id = "direct_" + java.util.UUID.randomUUID();
+                    String name = directDeviceDisplayName(normalizedUrl);
+                    serverConfigs.addDirectDevice(new ServerConfig(
+                        id, name, normalizedUrl, cookie, username, password,
+                        false, false, ""));
+                    refreshHomeDevices();
+                    WebTermDeviceService.refresh(mActivity);
+                    callback.onSuccess(name);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> callback.onError(
+                    message == null || message.isEmpty() ? "连接失败" : message));
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                mainHandler.post(() -> callback.onError(mapDirectLoginError(code)));
+            }
+        });
+    }
+
+    public void reconnectDirectDevice(ServerConfig server) {
+        if (server == null || mActivity == null) return;
+        final String username = server.getUsername();
+        final String password = server.getPassword();
+        api.login(server.getUrl(), "", username, password, new WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String baseUrl, String cookie) {
+                mainHandler.post(() -> {
+                    // 刷新 Cookie 并触发后台服务重建连接。
+                    serverConfigs.updateCookie(server, cookie);
+                    WebTermDeviceService.refresh(mActivity);
+                    android.widget.Toast.makeText(mActivity, "已重新连接", android.widget.Toast.LENGTH_SHORT).show();
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> android.widget.Toast.makeText(mActivity,
+                    "重新连接失败：" + (message == null ? "" : message),
+                    android.widget.Toast.LENGTH_SHORT).show());
+            }
+
+            @Override
+            public void onError(int code, String message) {
+                mainHandler.post(() -> android.widget.Toast.makeText(mActivity,
+                    mapDirectLoginError(code), android.widget.Toast.LENGTH_SHORT).show());
+            }
+        });
+    }
+
+    public void deleteDirectDevice(ServerConfig server) {
+        if (server == null || mActivity == null) return;
+        new android.app.AlertDialog.Builder(mActivity)
+            .setTitle("删除直连设备")
+            .setMessage("确定删除该直连设备吗？\n这不会关闭电脑上的终端会话。")
+            .setPositiveButton("删除", (dialog, which) -> {
+                serverConfigs.removeDirectDevice(server.getId());
+                refreshHomeDevices();
+                WebTermDeviceService.refresh(mActivity);
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    /** 刷新主页设备列表。 */
+    private void refreshHomeDevices() {
+        if (mHomeFragment == null) mHomeFragment = findHomeFragment();
+        if (mHomeFragment != null) mHomeFragment.refreshDevices();
+    }
+
 
     public void shareLatestCrashLog(Activity activity) {
         String crashLog = CrashReporter.readLatestCrash(activity);
