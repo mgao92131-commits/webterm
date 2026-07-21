@@ -3,6 +3,7 @@ package com.webterm.core.session;
 import android.os.Handler;
 import android.os.HandlerThread;
 
+import com.webterm.core.api.DeviceConnectionKeys;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.transport.api.TransportFactory;
 
@@ -26,7 +27,23 @@ public final class DeviceConnectionRegistry {
     }
 
     public synchronized DeviceConnection forDevice(String baseUrl, String cookie, String deviceId) {
-        String key = key(baseUrl, deviceId);
+        return getOrCreate(key(baseUrl, deviceId), baseUrl, cookie, deviceId);
+    }
+
+    /** Relay 设备连接：键空间为 baseUrl + deviceId，连接时携带 x-device-id。 */
+    public synchronized DeviceConnection forRelayDevice(String baseUrl, String cookie, String deviceId) {
+        return forDevice(baseUrl, cookie, deviceId);
+    }
+
+    /**
+     * Direct 设备连接：键空间为 {@code direct:{configId}}，deviceId 为空，因此
+     * HTTP/WS 请求不携带 x-device-id。同一地址的不同账户使用不同 configId，互不冲突。
+     */
+    public synchronized DeviceConnection forDirectDevice(String configId, String baseUrl, String cookie) {
+        return getOrCreate(DeviceConnectionKeys.direct(configId, baseUrl), baseUrl, cookie, "");
+    }
+
+    private DeviceConnection getOrCreate(String key, String baseUrl, String cookie, String deviceId) {
         DeviceConnection manager = managers.get(key);
         if (manager == null) {
             HandlerThread eventThread = new HandlerThread(

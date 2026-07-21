@@ -87,6 +87,9 @@ public final class WebTermDeviceService extends Service {
     /** 前台通知「全部停止」action：释放所有设备在线租约并退出前台。 */
     public static final String ACTION_STOP_ALL = "webterm.action.STOP_ALL_DEVICES";
 
+    /** 重新加载配置并刷新设备连接：添加/删除 Direct 设备后无需重启 App 即刻生效。 */
+    public static final String ACTION_REFRESH_DEVICES = "webterm.action.REFRESH_DEVICES";
+
     private static final String PREFS = "webterm.device_service";
     private static final String KEY_CONNECTIONS_ENABLED = "connections_enabled";
     private static final String KEY_CLIENT_ID = "client_id";
@@ -103,6 +106,7 @@ public final class WebTermDeviceService extends Service {
     private final ConcurrentHashMap<String, DeviceConnection> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
     private final Set<String> relayConnectionKeys = ConcurrentHashMap.newKeySet();
+    private final Set<String> directConnectionKeys = ConcurrentHashMap.newKeySet();
     private FileReceiveController controller;
     private FileUploadController uploadController;
     private AgentNotificationController agentController;
@@ -132,6 +136,14 @@ public final class WebTermDeviceService extends Service {
     public static void start(Context context) {
         if (!connectionsEnabled(context)) return;
         Intent intent = new Intent(context, WebTermDeviceService.class);
+        androidx.core.content.ContextCompat.startForegroundService(context, intent);
+    }
+
+    /** 添加/删除 Direct 设备后调用：重新加载配置并刷新连接，无需重启 App。 */
+    public static void refresh(Context context) {
+        if (!connectionsEnabled(context)) return;
+        Intent intent = new Intent(context, WebTermDeviceService.class);
+        intent.setAction(ACTION_REFRESH_DEVICES);
         androidx.core.content.ContextCompat.startForegroundService(context, intent);
     }
 
@@ -287,6 +299,7 @@ public final class WebTermDeviceService extends Service {
             stopAllDevices();
             return START_NOT_STICKY;
         }
+        // 默认启动与 ACTION_REFRESH_DEVICES 都会重载配置并刷新连接（含 Direct 设备）。
         startForeground(NOTIFICATION_ID, buildNotification(managers.size()));
         refreshConnections();
         return START_STICKY;
@@ -313,6 +326,7 @@ public final class WebTermDeviceService extends Service {
         managers.clear();
         configs.clear();
         relayConnectionKeys.clear();
+        directConnectionKeys.clear();
         relayService.setDeviceListener(null);
 
         // 释放 WakeLock
@@ -347,13 +361,52 @@ public final class WebTermDeviceService extends Service {
             return;
         }
         configManager.load();
+
+        // 连接所有持久化 Direct 设备，并记录本轮有效的连接键。
+        Set<String> nextDirectKeys = new HashSet<>();
         for (ServerConfig config : configManager.servers()) {
-            if (config.isRelayMaster()) continue;
-            connectDevice(config, false);
+            if (config.isDirectDevice()) {
+                String key = connectDirectDevice(config);
+                if (key != null) nextDirectKeys.add(key);
+            }
         }
+        // 清理已被删除的 Direct 设备连接（释放共享连接、解绑监听、清路由）。
+        for (String key : new HashSet<>(directConnectionKeys)) {
+            if (nextDirectKeys.contains(key)) continue;
+            DeviceConnection manager = managers.remove(key);
+            configs.remove(key);
+            if (manager != null) {
+                manager.setControlListener(null);
+                NetworkTrafficStats.unregisterConnection(manager.baseUrl(), manager.deviceId());
+                registry.releaseIfIdle(manager);
+            }
+        }
+        directConnectionKeys.clear();
+        directConnectionKeys.addAll(nextDirectKeys);
+
         relayService.loadMasterFromServers(configManager.servers());
         relayService.start();
         updateConnectionNotification();
+    }
+
+    /**
+     * 建立/复用一个 Direct 设备连接。键空间为 {@code direct:{configId}}，deviceId 为空，
+     * 因此 HTTP/WS 请求不携带 x-device-id；控制消息（file_send / agent_notification）
+     * 经 routeControl 走与 Relay 相同的路由。
+     */
+    @Nullable
+    private String connectDirectDevice(ServerConfig config) {
+        if (config == null) return null;
+        String url = config.getUrl();
+        if (url == null || url.isEmpty()) return null;
+        String key = DeviceConnectionKeys.direct(config.getId(), url);
+        DeviceConnection manager = registry.forDirectDevice(config.getId(), url, config.getCookie());
+        manager.setClientRegistration(receiverClientId(this), receiverClientName(this));
+        managers.put(key, manager);
+        configs.put(key, config);
+        manager.setControlListener(msg -> routeControl(key, msg));
+        manager.start();
+        return key;
     }
 
     private void syncRelayDevices(List<ServerConfig> devices) {
@@ -421,6 +474,7 @@ public final class WebTermDeviceService extends Service {
         managers.clear();
         configs.clear();
         relayConnectionKeys.clear();
+        directConnectionKeys.clear();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
