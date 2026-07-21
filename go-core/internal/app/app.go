@@ -219,8 +219,10 @@ func (app *App) SetRelayConnected(connected bool, deviceID string, errKind Relay
 		return
 	}
 	if connected {
+		// 设备身份一律哈希：relay 分配的 deviceId 可能以主机名等可识别信息为基础，
+		// 默认日志与导出不得出现原文；不随 --include-paths 恢复（该参数只针对路径/地址）。
 		app.logger.Event("info", "relay", "relay_connected", map[string]any{
-			"deviceId": logs.SafeID(deviceID),
+			"deviceHash": logs.HashID(deviceID),
 		})
 	} else if errKind != RelayErrorNone {
 		app.logger.Event("warn", "relay", "relay_disconnected", map[string]any{
@@ -291,7 +293,7 @@ func (app *App) DiagnosticsSummary(includePaths bool) map[string]any {
 			"platform":    runtime.GOOS,
 			"arch":        runtime.GOARCH,
 		},
-		"relay":   app.relayDiagnostics(includePaths),
+		"relay":   app.relayDiagnostics(),
 		"metrics": diagnostics.Default.Snapshot(),
 		"sessions": map[string]any{
 			"count": app.sessions.Count(),

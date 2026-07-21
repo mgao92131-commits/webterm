@@ -7,10 +7,11 @@ import (
 // DiagnosticsRelayState 是 relay 连接的只读诊断状态。
 type DiagnosticsRelayState struct {
 	State string `json:"state"`
-	// DeviceID 默认经 HashID 脱敏（与 DiagnosticsView 对 DeviceName 的策略一致）；
+	// DeviceHash 是 Relay deviceId 的 HashID 哈希。设备身份默认且始终脱敏，
+	// 不随 --include-paths 恢复（该参数只针对路径与地址）；
 	// LastError 只存 RelayErrorKind 枚举值，不含原始错误文本。
-	DeviceID  string `json:"deviceId,omitempty"`
-	LastError string `json:"lastError,omitempty"`
+	DeviceHash string `json:"deviceHash,omitempty"`
+	LastError  string `json:"lastError,omitempty"`
 }
 
 // DiagnosticsMuxState 是日志分发层的只读诊断状态。
@@ -27,9 +28,9 @@ type DiagnosticsState struct {
 }
 
 // relayState 在锁内读取当前 relay 连接状态并归一化为 state 字符串。
-// DeviceID 默认哈希：relay 分配的 deviceId 可能以主机名等可识别信息为基础，
-// 默认诊断输出不应原文暴露；includePaths 为 true 时恢复完整值。
-func (app *App) relayState(includePaths bool) DiagnosticsRelayState {
+// DeviceHash 对 relay 分配的 deviceId 做 HashID：deviceId 可能以主机名等可识别
+// 信息为基础，设备身份一律脱敏，不随 --include-paths 恢复（该参数只针对路径/地址）。
+func (app *App) relayState() DiagnosticsRelayState {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	state := "unconfigured"
@@ -38,28 +39,24 @@ func (app *App) relayState(includePaths bool) DiagnosticsRelayState {
 	} else if app.relayConfigured {
 		state = "disconnected"
 	}
-	deviceID := ""
+	deviceHash := ""
 	if app.relayDeviceID != "" {
-		if includePaths {
-			deviceID = app.relayDeviceID
-		} else {
-			deviceID = logs.HashID(app.relayDeviceID)
-		}
+		deviceHash = logs.HashID(app.relayDeviceID)
 	}
 	return DiagnosticsRelayState{
-		State:     state,
-		DeviceID:  deviceID,
-		LastError: string(app.relayLastErrorKind),
+		State:      state,
+		DeviceHash: deviceHash,
+		LastError:  string(app.relayLastErrorKind),
 	}
 }
 
 // relayDiagnostics 返回摘要用的 relay 状态 map。
-func (app *App) relayDiagnostics(includePaths bool) map[string]any {
-	relay := app.relayState(includePaths)
+func (app *App) relayDiagnostics() map[string]any {
+	relay := app.relayState()
 	return map[string]any{
-		"state":     relay.State,
-		"deviceId":  relay.DeviceID,
-		"lastError": relay.LastError,
+		"state":      relay.State,
+		"deviceHash": relay.DeviceHash,
+		"lastError":  relay.LastError,
 	}
 }
 
@@ -92,7 +89,7 @@ func (app *App) DiagnosticsState(includePaths bool) DiagnosticsState {
 
 	return DiagnosticsState{
 		RunID:     app.runID,
-		Relay:     app.relayState(includePaths),
+		Relay:     app.relayState(),
 		Mux:       DiagnosticsMuxState{SubscriberDroppedLogs: dropped},
 		Terminals: terminals,
 	}

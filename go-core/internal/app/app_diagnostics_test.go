@@ -379,29 +379,91 @@ func TestDiagnosticsSessionTrafficEmpty(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsRelayDeviceIDRedaction relay deviceId 默认哈希，includePaths 恢复；
-// 空 deviceId 保持为空（omitempty），不哈希成占位值。
-func TestDiagnosticsRelayDeviceIDRedaction(t *testing.T) {
+// TestDiagnosticsRelayDeviceHashAlwaysRedacted relay 设备身份（deviceId）一律哈希：
+// 默认与 includePaths 都不出现原文；空 deviceId 保持为空（omitempty），不哈希成占位值。
+func TestDiagnosticsRelayDeviceHashAlwaysRedacted(t *testing.T) {
 	application := newTestApp(config.Default())
 	application.SetRelayConnected(true, "my-identifiable-device", RelayErrorNone)
 
-	if got := application.DiagnosticsState(false).Relay.DeviceID; got != logs.HashID("my-identifiable-device") {
-		t.Errorf("default relay deviceId = %q, want hashed", got)
+	want := logs.HashID("my-identifiable-device")
+	for _, includePaths := range []bool{false, true} {
+		if got := application.DiagnosticsState(includePaths).Relay.DeviceHash; got != want {
+			t.Errorf("relay deviceHash (includePaths=%v) = %q, want %q", includePaths, got, want)
+		}
 	}
-	if got := application.DiagnosticsState(true).Relay.DeviceID; got != "my-identifiable-device" {
-		t.Errorf("includePaths relay deviceId = %q, want raw", got)
+	// 设备身份任何模式下都不恢复原文（--include-paths 只针对路径/地址）。
+	stateJSON, _ := json.Marshal(application.DiagnosticsState(true))
+	if strings.Contains(string(stateJSON), "my-identifiable-device") {
+		t.Errorf("state leaks raw device id even with includePaths: %s", stateJSON)
 	}
-	// 摘要 relay 段同样默认脱敏。
+
+	// 摘要 relay 段同样只含哈希。
 	summary := application.DiagnosticsSummary(false)
 	relay, _ := summary["relay"].(map[string]any)
-	if relay["deviceId"] == "my-identifiable-device" {
-		t.Errorf("summary relay deviceId leaks raw value: %v", relay["deviceId"])
+	if relay["deviceHash"] != want {
+		t.Errorf("summary relay deviceHash = %v, want %q", relay["deviceHash"], want)
 	}
 
 	// 空 deviceId 保持空。
 	empty := newTestApp(config.Default())
-	if got := empty.DiagnosticsState(false).Relay.DeviceID; got != "" {
-		t.Errorf("empty deviceId = %q, want empty", got)
+	if got := empty.DiagnosticsState(false).Relay.DeviceHash; got != "" {
+		t.Errorf("empty deviceHash = %q, want empty", got)
+	}
+}
+
+// TestRelayConnectedEventUsesDeviceHash relay_connected 事件写 deviceHash（哈希），
+// 不记录 deviceId 原文。
+func TestRelayConnectedEventUsesDeviceHash(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "desktop-gaoming", RelayErrorNone)
+
+	entries := application.Logs().Recent(0)
+	var connected *logs.Entry
+	for i := range entries {
+		if entries[i].Event == "relay_connected" {
+			connected = &entries[i]
+		}
+	}
+	if connected == nil {
+		t.Fatal("expected a relay_connected event")
+	}
+	if _, has := connected.Fields["deviceId"]; has {
+		t.Errorf("relay_connected must not carry raw deviceId field: %v", connected.Fields)
+	}
+	if connected.Fields["deviceHash"] != logs.HashID("desktop-gaoming") {
+		t.Errorf("deviceHash = %v, want %q", connected.Fields["deviceHash"], logs.HashID("desktop-gaoming"))
+	}
+	encoded, _ := json.Marshal(connected)
+	if strings.Contains(string(encoded), "desktop-gaoming") {
+		t.Errorf("relay_connected event leaks raw device id: %s", encoded)
+	}
+}
+
+// TestDefaultSummaryAndExportOmitDeviceID 默认 summary 与导出包（events/state/summary）
+// 都不出现 Device ID 原文。
+func TestDefaultSummaryAndExportOmitDeviceID(t *testing.T) {
+	application := newTestApp(config.Default())
+	application.SetRelayConnected(true, "desktop-gaoming", RelayErrorNone)
+
+	// 默认摘要 JSON 不含原文。
+	summaryJSON, err := json.Marshal(application.DiagnosticsSummary(false))
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(summaryJSON), "desktop-gaoming") {
+		t.Errorf("default summary leaks raw device id: %s", summaryJSON)
+	}
+
+	// 默认导出包的 events.jsonl / state.json / summary.txt 均不含原文。
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	for _, name := range []string{"events.jsonl", "state.json", "summary.txt"} {
+		content := readZipEntry(t, path, name)
+		if strings.Contains(content, "desktop-gaoming") {
+			t.Errorf("exported %s leaks raw device id: %s", name, content)
+		}
 	}
 }
 
