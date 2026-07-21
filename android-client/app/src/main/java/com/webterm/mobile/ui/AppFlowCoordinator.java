@@ -86,7 +86,6 @@ public final class AppFlowCoordinator implements
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
     private ServerConfig mSelectedServer;
 
-    private int mImeOverlap;
     private RelayUiState mRelayUiState;
     private NetworkRecoveryController mNetworkRecoveryController;
     private NavController mNavController;
@@ -178,7 +177,7 @@ public final class AppFlowCoordinator implements
         mHomeFragment = findHomeFragment();
 
         // 回到前台时，如果在主页列表，自动重新开启/拉取中转设备
-        if (!hasTerminalSession() && mScreenMode == ScreenMode.DEVICES) {
+        if (!isRemoteTerminalActive() && mScreenMode == ScreenMode.DEVICES) {
             mRelayService.start();
         }
 
@@ -198,7 +197,7 @@ public final class AppFlowCoordinator implements
         activityResumed = false;
         remoteTerminalIntegration.setAppVisible(false);
         terminalFocus.clear();
-        if (!hasTerminalSession()) {
+        if (!isRemoteTerminalActive()) {
             mRelayService.stop();
         }
     }
@@ -295,14 +294,6 @@ public final class AppFlowCoordinator implements
         return mNavController.getCurrentDestination().getId();
     }
 
-    private boolean hasTerminalSession() {
-        return remoteTerminalIntegration.hasSession();
-    }
-
-    private boolean hasActiveTerminal() {
-        return remoteTerminalIntegration.hasSession();
-    }
-
     private boolean isRemoteTerminalActive() {
         return remoteTerminalIntegration.hasSession();
     }
@@ -325,10 +316,8 @@ public final class AppFlowCoordinator implements
                                   int baseBottom, boolean avoidImeWithPadding,
                                   boolean includeStatusBar) {
         WindowInsetsController.installRootInsets(activity, root, baseLeft, baseTop,
-            baseRight, baseBottom, avoidImeWithPadding, includeStatusBar, (imeOverlap) -> {
-                mImeOverlap = imeOverlap;
-                updateKeyboardAvoidance();
-            });
+            baseRight, baseBottom, avoidImeWithPadding, includeStatusBar,
+            (imeOverlap) -> updateKeyboardAvoidance());
     }
 
     public View buildRelayView(Activity activity) {
@@ -384,14 +373,6 @@ public final class AppFlowCoordinator implements
                 mHomeFragment.showHomeScreen();
             }
         });
-    }
-
-    public void loadMultiSessions() {
-        // This is called from HomeFragment's loadMultiSessions
-    }
-
-    public void showDeviceSessions(Activity activity, ServerConfig server) {
-        navigateToDeviceSessions(server);
     }
 
     private boolean isSelectedServer(ServerConfig server) {
@@ -464,12 +445,7 @@ public final class AppFlowCoordinator implements
 
     // ── HomeHost ─────────────────────────────────────────────────────
 
-    public void showTerminal(Activity activity, ServerConfig server, String sessionId, String termTitle,
-                             String createdAt, String instanceId, String cwd) {
-        openSession(activity, server, sessionId, termTitle, createdAt, instanceId, cwd);
-    }
-
-    public void openSession(Activity activity, ServerConfig server, String sessionId, String termTitle,
+    public void openSession(ServerConfig server, String sessionId, String termTitle,
                             String createdAt, String instanceId, String cwd) {
         mSelectedServer = server;
         showTerminal(server.getUrl(), server.getCookie(), sessionId, termTitle, createdAt, instanceId, server.isRelayDevice(), server.getDeviceId(), cwd);
@@ -819,10 +795,6 @@ public final class AppFlowCoordinator implements
         activity.startActivity(Intent.createChooser(send, "导出崩溃日志"));
     }
 
-    public void shareCrashLog() {
-        shareLatestCrashLog(mActivity);
-    }
-
     public boolean canShareDiagnosticLogs() {
         return DiagnosticLogExporter.isAvailable();
     }
@@ -851,7 +823,6 @@ public final class AppFlowCoordinator implements
             && sessionId.equals(remoteTerminalIntegration.sessionId())
             && WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) {
             remoteTerminalIntegration.closeSession();
-            return;
         }
     }
 

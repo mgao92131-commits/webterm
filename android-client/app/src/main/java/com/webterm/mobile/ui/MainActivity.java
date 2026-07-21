@@ -121,7 +121,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     // ── HomeHost ─────────────────────────────────────────────────
 
 	@Override public void showSettingsDialog() { coordinator.showSettingsDialog(); }
-    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.showTerminal(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
+    @Override public void showTerminal(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.openSession(server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void navigateToDeviceSessions(ServerConfig server) { coordinator.navigateToDeviceSessions(server); }
     @Override public void navigateHome() { coordinator.navigateToHome(); }
     @Override public void createSession(ServerConfig server) { coordinator.createSession(server); }
@@ -152,10 +152,10 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     // ── RelayHost ─────────────────────────────────────────────────
 
-    @Override public View buildRelayView(RelayUiState relayUiState) { return coordinator.buildRelayView(this); }
+    @Override public View buildRelayView() { return coordinator.buildRelayView(this); }
 
     // ── SessionRowActions ────────────────────────────────────────
 
-    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.openSession(this, server, sessionId, termTitle, createdAt, instanceId, cwd); }
+    @Override public void openSession(ServerConfig server, String sessionId, String termTitle, String createdAt, String instanceId, String cwd) { coordinator.openSession(server, sessionId, termTitle, createdAt, instanceId, cwd); }
     @Override public void closeSession(ServerConfig server, String sessionId) { coordinator.closeSession(server, sessionId); }
 }

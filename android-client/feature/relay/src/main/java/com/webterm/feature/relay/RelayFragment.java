@@ -10,20 +10,15 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
-import com.webterm.core.relay.RelayService;
-
-import javax.inject.Inject;
-
 import dagger.hilt.android.AndroidEntryPoint;
 
 /**
  * RelayFragment owns the relay login and relay devices screens.
- * Uses RelayService for state and RelayHost for view building.
+ * Delegates view building to its {@link RelayHost}.
  */
 @AndroidEntryPoint
 public final class RelayFragment extends Fragment {
 
-    @Inject RelayService relayService;
     private RelayHost mHost;
 
     @Override
@@ -43,8 +38,7 @@ public final class RelayFragment extends Fragment {
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
         if (mHost != null) {
-            RelayUiState uiState = new RelayUiState(relayService, null);
-            return mHost.buildRelayView(uiState);
+            return mHost.buildRelayView();
         }
         return new android.widget.FrameLayout(requireContext());
     }
