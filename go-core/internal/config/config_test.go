@@ -61,10 +61,10 @@ func TestLoadStrictAllowsAbsentDefaultButRejectsAbsentExplicitConfig(t *testing.
 	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
 	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
 	missing := filepath.Join(t.TempDir(), "missing.json")
-	if _, err := loadStrict(missing, false); err != nil {
+	if _, err := loadStrict(missing, false, ""); err != nil {
 		t.Fatalf("non-explicit missing config: %v", err)
 	}
-	if _, err := loadStrict(missing, true); err == nil {
+	if _, err := loadStrict(missing, true, ""); err == nil {
 		t.Fatal("explicit missing config did not fail")
 	}
 }
@@ -229,6 +229,8 @@ func clearConfigEnv(t *testing.T) {
 		"WEBTERM_AGENT_DEVICE_NAME", "WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_AGENT_SHELL",
 		"WEBTERM_AGENT_SHELL_CWD", "WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
 		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES", "WEBTERM_AGENT_UPLOAD_MAX_BYTES",
+		"WEBTERM_AGENT_MODE", "WEBTERM_AGENT_DIRECT_ADDR",
+		"WEBTERM_AGENT_DIRECT_USERNAME", "WEBTERM_AGENT_DIRECT_PASSWORD",
 	} {
 		t.Setenv(key, "")
 	}
@@ -245,7 +247,7 @@ func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
 		for _, value := range []string{"abc", "0", "-5"} {
 			t.Run(key+"="+value, func(t *testing.T) {
 				t.Setenv(key, value)
-				_, err := loadStrict(missing, false)
+				_, err := loadStrict(missing, false, "")
 				if err == nil {
 					t.Fatalf("%s=%s was accepted", key, value)
 				}
@@ -260,7 +262,7 @@ func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
 func TestLoadStrictRejectsInvalidLegacyUploadEnv(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "abc")
-	_, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false)
+	_, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false, "")
 	if err == nil || !strings.Contains(err.Error(), "WEBTERM_MAX_UPLOAD_BYTES") || !strings.Contains(err.Error(), "abc") {
 		t.Fatalf("err = %v", err)
 	}
@@ -283,15 +285,189 @@ func TestLoadStrictRelayURLSchemeWhitelist(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	for _, scheme := range []string{"http", "https", "ws", "wss"} {
 		t.Setenv("WEBTERM_AGENT_RELAY_URL", scheme+"://relay.example")
-		if _, err := loadStrict(missing, false); err != nil {
+		if _, err := loadStrict(missing, false, ""); err != nil {
 			t.Fatalf("%s:// rejected: %v", scheme, err)
 		}
 	}
 	for _, rawURL := range []string{"ftp://relay.example", "file://relay.example/agent"} {
 		t.Setenv("WEBTERM_AGENT_RELAY_URL", rawURL)
-		_, err := loadStrict(missing, false)
+		_, err := loadStrict(missing, false, "")
 		if err == nil || !strings.Contains(err.Error(), "配置无效") {
 			t.Fatalf("%s should be rejected with 配置无效, got %v", rawURL, err)
 		}
+	}
+}
+
+// writeConfigFile 写入一个 strict 可解析的配置文件并返回其路径。
+func writeConfigFile(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+const directConfigJSON = `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","username":"admin","password":"pw"}}`
+
+const relayConfigJSON = `{"mode":"relay","relay":{"url":"https://relay.example","secret":"secret","deviceName":"pc"}}`
+
+// 旧配置不写 mode 时默认仍按 relay 运行。
+func TestMissingModeDefaultsToRelay(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, `{"relay":{"url":"https://relay.example","secret":"secret"}}`)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("legacy relay config rejected: %v", err)
+	}
+	if cfg.Mode != ModeRelay {
+		t.Fatalf("Mode = %q, want relay", cfg.Mode)
+	}
+}
+
+// TestLegacyRelayConfigStillLoads 完整的旧式 relay 配置（含 shell/scrollback/upload，
+// 无 mode 字段）必须能继续加载。
+func TestLegacyRelayConfigStillLoads(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, `{
+		"relay": {"url": "wss://relay.example", "secret": "secret", "deviceName": "my-pc", "protocol": "v2"},
+		"shell": {"command": "", "cwd": "/tmp"},
+		"scrollback": {"maxLines": 10000, "maxBytes": 16777216},
+		"upload": {"maxBytes": 104857600}
+	}`)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("legacy config rejected: %v", err)
+	}
+	if cfg.Mode != ModeRelay || cfg.Relay.URL != "wss://relay.example" {
+		t.Fatalf("cfg = %#v", cfg)
+	}
+}
+
+// direct 模式不要求 relay.url / relay.secret。
+func TestDirectDoesNotRequireRelayConfig(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, directConfigJSON)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("direct config without relay rejected: %v", err)
+	}
+	if cfg.Mode != ModeDirect {
+		t.Fatalf("Mode = %q, want direct", cfg.Mode)
+	}
+	if cfg.Direct.Addr != "127.0.0.1:8080" || cfg.Direct.Username != "admin" || cfg.Direct.Password != "pw" {
+		t.Fatalf("Direct = %#v", cfg.Direct)
+	}
+}
+
+// relay 模式不校验 direct 字段。
+func TestRelayDoesNotRequireDirectConfig(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, relayConfigJSON)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("relay config without direct rejected: %v", err)
+	}
+	if cfg.Mode != ModeRelay {
+		t.Fatalf("Mode = %q, want relay", cfg.Mode)
+	}
+}
+
+// direct 模式缺少 addr/username/password 任一项都必须失败。
+func TestDirectRequiresFields(t *testing.T) {
+	clearConfigEnv(t)
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"addr", `{"mode":"direct","direct":{"username":"admin","password":"pw"}}`, "direct.addr"},
+		{"username", `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","password":"pw"}}`, "direct.username"},
+		{"password", `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","username":"admin"}}`, "direct.password"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			path := writeConfigFile(t, tc.body)
+			_, err := loadStrict(path, true, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want mention of %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// hybrid、auto、direct+relay 等未知模式必须失败，并提示支持的模式。
+func TestUnknownModeRejected(t *testing.T) {
+	for _, mode := range []string{"hybrid", "auto", "direct+relay", "p2p"} {
+		t.Run(mode, func(t *testing.T) {
+			clearConfigEnv(t)
+			path := writeConfigFile(t, `{"mode":"`+mode+`"}`)
+			_, err := loadStrict(path, true, "")
+			if err == nil {
+				t.Fatalf("mode %q was accepted", mode)
+			}
+			if !strings.Contains(err.Error(), mode) || !strings.Contains(err.Error(), "direct") || !strings.Contains(err.Error(), "relay") {
+				t.Fatalf("error %q should name the bad mode and the supported modes", err)
+			}
+		})
+	}
+}
+
+// direct.password 与 relay.secret 一样必须脱敏。
+func TestDirectPasswordRedacted(t *testing.T) {
+	cfg := Config{Mode: ModeDirect, Direct: DirectConfig{Addr: "127.0.0.1:8080", Username: "admin", Password: "direct-pw"}}
+	redacted := cfg.Redacted()
+	if redacted.Direct.Password != RedactedSecret {
+		t.Fatalf("redacted direct password = %q", redacted.Direct.Password)
+	}
+	if cfg.Direct.Password != "direct-pw" {
+		t.Fatal("Redacted mutated original config")
+	}
+	view := cfg.DiagnosticsView(true)
+	direct := view["direct"].(map[string]any)
+	if direct["password"] != RedactedSecret {
+		t.Fatalf("diagnostics direct password = %v, want redacted even with includePaths", direct["password"])
+	}
+	if view["mode"] != "direct" {
+		t.Fatalf("diagnostics mode = %v, want direct", view["mode"])
+	}
+}
+
+// CLI --mode（modeOverride）覆盖配置文件中的 mode。
+func TestModeFlagOverridesConfig(t *testing.T) {
+	clearConfigEnv(t)
+	// 配置同时包含 direct 与 relay，文件声明 relay。
+	path := writeConfigFile(t, `{
+		"mode": "relay",
+		"direct": {"addr": "127.0.0.1:8080", "username": "admin", "password": "pw"},
+		"relay": {"url": "https://relay.example", "secret": "secret"}
+	}`)
+	byFile, err := loadStrict(path, true, "")
+	if err != nil || byFile.Mode != ModeRelay {
+		t.Fatalf("byFile Mode=%q err=%v, want relay", byFile.Mode, err)
+	}
+	byFlag, err := loadStrict(path, true, "direct")
+	if err != nil {
+		t.Fatalf("flag override to direct rejected: %v", err)
+	}
+	if byFlag.Mode != ModeDirect {
+		t.Fatalf("flag override Mode = %q, want direct", byFlag.Mode)
+	}
+}
+
+// 环境变量 WEBTERM_AGENT_MODE 选择模式，direct 环境变量提供 direct 配置。
+func TestModeEnvSelectsDirect(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_MODE", "direct")
+	t.Setenv("WEBTERM_AGENT_DIRECT_ADDR", "0.0.0.0:8080")
+	t.Setenv("WEBTERM_AGENT_DIRECT_USERNAME", "admin")
+	t.Setenv("WEBTERM_AGENT_DIRECT_PASSWORD", "pw")
+	cfg, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false, "")
+	if err != nil {
+		t.Fatalf("env direct config rejected: %v", err)
+	}
+	if cfg.Mode != ModeDirect || cfg.Direct.Addr != "0.0.0.0:8080" {
+		t.Fatalf("cfg = %#v", cfg)
 	}
 }

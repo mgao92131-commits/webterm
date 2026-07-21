@@ -21,6 +21,28 @@ const RelayProtocolV2 = "v2"
 
 const RedactedSecret = "********"
 
+// Mode 选择 Agent 的接入方式。两种模式互相独立、互不回落：
+//
+//   - ModeDirect：Android 经 HTTP/WebSocket 直连 PC Agent；
+//   - ModeRelay：Android 经中转服务器连接 PC Agent（默认，兼容旧配置）。
+//
+// 本次改造不支持 hybrid、auto 或直连失败自动回退；未知模式必须报错。
+type Mode string
+
+const (
+	ModeDirect Mode = "direct"
+	ModeRelay  Mode = "relay"
+)
+
+// Normalize 返回规范化的模式；未设置时回落到 relay，保证旧配置（无 mode 字段）
+// 仍按当前 Relay 行为运行。
+func (mode Mode) Normalize() Mode {
+	if mode == "" {
+		return ModeRelay
+	}
+	return mode
+}
+
 // DefaultMaxUploadBytes 是单个上传文件的默认大小上限（100 MiB）。
 const DefaultMaxUploadBytes int64 = 104857600
 
@@ -32,10 +54,16 @@ const (
 
 type Options struct {
 	ConfigPath string
+	// ModeOverride 由 CLI 的 --mode 标志提供，优先级高于配置文件与环境变量；
+	// 为空时不参与覆盖。
+	ModeOverride string
 }
 
-// Config 是 relay-only PC Agent 的完整配置。
+// Config 是 PC Agent 的完整配置。Agent 按 Mode 选择 direct 或 relay 接入方式，
+// 两种模式互相独立。
 type Config struct {
+	// Mode 选择接入方式：direct 或 relay（默认 relay）。
+	Mode Mode `json:"mode,omitempty"`
 	// IPCEndpoint 使用 unix:/absolute/path 或 npipe://./pipe/name。
 	IPCEndpoint string `json:"ipcEndpoint,omitempty"`
 	// SocketPath 是旧 WEBTERM_SOCKET_PATH / socketPath 配置的兼容字段；
@@ -44,10 +72,20 @@ type Config struct {
 	// Control is accepted only to allow one release of existing configurations
 	// to migrate; the Agent no longer starts a local HTTP control server.
 	Control    *LegacyControlConfig `json:"control,omitempty"`
+	Direct     DirectConfig         `json:"direct"`
 	Relay      RelayConfig          `json:"relay"`
 	Shell      ShellConfig          `json:"shell"`
 	Scrollback ScrollbackConfig     `json:"scrollback"`
 	Upload     UploadConfig         `json:"upload"`
+}
+
+// DirectConfig 是 Direct 模式（Android 直连 PC Agent）的监听与登录配置。
+type DirectConfig struct {
+	// Addr 是 HTTP/WebSocket 监听地址，例如 127.0.0.1:8080 或 0.0.0.0:8080。
+	Addr string `json:"addr"`
+	// Username / Password 用于 Android 登录认证。
+	Username string `json:"username"`
+	Password string `json:"password,omitempty"`
 }
 
 type LegacyControlConfig struct {
@@ -80,6 +118,9 @@ func (cfg Config) Redacted() Config {
 	if copy.Relay.Secret != "" {
 		copy.Relay.Secret = RedactedSecret
 	}
+	if copy.Direct.Password != "" {
+		copy.Direct.Password = RedactedSecret
+	}
 	return copy
 }
 
@@ -108,8 +149,16 @@ func (cfg Config) DiagnosticsView(includePaths bool) map[string]any {
 		"command": diagnosticsCommand(cfg.Shell.Command, includePaths),
 		"cwd":     diagnosticsString(cfg.Shell.CWD, includePaths),
 	}
+	// Direct 视图：password 永远脱敏；addr/username 默认哈希，includePaths 时恢复。
+	direct := map[string]any{
+		"addr":     diagnosticsString(cfg.Direct.Addr, includePaths),
+		"username": diagnosticsString(cfg.Direct.Username, includePaths),
+		"password": diagnosticsSecret(cfg.Direct.Password),
+	}
 	view := map[string]any{
+		"mode":        string(cfg.Mode.Normalize()),
 		"ipcEndpoint": diagnosticsEndpoint(cfg.IPCEndpoint, includePaths),
+		"direct":      direct,
 		"relay":       relay,
 		"shell":       shell,
 		"scrollback": map[string]any{
@@ -252,10 +301,10 @@ func LoadStrict(options Options) (Config, error) {
 		// operator choice, unlike the conventional default location.
 		explicit = os.Getenv("WEBTERM_AGENT_CONFIG") != ""
 	}
-	return loadStrict(path, explicit)
+	return loadStrict(path, explicit, options.ModeOverride)
 }
 
-func loadStrict(path string, explicit bool) (Config, error) {
+func loadStrict(path string, explicit bool, modeOverride string) (Config, error) {
 	cfg := defaultConfig()
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -278,32 +327,62 @@ func loadStrict(path string, explicit bool) (Config, error) {
 		return Config{}, err
 	}
 	cfg = mergeConfig(cfg, envCfg)
+	// CLI --mode 优先级最高，覆盖配置文件与环境变量中的 mode。
+	if modeOverride != "" {
+		cfg.Mode = Mode(modeOverride)
+	}
+	cfg.Mode = cfg.Mode.Normalize()
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
-	if cfg.Relay.URL == "" {
-		return Config{}, fmt.Errorf("配置无效：relay.url 必须设置")
-	}
-	parsed, err := url.Parse(cfg.Relay.URL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return Config{}, fmt.Errorf("配置无效：relay.url 无效")
-	}
-	switch parsed.Scheme {
-	case "http", "https", "ws", "wss":
-	default:
-		return Config{}, fmt.Errorf("配置无效：relay.url 协议 %q 不支持，仅允许 http、https、ws、wss", parsed.Scheme)
-	}
-	if cfg.Relay.Secret == "" {
-		return Config{}, fmt.Errorf("配置无效：relay.secret 必须设置")
-	}
-	if cfg.Upload.MaxBytes <= 0 {
-		return Config{}, fmt.Errorf("配置无效：upload.maxBytes 必须大于 0")
-	}
-	if cfg.Scrollback.MaxLines <= 0 || cfg.Scrollback.MaxBytes <= 0 {
-		return Config{}, fmt.Errorf("配置无效：scrollback 限制必须大于 0")
-	}
-	if _, err := localipc.Normalize(firstNonEmpty(cfg.IPCEndpoint, cfg.SocketPath)); err != nil {
-		return Config{}, fmt.Errorf("配置无效：ipc endpoint: %w", err)
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// validate 按模式校验配置：direct 只校验 Direct 字段，relay 只校验 Relay 字段，
+// 两种模式互不要求对方的配置。公共字段（upload/scrollback/ipc）始终校验。
+// 调用前 Mode 必须已经 Normalize。
+func (cfg Config) validate() error {
+	switch cfg.Mode {
+	case ModeDirect:
+		if cfg.Direct.Addr == "" {
+			return fmt.Errorf("配置无效：direct.addr 必须设置")
+		}
+		if cfg.Direct.Username == "" {
+			return fmt.Errorf("配置无效：direct.username 必须设置")
+		}
+		if cfg.Direct.Password == "" {
+			return fmt.Errorf("配置无效：direct.password 必须设置")
+		}
+	case ModeRelay:
+		if cfg.Relay.URL == "" {
+			return fmt.Errorf("配置无效：relay.url 必须设置")
+		}
+		parsed, err := url.Parse(cfg.Relay.URL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("配置无效：relay.url 无效")
+		}
+		switch parsed.Scheme {
+		case "http", "https", "ws", "wss":
+		default:
+			return fmt.Errorf("配置无效：relay.url 协议 %q 不支持，仅允许 http、https、ws、wss", parsed.Scheme)
+		}
+		if cfg.Relay.Secret == "" {
+			return fmt.Errorf("配置无效：relay.secret 必须设置")
+		}
+	default:
+		return fmt.Errorf("配置无效：不支持的 Agent 模式：%s\n支持的模式：direct、relay", cfg.Mode)
+	}
+	if cfg.Upload.MaxBytes <= 0 {
+		return fmt.Errorf("配置无效：upload.maxBytes 必须大于 0")
+	}
+	if cfg.Scrollback.MaxLines <= 0 || cfg.Scrollback.MaxBytes <= 0 {
+		return fmt.Errorf("配置无效：scrollback 限制必须大于 0")
+	}
+	if _, err := localipc.Normalize(firstNonEmpty(cfg.IPCEndpoint, cfg.SocketPath)); err != nil {
+		return fmt.Errorf("配置无效：ipc endpoint: %w", err)
+	}
+	return nil
 }
 
 // Default returns a template only; it deliberately never reads environment
@@ -323,6 +402,7 @@ func defaultConfig() Config {
 	cwd, _ := os.Getwd()
 	hostname, _ := os.Hostname()
 	return Config{
+		Mode: ModeRelay,
 		Relay: RelayConfig{
 			DeviceName: hostname,
 			Protocol:   RelayProtocolV2,
@@ -362,8 +442,14 @@ func envConfigStrict() (Config, error) {
 	scrollBytes, errBytes := envIntStrict("WEBTERM_AGENT_SCROLLBACK_MAX_BYTES")
 	uploadBytes, errUpload := envIntStrict("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "WEBTERM_MAX_UPLOAD_BYTES")
 	cfg := Config{
+		Mode:        Mode(env("WEBTERM_AGENT_MODE")),
 		IPCEndpoint: envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_IPC_ENDPOINT"),
 		SocketPath:  envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_SOCKET_PATH"),
+		Direct: DirectConfig{
+			Addr:     env("WEBTERM_AGENT_DIRECT_ADDR"),
+			Username: env("WEBTERM_AGENT_DIRECT_USERNAME"),
+			Password: env("WEBTERM_AGENT_DIRECT_PASSWORD"),
+		},
 		Relay: RelayConfig{
 			URL:        envCompat("WEBTERM_AGENT_RELAY_URL", "RELAY_URL"),
 			Secret:     envCompat("WEBTERM_AGENT_RELAY_SECRET", "RELAY_SECRET"),
@@ -384,11 +470,23 @@ func envConfigStrict() (Config, error) {
 }
 
 func mergeConfig(base Config, override Config) Config {
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
 	if override.IPCEndpoint != "" {
 		base.IPCEndpoint = override.IPCEndpoint
 	}
 	if override.SocketPath != "" {
 		base.SocketPath = override.SocketPath
+	}
+	if override.Direct.Addr != "" {
+		base.Direct.Addr = override.Direct.Addr
+	}
+	if override.Direct.Username != "" {
+		base.Direct.Username = override.Direct.Username
+	}
+	if override.Direct.Password != "" {
+		base.Direct.Password = override.Direct.Password
 	}
 	if override.Relay.URL != "" {
 		base.Relay.URL = override.Relay.URL

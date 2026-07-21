@@ -36,15 +36,15 @@ func main() {
 
 // newRootCommand 构建根命令。运行参数注册为 root 的 PersistentFlags，
 // root 与 run 子命令共用同一套变量和执行函数；run 参数便于测试注入桩。
-func newRootCommand(run func(configPath, ipcEndpoint string) error) *cobra.Command {
-	var configPath, ipcEndpoint, legacySocket string
+func newRootCommand(run func(configPath, ipcEndpoint, mode string) error) *cobra.Command {
+	var configPath, ipcEndpoint, legacySocket, mode string
 	runE := func(_ *cobra.Command, _ []string) error {
 		// --socket 是隐藏的兼容参数；显式指定 --ipc-endpoint 时优先。
 		endpoint := ipcEndpoint
 		if endpoint == "" {
 			endpoint = legacySocket
 		}
-		return run(configPath, endpoint)
+		return run(configPath, endpoint, mode)
 	}
 	root := &cobra.Command{Use: "webterm-agent", Short: "运行 WebTerm Go Agent", SilenceErrors: true, SilenceUsage: true, Args: noArgs,
 		// Keep direct invocation working for existing service managers and scripts.
@@ -52,10 +52,11 @@ func newRootCommand(run func(configPath, ipcEndpoint string) error) *cobra.Comma
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
 	pflags := root.PersistentFlags()
 	pflags.StringVarP(&configPath, "config", "c", "", "配置文件路径")
+	pflags.StringVar(&mode, "mode", "", "Agent 接入模式：direct（Android 直连）或 relay（经中转服务器，默认）。覆盖配置文件与环境变量中的 mode")
 	pflags.StringVar(&ipcEndpoint, "ipc-endpoint", "", "覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent")
 	pflags.StringVar(&legacySocket, "socket", "", "覆盖本地 IPC endpoint（--ipc-endpoint 的兼容写法）")
 	_ = pflags.MarkHidden("socket")
-	runCmd := &cobra.Command{Use: "run", Short: "启动 Agent", Long: "启动 Relay Runtime、本地 IPC 与 PTY/ConPTY 会话。前提：配置中的 Relay URL 和 Secret 有效。", Example: "  webterm-agent run\n  webterm-agent run --config ./agent.json --ipc-endpoint unix:/tmp/webterm.sock", Args: noArgs, RunE: runE}
+	runCmd := &cobra.Command{Use: "run", Short: "启动 Agent", Long: "启动 Agent Runtime、本地 IPC 与 PTY/ConPTY 会话。\n\n按配置/标志选择接入模式：\n  --mode direct：启动 Direct Server，Android 经 HTTP/WebSocket 直连。\n  --mode relay：启动 Relay Client，Android 经中转服务器连接（默认）。", Example: "  webterm-agent run\n  webterm-agent run --mode direct --config ./agent.json\n  webterm-agent run --config ./agent.json --ipc-endpoint unix:/tmp/webterm.sock", Args: noArgs, RunE: runE}
 	root.AddCommand(runCmd, configCommand(), versionCommand(root), completionCommand(root))
 	return root
 }
@@ -75,9 +76,9 @@ func noArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runAgent(configPath, ipcEndpoint string) error {
+func runAgent(configPath, ipcEndpoint, mode string) error {
 	// An omitted --config intentionally permits pure environment startup.
-	cfg, err := config.LoadStrict(config.Options{ConfigPath: configPath})
+	cfg, err := config.LoadStrict(config.Options{ConfigPath: configPath, ModeOverride: mode})
 	if err != nil {
 		return usageError{err}
 	}
@@ -94,7 +95,7 @@ func runAgent(configPath, ipcEndpoint string) error {
 	ipc := localipc.NewServer(application.IPCEndpoint(), application)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	fmt.Printf("webterm-agent %s\nrelay=%s\nipc=%s\ndevice=%s\n", version, cfg.Relay.URL, application.IPCEndpoint(), cfg.Relay.DeviceName)
+	printStartupBanner(cfg, application.IPCEndpoint())
 	errs := make(chan error, 3)
 	go func() { errs <- ipc.ListenAndServe(ctx) }()
 	if err := supervisor.Start(ctx); err != nil {
@@ -108,6 +109,17 @@ func runAgent(configPath, ipcEndpoint string) error {
 		return err
 	}
 	return nil
+}
+
+// printStartupBanner 按接入模式打印启动信息；敏感字段（Relay Secret、Direct
+// Password）从不输出。
+func printStartupBanner(cfg config.Config, ipcEndpoint string) {
+	switch cfg.Mode {
+	case config.ModeDirect:
+		fmt.Printf("webterm-agent %s\nmode=direct\ndirect=%s\nipc=%s\n", version, cfg.Direct.Addr, ipcEndpoint)
+	default:
+		fmt.Printf("webterm-agent %s\nmode=relay\nrelay=%s\ndevice=%s\nipc=%s\n", version, cfg.Relay.URL, cfg.Relay.DeviceName, ipcEndpoint)
+	}
 }
 
 func configCommand() *cobra.Command {
