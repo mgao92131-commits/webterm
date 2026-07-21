@@ -306,6 +306,11 @@ public final class RelayService {
         api.verifyOtp(baseUrl, email, code, targetDeviceId, cookie, callback);
     }
 
+    /** 邮箱验证必须使用注册时固定的同一 {@code baseUrl}，由调用方显式传入。 */
+    public void onVerifyEmail(String baseUrl, String email, String code, WebTermApi.EmailVerifyCallback callback) {
+        api.verifyEmail(baseUrl, email, code, callback);
+    }
+
     public String relayBaseUrl() {
         if (relayMasterConfig != null && relayMasterConfig.getUrl() != null && !relayMasterConfig.getUrl().isEmpty()) {
             return relayMasterConfig.getUrl();

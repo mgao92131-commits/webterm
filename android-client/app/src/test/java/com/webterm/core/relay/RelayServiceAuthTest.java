@@ -137,6 +137,21 @@ public final class RelayServiceAuthTest {
             eq("123456"), eq("dev-1"), eq("otp-cookie"), any());
     }
 
+    @Test
+    public void onVerifyEmail_usesProvidedBaseUrlNotMasterUrl() {
+        WebTermApi api = mock(WebTermApi.class);
+        RelayService service = newService(api, immediateHandler());
+        List<ServerConfig> servers = new ArrayList<>();
+        servers.add(master("http://saved.example.com", "sid=x"));
+        service.loadMasterFromServers(servers);
+
+        service.onVerifyEmail("http://register-time.example.com", "user@example.com", "123456",
+            mock(WebTermApi.EmailVerifyCallback.class));
+
+        verify(api).verifyEmail(eq("http://register-time.example.com"),
+            eq("user@example.com"), eq("123456"), any());
+    }
+
     // ── saveRelayLogin：切换服务器清理旧设备缓存 ──────────────────
 
     @Test

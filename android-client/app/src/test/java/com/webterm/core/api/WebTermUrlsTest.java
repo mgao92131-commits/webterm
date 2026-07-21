@@ -81,6 +81,31 @@ public class WebTermUrlsTest {
     }
 
     @Test
+    public void validateBaseUrl_acceptsBoundaryPorts() {
+        WebTermUrls.BaseUrlCheck min = WebTermUrls.validateBaseUrl("http://example.com:1");
+        assertTrue(min.valid);
+        assertEquals("http://example.com:1", min.normalized);
+        WebTermUrls.BaseUrlCheck max = WebTermUrls.validateBaseUrl("http://example.com:65535");
+        assertTrue(max.valid);
+        assertEquals("http://example.com:65535", max.normalized);
+        assertTrue(WebTermUrls.validateBaseUrl("http://example.com").valid); // 未指定端口合法
+    }
+
+    @Test
+    public void validateBaseUrl_rejectsOutOfRangePorts() {
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:0").valid);
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:65536").valid);
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:99999").valid);
+    }
+
+    @Test
+    public void validateBaseUrl_rejectsMalformedPorts() {
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:abc").valid);
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:").valid);
+        assertFalse(WebTermUrls.validateBaseUrl("http://example.com:-1").valid);
+    }
+
+    @Test
     public void sameBaseUrl_ignoresTrailingSlashesCaseAndWhitespace() {
         assertTrue(WebTermUrls.sameBaseUrl("http://example.com/", "http://example.com"));
         assertTrue(WebTermUrls.sameBaseUrl("HTTP://EXAMPLE.com", "http://example.com"));

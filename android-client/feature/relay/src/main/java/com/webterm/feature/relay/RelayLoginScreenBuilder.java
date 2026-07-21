@@ -17,11 +17,20 @@ import com.webterm.ui.common.UIUtils;
 
 public final class RelayLoginScreenBuilder {
 
+    /** 注册页状态机：填表注册 →（可选）邮箱验证 →（可选）新设备验证 → 登录成功。 */
+    enum RegisterMode {
+        REGISTER,
+        EMAIL_VERIFY,
+        DEVICE_OTP
+    }
+
     public interface Host {
         Activity activity();
         void onLogin(String baseUrl, String email, String password, LoginScreenCallback callback);
         void onRegister(String baseUrl, String email, String password, LoginScreenCallback callback);
         void onVerifyOtp(String baseUrl, String email, String password, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
+        /** 邮箱验证；保留密码以便验证成功后用同一账号继续自动登录。 */
+        void onVerifyEmail(String baseUrl, String email, String password, String code, LoginScreenCallback callback);
         void onBackToHome();
     }
 
@@ -343,6 +352,12 @@ public final class RelayLoginScreenBuilder {
         passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         content.addView(passwordInput, UIUtils.matchWrap(activity));
 
+        // 验证码输入框（邮箱验证 / 新设备验证阶段显示）
+        EditText otpInput = UIUtils.createInput(activity, "6 位验证码");
+        otpInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        otpInput.setVisibility(View.GONE);
+        content.addView(otpInput, UIUtils.matchWrap(activity));
+
         TextView msgText = new TextView(activity);
         msgText.setTextColor(DesignTokens.WARNING);
         msgText.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
@@ -369,7 +384,101 @@ public final class RelayLoginScreenBuilder {
         scrollView.addView(content);
         root.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
 
+        // === 注册页状态与本次认证上下文 ===
+        final RegisterMode[] mode = {RegisterMode.REGISTER};
+        final String[] authBaseUrl = {""};
+        final String[] authEmail = {""};
+        final String[] authPassword = {""};
+        final String[] targetDeviceId = {""};
+        final String[] otpCookie = {""};
+
+        // 切换到新设备验证模式：固定 URL/邮箱/密码，保留 OTP 上下文，不重新登录。
+        final java.util.function.BiConsumer<String, String> enterDeviceOtpMode = (tdId, cookie) -> {
+            mode[0] = RegisterMode.DEVICE_OTP;
+            targetDeviceId[0] = tdId;
+            otpCookie[0] = cookie;
+            urlInput.setEnabled(false);
+            emailInput.setEnabled(false);
+            passwordInput.setVisibility(View.GONE);
+            otpInput.setVisibility(View.VISIBLE);
+            submitBtn.setText("验证并登录");
+            submitBtn.setEnabled(true);
+            msgText.setText("已发送验证码，请检查您的邮箱");
+            msgText.setTextColor(DesignTokens.SUCCESS);
+            msgText.setVisibility(View.VISIBLE);
+        };
+
         submitBtn.setOnClickListener(v -> {
+            if (mode[0] == RegisterMode.DEVICE_OTP) {
+                String code = otpInput.getText().toString().trim();
+                if (code.isEmpty()) {
+                    msgText.setText("请输入验证码");
+                    msgText.setTextColor(DesignTokens.DANGER);
+                    msgText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                submitBtn.setEnabled(false);
+                msgText.setText("验证中...");
+                msgText.setTextColor(DesignTokens.WARNING);
+                msgText.setVisibility(View.VISIBLE);
+                // 直接消费注册流程中取得的设备 OTP 上下文，不得重新发起登录。
+                host.onVerifyOtp(authBaseUrl[0], authEmail[0], authPassword[0], code,
+                    targetDeviceId[0], otpCookie[0], new LoginScreenCallback() {
+                        @Override
+                        public void onOtpRequired(String tdId, String cookie) {}
+                        @Override
+                        public void onLoginSuccess(String url, String cookie) {
+                            activity.runOnUiThread(() -> host.onBackToHome());
+                        }
+                        @Override
+                        public void onError(String message) {
+                            activity.runOnUiThread(() -> {
+                                submitBtn.setEnabled(true);
+                                msgText.setText(message);
+                                msgText.setTextColor(DesignTokens.DANGER);
+                                msgText.setVisibility(View.VISIBLE);
+                            });
+                        }
+                    });
+                return;
+            }
+
+            if (mode[0] == RegisterMode.EMAIL_VERIFY) {
+                String code = otpInput.getText().toString().trim();
+                if (code.isEmpty()) {
+                    msgText.setText("请输入验证码");
+                    msgText.setTextColor(DesignTokens.DANGER);
+                    msgText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                submitBtn.setEnabled(false);
+                msgText.setText("验证中...");
+                msgText.setTextColor(DesignTokens.WARNING);
+                msgText.setVisibility(View.VISIBLE);
+                // 邮箱验证成功后由上层继续自动登录；若要求设备验证则切换 DEVICE_OTP。
+                host.onVerifyEmail(authBaseUrl[0], authEmail[0], authPassword[0], code, new LoginScreenCallback() {
+                    @Override
+                    public void onOtpRequired(String tdId, String cookie) {
+                        activity.runOnUiThread(() -> enterDeviceOtpMode.accept(tdId, cookie));
+                    }
+                    @Override
+                    public void onLoginSuccess(String url, String cookie) {
+                        activity.runOnUiThread(() -> host.onBackToHome());
+                    }
+                    @Override
+                    public void onError(String message) {
+                        activity.runOnUiThread(() -> {
+                            submitBtn.setEnabled(true);
+                            msgText.setText(message);
+                            msgText.setTextColor(DesignTokens.DANGER);
+                            msgText.setVisibility(View.VISIBLE);
+                        });
+                    }
+                });
+                return;
+            }
+
+            // === REGISTER 模式 ===
             WebTermUrls.BaseUrlCheck urlCheck = WebTermUrls.validateBaseUrl(urlInput.getText().toString());
             if (!urlCheck.valid) {
                 msgText.setText(urlCheck.error);
@@ -392,7 +501,14 @@ public final class RelayLoginScreenBuilder {
             msgText.setVisibility(View.VISIBLE);
             host.onRegister(baseUrl, email, password, new LoginScreenCallback() {
                 @Override
-                public void onOtpRequired(String tdId, String cookie) {}
+                public void onOtpRequired(String tdId, String cookie) {
+                    activity.runOnUiThread(() -> {
+                        authBaseUrl[0] = baseUrl;
+                        authEmail[0] = email;
+                        authPassword[0] = password;
+                        enterDeviceOtpMode.accept(tdId, cookie);
+                    });
+                }
                 @Override
                 public void onLoginSuccess(String url, String cookie) {
                     activity.runOnUiThread(() -> host.onBackToHome());
@@ -400,19 +516,20 @@ public final class RelayLoginScreenBuilder {
                 @Override
                 public void onEmailVerificationRequired(String message) {
                     activity.runOnUiThread(() -> {
+                        // 切换到邮箱验证模式：固定 URL/邮箱/密码，等待用户输入验证码。
+                        mode[0] = RegisterMode.EMAIL_VERIFY;
+                        authBaseUrl[0] = baseUrl;
+                        authEmail[0] = email;
+                        authPassword[0] = password;
+                        urlInput.setEnabled(false);
+                        emailInput.setEnabled(false);
+                        passwordInput.setVisibility(View.GONE);
+                        otpInput.setVisibility(View.VISIBLE);
+                        submitBtn.setText("验证邮箱并登录");
+                        submitBtn.setEnabled(true);
                         msgText.setText(message);
                         msgText.setTextColor(DesignTokens.SUCCESS);
                         msgText.setVisibility(View.VISIBLE);
-                        // 账号已创建但尚未登录：按钮变为返回登录，保留 URL 与邮箱。
-                        submitBtn.setText("返回登录");
-                        submitBtn.setEnabled(true);
-                        submitBtn.setOnClickListener(back -> {
-                            RelayLoginScreen loginScreen = buildLogin(host,
-                                urlInput.getText().toString().trim(),
-                                emailInput.getText().toString().trim());
-                            root.removeAllViews();
-                            root.addView(loginScreen.root, new LinearLayout.LayoutParams(-1, -1));
-                        });
                     });
                 }
                 @Override

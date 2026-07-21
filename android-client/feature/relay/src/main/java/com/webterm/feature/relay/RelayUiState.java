@@ -154,10 +154,10 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
             @Override
             public void onAccountCreated(String url, boolean emailVerificationRequired) {
                 if (emailVerificationRequired) {
-                    // 注册成功但需先完成邮箱验证；不得调用 new_device 的 verify-otp 接口。
-                    // TODO(email-verify): 后端补充 /api/auth/verify-email 后，在此接入邮箱验证码界面。
+                    // 注册成功但需先完成邮箱验证；由注册页切换到 EMAIL_VERIFY 模式，
+                    // 调用独立的 /api/auth/verify-email，不得调用 new_device 的 verify-otp 接口。
                     callback.onEmailVerificationRequired(
-                        "注册成功。该服务器要求邮箱验证，请在邮箱中完成验证后返回登录页登录。");
+                        "注册成功。该服务器要求邮箱验证，验证码已发送到您的邮箱。");
                     return;
                 }
                 // 注册成功后用同一 baseUrl、email、password 自动登录以取得认证 Cookie。
@@ -172,8 +172,9 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
                     @Override
                     public void onOtpRequired(String targetDeviceId, String cookie) {
-                        callback.onEmailVerificationRequired(
-                            "账号已创建。该服务器要求设备验证，请返回登录页输入验证码后登录。");
+                        // 完整保留设备 OTP 上下文（targetDeviceId 与 Cookie），
+                        // 由注册页直接进入设备验证模式，不得丢弃后让用户重新登录。
+                        callback.onOtpRequired(targetDeviceId, cookie);
                     }
 
                     @Override
@@ -199,6 +200,41 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
                     relayService.saveRelayLogin(url, email, password, newCookie);
                 }
                 callback.onLoginSuccess(url, newCookie);
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+        });
+    }
+
+    @Override
+    public void onVerifyEmail(String baseUrl, String email, String password, String code, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onVerifyEmail(baseUrl, email, code, new com.webterm.data.http.WebTermApi.EmailVerifyCallback() {
+            @Override
+            public void onVerified(String url) {
+                // 邮箱验证成功后用同一 baseUrl、email、password 自动登录；
+                // 若服务端要求新设备验证，则继续进入设备 OTP 流程。
+                relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+                    @Override
+                    public void onReady(String loginUrl, String cookie) {
+                        if (cookie != null && !cookie.isEmpty()) {
+                            relayService.saveRelayLogin(loginUrl, email, password, cookie);
+                        }
+                        callback.onLoginSuccess(loginUrl, cookie);
+                    }
+
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {
+                        callback.onOtpRequired(targetDeviceId, cookie);
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        callback.onError("邮箱验证成功，但自动登录失败，请返回登录页重试。");
+                    }
+                });
             }
 
             @Override

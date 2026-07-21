@@ -66,6 +66,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/auth/register", server.handleRegister)
 	mux.HandleFunc("/api/auth/refresh", server.handleRefresh)
 	mux.HandleFunc("/api/auth/verify-otp", server.handleVerifyOTP)
+	mux.HandleFunc("/api/auth/verify-email", server.handleVerifyEmail)
 	mux.HandleFunc("/api/auth/devices", server.handleTrustedDevices)
 	mux.HandleFunc("/api/auth/devices/", server.handleTrustedDevice)
 	mux.HandleFunc("/api/devices", server.handleDevices)

@@ -62,6 +62,12 @@ public final class WebTermUrls {
         }
         String host = uri.getHost();
         if (host == null || host.isEmpty()) {
+            // "http://host:abc"、"http://host:-1" 会被 java.net.URI 按 registry-based
+            // 解析而 host=null；authority 带冒号时按端口格式非法提示，更贴近真实原因。
+            String authority = uri.getAuthority();
+            if (authority != null && authority.contains(":")) {
+                return new BaseUrlCheck(false, "", "服务器端口格式非法");
+            }
             return new BaseUrlCheck(false, "", "服务器地址缺少有效主机");
         }
         if (uri.getQuery() != null || uri.getFragment() != null) {
@@ -69,6 +75,18 @@ public final class WebTermUrls {
         }
         if (uri.getUserInfo() != null) {
             return new BaseUrlCheck(false, "", "服务器地址不能包含账号信息");
+        }
+        int port = uri.getPort();
+        // port == -1 表示未指定端口，合法；0 或超过 65535 会被 OkHttp 拒绝并抛异常。
+        if (port == 0 || port > 65535) {
+            return new BaseUrlCheck(false, "", "服务器端口必须在 1 到 65535 之间");
+        }
+        if (port == -1) {
+            // "http://host:" 这类显式空端口：URI 解析为默认端口，但属于非法输入格式。
+            String authority = uri.getAuthority();
+            if (authority != null && authority.endsWith(":")) {
+                return new BaseUrlCheck(false, "", "服务器端口格式非法");
+            }
         }
         StringBuilder sb = new StringBuilder(uri.getScheme().toLowerCase(Locale.ROOT));
         sb.append("://").append(host.toLowerCase(Locale.ROOT));

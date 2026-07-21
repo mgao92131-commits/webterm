@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaystore"
@@ -131,6 +132,44 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"role":                      user.Role,
 		"emailVerificationRequired": emailVerificationRequired,
 	})
+}
+
+// handleVerifyEmail 消费注册阶段签发的 email_verify 验证码，标记邮箱已验证。
+// 该接口只负责验证，不签发登录 Cookie：验证成功后由客户端调用正常登录接口。
+func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	email := strings.TrimSpace(req.Email)
+	code := strings.TrimSpace(req.Code)
+	if email == "" || code == "" {
+		writeError(w, http.StatusBadRequest, "email and code are required")
+		return
+	}
+	// 账号不存在、验证码错误或过期均返回统一错误，避免泄露账号存在性；不记录验证码。
+	user, ok := server.store.FindUserByUsername(email)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid verification code")
+		return
+	}
+	if _, err := server.store.ConsumeVerificationCode(user.ID, verifyEmailPurpose, code, "", time.Now()); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid verification code")
+		return
+	}
+	if _, err := server.store.MarkEmailVerified(user.ID, time.Now()); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"verified": true})
 }
 
 func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

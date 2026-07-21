@@ -298,6 +298,165 @@ func TestRelayControlVerifyOTPRejectsEmailVerifyCode(t *testing.T) {
 	}
 }
 
+func TestRelayControlVerifyEmailCompletesRegistration(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	response := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", response.Code, response.Body.String())
+	}
+	if sender.count() != 1 || sender.last().purpose != verifyEmailPurpose {
+		t.Fatalf("otp sends = %#v, want email verify send", sender.sends)
+	}
+
+	verify := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com",
+		"code":  sender.last().code,
+	}, nil)
+	if verify.Code != http.StatusOK {
+		t.Fatalf("verify-email status = %d body=%s", verify.Code, verify.Body.String())
+	}
+	var verifyBody map[string]any
+	if err := json.Unmarshal(verify.Body.Bytes(), &verifyBody); err != nil {
+		t.Fatalf("decode verify-email response: %v", err)
+	}
+	if verifyBody["verified"] != true {
+		t.Fatalf("verify-email response = %#v, want verified=true", verifyBody)
+	}
+	// 邮箱验证接口不签发登录 Cookie，登录凭据由正常登录接口获取。
+	if access := findCookie(verify, relaycore.AuthCookieName); access != nil {
+		t.Fatalf("verify-email must not issue auth cookie: %#v", verify.Result().Cookies())
+	}
+
+	// 邮箱已验证：登录不再返回 403 email not verified。
+	login := postJSON(t, handler, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login after verify-email status = %d body=%s", login.Code, login.Body.String())
+	}
+}
+
+func TestRelayControlVerifyEmailRejectsWrongCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	if rec := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	verify := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com",
+		"code":  "000000",
+	}, nil)
+	if verify.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong code status = %d body=%s", verify.Code, verify.Body.String())
+	}
+
+	// 邮箱仍未验证：登录依旧 403。
+	login := postJSON(t, handler, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil)
+	if login.Code != http.StatusForbidden {
+		t.Fatalf("login after failed verify status = %d body=%s", login.Code, login.Body.String())
+	}
+
+	// 未知邮箱返回同样的统一错误，不泄露账号存在性。
+	unknown := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "ghost@example.com",
+		"code":  "123456",
+	}, nil)
+	if unknown.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown email status = %d body=%s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestRelayControlVerifyEmailCodeCannotBeReused(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	if rec := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	code := sender.last().code
+
+	first := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com",
+		"code":  code,
+	}, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first verify status = %d body=%s", first.Code, first.Body.String())
+	}
+	second := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com",
+		"code":  code,
+	}, nil)
+	if second.Code != http.StatusUnauthorized {
+		t.Fatalf("reused code status = %d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestRelayControlVerifyEmailRejectsNewDeviceCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	if _, err := store.MarkEmailVerified(user.ID, time.Now()); err != nil {
+		t.Fatalf("MarkEmailVerified returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	// 未信任设备登录触发 new_device 验证码。
+	login := postJSON(t, handler, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "secret-password",
+	}, &http.Cookie{Name: relaycore.ClientDeviceCookieName, Value: "client-1"})
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
+	}
+	if sender.count() != 1 || sender.last().purpose != newDevicePurpose {
+		t.Fatalf("otp sends = %#v, want new device send", sender.sends)
+	}
+
+	// new_device 验证码不能用于邮箱验证接口：用途严格隔离。
+	verify := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com",
+		"code":  sender.last().code,
+	}, nil)
+	if verify.Code != http.StatusUnauthorized {
+		t.Fatalf("new_device code via verify-email status = %d body=%s", verify.Code, verify.Body.String())
+	}
+}
+
 func TestRelayControlLoginRequiresOTPForUntrustedDevice(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	store := relaystore.NewMemoryStore()
