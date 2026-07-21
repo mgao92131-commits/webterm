@@ -68,8 +68,13 @@ jobs:
         with:
           go-version-file: go-core/go.mod
           cache-dependency-path: go-core/go.sum
-      - run: go test ./internal/localipc ./internal/infrastructure/pty ./internal/session
+      # 预构建 webterm：pty 的 PowerShell hook 测试会在运行时 go build ./cmd/webterm，
+      # 共享 runner 冷构建可能耗尽测试自身的 90s deadline；先构建让缓存命中。
       - run: go build ./cmd/webterm ./cmd/webterm-agent
+      # 三个包拆成独立步骤，失败时能直接定位到具体包。
+      - run: go test -v ./internal/localipc
+      - run: go test -v ./internal/infrastructure/pty
+      - run: go test -v ./internal/session
 
   android:
     name: Android test lint and build
@@ -84,7 +89,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - run: ./gradlew testDebugUnitTest lintDebug assembleDebug
+      # diag 变体基于 release 且开启 minify/资源压缩，必须进 CI 才能持续验证 R8 不裁剪诊断类。
+      - run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDiag
 
   generated-protocol:
     name: Generated protocol is current
