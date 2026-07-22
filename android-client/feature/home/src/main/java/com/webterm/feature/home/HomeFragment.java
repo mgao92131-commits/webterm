@@ -35,7 +35,6 @@ public final class HomeFragment extends Fragment {
 
     // Home screen state
     private LinearLayout mSessionList;
-    private int mImeOverlap;
     private HomeHost.RelayStatusBinding mRelayStatusBinding;
 
     @Override
@@ -171,7 +170,7 @@ public final class HomeFragment extends Fragment {
                                    boolean includeStatusBar) {
         WindowInsetsController.installRootInsets(requireActivity(), root,
             baseLeft, baseTop, baseRight, baseBottom, avoidImeWithPadding, includeStatusBar,
-            (imeOverlap) -> mImeOverlap = imeOverlap);
+            (imeOverlap) -> {});
     }
 
     // ── Helpers ──────────────────────────────────────────────────

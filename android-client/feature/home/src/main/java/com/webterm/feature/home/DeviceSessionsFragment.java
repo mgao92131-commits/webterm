@@ -38,7 +38,6 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
     private HomeHost mHost;
     private SessionRecyclerAdapter mSessionAdapter;
     private DeviceSessionsScreenBuilder.Result mScreen;
-    private int mImeOverlap;
 
     public static Bundle args(ServerConfig server) {
         Bundle args = new Bundle();
@@ -199,7 +198,7 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
                                    boolean includeStatusBar) {
         WindowInsetsController.installRootInsets(requireActivity(), root,
             baseLeft, baseTop, baseRight, baseBottom, avoidImeWithPadding, includeStatusBar,
-            (imeOverlap) -> mImeOverlap = imeOverlap);
+            (imeOverlap) -> {});
     }
 
     private int dp(int value) {

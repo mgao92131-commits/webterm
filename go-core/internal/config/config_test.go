@@ -13,9 +13,6 @@ import (
 func TestLoadRelayOnlyDefaults(t *testing.T) {
 	clearConfigEnv(t)
 	cfg := Load(Options{})
-	if cfg.Relay.Protocol != RelayProtocolV2 {
-		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
-	}
 	if cfg.Scrollback.MaxLines != DefaultScrollbackMaxLines ||
 		cfg.Scrollback.MaxBytes != DefaultScrollbackMaxBytes {
 		t.Fatalf("Scrollback = %#v", cfg.Scrollback)
@@ -27,16 +24,12 @@ func TestLoadEnvOverridesDefaults(t *testing.T) {
 	t.Setenv("RELAY_URL", "https://relay.example")
 	t.Setenv("RELAY_SECRET", "secret")
 	t.Setenv("DEVICE_NAME", "test-mac")
-	t.Setenv("WEBTERM_RELAY_PROTOCOL", "legacy")
 	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "2048")
 
 	cfg := Load(Options{})
 	if cfg.Relay.URL != "https://relay.example" || cfg.Relay.Secret != "secret" ||
 		cfg.Relay.DeviceName != "test-mac" {
 		t.Fatalf("Relay = %#v", cfg.Relay)
-	}
-	if cfg.Relay.Protocol != RelayProtocolV2 {
-		t.Fatalf("Relay.Protocol = %q", cfg.Relay.Protocol)
 	}
 	if cfg.Upload.MaxBytes != 2048 {
 		t.Fatalf("Upload = %#v", cfg.Upload)
@@ -89,7 +82,6 @@ func diagnosticsTestConfig() Config {
 			URL:        "wss://relay.secret-host.example:8443/agent",
 			Secret:     "super-secret",
 			DeviceName: "my-secret-device",
-			Protocol:   RelayProtocolV2,
 		},
 		Shell: ShellConfig{Command: "/usr/local/bin/fish", CWD: "/home/user/confidential"},
 	}
@@ -180,7 +172,7 @@ func TestSaveAndLoadConfigFile(t *testing.T) {
 	clearConfigEnv(t)
 	path := filepath.Join(t.TempDir(), "WebTerm Agent", "config.json")
 	want := Config{
-		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac", Protocol: RelayProtocolV2},
+		Relay: RelayConfig{URL: "https://relay.example", Secret: "secret", DeviceName: "mac"},
 		Shell: ShellConfig{Command: "/bin/sh", CWD: "/tmp"},
 	}
 	if err := Save(path, want); err != nil {
@@ -224,7 +216,7 @@ func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"WEBTERM_IPC_ENDPOINT", "WEBTERM_SOCKET_PATH", "RELAY_URL", "RELAY_SECRET",
-		"DEVICE_NAME", "WEBTERM_RELAY_PROTOCOL", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
+		"DEVICE_NAME", "WEBTERM_SHELL", "WEBTERM_MAX_UPLOAD_BYTES",
 		"WEBTERM_AGENT_CONFIG", "WEBTERM_AGENT_RELAY_URL", "WEBTERM_AGENT_RELAY_SECRET",
 		"WEBTERM_AGENT_DEVICE_NAME", "WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_AGENT_SHELL",
 		"WEBTERM_AGENT_SHELL_CWD", "WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
@@ -293,5 +285,67 @@ func TestLoadStrictRelayURLSchemeWhitelist(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "配置无效") {
 			t.Fatalf("%s should be rejected with 配置无效, got %v", rawURL, err)
 		}
+	}
+}
+
+// TestLoadStrictAcceptsLegacyRelayProtocol 旧版配置携带 "protocol":"v2" 时，
+// 严格加载必须成功（RelayConfig 保留只读兼容字段以通过 DisallowUnknownFields）。
+// 该字段运行时从不读取、也不经 mergeConfig 传播，因此这里只断言加载成功，
+// 不断言其值——值为空恰好保证旧配置一旦被重新保存会因 omitempty 丢弃 protocol。
+func TestLoadStrictAcceptsLegacyRelayProtocol(t *testing.T) {
+	clearConfigEnv(t)
+
+	path := filepath.Join(t.TempDir(), "agent.json")
+	data := `{
+		"relay": {
+			"url": "https://relay.example",
+			"secret": "secret",
+			"deviceName": "pc",
+			"protocol": "v2"
+		},
+		"scrollback": {"maxLines": 1000, "maxBytes": 1048576},
+		"upload": {"maxBytes": 104857600}
+	}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadStrict(Options{ConfigPath: path}); err != nil {
+		t.Fatalf("legacy relay.protocol must remain readable: %v", err)
+	}
+}
+
+// TestDefaultConfigDoesNotPersistRelayProtocol 新生成的配置（config init）不得
+// 再包含 protocol 键：字段默认空值 + omitempty 会被 marshal 省略。
+func TestDefaultConfigDoesNotPersistRelayProtocol(t *testing.T) {
+	data, err := json.Marshal(Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"protocol"`) {
+		t.Fatalf("new config must not persist relay.protocol: %s", data)
+	}
+}
+
+// TestLoadStrictStillRejectsUnknownRelayFields 兼容修复不得弱化严格检查：
+// relay 中出现真正的未知字段仍应报错。
+func TestLoadStrictStillRejectsUnknownRelayFields(t *testing.T) {
+	clearConfigEnv(t)
+
+	path := filepath.Join(t.TempDir(), "agent.json")
+	data := `{
+		"relay": {
+			"url": "https://relay.example",
+			"secret": "secret",
+			"deviceName": "pc",
+			"unknownField": true
+		}
+	}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadStrict(Options{ConfigPath: path}); err == nil {
+		t.Fatal("unknown relay field must be rejected")
 	}
 }

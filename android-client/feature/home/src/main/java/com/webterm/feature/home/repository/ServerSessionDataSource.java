@@ -7,7 +7,7 @@ import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
-import com.webterm.feature.home.domain.ServerSessionMonitor;
+import com.webterm.feature.home.domain.SessionMessageParser;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -90,17 +90,7 @@ public final class ServerSessionDataSource {
     }
 
     void dispatch(String text, Listener listener, String relayDeviceId) {
-        ServerSessionMonitor.dispatchMessage(text, new ServerSessionMonitor.Listener() {
-            @Override
-            public void onMonitorConnected() {
-                // Channel-level connected is already reported via ChannelListener.onConnected.
-            }
-
-            @Override
-            public void onMonitorPollingFallback() {
-                // Repository handles fallback polling; data source only reports WS state.
-            }
-
+        SessionMessageParser.dispatchMessage(text, new SessionMessageParser.Listener() {
             @Override
             public void onMonitorSessions(JSONArray sessions) {
                 dispatchOnMain(() -> listener.onSessions(sessions));
@@ -114,11 +104,6 @@ public final class ServerSessionDataSource {
             @Override
             public void onMonitorSessionClosed(String sessionId) {
                 dispatchOnMain(() -> listener.onSessionClosed(sessionId));
-            }
-
-            @Override
-            public void onMonitorDevices(JSONArray devices) {
-                // Device list updates are handled elsewhere.
             }
 
             @Override

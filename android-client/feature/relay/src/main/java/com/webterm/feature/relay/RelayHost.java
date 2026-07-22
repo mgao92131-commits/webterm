@@ -8,5 +8,5 @@ public interface RelayHost {
     /**
      * Build and return the appropriate relay view (login or devices screen).
      */
-    android.view.View buildRelayView(RelayUiState relayUiState);
+    android.view.View buildRelayView();
 }

@@ -255,11 +255,6 @@ func (app *App) Shutdown() {
 	}
 }
 
-func (app *App) Run(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
 // diagnosticsRecentLogLimit 是诊断摘要中携带的最近日志条数上限。
 const diagnosticsRecentLogLimit = 100
 
