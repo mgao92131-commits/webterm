@@ -8,7 +8,7 @@ WebTerm 是个人使用的 Android 远程终端系统，只包含三个正式组
 
 ## 正式链路
 
-PC Agent 支持两种互相独立的接入模式（`--mode direct` / `--mode relay`，默认 relay）：
+PC Agent 支持两种互相独立的接入模式（`direct` / `relay`），没有默认模式：
 
 ```text
 Direct: Android -- HTTP + /ws/sessions --> Go PC Agent --> PTY
@@ -34,27 +34,46 @@ cd ../android-client
 ./gradlew :app:assembleRelease
 ```
 
-## 启动
+## 配置与启动
 
-Relay 模式（默认）：
+Direct 和 Relay 不共用配置文件：
+
+- Direct：用户配置目录下的 `WebTerm Agent/direct.json`
+- Relay：用户配置目录下的 `WebTerm Agent/relay.json`
+
+首次使用时生成模板并选择模式：
 
 ```sh
 cd go-core
-WEBTERM_AGENT_RELAY_URL=http://relay.example:9001 \
-WEBTERM_AGENT_RELAY_SECRET='agent-secret' \
-WEBTERM_AGENT_DEVICE_NAME='my-mac' \
+go run ./cmd/webterm-agent config init
+```
+
+交互终端会选择 Direct 或 Relay，非交互环境必须明确指定模式：
+
+```sh
+go run ./cmd/webterm-agent config init --mode direct
+go run ./cmd/webterm-agent config init --mode relay
+```
+
+编辑模板填写密码或密钥后启动：
+
+```sh
+cd go-core
+go run ./cmd/webterm-agent run --mode direct
 go run ./cmd/webterm-agent run --mode relay
 ```
 
-Direct 模式（Android 直连；局域网内监听 `0.0.0.0:8080`）：
+`--mode` 只选择对应的默认配置文件，不覆盖文件内部的 `mode`。也可以用
+`--config ./my-agent.json` 运行自定义文件；此时模式由文件中的 `mode` 决定，若同时指定
+`--mode` 则必须一致。`WEBTERM_AGENT_CONFIG` 与 `WEBTERM_AGENT_MODE` 分别对应配置文件和
+默认模式文件选择。没有配置文件时，交互终端会引导初始化；后台环境应使用 `--mode` 或
+`--config` 明确指定。标准启动流程不依赖纯环境变量生成运行配置。
+
+Direct 模式（Android 直连；如需局域网访问，编辑模板中的监听地址并显式确认明文风险）：
 
 ```sh
 cd go-core
-WEBTERM_AGENT_MODE=direct \
-WEBTERM_AGENT_DIRECT_ADDR=0.0.0.0:8080 \
-WEBTERM_AGENT_DIRECT_USERNAME='admin' \
-WEBTERM_AGENT_DIRECT_PASSWORD='your-password' \
-go run ./cmd/webterm-agent run --mode direct
+go run ./cmd/webterm-agent config show --mode direct
 ```
 
 `webterm-agent` 按 mode 只启动 Direct Server 或 Relay Client 之一（绝不两者同时），

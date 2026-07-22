@@ -19,7 +19,7 @@ Flags:
   -c, --config string         配置文件路径
   -h, --help                  help for webterm-agent
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
-      --mode string           Agent 接入模式：direct（Android 直连）或 relay（经中转服务器，默认）。覆盖配置文件与环境变量中的 mode
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 Use "webterm-agent [command] --help" for more information about a command.
 
@@ -28,16 +28,14 @@ Use "webterm-agent [command] --help" for more information about a command.
 
 启动 Agent Runtime、本地 IPC 与 PTY/ConPTY 会话。
 
-按配置/标志选择接入模式：
-  --mode direct：启动 Direct Server，Android 经 HTTP/WebSocket 直连。
-  --mode relay：启动 Relay Client，Android 经中转服务器连接（默认）。
+--mode 只选择对应模式的默认配置文件；配置文件内部 mode 必须一致。
 
 Usage:
   webterm-agent run [flags]
 
 Examples:
   webterm-agent run
-  webterm-agent run --mode direct --config ./agent.json
+  webterm-agent run --mode direct
   webterm-agent run --config ./agent.json --ipc-endpoint unix:/tmp/webterm.sock
 
 Flags:
@@ -46,12 +44,12 @@ Flags:
 Global Flags:
   -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
-      --mode string           Agent 接入模式：direct（Android 直连）或 relay（经中转服务器，默认）。覆盖配置文件与环境变量中的 mode
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 
 ## config init
 
-写入默认配置
+创建 Direct 或 Relay 配置模板
 
 Usage:
   webterm-agent config init [flags]
@@ -64,6 +62,7 @@ Flags:
 Global Flags:
   -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 
 ## config show
@@ -74,13 +73,14 @@ Usage:
   webterm-agent config show [flags]
 
 Flags:
-  -c, --config string   配置文件路径
-      --effective       严格解析并显示最终生效配置
-  -h, --help            help for show
-      --json            以紧凑 JSON 输出
+      --effective   严格解析并显示最终生效配置
+  -h, --help        help for show
+      --json        以紧凑 JSON 输出
 
 Global Flags:
+  -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 
 ## config validate
@@ -91,26 +91,29 @@ Usage:
   webterm-agent config validate [flags]
 
 Flags:
-  -c, --config string   配置文件路径
-  -h, --help            help for validate
+  -h, --help   help for validate
 
 Global Flags:
+  -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 
 ## config path
 
-显示默认配置路径
+显示配置路径
 
 Usage:
   webterm-agent config path [flags]
 
 Flags:
+      --all    同时显示 Direct 和 Relay 路径
   -h, --help   help for path
 
 Global Flags:
   -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay
 
 
 ## completion
@@ -124,3 +127,4 @@ Flags:
 Global Flags:
   -c, --config string         配置文件路径
       --ipc-endpoint string   覆盖本地 IPC endpoint。Unix 示例：unix:/tmp/webterm.sock；Windows 示例：npipe://./pipe/webterm-agent
+      --mode string           选择 Agent 接入模式对应的配置文件：direct 或 relay

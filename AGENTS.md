@@ -5,9 +5,11 @@
 WebTerm 是 Android-only 的远程终端项目。PC Agent 支持两种互相独立的接入模式：
 
 - **Direct**：Android 经 HTTP/WebSocket 直连 PC Agent（`webterm-agent run --mode direct`）。
-- **Relay**：Android 经中转服务器连接 PC Agent（`webterm-agent run --mode relay`，默认）。
+- **Relay**：Android 经中转服务器连接 PC Agent（`webterm-agent run --mode relay`）。
 
-两种模式不自动切换、不回落，不支持 hybrid/auto。正式组件只有：
+两种模式不共用配置文件，没有默认模式，不自动切换、不回落，不支持 hybrid/auto。Direct 使用
+用户配置目录下的 `WebTerm Agent/direct.json`，Relay 使用 `WebTerm Agent/relay.json`；首次使用
+通过 `webterm-agent config init` 选择模式并生成模板。正式组件只有：
 
 | 组件 | 目录 | 职责 |
 | --- | --- | --- |
