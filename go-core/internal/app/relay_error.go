@@ -12,14 +12,18 @@ const (
 	RelayErrorDialFailed RelayErrorKind = "dial_failed"
 	// RelayErrorTLSFailed 是 TLS 握手/证书校验失败。
 	RelayErrorTLSFailed RelayErrorKind = "tls_failed"
-	// RelayErrorAuthRejected 是 Relay 明确拒绝注册（凭据无效等）。
+	// RelayErrorAuthRejected 是 Relay 明确拒绝注册（凭据无效等），不可重试。
 	RelayErrorAuthRejected RelayErrorKind = "auth_rejected"
-	// RelayErrorProtocolFailed 是注册/帧协议不符合预期。
+	// RelayErrorDeviceDisabled 是设备已被禁用，不可重试。
+	RelayErrorDeviceDisabled RelayErrorKind = "device_disabled"
+	// RelayErrorProtocolFailed 是注册/帧协议不符合预期，不可重试。
 	RelayErrorProtocolFailed RelayErrorKind = "protocol_failed"
-	// RelayErrorConnectionClosed 是已建立连接被关闭或读写出错。
+	// RelayErrorServerBusy 是 Relay 临时不可用（可重试）。
+	RelayErrorServerBusy RelayErrorKind = "server_busy"
+	// RelayErrorConnectionClosed 是已建立连接被关闭或读写出错（可重试）。
 	RelayErrorConnectionClosed RelayErrorKind = "connection_closed"
-	// RelayErrorTimeout 是拨号或读写超时。
+	// RelayErrorTimeout 是拨号或读写超时（可重试）。
 	RelayErrorTimeout RelayErrorKind = "timeout"
-	// RelayErrorUnknown 是无法归类的其他错误。
+	// RelayErrorUnknown 是无法归类的其他错误（按可重试处理，避免永久停止）。
 	RelayErrorUnknown RelayErrorKind = "unknown"
 )

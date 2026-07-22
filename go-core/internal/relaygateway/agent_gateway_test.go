@@ -108,6 +108,57 @@ func TestAgentGatewayRejectsInvalidCredential(t *testing.T) {
 	if response["type"] != AgentErrorMessage {
 		t.Fatalf("error response = %#v, want %s", response, AgentErrorMessage)
 	}
+	if response["code"] != AgentErrInvalidCredential {
+		t.Errorf("error code = %v, want %s", response["code"], AgentErrInvalidCredential)
+	}
+	if response["retryable"] != false {
+		t.Errorf("error retryable = %v, want false", response["retryable"])
+	}
+}
+
+// TestAgentGatewayRejectsDisabledDevice 设备被禁用时返回 device_disabled（不可重试），
+// 而不是笼统的凭据错误。
+func TestAgentGatewayRejectsDisabledDevice(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+
+	store := relaystore.NewMemoryStore()
+	user, err := store.CreateUser("owner@example.com", "secret", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	device, credential, err := store.CreateDevice(user.ID, "Stored Name")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	if _, err := store.SetDeviceDisabled(user.ID, device.ID, true); err != nil {
+		t.Fatalf("SetDeviceDisabled: %v", err)
+	}
+	registry := relayrouter.NewRegistry()
+	server := httptest.NewServer(NewAgentGateway(store, registry, relayrouter.NewStreamManager()))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL(server.URL), nil)
+	if err != nil {
+		t.Fatalf("Dial returned error: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeJSON(t, ctx, conn, map[string]any{
+		"type":       AgentRegisterMessage,
+		"credential": credential,
+	})
+	response := readJSON(t, ctx, conn)
+	if response["type"] != AgentErrorMessage {
+		t.Fatalf("error response = %#v, want %s", response, AgentErrorMessage)
+	}
+	if response["code"] != AgentErrDeviceDisabled {
+		t.Errorf("error code = %v, want %s", response["code"], AgentErrDeviceDisabled)
+	}
+	if response["retryable"] != false {
+		t.Errorf("error retryable = %v, want false", response["retryable"])
+	}
 }
 
 func TestWebSocketAgentSenderQueueBackpressureAndClose(t *testing.T) {

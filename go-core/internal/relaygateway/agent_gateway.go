@@ -24,6 +24,45 @@ const (
 	agentPlaneBulk         = "bulk"
 )
 
+// Agent 注册错误码（稳定枚举）。Agent 据此判断错误分类与重试策略，绝不依赖
+// 自由文本 message。新增错误码时同步更新 Agent 端 mapRegisterErrorCode。
+const (
+	AgentErrInvalidCredential = "invalid_credential"
+	AgentErrRealtimeRequired  = "realtime_required"
+	AgentErrDeviceDisabled    = "device_disabled"
+	AgentErrProtocolMismatch  = "protocol_mismatch"
+	AgentErrServerBusy        = "server_busy"
+	AgentErrInternalError     = "internal_error"
+)
+
+// AgentRegisterError 是结构化的注册拒绝响应。Message 仅供服务端日志与兼容旧
+// 客户端，Agent 不据此判断逻辑。
+type AgentRegisterError struct {
+	Type      string `json:"type"`
+	Code      string `json:"code"`
+	Retryable bool   `json:"retryable"`
+	Message   string `json:"message,omitempty"`
+}
+
+// agentErrorRetryable 给出每个注册错误码的默认可重试性：永久性配置/协议/凭据
+// 错误不可重试，服务端临时错误可重试。
+func agentErrorRetryable(code string) bool {
+	switch code {
+	case AgentErrInvalidCredential, AgentErrDeviceDisabled, AgentErrProtocolMismatch:
+		return false
+	default:
+		return true
+	}
+}
+
+// registerError 让 readRegister 在拒绝注册时携带稳定错误码。
+type registerError struct {
+	code string
+	msg  string
+}
+
+func (e *registerError) Error() string { return e.msg }
+
 type agentDataRegistry interface {
 	RegisterAgentDataConnection(deviceID string, sender relayrouter.AgentSender) bool
 	RemoveAgentDataConnection(deviceID string, sender relayrouter.AgentSender)
@@ -76,10 +115,12 @@ func (gateway *AgentGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (gateway *AgentGateway) handleConnection(ctx context.Context, conn *websocket.Conn) {
 	device, req, err := gateway.readRegister(ctx, conn)
 	if err != nil {
-		_ = writeAgentJSON(ctx, conn, map[string]any{
-			"type":    AgentErrorMessage,
-			"message": err.Error(),
-		})
+		code := AgentErrInternalError
+		var regErr *registerError
+		if errors.As(err, &regErr) {
+			code = regErr.code
+		}
+		_ = writeAgentRegisterError(ctx, conn, code)
 		_ = conn.Close(websocket.StatusPolicyViolation, err.Error())
 		return
 	}
@@ -95,9 +136,7 @@ func (gateway *AgentGateway) handleConnection(ctx context.Context, conn *websock
 	if req.Plane == agentPlaneBulk {
 		dataRegistry, ok := gateway.registry.(agentDataRegistry)
 		if !ok || !dataRegistry.RegisterAgentDataConnection(device.ID, sender) {
-			_ = writeAgentJSON(ctx, conn, map[string]any{
-				"type": AgentErrorMessage, "message": "realtime agent connection is required",
-			})
+			_ = writeAgentRegisterError(ctx, conn, AgentErrRealtimeRequired)
 			return
 		}
 		defer dataRegistry.RemoveAgentDataConnection(device.ID, sender)
@@ -275,27 +314,30 @@ func (gateway *AgentGateway) readRegister(ctx context.Context, conn *websocket.C
 		return relaystore.Device{}, registerRequest{}, err
 	}
 	if messageType != websocket.MessageText {
-		return relaystore.Device{}, registerRequest{}, errors.New("agent register must be a text message")
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrProtocolMismatch, "agent register must be a text message"}
 	}
 	var req registerRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return relaystore.Device{}, registerRequest{}, errors.New("invalid agent register json")
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrProtocolMismatch, "invalid agent register json"}
 	}
 	if req.Type != AgentRegisterMessage {
-		return relaystore.Device{}, registerRequest{}, errors.New("first agent message must be agent.register")
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrProtocolMismatch, "first agent message must be agent.register"}
 	}
 	if req.Credential == "" {
-		return relaystore.Device{}, registerRequest{}, errors.New("agent credential is required")
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrInvalidCredential, "agent credential is required"}
 	}
 	if req.Plane == "" {
 		req.Plane = agentPlaneRealtime
 	}
 	if req.Plane != agentPlaneRealtime && req.Plane != agentPlaneBulk {
-		return relaystore.Device{}, registerRequest{}, errors.New("invalid agent plane")
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrProtocolMismatch, "invalid agent plane"}
 	}
 	device, err := gateway.store.FindDeviceByCredential(req.Credential)
 	if err != nil {
-		return relaystore.Device{}, registerRequest{}, errors.New("invalid agent credential")
+		if errors.Is(err, relaystore.ErrDeviceDisabled) {
+			return relaystore.Device{}, registerRequest{}, &registerError{AgentErrDeviceDisabled, "device disabled"}
+		}
+		return relaystore.Device{}, registerRequest{}, &registerError{AgentErrInvalidCredential, "invalid agent credential"}
 	}
 	return device, req, nil
 }
@@ -308,6 +350,15 @@ func writeAgentJSON(ctx context.Context, conn *websocket.Conn, value any) error 
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return conn.Write(writeCtx, websocket.MessageText, data)
+}
+
+// writeAgentRegisterError 写出结构化注册拒绝响应（code + retryable）。
+func writeAgentRegisterError(ctx context.Context, conn *websocket.Conn, code string) error {
+	return writeAgentJSON(ctx, conn, AgentRegisterError{
+		Type:      AgentErrorMessage,
+		Code:      code,
+		Retryable: agentErrorRetryable(code),
+	})
 }
 
 func firstNonEmpty(values ...string) string {

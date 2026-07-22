@@ -11,21 +11,24 @@ import (
 	"webterm/go-core/internal/app"
 )
 
-// relayError 在错误源头标记诊断分类；Error()/Unwrap() 保留原始错误，
-// 供调用方调试输出使用，但诊断状态与日志只取 kind（见 ClassifyRelayError）。
-type relayError struct {
-	kind app.RelayErrorKind
-	err  error
+// RelayConnectError 在错误源头标记诊断分类与重试属性；Error()/Unwrap() 保留
+// 原始错误供调用方调试输出，但诊断状态与日志只取 Kind（见 ClassifyRelayError），
+// 重连循环据 Retryable 决定是否继续 backoff（见 V2Client.Run）。
+type RelayConnectError struct {
+	Kind      app.RelayErrorKind
+	Retryable bool
+	Cause     error
 }
 
-func (e *relayError) Error() string { return e.err.Error() }
-func (e *relayError) Unwrap() error { return e.err }
+func (err *RelayConnectError) Error() string { return err.Cause.Error() }
+func (err *RelayConnectError) Unwrap() error { return err.Cause }
 
-func markRelayError(kind app.RelayErrorKind, err error) error {
+// markRelayError 包装一个带分类与重试属性的 relay 错误。err 为 nil 时返回 nil。
+func markRelayError(kind app.RelayErrorKind, retryable bool, err error) error {
 	if err == nil {
 		return nil
 	}
-	return &relayError{kind: kind, err: err}
+	return &RelayConnectError{Kind: kind, Retryable: retryable, Cause: err}
 }
 
 // ClassifyRelayError 把 relay 连接错误归类为 RelayErrorKind 枚举。
@@ -40,14 +43,25 @@ func ClassifyRelayError(err error) app.RelayErrorKind {
 	if errors.Is(err, context.DeadlineExceeded) || isNetTimeout(err) {
 		return app.RelayErrorTimeout
 	}
-	var marked *relayError
+	var marked *RelayConnectError
 	if errors.As(err, &marked) {
-		return marked.kind
+		return marked.Kind
 	}
 	if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return app.RelayErrorConnectionClosed
 	}
 	return app.RelayErrorUnknown
+}
+
+// retryableByKind 为没有显式 retryable 信号的底层错误按分类给出默认重试策略：
+// 永久性配置/协议错误不重试，网络类临时错误重试，未知错误默认重试以免永久停止。
+func retryableByKind(kind app.RelayErrorKind) bool {
+	switch kind {
+	case app.RelayErrorAuthRejected, app.RelayErrorDeviceDisabled, app.RelayErrorProtocolFailed:
+		return false
+	default:
+		return true
+	}
 }
 
 func isNetTimeout(err error) bool {
