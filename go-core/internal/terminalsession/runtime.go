@@ -31,6 +31,11 @@ type Runtime struct {
 	terminalIO  TerminalIO
 	inputWriter *InputWriter
 	ptyResizer  func(cols, rows int) error
+	// ptyCols/ptyRows 记录 PTY 已成功确认的几何。Engine 在 resize 时 best-effort
+	// 更新，PTY 却可能调整失败；分开记录使“Engine 已到位但 PTY 失败”的相同尺寸
+	// 请求可以只重试 PTY，而不是被 Engine 尺寸去重直接丢弃。
+	ptyCols int
+	ptyRows int
 
 	scrollbackMaxLines int
 	scrollbackMaxBytes int
@@ -222,6 +227,9 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 		layoutEpoch:     1,
 		screenRevision:  1,
 		busyFlushWindow: projectionBusyWindowFromEnv(),
+		// PTY 初始即按创建几何确认（NewEngine 之前 PTY 已以此尺寸存在）。
+		ptyCols: cols,
+		ptyRows: rows,
 	}
 	for _, opt := range options {
 		opt(r)
@@ -887,14 +895,41 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	// Android may recreate a View during background return and send the same
 	// terminal geometry again. A repeated size has no terminal effect and must
 	// not advance layoutEpoch, reset client baselines, or trigger a snapshot.
-	if e.cols == r.engine.Cols() && e.rows == r.engine.Rows() {
+	sameEngineSize := e.cols == r.engine.Cols() && e.rows == r.engine.Rows()
+	samePTYSize := e.cols == r.ptyCols && e.rows == r.ptyRows
+
+	// 情况 A：Engine 与 PTY 均已是目标尺寸，重复请求直接去重。
+	if sameEngineSize && samePTYSize {
 		return
 	}
-	// 先同步 PTY winsize（触发 SIGWINCH 让 shell/TUI 感知新尺寸），再调整无头终端几何。
-	// best-effort：PTY 调整失败不阻断引擎 resize，否则屏幕投影会与客户端请求脱节。
+
+	// 情况 B：Engine 已到位但 PTY 上一次调整失败。只重试 PTY，不推进 epoch、
+	// 不重新生成 Snapshot（几何投影未变）；成功后补发 onResize 同步 Info。
+	if sameEngineSize {
+		if r.ptyResizer != nil {
+			if err := r.ptyResizer(e.cols, e.rows); err != nil {
+				return
+			}
+		}
+		r.ptyCols = e.cols
+		r.ptyRows = e.rows
+		if r.onResize != nil {
+			r.onResize(e.cols, e.rows)
+		}
+		return
+	}
+
+	// 情况 C：Engine 也需要调整。先同步 PTY winsize（触发 SIGWINCH 让 shell/TUI
+	// 感知新尺寸），再调整无头终端几何。best-effort：PTY 调整失败不阻断引擎
+	// resize，否则屏幕投影会与客户端请求脱节。
 	ptyResized := true
 	if r.ptyResizer != nil {
-		ptyResized = r.ptyResizer(e.cols, e.rows) == nil
+		if err := r.ptyResizer(e.cols, e.rows); err != nil {
+			ptyResized = false
+		} else {
+			r.ptyCols = e.cols
+			r.ptyRows = e.rows
+		}
 	}
 	// layoutEpoch 由 actor 单写，但 Info() 会在其他 goroutine 持 RLock 读取，
 	// 因此自增必须持锁，与 bumpScreenRevision 对 screenRevision 的保护一致。
@@ -914,7 +949,7 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	r.flushProjectionNow()
 	// 只在租约有效、PTY 与 Engine resize 均成功、epoch/revision 更新完成后，
 	// 才把新几何同步回外层会话 Info。PTY 失败时不回调，避免 Info 报告一个
-	// 真实终端并未采用的尺寸。
+	// 真实终端并未采用的尺寸；下一次同尺寸请求会走情况 B 重试 PTY。
 	if ptyResized && r.onResize != nil {
 		r.onResize(e.cols, e.rows)
 	}

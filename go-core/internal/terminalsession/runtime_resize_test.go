@@ -190,8 +190,8 @@ func TestRuntimeResizeSameSizeDoesNotCallOnResize(t *testing.T) {
 	rec := newResizeRecorder()
 	r, leaseID := newResizeRuntime(t, resizer, rec)
 
-	r.Resize("screen-1", leaseID, 10, 5)   // 与初始 5×10 相同
-	r.Resize("screen-1", leaseID, 80, 20)  // 有效 barrier
+	r.Resize("screen-1", leaseID, 10, 5)  // 与初始 5×10 相同
+	r.Resize("screen-1", leaseID, 80, 20) // 有效 barrier
 	rec.waitForCount(t, 1)
 
 	calls := rec.snapshot()
@@ -200,5 +200,53 @@ func TestRuntimeResizeSameSizeDoesNotCallOnResize(t *testing.T) {
 	}
 	if epoch := r.Info().LayoutEpoch; epoch != 2 {
 		t.Fatalf("layoutEpoch = %d, want 2 (same-size resize must not advance epoch)", epoch)
+	}
+}
+
+// PTY 失败后同尺寸可重试：第一次 80×20 PTY 失败（Engine best-effort 更新、
+// onResize 不触发、epoch 推进到 2）；PTY 恢复后再次请求相同 80×20，应只重试
+// PTY（resizer 第二次被调用）、触发一次 onResize，且不再推进 layoutEpoch。
+func TestRuntimeResizeRetriesSameSizeAfterPTYFailure(t *testing.T) {
+	resizer := &controllableResizer{}
+	rec := newResizeRecorder()
+	r, leaseID := newResizeRuntime(t, resizer, rec)
+
+	// 第一次：PTY 失败。
+	resizer.fail.Store(true)
+	r.Resize("screen-1", leaseID, 80, 20)
+	waitForResizerCalls(t, resizer, 1)
+	if calls := rec.snapshot(); len(calls) != 0 {
+		t.Fatalf("onResize fired on first (failed) resize: %v, want none", calls)
+	}
+	if epoch := r.Info().LayoutEpoch; epoch != 2 {
+		t.Fatalf("layoutEpoch after first resize = %d, want 2 (case C advances epoch)", epoch)
+	}
+
+	// 第二次：相同尺寸，PTY 恢复 → 只重试 PTY（情况 B），不推进 epoch。
+	resizer.fail.Store(false)
+	r.Resize("screen-1", leaseID, 80, 20)
+	rec.waitForCount(t, 1)
+
+	if got := resizer.calls.Load(); got != 2 {
+		t.Fatalf("pty resizer calls = %d, want 2 (same-size retry must re-invoke PTY)", got)
+	}
+	calls := rec.snapshot()
+	if len(calls) != 1 || calls[0] != [2]int{80, 20} {
+		t.Fatalf("onResize calls = %v, want exactly [[80 20]]", calls)
+	}
+	if epoch := r.Info().LayoutEpoch; epoch != 2 {
+		t.Fatalf("layoutEpoch after retry = %d, want 2 (case B must not advance epoch)", epoch)
+	}
+
+	// 第三次：Engine 与 PTY 均已 80×20，再去重，不触发 onResize、不推进 epoch。
+	r.Resize("screen-1", leaseID, 80, 20)
+	// 用一个不同尺寸的成功 resize 作为 barrier，证明第三次已被处理且无副作用。
+	r.Resize("screen-1", leaseID, 100, 30)
+	rec.waitForCount(t, 2)
+	if got := resizer.calls.Load(); got != 3 {
+		t.Fatalf("pty resizer calls = %d, want 3 (deduped repeat must not call PTY)", got)
+	}
+	if epoch := r.Info().LayoutEpoch; epoch != 3 {
+		t.Fatalf("layoutEpoch after dedup+barrier = %d, want 3", epoch)
 	}
 }

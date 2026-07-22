@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,6 +280,37 @@ func TestScreenClientResizeSameSizeDoesNotRebroadcast(t *testing.T) {
 	if broadcasts != 1 {
 		t.Fatalf("onInfoChanged broadcasts = %d, want 1 (same-size must not rebroadcast)", broadcasts)
 	}
+}
+
+// PTY 失败后重发相同尺寸：第一次失败 Info 保持原尺寸，PTY 恢复后第二次相同
+// 尺寸成功，Info 更新为目标尺寸。
+func TestScreenClientResizeRetrySameSizeUpdatesSessionInfo(t *testing.T) {
+	var fail atomic.Bool
+	fail.Store(true)
+	terminal, _ := newScreenTestTerminalWithResizer(t, func(cols, rows int) error {
+		if fail.Load() {
+			return errors.New("pty resize failed")
+		}
+		return nil
+	})
+
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	leaseID := acquireScreenLayoutLease(t, client)
+
+	// 第一次：PTY 失败，Info 保持创建尺寸 20×4。
+	sendScreenResize(t, client, leaseID, 132, 43)
+	time.Sleep(100 * time.Millisecond)
+	if info := terminal.Info(); info.Cols != 20 || info.Rows != 4 {
+		t.Fatalf("Info after failed resize = %dx%d, want unchanged 20x4", info.Cols, info.Rows)
+	}
+
+	// 第二次：相同尺寸，PTY 恢复 → 重试成功，Info 更新为 132×43。
+	fail.Store(false)
+	sendScreenResize(t, client, leaseID, 132, 43)
+	waitForSessionInfoSize(t, terminal, 132, 43)
 }
 
 // 同一 screen channel 只接受一次 Hello（计划 §3.5）：第二个 Hello 是协议
