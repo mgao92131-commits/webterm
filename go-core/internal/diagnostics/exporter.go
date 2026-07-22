@@ -65,9 +65,6 @@ type ExportResult struct {
 // 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
 // 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
-	if options.LogDir == "" {
-		return ExportResult{}, fmt.Errorf("log dir is required")
-	}
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = DefaultExportMaxBytes
 	}
@@ -80,12 +77,21 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	outDir := options.OutDir
 	if outDir == "" {
+		if options.LogDir == "" {
+			return ExportResult{}, fmt.Errorf("either LogDir or OutDir is required")
+		}
 		outDir = filepath.Join(filepath.Dir(options.LogDir), exportDirName)
 	}
 
-	entries, err := readLogEntries(options.LogDir)
-	if err != nil {
-		return ExportResult{}, err
+	// LogDir 为空表示调用方不希望读取磁盘日志（例如测试 App 仅导出内存 Ring），
+	// 此时跳过 readLogEntries，避免误读机器上属于其他 run 的生产日志。
+	var entries []logs.Entry
+	if options.LogDir != "" {
+		diskEntries, err := readLogEntries(options.LogDir)
+		if err != nil {
+			return ExportResult{}, err
+		}
+		entries = diskEntries
 	}
 	entries = mergeRingEntries(entries, options.RingEntries)
 	// 第二层保护：裁剪前优先保留当前 run 的事件，避免历史日志再次挤掉本次

@@ -1,12 +1,17 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/config"
+	"webterm/go-core/internal/logs"
 )
 
 // newLifecycleTestApp 以临时 IPC endpoint 构造 App，默认关闭日志落盘，
@@ -153,5 +158,98 @@ func TestAppShutdownLateLogsDoNotReopenFile(t *testing.T) {
 	}
 	if after.Size() != before.Size() {
 		t.Errorf("log file grew after shutdown: %d -> %d bytes", before.Size(), after.Size())
+	}
+}
+
+// seedDiskLog 在 dir/agent.jsonl 预置一条“其他 run”的磁盘日志，返回该目录。
+func seedDiskLog(t *testing.T, dir, event string) {
+	t.Helper()
+	entry := logs.Entry{RunID: "other-run", Seq: 1, Time: time.Now().UTC(), Level: "info", Source: "test", Event: event}
+	line, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal seed entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent.jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatalf("seed disk log: %v", err)
+	}
+}
+
+// 通用构造函数默认无副作用：NewWithBuildInfo 不落盘，避免污染正式日志目录。
+func TestNewWithBuildInfoDoesNotCreatePersistentLog(t *testing.T) {
+	cfg := config.Default()
+	tmp := t.TempDir()
+	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
+	application := NewWithBuildInfo(cfg, BuildInfo{Version: "1.0.0"})
+	t.Cleanup(application.Shutdown)
+	application.Log("info", "test", "should not persist")
+
+	logDir := filepath.Join(agenthooks.RuntimeBaseDir(application.IPCEndpoint()), "logs")
+	if _, err := os.Stat(filepath.Join(logDir, "agent.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("NewWithBuildInfo must not create a persistent log (stat err=%v)", err)
+	}
+}
+
+// ReadDiskLogs=false 时导出只携带内存 Ring，忽略磁盘上属于其他 run 的历史日志。
+func TestExportWithReadDiskLogsFalseIgnoresExistingDiskLogs(t *testing.T) {
+	diskDir := t.TempDir()
+	seedDiskLog(t, diskDir, "SEEDED_DISK_MARKER")
+
+	cfg := config.Default()
+	tmp := t.TempDir()
+	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
+	application := NewWithBuildInfoAndOptions(cfg, BuildInfo{Version: "1.0.0"}, Options{
+		LogDir:         diskDir,
+		PersistentLogs: false,
+		ReadDiskLogs:   false,
+	})
+	t.Cleanup(application.Shutdown)
+
+	application.logger.Event("info", "test", "RING_MARKER", nil)
+
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	events := readZipEntry(t, path, "events.jsonl")
+	if strings.Contains(events, "SEEDED_DISK_MARKER") {
+		t.Errorf("ReadDiskLogs=false export must not include disk history:\n%s", events)
+	}
+	if !strings.Contains(events, "RING_MARKER") {
+		t.Errorf("export must include current Ring events:\n%s", events)
+	}
+}
+
+// 生产配置（PersistentLogs+ReadDiskLogs）既落盘又在导出时读取磁盘历史日志。
+func TestProductionOptionsReadAndWriteDiskLogs(t *testing.T) {
+	logDir := t.TempDir()
+	seedDiskLog(t, logDir, "SEEDED_HISTORY")
+
+	cfg := config.Default()
+	tmp := t.TempDir()
+	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
+	application := NewWithBuildInfoAndOptions(cfg, BuildInfo{Version: "1.0.0"}, Options{
+		LogDir:         logDir,
+		PersistentLogs: true,
+		ReadDiskLogs:   true,
+	})
+	t.Cleanup(application.Shutdown)
+
+	// 写：FileSink 以 append 打开，预置文件仍在且新事件可写。
+	if _, err := os.Stat(filepath.Join(logDir, "agent.jsonl")); err != nil {
+		t.Fatalf("persistent log missing: %v", err)
+	}
+	application.logger.Event("info", "test", "PROD_MARKER", nil)
+
+	// 读：导出应同时包含磁盘历史（仅磁盘有）与当前事件。
+	path, err := application.ExportDiagnostics(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	events := readZipEntry(t, path, "events.jsonl")
+	if !strings.Contains(events, "SEEDED_HISTORY") {
+		t.Errorf("production export (ReadDiskLogs=true) must include disk history:\n%s", events)
+	}
+	if !strings.Contains(events, "PROD_MARKER") {
+		t.Errorf("production export must include current events:\n%s", events)
 	}
 }

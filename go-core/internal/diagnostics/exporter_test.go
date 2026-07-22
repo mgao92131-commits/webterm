@@ -519,3 +519,24 @@ func TestExportPrioritizesCurrentRunOverNewerHistory(t *testing.T) {
 		t.Errorf("history events kept = %d, want 1 (remaining budget)", history)
 	}
 }
+
+// TestExportWithEmptyLogDirUsesRingOnly LogDir 为空时导出跳过磁盘读取，
+// 只携带内存 Ring 事件（测试 App 隔离生产日志的关键路径）。
+func TestExportWithEmptyLogDirUsesRingOnly(t *testing.T) {
+	outDir := t.TempDir()
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	ring := []logs.Entry{
+		{RunID: "run-1", Seq: 1, Time: base, Level: "info", Source: "test", Event: "ring_only_event"},
+	}
+	result, err := Export(ExportOptions{
+		LogDir: "", OutDir: outDir, Manifest: exportTestManifest(),
+		RingEntries: ring, MaxEvents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("export with empty LogDir: %v", err)
+	}
+	events := readZip(t, result.Path)["events.jsonl"]
+	if !strings.Contains(events, "ring_only_event") {
+		t.Errorf("empty LogDir export should include ring events:\n%s", events)
+	}
+}
