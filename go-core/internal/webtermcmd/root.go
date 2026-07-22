@@ -23,6 +23,16 @@ const Version = "0.1.0-dev"
 
 type usageError struct{ error }
 
+// exitCodeError 携带自定义进程退出码。diagnostics wait-relay 用它向安装脚本
+// 传递结构化的 Relay 连接结果（0 已连接 / 3 凭据被拒 / 4 设备禁用 / 5 协议不兼容
+// / 6 超时），脚本据此区分失败原因，无需 grep 人类可读文本。
+type exitCodeError struct {
+	code int
+	msg  string
+}
+
+func (e exitCodeError) Error() string { return e.msg }
+
 func New() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "webterm",
@@ -39,6 +49,10 @@ func New() *cobra.Command {
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	var coded exitCodeError
+	if errors.As(err, &coded) {
+		return coded.code
 	}
 	var usage usageError
 	if errors.As(err, &usage) {
@@ -185,7 +199,7 @@ func newNotify() *cobra.Command {
 
 func newDiagnostics() *cobra.Command {
 	diagnostics := &cobra.Command{Use: "diagnostics", Short: "查询或导出 Agent 诊断信息", Long: "通过正在运行的 webterm-agent 本地 IPC 查询诊断摘要或导出诊断包。前提：webterm-agent 正在运行。"}
-	diagnostics.AddCommand(newDiagnosticsSummary(), newDiagnosticsExport(), newDiagnosticsState())
+	diagnostics.AddCommand(newDiagnosticsSummary(), newDiagnosticsExport(), newDiagnosticsState(), newDiagnosticsWaitRelay())
 	return diagnostics
 }
 
@@ -267,29 +281,106 @@ func newDiagnosticsState() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "state", Short: "显示 Agent 连接状态（机器可读）", Long: "显示运行中 Agent 的 relay 连接状态（configured/connected/lastErrorKind）。--json 输出稳定结构，适合脚本判断连接是否就绪。", Example: "  webterm diagnostics state\n  webterm diagnostics state --json", Args: noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionState})
-			if err != nil {
-				return err
-			}
-			responses, err := request(endpoint(socket), env)
+			summary, err := fetchDiagnosticsState(endpoint(socket))
 			if err != nil {
 				return diagnosticsConnError(err, socket)
 			}
-			if len(responses) != 1 {
-				return errors.New("Agent 返回了无效响应")
-			}
-			var result localipc.DiagnosticsResponse
-			if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
-				return err
-			}
 			if jsonOutput {
-				return json.NewEncoder(os.Stdout).Encode(result.Summary)
+				return json.NewEncoder(os.Stdout).Encode(summary)
 			}
-			printDiagnosticsState(os.Stdout, result.Summary)
+			printDiagnosticsState(os.Stdout, summary)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "输出 JSON")
+	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
+	return cmd
+}
+
+// fetchDiagnosticsState 经 Local IPC 查询机器可读连接状态，返回 state 摘要
+// （形如 {"relay": {"configured":..., "connected":..., "lastErrorKind":...}}）。
+func fetchDiagnosticsState(ep string) (map[string]any, error) {
+	env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionState})
+	if err != nil {
+		return nil, err
+	}
+	responses, err := request(ep, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) != 1 {
+		return nil, errors.New("Agent 返回了无效响应")
+	}
+	var result localipc.DiagnosticsResponse
+	if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
+		return nil, err
+	}
+	return result.Summary, nil
+}
+
+// wait-relay 的轮询间隔与退出码契约。退出码供安装脚本区分失败原因：
+// 0=已连接，3=凭据被拒，4=设备禁用，5=协议不兼容，6=超时。
+const waitRelayPollInterval = 500 * time.Millisecond
+
+const (
+	waitRelayExitConnected        = 0
+	waitRelayExitInvalidCred      = 3
+	waitRelayExitDeviceDisabled   = 4
+	waitRelayExitProtocolMismatch = 5
+	waitRelayExitTimeout          = 6
+)
+
+// waitRelayPermanentExitCode 把 lastErrorKind 映射为不可恢复的退出码。
+// 返回 ok=false 表示非永久错误（如临时断开/超时），应继续等待。
+// 字符串须与 app.RelayErrorKind 枚举一致（稳定诊断契约）。
+func waitRelayPermanentExitCode(lastErrorKind string) (int, bool) {
+	switch lastErrorKind {
+	case "auth_rejected":
+		return waitRelayExitInvalidCred, true
+	case "device_disabled":
+		return waitRelayExitDeviceDisabled, true
+	case "protocol_failed":
+		return waitRelayExitProtocolMismatch, true
+	default:
+		return 0, false
+	}
+}
+
+// newDiagnosticsWaitRelay 轮询 relay 连接状态直到就绪或超时，用进程退出码传递
+// 结果，供安装脚本判断而无需解析人类可读文本或依赖 Python。
+func newDiagnosticsWaitRelay() *cobra.Command {
+	var socket string
+	var timeout time.Duration
+	cmd := &cobra.Command{Use: "wait-relay", Short: "等待 Relay 连接就绪（脚本用）", Long: "轮询运行中 Agent 的 relay 连接状态，直到连接成功或超时。用进程退出码传递结果：0=已连接，3=凭据被拒，4=设备禁用，5=协议不兼容，6=超时。", Example: "  webterm diagnostics wait-relay --timeout 15s", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			deadline := time.Now().Add(timeout)
+			for {
+				summary, err := fetchDiagnosticsState(endpoint(socket))
+				if err == nil {
+					relay, _ := summary["relay"].(map[string]any)
+					if relay != nil {
+						if connected, _ := relay["connected"].(bool); connected {
+							fmt.Fprintln(cmd.OutOrStdout(), "Relay 已连接")
+							return nil
+						}
+						kind, _ := relay["lastErrorKind"].(string)
+						if code, permanent := waitRelayPermanentExitCode(kind); permanent {
+							return exitCodeError{code: code, msg: fmt.Sprintf("Relay 连接被拒绝：%s", kind)}
+						}
+					}
+				}
+				if time.Now().After(deadline) {
+					return exitCodeError{code: waitRelayExitTimeout, msg: "等待 Relay 连接超时"}
+				}
+				select {
+				case <-time.After(waitRelayPollInterval):
+				case <-cmd.Context().Done():
+					return cmd.Context().Err()
+				}
+			}
+		},
+	}
+	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "最长等待时间")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
 }

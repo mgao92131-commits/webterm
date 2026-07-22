@@ -69,6 +69,59 @@ func TestDiagnosticsStateAgentNotRunning(t *testing.T) {
 	}
 }
 
+func TestWaitRelayPermanentExitCode(t *testing.T) {
+	cases := []struct {
+		kind     string
+		wantCode int
+		wantOK   bool
+	}{
+		{"auth_rejected", 3, true},
+		{"device_disabled", 4, true},
+		{"protocol_failed", 5, true},
+		{"dial_failed", 0, false},
+		{"connection_closed", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		code, ok := waitRelayPermanentExitCode(tc.kind)
+		if code != tc.wantCode || ok != tc.wantOK {
+			t.Errorf("waitRelayPermanentExitCode(%q) = (%d, %v), want (%d, %v)",
+				tc.kind, code, ok, tc.wantCode, tc.wantOK)
+		}
+	}
+}
+
+func TestExitCodeMapsWaitRelayErrors(t *testing.T) {
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{nil, 0},
+		{exitCodeError{code: 3, msg: "rejected"}, 3},
+		{exitCodeError{code: 4, msg: "disabled"}, 4},
+		{exitCodeError{code: 6, msg: "timeout"}, 6},
+	}
+	for _, tc := range cases {
+		if got := ExitCode(tc.err); got != tc.want {
+			t.Errorf("ExitCode(%v) = %d, want %d", tc.err, got, tc.want)
+		}
+	}
+}
+
+// Agent 未运行时 wait-relay 轮询直到超时，退出码 6（IPC 不可用同样走超时路径）。
+func TestDiagnosticsWaitRelayTimeoutWhenAgentNotRunning(t *testing.T) {
+	cmd := New()
+	cmd.SetArgs([]string{"diagnostics", "wait-relay", "--timeout", "200ms",
+		"--socket", "unix:/tmp/webterm-definitely-not-running.sock"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected timeout error when agent not running")
+	}
+	if got := ExitCode(err); got != 6 {
+		t.Errorf("exit code = %d, want 6 (timeout)", got)
+	}
+}
+
 // TestPrintDiagnosticsSummaryMarksNotInstrumented 未埋点的指标能力必须显示
 // not instrumented，而不是把恒 0 的计数当真实观测输出。
 func TestPrintDiagnosticsSummaryMarksNotInstrumented(t *testing.T) {

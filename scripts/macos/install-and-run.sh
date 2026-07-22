@@ -116,45 +116,35 @@ stop_launch_agent() {
   fi
 }
 
-# relay_field 从 `webterm diagnostics state --json` 的输出中提取 relay.<field>。
-# 用 JSON 解析而非 grep 人类可读文本：bool 归一化为 true/false，缺失输出空串。
-relay_field() {
-  python3 - "$1" "$2" <<'PY'
-import json, sys
-
-try:
-    data = json.loads(sys.argv[1])
-    value = data.get("relay", {}).get(sys.argv[2])
-except Exception:
-    sys.exit(1)
-if isinstance(value, bool):
-    print("true" if value else "false")
-elif value is None:
-    print("")
-else:
-    print(value)
-PY
+# fail_started_agent 在安装验证失败时停止刚启动的 LaunchAgent 再退出，
+# 避免留下一个状态不明、仍在后台周期性报错的 Agent。
+fail_started_agent() {
+  local message="$1"
+  if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+    launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  fi
+  die "$message"
 }
 
 # verify_agent_ready 确认 Agent 不只是“进程存在”，而是真正连上了 Relay。
-# launchctl print 只能证明 LaunchAgent 进程在运行；relay 模式必须轮询本地 IPC
-# 的机器可读连接状态（最多 10 次、每次间隔 1 秒），凭据被拒或超时则明确失败。
+# launchctl print 只能证明 LaunchAgent 进程在运行；relay 模式用机器可读的
+# `diagnostics wait-relay` 轮询连接状态，并以其退出码区分失败原因：
+#   0=已连接  3=凭据被拒  4=设备禁用  5=协议不兼容  6=超时。
+# 任何失败都会 bootout 本次 Agent，保证“退出码 0 = 已安装且已连接”。
 verify_agent_ready() {
   [[ "$MODE" == "relay" ]] || return 0
-  local attempt output
-  for attempt in {1..10}; do
-    if output="$("$BIN_DIR/webterm" diagnostics state --json 2>/dev/null)"; then
-      if [[ "$(relay_field "$output" connected)" == "true" ]]; then
-        echo "Relay 已连接"
-        return 0
-      fi
-      if [[ "$(relay_field "$output" lastErrorKind)" == "auth_rejected" ]]; then
-        die "Agent 已启动，但 Relay 凭据被拒绝。请检查 relay.json 的 credential 是否与 Relay 数据库登记一致。"
-      fi
-    fi
-    sleep 1
-  done
-  die "Agent 进程已启动，但未能确认 Relay 连接成功。可运行：$BIN_DIR/webterm diagnostics state"
+  local status=0
+  "$BIN_DIR/webterm" diagnostics wait-relay --timeout 15s || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    return 0
+  fi
+  case "$status" in
+    3) fail_started_agent "Agent 已安装，但 Relay 凭据被拒绝。请检查 relay.json 的 credential 是否与 Relay 数据库登记一致，然后重新运行安装脚本。" ;;
+    4) fail_started_agent "Agent 已安装，但该设备已被 Relay 禁用。" ;;
+    5) fail_started_agent "Agent 已安装，但 Agent 与 Relay 协议不兼容。请升级 Agent 或 Relay。" ;;
+    6) fail_started_agent "Agent 已安装，但未能在规定时间内连接 Relay。请检查网络与 Relay 地址后重新启动。" ;;
+    *) fail_started_agent "Agent 已安装，但无法确认 Relay 连接状态（退出码 $status）。" ;;
+  esac
 }
 
 [[ "$(uname -s)" == "Darwin" ]] || die "该脚本只能在 macOS 上运行"
@@ -172,10 +162,6 @@ require_command open
 require_command plutil
 require_command install
 select_mode "$@"
-# relay 模式启动后用 python3 解析 `diagnostics state --json` 判断连接是否就绪。
-if [[ "$MODE" == "relay" ]]; then
-  require_command python3
-fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/webterm-macos.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
