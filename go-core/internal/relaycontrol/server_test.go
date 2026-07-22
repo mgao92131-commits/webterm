@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -222,6 +224,175 @@ func TestRelayControlRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) 
 	}
 	if pending, exists := store.FindPendingRegistration("owner@example.com"); !exists || pending.PasswordHash == "" || pending.CodeHash == "" {
 		t.Fatalf("pending registration missing or contains no hashes: %#v", pending)
+	}
+}
+
+func TestRelayControlRegisterRejectsInvalidEmailAddresses(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	valid := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email": " User@Example.COM ", "password": "secret-password",
+	}, nil)
+	if valid.Code != http.StatusAccepted {
+		t.Fatalf("normalized email register status=%d body=%s", valid.Code, valid.Body.String())
+	}
+	if sender.count() != 1 || sender.last().email != "user@example.com" {
+		t.Fatalf("normalized email send=%#v", sender.sends)
+	}
+	if _, ok := store.FindPendingRegistration("user@example.com"); !ok {
+		t.Fatalf("normalized pending registration not found")
+	}
+
+	for _, email := range []string{"abc", "user@", "Name <a@b.com>"} {
+		response := postJSON(t, handler, "/api/auth/register", map[string]any{
+			"email": email, "password": "secret-password",
+		}, nil)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid email %q status=%d body=%s", email, response.Code, response.Body.String())
+		}
+	}
+	if sender.count() != 1 {
+		t.Fatalf("invalid email requests sent OTPs: %#v", sender.sends)
+	}
+	if store.UserCount() != 0 {
+		t.Fatalf("invalid email requests created formal users")
+	}
+}
+
+func TestRelayControlVerifyEmailMapsConflictAndInternalErrors(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	for _, test := range []struct {
+		name      string
+		err       error
+		status    int
+		errorText string
+	}{
+		{name: "conflict", err: relaystore.ErrConflict, status: http.StatusConflict, errorText: "user already exists"},
+		{name: "internal", err: errors.New("persist /private/secret/store.json failed"), status: http.StatusInternalServerError, errorText: "internal server error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := relaystore.NewMemoryStore()
+			store := &authHandlerStore{
+				ControlStore: base,
+				completeErr:  test.err,
+			}
+			handler := New(store, relayrouter.NewRegistry()).Handler()
+			response := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+				"email": "user@example.com", "code": "123456",
+			}, nil)
+			if response.Code != test.status {
+				t.Fatalf("status=%d body=%s, want %d", response.Code, response.Body.String(), test.status)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body["error"] != test.errorText {
+				t.Fatalf("error=%#v, want %q", body["error"], test.errorText)
+			}
+			if test.name == "internal" && strings.Contains(response.Body.String(), "store.json") {
+				t.Fatalf("internal persistence details leaked: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestRelayControlRegisterDeliveryFailureCleanupErrorReturnsInternalError(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	base := relaystore.NewMemoryStore()
+	store := &authHandlerStore{
+		ControlStore: base,
+		deleteErr:    errors.New("persist cleanup failed"),
+	}
+	sender := &recordingOTPSender{err: errors.New("smtp unavailable")}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+
+	response := postJSON(t, server.Handler(), "/api/auth/register", map[string]any{
+		"email": "user@example.com", "password": "secret-password",
+	}, nil)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["error"] != "failed to clean up pending registration" {
+		t.Fatalf("error=%#v", body["error"])
+	}
+	if _, ok := base.FindPendingRegistration("user@example.com"); !ok {
+		t.Fatalf("pending registration unexpectedly removed despite cleanup failure")
+	}
+}
+
+func TestRelayControlConcurrentResendSendsOnlyWinningCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	base := relaystore.NewMemoryStore()
+	if err := base.CreatePendingRegistration("user@example.com", "secret-password", "111111", 10*time.Minute); err != nil {
+		t.Fatalf("CreatePendingRegistration: %v", err)
+	}
+	store := &concurrentResendStore{ControlStore: base}
+	sender := newBlockingOTPSender()
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+	request := map[string]any{"email": "user@example.com", "password": "secret-password"}
+
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses <- postJSON(t, handler, "/api/auth/resend-email-verification", request, nil)
+		}()
+	}
+	select {
+	case <-sender.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent resend did not enter SendOTP")
+	}
+	if sender.count() != 1 {
+		t.Fatalf("second request entered SendOTP before first completed: %d sends", sender.count())
+	}
+	close(sender.release)
+	wg.Wait()
+	close(responses)
+
+	statuses := make([]int, 0, 2)
+	for response := range responses {
+		statuses = append(statuses, response.Code)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("responses=%v, want 2 responses", statuses)
+	}
+	oks, rateLimited := 0, 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusOK:
+			oks++
+		case http.StatusTooManyRequests:
+			rateLimited++
+		}
+	}
+	if oks != 1 || rateLimited != 1 {
+		t.Fatalf("statuses=%v, want one 200 and one 429", statuses)
+	}
+	sent := sender.last()
+	if sent.code == "" || sent.email != "user@example.com" || sender.count() != 1 {
+		t.Fatalf("sender sends=%#v", sender.sends)
+	}
+	if _, err := base.CompletePendingRegistration("user@example.com", sent.code, time.Now()); err != nil {
+		t.Fatalf("winning email code did not complete registration: %v", err)
+	}
+	if base.UserCount() != 1 {
+		t.Fatalf("formal user count=%d, want 1", base.UserCount())
 	}
 }
 
@@ -929,6 +1100,97 @@ type otpSend struct {
 	email   string
 	purpose string
 	code    string
+}
+
+type authHandlerStore struct {
+	relaystore.ControlStore
+	completeErr error
+	deleteErr   error
+}
+
+func (store *authHandlerStore) CompletePendingRegistration(email, code string, at time.Time) (relaystore.User, error) {
+	if store.completeErr != nil {
+		return relaystore.User{}, store.completeErr
+	}
+	return store.ControlStore.CompletePendingRegistration(email, code, at)
+}
+
+func (store *authHandlerStore) DeletePendingRegistration(email string) error {
+	if store.deleteErr != nil {
+		return store.deleteErr
+	}
+	return store.ControlStore.DeletePendingRegistration(email)
+}
+
+// concurrentResendStore makes the initial pending record eligible for the test
+// without weakening the production one-minute rate limit.
+type concurrentResendStore struct {
+	relaystore.ControlStore
+	mu        sync.Mutex
+	committed bool
+}
+
+func (store *concurrentResendStore) FindPendingRegistration(email string) (relaystore.PendingRegistration, bool) {
+	pending, ok := store.ControlStore.FindPendingRegistration(email)
+	store.mu.Lock()
+	committed := store.committed
+	store.mu.Unlock()
+	if ok && !committed {
+		pending.LastCodeSentAt = time.Now().Add(-2 * time.Minute)
+	}
+	return pending, ok
+}
+
+func (store *concurrentResendStore) ResendPendingRegistrationCode(email, password, code string, ttl, resendWindow time.Duration) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.committed {
+		return relaystore.ErrConflict
+	}
+	err := store.ControlStore.ResendPendingRegistrationCode(email, password, code, ttl, 0)
+	if err == nil {
+		store.committed = true
+	}
+	return err
+}
+
+type blockingOTPSender struct {
+	mu      sync.Mutex
+	sends   []otpSend
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingOTPSender() *blockingOTPSender {
+	return &blockingOTPSender{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (sender *blockingOTPSender) SendOTP(toEmail string, purpose string, code string) error {
+	sender.mu.Lock()
+	sender.sends = append(sender.sends, otpSend{email: toEmail, purpose: purpose, code: code})
+	sender.mu.Unlock()
+	sender.once.Do(func() { close(sender.entered) })
+	<-sender.release
+	return nil
+}
+
+func (sender *blockingOTPSender) count() int {
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	return len(sender.sends)
+}
+
+func (sender *blockingOTPSender) last() otpSend {
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.sends) == 0 {
+		return otpSend{}
+	}
+	return sender.sends[len(sender.sends)-1]
 }
 
 type recordingOTPSender struct {

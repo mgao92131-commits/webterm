@@ -4,12 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaystore"
 )
+
+func normalizeAndValidateEmail(raw string) (string, error) {
+	email := relaystore.NormalizeEmail(raw)
+	if email == "" || !strings.Contains(email, "@") {
+		return "", relaystore.ErrInvalidInput
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Name != "" || parsed.Address != email {
+		return "", relaystore.ErrInvalidInput
+	}
+	return email, nil
+}
 
 func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -101,8 +114,12 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	email := relaystore.NormalizeEmail(req.Email)
-	if email == "" || len(req.Password) < 6 {
+	email, err := normalizeAndValidateEmail(req.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid email address")
+		return
+	}
+	if len(req.Password) < 6 {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
@@ -125,7 +142,10 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := server.otpSender.SendOTP(email, verifyEmailPurpose, code); err != nil {
-			_ = server.store.DeletePendingRegistration(email)
+			if cleanupErr := server.store.DeletePendingRegistration(email); cleanupErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to clean up pending registration")
+				return
+			}
 			writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
 			return
 		}
@@ -177,12 +197,17 @@ func (server *Server) handleResendEmailVerification(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	server.resendEmailMu.Lock()
+	defer server.resendEmailMu.Unlock()
+
+	// 必须在重发锁内重新读取，避免并发请求使用同一份旧记录发送两个不同验证码。
 	pending, ok := server.store.FindPendingRegistration(email)
-	if !ok || !time.Now().Before(pending.ExpiresAt) || !relaystore.VerifyPassword(req.Password, pending.PasswordHash) {
+	now := time.Now()
+	if !ok || !now.Before(pending.ExpiresAt) || !relaystore.VerifyPassword(req.Password, pending.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	if !pending.LastCodeSentAt.IsZero() && time.Now().Before(pending.LastCodeSentAt.Add(resendOTPWindow)) {
+	if !pending.LastCodeSentAt.IsZero() && now.Before(pending.LastCodeSentAt.Add(resendOTPWindow)) {
 		writeError(w, http.StatusTooManyRequests, "otp recently sent")
 		return
 	}
@@ -229,7 +254,7 @@ func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	email := strings.TrimSpace(req.Email)
+	email := relaystore.NormalizeEmail(req.Email)
 	code := strings.TrimSpace(req.Code)
 	if email == "" || code == "" {
 		writeError(w, http.StatusBadRequest, "email and code are required")
@@ -237,14 +262,24 @@ func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) 
 	}
 	// 不存在、错误或过期的待验证记录统一返回相同错误；不记录验证码。
 	user, err := server.store.CompletePendingRegistration(email, code, time.Now())
-	if err != nil {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"accountCreated": true,
+			"email":          user.Username,
+		})
+		return
+	case errors.Is(err, relaystore.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, "invalid verification code")
 		return
+	case errors.Is(err, relaystore.ErrConflict):
+		writeError(w, http.StatusConflict, "user already exists")
+		return
+	default:
+		// 不把持久化或其他内部错误伪装成验证码错误，也不暴露底层错误文本。
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"accountCreated": true,
-		"email":          user.Username,
-	})
 }
 
 func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

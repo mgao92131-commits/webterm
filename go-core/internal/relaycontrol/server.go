@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"webterm/go-core/internal/relaycore"
@@ -19,6 +20,7 @@ type Server struct {
 	refreshTokenTTL time.Duration
 	otpSender       otpSender
 	config          *Config
+	resendEmailMu   sync.Mutex
 }
 
 // Config contains the Relay control-plane settings supplied by the owning
