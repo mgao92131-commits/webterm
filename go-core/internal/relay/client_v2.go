@@ -121,7 +121,21 @@ func (client *V2Client) Run(ctx context.Context) error {
 		} else {
 			diagnostics.Default.RelayConnectFailureCount.Add(1)
 		}
-		client.app.SetRelayConnected(false, "", ClassifyRelayError(err))
+		kind := ClassifyRelayError(err)
+		client.app.SetRelayConnected(false, "", kind)
+
+		// 不可重试的永久性错误（凭据无效、设备禁用、协议不兼容）：停止认证循环，
+		// 但保持进程与 Local IPC 存活，Relay 状态停留在 disconnected 并保留
+		// lastErrorKind，等待运维修正配置后重启 Agent。若此处直接 return，
+		// Supervisor 会结束进程，LaunchAgent KeepAlive 又将其拉起，形成重启风暴。
+		var relayErr *RelayConnectError
+		if errors.As(err, &relayErr) && !relayErr.Retryable {
+			client.app.Log("error", "relay",
+				fmt.Sprintf("relay registration permanently rejected (%s); stopping reconnect loop until restart", relayErr.Kind))
+			<-ctx.Done()
+			return ctx.Err()
+		}
+
 		diagnostics.Default.RelayReconnectCount.Add(1)
 		select {
 		case <-ctx.Done():
