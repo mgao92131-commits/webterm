@@ -99,7 +99,7 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void trimsTerminalPaddingAndUsesIndentationForContinuation() {
+  public void trimsPaddingAndPreservesHardLineIndentation() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, "  alpha  beta    "),
         screenRow(1, "    gamma       ")
@@ -200,6 +200,38 @@ public class TerminalSelectionTextExtractorTest {
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(6, 30)).normalized();
     assertEquals("first continued\nhard line\n\n    indented", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void nullScreenRowStopsWrappedContinuation() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, true, "first"),
+        null,
+        screenRow(2, false, "second")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 6)).normalized();
+    assertEquals("first\n\nsecond", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void trailingNullScreenRowsAreDroppedFromCopiedText() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, false, "content"),
+        null,
+        null
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 0)).normalized();
+    assertEquals("content", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void leadingNullScreenRowsAreDroppedFromCopiedText() {
+    TerminalLine[] screen = new TerminalLine[] {
+        null,
+        screenRow(1, false, "content")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 7)).normalized();
+    assertEquals("content", extract(sel, Collections.emptyList(), screen));
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {

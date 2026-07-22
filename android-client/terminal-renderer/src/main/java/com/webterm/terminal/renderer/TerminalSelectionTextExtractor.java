@@ -79,7 +79,12 @@ final class TerminalSelectionTextExtractor {
   private static void appendScreenRow(List<CopyLine> lines, TerminalLine[] screen,
                                       int row, int colStart, int colEnd) {
     if (screen == null || row < 0 || row >= screen.length) return;
-    appendLine(lines, screen[row], colStart, colEnd);
+    TerminalLine line = screen[row];
+    if (line == null) {
+      lines.add(new CopyLine("", false));
+      return;
+    }
+    appendLine(lines, line, colStart, colEnd);
   }
 
   private static void appendLine(List<CopyLine> lines, TerminalLine line, int colStart, int colEnd) {
