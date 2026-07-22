@@ -1,13 +1,9 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 )
-
-const InitScrollbackMaxBytes = 16777216
 
 // DirectInitTemplate 是 Direct 初始化模板。模板故意不使用 omitempty，确保
 // password 与 allowInsecureRemote=false 等需要用户确认的字段始终可见。
@@ -80,8 +76,8 @@ func NewRelayInitTemplate() RelayInitTemplate {
 
 func initScrollbackConfig() ScrollbackConfig {
 	return ScrollbackConfig{
-		MaxLines: 10000,
-		MaxBytes: InitScrollbackMaxBytes,
+		MaxLines: DefaultScrollbackMaxLines,
+		MaxBytes: DefaultScrollbackMaxBytes,
 	}
 }
 
@@ -133,16 +129,5 @@ func (cfg Config) RedactedTemplate() (any, error) {
 // SaveTemplate 保存初始化模板，不读取环境变量。是否允许覆盖由 config init
 // 在调用前检查 --force 决定。
 func SaveTemplate(path string, template any) error {
-	if path == "" {
-		return os.ErrInvalid
-	}
-	data, err := json.MarshalIndent(template, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
+	return writePrivateJSON(path, template)
 }

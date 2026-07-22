@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -247,29 +246,8 @@ func diagnosticsEndpoint(endpoint string, includePaths bool) string {
 	return logs.HashID(endpoint)
 }
 
-func ResolvePath(configPath string) string {
-	if configPath != "" {
-		return configPath
-	}
-	if configPath := os.Getenv("WEBTERM_AGENT_CONFIG"); configPath != "" {
-		return configPath
-	}
-	return ""
-}
-
 func Save(path string, cfg Config) error {
-	if path == "" {
-		return nil
-	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
+	return writePrivateJSON(path, cfg)
 }
 
 // ReadFile 只解析配置文件结构，供 config show 使用；它不读取环境变量，也不
@@ -359,12 +337,8 @@ func loadStrict(path string, explicit bool, expectedMode string) (Config, error)
 	if err != nil {
 		return Config{}, err
 	}
-	selectedMode := expectedMode
-	if selectedMode == "" {
-		selectedMode = os.Getenv("WEBTERM_AGENT_MODE")
-	}
-	if selectedMode != "" {
-		expected, err := ParseMode(selectedMode)
+	if expectedMode != "" {
+		expected, err := ParseMode(expectedMode)
 		if err != nil {
 			return Config{}, err
 		}

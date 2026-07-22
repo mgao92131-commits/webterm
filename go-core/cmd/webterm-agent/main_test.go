@@ -78,10 +78,44 @@ func TestConfigInitDirectWritesModeSpecificTemplate(t *testing.T) {
 	if strings.Contains(text, `"relay"`) {
 		t.Fatalf("direct template contains relay: %s", text)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	root = newRootCommand(func(string, string, string) error { return nil })
 	root.SetArgs([]string{"config", "init", "--mode", "direct", "--path", path})
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "已存在") {
 		t.Fatalf("second init error = %v", err)
+	}
+	afterNoForce, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterNoForce) != text || info.Mode().Perm() != 0o644 {
+		t.Fatalf("no-force init changed existing file: mode=%o contentChanged=%t", info.Mode().Perm(), string(afterNoForce) != text)
+	}
+
+	root = newRootCommand(func(string, string, string) error { return nil })
+	root.SetArgs([]string{"config", "init", "--mode", "direct", "--path", path, "--force"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("forced init: %v", err)
+	}
+	info, err = os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("forced template permissions: info=%v err=%v", info, err)
+	}
+}
+
+func TestInitRunCommandUsesModeOnlyForDefaultPath(t *testing.T) {
+	if got := initRunCommand("direct", "", "/config/WebTerm Agent/direct.json"); got != "webterm-agent run --mode direct" {
+		t.Fatalf("default command = %q", got)
+	}
+	got := initRunCommand("direct", "./my-direct.json", "my direct.json")
+	if got != `webterm-agent run --config "my direct.json"` {
+		t.Fatalf("custom command = %q", got)
 	}
 }

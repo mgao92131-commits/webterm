@@ -72,6 +72,16 @@ func TestSaveTemplateDoesNotOverwrite(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("template permissions: info=%v err=%v", info, err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveTemplate(path, NewDirectInitTemplate()); err != nil {
+		t.Fatalf("SaveTemplate overwrite: %v", err)
+	}
+	info, err = os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("overwritten template permissions: info=%v err=%v", info, err)
+	}
 }
 
 func TestSelectModeInteractively(t *testing.T) {
@@ -83,12 +93,24 @@ func TestSelectModeInteractively(t *testing.T) {
 	if err != nil || mode != ModeRelay {
 		t.Fatalf("relay selection mode=%q err=%v", mode, err)
 	}
-	if _, err := selectModeInteractively(strings.NewReader("0\n"), new(strings.Builder)); err == nil {
-		t.Fatal("exit selection should return an error")
+	if _, err := selectModeInteractively(strings.NewReader("0\n"), new(strings.Builder)); !errors.Is(err, ErrUserCancelled) {
+		t.Fatalf("exit selection error = %v, want cancellation", err)
+	}
+	mode, err = selectModeInteractively(strings.NewReader("1abc\n1\n"), new(strings.Builder))
+	if err != nil || mode != ModeDirect {
+		t.Fatalf("invalid then direct selection mode=%q err=%v", mode, err)
+	}
+	if _, err := selectModeInteractively(strings.NewReader(""), new(strings.Builder)); !errors.Is(err, ErrInputClosed) {
+		t.Fatalf("empty EOF error = %v, want input closed", err)
+	}
+	mode, err = selectModeInteractively(strings.NewReader("1"), new(strings.Builder))
+	if err != nil || mode != ModeDirect {
+		t.Fatalf("nonempty EOF selection mode=%q err=%v", mode, err)
 	}
 }
 
 func TestResolveRunConfigExplicitPathAndMode(t *testing.T) {
+	t.Setenv("WEBTERM_AGENT_MODE", string(ModeRelay))
 	path := filepath.Join(t.TempDir(), "my-agent.json")
 	if err := os.WriteFile(path, []byte(`{"mode":"direct"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -104,5 +126,22 @@ func TestResolveRunConfigExplicitPathAndMode(t *testing.T) {
 		// Selection is intentionally separate from file validation; mismatch is
 		// reported by LoadStrict after this step.
 		t.Fatalf("selection should not parse runtime fields: %v", err)
+	}
+	selection, err = ResolveRunConfig(path, "", false)
+	if err != nil || selection.Mode != "" {
+		t.Fatalf("explicit path should ignore env mode: selection=%#v err=%v", selection, err)
+	}
+}
+
+func TestResolveRunConfigEnvPathIgnoresEnvMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "direct.json")
+	t.Setenv("WEBTERM_AGENT_CONFIG", path)
+	t.Setenv("WEBTERM_AGENT_MODE", string(ModeRelay))
+	selection, err := ResolveRunConfig("", "", false)
+	if err != nil {
+		t.Fatalf("ResolveRunConfig: %v", err)
+	}
+	if selection.Path != path || selection.Mode != "" {
+		t.Fatalf("selection = %#v, want explicit env path without mode constraint", selection)
 	}
 }

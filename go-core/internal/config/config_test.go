@@ -351,6 +351,45 @@ func TestDirectDoesNotRequireRelayConfig(t *testing.T) {
 	}
 }
 
+func TestLoadStrictExplicitConfigIgnoresEnvironmentMode(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_MODE", string(ModeRelay))
+	path := writeConfigFile(t, directConfigJSON)
+	cfg, err := LoadStrict(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("explicit direct config was constrained by env mode: %v", err)
+	}
+	if cfg.Mode != ModeDirect {
+		t.Fatalf("Mode = %q, want direct", cfg.Mode)
+	}
+}
+
+func TestLoadStrictEnvironmentConfigIgnoresEnvironmentMode(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, directConfigJSON)
+	t.Setenv("WEBTERM_AGENT_CONFIG", path)
+	t.Setenv("WEBTERM_AGENT_MODE", string(ModeRelay))
+	cfg, err := LoadStrict(Options{})
+	if err != nil {
+		t.Fatalf("environment-selected direct config was constrained by env mode: %v", err)
+	}
+	if cfg.Mode != ModeDirect {
+		t.Fatalf("Mode = %q, want direct", cfg.Mode)
+	}
+}
+
+func TestExplicitModeWinsOverEnvironmentModeForDefaultPath(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_MODE", string(ModeRelay))
+	selection, err := ResolveRunConfig("", ModeDirect, false)
+	if err != nil {
+		t.Fatalf("ResolveRunConfig: %v", err)
+	}
+	if selection.Mode != ModeDirect || !strings.HasSuffix(filepath.ToSlash(selection.Path), "/WebTerm Agent/direct.json") {
+		t.Fatalf("selection = %#v, want direct default path", selection)
+	}
+}
+
 // relay 模式不校验 direct 字段。
 func TestRelayDoesNotRequireDirectConfig(t *testing.T) {
 	clearConfigEnv(t)

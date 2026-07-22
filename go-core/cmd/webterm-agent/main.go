@@ -81,12 +81,18 @@ func noArgs(_ *cobra.Command, args []string) error {
 func runAgent(configPath, ipcEndpoint, mode string) error {
 	selection, err := config.ResolveRunConfig(configPath, config.Mode(mode), isInteractiveTerminal())
 	if errors.Is(err, config.ErrNoConfig) && isInteractiveTerminal() {
-		fmt.Println("欢迎使用 WebTerm Agent")
+		fmt.Fprintln(os.Stderr, "欢迎使用 WebTerm Agent")
 		selected, selectErr := config.SelectModeInteractively()
+		if errors.Is(selectErr, config.ErrUserCancelled) {
+			return nil
+		}
 		if selectErr != nil {
 			return usageError{selectErr}
 		}
 		return createInitTemplate(selected, "", false)
+	}
+	if errors.Is(err, config.ErrUserCancelled) {
+		return nil
 	}
 	if err != nil {
 		return usageError{err}
@@ -150,6 +156,9 @@ func configCommand() *cobra.Command {
 				return usageError{errors.New("当前环境不能交互选择模式。请明确指定：webterm-agent config init --mode direct 或 --mode relay")}
 			}
 			selected, err = config.SelectModeInteractively()
+			if errors.Is(err, config.ErrUserCancelled) {
+				return nil
+			}
 			if err != nil {
 				return usageError{err}
 			}
@@ -302,8 +311,16 @@ func createInitTemplate(mode config.Mode, requestedPath string, force bool) erro
 	if err := config.SaveTemplate(path, template); err != nil {
 		return err
 	}
-	fmt.Printf("已生成 %s 配置模板：\n\n  %s\n\n请编辑配置文件后运行：\n\n  webterm-agent run --mode %s\n", modeDisplayName(mode), filepath.Clean(path), mode)
+	runCommand := initRunCommand(mode, requestedPath, path)
+	fmt.Printf("已生成 %s 配置模板：\n\n  %s\n\n请编辑配置文件后运行：\n\n  %s\n", modeDisplayName(mode), filepath.Clean(path), runCommand)
 	return nil
+}
+
+func initRunCommand(mode config.Mode, requestedPath, path string) string {
+	if strings.TrimSpace(requestedPath) == "" {
+		return fmt.Sprintf("webterm-agent run --mode %s", mode)
+	}
+	return fmt.Sprintf("webterm-agent run --config %q", filepath.Clean(path))
 }
 
 func modeDisplayName(mode config.Mode) string {
@@ -314,7 +331,7 @@ func modeDisplayName(mode config.Mode) string {
 }
 
 func isInteractiveTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stderr.Fd()))
 }
 func versionCommand(_ *cobra.Command) *cobra.Command {
 	return &cobra.Command{Use: "version", Short: "显示版本", Run: func(_ *cobra.Command, _ []string) { fmt.Println(version) }}

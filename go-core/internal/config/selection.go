@@ -2,12 +2,12 @@ package config
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +15,8 @@ var (
 	ErrNoConfig        = errors.New("未找到 Agent 配置")
 	ErrNonInteractive  = errors.New("当前环境不能交互选择模式")
 	ErrModeUnavailable = errors.New("必须选择 direct 或 relay 模式")
+	ErrUserCancelled   = errors.New("用户取消操作")
+	ErrInputClosed     = errors.New("输入已关闭")
 )
 
 // ConfigSelection 是模式选择阶段的结果。此阶段只决定文件，不加载运行时
@@ -86,32 +88,39 @@ func DetectAvailableConfigs() ([]ConfigSelection, error) {
 
 // SelectConfigInteractively 从终端选择一个已存在的模式配置。
 func SelectConfigInteractively(configs []ConfigSelection) (ConfigSelection, error) {
-	return selectConfigInteractively(os.Stdin, os.Stdout, configs)
+	return selectConfigInteractively(os.Stdin, os.Stderr, configs)
 }
 
 // SelectModeInteractively 用于首次初始化或运行时尚未找到任何配置的场景。
 func SelectModeInteractively() (Mode, error) {
-	return selectModeInteractively(os.Stdin, os.Stdout)
+	return selectModeInteractively(os.Stdin, os.Stderr)
 }
 
 func selectModeInteractively(in io.Reader, out io.Writer) (Mode, error) {
+	reader := bufio.NewReader(in)
 	fmt.Fprintln(out, "请选择 Agent 接入模式：")
 	fmt.Fprintln(out, "\n  1. Direct － Android 直接连接本机")
 	fmt.Fprintln(out, "  2. Relay  － 通过中转服务器连接")
 	fmt.Fprintln(out, "  0. 退出")
-	choice, err := readChoice(in, out, "\n请选择 [1/2/0]: ")
-	if err != nil {
-		return "", err
-	}
-	switch choice {
-	case 1:
-		return ModeDirect, nil
-	case 2:
-		return ModeRelay, nil
-	case 0:
-		return "", errors.New("已退出")
-	default:
-		return "", errors.New("选择无效：请输入 1、2 或 0")
+	for {
+		choice, err := readChoice(reader, out, "\n请选择 [1/2/0]: ")
+		if err != nil {
+			if errors.Is(err, ErrInputClosed) {
+				return "", err
+			}
+			fmt.Fprintln(out, "输入无效，请重新选择。")
+			continue
+		}
+		switch choice {
+		case 1:
+			return ModeDirect, nil
+		case 2:
+			return ModeRelay, nil
+		case 0:
+			return "", ErrUserCancelled
+		default:
+			fmt.Fprintln(out, "请输入 1、2 或 0。")
+		}
 	}
 }
 
@@ -124,22 +133,48 @@ func selectConfigInteractively(in io.Reader, out io.Writer, configs []ConfigSele
 		fmt.Fprintf(out, "\n  %d. %s\n     %s\n", i+1, modeDisplayName(selection.Mode), selection.Path)
 	}
 	fmt.Fprintln(out, "\n  0. 退出")
-	choice, err := readChoice(in, out, fmt.Sprintf("请选择 [1/%d/0]: ", len(configs)))
-	if err != nil {
-		return ConfigSelection{}, err
+	reader := bufio.NewReader(in)
+	for {
+		choice, err := readChoice(reader, out, fmt.Sprintf("请选择 [1-%d/0]: ", len(configs)))
+		if err != nil {
+			if errors.Is(err, ErrInputClosed) {
+				return ConfigSelection{}, err
+			}
+			fmt.Fprintln(out, "输入无效，请重新选择。")
+			continue
+		}
+		if choice == 0 {
+			return ConfigSelection{}, ErrUserCancelled
+		}
+		if choice < 1 || choice > len(configs) {
+			fmt.Fprintln(out, "请输入列表中的编号或 0。")
+			continue
+		}
+		return configs[choice-1], nil
 	}
-	if choice == 0 {
-		return ConfigSelection{}, errors.New("已退出")
-	}
-	if choice < 1 || choice > len(configs) {
-		return ConfigSelection{}, errors.New("选择无效：请输入列表中的编号")
-	}
-	return configs[choice-1], nil
 }
 
 // ResolveRunConfig 按最终优先级选择配置文件。显式模式只决定默认文件，
 // 不覆盖文件内的 mode；文件 mode 的一致性由 LoadStrict 最终校验。
 func ResolveRunConfig(explicitPath string, explicitMode Mode, interactive bool) (ConfigSelection, error) {
+	if explicitMode != "" {
+		var err error
+		explicitMode, err = ParseMode(string(explicitMode))
+		if err != nil {
+			return ConfigSelection{}, err
+		}
+	}
+
+	path := strings.TrimSpace(explicitPath)
+	if path != "" {
+		return ConfigSelection{Mode: explicitMode, Path: path}, nil
+	}
+
+	path = strings.TrimSpace(os.Getenv("WEBTERM_AGENT_CONFIG"))
+	if path != "" {
+		return ConfigSelection{Mode: explicitMode, Path: path}, nil
+	}
+
 	selectedMode := explicitMode
 	if selectedMode == "" {
 		selectedMode = Mode(os.Getenv("WEBTERM_AGENT_MODE"))
@@ -150,18 +185,6 @@ func ResolveRunConfig(explicitPath string, explicitMode Mode, interactive bool) 
 		if err != nil {
 			return ConfigSelection{}, err
 		}
-	}
-
-	path := strings.TrimSpace(explicitPath)
-	if path == "" {
-		path = strings.TrimSpace(os.Getenv("WEBTERM_AGENT_CONFIG"))
-	}
-	if path != "" {
-		selection := ConfigSelection{Mode: selectedMode, Path: path}
-		if selection.Mode == "" {
-			selection.Mode = modeFromFile(path)
-		}
-		return selection, nil
 	}
 
 	if selectedMode != "" {
@@ -192,20 +215,6 @@ func ResolveRunConfig(explicitPath string, explicitMode Mode, interactive bool) 
 	}
 }
 
-func modeFromFile(path string) Mode {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var header struct {
-		Mode Mode `json:"mode"`
-	}
-	if json.Unmarshal(data, &header) != nil {
-		return ""
-	}
-	return header.Mode
-}
-
 func modeDisplayName(mode Mode) string {
 	if mode == ModeDirect {
 		return "Direct"
@@ -213,8 +222,7 @@ func modeDisplayName(mode Mode) string {
 	return "Relay"
 }
 
-func readChoice(in io.Reader, out io.Writer, prompt string) (int, error) {
-	reader := bufio.NewReader(in)
+func readChoice(reader *bufio.Reader, out io.Writer, prompt string) (int, error) {
 	fmt.Fprint(out, prompt)
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -222,10 +230,13 @@ func readChoice(in io.Reader, out io.Writer, prompt string) (int, error) {
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
+		if errors.Is(err, io.EOF) {
+			return 0, ErrInputClosed
+		}
 		return 0, errors.New("选择无效")
 	}
-	var choice int
-	if _, err := fmt.Sscanf(line, "%d", &choice); err != nil {
+	choice, parseErr := strconv.Atoi(line)
+	if parseErr != nil {
 		return 0, errors.New("选择无效")
 	}
 	return choice, nil
