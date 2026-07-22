@@ -99,13 +99,13 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void trimsTerminalPaddingButPreservesIndentationAndInternalSpaces() {
+  public void trimsTerminalPaddingAndUsesIndentationForContinuation() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, "  alpha  beta    "),
         screenRow(1, "    gamma       ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 16)).normalized();
-    assertEquals("  alpha  beta\n    gamma", extract(sel, Collections.emptyList(), screen));
+    assertEquals("alpha  beta gamma", extract(sel, Collections.emptyList(), screen));
   }
 
   @Test
@@ -132,13 +132,13 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void joinsVisualWrapAtRightEdgeWhenWrappedFlagIsMissing() {
+  public void keepsUnmarkedUnindentedShortRowsSeparate() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, false, "1234567890"),
         screenRow(1, false, "continued ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
-    assertEquals("1234567890continued", extract(sel, Collections.emptyList(), screen));
+    assertEquals("1234567890\ncontinued", extract(sel, Collections.emptyList(), screen));
   }
 
   @Test
@@ -185,6 +185,18 @@ public class TerminalSelectionTextExtractorTest {
     TerminalLine[] screen = new TerminalLine[] { screenRow(0, "cccc    ") };
     TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 2)).normalized();
     assertEquals("aaaa\nbbbb\ncc", extract(sel, history, screen));
+  }
+
+  @Test
+  public void joinsListContinuationAcrossHistoryAndScreenBoundary() {
+    List<TerminalLine> history = Arrays.asList(
+        historyLine(1, "- C1 第一项"));
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, "  续行"),
+        screenRow(1, "- C2 第二项")
+    };
+    TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(1, 30)).normalized();
+    assertEquals("- C1 第一项续行\n- C2 第二项", extract(sel, history, screen));
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {

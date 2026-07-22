@@ -5,6 +5,9 @@ import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 把 {@link TerminalSelection} 转换为可复制到剪贴板的纯文本。
  *
@@ -23,36 +26,28 @@ final class TerminalSelectionTextExtractor {
    * @param screen    活动屏幕行数组；可能为 null
    */
   static String extract(TerminalSelection selection, TerminalHistorySnapshot history, TerminalLine[] screen) {
-    SelectionTextBuilder output = new SelectionTextBuilder(screenColumns(screen));
+    List<CopyLine> lines = new ArrayList<>();
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
 
     if (start.historySeq != 0) {
       if (end.historySeq != 0) {
         // 历史内部选择。
-        appendHistoryRange(output, start.historySeq, end.historySeq, start.col, end.col, history);
+        appendHistoryRange(lines, start.historySeq, end.historySeq, start.col, end.col, history);
       } else {
         // 起点在历史、终点在屏幕：先取到历史末尾，再取屏幕开头到终点。
-        appendHistoryRange(output, start.historySeq, Long.MAX_VALUE, start.col, -1, history);
-        appendScreenRange(output, new TerminalSelection.Anchor(0, 0, 0), end, screen);
+        appendHistoryRange(lines, start.historySeq, Long.MAX_VALUE, start.col, -1, history);
+        appendScreenRange(lines, new TerminalSelection.Anchor(0, 0, 0), end, screen);
       }
     } else if (end.historySeq == 0 && start.screenRow == end.screenRow) {
-      appendScreenRow(output, screen, start.screenRow, start.col, end.col);
+      appendScreenRow(lines, screen, start.screenRow, start.col, end.col);
     } else {
-      appendScreenRange(output, start, end, screen);
+      appendScreenRange(lines, start, end, screen);
     }
-    return output.build();
+    return TerminalCopyBeautifier.beautify(lines);
   }
 
-  private static int screenColumns(TerminalLine[] screen) {
-    if (screen == null) return 0;
-    for (TerminalLine line : screen) {
-      if (line != null && line.length() > 0) return line.length();
-    }
-    return 0;
-  }
-
-  private static void appendHistoryRange(SelectionTextBuilder output, long startSeq, long endSeq,
+  private static void appendHistoryRange(List<CopyLine> lines, long startSeq, long endSeq,
                                          int startCol, int endCol, TerminalHistorySnapshot history) {
     if (history == null || history.isEmpty()) return;
     int startIndex = history.findSeqIndex(startSeq);
@@ -67,84 +62,41 @@ final class TerminalSelectionTextExtractor {
       if (seq > endSeq) break;
       int c0 = seq == startSeq ? startCol : 0;
       int c1 = seq == endSeq ? (endCol >= 0 ? endCol : line.length()) : line.length();
-      output.append(line, c0, c1, /* inferVisualWrap */ false);
+      appendLine(lines, line, c0, c1);
     }
   }
 
-  private static void appendScreenRange(SelectionTextBuilder output, TerminalSelection.Anchor start,
+  private static void appendScreenRange(List<CopyLine> lines, TerminalSelection.Anchor start,
                                         TerminalSelection.Anchor end, TerminalLine[] screen) {
     if (screen == null) return;
     for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
       int c0 = row == start.screenRow ? start.col : 0;
-      int c1 = row == end.screenRow ? end.col : (row < screen.length ? screen[row].length() : 0);
-      appendScreenRow(output, screen, row, c0, c1);
+      int c1 = row == end.screenRow ? end.col : screen[row] == null ? 0 : screen[row].length();
+      appendScreenRow(lines, screen, row, c0, c1);
     }
   }
 
-  private static void appendScreenRow(SelectionTextBuilder output, TerminalLine[] screen,
+  private static void appendScreenRow(List<CopyLine> lines, TerminalLine[] screen,
                                       int row, int colStart, int colEnd) {
     if (screen == null || row < 0 || row >= screen.length) return;
-    output.append(screen[row], colStart, colEnd, /* inferVisualWrap */ true);
+    appendLine(lines, screen[row], colStart, colEnd);
   }
 
-  private static void appendLineText(StringBuilder sb, TerminalLine line, int colStart, int colEnd) {
+  private static void appendLine(List<CopyLine> lines, TerminalLine line, int colStart, int colEnd) {
     if (line == null) return;
+    StringBuilder text = new StringBuilder();
     int start = Math.max(0, Math.min(line.length(), colStart));
     int end = Math.max(0, Math.min(line.length(), colEnd));
     for (int i = start; i < end; i++) {
       TerminalCell cell = line.at(i);
       if (cell == null || cell.isSpacer()) continue;
-      String text = cell.text;
-      sb.append(text == null || text.isEmpty() ? " " : text);
+      String value = cell.text;
+      text.append(value == null || value.isEmpty() ? " " : value);
     }
+    lines.add(new CopyLine(text.toString(), line.wrapped, hasLeadingWhitespace(text)));
   }
 
-  /**
-   * 按终端的逻辑行语义组装经过美化的复制文本：跳过空白物理行，
-   * 软换行的下一个物理行不加换行符，硬换行则去掉行尾填充。
-   * 对于少数丢失 wrapped 标记的行，内容顶到屏幕右边界时也视为视觉折行。
-   */
-  private static final class SelectionTextBuilder {
-    private final StringBuilder text = new StringBuilder();
-    private final int terminalColumns;
-    private boolean hasLine;
-    private boolean previousContinues;
-
-    SelectionTextBuilder(int terminalColumns) {
-      this.terminalColumns = terminalColumns;
-    }
-
-    void append(TerminalLine line, int colStart, int colEnd, boolean inferVisualWrap) {
-      if (line == null) return;
-
-      StringBuilder fragment = new StringBuilder();
-      appendLineText(fragment, line, colStart, colEnd);
-      boolean reachesRightEdge = inferVisualWrap
-          && terminalColumns > 0
-          && line.length() >= terminalColumns
-          && colEnd >= terminalColumns
-          && fragment.length() > 0
-          && fragment.charAt(fragment.length() - 1) != ' ';
-      if (!line.wrapped) trimTrailingSpaces(fragment, 0);
-
-      // 终端缓冲区的空白行不携带可复制内容，直接忽略。
-      if (fragment.length() == 0) return;
-
-      if (hasLine && !previousContinues) text.append('\n');
-      text.append(fragment);
-
-      hasLine = true;
-      previousContinues = line.wrapped || reachesRightEdge;
-    }
-
-    String build() {
-      return text.toString();
-    }
-
-    private static void trimTrailingSpaces(StringBuilder value, int contentStart) {
-      while (value.length() > contentStart && value.charAt(value.length() - 1) == ' ') {
-        value.setLength(value.length() - 1);
-      }
-    }
+  private static boolean hasLeadingWhitespace(CharSequence value) {
+    return value.length() > 0 && Character.isWhitespace(value.charAt(0));
   }
 }
