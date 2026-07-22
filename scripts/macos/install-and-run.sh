@@ -8,6 +8,10 @@ GO_DIR="$REPO_ROOT/go-core"
 HOME_DIR="${HOME:-}"
 APP_DIR="$HOME_DIR/Library/Application Support/WebTerm"
 BIN_DIR="$APP_DIR/bin"
+LOCAL_BIN_DIR="$HOME_DIR/.local/bin"
+WORKING_DIR="$HOME_DIR/Documents"
+USER_NAME="${USER:-$(id -un)}"
+AGENT_PATH="/usr/local/bin:/opt/homebrew/bin:$LOCAL_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
 PLIST="$HOME_DIR/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME_DIR/Library/Logs/WebTerm"
 
@@ -63,11 +67,23 @@ write_launch_agent() {
     <string>$MODE</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>$BIN_DIR</string>
+  <string>$WORKING_DIR</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
     <string>$HOME_DIR</string>
+    <key>USER</key>
+    <string>$USER_NAME</string>
+    <key>LOGNAME</key>
+    <string>$USER_NAME</string>
+    <key>SHELL</key>
+    <string>/bin/zsh</string>
+    <key>PATH</key>
+    <string>$AGENT_PATH</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>LC_CTYPE</key>
+    <string>UTF-8</string>
     <key>WEBTERM_AGENT_CONFIG</key>
     <string></string>
     <key>WEBTERM_AGENT_MODE</key>
@@ -103,6 +119,7 @@ stop_launch_agent() {
 [[ "$(uname -s)" == "Darwin" ]] || die "该脚本只能在 macOS 上运行"
 [[ -n "$HOME_DIR" ]] || die "无法确定 HOME"
 [[ -d "$GO_DIR" ]] || die "找不到 Go 项目目录：$GO_DIR"
+[[ -d "$WORKING_DIR" ]] || die "找不到默认终端工作目录：$WORKING_DIR"
 
 # 安装包只有一个模式参数，不使用调用方残留的配置选择环境变量。
 unset WEBTERM_AGENT_CONFIG WEBTERM_AGENT_MODE
@@ -156,6 +173,9 @@ echo "[5/6] 安装到固定目录"
 mkdir -p "$BIN_DIR"
 install -m 755 "$TMP_DIR/webterm-agent" "$BIN_DIR/webterm-agent"
 install -m 755 "$TMP_DIR/webterm" "$BIN_DIR/webterm"
+mkdir -p "$LOCAL_BIN_DIR"
+ln -sfn "$BIN_DIR/webterm" "$LOCAL_BIN_DIR/webterm"
+ln -sfn "$BIN_DIR/webterm-agent" "$LOCAL_BIN_DIR/webterm-agent"
 write_launch_agent
 
 echo "[6/6] 启动 LaunchAgent"
@@ -167,5 +187,8 @@ echo
 echo "Agent 已启动：$MODE"
 echo "Agent：$BIN_DIR/webterm-agent"
 echo "CLI：  $BIN_DIR/webterm"
+echo "命令： $LOCAL_BIN_DIR/webterm"
+echo "命令： $LOCAL_BIN_DIR/webterm-agent"
+echo "工作目录：$WORKING_DIR"
 echo "日志： $LOG_DIR/agent.out.log"
 echo "诊断：$BIN_DIR/webterm diagnostics summary"

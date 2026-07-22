@@ -73,9 +73,13 @@ Relay 至少需要填写：
 ~/Library/LaunchAgents/com.webterm.agent.plist
 ~/Library/Logs/WebTerm/agent.out.log
 ~/Library/Logs/WebTerm/agent.err.log
+~/.local/bin/webterm -> ~/Library/Application Support/WebTerm/bin/webterm
+~/.local/bin/webterm-agent -> ~/Library/Application Support/WebTerm/bin/webterm-agent
 ~~~
 
-LaunchAgent 使用完整绝对路径，并直接传入：
+LaunchAgent 使用完整绝对路径，直接启动 Agent，不经过 zsh、screen 或 nohup。
+默认工作目录为 `~/Documents`，并向 Agent 注入用户、zsh、PATH 和 UTF-8 环境。
+启动参数直接传入：
 
 ~~~text
 run --mode direct
@@ -88,6 +92,16 @@ run --mode relay
 ~~~
 
 它设置了 RunAtLoad 和 KeepAlive，因此登录后会自动启动，异常退出后会自动重启。
+
+安装完成后，新开的普通 zsh 也可以直接执行：
+
+~~~sh
+webterm devices
+webterm diagnostics summary
+webterm-agent --help
+~~~
+
+LaunchAgent 不会加载 `~/.zshrc`。因此通过 nvm、Conda 或其他 shell 初始化脚本加入的命令路径，需要显式加入 LaunchAgent 的 PATH，或使用固定路径安装。
 
 ## 切换模式
 
@@ -103,11 +117,11 @@ scripts/macos/install-and-run.sh direct
 ## 使用 CLI 和诊断
 
 ~~~sh
-"$HOME/Library/Application Support/WebTerm/bin/webterm" devices
-"$HOME/Library/Application Support/WebTerm/bin/webterm" diagnostics summary
+webterm devices
+webterm diagnostics summary
 ~~~
 
-Agent 与 CLI 安装在同一目录，Agent 内部查找相邻 CLI 时不依赖 PATH。
+Agent 与 CLI 安装在同一目录，Agent 内部查找相邻 CLI 时不依赖 PATH；`~/.local/bin` 中的软链接用于普通 zsh 直接调用。
 
 ## 卸载
 
