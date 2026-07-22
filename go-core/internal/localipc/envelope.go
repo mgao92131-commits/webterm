@@ -25,6 +25,7 @@ const (
 const (
 	DiagnosticsActionSummary = "summary"
 	DiagnosticsActionExport  = "export"
+	DiagnosticsActionState   = "state"
 )
 
 // Envelope is the only wire shape accepted by the local IPC service.

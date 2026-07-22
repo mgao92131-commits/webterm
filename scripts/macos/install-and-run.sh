@@ -116,6 +116,47 @@ stop_launch_agent() {
   fi
 }
 
+# relay_field 从 `webterm diagnostics state --json` 的输出中提取 relay.<field>。
+# 用 JSON 解析而非 grep 人类可读文本：bool 归一化为 true/false，缺失输出空串。
+relay_field() {
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+
+try:
+    data = json.loads(sys.argv[1])
+    value = data.get("relay", {}).get(sys.argv[2])
+except Exception:
+    sys.exit(1)
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif value is None:
+    print("")
+else:
+    print(value)
+PY
+}
+
+# verify_agent_ready 确认 Agent 不只是“进程存在”，而是真正连上了 Relay。
+# launchctl print 只能证明 LaunchAgent 进程在运行；relay 模式必须轮询本地 IPC
+# 的机器可读连接状态（最多 10 次、每次间隔 1 秒），凭据被拒或超时则明确失败。
+verify_agent_ready() {
+  [[ "$MODE" == "relay" ]] || return 0
+  local attempt output
+  for attempt in {1..10}; do
+    if output="$("$BIN_DIR/webterm" diagnostics state --json 2>/dev/null)"; then
+      if [[ "$(relay_field "$output" connected)" == "true" ]]; then
+        echo "Relay 已连接"
+        return 0
+      fi
+      if [[ "$(relay_field "$output" lastErrorKind)" == "auth_rejected" ]]; then
+        die "Agent 已启动，但 Relay 凭据被拒绝。请检查 relay.json 的 credential 是否与 Relay 数据库登记一致。"
+      fi
+    fi
+    sleep 1
+  done
+  die "Agent 进程已启动，但未能确认 Relay 连接成功。可运行：$BIN_DIR/webterm diagnostics state"
+}
+
 [[ "$(uname -s)" == "Darwin" ]] || die "该脚本只能在 macOS 上运行"
 [[ -n "$HOME_DIR" ]] || die "无法确定 HOME"
 [[ -d "$GO_DIR" ]] || die "找不到 Go 项目目录：$GO_DIR"
@@ -131,6 +172,10 @@ require_command open
 require_command plutil
 require_command install
 select_mode "$@"
+# relay 模式启动后用 python3 解析 `diagnostics state --json` 判断连接是否就绪。
+if [[ "$MODE" == "relay" ]]; then
+  require_command python3
+fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/webterm-macos.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -182,6 +227,8 @@ echo "[6/6] 启动 LaunchAgent"
 launchctl bootstrap "gui/$UID" "$PLIST"
 launchctl kickstart -k "gui/$UID/$LABEL"
 launchctl print "gui/$UID/$LABEL" >/dev/null
+# 进程存在不等于 Relay 已连接：relay 模式轮询连接状态确认真正就绪。
+verify_agent_ready
 
 echo
 echo "Agent 已启动：$MODE"

@@ -15,9 +15,10 @@ import (
 
 // fakeApplication 仅实现 diagnostics 路径所需方法；其余返回 nil（diagnostics 不会调用）。
 type fakeApplication struct {
-	summary    map[string]any
-	exportPath string
-	exportErr  error
+	summary     map[string]any
+	relayStatus map[string]any
+	exportPath  string
+	exportErr   error
 	// 记录请求是否携带 include_paths，供断言默认脱敏/显式恢复。
 	gotIncludePaths bool
 }
@@ -30,6 +31,7 @@ func (f *fakeApplication) DiagnosticsSummary(includePaths bool) map[string]any {
 	f.gotIncludePaths = includePaths
 	return f.summary
 }
+func (f *fakeApplication) DiagnosticsRelayStatus() map[string]any { return f.relayStatus }
 func (f *fakeApplication) ExportDiagnostics(exportDir string, includePaths bool) (string, error) {
 	f.gotIncludePaths = includePaths
 	return f.exportPath, f.exportErr
@@ -114,6 +116,32 @@ func TestDiagnosticsExportFailureReturnsError(t *testing.T) {
 	response := diagnosticsRoundTrip(t, app, mustDiagnosticsRequest(t, DiagnosticsRequest{Action: DiagnosticsActionExport}))
 	if response.Error != "export_failed" {
 		t.Fatalf("expected export_failed, got %q", response.Error)
+	}
+}
+
+func TestDiagnosticsStateOverIPC(t *testing.T) {
+	app := &fakeApplication{relayStatus: map[string]any{
+		"configured":    true,
+		"connected":     false,
+		"lastErrorKind": "auth_rejected",
+	}}
+	response := diagnosticsRoundTrip(t, app, mustDiagnosticsRequest(t, DiagnosticsRequest{Action: DiagnosticsActionState}))
+	if response.Type != TypeDiagnostics || response.Error != "" {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	var result DiagnosticsResponse
+	if err := DecodePayload(response.Payload, &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.Action != DiagnosticsActionState {
+		t.Errorf("action = %q, want state", result.Action)
+	}
+	relay, _ := result.Summary["relay"].(map[string]any)
+	if relay == nil {
+		t.Fatalf("missing relay status: %v", result.Summary)
+	}
+	if relay["configured"] != true || relay["connected"] != false || relay["lastErrorKind"] != "auth_rejected" {
+		t.Errorf("relay status not propagated: %v", relay)
 	}
 }
 

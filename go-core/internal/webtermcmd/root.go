@@ -185,7 +185,7 @@ func newNotify() *cobra.Command {
 
 func newDiagnostics() *cobra.Command {
 	diagnostics := &cobra.Command{Use: "diagnostics", Short: "查询或导出 Agent 诊断信息", Long: "通过正在运行的 webterm-agent 本地 IPC 查询诊断摘要或导出诊断包。前提：webterm-agent 正在运行。"}
-	diagnostics.AddCommand(newDiagnosticsSummary(), newDiagnosticsExport())
+	diagnostics.AddCommand(newDiagnosticsSummary(), newDiagnosticsExport(), newDiagnosticsState())
 	return diagnostics
 }
 
@@ -258,6 +258,51 @@ func newDiagnosticsExport() *cobra.Command {
 	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "诊断包中包含完整本地路径和地址（会话 ID、标题与目录），默认脱敏。输出可能带有敏感的本机诊断信息，分享前请人工检查（设备身份始终脱敏，不受此选项影响）")
 	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
 	return cmd
+}
+
+// newDiagnosticsState 输出机器可读的连接状态。--json 输出 {"relay":{...}}，
+// 供安装脚本等自动化流程判断 Relay 是否就绪，不再 grep 人类可读摘要。
+func newDiagnosticsState() *cobra.Command {
+	var socket string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "state", Short: "显示 Agent 连接状态（机器可读）", Long: "显示运行中 Agent 的 relay 连接状态（configured/connected/lastErrorKind）。--json 输出稳定结构，适合脚本判断连接是否就绪。", Example: "  webterm diagnostics state\n  webterm diagnostics state --json", Args: noArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			env, err := localipc.NewRequest(localipc.KindCommand, localipc.TypeDiagnostics, requestID(), localipc.DiagnosticsRequest{Action: localipc.DiagnosticsActionState})
+			if err != nil {
+				return err
+			}
+			responses, err := request(endpoint(socket), env)
+			if err != nil {
+				return diagnosticsConnError(err, socket)
+			}
+			if len(responses) != 1 {
+				return errors.New("Agent 返回了无效响应")
+			}
+			var result localipc.DiagnosticsResponse
+			if err := localipc.DecodePayload(responses[0].Payload, &result); err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.NewEncoder(os.Stdout).Encode(result.Summary)
+			}
+			printDiagnosticsState(os.Stdout, result.Summary)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "输出 JSON")
+	cmd.Flags().StringVar(&socket, "socket", "", "覆盖 Agent 本地 IPC 路径")
+	return cmd
+}
+
+// printDiagnosticsState 以人类可读形式输出 relay 连接状态。
+func printDiagnosticsState(w io.Writer, state map[string]any) {
+	relay, _ := state["relay"].(map[string]any)
+	if relay == nil {
+		fmt.Fprintln(w, "Relay\t<unavailable>")
+		return
+	}
+	fmt.Fprintf(w, "Relay\tconfigured=%v connected=%v lastErrorKind=%v\n",
+		relay["configured"], relay["connected"], relay["lastErrorKind"])
 }
 
 // diagnosticsConnError 为诊断请求失败补充“Agent 是否在运行”的明确提示。

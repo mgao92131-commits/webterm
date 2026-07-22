@@ -39,6 +39,36 @@ func TestDiagnosticsSummaryAgentNotRunning(t *testing.T) {
 	}
 }
 
+func TestPrintDiagnosticsState(t *testing.T) {
+	state := map[string]any{
+		"relay": map[string]any{
+			"configured":    true,
+			"connected":     false,
+			"lastErrorKind": "auth_rejected",
+		},
+	}
+	var buf bytes.Buffer
+	printDiagnosticsState(&buf, state)
+	out := buf.String()
+	for _, want := range []string{"configured=true", "connected=false", "lastErrorKind=auth_rejected"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("state output missing %q\noutput:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiagnosticsStateAgentNotRunning(t *testing.T) {
+	cmd := New()
+	cmd.SetArgs([]string{"diagnostics", "state", "--json", "--socket", "unix:/tmp/webterm-definitely-not-running.sock"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when agent not running")
+	}
+	if !strings.Contains(err.Error(), "webterm-agent") {
+		t.Errorf("error should hint about webterm-agent: %v", err)
+	}
+}
+
 // TestPrintDiagnosticsSummaryMarksNotInstrumented 未埋点的指标能力必须显示
 // not instrumented，而不是把恒 0 的计数当真实观测输出。
 func TestPrintDiagnosticsSummaryMarksNotInstrumented(t *testing.T) {
