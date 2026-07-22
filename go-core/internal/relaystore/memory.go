@@ -58,6 +58,17 @@ type VerificationCode struct {
 	CreatedAt      time.Time
 }
 
+// PendingRegistration 保存尚未完成邮箱验证的注册申请，不代表正式用户。
+// PasswordHash 和 CodeHash 均为不可逆摘要，Email 是规范化后的邮箱地址。
+type PendingRegistration struct {
+	Email          string
+	PasswordHash   string
+	CodeHash       string
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	LastCodeSentAt time.Time
+}
+
 type Token struct {
 	Value     string
 	UserID    string
@@ -78,6 +89,7 @@ type MemoryStore struct {
 	devices       map[string]Device
 	trusted       map[string]TrustedDevice
 	verifications map[string]VerificationCode
+	pending       map[string]PendingRegistration
 	tokens        map[string]Token
 	refreshTokens map[string]Token
 }
@@ -94,6 +106,7 @@ func NewMemoryStore() *MemoryStore {
 		devices:       make(map[string]Device),
 		trusted:       make(map[string]TrustedDevice),
 		verifications: make(map[string]VerificationCode),
+		pending:       make(map[string]PendingRegistration),
 		tokens:        make(map[string]Token),
 		refreshTokens: make(map[string]Token),
 	}
@@ -145,6 +158,9 @@ func NewPersistentStore(path string) (*MemoryStore, error) {
 	for _, code := range snapshot.VerificationCodes {
 		store.verifications[code.ID] = code
 	}
+	for _, registration := range snapshot.PendingRegistrations {
+		store.pending[registration.Email] = registration
+	}
 	for _, token := range snapshot.Tokens {
 		store.tokens[token.Value] = token
 	}
@@ -155,16 +171,17 @@ func NewPersistentStore(path string) (*MemoryStore, error) {
 }
 
 type storeSnapshot struct {
-	NextUserID        int                `json:"nextUserId"`
-	NextDeviceID      int                `json:"nextDeviceId"`
-	NextTrustedID     int                `json:"nextTrustedId"`
-	NextVerifyID      int                `json:"nextVerifyId"`
-	Users             []User             `json:"users"`
-	Devices           []Device           `json:"devices"`
-	TrustedDevices    []TrustedDevice    `json:"trustedDevices"`
-	VerificationCodes []VerificationCode `json:"verificationCodes"`
-	Tokens            []Token            `json:"tokens"`
-	RefreshTokens     []Token            `json:"refreshTokens"`
+	NextUserID           int                   `json:"nextUserId"`
+	NextDeviceID         int                   `json:"nextDeviceId"`
+	NextTrustedID        int                   `json:"nextTrustedId"`
+	NextVerifyID         int                   `json:"nextVerifyId"`
+	Users                []User                `json:"users"`
+	Devices              []Device              `json:"devices"`
+	TrustedDevices       []TrustedDevice       `json:"trustedDevices"`
+	VerificationCodes    []VerificationCode    `json:"verificationCodes"`
+	PendingRegistrations []PendingRegistration `json:"pendingRegistrations"`
+	Tokens               []Token               `json:"tokens"`
+	RefreshTokens        []Token               `json:"refreshTokens"`
 }
 
 func (store *MemoryStore) saveLocked() error {
@@ -172,16 +189,17 @@ func (store *MemoryStore) saveLocked() error {
 		return nil
 	}
 	snapshot := storeSnapshot{
-		NextUserID:        store.nextUserID,
-		NextDeviceID:      store.nextDeviceID,
-		NextTrustedID:     store.nextTrustedID,
-		NextVerifyID:      store.nextVerifyID,
-		Users:             make([]User, 0, len(store.users)),
-		Devices:           make([]Device, 0, len(store.devices)),
-		TrustedDevices:    make([]TrustedDevice, 0, len(store.trusted)),
-		VerificationCodes: make([]VerificationCode, 0, len(store.verifications)),
-		Tokens:            make([]Token, 0, len(store.tokens)),
-		RefreshTokens:     make([]Token, 0, len(store.refreshTokens)),
+		NextUserID:           store.nextUserID,
+		NextDeviceID:         store.nextDeviceID,
+		NextTrustedID:        store.nextTrustedID,
+		NextVerifyID:         store.nextVerifyID,
+		Users:                make([]User, 0, len(store.users)),
+		Devices:              make([]Device, 0, len(store.devices)),
+		TrustedDevices:       make([]TrustedDevice, 0, len(store.trusted)),
+		VerificationCodes:    make([]VerificationCode, 0, len(store.verifications)),
+		PendingRegistrations: make([]PendingRegistration, 0, len(store.pending)),
+		Tokens:               make([]Token, 0, len(store.tokens)),
+		RefreshTokens:        make([]Token, 0, len(store.refreshTokens)),
 	}
 	for _, user := range store.users {
 		snapshot.Users = append(snapshot.Users, user)
@@ -194,6 +212,9 @@ func (store *MemoryStore) saveLocked() error {
 	}
 	for _, code := range store.verifications {
 		snapshot.VerificationCodes = append(snapshot.VerificationCodes, code)
+	}
+	for _, registration := range store.pending {
+		snapshot.PendingRegistrations = append(snapshot.PendingRegistrations, registration)
 	}
 	for _, token := range store.tokens {
 		snapshot.Tokens = append(snapshot.Tokens, token)

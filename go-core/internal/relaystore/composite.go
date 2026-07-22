@@ -7,6 +7,7 @@ type ControlStore interface {
 	TokenStore
 	TrustedDeviceStore
 	VerificationStore
+	PendingRegistrationStore
 }
 
 // GatewayStore is the composite interface needed by the relaygateway package.

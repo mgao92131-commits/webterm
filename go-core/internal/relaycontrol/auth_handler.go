@@ -101,17 +101,43 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" {
-		username = strings.TrimSpace(req.Email)
-	}
-	if username == "" || len(req.Password) < 6 {
+	email := relaystore.NormalizeEmail(req.Email)
+	if email == "" || len(req.Password) < 6 {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
 	if server.requireEmailOTP() && !server.otpDeliveryConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "email verification delivery is not configured")
 		return
+	}
+	if server.requireEmailOTP() {
+		if _, exists := server.store.FindUserByUsername(email); exists {
+			writeError(w, http.StatusConflict, "user already exists")
+			return
+		}
+		code := newVerificationCode()
+		if code == "" {
+			writeError(w, http.StatusInternalServerError, "verification code generation failed")
+			return
+		}
+		if err := server.store.CreatePendingRegistration(email, req.Password, code, verificationTTL); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if err := server.otpSender.SendOTP(email, verifyEmailPurpose, code); err != nil {
+			_ = server.store.DeletePendingRegistration(email)
+			writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"verificationRequired": true,
+			"verificationSent":     true,
+		})
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = email
 	}
 	role := "user"
 	if server.store.UserCount() == 0 {
@@ -122,28 +148,12 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	emailVerificationRequired := server.requireEmailOTP()
-	if emailVerificationRequired {
-		if err := server.sendVerificationCode(user, verifyEmailPurpose, "", false); err != nil {
-			if errors.Is(err, errOTPDeliveryFailed) {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-					"error":                      "account created but verification email delivery failed",
-					"accountCreated":             true,
-					"emailVerificationRequired":  true,
-					"verificationDeliveryFailed": true,
-				})
-				return
-			}
-			writeStoreError(w, err)
-			return
-		}
-	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                        user.ID,
 		"email":                     user.Username,
 		"username":                  user.Username,
 		"role":                      user.Role,
-		"emailVerificationRequired": emailVerificationRequired,
+		"emailVerificationRequired": false,
 	})
 }
 
@@ -162,36 +172,49 @@ func (server *Server) handleResendEmailVerification(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	email := strings.TrimSpace(req.Email)
+	email := relaystore.NormalizeEmail(req.Email)
 	if email == "" || req.Password == "" {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	user, err := server.store.AuthenticateUser(email, req.Password)
-	if err != nil {
+	pending, ok := server.store.FindPendingRegistration(email)
+	if !ok || !time.Now().Before(pending.ExpiresAt) || !relaystore.VerifyPassword(req.Password, pending.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	if !user.EmailVerifiedAt.IsZero() {
-		writeJSON(w, http.StatusOK, map[string]any{"sent": true})
+	if !pending.LastCodeSentAt.IsZero() && time.Now().Before(pending.LastCodeSentAt.Add(resendOTPWindow)) {
+		writeError(w, http.StatusTooManyRequests, "otp recently sent")
 		return
 	}
-	if err := server.sendVerificationCode(user, verifyEmailPurpose, "", true); err != nil {
+	code := newVerificationCode()
+	if code == "" {
+		writeError(w, http.StatusInternalServerError, "verification code generation failed")
+		return
+	}
+	if server.otpSender == nil {
+		writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+		return
+	}
+	if err := server.otpSender.SendOTP(email, verifyEmailPurpose, code); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+		return
+	}
+	if err := server.store.ResendPendingRegistrationCode(email, req.Password, code, verificationTTL, resendOTPWindow); err != nil {
 		if errors.Is(err, relaystore.ErrConflict) {
 			writeError(w, http.StatusTooManyRequests, "otp recently sent")
 			return
 		}
-		if errors.Is(err, errOTPDeliveryFailed) {
-			writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+		if errors.Is(err, relaystore.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "verification email could not be sent")
+		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sent": true})
 }
 
-// handleVerifyEmail 消费注册阶段签发的 email_verify 验证码，标记邮箱已验证。
+// handleVerifyEmail 消费注册阶段签发的 email_verify 验证码并创建正式用户。
 // 该接口只负责验证，不签发登录 Cookie：验证成功后由客户端调用正常登录接口。
 func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -212,21 +235,16 @@ func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "email and code are required")
 		return
 	}
-	// 账号不存在、验证码错误或过期均返回统一错误，避免泄露账号存在性；不记录验证码。
-	user, ok := server.store.FindUserByUsername(email)
-	if !ok {
+	// 不存在、错误或过期的待验证记录统一返回相同错误；不记录验证码。
+	user, err := server.store.CompletePendingRegistration(email, code, time.Now())
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid verification code")
 		return
 	}
-	if _, err := server.store.ConsumeVerificationCode(user.ID, verifyEmailPurpose, code, "", time.Now()); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid verification code")
-		return
-	}
-	if _, err := server.store.MarkEmailVerified(user.ID, time.Now()); err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"verified": true})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"accountCreated": true,
+		"email":          user.Username,
+	})
 }
 
 func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

@@ -45,12 +45,10 @@ public final class RelayLoginScreenBuilder {
         void onLoginSuccess(String url, String cookie);
         void onError(String message);
         /**
-         * 注册成功但需要邮箱验证（或需要回到登录页完成设备验证）时的中性提示，
+         * 验证码已发送但正式账号尚未创建（或需要回到登录页完成设备验证）时的中性提示，
          * 不代表失败；默认无操作以兼容旧实现。
          */
         default void onEmailVerificationRequired(String message) {}
-        /** 账号已创建，但邮箱验证码投递失败；页面仍应进入邮箱验证恢复流程。 */
-        default void onEmailVerificationDeliveryFailed(String message) { onError(message); }
     }
 
     public static final class RelayLoginScreen {
@@ -554,28 +552,6 @@ public final class RelayLoginScreenBuilder {
                         submitBtn.setEnabled(true);
                         msgText.setText(message);
                         msgText.setTextColor(DesignTokens.SUCCESS);
-                        msgText.setVisibility(View.VISIBLE);
-                    });
-                }
-                @Override
-                public void onEmailVerificationDeliveryFailed(String message) {
-                    activity.runOnUiThread(() -> {
-                        // 账号已经创建，进入同一邮箱验证状态，允许用户通过重发恢复。
-                        mode[0] = RegisterMode.EMAIL_VERIFY;
-                        authBaseUrl[0] = baseUrl;
-                        authEmail[0] = email;
-                        authPassword[0] = password;
-                        urlInput.setEnabled(false);
-                        emailInput.setEnabled(false);
-                        passwordInput.setVisibility(View.GONE);
-                        otpInput.setText("");
-                        otpInput.setVisibility(View.VISIBLE);
-                        otpInput.requestFocus();
-                        resendLink.setVisibility(View.VISIBLE);
-                        submitBtn.setText("验证邮箱并登录");
-                        submitBtn.setEnabled(true);
-                        msgText.setText(message);
-                        msgText.setTextColor(DesignTokens.DANGER);
                         msgText.setVisibility(View.VISIBLE);
                     });
                 }

@@ -293,12 +293,9 @@ public final class RelayService {
         api.login(baseUrl, oldCookie, email, password, callback);
     }
 
-    /**
-     * 用户在注册页发起注册。username 留空，由 Go Relay 回退使用 email，
-     * 同时兼容要求 username 字段的历史后端。
-     */
+    /** 用户在注册页发起注册；邮箱验证模式不发送 username。 */
     public void onRegister(String baseUrl, String email, String password, WebTermApi.RegisterCallback callback) {
-        api.register(baseUrl, email, "", password, callback);
+        api.register(baseUrl, email, password, callback);
     }
 
     /** OTP 验证必须使用发起登录时的同一 {@code baseUrl}，由调用方固定传入。 */

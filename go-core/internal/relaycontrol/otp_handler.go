@@ -22,8 +22,9 @@ const (
 	verifyEmailPurpose = "email_verify"
 	newDevicePurpose   = "new_device"
 	verificationTTL    = 10 * time.Minute
-	resendOTPWindow    = time.Minute
 )
+
+var resendOTPWindow = time.Minute
 
 var errOTPDeliveryFailed = errors.New("otp delivery failed")
 

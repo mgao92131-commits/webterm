@@ -49,3 +49,12 @@ type VerificationStore interface {
 	HasRecentVerificationCode(userID, purpose, targetDeviceID string, since time.Time) bool
 	ConsumeVerificationCode(userID, purpose, code, targetDeviceID string, at time.Time) (VerificationCode, error)
 }
+
+// PendingRegistrationStore manages registrations that have not passed email verification.
+type PendingRegistrationStore interface {
+	CreatePendingRegistration(email, password, code string, ttl time.Duration) error
+	FindPendingRegistration(email string) (PendingRegistration, bool)
+	DeletePendingRegistration(email string) error
+	ResendPendingRegistrationCode(email, password, code string, ttl, resendWindow time.Duration) error
+	CompletePendingRegistration(email, code string, at time.Time) (User, error)
+}

@@ -204,35 +204,35 @@ func TestRelayControlRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) 
 		"email":    "owner@example.com",
 		"password": "secret-password",
 	}, nil)
-	if response.Code != http.StatusCreated {
+	if response.Code != http.StatusAccepted {
 		t.Fatalf("register status = %d body=%s", response.Code, response.Body.String())
 	}
 	var body map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
-	if body["emailVerificationRequired"] != true {
-		t.Fatalf("register response = %#v, want emailVerificationRequired=true", body)
+	if body["verificationRequired"] != true || body["verificationSent"] != true {
+		t.Fatalf("register response = %#v, want verificationRequired/verificationSent=true", body)
 	}
 	if sender.count() != 1 || sender.last().purpose != verifyEmailPurpose || sender.last().email != "owner@example.com" {
 		t.Fatalf("otp sends = %#v, want email verify send", sender.sends)
 	}
-
-	login := postJSON(t, handler, "/api/auth/login", map[string]any{
-		"email":    "owner@example.com",
-		"password": "secret-password",
-	}, nil)
-	if login.Code != http.StatusForbidden {
-		t.Fatalf("login before email verification status = %d body=%s", login.Code, login.Body.String())
+	if _, exists := store.FindUserByUsername("owner@example.com"); exists {
+		t.Fatalf("register with email OTP created a formal user")
+	}
+	if pending, exists := store.FindPendingRegistration("owner@example.com"); !exists || pending.PasswordHash == "" || pending.CodeHash == "" {
+		t.Fatalf("pending registration missing or contains no hashes: %#v", pending)
 	}
 }
 
 func TestRelayControlResendEmailVerification(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	store := relaystore.NewMemoryStore()
-	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
-	if err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
+	oldWindow := resendOTPWindow
+	resendOTPWindow = 0
+	t.Cleanup(func() { resendOTPWindow = oldWindow })
+	if err := store.CreatePendingRegistration("owner@example.com", "secret-password", "111111", 10*time.Minute); err != nil {
+		t.Fatalf("CreatePendingRegistration returned error: %v", err)
 	}
 	sender := &recordingOTPSender{}
 	server := New(store, relayrouter.NewRegistry())
@@ -253,8 +253,11 @@ func TestRelayControlResendEmailVerification(t *testing.T) {
 	if body["sent"] != true || sender.count() != 1 {
 		t.Fatalf("resend response = %#v sends=%#v", body, sender.sends)
 	}
-	if sender.last().purpose != verifyEmailPurpose || sender.last().email != user.Username {
+	if sender.last().purpose != verifyEmailPurpose || sender.last().email != "owner@example.com" {
 		t.Fatalf("resend send = %#v, want email_verify for owner", sender.last())
+	}
+	if sender.last().code == "111111" {
+		t.Fatalf("resend did not generate a new code")
 	}
 }
 
@@ -286,30 +289,7 @@ func TestRelayControlResendEmailVerificationRejectsInvalidCredentialsUniformly(t
 	}
 }
 
-func TestRelayControlResendEmailVerificationSkipsVerifiedAccount(t *testing.T) {
-	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
-	store := relaystore.NewMemoryStore()
-	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
-	if err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
-	}
-	if _, err := store.MarkEmailVerified(user.ID, time.Now()); err != nil {
-		t.Fatalf("MarkEmailVerified returned error: %v", err)
-	}
-	sender := &recordingOTPSender{}
-	server := New(store, relayrouter.NewRegistry())
-	server.otpSender = sender
-	handler := server.Handler()
-
-	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
-		"email": "owner@example.com", "password": "secret-password",
-	}, nil)
-	if resend.Code != http.StatusOK || sender.count() != 0 {
-		t.Fatalf("verified resend status=%d body=%s sends=%#v", resend.Code, resend.Body.String(), sender.sends)
-	}
-}
-
-func TestRelayControlResendEmailVerificationRateLimits(t *testing.T) {
+func TestRelayControlResendEmailVerificationRejectsFormalAccountWithoutPendingRegistration(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	store := relaystore.NewMemoryStore()
 	if _, err := store.CreateUser("owner@example.com", "secret-password", "admin"); err != nil {
@@ -319,19 +299,66 @@ func TestRelayControlResendEmailVerificationRateLimits(t *testing.T) {
 	server := New(store, relayrouter.NewRegistry())
 	server.otpSender = sender
 	handler := server.Handler()
+
+	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "owner@example.com", "password": "secret-password",
+	}, nil)
+	if resend.Code != http.StatusUnauthorized || sender.count() != 0 {
+		t.Fatalf("verified resend status=%d body=%s sends=%#v", resend.Code, resend.Body.String(), sender.sends)
+	}
+}
+
+func TestRelayControlResendEmailVerificationRateLimits(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	if err := store.CreatePendingRegistration("owner@example.com", "secret-password", "111111", 10*time.Minute); err != nil {
+		t.Fatalf("CreatePendingRegistration returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
 	request := map[string]any{"email": "owner@example.com", "password": "secret-password"}
 
 	first := postJSON(t, handler, "/api/auth/resend-email-verification", request, nil)
 	second := postJSON(t, handler, "/api/auth/resend-email-verification", request, nil)
-	if first.Code != http.StatusOK || second.Code != http.StatusTooManyRequests {
+	if first.Code != http.StatusTooManyRequests || second.Code != http.StatusTooManyRequests {
 		t.Fatalf("rate limit statuses = %d/%d bodies=%s/%s", first.Code, second.Code, first.Body.String(), second.Body.String())
 	}
-	if sender.count() != 1 {
+	if sender.count() != 0 {
 		t.Fatalf("rate limited resend sent %d OTPs", sender.count())
 	}
 }
 
-func TestRelayControlRegisterDeliveryFailureKeepsRecoverableAccount(t *testing.T) {
+func TestRelayControlResendEmailVerificationFailureKeepsOldCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	if err := store.CreatePendingRegistration("owner@example.com", "secret-password", "111111", 10*time.Minute); err != nil {
+		t.Fatalf("CreatePendingRegistration returned error: %v", err)
+	}
+	oldWindow := resendOTPWindow
+	resendOTPWindow = 0
+	t.Cleanup(func() { resendOTPWindow = oldWindow })
+	sender := &recordingOTPSender{err: errors.New("smtp unavailable")}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "owner@example.com", "password": "secret-password",
+	}, nil)
+	if resend.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed resend status=%d body=%s", resend.Code, resend.Body.String())
+	}
+	verify := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "owner@example.com", "code": "111111",
+	}, nil)
+	if verify.Code != http.StatusCreated {
+		t.Fatalf("old code after failed resend status=%d body=%s", verify.Code, verify.Body.String())
+	}
+}
+
+func TestRelayControlRegisterDeliveryFailureRemovesPendingRegistration(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	store := relaystore.NewMemoryStore()
 	sender := &recordingOTPSender{err: errors.New("smtp connection refused")}
@@ -349,19 +376,21 @@ func TestRelayControlRegisterDeliveryFailureKeepsRecoverableAccount(t *testing.T
 	if err := json.Unmarshal(register.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode failed register response: %v", err)
 	}
-	if body["accountCreated"] != true || body["emailVerificationRequired"] != true || body["verificationDeliveryFailed"] != true {
+	if body["error"] != "verification email delivery failed" {
 		t.Fatalf("failed register response = %#v", body)
 	}
-	if _, ok := store.FindUserByUsername("owner@example.com"); !ok {
-		t.Fatalf("account was not retained after delivery failure")
+	if _, ok := store.FindUserByUsername("owner@example.com"); ok {
+		t.Fatalf("formal account exists after delivery failure")
 	}
-
+	if _, ok := store.FindPendingRegistration("owner@example.com"); ok {
+		t.Fatalf("pending registration exists after delivery failure")
+	}
 	sender.err = nil
-	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+	retry := postJSON(t, handler, "/api/auth/register", map[string]any{
 		"email": "owner@example.com", "password": "secret-password",
 	}, nil)
-	if resend.Code != http.StatusOK || sender.count() != 1 {
-		t.Fatalf("recovery resend status=%d body=%s sends=%#v", resend.Code, resend.Body.String(), sender.sends)
+	if retry.Code != http.StatusAccepted {
+		t.Fatalf("retry register status=%d body=%s", retry.Code, retry.Body.String())
 	}
 }
 
@@ -414,7 +443,7 @@ func TestRelayControlVerifyOTPRejectsEmailVerifyCode(t *testing.T) {
 		"email":    "owner@example.com",
 		"password": "secret-password",
 	}, nil)
-	if response.Code != http.StatusCreated {
+	if response.Code != http.StatusAccepted {
 		t.Fatalf("register status = %d body=%s", response.Code, response.Body.String())
 	}
 	if sender.count() != 1 || sender.last().purpose != verifyEmailPurpose {
@@ -448,7 +477,7 @@ func TestRelayControlVerifyEmailCompletesRegistration(t *testing.T) {
 		"email":    "owner@example.com",
 		"password": "secret-password",
 	}, nil)
-	if response.Code != http.StatusCreated {
+	if response.Code != http.StatusAccepted {
 		t.Fatalf("register status = %d body=%s", response.Code, response.Body.String())
 	}
 	if sender.count() != 1 || sender.last().purpose != verifyEmailPurpose {
@@ -459,15 +488,21 @@ func TestRelayControlVerifyEmailCompletesRegistration(t *testing.T) {
 		"email": "owner@example.com",
 		"code":  sender.last().code,
 	}, nil)
-	if verify.Code != http.StatusOK {
+	if verify.Code != http.StatusCreated {
 		t.Fatalf("verify-email status = %d body=%s", verify.Code, verify.Body.String())
 	}
 	var verifyBody map[string]any
 	if err := json.Unmarshal(verify.Body.Bytes(), &verifyBody); err != nil {
 		t.Fatalf("decode verify-email response: %v", err)
 	}
-	if verifyBody["verified"] != true {
-		t.Fatalf("verify-email response = %#v, want verified=true", verifyBody)
+	if verifyBody["accountCreated"] != true || verifyBody["email"] != "owner@example.com" {
+		t.Fatalf("verify-email response = %#v, want accountCreated/email", verifyBody)
+	}
+	if _, exists := store.FindUserByUsername("owner@example.com"); !exists {
+		t.Fatalf("formal user was not created after verification")
+	}
+	if _, exists := store.FindPendingRegistration("owner@example.com"); exists {
+		t.Fatalf("pending registration was not deleted after verification")
 	}
 	// 邮箱验证接口不签发登录 Cookie，登录凭据由正常登录接口获取。
 	if access := findCookie(verify, relaycore.AuthCookieName); access != nil {
@@ -495,7 +530,7 @@ func TestRelayControlVerifyEmailRejectsWrongCode(t *testing.T) {
 	if rec := postJSON(t, handler, "/api/auth/register", map[string]any{
 		"email":    "owner@example.com",
 		"password": "secret-password",
-	}, nil); rec.Code != http.StatusCreated {
+	}, nil); rec.Code != http.StatusAccepted {
 		t.Fatalf("register status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
@@ -512,8 +547,11 @@ func TestRelayControlVerifyEmailRejectsWrongCode(t *testing.T) {
 		"email":    "owner@example.com",
 		"password": "secret-password",
 	}, nil)
-	if login.Code != http.StatusForbidden {
+	if login.Code != http.StatusUnauthorized {
 		t.Fatalf("login after failed verify status = %d body=%s", login.Code, login.Body.String())
+	}
+	if _, exists := store.FindPendingRegistration("owner@example.com"); !exists {
+		t.Fatalf("wrong verification code removed pending registration")
 	}
 
 	// 未知邮箱返回同样的统一错误，不泄露账号存在性。
@@ -537,7 +575,7 @@ func TestRelayControlVerifyEmailCodeCannotBeReused(t *testing.T) {
 	if rec := postJSON(t, handler, "/api/auth/register", map[string]any{
 		"email":    "owner@example.com",
 		"password": "secret-password",
-	}, nil); rec.Code != http.StatusCreated {
+	}, nil); rec.Code != http.StatusAccepted {
 		t.Fatalf("register status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	code := sender.last().code
@@ -546,7 +584,7 @@ func TestRelayControlVerifyEmailCodeCannotBeReused(t *testing.T) {
 		"email": "owner@example.com",
 		"code":  code,
 	}, nil)
-	if first.Code != http.StatusOK {
+	if first.Code != http.StatusCreated {
 		t.Fatalf("first verify status = %d body=%s", first.Code, first.Body.String())
 	}
 	second := postJSON(t, handler, "/api/auth/verify-email", map[string]any{

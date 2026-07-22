@@ -43,6 +43,8 @@ public final class WebTermApiAuthTest {
         assertTrue(created.created);
         assertFalse(created.emailVerificationRequired);
         assertNull(created.error);
+        String requestBody = server.takeRequest().getBody().readUtf8();
+        assertFalse(requestBody.contains("username"));
 
         server.enqueue(json(200, userJson(false)));
         RegisterProbe legacy = register();
@@ -51,11 +53,20 @@ public final class WebTermApiAuthTest {
     }
 
     @Test
-    public void registerAcceptsEmailVerificationRequired() throws Exception {
-        server.enqueue(json(201, userJson(true)));
+    public void registerAcceptsEmailVerificationRequiredWithoutCreatingAccount() throws Exception {
+        server.enqueue(json(202, "{\"verificationRequired\":true,\"verificationSent\":true}"));
         RegisterProbe probe = register();
-        assertTrue(probe.created);
+        assertFalse(probe.created);
         assertTrue(probe.emailVerificationRequired);
+    }
+
+    @Test
+    public void registerDeliveryFailureIsErrorAndNotAccountCreated() throws Exception {
+        server.enqueue(json(503, "{\"error\":\"verification email delivery failed\"}"));
+        RegisterProbe probe = register();
+        assertFalse(probe.created);
+        assertFalse(probe.emailVerificationRequired);
+        assertEquals("verification email delivery failed", probe.error);
     }
 
     @Test
@@ -80,7 +91,7 @@ public final class WebTermApiAuthTest {
     @Test
     public void registerRejectsInvalidUrlWithoutRequest() throws Exception {
         RegisterProbe probe = new RegisterProbe();
-        api.register("http://[invalid", "user@example.com", "", "secret-password", probe);
+        api.register("http://[invalid", "user@example.com", "secret-password", probe);
         probe.await();
         assertEquals("服务器地址无效", probe.error);
         assertFalse(probe.created);
@@ -89,23 +100,23 @@ public final class WebTermApiAuthTest {
 
     @Test
     public void verifyEmailRequiresVerifiedTrue() throws Exception {
-        server.enqueue(json(200, "{\"verified\":true}"));
+        server.enqueue(json(201, "{\"accountCreated\":true,\"email\":\"user@example.com\"}"));
         VerifyProbe success = verify("123456");
         assertEquals(baseUrl, success.url);
         assertNull(success.error);
 
-        server.enqueue(json(200, "{\"verified\":false}"));
+        server.enqueue(json(201, "{\"accountCreated\":false,\"email\":\"user@example.com\"}"));
         VerifyProbe falseValue = verify("123456");
-        assertEquals("邮箱验证失败", falseValue.error);
+        assertTrue(falseValue.error.contains("不兼容"));
     }
 
     @Test
     public void verifyEmailRejectsHtmlEmptyAndPropagatesUnauthorized() throws Exception {
-        server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "text/html").setBody("<html>ok</html>"));
-        assertEquals("邮箱验证失败: 服务器响应格式不正确", verify("123456").error);
+        server.enqueue(new MockResponse().setResponseCode(201).setHeader("Content-Type", "text/html").setBody("<html>ok</html>"));
+        assertTrue(verify("123456").error.contains("邮箱验证失败"));
 
         server.enqueue(new MockResponse().setResponseCode(204));
-        assertEquals("邮箱验证失败: 服务器响应格式不正确", verify("123456").error);
+        assertTrue(verify("123456").error.contains("邮箱验证失败"));
 
         server.enqueue(json(401, "{\"error\":\"invalid verification code\"}"));
         assertEquals("invalid verification code", verify("000000").error);
@@ -133,7 +144,7 @@ public final class WebTermApiAuthTest {
 
     private RegisterProbe register() throws Exception {
         RegisterProbe probe = new RegisterProbe();
-        api.register(baseUrl, "user@example.com", "", "secret-password", probe);
+        api.register(baseUrl, "user@example.com", "secret-password", probe);
         probe.await();
         return probe;
     }
@@ -183,24 +194,20 @@ public final class WebTermApiAuthTest {
         String error;
 
         @Override
-        public void onAccountCreated(String baseUrl, boolean emailVerificationRequired) {
+        public void onVerificationRequired(String baseUrl) {
+            emailVerificationRequired = true;
+            done.countDown();
+        }
+
+        @Override
+        public void onAccountCreated(String baseUrl) {
             created = true;
-            this.emailVerificationRequired = emailVerificationRequired;
+            emailVerificationRequired = false;
             done.countDown();
         }
 
         @Override
         public void onError(String message) {
-            error = message;
-            done.countDown();
-        }
-
-        @Override
-        public void onError(String message, boolean accountCreated,
-                            boolean emailVerificationRequired,
-                            boolean verificationDeliveryFailed) {
-            created = accountCreated;
-            this.emailVerificationRequired = emailVerificationRequired;
             error = message;
             done.countDown();
         }
@@ -211,7 +218,7 @@ public final class WebTermApiAuthTest {
         String error;
 
         @Override
-        public void onVerified(String baseUrl) {
+        public void onAccountCreated(String baseUrl) {
             url = baseUrl;
             done.countDown();
         }

@@ -69,7 +69,7 @@ public final class RelayUiStateRegisterFlowTest {
             eq("user@example.com"), eq("pw"), registerCb.capture());
 
         // 注册成功（无需邮箱验证）→ 自动登录。
-        registerCb.getValue().onAccountCreated("http://relay.example.com", false);
+        registerCb.getValue().onAccountCreated("http://relay.example.com");
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);
         verify(relayService).onLogin(eq("http://relay.example.com"),
@@ -92,7 +92,7 @@ public final class RelayUiStateRegisterFlowTest {
             ArgumentCaptor.forClass(WebTermApi.RegisterCallback.class);
         verify(relayService).onRegister(anyString(), anyString(), anyString(), registerCb.capture());
 
-        registerCb.getValue().onAccountCreated("http://relay.example.com", true);
+        registerCb.getValue().onVerificationRequired("http://relay.example.com");
 
         verify(relayService, never()).onLogin(anyString(), anyString(), anyString(), any());
         verify(relayService, never()).saveRelayLogin(anyString(), anyString(), anyString(), anyString());
@@ -111,7 +111,7 @@ public final class RelayUiStateRegisterFlowTest {
         ArgumentCaptor<WebTermApi.RegisterCallback> registerCb =
             ArgumentCaptor.forClass(WebTermApi.RegisterCallback.class);
         verify(relayService).onRegister(anyString(), anyString(), anyString(), registerCb.capture());
-        registerCb.getValue().onAccountCreated("http://relay.example.com", false);
+        registerCb.getValue().onAccountCreated("http://relay.example.com");
 
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);
@@ -134,7 +134,7 @@ public final class RelayUiStateRegisterFlowTest {
         ArgumentCaptor<WebTermApi.RegisterCallback> registerCb =
             ArgumentCaptor.forClass(WebTermApi.RegisterCallback.class);
         verify(relayService).onRegister(anyString(), anyString(), anyString(), registerCb.capture());
-        registerCb.getValue().onAccountCreated("http://relay.example.com", false);
+        registerCb.getValue().onAccountCreated("http://relay.example.com");
 
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);
@@ -183,23 +183,6 @@ public final class RelayUiStateRegisterFlowTest {
     }
 
     @Test
-    public void onRegister_deliveryFailureReportsRecoverableAccount() {
-        RelayLoginScreenBuilder.LoginScreenCallback callback =
-            mock(RelayLoginScreenBuilder.LoginScreenCallback.class);
-        uiState.onRegister("http://relay.example.com", "user@example.com", "pw", callback);
-
-        ArgumentCaptor<WebTermApi.RegisterCallback> registerCb =
-            ArgumentCaptor.forClass(WebTermApi.RegisterCallback.class);
-        verify(relayService).onRegister(anyString(), anyString(), anyString(), registerCb.capture());
-        registerCb.getValue().onError("account created but verification email delivery failed",
-            true, true, true);
-
-        verify(callback).onEmailVerificationDeliveryFailed(
-            "账号已创建，但验证码邮件发送失败。请点击重新发送验证码。");
-        verify(callback, never()).onLoginSuccess(anyString(), anyString());
-    }
-
-    @Test
     public void onResendEmailVerificationUsesFixedArgumentsAndReportsSuccess() {
         RelayLoginScreenBuilder.LoginScreenCallback callback =
             mock(RelayLoginScreenBuilder.LoginScreenCallback.class);
@@ -228,7 +211,7 @@ public final class RelayUiStateRegisterFlowTest {
         verify(relayService).onVerifyEmail(eq("http://relay.example.com"),
             eq("user@example.com"), eq("123456"), verifyCb.capture());
 
-        verifyCb.getValue().onVerified("http://relay.example.com");
+        verifyCb.getValue().onAccountCreated("http://relay.example.com");
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);
         verify(relayService).onLogin(eq("http://relay.example.com"),
@@ -248,7 +231,7 @@ public final class RelayUiStateRegisterFlowTest {
         ArgumentCaptor<WebTermApi.EmailVerifyCallback> verifyCb =
             ArgumentCaptor.forClass(WebTermApi.EmailVerifyCallback.class);
         verify(relayService).onVerifyEmail(anyString(), anyString(), anyString(), verifyCb.capture());
-        verifyCb.getValue().onVerified("http://relay.example.com");
+        verifyCb.getValue().onAccountCreated("http://relay.example.com");
 
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);
@@ -287,7 +270,7 @@ public final class RelayUiStateRegisterFlowTest {
         ArgumentCaptor<WebTermApi.EmailVerifyCallback> verifyCb =
             ArgumentCaptor.forClass(WebTermApi.EmailVerifyCallback.class);
         verify(relayService).onVerifyEmail(anyString(), anyString(), anyString(), verifyCb.capture());
-        verifyCb.getValue().onVerified("http://relay.example.com");
+        verifyCb.getValue().onAccountCreated("http://relay.example.com");
 
         ArgumentCaptor<WebTermApi.ExtendedLoginCallback> loginCb =
             ArgumentCaptor.forClass(WebTermApi.ExtendedLoginCallback.class);

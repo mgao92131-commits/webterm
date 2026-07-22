@@ -170,14 +170,13 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     public void onRegister(String baseUrl, String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
         relayService.onRegister(baseUrl, email, password, new com.webterm.data.http.WebTermApi.RegisterCallback() {
             @Override
-            public void onAccountCreated(String url, boolean emailVerificationRequired) {
-                if (emailVerificationRequired) {
-                    // 注册成功但需先完成邮箱验证；由注册页切换到 EMAIL_VERIFY 模式，
-                    // 调用独立的 /api/auth/verify-email，不得调用 new_device 的 verify-otp 接口。
-                    callback.onEmailVerificationRequired(
-                        "注册成功。该服务器要求邮箱验证，验证码已发送到您的邮箱。");
-                    return;
-                }
+            public void onVerificationRequired(String url) {
+                callback.onEmailVerificationRequired("验证码已发送，请完成邮箱验证");
+            }
+
+            @Override
+            public void onAccountCreated(String url) {
+                // 未开启邮箱验证的旧部署会直接创建账号，再沿用原自动登录流程。
                 // 注册成功后用同一 baseUrl、email、password 自动登录以取得认证 Cookie。
                 relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
                     @Override
@@ -207,17 +206,6 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
                 callback.onError(message);
             }
 
-            @Override
-            public void onError(String message, boolean accountCreated,
-                                boolean emailVerificationRequired,
-                                boolean verificationDeliveryFailed) {
-                if (accountCreated && emailVerificationRequired && verificationDeliveryFailed) {
-                    callback.onEmailVerificationDeliveryFailed(
-                        "账号已创建，但验证码邮件发送失败。请点击重新发送验证码。");
-                    return;
-                }
-                callback.onError(message);
-            }
         });
     }
 
@@ -243,7 +231,7 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     public void onVerifyEmail(String baseUrl, String email, String password, String code, RelayLoginScreenBuilder.LoginScreenCallback callback) {
         relayService.onVerifyEmail(baseUrl, email, code, new com.webterm.data.http.WebTermApi.EmailVerifyCallback() {
             @Override
-            public void onVerified(String url) {
+            public void onAccountCreated(String url) {
                 // 邮箱验证成功后用同一 baseUrl、email、password 自动登录；
                 // 若服务端要求新设备验证，则继续进入设备 OTP 流程。
                 relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {

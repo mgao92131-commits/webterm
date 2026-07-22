@@ -172,15 +172,11 @@ public final class WebTermApi {
         });
     }
 
-    /**
-     * 提交普通注册。只接受 Relay 明确支持的 200/201，避免把代理或网关的其他 2xx
-     * 响应误判为账号已经创建。
-     */
-    public void register(String baseUrl, String email, String username, String password, RegisterCallback callback) {
+    /** 注册；邮箱验证开启时，202 只表示待验证记录和邮件已创建。 */
+    public void register(String baseUrl, String email, String password, RegisterCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("email", email);
-            body.put("username", username != null && !username.isEmpty() ? username : email);
             body.put("password", password);
         } catch (JSONException e) {
             callback.onError(e.getMessage());
@@ -207,16 +203,24 @@ public final class WebTermApi {
                 try (response) {
                     String text = response.body() != null ? response.body().string() : "";
                     int status = response.code();
+                    if (status == 202) {
+                        JSONObject json = parseJsonObject(text);
+                        Object required = json == null ? null : json.opt("verificationRequired");
+                        Object sent = json == null ? null : json.opt("verificationSent");
+                        if (!(required instanceof Boolean) || !((Boolean) required)
+                            || !(sent instanceof Boolean) || !((Boolean) sent)) {
+                            callback.onError("服务器返回了不兼容的注册响应，无法确认验证码已发送");
+                            return;
+                        }
+                        callback.onVerificationRequired(baseUrl);
+                        return;
+                    }
                     if (status != 200 && status != 201) {
                         String msg = parseErrorMessage(text);
                         if (msg.isEmpty()) {
                             msg = "服务器返回了不兼容的注册响应，无法确认账号是否创建";
                         }
-                        JSONObject errorJson = parseJsonObject(text);
-                        callback.onError(msg,
-                            booleanField(errorJson, "accountCreated", false),
-                            booleanField(errorJson, "emailVerificationRequired", false),
-                            booleanField(errorJson, "verificationDeliveryFailed", false));
+                        callback.onError(msg);
                         return;
                     }
                     JSONObject json = parseJsonObject(text);
@@ -232,9 +236,12 @@ public final class WebTermApi {
                         callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
                         return;
                     }
-                    boolean emailVerificationRequired = emailVerificationValue instanceof Boolean
-                        && (Boolean) emailVerificationValue;
-                    callback.onAccountCreated(baseUrl, emailVerificationRequired);
+                    if (emailVerificationValue != null
+                        && (!(emailVerificationValue instanceof Boolean) || (Boolean) emailVerificationValue)) {
+                        callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
+                        return;
+                    }
+                    callback.onAccountCreated(baseUrl);
                 }
             }
         });
@@ -665,12 +672,6 @@ public final class WebTermApi {
         return value instanceof String && !((String) value).trim().isEmpty();
     }
 
-    private static boolean booleanField(JSONObject object, String name, boolean fallback) {
-        if (object == null) return fallback;
-        Object value = object.opt(name);
-        return value instanceof Boolean ? (Boolean) value : fallback;
-    }
-
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {
         return new Callback() {
             @Override
@@ -800,7 +801,7 @@ public final class WebTermApi {
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
                     String text = response.body() != null ? response.body().string() : "";
-                    if (!response.isSuccessful()) {
+                    if (response.code() != 201) {
                         String msg = parseErrorMessage(text);
                         if (msg.isEmpty()) msg = "邮箱验证失败: " + response.code();
                         callback.onError(msg);
@@ -813,38 +814,29 @@ public final class WebTermApi {
                         callback.onError("邮箱验证失败: 服务器响应格式不正确");
                         return;
                     }
-                    if (!json.optBoolean("verified", false)) {
-                        callback.onError("邮箱验证失败");
+                    Object accountCreated = json.opt("accountCreated");
+                    if (!(accountCreated instanceof Boolean) || !((Boolean) accountCreated)
+                        || !nonEmptyStringField(json, "email")) {
+                        callback.onError("邮箱验证失败: 服务器返回了不兼容的响应");
                         return;
                     }
-                    callback.onVerified(baseUrl);
+                    callback.onAccountCreated(baseUrl);
                 }
             }
         });
     }
 
-    /** 注册结果回调：注册接口本身不签发 Cookie，仅代表账号是否创建成功。 */
+    /** 注册结果回调；邮箱验证模式下只报告验证码已发送，不报告账号已创建。 */
     public interface RegisterCallback {
-        /**
-         * 账号创建成功。
-         *
-         * @param baseUrl                   本次注册使用的规范化服务器地址
-         * @param emailVerificationRequired 服务端是否要求先完成邮箱验证
-         */
-        void onAccountCreated(String baseUrl, boolean emailVerificationRequired);
+        void onVerificationRequired(String baseUrl);
+        /** 仅用于未开启邮箱验证的旧直注册部署。 */
+        void onAccountCreated(String baseUrl);
         void onError(String message);
-
-        /** 注册响应明确表示账号已创建，但邮箱验证邮件投递失败。 */
-        default void onError(String message, boolean accountCreated,
-                              boolean emailVerificationRequired,
-                              boolean verificationDeliveryFailed) {
-            onError(message);
-        }
     }
 
-    /** 邮箱验证回调：仅当服务端确认 verified==true 时成功。 */
+    /** 邮箱验证回调：仅当服务端确认正式账号已创建时成功。 */
     public interface EmailVerifyCallback {
-        void onVerified(String baseUrl);
+        void onAccountCreated(String baseUrl);
         void onError(String message);
     }
 
