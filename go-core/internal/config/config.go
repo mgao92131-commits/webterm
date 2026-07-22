@@ -25,7 +25,7 @@ const RedactedSecret = "********"
 // Mode 选择 Agent 的接入方式。两种模式互相独立、互不回落：
 //
 //   - ModeDirect：Android 经 HTTP/WebSocket 直连 PC Agent；
-//   - ModeRelay：Android 经中转服务器连接 PC Agent（默认，兼容旧配置）。
+//   - ModeRelay：Android 经中转服务器连接 PC Agent。
 //
 // 本次改造不支持 hybrid、auto 或直连失败自动回退；未知模式必须报错。
 type Mode string
@@ -35,12 +35,8 @@ const (
 	ModeRelay  Mode = "relay"
 )
 
-// Normalize 返回规范化的模式；未设置时回落到 relay，保证旧配置（无 mode 字段）
-// 仍按当前 Relay 行为运行。
+// Normalize 只保留类型兼容性，不再为缺少 mode 的配置补 relay 默认值。
 func (mode Mode) Normalize() Mode {
-	if mode == "" {
-		return ModeRelay
-	}
 	return mode
 }
 
@@ -55,15 +51,15 @@ const (
 
 type Options struct {
 	ConfigPath string
-	// ModeOverride 由 CLI 的 --mode 标志提供，优先级高于配置文件与环境变量；
-	// 为空时不参与覆盖。
+	// ModeOverride 保留旧字段名，但语义是“选择结果”：只用于校验配置文件
+	// mode 与 --mode/环境变量选择是否一致，绝不覆盖文件内容。
 	ModeOverride string
 }
 
 // Config 是 PC Agent 的完整配置。Agent 按 Mode 选择 direct 或 relay 接入方式，
 // 两种模式互相独立。
 type Config struct {
-	// Mode 选择接入方式：direct 或 relay（默认 relay）。
+	// Mode 选择接入方式：必须明确为 direct 或 relay。
 	Mode Mode `json:"mode,omitempty"`
 	// IPCEndpoint 使用 unix:/absolute/path 或 npipe://./pipe/name。
 	IPCEndpoint string `json:"ipcEndpoint,omitempty"`
@@ -258,11 +254,7 @@ func ResolvePath(configPath string) string {
 	if configPath := os.Getenv("WEBTERM_AGENT_CONFIG"); configPath != "" {
 		return configPath
 	}
-	base, err := os.UserConfigDir()
-	if err != nil || base == "" {
-		return ""
-	}
-	return filepath.Join(base, "WebTerm Agent", "config.json")
+	return ""
 }
 
 func Save(path string, cfg Config) error {
@@ -280,6 +272,30 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+// ReadFile 只解析配置文件结构，供 config show 使用；它不读取环境变量，也不
+// 要求 password/secret 等运行时必填字段已经填写。
+func ReadFile(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+	}
+	var cfg Config
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+	}
+	if cfg.Mode == "" {
+		return Config{}, errors.New("配置无效：mode 必须设置为 direct 或 relay")
+	}
+	mode, err := ParseMode(string(cfg.Mode))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Mode = mode
+	return cfg, nil
+}
+
 func NormalizeRelayProtocol(string) string {
 	return RelayProtocolV2
 }
@@ -287,7 +303,11 @@ func NormalizeRelayProtocol(string) string {
 func Load(options Options) Config {
 	cfg := defaultConfig()
 	if options.ConfigPath != "" {
-		cfg = mergeConfig(cfg, readConfigFile(options.ConfigPath))
+		file := readConfigFile(options.ConfigPath)
+		cfg = mergeConfig(cfg, file)
+		if file.Mode != "" {
+			cfg.Mode = file.Mode
+		}
 	}
 	cfg = mergeConfig(cfg, envConfig())
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
@@ -304,34 +324,56 @@ func Load(options Options) Config {
 // never treats a missing or malformed requested configuration file as defaults.
 func LoadStrict(options Options) (Config, error) {
 	path := options.ConfigPath
-	explicit := path != ""
 	if path == "" {
-		path = ResolvePath("")
-		// A path supplied through the new environment variable is an explicit
-		// operator choice, unlike the conventional default location.
-		explicit = os.Getenv("WEBTERM_AGENT_CONFIG") != ""
+		selection, err := ResolveRunConfig("", Mode(options.ModeOverride), false)
+		if err != nil {
+			return Config{}, err
+		}
+		path = selection.Path
 	}
-	return loadStrict(path, explicit, options.ModeOverride)
+	return loadStrict(path, true, options.ModeOverride)
 }
 
-func loadStrict(path string, explicit bool, modeOverride string) (Config, error) {
+func loadStrict(path string, explicit bool, expectedMode string) (Config, error) {
 	cfg := defaultConfig()
-	if path != "" {
-		data, err := os.ReadFile(path)
+	if path == "" {
+		return Config{}, errors.New("配置无效：未指定配置文件")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if explicit || !os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+		}
+		return Config{}, fmt.Errorf("配置无效：%s 不存在", path)
+	}
+	var file Config
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
+	}
+	if file.Mode == "" {
+		return Config{}, errors.New("配置无效：mode 必须设置为 direct 或 relay")
+	}
+	fileMode, err := ParseMode(string(file.Mode))
+	if err != nil {
+		return Config{}, err
+	}
+	selectedMode := expectedMode
+	if selectedMode == "" {
+		selectedMode = os.Getenv("WEBTERM_AGENT_MODE")
+	}
+	if selectedMode != "" {
+		expected, err := ParseMode(selectedMode)
 		if err != nil {
-			if explicit || !os.IsNotExist(err) {
-				return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
-			}
-		} else {
-			var file Config
-			decoder := json.NewDecoder(bytes.NewReader(data))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&file); err != nil {
-				return Config{}, fmt.Errorf("配置无效：%s: %w", path, err)
-			}
-			cfg = mergeConfig(cfg, file)
+			return Config{}, err
+		}
+		if err := ValidateModeMatch(path, expected, fileMode); err != nil {
+			return Config{}, err
 		}
 	}
+	file.Mode = fileMode
+	cfg = mergeConfig(cfg, file)
 	envOverrides, err := envConfigOverridesStrict()
 	if err != nil {
 		return Config{}, err
@@ -340,11 +382,8 @@ func loadStrict(path string, explicit bool, modeOverride string) (Config, error)
 	if envOverrides.DirectAllowInsecureRemote.Set {
 		cfg.Direct.AllowInsecureRemote = envOverrides.DirectAllowInsecureRemote.Value
 	}
-	// CLI --mode 优先级最高，覆盖配置文件与环境变量中的 mode。
-	if modeOverride != "" {
-		cfg.Mode = Mode(modeOverride)
-	}
-	cfg.Mode = cfg.Mode.Normalize()
+	// WEBTERM_AGENT_MODE 只参与文件选择，不得覆盖配置文件中的 mode。
+	cfg.Mode = fileMode
 	cfg.Relay.Protocol = NormalizeRelayProtocol(cfg.Relay.Protocol)
 	if cfg.Direct.Addr == "" {
 		cfg.Direct.Addr = DefaultDirectAddr
@@ -438,7 +477,6 @@ func defaultConfig() Config {
 	cwd, _ := os.Getwd()
 	hostname, _ := os.Hostname()
 	return Config{
-		Mode: ModeRelay,
 		Direct: DirectConfig{
 			Addr: DefaultDirectAddr,
 		},
@@ -533,9 +571,6 @@ func envConfigOverridesStrict() (configOverrides, error) {
 }
 
 func mergeConfig(base Config, override Config) Config {
-	if override.Mode != "" {
-		base.Mode = override.Mode
-	}
 	if override.IPCEndpoint != "" {
 		base.IPCEndpoint = override.IPCEndpoint
 	}

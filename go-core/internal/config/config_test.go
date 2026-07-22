@@ -61,8 +61,8 @@ func TestLoadStrictAllowsAbsentDefaultButRejectsAbsentExplicitConfig(t *testing.
 	t.Setenv("WEBTERM_AGENT_RELAY_URL", "https://relay.example")
 	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
 	missing := filepath.Join(t.TempDir(), "missing.json")
-	if _, err := loadStrict(missing, false, ""); err != nil {
-		t.Fatalf("non-explicit missing config: %v", err)
+	if _, err := loadStrict(missing, false, ""); err == nil {
+		t.Fatal("missing config should fail even without an explicit path")
 	}
 	if _, err := loadStrict(missing, true, ""); err == nil {
 		t.Fatal("explicit missing config did not fail")
@@ -239,7 +239,7 @@ func clearConfigEnv(t *testing.T) {
 
 func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
 	clearConfigEnv(t)
-	missing := filepath.Join(t.TempDir(), "missing.json")
+	path := writeConfigFile(t, relayConfigJSON)
 	for _, key := range []string{
 		"WEBTERM_AGENT_SCROLLBACK_MAX_LINES",
 		"WEBTERM_AGENT_SCROLLBACK_MAX_BYTES",
@@ -248,7 +248,7 @@ func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
 		for _, value := range []string{"abc", "0", "-5"} {
 			t.Run(key+"="+value, func(t *testing.T) {
 				t.Setenv(key, value)
-				_, err := loadStrict(missing, false, "")
+				_, err := loadStrict(path, true, "")
 				if err == nil {
 					t.Fatalf("%s=%s was accepted", key, value)
 				}
@@ -263,7 +263,7 @@ func TestLoadStrictRejectsInvalidNumericEnv(t *testing.T) {
 func TestLoadStrictRejectsInvalidLegacyUploadEnv(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("WEBTERM_MAX_UPLOAD_BYTES", "abc")
-	_, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false, "")
+	_, err := loadStrict(writeConfigFile(t, relayConfigJSON), true, "")
 	if err == nil || !strings.Contains(err.Error(), "WEBTERM_MAX_UPLOAD_BYTES") || !strings.Contains(err.Error(), "abc") {
 		t.Fatalf("err = %v", err)
 	}
@@ -283,16 +283,16 @@ func TestLoadInvalidNumericEnvStillFallsBackToDefaults(t *testing.T) {
 func TestLoadStrictRelayURLSchemeWhitelist(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("WEBTERM_AGENT_RELAY_SECRET", "secret")
-	missing := filepath.Join(t.TempDir(), "missing.json")
+	path := writeConfigFile(t, relayConfigJSON)
 	for _, scheme := range []string{"http", "https", "ws", "wss"} {
 		t.Setenv("WEBTERM_AGENT_RELAY_URL", scheme+"://relay.example")
-		if _, err := loadStrict(missing, false, ""); err != nil {
+		if _, err := loadStrict(path, true, ""); err != nil {
 			t.Fatalf("%s:// rejected: %v", scheme, err)
 		}
 	}
 	for _, rawURL := range []string{"ftp://relay.example", "file://relay.example/agent"} {
 		t.Setenv("WEBTERM_AGENT_RELAY_URL", rawURL)
-		_, err := loadStrict(missing, false, "")
+		_, err := loadStrict(path, true, "")
 		if err == nil || !strings.Contains(err.Error(), "配置无效") {
 			t.Fatalf("%s should be rejected with 配置无效, got %v", rawURL, err)
 		}
@@ -313,22 +313,16 @@ const directConfigJSON = `{"mode":"direct","direct":{"addr":"127.0.0.1:8080","us
 
 const relayConfigJSON = `{"mode":"relay","relay":{"url":"https://relay.example","secret":"secret","deviceName":"pc"}}`
 
-// 旧配置不写 mode 时默认仍按 relay 运行。
-func TestMissingModeDefaultsToRelay(t *testing.T) {
+// mode 是运行配置的必填字段，不再默认 relay。
+func TestMissingModeRejected(t *testing.T) {
 	clearConfigEnv(t)
 	path := writeConfigFile(t, `{"relay":{"url":"https://relay.example","secret":"secret"}}`)
-	cfg, err := loadStrict(path, true, "")
-	if err != nil {
-		t.Fatalf("legacy relay config rejected: %v", err)
-	}
-	if cfg.Mode != ModeRelay {
-		t.Fatalf("Mode = %q, want relay", cfg.Mode)
+	if _, err := loadStrict(path, true, ""); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("missing mode error = %v", err)
 	}
 }
 
-// TestLegacyRelayConfigStillLoads 完整的旧式 relay 配置（含 shell/scrollback/upload，
-// 无 mode 字段）必须能继续加载。
-func TestLegacyRelayConfigStillLoads(t *testing.T) {
+func TestLegacyRelayConfigWithoutModeRejected(t *testing.T) {
 	clearConfigEnv(t)
 	path := writeConfigFile(t, `{
 		"relay": {"url": "wss://relay.example", "secret": "secret", "deviceName": "my-pc", "protocol": "v2"},
@@ -336,12 +330,8 @@ func TestLegacyRelayConfigStillLoads(t *testing.T) {
 		"scrollback": {"maxLines": 10000, "maxBytes": 16777216},
 		"upload": {"maxBytes": 104857600}
 	}`)
-	cfg, err := loadStrict(path, true, "")
-	if err != nil {
-		t.Fatalf("legacy config rejected: %v", err)
-	}
-	if cfg.Mode != ModeRelay || cfg.Relay.URL != "wss://relay.example" {
-		t.Fatalf("cfg = %#v", cfg)
+	if _, err := loadStrict(path, true, ""); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("missing mode error = %v", err)
 	}
 }
 
@@ -535,8 +525,8 @@ func TestDirectPasswordRedacted(t *testing.T) {
 	}
 }
 
-// CLI --mode（modeOverride）覆盖配置文件中的 mode。
-func TestModeFlagOverridesConfig(t *testing.T) {
+// CLI --mode 只选择文件，不能覆盖文件内部的 mode。
+func TestModeFlagMismatchRejected(t *testing.T) {
 	clearConfigEnv(t)
 	// 配置同时包含 direct 与 relay，文件声明 relay。
 	path := writeConfigFile(t, `{
@@ -548,23 +538,18 @@ func TestModeFlagOverridesConfig(t *testing.T) {
 	if err != nil || byFile.Mode != ModeRelay {
 		t.Fatalf("byFile Mode=%q err=%v, want relay", byFile.Mode, err)
 	}
-	byFlag, err := loadStrict(path, true, "direct")
-	if err != nil {
-		t.Fatalf("flag override to direct rejected: %v", err)
-	}
-	if byFlag.Mode != ModeDirect {
-		t.Fatalf("flag override Mode = %q, want direct", byFlag.Mode)
+	_, err = loadStrict(path, true, "direct")
+	if err == nil || !strings.Contains(err.Error(), "模式不匹配") {
+		t.Fatalf("mode mismatch error = %v", err)
 	}
 }
 
-// 环境变量 WEBTERM_AGENT_MODE 选择模式，direct 环境变量提供 direct 配置。
+// 环境变量 WEBTERM_AGENT_MODE 作为文件选择结果时必须与文件 mode 一致。
 func TestModeEnvSelectsDirect(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("WEBTERM_AGENT_MODE", "direct")
-	t.Setenv("WEBTERM_AGENT_DIRECT_ADDR", "127.0.0.1:8080")
-	t.Setenv("WEBTERM_AGENT_DIRECT_USERNAME", "admin")
-	t.Setenv("WEBTERM_AGENT_DIRECT_PASSWORD", "pw")
-	cfg, err := loadStrict(filepath.Join(t.TempDir(), "missing.json"), false, "")
+	path := writeConfigFile(t, directConfigJSON)
+	cfg, err := loadStrict(path, true, "")
 	if err != nil {
 		t.Fatalf("env direct config rejected: %v", err)
 	}
