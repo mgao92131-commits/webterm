@@ -13,6 +13,7 @@ android {
 dependencies {
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation(libs.junit)
     testImplementation("org.mockito:mockito-core:5.12.0")
     // 本地 JVM 单元测试中 Android 的 org.json 是被桩化的（调用即抛异常），

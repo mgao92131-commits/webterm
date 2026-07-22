@@ -18,6 +18,7 @@ import javax.inject.Singleton;
 
 import okhttp3.Call;
 import okhttp3.Callback;
+import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -36,22 +37,38 @@ public final class WebTermApi {
         this.http = http;
     }
 
-    public void login(String baseUrl, String cookie, String username, String password, LoginCallback callback) {
+    public RequestHandle login(String baseUrl, String cookie, String username, String password, LoginCallback callback) {
         JSONObject login = new JSONObject();
         try {
             login.put("username", username);
             login.put("password", password);
         } catch (JSONException e) {
             callback.onError(e.getMessage());
-            return;
+            return () -> {};
         }
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/auth/login")
-            .header("Cookie", cookie != null ? cookie : "")
-            .header("X-Device-Name", getDeviceName())
-            .post(RequestBody.create(login.toString(), JSON))
-            .build();
-        http.newCall(request).enqueue(new Callback() {
+        HttpUrl parsedBaseUrl = baseUrl == null ? null : HttpUrl.parse(baseUrl);
+        if (parsedBaseUrl == null
+            || (!"http".equals(parsedBaseUrl.scheme()) && !"https".equals(parsedBaseUrl.scheme()))
+            || parsedBaseUrl.query() != null
+            || parsedBaseUrl.fragment() != null
+            || !"/".equals(parsedBaseUrl.encodedPath())) {
+            callback.onError("设备地址无效");
+            return () -> {};
+        }
+        final Request request;
+        try {
+            request = new Request.Builder()
+                .url(baseUrl + "/api/auth/login")
+                .header("Cookie", cookie != null ? cookie : "")
+                .header("X-Device-Name", getDeviceName())
+                .post(RequestBody.create(login.toString(), JSON))
+                .build();
+        } catch (IllegalArgumentException e) {
+            callback.onError("设备地址无效");
+            return () -> {};
+        }
+        Call call = http.newCall(request);
+        call.enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
                 callback.onError(0, "Login failed: " + e.getMessage());
@@ -87,6 +104,7 @@ public final class WebTermApi {
                 }
             }
         });
+        return call::cancel;
     }
 
     public void verifyOtp(String baseUrl, String username, String code, String targetDeviceId, String cookie, LoginCallback callback) {
@@ -617,6 +635,11 @@ public final class WebTermApi {
         }
     }
 
+    /** HTTP 请求的最小取消接口，避免业务层依赖 OkHttp Call 类型。 */
+    public interface RequestHandle {
+        void cancel();
+    }
+
     public interface ExtendedLoginCallback extends LoginCallback {
         void onOtpRequired(String targetDeviceId, String cookie);
     }
@@ -664,4 +687,3 @@ public final class WebTermApi {
         void onError(String message);
     }
 }
-

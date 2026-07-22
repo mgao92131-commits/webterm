@@ -1,5 +1,10 @@
 package com.webterm.core.config;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+
+import okhttp3.HttpUrl;
+
 /**
  * 规范化“添加直连设备”弹框中输入的地址。与 Dialog 分离，便于单元测试。
  *
@@ -55,82 +60,87 @@ public final class DirectDeviceAddressNormalizer {
 
         String scheme = "http";
         String rest = raw;
-        if (raw.startsWith("http://")) {
+        boolean explicitScheme = false;
+        if (raw.regionMatches(true, 0, "http://", 0, "http://".length())) {
+            explicitScheme = true;
             rest = raw.substring("http://".length());
-        } else if (raw.startsWith("https://")) {
+        } else if (raw.regionMatches(true, 0, "https://", 0, "https://".length())) {
+            explicitScheme = true;
             scheme = "https";
             rest = raw.substring("https://".length());
         } else if (raw.contains("://")) {
             return Result.error("地址格式错误");
         }
-
-        // 分离路径：只允许空路径或单个 "/"。
-        String authority = rest;
-        String path = "";
-        int slash = rest.indexOf('/');
-        if (slash >= 0) {
-            authority = rest.substring(0, slash);
-            path = rest.substring(slash);
-        }
-        if (!path.isEmpty() && !path.equals("/")) {
-            return Result.error("地址不能包含路径");
-        }
-        if (authority.isEmpty()) {
-            return Result.error("主机名无效");
-        }
-        if (authority.contains("@")) {
+        // 无 // 的 host:port 形式仍然合法；其它类似 scheme:value 的形式拒绝，
+        // 避免 ftp:foo、ws:foo 被当作普通主机名。
+        int schemeSeparator = raw.indexOf(':');
+        if (!explicitScheme && schemeSeparator > 0
+            && raw.substring(0, schemeSeparator).matches("[A-Za-z][A-Za-z0-9+.-]*")
+            && !raw.substring(schemeSeparator + 1)
+                .replaceFirst("/$", "")
+                .matches("[0-9]+")) {
             return Result.error("地址格式错误");
         }
 
-        // 解析 host 与 port，支持 [ipv6]:port。
-        String hostPart;
-        String hostForUrl;
-        String portStr = null;
-        if (authority.startsWith("[")) {
-            int close = authority.indexOf(']');
-            if (close < 0) {
-                return Result.error("主机名无效");
-            }
-            hostPart = authority.substring(1, close);
-            hostForUrl = "[" + hostPart + "]";
-            String after = authority.substring(close + 1);
-            if (after.startsWith(":")) {
-                portStr = after.substring(1);
-            } else if (!after.isEmpty()) {
-                return Result.error("地址格式错误");
-            }
-        } else {
-            int colon = authority.lastIndexOf(':');
-            if (colon >= 0) {
-                hostPart = authority.substring(0, colon);
-                portStr = authority.substring(colon + 1);
-            } else {
-                hostPart = authority;
-            }
-            hostForUrl = hostPart;
+        final URI uri;
+        try {
+            uri = new URI(scheme + "://" + rest);
+        } catch (URISyntaxException e) {
+            return Result.error("地址格式错误");
         }
-        if (hostPart.isEmpty()) {
+        if (!scheme.equalsIgnoreCase(uri.getScheme())) {
+            return Result.error("地址格式错误");
+        }
+        if (uri.getUserInfo() != null) {
+            return Result.error("地址不能包含账户信息");
+        }
+        if (uri.getQuery() != null) {
+            return Result.error("地址不能包含查询参数");
+        }
+        if (uri.getFragment() != null) {
+            return Result.error("地址不能包含片段");
+        }
+        String path = uri.getPath();
+        if (path != null && !path.isEmpty() && !path.equals("/")) {
+            return Result.error("地址不能包含路径");
+        }
+        String rawAuthority = uri.getRawAuthority();
+        if (rawAuthority == null || rawAuthority.isEmpty()) {
             return Result.error("主机名无效");
         }
-
-        int port;
-        if (portStr == null) {
-            // 未写端口：http 补 Direct 默认端口，https 补标准 443。
-            port = scheme.equals("http") ? DEFAULT_DIRECT_PORT : DEFAULT_HTTPS_PORT;
-        } else if (portStr.isEmpty()) {
-            // 写了冒号但端口为空（如 host:）视为非法。
+        if (rawAuthority.endsWith(":")) {
             return Result.error("端口无效");
-        } else {
-            try {
-                port = Integer.parseInt(portStr);
-            } catch (NumberFormatException e) {
-                return Result.error("端口无效");
-            }
-            if (port <= 0 || port > 65535) {
-                return Result.error("端口无效");
-            }
         }
 
-        return Result.ok(scheme + "://" + hostForUrl + ":" + port, hostPart, port);
+        String host = uri.getHost();
+        if (host == null || host.trim().isEmpty()) {
+            return Result.error("主机名无效");
+        }
+        if (host.startsWith("[") && host.endsWith("]")) {
+            host = host.substring(1, host.length() - 1);
+        }
+
+        int port = uri.getPort();
+        if (port == -1) {
+            port = scheme.equals("https") ? DEFAULT_HTTPS_PORT : DEFAULT_DIRECT_PORT;
+        }
+        if (port <= 0 || port > 65535) {
+            return Result.error("端口无效");
+        }
+
+        try {
+            HttpUrl validated = new HttpUrl.Builder()
+                .scheme(scheme)
+                .host(host)
+                .port(port)
+                .build();
+            // HttpUrl 会隐藏默认端口；URI 输出保留显式端口，同时由标准 URI
+            // 构造器负责 IPv6 方括号，不手工拼接 host。
+            String normalizedUrl = new URI(
+                scheme, null, validated.host(), port, null, null, null).toString();
+            return Result.ok(normalizedUrl, host, port);
+        } catch (IllegalArgumentException | URISyntaxException e) {
+            return Result.error("地址格式错误");
+        }
     }
 }

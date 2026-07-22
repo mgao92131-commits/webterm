@@ -46,6 +46,7 @@ public class DirectDeviceAddressNormalizerTest {
     public void normalizeStripsTrailingSlash() {
         assertEquals("http://192.168.1.20:8080", ok("192.168.1.20/"));
         assertEquals("http://192.168.1.20:8080", ok("http://192.168.1.20:8080/"));
+        assertEquals("http://192.168.1.20:9000", ok("192.168.1.20:9000/"));
     }
 
     @Test
@@ -79,6 +80,26 @@ public class DirectDeviceAddressNormalizerTest {
     public void rejectUnsupportedScheme() {
         error("ftp://192.168.1.20");
         error("ws://192.168.1.20");
+    }
+
+    @Test
+    public void rejectQueryFragmentAndMalformedAuthority() {
+        error("pc.local?x=1");
+        error("pc.local#section");
+        error("bad host");
+        error("http://a\\b");
+        error("http://user@host");
+        error("[not-an-ip]:8080");
+        error("http://host:");
+    }
+
+    @Test
+    public void acceptValidIpv6() {
+        assertEquals("http://[2001:db8::1]:8080", ok("[2001:db8::1]:8080"));
+        DirectDeviceAddressNormalizer.Result result =
+            DirectDeviceAddressNormalizer.normalize("[2001:db8::1]:8080");
+        assertEquals("2001:db8::1", result.host);
+        assertEquals(8080, result.port);
     }
 
     @Test
