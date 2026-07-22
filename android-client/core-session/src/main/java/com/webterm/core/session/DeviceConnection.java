@@ -79,6 +79,7 @@ public final class DeviceConnection {
     private volatile boolean physicalConnected;
     private boolean physicalConnecting;
     private int physicalReconnectAttempts;
+    private volatile boolean stopped;
     private final LogicalChannelRegistry channelRegistry = new LogicalChannelRegistry();
     private final MuxOutboundQueue outboundQueue =
         new MuxOutboundQueue(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES);
@@ -121,6 +122,7 @@ public final class DeviceConnection {
     }
 
     private void connectPhysical() {
+        if (stopped) return;
         physicalDesired = true;
         if (transport == null) {
             handlePhysicalDisconnected(transportGeneration, 0, "transport unavailable");
@@ -405,8 +407,11 @@ public final class DeviceConnection {
             throw new IllegalArgumentException("screen channel ownerId is required");
         }
         String channelId = terminalChannelId(localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner);
-        runOnState(() -> openProtocolChannel(
-            localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner, listener));
+        runOnState(() -> {
+            if (!stopped) {
+                openProtocolChannel(localSessionId, SCREEN_SUBPROTOCOL, normalizedOwner, listener);
+            }
+        });
         return channelId;
     }
 
@@ -470,7 +475,9 @@ public final class DeviceConnection {
     }
 
     public void openChannel(String channelId, String path, String[] protocols, ChannelListener listener) {
-        runOnState(() -> openChannelInternal(channelId, path, protocols, null, listener));
+        runOnState(() -> {
+            if (!stopped) openChannelInternal(channelId, path, protocols, null, listener);
+        });
     }
 
     private void openChannelInternal(String channelId, String path, String[] protocols,
@@ -515,6 +522,7 @@ public final class DeviceConnection {
     }
 
     private void reconnectTransport(String reason, boolean autoStart) {
+        if (stopped) return;
         if (physicalConnecting) {
             // 当前 generation 已有在途连接（例如 drain 循环中上一帧刚触发重建）。
             // 重复重建只会串联创建多个 Transport，其中只有一个能活到 ws_open；
@@ -590,6 +598,7 @@ public final class DeviceConnection {
 
     /** 注册设备级控制消息监听，不改变 screen channel 的所有权。 */
     public void setControlListener(ControlListener listener) {
+        if (stopped && listener != null) return;
         controlPlane.setListener(listener);
     }
 
@@ -617,12 +626,16 @@ public final class DeviceConnection {
 
     void stop() {
         runOnState(() -> {
+            if (stopped) return;
             stopInternal();
             eventLoopShutdown.run();
         });
     }
 
     private void stopInternal() {
+        if (stopped) return;
+        stopped = true;
+        controlPlane.setListener(null);
         for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             sendChannelClose(channel.id);
         }

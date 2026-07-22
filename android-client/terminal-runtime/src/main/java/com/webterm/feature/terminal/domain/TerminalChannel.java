@@ -28,6 +28,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   private final String baseUrl;
   private final String cookie;
   private final String sessionId;
+  private final String serverConfigId;
+  private final boolean directDevice;
   private final String relayDeviceId;
 
   private volatile DeviceConnection deviceConnection;
@@ -45,12 +47,16 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
       @Assisted("baseUrl") String baseUrl,
       @Assisted("cookie") String cookie,
       @Assisted("sessionId") String sessionId,
+      @Assisted("serverConfigId") String serverConfigId,
+      @Assisted("directDevice") boolean directDevice,
       @Assisted("relayDeviceId") String relayDeviceId) {
     this.mainHandler = mainHandler;
     this.deviceConnectionRegistry = deviceConnectionRegistry;
     this.baseUrl = baseUrl;
     this.cookie = cookie;
     this.sessionId = sessionId;
+    this.serverConfigId = serverConfigId == null ? "" : serverConfigId;
+    this.directDevice = directDevice;
     this.relayDeviceId = relayDeviceId == null ? "" : relayDeviceId;
     this.reliableInputTracker = new ReliableInputTracker(
         mainHandler,
@@ -90,6 +96,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
         @Assisted("baseUrl") String baseUrl,
         @Assisted("cookie") String cookie,
         @Assisted("sessionId") String sessionId,
+        @Assisted("serverConfigId") String serverConfigId,
+        @Assisted("directDevice") boolean directDevice,
         @Assisted("relayDeviceId") String relayDeviceId);
   }
 
@@ -244,7 +252,12 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
       if (deviceConnection != null) {
         deviceConnectionRegistry.releaseIfIdle(deviceConnection);
       }
-      deviceConnection = deviceConnectionRegistry.forDevice(baseUrl, cookie, relayDeviceId);
+      if (directDevice) {
+        // Direct：与后台服务共享同一条 direct:{configId} 连接，不携带 x-device-id。
+        deviceConnection = deviceConnectionRegistry.forDirectDevice(serverConfigId, baseUrl, cookie);
+      } else {
+        deviceConnection = deviceConnectionRegistry.forRelayDevice(baseUrl, cookie, relayDeviceId);
+      }
       deviceConnection.updateCookie(cookie);
     }
     String localSessionId = DeviceConnection.localSessionId(sessionId, relayDeviceId);

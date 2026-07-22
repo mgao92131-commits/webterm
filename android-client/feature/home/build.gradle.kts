@@ -30,4 +30,5 @@ dependencies {
     implementation(libs.lifecycle.livedata)
     implementation("androidx.annotation:annotation:1.9.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    testImplementation(libs.junit)
 }

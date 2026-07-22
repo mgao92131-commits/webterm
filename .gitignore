@@ -11,6 +11,8 @@ data/
 # in the Android data-http module.
 !android-client/data-http/src/main/java/com/webterm/data/
 !android-client/data-http/src/main/java/com/webterm/data/**
+!android-client/data-http/src/test/java/com/webterm/data/
+!android-client/data-http/src/test/java/com/webterm/data/**
 *.db*
 agent_run.log
 webterm_deploy_temp.tar.gz

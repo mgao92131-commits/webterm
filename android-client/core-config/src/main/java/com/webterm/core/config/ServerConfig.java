@@ -40,10 +40,18 @@ public class ServerConfig {
     public boolean isRelayDevice() { return relayDevice; }
     public String getDeviceId() { return deviceId; }
 
+    /**
+     * 持久化的 Direct 设备：既不是中转服务器账户（relayMaster），也不是中转
+     * 返回的临时设备（relayDevice）。Direct 设备由用户经“添加直连设备”保存，
+     * 凭据所有者是它自己。
+     */
+    public boolean isDirectDevice() { return !relayMaster && !relayDevice; }
+
     public void setUrl(String url) { this.url = url; }
     public void setCookie(String cookie) { this.cookie = cookie; }
     public void setUsername(String username) { this.username = username; }
     public void setPassword(String password) { this.password = password; }
+    public void setName(String name) { this.name = name; }
 
     public JSONObject toJSON() throws JSONException {
         JSONObject obj = new JSONObject();

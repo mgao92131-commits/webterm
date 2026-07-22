@@ -38,7 +38,17 @@ public final class NotificationTerminalResolver {
         if (connectionKey == null || connectionKey.isEmpty()) {
             return new Result(ResolveStatus.NOT_FOUND, null);
         }
-		// RelayService 内存中的在线 Relay 设备。
+        // 1) 持久化 Direct 设备：键空间为 direct:{configId}，优先匹配。
+        if (savedServers != null) {
+            for (ServerConfig server : savedServers) {
+                if (server == null || !server.isDirectDevice()) continue;
+                String key = DeviceConnectionKeys.direct(server.getId(), server.getUrl());
+                if (connectionKey.equals(key)) {
+                    return new Result(ResolveStatus.RESOLVED, server);
+                }
+            }
+        }
+		// 2) RelayService 内存中的在线 Relay 设备。
         if (relayDevices != null) {
             for (ServerConfig device : relayDevices) {
                 if (device == null) continue;
@@ -48,7 +58,7 @@ public final class NotificationTerminalResolver {
                 }
             }
         }
-		// baseUrl 与某个 Relay Master 一致：仅在设备列表尚未完成首次加载时等待。
+		// 3) baseUrl 与某个 Relay Master 一致：仅在设备列表尚未完成首次加载时等待。
         // 已成功加载但未命中，说明目标当前离线或已删除，应明确 NOT_FOUND，避免刷新循环。
         String baseUrl = baseUrlPart(connectionKey);
         if (!baseUrl.isEmpty() && savedServers != null) {
@@ -61,6 +71,7 @@ public final class NotificationTerminalResolver {
                 }
             }
         }
+        // 4) 所有来源均无匹配。
         return new Result(ResolveStatus.NOT_FOUND, null);
     }
 

@@ -34,7 +34,7 @@ public final class SessionCommandController {
                 String canonicalSessionId = server.isRelayDevice()
                     ? SessionIds.canonical(sessionId, server.getDeviceId())
                     : sessionId;
-                activity.runOnUiThread(() -> listener.onOpenTerminal(server.getUrl(), server.getCookie(), canonicalSessionId, "Terminal", server.isRelayDevice(), server.getDeviceId()));
+                activity.runOnUiThread(() -> listener.onOpenTerminal(server, canonicalSessionId, "Terminal"));
             }
 
             @Override
@@ -117,7 +117,7 @@ public final class SessionCommandController {
 
     public interface Listener {
         void onAuthenticated(ServerConfig server);
-        void onOpenTerminal(String baseUrl, String cookie, String sessionId, String termTitle, boolean isRelayDevice, String relayDeviceId);
+        void onOpenTerminal(ServerConfig server, String sessionId, String termTitle);
         void onRemoveCachedTerminal(String baseUrl, String sessionId);
         void onSessionClosed(ServerConfig server, String sessionId);
         void onShowHome();
