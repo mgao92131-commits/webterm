@@ -93,10 +93,6 @@ final class TerminalSelectionTextExtractor {
       String value = cell.text;
       text.append(value == null || value.isEmpty() ? " " : value);
     }
-    lines.add(new CopyLine(text.toString(), line.wrapped, hasLeadingWhitespace(text)));
-  }
-
-  private static boolean hasLeadingWhitespace(CharSequence value) {
-    return value.length() > 0 && Character.isWhitespace(value.charAt(0));
+    lines.add(new CopyLine(text.toString(), line.wrapped));
   }
 }
