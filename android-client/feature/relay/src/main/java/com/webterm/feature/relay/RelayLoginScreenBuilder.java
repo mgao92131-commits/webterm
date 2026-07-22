@@ -24,6 +24,11 @@ public final class RelayLoginScreenBuilder {
         DEVICE_OTP
     }
 
+    @FunctionalInterface
+    private interface DeviceOtpModeHandler {
+        void enter(String targetDeviceId, String cookie, String message);
+    }
+
     public interface Host {
         Activity activity();
         void onLogin(String baseUrl, String email, String password, LoginScreenCallback callback);
@@ -31,6 +36,7 @@ public final class RelayLoginScreenBuilder {
         void onVerifyOtp(String baseUrl, String email, String password, String code, String targetDeviceId, String cookie, LoginScreenCallback callback);
         /** 邮箱验证；保留密码以便验证成功后用同一账号继续自动登录。 */
         void onVerifyEmail(String baseUrl, String email, String password, String code, LoginScreenCallback callback);
+        void onResendEmailVerification(String baseUrl, String email, String password, LoginScreenCallback callback);
         void onBackToHome();
     }
 
@@ -43,6 +49,8 @@ public final class RelayLoginScreenBuilder {
          * 不代表失败；默认无操作以兼容旧实现。
          */
         default void onEmailVerificationRequired(String message) {}
+        /** 账号已创建，但邮箱验证码投递失败；页面仍应进入邮箱验证恢复流程。 */
+        default void onEmailVerificationDeliveryFailed(String message) { onError(message); }
     }
 
     public static final class RelayLoginScreen {
@@ -373,6 +381,15 @@ public final class RelayLoginScreenBuilder {
         btnLp.setMargins(0, UIUtils.dp(activity, DesignTokens.SPACE_4), 0, 0);
         content.addView(submitBtn, btnLp);
 
+        TextView resendLink = new TextView(activity);
+        resendLink.setText("重新发送验证码");
+        resendLink.setTextColor(DesignTokens.ACCENT);
+        resendLink.setTextSize(DesignTokens.TEXT_LABEL_SIZE);
+        resendLink.setGravity(Gravity.CENTER);
+        resendLink.setPadding(0, UIUtils.dp(activity, DesignTokens.SPACE_3), 0, 0);
+        resendLink.setVisibility(View.GONE);
+        content.addView(resendLink, new LinearLayout.LayoutParams(-1, -2));
+
         TextView loginLink = new TextView(activity);
         loginLink.setText("已有账号？登录");
         loginLink.setTextColor(DesignTokens.ACCENT);
@@ -392,8 +409,8 @@ public final class RelayLoginScreenBuilder {
         final String[] targetDeviceId = {""};
         final String[] otpCookie = {""};
 
-        // 切换到新设备验证模式：固定 URL/邮箱/密码，保留 OTP 上下文，不重新登录。
-        final java.util.function.BiConsumer<String, String> enterDeviceOtpMode = (tdId, cookie) -> {
+        // 切换到新设备验证模式：固定 URL/邮箱/密码，清除邮箱验证码，不重新登录。
+        final DeviceOtpModeHandler enterDeviceOtpMode = (tdId, cookie, message) -> {
             mode[0] = RegisterMode.DEVICE_OTP;
             targetDeviceId[0] = tdId;
             otpCookie[0] = cookie;
@@ -401,9 +418,12 @@ public final class RelayLoginScreenBuilder {
             emailInput.setEnabled(false);
             passwordInput.setVisibility(View.GONE);
             otpInput.setVisibility(View.VISIBLE);
+            otpInput.setText("");
+            otpInput.requestFocus();
+            resendLink.setVisibility(View.GONE);
             submitBtn.setText("验证并登录");
             submitBtn.setEnabled(true);
-            msgText.setText("已发送验证码，请检查您的邮箱");
+            msgText.setText(message);
             msgText.setTextColor(DesignTokens.SUCCESS);
             msgText.setVisibility(View.VISIBLE);
         };
@@ -459,7 +479,8 @@ public final class RelayLoginScreenBuilder {
                 host.onVerifyEmail(authBaseUrl[0], authEmail[0], authPassword[0], code, new LoginScreenCallback() {
                     @Override
                     public void onOtpRequired(String tdId, String cookie) {
-                        activity.runOnUiThread(() -> enterDeviceOtpMode.accept(tdId, cookie));
+                        activity.runOnUiThread(() -> enterDeviceOtpMode.enter(tdId, cookie,
+                            "邮箱验证成功。新的设备验证码已发送，请输入新验证码"));
                     }
                     @Override
                     public void onLoginSuccess(String url, String cookie) {
@@ -506,7 +527,8 @@ public final class RelayLoginScreenBuilder {
                         authBaseUrl[0] = baseUrl;
                         authEmail[0] = email;
                         authPassword[0] = password;
-                        enterDeviceOtpMode.accept(tdId, cookie);
+                        enterDeviceOtpMode.enter(tdId, cookie,
+                            "设备验证码已发送，请检查您的邮箱");
                     });
                 }
                 @Override
@@ -525,10 +547,35 @@ public final class RelayLoginScreenBuilder {
                         emailInput.setEnabled(false);
                         passwordInput.setVisibility(View.GONE);
                         otpInput.setVisibility(View.VISIBLE);
+                        otpInput.setText("");
+                        otpInput.requestFocus();
+                        resendLink.setVisibility(View.VISIBLE);
                         submitBtn.setText("验证邮箱并登录");
                         submitBtn.setEnabled(true);
                         msgText.setText(message);
                         msgText.setTextColor(DesignTokens.SUCCESS);
+                        msgText.setVisibility(View.VISIBLE);
+                    });
+                }
+                @Override
+                public void onEmailVerificationDeliveryFailed(String message) {
+                    activity.runOnUiThread(() -> {
+                        // 账号已经创建，进入同一邮箱验证状态，允许用户通过重发恢复。
+                        mode[0] = RegisterMode.EMAIL_VERIFY;
+                        authBaseUrl[0] = baseUrl;
+                        authEmail[0] = email;
+                        authPassword[0] = password;
+                        urlInput.setEnabled(false);
+                        emailInput.setEnabled(false);
+                        passwordInput.setVisibility(View.GONE);
+                        otpInput.setText("");
+                        otpInput.setVisibility(View.VISIBLE);
+                        otpInput.requestFocus();
+                        resendLink.setVisibility(View.VISIBLE);
+                        submitBtn.setText("验证邮箱并登录");
+                        submitBtn.setEnabled(true);
+                        msgText.setText(message);
+                        msgText.setTextColor(DesignTokens.DANGER);
                         msgText.setVisibility(View.VISIBLE);
                     });
                 }
@@ -538,6 +585,44 @@ public final class RelayLoginScreenBuilder {
                         submitBtn.setEnabled(true);
                         msgText.setText(message);
                         msgText.setTextColor(DesignTokens.DANGER);
+                        msgText.setVisibility(View.VISIBLE);
+                    });
+                }
+            });
+        });
+
+        resendLink.setOnClickListener(v -> {
+            resendLink.setEnabled(false);
+            msgText.setText("正在重新发送验证码...");
+            msgText.setTextColor(DesignTokens.WARNING);
+            msgText.setVisibility(View.VISIBLE);
+            host.onResendEmailVerification(authBaseUrl[0], authEmail[0], authPassword[0], new LoginScreenCallback() {
+                @Override
+                public void onOtpRequired(String tdId, String cookie) {}
+
+                @Override
+                public void onLoginSuccess(String url, String cookie) {}
+
+                @Override
+                public void onError(String message) {
+                    activity.runOnUiThread(() -> {
+                        resendLink.setEnabled(true);
+                        String display = "otp recently sent".equalsIgnoreCase(message)
+                            ? "验证码发送过于频繁，请稍后再试"
+                            : message;
+                        msgText.setText(display);
+                        msgText.setTextColor(DesignTokens.DANGER);
+                        msgText.setVisibility(View.VISIBLE);
+                    });
+                }
+
+                @Override
+                public void onEmailVerificationRequired(String message) {
+                    activity.runOnUiThread(() -> {
+                        resendLink.setEnabled(true);
+                        otpInput.setText("");
+                        msgText.setText(message);
+                        msgText.setTextColor(DesignTokens.SUCCESS);
                         msgText.setVisibility(View.VISIBLE);
                     });
                 }

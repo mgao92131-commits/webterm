@@ -152,6 +152,21 @@ public final class RelayServiceAuthTest {
             eq("user@example.com"), eq("123456"), any());
     }
 
+    @Test
+    public void onResendEmailVerification_usesProvidedBaseUrlAndCredentials() {
+        WebTermApi api = mock(WebTermApi.class);
+        RelayService service = newService(api, immediateHandler());
+        List<ServerConfig> servers = new ArrayList<>();
+        servers.add(master("http://saved.example.com", "sid=x"));
+        service.loadMasterFromServers(servers);
+
+        service.onResendEmailVerification("http://register-time.example.com",
+            "user@example.com", "pw", mock(WebTermApi.SimpleCallback.class));
+
+        verify(api).resendEmailVerification(eq("http://register-time.example.com"),
+            eq("user@example.com"), eq("pw"), any());
+    }
+
     // ── saveRelayLogin：切换服务器清理旧设备缓存 ──────────────────
 
     @Test

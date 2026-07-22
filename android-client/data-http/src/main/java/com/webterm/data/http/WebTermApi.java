@@ -173,9 +173,8 @@ public final class WebTermApi {
     }
 
     /**
-     * 提交普通注册。Go Relay 注册接口创建账号后只返回用户 JSON，不签发认证 Cookie，
-     * 因此这里 2xx 即视为“账号创建成功”，通过 {@link RegisterCallback#onAccountCreated}
-     * 回传结果（含是否需要邮箱验证），由上层决定是否自动登录。
+     * 提交普通注册。只接受 Relay 明确支持的 200/201，避免把代理或网关的其他 2xx
+     * 响应误判为账号已经创建。
      */
     public void register(String baseUrl, String email, String username, String password, RegisterCallback callback) {
         JSONObject body = new JSONObject();
@@ -207,31 +206,82 @@ public final class WebTermApi {
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
                     String text = response.body() != null ? response.body().string() : "";
-                    if (!response.isSuccessful()) {
+                    int status = response.code();
+                    if (status != 200 && status != 201) {
                         String msg = parseErrorMessage(text);
-                        if (msg.isEmpty()) msg = "注册失败: " + response.code();
-                        callback.onError(msg);
+                        if (msg.isEmpty()) {
+                            msg = "服务器返回了不兼容的注册响应，无法确认账号是否创建";
+                        }
+                        JSONObject errorJson = parseJsonObject(text);
+                        callback.onError(msg,
+                            booleanField(errorJson, "accountCreated", false),
+                            booleanField(errorJson, "emailVerificationRequired", false),
+                            booleanField(errorJson, "verificationDeliveryFailed", false));
                         return;
                     }
-                    // Go Relay 注册返回 201 + 用户 JSON。网关/代理/旧服务器的 2xx
-                    // （HTML、空正文、204 等）不能当作账号已创建：响应必须是合法 JSON
-                    // 且包含身份字段，才确认创建成功。
-                    JSONObject json;
-                    try {
-                        json = new JSONObject(text);
-                    } catch (JSONException e) {
+                    JSONObject json = parseJsonObject(text);
+                    if (json == null
+                        || !nonEmptyStringField(json, "id")
+                        || !nonEmptyStringField(json, "email")
+                        || !nonEmptyStringField(json, "username")) {
                         callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
                         return;
                     }
-                    String identity = json.optString("email", "");
-                    if (identity.isEmpty()) identity = json.optString("username", "");
-                    if (identity.isEmpty()) identity = json.optString("id", "");
-                    if (identity.isEmpty()) {
+                    Object emailVerificationValue = json.opt("emailVerificationRequired");
+                    if (emailVerificationValue != null && !(emailVerificationValue instanceof Boolean)) {
                         callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
                         return;
                     }
-                    boolean emailVerificationRequired = json.optBoolean("emailVerificationRequired", false);
+                    boolean emailVerificationRequired = emailVerificationValue instanceof Boolean
+                        && (Boolean) emailVerificationValue;
                     callback.onAccountCreated(baseUrl, emailVerificationRequired);
+                }
+            }
+        });
+    }
+
+    /** 重新发送注册阶段的邮箱验证码。请求中的密码只用于服务端认证，不写日志。 */
+    public void resendEmailVerification(String baseUrl, String email, String password, SimpleCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("email", email);
+            body.put("password", password);
+        } catch (JSONException e) {
+            callback.onError("构造请求失败: " + e.getMessage());
+            return;
+        }
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/resend-email-verification");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
+            .header("Cookie", "")
+            .header("X-Device-Name", getDeviceName())
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("重新发送验证码失败: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body() != null ? response.body().string() : "";
+                    if (response.code() != 200) {
+                        String msg = parseErrorMessage(text);
+                        callback.onError(msg.isEmpty() ? "重新发送验证码失败: " + response.code() : msg);
+                        return;
+                    }
+                    JSONObject json = parseJsonObject(text);
+                    Object sent = json == null ? null : json.opt("sent");
+                    if (!(sent instanceof Boolean) || !((Boolean) sent)) {
+                        callback.onError("服务器返回了不兼容的验证码响应");
+                        return;
+                    }
+                    callback.onReady();
                 }
             }
         });
@@ -600,6 +650,27 @@ public final class WebTermApi {
         }
     }
 
+    private static JSONObject parseJsonObject(String body) {
+        if (body == null || body.trim().isEmpty()) return null;
+        try {
+            return new JSONObject(body);
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    private static boolean nonEmptyStringField(JSONObject object, String name) {
+        if (object == null) return false;
+        Object value = object.opt(name);
+        return value instanceof String && !((String) value).trim().isEmpty();
+    }
+
+    private static boolean booleanField(JSONObject object, String name, boolean fallback) {
+        if (object == null) return fallback;
+        Object value = object.opt(name);
+        return value instanceof Boolean ? (Boolean) value : fallback;
+    }
+
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {
         return new Callback() {
             @Override
@@ -762,6 +833,13 @@ public final class WebTermApi {
          */
         void onAccountCreated(String baseUrl, boolean emailVerificationRequired);
         void onError(String message);
+
+        /** 注册响应明确表示账号已创建，但邮箱验证邮件投递失败。 */
+        default void onError(String message, boolean accountCreated,
+                              boolean emailVerificationRequired,
+                              boolean verificationDeliveryFailed) {
+            onError(message);
+        }
     }
 
     /** 邮箱验证回调：仅当服务端确认 verified==true 时成功。 */
@@ -813,4 +891,3 @@ public final class WebTermApi {
         void onError(String message);
     }
 }
-

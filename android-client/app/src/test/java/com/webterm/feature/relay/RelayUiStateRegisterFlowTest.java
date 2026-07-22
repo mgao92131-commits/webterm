@@ -182,6 +182,39 @@ public final class RelayUiStateRegisterFlowTest {
         verify(relayService, never()).onLogin(anyString(), anyString(), anyString(), any());
     }
 
+    @Test
+    public void onRegister_deliveryFailureReportsRecoverableAccount() {
+        RelayLoginScreenBuilder.LoginScreenCallback callback =
+            mock(RelayLoginScreenBuilder.LoginScreenCallback.class);
+        uiState.onRegister("http://relay.example.com", "user@example.com", "pw", callback);
+
+        ArgumentCaptor<WebTermApi.RegisterCallback> registerCb =
+            ArgumentCaptor.forClass(WebTermApi.RegisterCallback.class);
+        verify(relayService).onRegister(anyString(), anyString(), anyString(), registerCb.capture());
+        registerCb.getValue().onError("account created but verification email delivery failed",
+            true, true, true);
+
+        verify(callback).onEmailVerificationDeliveryFailed(
+            "账号已创建，但验证码邮件发送失败。请点击重新发送验证码。");
+        verify(callback, never()).onLoginSuccess(anyString(), anyString());
+    }
+
+    @Test
+    public void onResendEmailVerificationUsesFixedArgumentsAndReportsSuccess() {
+        RelayLoginScreenBuilder.LoginScreenCallback callback =
+            mock(RelayLoginScreenBuilder.LoginScreenCallback.class);
+        uiState.onResendEmailVerification("http://register-time.example.com",
+            "user@example.com", "pw", callback);
+
+        ArgumentCaptor<WebTermApi.SimpleCallback> resendCb =
+            ArgumentCaptor.forClass(WebTermApi.SimpleCallback.class);
+        verify(relayService).onResendEmailVerification(eq("http://register-time.example.com"),
+            eq("user@example.com"), eq("pw"), resendCb.capture());
+
+        resendCb.getValue().onReady();
+        verify(callback).onEmailVerificationRequired("验证码已重新发送，请检查邮箱");
+    }
+
     // ── 邮箱验证：验证成功 → 自动登录（可能继续设备 OTP） ─────────
 
     @Test

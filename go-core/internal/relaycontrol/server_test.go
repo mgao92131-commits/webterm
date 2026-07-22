@@ -227,6 +227,144 @@ func TestRelayControlRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) 
 	}
 }
 
+func TestRelayControlResendEmailVerification(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email":    " owner@example.com ",
+		"password": "secret-password",
+	}, nil)
+	if resend.Code != http.StatusOK || resend.Body.String() == "" {
+		t.Fatalf("resend status = %d body=%s", resend.Code, resend.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(resend.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode resend response: %v", err)
+	}
+	if body["sent"] != true || sender.count() != 1 {
+		t.Fatalf("resend response = %#v sends=%#v", body, sender.sends)
+	}
+	if sender.last().purpose != verifyEmailPurpose || sender.last().email != user.Username {
+		t.Fatalf("resend send = %#v, want email_verify for owner", sender.last())
+	}
+}
+
+func TestRelayControlResendEmailVerificationRejectsInvalidCredentialsUniformly(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	if _, err := store.CreateUser("owner@example.com", "secret-password", "admin"); err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	wrongPassword := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "owner@example.com", "password": "wrong-password",
+	}, nil)
+	unknownEmail := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "ghost@example.com", "password": "secret-password",
+	}, nil)
+	if wrongPassword.Code != http.StatusUnauthorized || unknownEmail.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid credential statuses = %d/%d", wrongPassword.Code, unknownEmail.Code)
+	}
+	if wrongPassword.Body.String() != unknownEmail.Body.String() {
+		t.Fatalf("credential errors differ: %s vs %s", wrongPassword.Body.String(), unknownEmail.Body.String())
+	}
+	if sender.count() != 0 {
+		t.Fatalf("invalid credentials sent OTP: %#v", sender.sends)
+	}
+}
+
+func TestRelayControlResendEmailVerificationSkipsVerifiedAccount(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	user, err := store.CreateUser("owner@example.com", "secret-password", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	if _, err := store.MarkEmailVerified(user.ID, time.Now()); err != nil {
+		t.Fatalf("MarkEmailVerified returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "owner@example.com", "password": "secret-password",
+	}, nil)
+	if resend.Code != http.StatusOK || sender.count() != 0 {
+		t.Fatalf("verified resend status=%d body=%s sends=%#v", resend.Code, resend.Body.String(), sender.sends)
+	}
+}
+
+func TestRelayControlResendEmailVerificationRateLimits(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	if _, err := store.CreateUser("owner@example.com", "secret-password", "admin"); err != nil {
+		t.Fatalf("CreateUser returned error: %v", err)
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+	request := map[string]any{"email": "owner@example.com", "password": "secret-password"}
+
+	first := postJSON(t, handler, "/api/auth/resend-email-verification", request, nil)
+	second := postJSON(t, handler, "/api/auth/resend-email-verification", request, nil)
+	if first.Code != http.StatusOK || second.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate limit statuses = %d/%d bodies=%s/%s", first.Code, second.Code, first.Body.String(), second.Body.String())
+	}
+	if sender.count() != 1 {
+		t.Fatalf("rate limited resend sent %d OTPs", sender.count())
+	}
+}
+
+func TestRelayControlRegisterDeliveryFailureKeepsRecoverableAccount(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	store := relaystore.NewMemoryStore()
+	sender := &recordingOTPSender{err: errors.New("smtp connection refused")}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	register := postJSON(t, handler, "/api/auth/register", map[string]any{
+		"email": "owner@example.com", "password": "secret-password",
+	}, nil)
+	if register.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed register status = %d body=%s", register.Code, register.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(register.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode failed register response: %v", err)
+	}
+	if body["accountCreated"] != true || body["emailVerificationRequired"] != true || body["verificationDeliveryFailed"] != true {
+		t.Fatalf("failed register response = %#v", body)
+	}
+	if _, ok := store.FindUserByUsername("owner@example.com"); !ok {
+		t.Fatalf("account was not retained after delivery failure")
+	}
+
+	sender.err = nil
+	resend := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "owner@example.com", "password": "secret-password",
+	}, nil)
+	if resend.Code != http.StatusOK || sender.count() != 1 {
+		t.Fatalf("recovery resend status=%d body=%s sends=%#v", resend.Code, resend.Body.String(), sender.sends)
+	}
+}
+
 func TestRelayControlLoginAcceptsPlainUsername(t *testing.T) {
 	store := relaystore.NewMemoryStore()
 	// 管理员账号通过 CLI 以非邮箱用户名创建（webterm-relay admin create --username admin）。

@@ -145,7 +145,25 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
             public void onError(String message) {
                 callback.onError(message);
             }
+
         });
+    }
+
+    @Override
+    public void onResendEmailVerification(String baseUrl, String email, String password,
+                                          RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onResendEmailVerification(baseUrl, email, password,
+            new com.webterm.data.http.WebTermApi.SimpleCallback() {
+                @Override
+                public void onReady() {
+                    callback.onEmailVerificationRequired("验证码已重新发送，请检查邮箱");
+                }
+
+                @Override
+                public void onError(String message) {
+                    callback.onError(message);
+                }
+            });
     }
 
     @Override
@@ -186,6 +204,18 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
 
             @Override
             public void onError(String message) {
+                callback.onError(message);
+            }
+
+            @Override
+            public void onError(String message, boolean accountCreated,
+                                boolean emailVerificationRequired,
+                                boolean verificationDeliveryFailed) {
+                if (accountCreated && emailVerificationRequired && verificationDeliveryFailed) {
+                    callback.onEmailVerificationDeliveryFailed(
+                        "账号已创建，但验证码邮件发送失败。请点击重新发送验证码。");
+                    return;
+                }
                 callback.onError(message);
             }
         });

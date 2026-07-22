@@ -109,6 +109,10 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
+	if server.requireEmailOTP() && !server.otpDeliveryConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "email verification delivery is not configured")
+		return
+	}
 	role := "user"
 	if server.store.UserCount() == 0 {
 		role = "admin"
@@ -121,6 +125,15 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	emailVerificationRequired := server.requireEmailOTP()
 	if emailVerificationRequired {
 		if err := server.sendVerificationCode(user, verifyEmailPurpose, "", false); err != nil {
+			if errors.Is(err, errOTPDeliveryFailed) {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":                      "account created but verification email delivery failed",
+					"accountCreated":             true,
+					"emailVerificationRequired":  true,
+					"verificationDeliveryFailed": true,
+				})
+				return
+			}
 			writeStoreError(w, err)
 			return
 		}
@@ -132,6 +145,50 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"role":                      user.Role,
 		"emailVerificationRequired": emailVerificationRequired,
 	})
+}
+
+// handleResendEmailVerification 使用邮箱和密码认证后重发注册阶段的验证码。
+// 认证失败统一返回 invalid credentials，不泄露邮箱是否存在。
+func (server *Server) handleResendEmailVerification(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	email := strings.TrimSpace(req.Email)
+	if email == "" || req.Password == "" {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	user, err := server.store.AuthenticateUser(email, req.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !user.EmailVerifiedAt.IsZero() {
+		writeJSON(w, http.StatusOK, map[string]any{"sent": true})
+		return
+	}
+	if err := server.sendVerificationCode(user, verifyEmailPurpose, "", true); err != nil {
+		if errors.Is(err, relaystore.ErrConflict) {
+			writeError(w, http.StatusTooManyRequests, "otp recently sent")
+			return
+		}
+		if errors.Is(err, errOTPDeliveryFailed) {
+			writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "verification email could not be sent")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true})
 }
 
 // handleVerifyEmail 消费注册阶段签发的 email_verify 验证码，标记邮箱已验证。

@@ -25,6 +25,8 @@ const (
 	resendOTPWindow    = time.Minute
 )
 
+var errOTPDeliveryFailed = errors.New("otp delivery failed")
+
 type otpSender interface {
 	SendOTP(toEmail string, purpose string, code string) error
 }
@@ -77,7 +79,13 @@ func (server *Server) sendVerificationCode(user relaystore.User, purpose, target
 	if server.otpSender == nil {
 		return nil
 	}
-	return server.otpSender.SendOTP(user.Username, purpose, code)
+	if err := server.otpSender.SendOTP(user.Username, purpose, code); err != nil {
+		// 邮件没有送出时立即使刚创建的验证码失效，避免失败的投递占用
+		// 重发窗口；验证码正文不写入日志或错误响应。
+		_, _ = server.store.ConsumeVerificationCode(user.ID, purpose, code, targetDeviceID, time.Now())
+		return errOTPDeliveryFailed
+	}
+	return nil
 }
 
 func (server *Server) rememberClientDevice(w http.ResponseWriter, r *http.Request, user relaystore.User) {
@@ -177,6 +185,20 @@ func (server *Server) requireEmailOTP() bool {
 		return server.config.RequireEmailOTP
 	}
 	return requireEmailOTP()
+}
+
+func (server *Server) otpDeliveryConfigured() bool {
+	switch sender := server.otpSender.(type) {
+	case nil:
+		return false
+	case envOTPSender:
+		return OTPDeliveryConfigured()
+	case configuredOTPSender:
+		return sender.devPrint || sender.config.Configured()
+	default:
+		// 测试或进程内注入的 sender 自己负责投递能力检查。
+		return true
+	}
 }
 
 func (server *Server) allowRegistration() bool {

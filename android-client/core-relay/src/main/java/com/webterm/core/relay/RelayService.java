@@ -311,6 +311,12 @@ public final class RelayService {
         api.verifyEmail(baseUrl, email, code, callback);
     }
 
+    /** 重新发送邮箱验证码必须使用注册时固定的地址，不读取已保存的主 Relay 地址。 */
+    public void onResendEmailVerification(String baseUrl, String email, String password,
+                                          WebTermApi.SimpleCallback callback) {
+        api.resendEmailVerification(baseUrl, email, password, callback);
+    }
+
     public String relayBaseUrl() {
         if (relayMasterConfig != null && relayMasterConfig.getUrl() != null && !relayMasterConfig.getUrl().isEmpty()) {
             return relayMasterConfig.getUrl();
