@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -397,5 +399,105 @@ func TestDirectGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("graceful shutdown timed out")
+	}
+}
+
+func TestDirectLoginConcurrentAttemptsAreBounded(t *testing.T) {
+	server, ts, _ := newTestServer(t)
+	var authCalls atomic.Int32
+	server.authenticate = func(string, string) (string, bool) {
+		authCalls.Add(1)
+		return "", false
+	}
+
+	const concurrent = 50
+	start := make(chan struct{})
+	statuses := make(chan int, concurrent)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrent; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			body := bytes.NewReader([]byte(`{"username":"admin","password":"wrong"}`))
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", body)
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			statuses <- resp.StatusCode
+			resp.Body.Close()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusUnauthorized {
+			t.Fatalf("concurrent login status = %d, want 401", status)
+		}
+	}
+	if got := authCalls.Load(); got != int32(server.limiter.maxAttempts) {
+		t.Fatalf("concurrent authenticate calls = %d, want %d", got, server.limiter.maxAttempts)
+	}
+}
+
+func TestDirectShutdownClosesActiveMux(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Shell.CWD = t.TempDir()
+	cfg.Upload.MaxBytes = 1 << 20
+	application := app.New(cfg, "test")
+	t.Cleanup(application.Shutdown)
+	server := New(config.DirectConfig{Addr: "127.0.0.1:0", Username: "admin", Password: "pw"}, application)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	baseURL := "http://" + listener.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.serve(ctx, listener) }()
+
+	cookie := loginCookie(t, baseURL, "admin", "pw")
+	header := http.Header{}
+	header.Set("Cookie", cookie)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	conn, _, err := websocket.Dial(dialCtx, "ws"+strings.TrimPrefix(baseURL, "http")+"/ws/sessions", &websocket.DialOptions{
+		Subprotocols: []string{"webterm.mux.v1"},
+		HTTPHeader:   header,
+	})
+	dialCancel()
+	if err != nil {
+		cancel()
+		t.Fatalf("authenticated mux dial failed: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	cancel()
+	readCtx, readCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _, readErr := conn.Read(readCtx)
+	readCancel()
+	if readErr == nil {
+		t.Fatal("active mux should be closed during Direct shutdown")
+	}
+	status := websocket.CloseStatus(readErr)
+	if status != websocket.StatusGoingAway && status != websocket.StatusNormalClosure {
+		t.Fatalf("mux close status = %v, want GoingAway or NormalClosure (err=%v)", status, readErr)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("serve returned unexpected error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("serve did not return after active mux shutdown")
 	}
 }

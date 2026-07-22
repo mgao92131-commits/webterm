@@ -332,11 +332,14 @@ func loadStrict(path string, explicit bool, modeOverride string) (Config, error)
 			cfg = mergeConfig(cfg, file)
 		}
 	}
-	envCfg, err := envConfigStrict()
+	envOverrides, err := envConfigOverridesStrict()
 	if err != nil {
 		return Config{}, err
 	}
-	cfg = mergeConfig(cfg, envCfg)
+	cfg = mergeConfig(cfg, envOverrides.Config)
+	if envOverrides.DirectAllowInsecureRemote.Set {
+		cfg.Direct.AllowInsecureRemote = envOverrides.DirectAllowInsecureRemote.Value
+	}
 	// CLI --mode 优先级最高，覆盖配置文件与环境变量中的 mode。
 	if modeOverride != "" {
 		cfg.Mode = Mode(modeOverride)
@@ -467,25 +470,45 @@ func readConfigFile(path string) Config {
 func envConfig() Config {
 	// Load 是遗留的宽松加载路径，没有 error 返回值；数字环境变量非法时
 	// 保持回退默认值的旧行为。严格报错由 LoadStrict 使用的 envConfigStrict 提供。
-	cfg, _ := envConfigStrict()
-	return cfg
+	overrides, _ := envConfigOverridesStrict()
+	if overrides.DirectAllowInsecureRemote.Set {
+		overrides.Config.Direct.AllowInsecureRemote = overrides.DirectAllowInsecureRemote.Value
+	}
+	return overrides.Config
+}
+
+// OptionalBool 表示环境变量布尔覆盖的三态结果：未设置、true、false。
+// 它不进入正式 Config，避免文件配置中的 false 失去原有语义。
+type OptionalBool struct {
+	Value bool
+	Set   bool
+}
+
+type configOverrides struct {
+	Config
+	DirectAllowInsecureRemote OptionalBool
 }
 
 // envConfigStrict 与 envConfig 读取相同的环境变量，但数字变量非空却无法
-// 解析为正整数时返回明确错误，而不是静默回退默认值。
+// 解析为正整数、或安全布尔变量非法时返回明确错误，而不是静默回退默认值。
 func envConfigStrict() (Config, error) {
+	overrides, err := envConfigOverridesStrict()
+	return overrides.Config, err
+}
+
+func envConfigOverridesStrict() (configOverrides, error) {
 	lines, errLines := envIntStrict("WEBTERM_AGENT_SCROLLBACK_MAX_LINES")
 	scrollBytes, errBytes := envIntStrict("WEBTERM_AGENT_SCROLLBACK_MAX_BYTES")
 	uploadBytes, errUpload := envIntStrict("WEBTERM_AGENT_UPLOAD_MAX_BYTES", "WEBTERM_MAX_UPLOAD_BYTES")
+	allowInsecureRemote, errAllow := envBoolStrict("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE")
 	cfg := Config{
 		Mode:        Mode(env("WEBTERM_AGENT_MODE")),
 		IPCEndpoint: envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_IPC_ENDPOINT"),
 		SocketPath:  envCompat("WEBTERM_AGENT_SOCKET_PATH", "WEBTERM_SOCKET_PATH"),
 		Direct: DirectConfig{
-			Addr:                env("WEBTERM_AGENT_DIRECT_ADDR"),
-			Username:            env("WEBTERM_AGENT_DIRECT_USERNAME"),
-			Password:            env("WEBTERM_AGENT_DIRECT_PASSWORD"),
-			AllowInsecureRemote: envBool("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE"),
+			Addr:     env("WEBTERM_AGENT_DIRECT_ADDR"),
+			Username: env("WEBTERM_AGENT_DIRECT_USERNAME"),
+			Password: env("WEBTERM_AGENT_DIRECT_PASSWORD"),
 		},
 		Relay: RelayConfig{
 			URL:        envCompat("WEBTERM_AGENT_RELAY_URL", "RELAY_URL"),
@@ -503,7 +526,10 @@ func envConfigStrict() (Config, error) {
 		},
 		Upload: UploadConfig{MaxBytes: uploadBytes},
 	}
-	return cfg, errors.Join(errLines, errBytes, errUpload)
+	return configOverrides{
+		Config:                    cfg,
+		DirectAllowInsecureRemote: allowInsecureRemote,
+	}, errors.Join(errLines, errBytes, errUpload, errAllow)
 }
 
 func mergeConfig(base Config, override Config) Config {
@@ -562,13 +588,21 @@ func env(key string) string {
 	return os.Getenv(key)
 }
 
-// envBool 解析布尔环境变量：true/1 视为 true，其余（含空）为 false。
-func envBool(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+func envBoolStrict(key string) (OptionalBool, error) {
+	raw, exists := os.LookupEnv(key)
+	if !exists || strings.TrimSpace(raw) == "" {
+		return OptionalBool{}, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "true", "1":
-		return true
+		return OptionalBool{Value: true, Set: true}, nil
+	case "false", "0":
+		return OptionalBool{Value: false, Set: true}, nil
 	default:
-		return false
+		return OptionalBool{}, fmt.Errorf(
+			"配置无效：%s=%q 不是有效布尔值，仅允许 true、false、1、0",
+			key, raw,
+		)
 	}
 }
 

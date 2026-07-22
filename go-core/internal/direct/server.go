@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -42,17 +43,23 @@ type Server struct {
 	router  *application.SessionRouter
 	auth    *Authenticator
 	limiter *LoginLimiter
+
+	authenticate func(username, password string) (string, bool)
+	wsMu         sync.Mutex
+	connections  map[*websocket.Conn]struct{}
+	closing      bool
 }
 
 // New 创建 Direct Server。SessionRouter 的完整装配（Mux、控制消息、文件传输、
 // 通知）由 agentrouter 统一提供，与 Relay Client 共享同一份逻辑。
 func New(cfg config.DirectConfig, appInstance *app.App) *Server {
 	return &Server{
-		cfg:     cfg,
-		app:     appInstance,
-		router:  agentrouter.New(appInstance, "direct"),
-		auth:    NewAuthenticator(cfg.Username, cfg.Password),
-		limiter: NewLoginLimiter(),
+		cfg:         cfg,
+		app:         appInstance,
+		router:      agentrouter.New(appInstance, "direct"),
+		auth:        NewAuthenticator(cfg.Username, cfg.Password),
+		limiter:     NewLoginLimiter(),
+		connections: make(map[*websocket.Conn]struct{}),
 	}
 }
 
@@ -71,15 +78,20 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 // 注入自己的 listener（127.0.0.1:0）以获得确定的端口并验证优雅退出。
 func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	s.app.Log("info", "direct", "direct server listening addr="+listener.Addr().String())
+	runtimeCtx, cancelRuntime := context.WithCancel(context.Background())
+	defer cancelRuntime()
+	defer s.closeWebSockets()
 
 	// ReadHeaderTimeout 缓解 slowloris；不设较短的 WriteTimeout，因为文件发送/下载
 	// 可能是长时间流式响应。WebSocket 连接被劫持后不受 IdleTimeout 影响。
 	server := &http.Server{
 		Handler:           s.routes(),
+		BaseContext:       func(net.Listener) context.Context { return runtimeCtx },
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	server.RegisterOnShutdown(s.closeWebSockets)
 	serveErr := make(chan error, 1)
 	go func() {
 		err := server.Serve(listener)
@@ -91,6 +103,10 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 
 	select {
 	case <-ctx.Done():
+		// 先发 WebSocket close frame，再取消 Handler context，避免普通 context
+		// 取消路径抢先以 EOF 结束客户端连接。
+		s.closeWebSockets()
+		cancelRuntime()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
@@ -123,10 +139,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// 登录失败限流：被封禁时返回与密码错误相同的通用错误，不泄露限流状态。
 	ip := clientIP(r)
-	if !s.limiter.Allow(ip) {
-		s.writeError(w, http.StatusUnauthorized, "账户或密码错误")
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, loginBodyLimit))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "请求体无效")
@@ -140,9 +152,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "请求体无效")
 		return
 	}
-	token, ok := s.auth.Authenticate(req.Username, req.Password)
+	if !s.limiter.BeginAttempt(ip) {
+		s.writeError(w, http.StatusUnauthorized, "账户或密码错误")
+		return
+	}
+	authenticate := s.authenticate
+	if authenticate == nil {
+		authenticate = s.auth.Authenticate
+	}
+	token, ok := authenticate(req.Username, req.Password)
 	if !ok {
-		s.limiter.RecordFailure(ip)
 		s.app.Log("warn", "direct", "direct login failed")
 		s.writeError(w, http.StatusUnauthorized, "账户或密码错误")
 		return
@@ -244,6 +263,11 @@ func (s *Server) handleSessionsWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	if !s.registerWebSocket(conn) {
+		_ = conn.Close(websocket.StatusGoingAway, "agent shutting down")
+		return
+	}
+	defer s.unregisterWebSocket(conn)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	if conn.Subprotocol() != protocol.MuxSubprotocol {
 		conn.Close(websocket.StatusPolicyViolation, "unsupported subprotocol")
@@ -259,6 +283,40 @@ func (s *Server) handleSessionsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if start != nil {
 		start()
+	}
+}
+
+func (s *Server) registerWebSocket(conn *websocket.Conn) bool {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.connections[conn] = struct{}{}
+	return true
+}
+
+func (s *Server) unregisterWebSocket(conn *websocket.Conn) {
+	s.wsMu.Lock()
+	delete(s.connections, conn)
+	s.wsMu.Unlock()
+}
+
+func (s *Server) closeWebSockets() {
+	s.wsMu.Lock()
+	if s.closing {
+		s.wsMu.Unlock()
+		return
+	}
+	s.closing = true
+	connections := make([]*websocket.Conn, 0, len(s.connections))
+	for conn := range s.connections {
+		connections = append(connections, conn)
+	}
+	s.wsMu.Unlock()
+
+	for _, conn := range connections {
+		_ = conn.Close(websocket.StatusGoingAway, "agent shutting down")
 	}
 }
 

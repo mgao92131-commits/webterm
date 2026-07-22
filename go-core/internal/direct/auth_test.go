@@ -181,16 +181,15 @@ func TestLoginLimiterBlocksAfterThreshold(t *testing.T) {
 	limiter := NewLoginLimiter()
 	ip := "192.168.1.50"
 	for i := 0; i < 5; i++ {
-		if !limiter.Allow(ip) {
+		if !limiter.BeginAttempt(ip) {
 			t.Fatalf("attempt %d should be allowed before threshold", i)
 		}
-		limiter.RecordFailure(ip)
 	}
-	if limiter.Allow(ip) {
+	if limiter.BeginAttempt(ip) {
 		t.Fatal("should be blocked after 5 failures")
 	}
 	// 其它 IP 不受影响。
-	if !limiter.Allow("10.0.0.9") {
+	if !limiter.BeginAttempt("10.0.0.9") {
 		t.Fatal("unrelated IP should not be blocked")
 	}
 }
@@ -199,14 +198,18 @@ func TestLoginLimiterSuccessClears(t *testing.T) {
 	limiter := NewLoginLimiter()
 	ip := "192.168.1.51"
 	for i := 0; i < 4; i++ {
-		limiter.RecordFailure(ip)
+		if !limiter.BeginAttempt(ip) {
+			t.Fatalf("attempt %d should be allowed", i)
+		}
 	}
 	limiter.RecordSuccess(ip)
 	// 成功后计数清零：再失败 4 次仍未达阈值。
 	for i := 0; i < 4; i++ {
-		limiter.RecordFailure(ip)
+		if !limiter.BeginAttempt(ip) {
+			t.Fatalf("attempt after success %d should be allowed", i)
+		}
 	}
-	if !limiter.Allow(ip) {
+	if !limiter.BeginAttempt(ip) {
 		t.Fatal("success should reset the failure counter")
 	}
 }
@@ -217,14 +220,52 @@ func TestLoginLimiterBanExpires(t *testing.T) {
 	limiter.now = func() time.Time { return base }
 	ip := "192.168.1.52"
 	for i := 0; i < 5; i++ {
-		limiter.RecordFailure(ip)
+		if !limiter.BeginAttempt(ip) {
+			t.Fatalf("attempt %d should be allowed", i)
+		}
 	}
-	if limiter.Allow(ip) {
+	if limiter.BeginAttempt(ip) {
 		t.Fatal("should be blocked immediately after threshold")
 	}
 	// 推进到封禁期之后。
 	limiter.now = func() time.Time { return base.Add(limiter.banDuration + time.Second) }
-	if !limiter.Allow(ip) {
+	if !limiter.BeginAttempt(ip) {
 		t.Fatal("ban should expire after banDuration")
+	}
+}
+
+func TestLoginLimiterConcurrentAttemptsAreBounded(t *testing.T) {
+	limiter := NewLoginLimiter()
+	ip := "192.0.2.50"
+	const concurrent = 50
+	start := make(chan struct{})
+	results := make(chan bool, concurrent)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrent; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- limiter.BeginAttempt(ip)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	allowed := 0
+	blocked := 0
+	for result := range results {
+		if result {
+			allowed++
+		} else {
+			blocked++
+		}
+	}
+	if allowed != limiter.maxAttempts {
+		t.Fatalf("concurrent allowed attempts = %d, want %d", allowed, limiter.maxAttempts)
+	}
+	if blocked != concurrent-limiter.maxAttempts {
+		t.Fatalf("concurrent blocked attempts = %d, want %d", blocked, concurrent-limiter.maxAttempts)
 	}
 }

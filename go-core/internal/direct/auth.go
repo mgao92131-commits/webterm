@@ -115,8 +115,9 @@ func randomToken() string {
 	return hex.EncodeToString(buf)
 }
 
-// LoginLimiter 是内存型登录失败限流器，按远端 IP 计数：window 内累计 maxAttempts
-// 次失败后封禁 banDuration；成功登录清除该 IP 记录；过期记录在每次访问时顺手清理。
+// LoginLimiter 是内存型登录尝试限流器，按远端 IP 计数：window 内累计
+// maxAttempts 次认证尝试后封禁 banDuration；成功登录清除该 IP 记录；过期记录
+// 在每次访问时顺手清理。
 type LoginLimiter struct {
 	maxAttempts int
 	window      time.Duration
@@ -143,33 +144,43 @@ func NewLoginLimiter() *LoginLimiter {
 	}
 }
 
-// Allow 判断该 IP 当前是否允许登录尝试（未被封禁）。
-func (limiter *LoginLimiter) Allow(ip string) bool {
-	limiter.mu.Lock()
-	defer limiter.mu.Unlock()
-	limiter.cleanupLocked()
-	rec := limiter.records[ip]
-	if rec == nil {
-		return true
-	}
-	return !limiter.now().Before(rec.blockedUntil)
-}
-
-// RecordFailure 记录一次失败；达到阈值后封禁并重置计数。
-func (limiter *LoginLimiter) RecordFailure(ip string) {
+// BeginAttempt 原子地检查并占用一次认证尝试额度。
+//
+// 认证耗时在锁外执行，但额度占用在锁内完成，因此并发请求不能全部越过
+// “5 次尝试后封禁”的边界。调用方应在真正调用 Authenticate 前调用本方法；
+// 认证成功后调用 RecordSuccess 清除该 IP 的记录。
+func (limiter *LoginLimiter) BeginAttempt(ip string) bool {
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
 	now := limiter.now()
+	limiter.cleanupLockedAt(now)
 	rec := limiter.records[ip]
-	if rec == nil || now.Sub(rec.firstSeen) > limiter.window {
+	if rec == nil {
 		rec = &loginRecord{firstSeen: now}
 		limiter.records[ip] = rec
 	}
-	rec.attempts++
+	if now.Before(rec.blockedUntil) {
+		return false
+	}
+	if !rec.blockedUntil.IsZero() {
+		rec.blockedUntil = time.Time{}
+		rec.attempts = 0
+		rec.firstSeen = now
+	}
+	if now.Sub(rec.firstSeen) > limiter.window {
+		rec.firstSeen = now
+		rec.attempts = 0
+		rec.blockedUntil = time.Time{}
+	}
 	if rec.attempts >= limiter.maxAttempts {
 		rec.blockedUntil = now.Add(limiter.banDuration)
-		rec.attempts = 0
+		return false
 	}
+	rec.attempts++
+	if rec.attempts == limiter.maxAttempts {
+		rec.blockedUntil = now.Add(limiter.banDuration)
+	}
+	return true
 }
 
 // RecordSuccess 成功登录后清除该 IP 的失败记录。
@@ -179,8 +190,7 @@ func (limiter *LoginLimiter) RecordSuccess(ip string) {
 	delete(limiter.records, ip)
 }
 
-func (limiter *LoginLimiter) cleanupLocked() {
-	now := limiter.now()
+func (limiter *LoginLimiter) cleanupLockedAt(now time.Time) {
 	for ip, rec := range limiter.records {
 		if now.Sub(rec.firstSeen) > limiter.window && !now.Before(rec.blockedUntil) {
 			delete(limiter.records, ip)

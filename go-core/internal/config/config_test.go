@@ -435,6 +435,69 @@ func TestDirectInsecureRemoteGate(t *testing.T) {
 	}
 }
 
+func TestDirectAllowInsecureRemoteEnvOverridesTrueWithFalse(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE", "false")
+	path := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw","allowInsecureRemote":true}}`)
+	if _, err := loadStrict(path, true, ""); err == nil || !strings.Contains(err.Error(), "allowInsecureRemote") {
+		t.Fatalf("false environment override should disable insecure remote, got %v", err)
+	}
+}
+
+func TestDirectAllowInsecureRemoteEnvOverridesFalseWithTrue(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE", "true")
+	path := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw","allowInsecureRemote":false}}`)
+	if _, err := loadStrict(path, true, ""); err != nil {
+		t.Fatalf("true environment override rejected: %v", err)
+	}
+}
+
+func TestDirectAllowInsecureRemoteEnvAcceptsZeroAndOne(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+		ok    bool
+	}{
+		{name: "zero", value: "0", ok: false},
+		{name: "one", value: "1", ok: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE", test.value)
+			path := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw","allowInsecureRemote":false}}`)
+			_, err := loadStrict(path, true, "")
+			if test.ok && err != nil {
+				t.Fatalf("1 should enable insecure remote: %v", err)
+			}
+			if !test.ok && (err == nil || !strings.Contains(err.Error(), "allowInsecureRemote")) {
+				t.Fatalf("0 should disable insecure remote, got %v", err)
+			}
+		})
+	}
+}
+
+func TestDirectAllowInsecureRemoteEnvRejectsInvalidValue(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE", "abc")
+	path := writeConfigFile(t, `{"mode":"direct","direct":{"username":"admin","password":"pw"}}`)
+	if _, err := loadStrict(path, true, ""); err == nil || !strings.Contains(err.Error(), "WEBTERM_AGENT_DIRECT_ALLOW_INSECURE_REMOTE") {
+		t.Fatalf("invalid boolean environment should fail, got %v", err)
+	}
+}
+
+func TestDirectAllowInsecureRemoteEnvUnsetPreservesFileValue(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfigFile(t, `{"mode":"direct","direct":{"addr":"0.0.0.0:8080","username":"admin","password":"pw","allowInsecureRemote":true}}`)
+	cfg, err := loadStrict(path, true, "")
+	if err != nil {
+		t.Fatalf("file allowInsecureRemote rejected when env unset: %v", err)
+	}
+	if !cfg.Direct.AllowInsecureRemote {
+		t.Fatal("unset environment should preserve file allowInsecureRemote=true")
+	}
+}
+
 // hybrid、auto、direct+relay 等未知模式必须失败，并提示支持的模式。
 func TestUnknownModeRejected(t *testing.T) {
 	for _, mode := range []string{"hybrid", "auto", "direct+relay", "p2p"} {
