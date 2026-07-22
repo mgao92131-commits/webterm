@@ -97,7 +97,7 @@ const powerShellHookTemplate = `# WebTerm PowerShell hook: reports session metad
 if ($env:WEBTERM_INTEGRATION -ne "1" -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_IPC_ENDPOINT)) { return }
 $script:WebTermBin = "{{.WebtermBin}}"
 if (-not (Test-Path $script:WebTermBin)) { $script:WebTermBin = "webterm" }
-# 退避状态由 CLI 的 --hook-mode 维护（成功清除、失败延长）；此处只读，故障期间跳过启动子进程。
+# Backoff state is maintained by the CLI hook mode; this hook only reads it.
 function Test-WebTermHookBackoff {
   $stateDir = $env:WEBTERM_HOOK_STATE_DIR
   if ([string]::IsNullOrWhiteSpace($stateDir) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID)) { return $false }
@@ -114,8 +114,8 @@ function Invoke-WebTermSessionUpdate {
   $last = ""
   $history = Get-History -Count 1 -ErrorAction SilentlyContinue
   if ($null -ne $history) { $last = $history.CommandLine }
-  # 后台启动、不弹窗、输出不连接终端；启动后短等退出（见下方注释），失败绝不影响 prompt。
-  # 元数据经环境变量传入，避免对动态值做命令行转义。
+  # Start the child process without attaching output to the terminal.
+  # Pass metadata through environment variables to avoid command-line escaping.
   try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $script:WebTermBin
@@ -130,12 +130,8 @@ function Invoke-WebTermSessionUpdate {
     $psi.EnvironmentVariables["WEBTERM_HOOK_SHELL_STATE"] = "prompt"
     $proc = [System.Diagnostics.Process]::Start($psi)
     if ($null -ne $proc) {
-      # 必须短等子进程退出：spawn 后立即返回 prompt（含仅去掉 Dispose、交由 GC
-      # 回收的写法）会让子进程在 ConPTY 会话内初始化阶段静默死亡——进程从未执行，
-      # 上报整条丢失且无任何失败记录（CI runner 上 5/5 稳定复现，本地 Win10 不
-      # 复现）。等待期间 PowerShell 管线保持安静，子进程可正常完成初始化。
-      # 正常退出约几十毫秒；hook-mode CLI 自身有亚秒级超时，2s 封顶兜底，
-      # prompt 不会被无限阻塞。
+      # Wait briefly so the child can finish initialization under ConPTY.
+      # The 2s limit prevents a slow or broken CLI from blocking the prompt.
       try { [void]$proc.WaitForExit(2000) } catch { }
       try { $proc.Dispose() } catch { }
     }
@@ -166,11 +162,11 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 	}
 
 	hookPath := filepath.Join(binDir, "webterm-shell-hook.sh")
-	if err := os.WriteFile(hookPath, []byte(replaceShellHookTemplate(webtermBin)), 0o755); err != nil {
+	if err := writeFileAtomic(hookPath, []byte(replaceShellHookTemplate(webtermBin)), 0o755); err != nil {
 		return "", "", fmt.Errorf("write shell hook: %w", err)
 	}
 	powerShellHookPath := filepath.Join(binDir, "webterm-shell-hook.ps1")
-	if err := os.WriteFile(powerShellHookPath, []byte(replacePowerShellHookTemplate(webtermBin)), 0o600); err != nil {
+	if err := writeFileAtomic(powerShellHookPath, buildPowerShellHook(webtermBin), 0o600); err != nil {
 		return "", "", fmt.Errorf("write PowerShell hook: %w", err)
 	}
 
@@ -179,7 +175,7 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 		return "", "", fmt.Errorf("create shell init dir: %w", err)
 	}
 	bashRcPath := filepath.Join(initDir, "bashrc")
-	if err := os.WriteFile(bashRcPath, []byte(replaceBashRcTemplate(hookPath)), 0o600); err != nil {
+	if err := writeFileAtomic(bashRcPath, []byte(replaceBashRcTemplate(hookPath)), 0o600); err != nil {
 		return "", "", fmt.Errorf("write bash rc: %w", err)
 	}
 	zshDir := filepath.Join(initDir, "zsh")
@@ -187,10 +183,20 @@ func InstallShellHookAt(runtimeBaseDir, webtermBin string) (string, string, erro
 		return "", "", fmt.Errorf("create zsh init dir: %w", err)
 	}
 	zshRcPath := filepath.Join(zshDir, ".zshrc")
-	if err := os.WriteFile(zshRcPath, []byte(replaceZshRcTemplate(hookPath)), 0o600); err != nil {
+	if err := writeFileAtomic(zshRcPath, []byte(replaceZshRcTemplate(hookPath)), 0o600); err != nil {
 		return "", "", fmt.Errorf("write zsh rc: %w", err)
 	}
 	return hookPath, bashRcPath, nil
+}
+
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+func buildPowerShellHook(webtermBin string) []byte {
+	body := []byte(replacePowerShellHookTemplate(webtermBin))
+	data := make([]byte, 0, len(utf8BOM)+len(body))
+	data = append(data, utf8BOM...)
+	data = append(data, body...)
+	return data
 }
 
 func replacePowerShellHookTemplate(webtermBin string) string {
