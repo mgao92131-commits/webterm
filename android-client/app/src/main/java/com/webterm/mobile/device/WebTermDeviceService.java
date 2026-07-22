@@ -53,6 +53,7 @@ import com.webterm.core.session.traffic.UidTrafficTracker;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -105,8 +106,10 @@ public final class WebTermDeviceService extends Service {
 
     private final ConcurrentHashMap<String, DeviceConnection> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
-    private final Set<String> relayConnectionKeys = ConcurrentHashMap.newKeySet();
-    private final Set<String> directConnectionKeys = ConcurrentHashMap.newKeySet();
+    private final Set<String> relayConnectionKeys = Collections.newSetFromMap(
+            new ConcurrentHashMap<String, Boolean>());
+    private final Set<String> directConnectionKeys = Collections.newSetFromMap(
+            new ConcurrentHashMap<String, Boolean>());
     private FileReceiveController controller;
     private FileUploadController uploadController;
     private AgentNotificationController agentController;
@@ -378,7 +381,9 @@ public final class WebTermDeviceService extends Service {
             if (manager != null) {
                 manager.setControlListener(null);
                 NetworkTrafficStats.unregisterConnection(manager.baseUrl(), manager.deviceId());
-                registry.releaseIfIdle(manager);
+                // Direct 设备是用户明确删除的本地连接，不能等待异步 channel close
+                // 后再次触发 releaseIfIdle；此处必须强制终止物理 Mux 与重连。
+                registry.forceRelease(manager);
             }
         }
         directConnectionKeys.clear();

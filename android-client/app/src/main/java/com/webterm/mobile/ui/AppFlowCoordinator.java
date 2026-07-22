@@ -83,6 +83,7 @@ public final class AppFlowCoordinator implements
     private boolean activityResumed;
     private boolean terminalAuthRecoveryInFlight;
     private int terminalAuthRecoveryGeneration;
+    private int directRequestGeneration;
     private SessionCommandController mSessionCommands;
 
     private ScreenMode mScreenMode = ScreenMode.DEVICES;
@@ -208,6 +209,7 @@ public final class AppFlowCoordinator implements
     }
 
     public void onDestroy() {
+        directRequestGeneration++;
         mainHandler.removeCallbacksAndMessages(null);
         mRelayService.stop();
         remoteTerminalIntegration.stop();
@@ -830,17 +832,19 @@ public final class AppFlowCoordinator implements
     }
 
     @Override
-    public void submitDirectDevice(String normalizedUrl, String username, String password,
+    public DirectDeviceDialog.RequestHandle submitDirectDevice(String normalizedUrl, String username, String password,
                                    DirectDeviceDialog.Callback callback) {
         // 去重：相同 URL + 账户视为同一 Direct 设备。
         if (serverConfigs.containsDirectDevice(normalizedUrl, username)) {
             callback.onError("该地址和账户已经添加");
-            return;
+            return () -> {};
         }
-        api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
+        final int requestGeneration = ++directRequestGeneration;
+        WebTermApi.RequestHandle call = api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
                 mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
                     String id = "direct_" + java.util.UUID.randomUUID();
                     String name = directDeviceDisplayName(normalizedUrl);
                     ServerConfig config = new ServerConfig(
@@ -857,15 +861,24 @@ public final class AppFlowCoordinator implements
 
             @Override
             public void onError(String message) {
-                mainHandler.post(() -> callback.onError(
-                    message == null || message.isEmpty() ? "连接失败" : message));
+                mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
+                    callback.onError(message == null || message.isEmpty() ? "连接失败" : message);
+                });
             }
 
             @Override
             public void onError(int code, String message) {
-                mainHandler.post(() -> callback.onError(mapDirectLoginError(code)));
+                mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
+                    callback.onError(mapDirectLoginError(code));
+                });
             }
         });
+        return () -> {
+            if (directRequestGeneration == requestGeneration) directRequestGeneration++;
+            if (call != null) call.cancel();
+        };
     }
 
     /** 设备名优先取主机名/IP（登录响应暂未返回设备名）。 */
@@ -899,17 +912,19 @@ public final class AppFlowCoordinator implements
     }
 
     @Override
-    public void updateDirectDevice(String oldConfigId, String normalizedUrl, String username,
+    public DirectDeviceDialog.RequestHandle updateDirectDevice(String oldConfigId, String normalizedUrl, String username,
                                    String password, DirectDeviceDialog.Callback callback) {
         // 编辑去重需排除自身，否则“只改密码”会被误判为重复。
         if (serverConfigs.containsDirectDevice(normalizedUrl, username, oldConfigId)) {
             callback.onError("该地址和账户已经添加");
-            return;
+            return () -> {};
         }
-        api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
+        final int requestGeneration = ++directRequestGeneration;
+        WebTermApi.RequestHandle call = api.login(normalizedUrl, "", username, password, new WebTermApi.LoginCallback() {
             @Override
             public void onReady(String baseUrl, String cookie) {
                 mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
                     String name = directDeviceDisplayName(normalizedUrl);
                     // 先按旧地址清理本地 Runtime 与缓存（此时配置尚未被原位改写）。
                     ServerConfig target = findDirectServerById(oldConfigId);
@@ -931,15 +946,24 @@ public final class AppFlowCoordinator implements
 
             @Override
             public void onError(String message) {
-                mainHandler.post(() -> callback.onError(
-                    message == null || message.isEmpty() ? "连接失败" : message));
+                mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
+                    callback.onError(message == null || message.isEmpty() ? "连接失败" : message);
+                });
             }
 
             @Override
             public void onError(int code, String message) {
-                mainHandler.post(() -> callback.onError(mapDirectLoginError(code)));
+                mainHandler.post(() -> {
+                    if (directRequestGeneration != requestGeneration) return;
+                    callback.onError(mapDirectLoginError(code));
+                });
             }
         });
+        return () -> {
+            if (directRequestGeneration == requestGeneration) directRequestGeneration++;
+            if (call != null) call.cancel();
+        };
     }
 
     /** 在持久化配置中按 configId 查找 Direct 设备。 */

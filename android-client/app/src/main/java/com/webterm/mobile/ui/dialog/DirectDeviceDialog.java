@@ -29,10 +29,10 @@ public final class DirectDeviceDialog {
         Activity activity();
 
         /** 规范化地址 + 账户 + 密码后登录并保存新设备，结果经 callback 回调（主线程）。 */
-        void submitDirectDevice(String normalizedUrl, String username, String password, Callback callback);
+        RequestHandle submitDirectDevice(String normalizedUrl, String username, String password, Callback callback);
 
         /** 编辑现有 Direct 设备：重新登录验证后替换旧配置（释放旧连接、建立新连接）。 */
-        void updateDirectDevice(String oldConfigId, String normalizedUrl, String username, String password, Callback callback);
+        RequestHandle updateDirectDevice(String oldConfigId, String normalizedUrl, String username, String password, Callback callback);
     }
 
     /** 提交结果回调。 */
@@ -40,6 +40,11 @@ public final class DirectDeviceDialog {
         void onSuccess(String displayName);
 
         void onError(String message);
+    }
+
+    /** 可取消的 Direct 提交请求。Dialog 被系统销毁时会取消并使回调过期。 */
+    public interface RequestHandle {
+        void cancel();
     }
 
     private DirectDeviceDialog() {}
@@ -157,6 +162,19 @@ public final class DirectDeviceDialog {
             dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         }
 
+        final java.util.concurrent.atomic.AtomicInteger generation =
+            new java.util.concurrent.atomic.AtomicInteger();
+        final boolean[] submitting = {false};
+        final RequestHandle[] activeRequest = {null};
+        dialog.setOnDismissListener(d -> {
+            if (!submitting[0]) return;
+            submitting[0] = false;
+            generation.incrementAndGet();
+            RequestHandle request = activeRequest[0];
+            if (request != null) request.cancel();
+            activeRequest[0] = null;
+        });
+
         cancelBtn.setOnClickListener((v) -> dialog.dismiss());
 
         submitBtn.setOnClickListener((v) -> {
@@ -184,23 +202,35 @@ public final class DirectDeviceDialog {
 
             errorText.setVisibility(View.GONE);
             setSubmitting(activity, true, submitLabel, addressInput, usernameInput, passwordInput, cancelBtn, submitBtn);
+            dialog.setCancelable(false);
+            dialog.setCanceledOnTouchOutside(false);
+            submitting[0] = true;
+            int requestGeneration = generation.incrementAndGet();
 
             Callback callback = new Callback() {
                 @Override
                 public void onSuccess(String displayName) {
+                    if (generation.get() != requestGeneration || !dialog.isShowing()) return;
+                    submitting[0] = false;
+                    activeRequest[0] = null;
+                    dialog.setCancelable(true);
                     dialog.dismiss();
                 }
 
                 @Override
                 public void onError(String message) {
+                    if (generation.get() != requestGeneration || !dialog.isShowing()) return;
+                    submitting[0] = false;
+                    activeRequest[0] = null;
+                    dialog.setCancelable(true);
                     setSubmitting(activity, false, submitLabel, addressInput, usernameInput, passwordInput, cancelBtn, submitBtn);
                     showError(errorText, message);
                 }
             };
             if (isEdit) {
-                host.updateDirectDevice(editing.getId(), normalized.url, username, password, callback);
+                activeRequest[0] = host.updateDirectDevice(editing.getId(), normalized.url, username, password, callback);
             } else {
-                host.submitDirectDevice(normalized.url, username, password, callback);
+                activeRequest[0] = host.submitDirectDevice(normalized.url, username, password, callback);
             }
         });
     }
