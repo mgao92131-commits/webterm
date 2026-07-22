@@ -464,3 +464,79 @@ func TestExportTruncationKeepsNewestAcrossRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestExportPrioritizesCurrentRunOverNewerHistory 当前 run 事件即使比历史事件更旧，
+// 也应优先进入保留窗口，避免历史日志挤掉本次运行的关键事件。
+func TestExportPrioritizesCurrentRunOverNewerHistory(t *testing.T) {
+	logDir := t.TempDir()
+	outDir := t.TempDir()
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	var disk []logs.Entry
+	// 当前 run（run-1，与 manifest 一致）：3 条较早的事件。
+	for i := 1; i <= 3; i++ {
+		disk = append(disk, logs.Entry{
+			RunID: "run-1", Seq: uint64(i), Time: base.Add(time.Duration(i) * time.Second),
+			Level: "info", Source: "test", Event: "ev_current",
+		})
+	}
+	// 历史 run（run-a）：5 条较晚的事件，纯按时间会挤掉当前 run。
+	for i := 1; i <= 5; i++ {
+		disk = append(disk, logs.Entry{
+			RunID: "run-a", Seq: uint64(i), Time: base.Add(time.Duration(100+i) * time.Second),
+			Level: "info", Source: "test", Event: "ev_history",
+		})
+	}
+	writeRawEntries(t, logDir, disk)
+
+	result, err := Export(ExportOptions{
+		LogDir: logDir, OutDir: outDir, Manifest: exportTestManifest(),
+		MaxEvents: 4, MaxBytes: DefaultExportMaxBytes,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if result.Events != 4 || !result.Truncated {
+		t.Fatalf("events = %d truncated = %v, want 4/true", result.Events, result.Truncated)
+	}
+	lines := strings.Split(strings.TrimSpace(readZip(t, result.Path)["events.jsonl"]), "\n")
+	current, history := 0, 0
+	for _, line := range lines {
+		var entry logs.Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("invalid line: %v", err)
+		}
+		switch entry.RunID {
+		case "run-1":
+			current++
+		case "run-a":
+			history++
+		}
+	}
+	if current != 3 {
+		t.Errorf("current-run events kept = %d, want 3 (all prioritized)", current)
+	}
+	if history != 1 {
+		t.Errorf("history events kept = %d, want 1 (remaining budget)", history)
+	}
+}
+
+// TestExportWithEmptyLogDirUsesRingOnly LogDir 为空时导出跳过磁盘读取，
+// 只携带内存 Ring 事件（测试 App 隔离生产日志的关键路径）。
+func TestExportWithEmptyLogDirUsesRingOnly(t *testing.T) {
+	outDir := t.TempDir()
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	ring := []logs.Entry{
+		{RunID: "run-1", Seq: 1, Time: base, Level: "info", Source: "test", Event: "ring_only_event"},
+	}
+	result, err := Export(ExportOptions{
+		LogDir: "", OutDir: outDir, Manifest: exportTestManifest(),
+		RingEntries: ring, MaxEvents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("export with empty LogDir: %v", err)
+	}
+	events := readZip(t, result.Path)["events.jsonl"]
+	if !strings.Contains(events, "ring_only_event") {
+		t.Errorf("empty LogDir export should include ring events:\n%s", events)
+	}
+}

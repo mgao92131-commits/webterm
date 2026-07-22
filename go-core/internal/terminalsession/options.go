@@ -49,6 +49,15 @@ func WithOnInfo(fn func()) Option {
 	}
 }
 
+// WithOnResize 设置几何成功变更回调。仅在 resize actor 确认租约有效、
+// PTY 与 Engine resize 均成功、layoutEpoch/revision 更新完成后触发，
+// 供外层会话把权威尺寸同步进 Info()。无效的租约或 PTY 失败不会触发。
+func WithOnResize(fn func(cols, rows int)) Option {
+	return func(r *Runtime) {
+		r.onResize = fn
+	}
+}
+
 // WithPTYResizer 设置 PTY winsize 调整回调。
 // screen 协议处理 resize 时会先调用它同步 PTY 尺寸（向 shell 发 SIGWINCH），
 // 再调整无头终端几何，保证 stty/TUI 程序看到的尺寸与实际渲染一致。

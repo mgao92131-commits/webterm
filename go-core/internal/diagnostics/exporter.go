@@ -65,9 +65,6 @@ type ExportResult struct {
 // 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
 // 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
-	if options.LogDir == "" {
-		return ExportResult{}, fmt.Errorf("log dir is required")
-	}
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = DefaultExportMaxBytes
 	}
@@ -80,15 +77,28 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	outDir := options.OutDir
 	if outDir == "" {
+		if options.LogDir == "" {
+			return ExportResult{}, fmt.Errorf("either LogDir or OutDir is required")
+		}
 		outDir = filepath.Join(filepath.Dir(options.LogDir), exportDirName)
 	}
 
-	entries, err := readLogEntries(options.LogDir)
-	if err != nil {
-		return ExportResult{}, err
+	// LogDir 为空表示调用方不希望读取磁盘日志（例如测试 App 仅导出内存 Ring），
+	// 此时跳过 readLogEntries，避免误读机器上属于其他 run 的生产日志。
+	var entries []logs.Entry
+	if options.LogDir != "" {
+		diskEntries, err := readLogEntries(options.LogDir)
+		if err != nil {
+			return ExportResult{}, err
+		}
+		entries = diskEntries
 	}
 	entries = mergeRingEntries(entries, options.RingEntries)
+	// 第二层保护：裁剪前优先保留当前 run 的事件，避免历史日志再次挤掉本次
+	// 运行的关键事件（根本保护仍是测试不写生产日志目录）。
+	entries, preTruncated := prioritizeCurrentRun(entries, options.Manifest.RunID, options.MaxEvents)
 	events, truncated := trimEntries(entries, options.MaxEvents, options.MaxBytes)
+	truncated = truncated || preTruncated
 	// 默认折叠自由文本 Message 与路径类 Field，诊断包不泄露原始错误正文与路径；
 	// --include-paths 时才放行原文。
 	events = logs.SanitizeEntries(events, options.IncludePaths)
@@ -311,6 +321,36 @@ func entryLess(a, b logs.Entry) bool {
 		return a.RunID < b.RunID
 	}
 	return a.Seq < b.Seq
+}
+
+// prioritizeCurrentRun 在裁剪前把当前 run 的事件排进保留窗口：当前 run 事件
+// 全部优先保留（受 maxEvents 上限约束），剩余条数预算再填充最新的历史事件。
+// 返回切片仍按 entryLess 排序，交由 trimEntries 继续按字节预算截断。
+// 第二个返回值标记本步骤是否丢弃了事件（用于汇总 Truncated 标志）。
+// runID 为空（旧版兼容）或总量未超预算时原样返回，不改变既有行为。
+func prioritizeCurrentRun(entries []logs.Entry, runID string, maxEvents int) ([]logs.Entry, bool) {
+	if runID == "" || len(entries) <= maxEvents {
+		return entries, false
+	}
+	var current, historical []logs.Entry
+	for _, entry := range entries {
+		if entry.RunID == runID {
+			current = append(current, entry)
+		} else {
+			historical = append(historical, entry)
+		}
+	}
+	// 当前 run 自身即超过预算：只保留最新的 maxEvents 条当前 run 事件。
+	if len(current) >= maxEvents {
+		return current[len(current)-maxEvents:], true
+	}
+	budget := maxEvents - len(current)
+	if len(historical) > budget {
+		historical = historical[len(historical)-budget:]
+	}
+	merged := append(historical, current...)
+	sort.Slice(merged, func(i, j int) bool { return entryLess(merged[i], merged[j]) })
+	return merged, true
 }
 
 // trimEntries 保留最新的事件：先按条数，再按编码后字节预算截断最旧记录。

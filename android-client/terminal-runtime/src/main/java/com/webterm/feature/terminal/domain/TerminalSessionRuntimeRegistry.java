@@ -122,6 +122,15 @@ public final class TerminalSessionRuntimeRegistry {
       return;
     }
     for (Entry entry : entries.values()) {
+      /*
+       * Fragment/View 仍可能存在，但应用已经不可交互。这里必须释放页面布局租约，
+       * 并将 pageAttached 标记为 false；应用回到前台时 attachPage() 才能识别出
+       * 一次真正的 page reattach，并恢复处于 RECONNECTING 状态的连接。
+       * detachPage() 不会关闭 TerminalChannel，也不会删除终端模型。
+       */
+      if (entry.visible) {
+        entry.runtime.detachPage();
+      }
       if (entry.state != LifecycleState.HOT) continue;
       long generation = ++entry.transitionGeneration;
       scheduler.schedule(() -> expireHot(entry.key, generation), BACKGROUND_WARM_DELAY_MS);

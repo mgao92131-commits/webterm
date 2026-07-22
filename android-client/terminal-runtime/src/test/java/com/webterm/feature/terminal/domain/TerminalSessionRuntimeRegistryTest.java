@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ResumeToken;
+import com.webterm.terminal.protocol.generated.TerminalScreenProto;
 
 import org.junit.Test;
 
@@ -119,6 +120,58 @@ public final class TerminalSessionRuntimeRegistryTest {
   }
 
   @Test
+  public void appHiddenDetachesVisibleRuntimeWithoutClosingConnection() {
+    Fixture fixture = new Fixture();
+    TerminalRuntimeKey key = key("server-1", "account-1", "s1");
+    TerminalSessionRuntime runtime = fixture.registry.acquire(key, HistoryBudget.defaults());
+    FakeConnection connection = new FakeConnection();
+    runtime.attachConnection(connection);
+
+    fixture.registry.setAppVisible(false);
+
+    assertEquals(1, connection.releaseLayoutCalls);
+    assertEquals(0, connection.closeCalls);
+  }
+
+  @Test
+  public void appVisibleRecoversDisconnectedHotRuntime() {
+    Fixture fixture = new Fixture();
+    TerminalRuntimeKey key = key("server-1", "account-1", "s1");
+    TerminalSessionRuntime runtime = fixture.registry.acquire(key, HistoryBudget.defaults());
+    FakeConnection connection = new FakeConnection();
+    runtime.attachConnection(connection);
+
+    fixture.registry.setAppVisible(false);
+    connection.listener.onDisconnected("network lost");
+    fixture.registry.setAppVisible(true);
+
+    assertEquals(1, connection.requestReconnectCalls);
+    assertEquals(0, connection.closeCalls);
+  }
+
+  @Test
+  public void appVisibleDoesNotReconnectHealthyRuntime() {
+    Fixture fixture = new Fixture();
+    TerminalRuntimeKey key = key("server-1", "account-1", "s1");
+    TerminalSessionRuntime runtime = fixture.registry.acquire(key, HistoryBudget.defaults());
+    FakeConnection connection = new FakeConnection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(TerminalScreenProto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(1)
+        .setSnapshot(TestScreenFrames.snapshotBuilder(1).build())
+        .build().toByteArray());
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+
+    fixture.registry.setAppVisible(false);
+    fixture.registry.setAppVisible(true);
+
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+    assertEquals(0, connection.requestReconnectCalls);
+    assertEquals(0, connection.closeCalls);
+  }
+
+  @Test
   public void warmLimitEvictsOldestToCold() {
     Fixture fixture = new Fixture();
     List<TerminalRuntimeKey> keys = new ArrayList<>();
@@ -167,6 +220,8 @@ public final class TerminalSessionRuntimeRegistryTest {
 
   private static final class FakeConnection implements TerminalSessionRuntime.ScreenConnection {
     int closeCalls;
+    int releaseLayoutCalls;
+    int requestReconnectCalls;
     Listener listener;
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
     @Override public boolean beginSync(@NonNull ResumeToken resumeToken) { return true; }
@@ -183,7 +238,8 @@ public final class TerminalSessionRuntimeRegistryTest {
     @Override public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq,
                                                 int limit) { return false; }
     @Override public void acquireLayout(boolean interactive) {}
-    @Override public void releaseLayout() {}
+    @Override public void releaseLayout() { releaseLayoutCalls++; }
+    @Override public void requestReconnect(@NonNull String reason) { requestReconnectCalls++; }
     @Override public void sendClipboardResponse(@NonNull String requestId, boolean allowed,
                                                  boolean timeout, byte[] data) {}
     @Override public void close() { closeCalls++; }

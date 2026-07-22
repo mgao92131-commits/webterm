@@ -116,6 +116,37 @@ stop_launch_agent() {
   fi
 }
 
+# fail_started_agent 在安装验证失败时停止刚启动的 LaunchAgent 再退出，
+# 避免留下一个状态不明、仍在后台周期性报错的 Agent。
+fail_started_agent() {
+  local message="$1"
+  if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+    launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  fi
+  die "$message"
+}
+
+# verify_agent_ready 确认 Agent 不只是“进程存在”，而是真正连上了 Relay。
+# launchctl print 只能证明 LaunchAgent 进程在运行；relay 模式用机器可读的
+# `diagnostics wait-relay` 轮询连接状态，并以其退出码区分失败原因：
+#   0=已连接  3=凭据被拒  4=设备禁用  5=协议不兼容  6=超时。
+# 任何失败都会 bootout 本次 Agent，保证“退出码 0 = 已安装且已连接”。
+verify_agent_ready() {
+  [[ "$MODE" == "relay" ]] || return 0
+  local status=0
+  "$BIN_DIR/webterm" diagnostics wait-relay --timeout 15s || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    return 0
+  fi
+  case "$status" in
+    3) fail_started_agent "Agent 已安装，但 Relay 凭据被拒绝。请检查 relay.json 的 credential 是否与 Relay 数据库登记一致，然后重新运行安装脚本。" ;;
+    4) fail_started_agent "Agent 已安装，但该设备已被 Relay 禁用。" ;;
+    5) fail_started_agent "Agent 已安装，但 Agent 与 Relay 协议不兼容。请升级 Agent 或 Relay。" ;;
+    6) fail_started_agent "Agent 已安装，但未能在规定时间内连接 Relay。请检查网络与 Relay 地址后重新启动。" ;;
+    *) fail_started_agent "Agent 已安装，但无法确认 Relay 连接状态（退出码 $status）。" ;;
+  esac
+}
+
 [[ "$(uname -s)" == "Darwin" ]] || die "该脚本只能在 macOS 上运行"
 [[ -n "$HOME_DIR" ]] || die "无法确定 HOME"
 [[ -d "$GO_DIR" ]] || die "找不到 Go 项目目录：$GO_DIR"
@@ -182,6 +213,8 @@ echo "[6/6] 启动 LaunchAgent"
 launchctl bootstrap "gui/$UID" "$PLIST"
 launchctl kickstart -k "gui/$UID/$LABEL"
 launchctl print "gui/$UID/$LABEL" >/dev/null
+# 进程存在不等于 Relay 已连接：relay 模式轮询连接状态确认真正就绪。
+verify_agent_ready
 
 echo
 echo "Agent 已启动：$MODE"

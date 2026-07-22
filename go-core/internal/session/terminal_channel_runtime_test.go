@@ -1,11 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"webterm/go-core/internal/terminalengine"
+	"webterm/go-core/internal/terminalsession"
 )
 
 type countingChannelSink struct {
@@ -187,5 +190,147 @@ func TestTerminalChannelRuntimeConcurrentEnqueueDoesNotLoseBytes(t *testing.T) {
 	}
 	if snap.HistoryPageBytes == 0 {
 		t.Fatal("historyPageBytes must be > 0")
+	}
+}
+
+// sizedEncode 返回一个按 Frame.Kind 决定输出长度的 encode 函数，
+// 用于在不依赖真实编码器的情况下测试 initial-sync 的 snapshot/patch 分类与 80% 阈值。
+func sizedEncode(patchLen, snapshotLen int) func(terminalengine.ScreenFrame) ([]byte, error) {
+	return func(frame terminalengine.ScreenFrame) ([]byte, error) {
+		switch frame.Kind {
+		case terminalengine.FrameSnapshot:
+			return bytes.Repeat([]byte{0xAA}, snapshotLen), nil
+		case terminalengine.FramePatch:
+			return bytes.Repeat([]byte{0xBB}, patchLen), nil
+		default:
+			return nil, nil
+		}
+	}
+}
+
+func baseInitialSyncMessage() terminalsession.InitialSync {
+	return terminalsession.InitialSync{
+		State: terminalengine.ScreenFrame{
+			InstanceID: "inst-1",
+			Epoch:      7,
+			Seq:        42,
+		},
+	}
+}
+
+// cold snapshot：Frame 本身即 FrameSnapshot，必须分类为 snapshot。
+// 这正是修复前被错误统计成 patch 的场景。
+func TestEncodeInitialScreenSync_ColdSnapshotClassifiedAsSnapshot(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Frame = terminalengine.ScreenFrame{Kind: terminalengine.FrameSnapshot}
+
+	payload, kind, err := encodeInitialScreenSyncWith(syncMessage, sizedEncode(0, 32))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "snapshot" {
+		t.Fatalf("cold snapshot classified as %q, want %q", kind, "snapshot")
+	}
+	if len(payload) != 32 {
+		t.Fatalf("payload len = %d, want 32 (snapshot bytes)", len(payload))
+	}
+}
+
+// forced resync：runtime 强制下发 snapshot 帧，同样必须分类为 snapshot。
+func TestEncodeInitialScreenSync_ForcedResyncClassifiedAsSnapshot(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Frame = terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot,
+		Seq:  99,
+	}
+	syncMessage.Reason = "forced_resync"
+
+	_, kind, err := encodeInitialScreenSyncWith(syncMessage, sizedEncode(0, 64))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "snapshot" {
+		t.Fatalf("forced resync classified as %q, want %q", kind, "snapshot")
+	}
+}
+
+// resume patch 较小：Patch 明显小于 Snapshot 的 80%，保留 patch。
+func TestEncodeInitialScreenSync_SmallPatchStaysPatch(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Frame = terminalengine.ScreenFrame{Kind: terminalengine.FramePatch, BaseRevision: 41}
+
+	// patch=10, snapshot=100 → 10*10=100 < 100*8=800，保留 patch。
+	payload, kind, err := encodeInitialScreenSyncWith(syncMessage, sizedEncode(10, 100))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "patch" {
+		t.Fatalf("small patch classified as %q, want %q", kind, "patch")
+	}
+	if len(payload) != 10 {
+		t.Fatalf("payload len = %d, want 10 (patch bytes)", len(payload))
+	}
+}
+
+// resume patch ≥ 80%：Patch 达到 Snapshot 的 80%，改发自包含 Snapshot。
+func TestEncodeInitialScreenSync_LargePatchUpgradedToSnapshot(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Frame = terminalengine.ScreenFrame{Kind: terminalengine.FramePatch, BaseRevision: 41}
+
+	// patch=80, snapshot=100 → 80*10=800 >= 100*8=800，升级为 snapshot。
+	payload, kind, err := encodeInitialScreenSyncWith(syncMessage, sizedEncode(80, 100))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "snapshot" {
+		t.Fatalf("large patch classified as %q, want %q", kind, "snapshot")
+	}
+	if len(payload) != 100 {
+		t.Fatalf("payload len = %d, want 100 (snapshot bytes)", len(payload))
+	}
+}
+
+// exact resume：Exact=true 时发送 ResumeAck，分类为 other，不调用 encode。
+func TestEncodeInitialScreenSync_ExactResumeIsOther(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Exact = true
+
+	encodeCalled := false
+	encode := func(terminalengine.ScreenFrame) ([]byte, error) {
+		encodeCalled = true
+		return nil, nil
+	}
+
+	_, kind, err := encodeInitialScreenSyncWith(syncMessage, encode)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "other" {
+		t.Fatalf("exact resume classified as %q, want %q", kind, "other")
+	}
+	if encodeCalled {
+		t.Fatalf("exact resume must not invoke frame encode")
+	}
+}
+
+// encode 失败：返回错误且不掩盖为 patch。
+func TestEncodeInitialScreenSync_EncodeErrorPropagates(t *testing.T) {
+	syncMessage := baseInitialSyncMessage()
+	syncMessage.Frame = terminalengine.ScreenFrame{Kind: terminalengine.FrameSnapshot}
+
+	wantErr := errors.New("encode boom")
+	encode := func(terminalengine.ScreenFrame) ([]byte, error) {
+		return nil, wantErr
+	}
+
+	payload, kind, err := encodeInitialScreenSyncWith(syncMessage, encode)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if payload != nil {
+		t.Fatalf("payload = %v, want nil on encode error", payload)
+	}
+	if kind != "" {
+		t.Fatalf("kind = %q, want empty on encode error", kind)
 	}
 }

@@ -60,6 +60,19 @@ func (app *App) relayDiagnostics() map[string]any {
 	}
 }
 
+// DiagnosticsRelayStatus 返回机器可读的 relay 连接状态，供
+// `webterm diagnostics state --json` 与安装脚本判断连接是否就绪。
+// 字段为稳定布尔/枚举，不含原始错误文本或设备身份。
+func (app *App) DiagnosticsRelayStatus() map[string]any {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return map[string]any{
+		"configured":    app.relayConfigured,
+		"connected":     app.relayConnected,
+		"lastErrorKind": string(app.relayLastErrorKind),
+	}
+}
+
 // DiagnosticsState 汇总当前 Agent 的只读状态（供导出 state.json）。
 // 终端项仅含状态与计量字段，不含输入正文。默认 id/termTitle 经 HashID 脱敏；
 // includePaths 为 true 时恢复完整值。

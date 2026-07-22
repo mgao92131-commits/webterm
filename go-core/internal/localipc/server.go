@@ -31,6 +31,9 @@ type Application interface {
 	// DiagnosticsSummary 返回运行中 Agent 的只读诊断快照。
 	// 默认脱敏（id/路径哈希化）；includePaths 为 true 时恢复完整值。
 	DiagnosticsSummary(includePaths bool) map[string]any
+	// DiagnosticsRelayStatus 返回机器可读的 relay 连接状态
+	// （configured/connected/lastErrorKind），供脚本判断连接是否就绪。
+	DiagnosticsRelayStatus() map[string]any
 	// ExportDiagnostics 生成诊断包并返回实际输出路径；exportDir 为空时使用默认位置。
 	// 实现必须保证失败时返回 error 而非 panic，且不影响 Agent 主循环。
 	ExportDiagnostics(exportDir string, includePaths bool) (string, error)
@@ -280,6 +283,12 @@ func (s *Server) handleDiagnostics(conn net.Conn, requestID string, request Diag
 		s.writePayload(conn, requestID, TypeDiagnostics, DiagnosticsResponse{
 			Action:     DiagnosticsActionExport,
 			ExportPath: path,
+		})
+	case DiagnosticsActionState:
+		// 机器可读的连接状态：安装脚本据此判断 Relay 是否就绪，不 grep 人类可读文本。
+		s.writePayload(conn, requestID, TypeDiagnostics, DiagnosticsResponse{
+			Action:  DiagnosticsActionState,
+			Summary: map[string]any{"relay": s.app.DiagnosticsRelayStatus()},
 		})
 	default:
 		s.writeError(conn, requestID, "invalid_action")

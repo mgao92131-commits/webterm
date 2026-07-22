@@ -17,6 +17,7 @@ import (
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/protocol"
 	termsession "webterm/go-core/internal/session"
+	"webterm/go-core/internal/transporterr"
 )
 
 // OpenHandler 为 logical channel 创建直接的帧处理器。
@@ -276,16 +277,32 @@ func errorKind(err error) string {
 	switch {
 	case err == nil:
 		return "none"
+
+	case errors.Is(err, context.Canceled):
+		return "context_cancelled"
+
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
-	case errors.Is(err, net.ErrClosed), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+
+	case errors.Is(err, transporterr.ErrRelayStreamClosed):
+		return "stream_closed"
+
+	case errors.Is(err, net.ErrClosed),
+		errors.Is(err, io.EOF),
+		errors.Is(err, io.ErrUnexpectedEOF):
 		return "closed"
 	}
+
+	if websocket.CloseStatus(err) != -1 {
+		return "websocket_closed"
+	}
+
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "timeout"
 	}
-	return "unknown"
+
+	return "io_error"
 }
 
 type channelSink struct {
