@@ -667,22 +667,36 @@ func encodeInitialScreenSyncWith(syncMessage terminalsession.InitialSync,
 		payload, err := screenprotocol.EncodeResumeAck(state.InstanceID, state.Epoch, state.Seq)
 		return payload, "other", err
 	}
-	patchBytes, err := encode(syncMessage.Frame)
-	if err != nil || syncMessage.Frame.Kind != terminalengine.FramePatch {
-		return patchBytes, "patch", err
-	}
-	// 恢复慢路径同时编码候选 Patch 与 Snapshot。Patch 达到 Snapshot 的 80%
-	// 时直接发送自包含 Snapshot；比较只发生在 initial-sync，不进入在线热路径。
-	snapshot := syncMessage.State
-	snapshot.Kind = terminalengine.FrameSnapshot
-	snapshotBytes, err := encode(snapshot)
+
+	payload, err := encode(syncMessage.Frame)
 	if err != nil {
 		return nil, "", err
 	}
-	if len(patchBytes)*10 >= len(snapshotBytes)*8 {
-		return snapshotBytes, "snapshot", nil
+
+	switch syncMessage.Frame.Kind {
+	case terminalengine.FrameSnapshot:
+		return payload, "snapshot", nil
+
+	case terminalengine.FramePatch:
+		// 恢复慢路径同时编码候选 Patch 与 Snapshot。Patch 达到 Snapshot 的 80%
+		// 时直接发送自包含 Snapshot；比较只发生在 initial-sync，不进入在线热路径。
+		snapshot := syncMessage.State
+		snapshot.Kind = terminalengine.FrameSnapshot
+		snapshot.BaseRevision = 0
+
+		snapshotBytes, err := encode(snapshot)
+		if err != nil {
+			return nil, "", err
+		}
+
+		if len(payload)*10 >= len(snapshotBytes)*8 {
+			return snapshotBytes, "snapshot", nil
+		}
+		return payload, "patch", nil
+
+	default:
+		return payload, "other", nil
 	}
-	return patchBytes, "patch", nil
 }
 
 func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
