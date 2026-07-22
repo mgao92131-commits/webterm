@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"webterm/go-core/internal/relaycore"
@@ -19,6 +20,7 @@ type Server struct {
 	refreshTokenTTL time.Duration
 	otpSender       otpSender
 	config          *Config
+	resendEmailMu   sync.Mutex
 }
 
 // Config contains the Relay control-plane settings supplied by the owning
@@ -66,6 +68,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/auth/register", server.handleRegister)
 	mux.HandleFunc("/api/auth/refresh", server.handleRefresh)
 	mux.HandleFunc("/api/auth/verify-otp", server.handleVerifyOTP)
+	mux.HandleFunc("/api/auth/verify-email", server.handleVerifyEmail)
+	mux.HandleFunc("/api/auth/resend-email-verification", server.handleResendEmailVerification)
 	mux.HandleFunc("/api/auth/devices", server.handleTrustedDevices)
 	mux.HandleFunc("/api/auth/devices/", server.handleTrustedDevice)
 	mux.HandleFunc("/api/devices", server.handleDevices)
@@ -95,15 +99,15 @@ func (server *Server) authenticateRequest(w http.ResponseWriter, r *http.Request
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, relaystore.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, relaystore.ErrUnauthorized):
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, relaystore.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, relaystore.ErrConflict):
-		writeError(w, http.StatusConflict, err.Error())
+		writeError(w, http.StatusConflict, "conflict")
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
 

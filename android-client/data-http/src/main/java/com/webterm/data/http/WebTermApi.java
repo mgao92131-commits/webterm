@@ -45,8 +45,12 @@ public final class WebTermApi {
             callback.onError(e.getMessage());
             return;
         }
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/auth/login")
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/login");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
             .header("Cookie", cookie != null ? cookie : "")
             .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(login.toString(), JSON))
@@ -99,8 +103,12 @@ public final class WebTermApi {
             callback.onError(e.getMessage());
             return;
         }
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/auth/verify-otp")
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/verify-otp");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
             .header("Cookie", cookie != null ? cookie : "")
             .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(body.toString(), JSON))
@@ -130,8 +138,12 @@ public final class WebTermApi {
     }
 
     public void refresh(String baseUrl, String cookie, LoginCallback callback) {
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/auth/refresh")
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/refresh");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
             .header("Cookie", cookie != null ? cookie : "")
             .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create("", JSON))
@@ -160,18 +172,22 @@ public final class WebTermApi {
         });
     }
 
-    public void register(String baseUrl, String email, String username, String password, ExtendedLoginCallback callback) {
+    /** 注册；邮箱验证开启时，202 只表示待验证记录和邮件已创建。 */
+    public void register(String baseUrl, String email, String password, RegisterCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("email", email);
-            body.put("username", username);
             body.put("password", password);
         } catch (JSONException e) {
             callback.onError(e.getMessage());
             return;
         }
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/auth/register")
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/register");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
             .header("Cookie", "")
             .header("X-Device-Name", getDeviceName())
             .post(RequestBody.create(body.toString(), JSON))
@@ -179,43 +195,112 @@ public final class WebTermApi {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                callback.onError("Register failed: " + e.getMessage());
+                callback.onError("注册失败: " + e.getMessage());
             }
 
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 try (response) {
-                    if (!response.isSuccessful()) {
-                        String bodyStr = response.body() != null ? response.body().string() : "";
-                        String msg = parseErrorMessage(bodyStr);
-                        if (msg.isEmpty()) msg = "Register failed: " + response.code();
+                    String text = response.body() != null ? response.body().string() : "";
+                    int status = response.code();
+                    if (status == 202) {
+                        JSONObject json = parseJsonObject(text);
+                        Object required = json == null ? null : json.opt("verificationRequired");
+                        Object sent = json == null ? null : json.opt("verificationSent");
+                        if (!(required instanceof Boolean) || !((Boolean) required)
+                            || !(sent instanceof Boolean) || !((Boolean) sent)) {
+                            callback.onError("服务器返回了不兼容的注册响应，无法确认验证码已发送");
+                            return;
+                        }
+                        callback.onVerificationRequired(baseUrl);
+                        return;
+                    }
+                    if (status != 200 && status != 201) {
+                        String msg = parseErrorMessage(text);
+                        if (msg.isEmpty()) {
+                            msg = "服务器返回了不兼容的注册响应，无法确认账号是否创建";
+                        }
                         callback.onError(msg);
                         return;
                     }
-                    String text = response.body().string();
-                    JSONObject json = null;
-                    try {
-                        json = new JSONObject(text);
-                    } catch (JSONException ignored) {}
-                    String mergedCookie = parseAndMergeCookies(null, response);
-                    if (json != null && json.optBoolean("otp_required", false)) {
-                        String targetDeviceId = json.optString("target_device_id", "");
-                        callback.onOtpRequired(targetDeviceId, mergedCookie);
+                    JSONObject json = parseJsonObject(text);
+                    if (json == null
+                        || !nonEmptyStringField(json, "id")
+                        || !nonEmptyStringField(json, "email")
+                        || !nonEmptyStringField(json, "username")) {
+                        callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
                         return;
                     }
-                    if (mergedCookie.isEmpty()) {
-                        callback.onError("Register did not return an auth cookie.");
+                    Object emailVerificationValue = json.opt("emailVerificationRequired");
+                    if (emailVerificationValue != null && !(emailVerificationValue instanceof Boolean)) {
+                        callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
                         return;
                     }
-                    callback.onReady(baseUrl, mergedCookie);
+                    if (emailVerificationValue != null
+                        && (!(emailVerificationValue instanceof Boolean) || (Boolean) emailVerificationValue)) {
+                        callback.onError("服务器返回了不兼容的注册响应，无法确认账号是否创建");
+                        return;
+                    }
+                    callback.onAccountCreated(baseUrl);
+                }
+            }
+        });
+    }
+
+    /** 重新发送注册阶段的邮箱验证码。请求中的密码只用于服务端认证，不写日志。 */
+    public void resendEmailVerification(String baseUrl, String email, String password, SimpleCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("email", email);
+            body.put("password", password);
+        } catch (JSONException e) {
+            callback.onError("构造请求失败: " + e.getMessage());
+            return;
+        }
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/resend-email-verification");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
+            .header("Cookie", "")
+            .header("X-Device-Name", getDeviceName())
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("重新发送验证码失败: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body() != null ? response.body().string() : "";
+                    if (response.code() != 200) {
+                        String msg = parseErrorMessage(text);
+                        callback.onError(msg.isEmpty() ? "重新发送验证码失败: " + response.code() : msg);
+                        return;
+                    }
+                    JSONObject json = parseJsonObject(text);
+                    Object sent = json == null ? null : json.opt("sent");
+                    if (!(sent instanceof Boolean) || !((Boolean) sent)) {
+                        callback.onError("服务器返回了不兼容的验证码响应");
+                        return;
+                    }
+                    callback.onReady();
                 }
             }
         });
     }
 
     public void fetchDevices(String baseUrl, String cookie, SessionsCallback callback) {
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/devices")
+        Request.Builder rb = safeBuilder(baseUrl + "/api/devices");
+        if (rb == null) {
+            callback.onError(0, "服务器地址无效");
+            return;
+        }
+        Request request = rb
             .header("Cookie", cookie != null ? cookie : "")
             .get()
             .build();
@@ -244,8 +329,12 @@ public final class WebTermApi {
     }
 
     public void fetchSessions(ServerConfig server, SessionsCallback callback) {
-        Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions")
+        Request.Builder builder = safeBuilder(server.getUrl() + "/api/sessions");
+        if (builder == null) {
+            callback.onError(0, "服务器地址无效");
+            return;
+        }
+        builder
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .get();
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
@@ -276,8 +365,12 @@ public final class WebTermApi {
     }
 
     public void createSession(ServerConfig server, SessionCreateCallback callback) {
-        Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions")
+        Request.Builder builder = safeBuilder(server.getUrl() + "/api/sessions");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        builder
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .post(RequestBody.create("{}", JSON));
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
@@ -308,8 +401,12 @@ public final class WebTermApi {
     }
 
     public void createSession(String baseUrl, String cookie, SessionCreateCallback callback) {
-        Request request = new Request.Builder()
-            .url(baseUrl + "/api/sessions")
+        Request.Builder builder = safeBuilder(baseUrl + "/api/sessions");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
             .header("Cookie", cookie != null ? cookie : "")
             .post(RequestBody.create("{}", JSON))
             .build();
@@ -339,8 +436,12 @@ public final class WebTermApi {
 
     public void deleteSession(ServerConfig server, String sessionId, SimpleCallback callback) {
         String apiSessionId = stripRelaySessionPrefix(sessionId);
-        Request.Builder builder = new Request.Builder()
-            .url(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
+        Request.Builder builder = safeBuilder(server.getUrl() + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId));
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        builder
             .header("Cookie", server.getCookie() != null ? server.getCookie() : "")
             .delete();
         if (server.isRelayDevice() && server.getDeviceId() != null && !server.getDeviceId().isEmpty()) {
@@ -351,8 +452,12 @@ public final class WebTermApi {
 
     public void deleteSession(String baseUrl, String cookie, String sessionId, SimpleCallback callback) {
         String apiSessionId = stripRelaySessionPrefix(sessionId);
-        Request.Builder builder = new Request.Builder()
-            .url(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId))
+        Request.Builder builder = safeBuilder(baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId));
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        builder
             .header("Cookie", cookie != null ? cookie : "")
             .delete();
         String relayDeviceId = relayDeviceIdFromSessionId(sessionId);
@@ -428,8 +533,25 @@ public final class WebTermApi {
 
     // --- HTTP helpers ---
 
+    /**
+     * 安全构造请求构建器：{@code Request.Builder.url()} 对非法地址（如越界端口）
+     * 会同步抛出 {@link IllegalArgumentException}。网络层不能假设所有调用方
+     * 都传入了合法地址，统一在此兜底，由调用方转为 callback 错误，避免崩溃。
+     */
+    private static Request.Builder safeBuilder(String url) {
+        try {
+            return new Request.Builder().url(url);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private void post(String url, String cookie, JSONObject body, RawCallback callback) {
-        Request.Builder rb = new Request.Builder().url(url);
+        Request.Builder rb = safeBuilder(url);
+        if (rb == null) {
+            callback.onFailure(0, "服务器地址无效");
+            return;
+        }
         rb.header("Cookie", cookie != null ? cookie : "");
         rb.post(RequestBody.create(body.toString(), JSON));
         http.newCall(rb.build()).enqueue(new Callback() {
@@ -458,7 +580,12 @@ public final class WebTermApi {
     }
 
     private void delete(String url, String cookie, RawCallback callback) {
-        Request.Builder rb = new Request.Builder().url(url).delete();
+        Request.Builder rb = safeBuilder(url);
+        if (rb == null) {
+            callback.onFailure(0, "服务器地址无效");
+            return;
+        }
+        rb.delete();
         rb.header("Cookie", cookie != null ? cookie : "");
         http.newCall(rb.build()).enqueue(new Callback() {
             @Override
@@ -486,7 +613,12 @@ public final class WebTermApi {
     }
 
     private void getJSONArray(String url, String cookie, RawArrayCallback callback) {
-        Request.Builder rb = new Request.Builder().url(url).get();
+        Request.Builder rb = safeBuilder(url);
+        if (rb == null) {
+            callback.onFailure(0, "服务器地址无效");
+            return;
+        }
+        rb.get();
         rb.header("Cookie", cookie != null ? cookie : "");
         http.newCall(rb.build()).enqueue(new Callback() {
             @Override
@@ -523,6 +655,21 @@ public final class WebTermApi {
         } catch (JSONException e) {
             return body;
         }
+    }
+
+    private static JSONObject parseJsonObject(String body) {
+        if (body == null || body.trim().isEmpty()) return null;
+        try {
+            return new JSONObject(body);
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    private static boolean nonEmptyStringField(JSONObject object, String name) {
+        if (object == null) return false;
+        Object value = object.opt(name);
+        return value instanceof String && !((String) value).trim().isEmpty();
     }
 
     private Callback simpleCallback(SimpleCallback callback, String failurePrefix) {
@@ -621,6 +768,78 @@ public final class WebTermApi {
         void onOtpRequired(String targetDeviceId, String cookie);
     }
 
+    /**
+     * 提交注册邮箱验证码（消费 Go Relay 的 email_verify 验证码）。
+     * 成功条件：HTTP 200 且响应 JSON 中 verified==true；响应格式错误不得视为成功。
+     */
+    public void verifyEmail(String baseUrl, String email, String code, EmailVerifyCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("email", email);
+            body.put("code", code);
+        } catch (JSONException e) {
+            callback.onError(e.getMessage());
+            return;
+        }
+        Request.Builder builder = safeBuilder(baseUrl + "/api/auth/verify-email");
+        if (builder == null) {
+            callback.onError("服务器地址无效");
+            return;
+        }
+        Request request = builder
+            .header("Cookie", "")
+            .header("X-Device-Name", getDeviceName())
+            .post(RequestBody.create(body.toString(), JSON))
+            .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                callback.onError("邮箱验证失败: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try (response) {
+                    String text = response.body() != null ? response.body().string() : "";
+                    if (response.code() != 201) {
+                        String msg = parseErrorMessage(text);
+                        if (msg.isEmpty()) msg = "邮箱验证失败: " + response.code();
+                        callback.onError(msg);
+                        return;
+                    }
+                    JSONObject json;
+                    try {
+                        json = new JSONObject(text);
+                    } catch (JSONException e) {
+                        callback.onError("邮箱验证失败: 服务器响应格式不正确");
+                        return;
+                    }
+                    Object accountCreated = json.opt("accountCreated");
+                    if (!(accountCreated instanceof Boolean) || !((Boolean) accountCreated)
+                        || !nonEmptyStringField(json, "email")) {
+                        callback.onError("邮箱验证失败: 服务器返回了不兼容的响应");
+                        return;
+                    }
+                    callback.onAccountCreated(baseUrl);
+                }
+            }
+        });
+    }
+
+    /** 注册结果回调；邮箱验证模式下只报告验证码已发送，不报告账号已创建。 */
+    public interface RegisterCallback {
+        void onVerificationRequired(String baseUrl);
+        /** 仅用于未开启邮箱验证的旧直注册部署。 */
+        void onAccountCreated(String baseUrl);
+        void onError(String message);
+    }
+
+    /** 邮箱验证回调：仅当服务端确认正式账号已创建时成功。 */
+    public interface EmailVerifyCallback {
+        void onAccountCreated(String baseUrl);
+        void onError(String message);
+    }
+
     public interface SessionCreateCallback {
         void onReady(String sessionId);
         void onError(String message);
@@ -664,4 +883,3 @@ public final class WebTermApi {
         void onError(String message);
     }
 }
-

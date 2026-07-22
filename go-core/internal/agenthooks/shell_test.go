@@ -1,6 +1,9 @@
 package agenthooks
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,5 +56,77 @@ func TestPowerShellHookIsNonBlockingWithBackoff(t *testing.T) {
 	// 不再同步执行 CLI（旧的 & $script:WebTermBin ... --shell-state 形式）。
 	if strings.Contains(powerShellHookTemplate, "& $script:WebTermBin internal session-update --shell-state") {
 		t.Fatal("PowerShell hook must not synchronously invoke session-update")
+	}
+}
+
+func TestGeneratedPowerShellHookHasUTF8BOM(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := InstallShellHookAt(root, `C:\webterm.exe`); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(root, "bin", "webterm-shell-hook.ps1")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, utf8BOM) {
+		t.Fatalf("PowerShell hook does not start with UTF-8 BOM: %x", data[:min(len(data), len(utf8BOM))])
+	}
+}
+
+func TestPowerShellHookTemplateIsASCII(t *testing.T) {
+	for index, value := range []byte(powerShellHookTemplate) {
+		if value > 0x7F {
+			t.Fatalf("PowerShell hook contains non-ASCII byte at %d: 0x%X", index, value)
+		}
+	}
+}
+
+func TestInstallReplacesMalformedPowerShellHook(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(binDir, "webterm-shell-hook.ps1")
+	if err := os.WriteFile(path, []byte("function broken {\n}\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := InstallShellHookAt(root, `C:\webterm.exe`); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, utf8BOM) {
+		t.Fatal("malformed hook was not replaced with a BOM-prefixed hook")
+	}
+	if bytes.Contains(data, []byte("function broken")) {
+		t.Fatal("old malformed content remains")
+	}
+}
+
+func TestInstallShellHookIsRepeatableWithoutTemporaryFiles(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 2; i++ {
+		if _, _, err := InstallShellHookAt(root, `C:\webterm.exe`); err != nil {
+			t.Fatalf("install %d: %v", i+1, err)
+		}
+	}
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(info.Name(), ".tmp-") {
+			t.Errorf("temporary file remains after install: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

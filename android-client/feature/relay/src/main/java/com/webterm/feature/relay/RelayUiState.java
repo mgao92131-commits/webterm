@@ -126,8 +126,8 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     }
 
     @Override
-    public void onLogin(String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onLogin(email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+    public void onLogin(String baseUrl, String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onLogin(baseUrl, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
             @Override
             public void onReady(String url, String cookie) {
                 if (cookie != null && !cookie.isEmpty()) {
@@ -145,23 +145,79 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
             public void onError(String message) {
                 callback.onError(message);
             }
+
         });
     }
 
     @Override
-    public void onRegister(String email, String username, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onRegister(email, username, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
-            @Override
-            public void onReady(String url, String cookie) {
-                if (cookie != null && !cookie.isEmpty()) {
-                    relayService.saveRelayLogin(url, email, password, cookie);
+    public void onResendEmailVerification(String baseUrl, String email, String password,
+                                          RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onResendEmailVerification(baseUrl, email, password,
+            new com.webterm.data.http.WebTermApi.SimpleCallback() {
+                @Override
+                public void onReady() {
+                    callback.onEmailVerificationRequired("验证码已重新发送，请检查邮箱");
                 }
-                callback.onLoginSuccess(url, cookie);
+
+                @Override
+                public void onError(String message) {
+                    callback.onError(message);
+                }
+            });
+    }
+
+    @Override
+    public void onRegister(String baseUrl, String email, String password, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onRegister(baseUrl, email, password, new com.webterm.data.http.WebTermApi.RegisterCallback() {
+            @Override
+            public void onVerificationRequired(String url) {
+                callback.onEmailVerificationRequired("验证码已发送，请完成邮箱验证");
             }
 
             @Override
-            public void onOtpRequired(String targetDeviceId, String cookie) {
-                // Register typically doesn't require OTP
+            public void onAccountCreated(String url) {
+                // 未开启邮箱验证的旧部署会直接创建账号，再沿用原自动登录流程。
+                // 注册成功后用同一 baseUrl、email、password 自动登录以取得认证 Cookie。
+                relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+                    @Override
+                    public void onReady(String loginUrl, String cookie) {
+                        if (cookie != null && !cookie.isEmpty()) {
+                            relayService.saveRelayLogin(loginUrl, email, password, cookie);
+                        }
+                        callback.onLoginSuccess(loginUrl, cookie);
+                    }
+
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {
+                        // 完整保留设备 OTP 上下文（targetDeviceId 与 Cookie），
+                        // 由注册页直接进入设备验证模式，不得丢弃后让用户重新登录。
+                        callback.onOtpRequired(targetDeviceId, cookie);
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        callback.onError("账号已创建，但自动登录失败，请返回登录页重试。");
+                    }
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                callback.onError(message);
+            }
+
+        });
+    }
+
+    @Override
+    public void onVerifyOtp(String baseUrl, String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onVerifyOtp(baseUrl, email, code, targetDeviceId, cookie, new com.webterm.data.http.WebTermApi.LoginCallback() {
+            @Override
+            public void onReady(String url, String newCookie) {
+                if (newCookie != null && !newCookie.isEmpty()) {
+                    relayService.saveRelayLogin(url, email, password, newCookie);
+                }
+                callback.onLoginSuccess(url, newCookie);
             }
 
             @Override
@@ -172,14 +228,31 @@ public final class RelayUiState implements RelayLoginScreenBuilder.Host, RelayDe
     }
 
     @Override
-    public void onVerifyOtp(String email, String password, String code, String targetDeviceId, String cookie, RelayLoginScreenBuilder.LoginScreenCallback callback) {
-        relayService.onVerifyOtp(email, code, targetDeviceId, cookie, new com.webterm.data.http.WebTermApi.LoginCallback() {
+    public void onVerifyEmail(String baseUrl, String email, String password, String code, RelayLoginScreenBuilder.LoginScreenCallback callback) {
+        relayService.onVerifyEmail(baseUrl, email, code, new com.webterm.data.http.WebTermApi.EmailVerifyCallback() {
             @Override
-            public void onReady(String url, String newCookie) {
-                if (newCookie != null && !newCookie.isEmpty()) {
-                    relayService.saveRelayLogin(url, email, password, newCookie);
-                }
-                callback.onLoginSuccess(url, newCookie);
+            public void onAccountCreated(String url) {
+                // 邮箱验证成功后用同一 baseUrl、email、password 自动登录；
+                // 若服务端要求新设备验证，则继续进入设备 OTP 流程。
+                relayService.onLogin(url, email, password, new com.webterm.data.http.WebTermApi.ExtendedLoginCallback() {
+                    @Override
+                    public void onReady(String loginUrl, String cookie) {
+                        if (cookie != null && !cookie.isEmpty()) {
+                            relayService.saveRelayLogin(loginUrl, email, password, cookie);
+                        }
+                        callback.onLoginSuccess(loginUrl, cookie);
+                    }
+
+                    @Override
+                    public void onOtpRequired(String targetDeviceId, String cookie) {
+                        callback.onOtpRequired(targetDeviceId, cookie);
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        callback.onError("邮箱验证成功，但自动登录失败，请返回登录页重试。");
+                    }
+                });
             }
 
             @Override

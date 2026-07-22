@@ -4,11 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strings"
+	"time"
 
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/relaystore"
 )
+
+func normalizeAndValidateEmail(raw string) (string, error) {
+	email := relaystore.NormalizeEmail(raw)
+	if email == "" || !strings.Contains(email, "@") {
+		return "", relaystore.ErrInvalidInput
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Name != "" || parsed.Address != email {
+		return "", relaystore.ErrInvalidInput
+	}
+	return email, nil
+}
 
 func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -100,13 +114,50 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" {
-		username = strings.TrimSpace(req.Email)
+	email, err := normalizeAndValidateEmail(req.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid email address")
+		return
 	}
-	if username == "" || len(req.Password) < 6 {
+	if len(req.Password) < 6 {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
+	}
+	if server.requireEmailOTP() && !server.otpDeliveryConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "email verification delivery is not configured")
+		return
+	}
+	if server.requireEmailOTP() {
+		if _, exists := server.store.FindUserByUsername(email); exists {
+			writeError(w, http.StatusConflict, "user already exists")
+			return
+		}
+		code := newVerificationCode()
+		if code == "" {
+			writeError(w, http.StatusInternalServerError, "verification code generation failed")
+			return
+		}
+		if err := server.store.CreatePendingRegistration(email, req.Password, code, verificationTTL); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if err := server.otpSender.SendOTP(email, verifyEmailPurpose, code); err != nil {
+			if cleanupErr := server.store.DeletePendingRegistration(email); cleanupErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to clean up pending registration")
+				return
+			}
+			writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"verificationRequired": true,
+			"verificationSent":     true,
+		})
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = email
 	}
 	role := "user"
 	if server.store.UserCount() == 0 {
@@ -117,20 +168,118 @@ func (server *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	emailVerificationRequired := server.requireEmailOTP()
-	if emailVerificationRequired {
-		if err := server.sendVerificationCode(user, verifyEmailPurpose, "", false); err != nil {
-			writeStoreError(w, err)
-			return
-		}
-	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                        user.ID,
 		"email":                     user.Username,
 		"username":                  user.Username,
 		"role":                      user.Role,
-		"emailVerificationRequired": emailVerificationRequired,
+		"emailVerificationRequired": false,
 	})
+}
+
+// handleResendEmailVerification 使用邮箱和密码认证后重发注册阶段的验证码。
+// 认证失败统一返回 invalid credentials，不泄露邮箱是否存在。
+func (server *Server) handleResendEmailVerification(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	email := relaystore.NormalizeEmail(req.Email)
+	if email == "" || req.Password == "" {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	server.resendEmailMu.Lock()
+	defer server.resendEmailMu.Unlock()
+
+	// 必须在重发锁内重新读取，避免并发请求使用同一份旧记录发送两个不同验证码。
+	pending, ok := server.store.FindPendingRegistration(email)
+	now := time.Now()
+	if !ok || !now.Before(pending.ExpiresAt) || !relaystore.VerifyPassword(req.Password, pending.PasswordHash) {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !pending.LastCodeSentAt.IsZero() && now.Before(pending.LastCodeSentAt.Add(resendOTPWindow)) {
+		writeError(w, http.StatusTooManyRequests, "otp recently sent")
+		return
+	}
+	code := newVerificationCode()
+	if code == "" {
+		writeError(w, http.StatusInternalServerError, "verification code generation failed")
+		return
+	}
+	if server.otpSender == nil {
+		writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+		return
+	}
+	if err := server.otpSender.SendOTP(email, verifyEmailPurpose, code); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "verification email delivery failed")
+		return
+	}
+	if err := server.store.ResendPendingRegistrationCode(email, req.Password, code, verificationTTL, resendOTPWindow); err != nil {
+		if errors.Is(err, relaystore.ErrConflict) {
+			writeError(w, http.StatusTooManyRequests, "otp recently sent")
+			return
+		}
+		if errors.Is(err, relaystore.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true})
+}
+
+// handleVerifyEmail 消费注册阶段签发的 email_verify 验证码并创建正式用户。
+// 该接口只负责验证，不签发登录 Cookie：验证成功后由客户端调用正常登录接口。
+func (server *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	email := relaystore.NormalizeEmail(req.Email)
+	code := strings.TrimSpace(req.Code)
+	if email == "" || code == "" {
+		writeError(w, http.StatusBadRequest, "email and code are required")
+		return
+	}
+	// 不存在、错误或过期的待验证记录统一返回相同错误；不记录验证码。
+	user, err := server.store.CompletePendingRegistration(email, code, time.Now())
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"accountCreated": true,
+			"email":          user.Username,
+		})
+		return
+	case errors.Is(err, relaystore.ErrUnauthorized):
+		writeError(w, http.StatusUnauthorized, "invalid verification code")
+		return
+	case errors.Is(err, relaystore.ErrConflict):
+		writeError(w, http.StatusConflict, "user already exists")
+		return
+	default:
+		// 不把持久化或其他内部错误伪装成验证码错误，也不暴露底层错误文本。
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 }
 
 func (server *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

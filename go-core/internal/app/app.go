@@ -74,7 +74,7 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 		ipcEndpoint = localipc.DefaultEndpoint()
 	}
 	runtimeHookDir := agenthooks.RuntimeBaseDir(ipcEndpoint)
-	installShellHook(logger, runtimeHookDir)
+	hookReady := installShellHook(logger, runtimeHookDir)
 
 	// 本地 JSONL 落盘：与 ExportDiagnostics 读取的日志目录一致（按 runtime 隔离）。
 	// 落盘是非关键能力，失败时降级为仅内存 Ring，不阻塞 Agent 启动。
@@ -93,21 +93,7 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 		ScrollbackMaxBytes: cfg.Scrollback.MaxBytes,
 	})
 
-	sessionEnv := map[string]string{
-		"WEBTERM":                 "1",
-		"WEBTERM_INTEGRATION":     "1",
-		"WEBTERM_IPC_ENDPOINT":    ipcEndpoint,
-		"WEBTERM_SHELL_INIT_DIR":  agenthooks.ShellInitDirAt(runtimeHookDir),
-		"WEBTERM_POWERSHELL_HOOK": filepath.Join(runtimeHookDir, "bin", "webterm-shell-hook.ps1"),
-		// hook 上报失败退避状态目录，按 runtime 隔离；CLI --hook-mode 维护其中按
-		// session 命名的状态文件，避免多 Agent / 多会话相互影响。
-		"WEBTERM_HOOK_STATE_DIR": filepath.Join(runtimeHookDir, "hook-state"),
-	}
-	if strings.HasPrefix(ipcEndpoint, "unix:") {
-		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。
-		sessionEnv["WEBTERM_SOCKET_PATH"] = strings.TrimPrefix(ipcEndpoint, "unix:")
-	}
-
+	sessionEnv := buildSessionEnv(ipcEndpoint, runtimeHookDir, hookReady)
 	if webtermBin, err := agenthooks.ResolveWebtermBinary(); err == nil && webtermBin != "" {
 		binDir := filepath.Dir(webtermBin)
 		if currentPath := os.Getenv("PATH"); currentPath != "" {
@@ -147,6 +133,26 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 	return application
 }
 
+func buildSessionEnv(ipcEndpoint, runtimeHookDir string, hookReady bool) map[string]string {
+	sessionEnv := map[string]string{
+		"WEBTERM":              "1",
+		"WEBTERM_INTEGRATION":  "1",
+		"WEBTERM_IPC_ENDPOINT": ipcEndpoint,
+		// hook 上报失败退避状态目录，按 runtime 隔离；CLI --hook-mode 维护其中按
+		// session 命名的状态文件，避免多 Agent / 多会话相互影响。
+		"WEBTERM_HOOK_STATE_DIR": filepath.Join(runtimeHookDir, "hook-state"),
+	}
+	if hookReady {
+		sessionEnv["WEBTERM_SHELL_INIT_DIR"] = agenthooks.ShellInitDirAt(runtimeHookDir)
+		sessionEnv["WEBTERM_POWERSHELL_HOOK"] = filepath.Join(runtimeHookDir, "bin", "webterm-shell-hook.ps1")
+	}
+	if strings.HasPrefix(ipcEndpoint, "unix:") {
+		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。
+		sessionEnv["WEBTERM_SOCKET_PATH"] = strings.TrimPrefix(ipcEndpoint, "unix:")
+	}
+	return sessionEnv
+}
+
 // newRunID 生成单次运行的诊断关联 ID（毫秒时间戳 + 随机后缀）。
 func newRunID() string {
 	return fmt.Sprintf("%d-%s", time.Now().UnixMilli(), randomSuffix())
@@ -160,15 +166,17 @@ func randomSuffix() string {
 	return hex.EncodeToString(buf[:])
 }
 
-func installShellHook(logger *logs.Logger, runtimeHookDir string) {
+func installShellHook(logger *logs.Logger, runtimeHookDir string) bool {
 	webtermBin, err := agenthooks.ResolveWebtermBinary()
 	if err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("webterm binary not found: %v", err))
-		return
+		return false
 	}
 	if _, _, err := agenthooks.InstallShellHookAt(runtimeHookDir, webtermBin); err != nil {
 		logger.Add("warn", "agenthooks", fmt.Sprintf("install shell hook failed: %v", err))
+		return false
 	}
+	return true
 }
 
 func (app *App) Config() config.Config {

@@ -99,7 +99,7 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void trimsTerminalPaddingButPreservesIndentationAndInternalSpaces() {
+  public void trimsPaddingAndPreservesHardLineIndentation() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, "  alpha  beta    "),
         screenRow(1, "    gamma       ")
@@ -128,21 +128,21 @@ public class TerminalSelectionTextExtractorTest {
         screenRow(4, "          ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(4, 10)).normalized();
-    assertEquals("first\nsecond", extract(sel, Collections.emptyList(), screen));
+    assertEquals("first\n\nsecond", extract(sel, Collections.emptyList(), screen));
   }
 
   @Test
-  public void joinsVisualWrapAtRightEdgeWhenWrappedFlagIsMissing() {
+  public void keepsHardRowsSeparateWithoutWidthInference() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, false, "1234567890"),
         screenRow(1, false, "continued ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
-    assertEquals("1234567890continued", extract(sel, Collections.emptyList(), screen));
+    assertEquals("1234567890\ncontinued", extract(sel, Collections.emptyList(), screen));
   }
 
   @Test
-  public void doesNotGuessVisualWrapWithoutKnownScreenWidth() {
+  public void keepsHistoryHardRowsSeparate() {
     List<TerminalLine> history = Arrays.asList(
         historyLine(1, false, "first"),
         historyLine(2, false, "second"));
@@ -185,6 +185,53 @@ public class TerminalSelectionTextExtractorTest {
     TerminalLine[] screen = new TerminalLine[] { screenRow(0, "cccc    ") };
     TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 2)).normalized();
     assertEquals("aaaa\nbbbb\ncc", extract(sel, history, screen));
+  }
+
+  @Test
+  public void cleansWrappedTextThroughExtractor() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, true, "first     "),
+        screenRow(1, false, "continued "),
+        screenRow(2, false, "hard line   "),
+        screenRow(3, false, ""),
+        screenRow(4, false, "    "),
+        screenRow(5, false, "\t"),
+        screenRow(6, false, "    indented   ")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(6, 30)).normalized();
+    assertEquals("first continued\nhard line\n\n    indented", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void nullScreenRowStopsWrappedContinuation() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, true, "first"),
+        null,
+        screenRow(2, false, "second")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 6)).normalized();
+    assertEquals("first\n\nsecond", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void trailingNullScreenRowsAreDroppedFromCopiedText() {
+    TerminalLine[] screen = new TerminalLine[] {
+        screenRow(0, false, "content"),
+        null,
+        null
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 0)).normalized();
+    assertEquals("content", extract(sel, Collections.emptyList(), screen));
+  }
+
+  @Test
+  public void leadingNullScreenRowsAreDroppedFromCopiedText() {
+    TerminalLine[] screen = new TerminalLine[] {
+        null,
+        screenRow(1, false, "content")
+    };
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 7)).normalized();
+    assertEquals("content", extract(sel, Collections.emptyList(), screen));
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {
