@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/infrastructure/pty"
+	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -415,6 +416,18 @@ func (terminal *TerminalSession) ProjectedScreenSnapshot() any {
 		return nil
 	}
 	return rt.ProjectedSnapshot()
+}
+
+// CaptureBarrier 在 actor 顺序中取得一致性只读捕获快照（当前 revision + 已存在的
+// 最新权威帧），供现场捕获通道使用。不消费 dirty、不生成业务 Patch、不推进状态。
+func (terminal *TerminalSession) CaptureBarrier() terminalcapture.BarrierState {
+	terminal.mu.RLock()
+	rt := terminal.runtime
+	terminal.mu.RUnlock()
+	if rt == nil {
+		return terminalcapture.BarrierState{}
+	}
+	return rt.CaptureBarrier()
 }
 
 func (terminal *TerminalSession) waitLoop() {

@@ -1,7 +1,17 @@
 package terminalsession
 
+import "webterm/go-core/internal/terminalcapture"
+
 // Option 配置 Runtime。
 type Option func(*Runtime)
+
+// WithCaptureSink 设置终端渲染路径现场捕获的旁路 Sink。nil 时使用进程级
+// terminalcapture.Default()（生产构建为 NOOP）。仅 Debug/Diag 构建注入真实实现。
+func WithCaptureSink(sink terminalcapture.Sink) Option {
+	return func(r *Runtime) {
+		r.captureSink = sink
+	}
+}
 
 // WithOnTitle 设置 title 变化回调。
 func WithOnTitle(fn func(string)) Option {

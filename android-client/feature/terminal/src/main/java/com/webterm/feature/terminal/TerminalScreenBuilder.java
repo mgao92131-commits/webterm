@@ -17,6 +17,8 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
 import com.webterm.ui.common.StatusIndicatorView;
@@ -34,6 +36,25 @@ public final class TerminalScreenBuilder {
         Runnable onUploadFile,
         Runnable onCtrl,
         TextSender textSender
+    ) {
+        return build(activity, headerTitle, headerSubtitle, onBack, onRetry, onUploadFile,
+            onCtrl, textSender, java.util.Collections.emptyList());
+    }
+
+    /**
+     * 构建终端画面。{@code debugMenuItems} 由上层（app 的 diagnostics source set）注入的
+     * “更多”菜单调试项（如现场捕获）；release 传入空列表即无任何调试 UI 入口。
+     */
+    public static Result build(
+        Activity activity,
+        String headerTitle,
+        String headerSubtitle,
+        Runnable onBack,
+        Runnable onRetry,
+        Runnable onUploadFile,
+        Runnable onCtrl,
+        TextSender textSender,
+        java.util.List<DebugMenuItem> debugMenuItems
     ) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -111,7 +132,9 @@ public final class TerminalScreenBuilder {
         moreButton.setBackground(UIUtils.iconButtonBackground(activity, 18));
         moreButton.setPadding(0, 0, 0, 0);
         moreButton.setContentDescription("更多");
-        moreButton.setOnClickListener(v -> showMoreMenu(activity, v, onUploadFile));
+        java.util.List<DebugMenuItem> menuDebugItems = debugMenuItems != null
+            ? debugMenuItems : java.util.Collections.emptyList();
+        moreButton.setOnClickListener(v -> showMoreMenu(activity, v, onUploadFile, menuDebugItems));
         buttonGroup.addView(moreButton, btnLp);
         topBar.addView(buttonGroup, new LinearLayout.LayoutParams(-2, -2));
         content.addView(topbarWrapper, new LinearLayout.LayoutParams(-1, -2));
@@ -197,14 +220,55 @@ public final class TerminalScreenBuilder {
         return UIUtils.iconButtonBackground(activity, radius);
     }
 
-    private static void showMoreMenu(Activity activity, View anchor, Runnable onUploadFile) {
+    private static void showMoreMenu(Activity activity, View anchor, Runnable onUploadFile,
+                                     java.util.List<DebugMenuItem> debugItems) {
         android.widget.PopupMenu menu = new android.widget.PopupMenu(activity, anchor);
-        menu.getMenu().add("上传文件");
+        menu.getMenu().add(0, MENU_UPLOAD_FILE, 0, "上传文件");
+        int order = 100;
+        for (DebugMenuItem item : debugItems) {
+            // 调试项使用高位 ID，避免与固定项冲突；仅当上层注入时才出现（release 无入口）。
+            // visible 供动态门控（如“记录中/未记录”显示不同捕获项）。
+            if (item.visible != null && !item.visible.getAsBoolean()) {
+                continue;
+            }
+            menu.getMenu().add(0, item.id, order++, item.label);
+        }
         menu.setOnMenuItemClickListener(item -> {
-            onUploadFile.run();
-            return true;
+            if (item.getItemId() == MENU_UPLOAD_FILE) {
+                onUploadFile.run();
+                return true;
+            }
+            for (DebugMenuItem debug : debugItems) {
+                if (debug.id == item.getItemId()) {
+                    debug.action.run();
+                    return true;
+                }
+            }
+            return false;
         });
         menu.show();
+    }
+
+    private static final int MENU_UPLOAD_FILE = 1;
+
+    /** 上层注入的“更多”菜单调试项（label + 点击动作）。id 由注入方保证唯一。 */
+    public static final class DebugMenuItem {
+        public final int id;
+        public final String label;
+        public final Runnable action;
+        @Nullable public final java.util.function.BooleanSupplier visible;
+
+        public DebugMenuItem(int id, String label, Runnable action) {
+            this(id, label, action, null);
+        }
+
+        public DebugMenuItem(int id, String label, Runnable action,
+                             @Nullable java.util.function.BooleanSupplier visible) {
+            this.id = id;
+            this.label = label;
+            this.action = action;
+            this.visible = visible;
+        }
     }
 
     private static View createQuickBar(Activity activity, View focusTarget, Runnable onCtrl, TextSender textSender, Button[] outCtrlButton) {

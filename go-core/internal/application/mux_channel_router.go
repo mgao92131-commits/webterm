@@ -52,6 +52,20 @@ func (router *MuxChannelRouter) OpenOwned(
 			return nil, fmt.Errorf("session %s not found", id)
 		}
 		return session.NewOwnedTerminalChannelHandler(terminal, sink, ownerKey, router.logger), nil
+	case strings.HasPrefix(clean, "/ws/capture/"):
+		// 现场捕获逻辑通道：独立于 screen 通道的诊断数据面。与 screen 通道一样经
+		// path 携带 sessionId、由 Manager.Get 解析，Direct/Relay 均透明路由；Relay 不
+		// 解析、不持久化其正文。生产构建（未开启 webterm_capture）handler 会直接拒绝。
+		if !hasProtocol(protocols, protocol.CaptureSubprotocol) {
+			return nil, fmt.Errorf("capture channel requires %s", protocol.CaptureSubprotocol)
+		}
+		id := strings.TrimPrefix(clean, "/ws/capture/")
+		id, _ = url.PathUnescape(id)
+		terminal, ok := router.manager.Get(id)
+		if !ok {
+			return nil, fmt.Errorf("session %s not found", id)
+		}
+		return session.NewCaptureChannelHandler(terminal, sink, router.logger), nil
 	default:
 		return nil, fmt.Errorf("unknown path: %s", path)
 	}

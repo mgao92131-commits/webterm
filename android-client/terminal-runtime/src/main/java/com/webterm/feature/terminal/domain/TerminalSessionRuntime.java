@@ -265,6 +265,15 @@ public final class TerminalSessionRuntime {
     return model;
   }
 
+  /**
+   * 当前 screen 连接（可能为 null）。仅供现场捕获会话源取得 TerminalChannel 以打开独立
+   * capture 通道使用，不参与 screen 业务状态。
+   */
+  @Nullable
+  public ScreenConnection connection() {
+    return connection;
+  }
+
   @NonNull
   public State state() {
     return state;
@@ -592,6 +601,10 @@ public final class TerminalSessionRuntime {
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
     // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
     TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payload.length);
+    // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse；未开启捕获时
+    // 门面内部仅一次廉价判断。payload 为该消息专属字节数组，实现可直接持引用。
+    com.webterm.terminal.model.capture.TerminalCapture.recordWireFrame(
+        messageEpoch, System.currentTimeMillis(), kind.name(), payload);
     ScreenMailbox.Offer offer = screenMailbox.offer(
         messageEpoch, sourceConnection, payload, frameSize.ok, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
@@ -814,6 +827,10 @@ public final class TerminalSessionRuntime {
             startResyncRecovery(e.getMessage() != null ? e.getMessage() : "snapshot apply failed");
             return;
           }
+          // 捕获点 B：Mapper 输出的不可变 Snapshot 领域对象。
+          com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(snapshot);
+          // 捕获点 C：applySnapshot 成功后的模型摘要。
+          recordModelCaptureState(true);
           resetPatchSummary();
           Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
               "instanceId", snapshot.instanceId,
@@ -874,6 +891,10 @@ public final class TerminalSessionRuntime {
                   "screenRevision", patch.screenRevision));
             }
             model.applyPatch(patch);
+            // 捕获点 B：Mapper 输出的不可变 Patch 领域对象。
+            com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(patch);
+            // 捕获点 C：applyPatch 成功后的模型摘要。
+            recordModelCaptureState(false);
             recordPatchSummary(message.payload.length, countScreenLineUpdates(patch), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
@@ -956,6 +977,21 @@ public final class TerminalSessionRuntime {
 
   private static void requireValid(ScreenMessageValidator.ValidationResult result) {
     if (!result.ok) throw new IllegalArgumentException(result.reason);
+  }
+
+  /**
+   * 捕获点 C：在 modelExecutor 上（applySnapshot/applyPatch 成功后）做有界字段读取，
+   * 记录模型摘要。绝不消费 render update、不推进任何状态。
+   */
+  private void recordModelCaptureState(boolean afterSnapshot) {
+    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(
+        new com.webterm.terminal.model.capture.CapturedModelState(
+            System.currentTimeMillis(),
+            model.instanceId, model.layoutEpoch, model.screenRevision,
+            model.rows, model.columns,
+            model.activeBuffer == com.webterm.terminal.model.ScreenSnapshot.BufferKind.ALTERNATE ? 1 : 0,
+            model.projectionHealth().complete,
+            afterSnapshot));
   }
 
   private Map<String, Object> diagnosticFields(Object... pairs) {

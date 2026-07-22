@@ -14,6 +14,7 @@ import (
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/screenprotocol"
 	pb "webterm/go-core/internal/screenprotocol/generated"
+	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
 )
@@ -48,6 +49,12 @@ type terminalChannelRuntime struct {
 	patchWireBytes       atomic.Uint64
 	historyPageWireBytes atomic.Uint64
 	otherWireBytes       atomic.Uint64
+
+	// captureSink 是现场捕获旁路 Sink（与所属 Runtime 同一实现，生产构建为 NOOP）。
+	// terminalInstanceID 缓存所属终端权威实例 ID，用于把派生/wire 捕获点按实例关联，
+	// 避免多会话/多客户端串数据。
+	captureSink        terminalcapture.Sink
+	terminalInstanceID string
 }
 
 type outboundMessage struct {
@@ -99,6 +106,14 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
+		if rt := terminal.ScreenRuntime(); rt != nil {
+			// 与所属 Runtime 使用同一捕获实现；同时缓存权威实例 ID 供派生/wire 捕获点关联。
+			client.captureSink = rt.CaptureSink()
+			client.terminalInstanceID = rt.Info().InstanceID
+		}
+	}
+	if client.captureSink == nil {
+		client.captureSink = terminalcapture.Default()
 	}
 	return client
 }
@@ -351,6 +366,10 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		// 空 patch 被抑制：无可观察变化，不写出；deriver baseline 未推进。
 		return true
 	}
+	// 捕获点 C：正常 FrameForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
+	// 不推进 baseline）。未开启捕获时 sink 内部仅一次廉价判断。
+	client.recordDerivedFrame(frame)
+
 	payload, err := client.encodeFrame(frame)
 	if err != nil {
 		client.logScreenEncodeFailure("frame", state, err)
@@ -369,7 +388,9 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 			client.Close()
 			return false
 		}
-		if !client.writeMessage(ctx, outboundMessage{binary: payload, kind: "snapshot"}) {
+		// 捕获点 D/E（snapshot 回退路径）。
+		handle := client.recordWireFrame("snapshot", snapshot.Seq, snapshot.BaseRevision, payload)
+		if !client.writeScreenMessage(ctx, outboundMessage{binary: payload, kind: "snapshot"}, handle) {
 			return false
 		}
 		client.screenMu.Lock()
@@ -381,7 +402,53 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	if frame.Kind == terminalengine.FrameSnapshot {
 		kind = "snapshot"
 	}
-	return client.writeMessage(ctx, outboundMessage{binary: payload, kind: kind})
+	// 捕获点 D：正常编码成功后旁路记录 wire bytes（SHA-256 在导出时异步计算，不在热路径）。
+	handle := client.recordWireFrame(kind, frame.Seq, frame.BaseRevision, payload)
+	return client.writeScreenMessage(ctx, outboundMessage{binary: payload, kind: kind}, handle)
+}
+
+// writeScreenMessage 包装 writeMessage 并在物理写完成后补写捕获 wire 记录的写状态
+// （捕获点 E）。写失败使用稳定枚举，绝不记录原始错误文本。
+func (client *terminalChannelRuntime) writeScreenMessage(ctx context.Context,
+	message outboundMessage, handle terminalcapture.WriteHandle) bool {
+	ok := client.writeMessage(ctx, message)
+	if handle != nil {
+		now := time.Now().UnixNano()
+		if ok {
+			handle.MarkWritten(now)
+		} else {
+			handle.MarkFailed(terminalcapture.FailureWriteFailed, now)
+		}
+	}
+	return ok
+}
+
+// recordDerivedFrame 旁路记录客户端派生帧（capture 点 C）。
+func (client *terminalChannelRuntime) recordDerivedFrame(frame terminalengine.ScreenFrame) {
+	if client.captureSink == nil {
+		return
+	}
+	client.captureSink.RecordDerived(client.terminalInstanceID, terminalcapture.DerivedRecord{
+		ScreenClientID:   client.screenClientID,
+		ClientInstanceID: client.clientInstanceID,
+		Frame:            frame,
+	})
+}
+
+// recordWireFrame 旁路记录编码后 wire bytes（capture 点 D），返回用于补写写状态的 handle。
+func (client *terminalChannelRuntime) recordWireFrame(kind string,
+	screenRevision, baseRevision uint64, payload []byte) terminalcapture.WriteHandle {
+	if client.captureSink == nil {
+		return nil
+	}
+	return client.captureSink.RecordWire(client.terminalInstanceID, terminalcapture.WireRecord{
+		ScreenClientID:   client.screenClientID,
+		ClientInstanceID: client.clientInstanceID,
+		Kind:             kind,
+		BaseRevision:     baseRevision,
+		ScreenRevision:   screenRevision,
+		Payload:          payload,
+	})
 }
 
 func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,

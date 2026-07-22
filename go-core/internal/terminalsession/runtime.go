@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"webterm/go-core/internal/screenprojection"
+	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -82,6 +83,15 @@ type Runtime struct {
 
 	ptyOutputEvents atomic.Uint64
 	ptyOutputBytes  atomic.Uint64
+
+	// captureSink 是终端渲染路径现场捕获的旁路 Sink。生产构建为 NOOP，热路径只
+	// 承担一次廉价判断；仅当用户显式开启现场记录时才拷贝/记录有界数据。它绝不
+	// 消费业务状态（dirty/baseline/revision/history watermark）。
+	captureSink terminalcapture.Sink
+	// lastCanonicalFrame 缓存最近一次 broadcastFrame 产出的完整权威帧（不可变），
+	// 供 capture barrier 在 actor 顺序中只读读取。仅在捕获激活时保留；不参与任何
+	// revision/baseline/dirty/lease/mailbox/renderer 语义。仅由 actor goroutine 访问。
+	lastCanonicalFrame terminalengine.ScreenFrame
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -224,6 +234,9 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 	}
 	for _, opt := range options {
 		opt(r)
+	}
+	if r.captureSink == nil {
+		r.captureSink = terminalcapture.Default()
 	}
 
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
@@ -420,6 +433,46 @@ func (r *Runtime) ProjectedSnapshot() terminalengine.ScreenFrame {
 	case <-r.stopCh:
 		return terminalengine.ScreenFrame{}
 	}
+}
+
+// CaptureBarrier 在 actor 顺序中取得一致性只读捕获快照：记录当前 screenRevision，
+// 返回已存在的最新权威帧（不消费 dirty、不生成业务 Patch、不推进任何状态）。
+// 它由 capture 通道在收到 Android barrier 请求后调用。
+func (r *Runtime) CaptureBarrier() terminalcapture.BarrierState {
+	reply := make(chan terminalcapture.BarrierState, 1)
+	r.postEvent(captureBarrierEvent{reply: reply})
+	select {
+	case state := <-reply:
+		return state
+	case <-r.stopCh:
+		return terminalcapture.BarrierState{}
+	}
+}
+
+// captureBarrierState 在 actor goroutine 上组装 barrier 快照。优先使用最近一次
+// broadcastFrame 产出的权威帧（Projector 字典，与 wire 帧 style/link ID 可比）；
+// 尚无广播帧时退化为只读 ExportSnapshot（ReadFullProjection，不消费 dirty）。
+func (r *Runtime) captureBarrierState() terminalcapture.BarrierState {
+	info := r.Info()
+	frame := r.lastCanonicalFrame
+	if frame.Seq == 0 {
+		frame = screenprojection.ExportSnapshot(
+			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
+		)
+	}
+	return terminalcapture.BarrierState{
+		Available:          frame.Seq != 0 || frame.Rows > 0,
+		AgentRevision:      info.ScreenRevision,
+		LayoutEpoch:        info.LayoutEpoch,
+		TerminalInstanceID: r.instanceID,
+		Canonical:          frame,
+	}
+}
+
+// CaptureSink 返回该 runtime 的现场捕获旁路 Sink（screen channel 据此挂接派生/
+// wire 捕获点，保证与 runtime 使用同一实现）。
+func (r *Runtime) CaptureSink() terminalcapture.Sink {
+	return r.captureSink
 }
 
 // Close 关闭 runtime。
@@ -673,6 +726,8 @@ func (r *Runtime) handleEvent(ev event) {
 		e.reply <- screenprojection.ExportSnapshot(
 			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
 		)
+	case captureBarrierEvent:
+		e.reply <- r.captureBarrierState()
 	case acquireLayoutEvent:
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
@@ -845,6 +900,14 @@ func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDelive
 func (r *Runtime) handlePTYOutput(data []byte) {
 	r.ptyOutputEvents.Add(1)
 	r.ptyOutputBytes.Add(uint64(len(data)))
+	// 捕获点 A：在 engine.Write 之前旁路记录原始 PTY 字节。PTY chunk 可能在
+	// UTF-8 字符中间断开，因此保存原始 bytes（由 sink 做有界拷贝），不校验/不改写。
+	// 未开启捕获时 sink 内部只做一次 atomic 判断立即返回。
+	r.captureSink.RecordPTY(r.instanceID, terminalcapture.PTYRecord{
+		EventSeq:             r.ptyOutputEvents.Load(),
+		ScreenRevisionBefore: r.currentRevision(),
+		Data:                 data,
+	})
 	_ = r.engine.Write(data)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
@@ -1084,6 +1147,13 @@ func (r *Runtime) broadcastFrame() {
 	// is limited to diffing against that client's baseline; without this split a
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
+	// 捕获点 B：在正常 ExportState 返回后旁路记录完整权威帧（持不可变引用，不拷贝、
+	// 不额外调用消费型 API）。同时缓存 lastCanonicalFrame 供 capture barrier 只读读取；
+	// 仅在捕获激活（Enabled）时保留该引用，未捕获时不额外占用内存。
+	if r.captureSink.Enabled(r.instanceID) {
+		r.captureSink.RecordCanonical(r.instanceID, terminalcapture.CanonicalRecord{Frame: state})
+		r.lastCanonicalFrame = state
+	}
 	for _, c := range r.clients {
 		if c.synced {
 			c.Send(state)
@@ -1271,6 +1341,13 @@ type workingDirectoryEvent struct {
 
 type projectedSnapshotEvent struct {
 	reply chan terminalengine.ScreenFrame
+}
+
+// captureBarrierEvent 是现场捕获 barrier：在 actor 顺序中产出一一致性只读快照
+// （当前 screenRevision + 已存在的最新权威帧）。它不消费 dirty、不生成业务 Patch、
+// 不推进 baseline/history watermark。
+type captureBarrierEvent struct {
+	reply chan terminalcapture.BarrierState
 }
 
 type acquireLayoutEvent struct {

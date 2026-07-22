@@ -325,6 +325,21 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     return reliableInputTracker;
   }
 
+  /**
+   * 现场捕获专用：返回当前 device connection（可能为 null，如尚未连接）。
+   * 仅供诊断捕获通道（webterm.capture.v1）打开独立逻辑通道使用，不参与 screen 业务。
+   */
+  @androidx.annotation.Nullable
+  public DeviceConnection captureDeviceConnection() {
+    return deviceConnection;
+  }
+
+  /** 现场捕获专用：与 screen 通道一致的 localSessionId，使 capture 通道路由到同一 Agent 会话。 */
+  @NonNull
+  public String captureLocalSessionId() {
+    return DeviceConnection.localSessionId(sessionId, relayDeviceId);
+  }
+
   private static ReliableInputTracker.SendResult mapSendResult(
       DeviceConnection.TunnelSendResult result) {
     switch (result) {

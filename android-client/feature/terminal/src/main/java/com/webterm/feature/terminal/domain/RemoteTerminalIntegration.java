@@ -74,7 +74,16 @@ public final class RemoteTerminalIntegration {
   private TitleListener titleListener;
   private AuthenticationListener authenticationListener;
   private int imeOverlap;
+  // 由上层（app diagnostics source set）注入的“更多”菜单调试项；release 为空列表（无 UI 入口）。
+  @NonNull
+  private java.util.List<TerminalScreenBuilder.DebugMenuItem> debugMenuItems =
+      java.util.Collections.emptyList();
   private final TerminalConnectionStatusView connectionStatusView = new TerminalConnectionStatusView();
+
+  /** 注入“更多”菜单调试项（如现场捕获入口）。必须在 start() 之前调用。 */
+  public void setDebugMenuItems(@Nullable java.util.List<TerminalScreenBuilder.DebugMenuItem> items) {
+    this.debugMenuItems = items != null ? items : java.util.Collections.emptyList();
+  }
 
   @Inject
   public RemoteTerminalIntegration(TerminalSessionRuntimeRegistry registry,
@@ -193,8 +202,12 @@ public final class RemoteTerminalIntegration {
         },
         text -> {
           if (inputCoordinator != null) inputCoordinator.submitText(text, "quickbar");
-        }
+        },
+        debugMenuItems
     );
+    // 现场捕获：把当前会话数据源绑定到控制器（release 为 NOOP，bindSession 为空操作）。
+    com.webterm.terminal.model.capture.TerminalCapture.controller()
+        .bindSession(new TerminalCaptureSessionSource(runtime, view));
     FrameLayout viewport = (FrameLayout) shell.terminalViewport;
     viewport.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
     root = shell.root;
@@ -218,6 +231,8 @@ public final class RemoteTerminalIntegration {
   }
 
   public void stop() {
+    // 现场捕获：解绑当前会话数据源，避免控制器继续引用已销毁的 View/Runtime。
+    com.webterm.terminal.model.capture.TerminalCapture.controller().bindSession(null);
     clearViewBindings(true);
   }
 

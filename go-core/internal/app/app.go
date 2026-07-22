@@ -60,6 +60,9 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 	if buildInfo.Version == "" {
 		buildInfo.Version = "0.1.0-dev"
 	}
+	// 安装终端渲染路径现场捕获（仅开启 build tag webterm_capture 的构建为真实实现，
+	// 生产构建 NOOP）。必须在任何终端会话创建之前，使 Runtime 构造时读取到正确 Sink。
+	installTerminalCapture(buildInfo)
 	// 先生成本次运行标识，再创建 Logger：写入的每条日志自动携带 runID，
 	// 诊断导出据此区分不同运行，避免 Agent 重启后 Seq 复位造成去重冲突。
 	runID := newRunID()

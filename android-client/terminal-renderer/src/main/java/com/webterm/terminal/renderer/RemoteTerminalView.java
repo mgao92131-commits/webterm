@@ -28,6 +28,7 @@ import androidx.annotation.Nullable;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
+import com.webterm.terminal.model.capture.CapturedViewState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -615,6 +616,59 @@ public final class RemoteTerminalView extends View {
   private float cellWidth() {
     float w = renderer.getCellWidth();
     return w > 0 ? w : 1;
+  }
+
+  /**
+   * 捕获点 E：返回当前 View 的只读诊断快照（几何/字体/viewport/渲染身份/光标/选择）。
+   * 仅读取字段，绝不修改 View 状态；必须在主线程调用（读取 renderedSnapshot 与 viewport）。
+   */
+  @NonNull
+  public CapturedViewState captureDiagnostics() {
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    long renderedRevision = snapshot != null ? snapshot.screenRevision : 0L;
+    long renderedEpoch = snapshot != null ? snapshot.layoutEpoch : 0L;
+    String renderedInstance = snapshot != null ? snapshot.instanceId : "";
+    boolean hasSelection = selecting || selectionStart != null || selectionEnd != null;
+    String typefaceDescription = userTypeface != null ? String.valueOf(userTypeface) : "monospace";
+    return new CapturedViewState(
+        System.currentTimeMillis(),
+        getWidth(), getHeight(),
+        getPaddingLeft(), getPaddingTop(), getPaddingRight(), getPaddingBottom(),
+        userTextSizeSp > 0 ? userTextSizeSp : 14f,
+        typefaceDescription,
+        cellWidth(), lineHeight(), renderer.getBaselineOffset(),
+        viewport.scrollOffsetPixels, viewport.followTail, isKeyboardVisible(),
+        renderedRevision, renderedEpoch, renderedInstance,
+        cursorBlinkScheduled, hasSelection);
+  }
+
+  /**
+   * 捕获点 F：把当前终端 viewport 光栅化为 PNG 字节。必须在主线程调用（使用 View.draw）。
+   * 优先捕获终端 viewport 而非整个 Activity。失败（尺寸为 0、OOM 等）返回 null，
+   * 由调用方在 manifest 记录 screenshotAvailable=false，绝不抛出导致现场导出失败。
+   */
+  @Nullable
+  public byte[] captureScreenshotPng() {
+    int w = getWidth();
+    int h = getHeight();
+    if (w <= 0 || h <= 0) return null;
+    android.graphics.Bitmap bitmap = null;
+    try {
+      bitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+      android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+      draw(canvas);
+      java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+      if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)) {
+        return null;
+      }
+      return out.toByteArray();
+    } catch (Throwable t) {
+      return null;
+    } finally {
+      if (bitmap != null) {
+        bitmap.recycle();
+      }
+    }
   }
 
   private void updateFontMetrics() {

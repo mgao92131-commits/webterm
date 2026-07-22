@@ -78,6 +78,9 @@ public final class RemoteTerminalRenderer {
     return Math.max(0f, lineHeight - baselineOffset);
   }
 
+  /** 基线相对行顶的偏移（仅供诊断只读快照使用）。 */
+  public float getBaselineOffset() { return baselineOffset; }
+
   public void setTextSize(int textSizeSp) {
     this.textSizeSp = textSizeSp;
     applyFont();
