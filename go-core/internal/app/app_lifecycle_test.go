@@ -6,16 +6,16 @@ import (
 	"sync"
 	"testing"
 
-	"webterm/go-core/internal/agenthooks"
 	"webterm/go-core/internal/config"
 )
 
-// newLifecycleTestApp 以临时 IPC endpoint 构造 App，避免污染真实 runtime 目录。
+// newLifecycleTestApp 以临时 IPC endpoint 构造 App，默认关闭日志落盘，
+// 避免测试污染真实 runtime 目录。需要验证落盘的测试自行传入 TempDir。
 func newLifecycleTestApp(t *testing.T, cfg config.Config, buildInfo BuildInfo) *App {
 	t.Helper()
 	tmp := t.TempDir()
 	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
-	application := NewWithBuildInfo(cfg, buildInfo)
+	application := NewWithBuildInfoAndOptions(cfg, buildInfo, Options{PersistentLogs: false})
 	t.Cleanup(application.Shutdown)
 	return application
 }
@@ -74,9 +74,16 @@ func TestAppRelayStateUnconfiguredWhenNoURL(t *testing.T) {
 
 func TestAppFileSinkPersistsLogs(t *testing.T) {
 	cfg := config.Default()
-	application := newLifecycleTestApp(t, cfg, BuildInfo{Version: "1.0.0"})
+	tmp := t.TempDir()
+	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
+	logDir := t.TempDir()
+	application := NewWithBuildInfoAndOptions(cfg, BuildInfo{Version: "1.0.0"}, Options{
+		PersistentLogs: true,
+		LogDir:         logDir,
+	})
+	t.Cleanup(application.Shutdown)
+
 	application.Log("info", "test", "hello lifecycle")
-	logDir := filepath.Join(agenthooks.RuntimeBaseDir(application.IPCEndpoint()), "logs")
 	if _, err := os.Stat(filepath.Join(logDir, "agent.jsonl")); err != nil {
 		t.Errorf("expected log file under %s: %v", logDir, err)
 	}
@@ -86,7 +93,7 @@ func TestAppShutdownIdempotent(t *testing.T) {
 	cfg := config.Default()
 	tmp := t.TempDir()
 	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
-	application := NewWithBuildInfo(cfg, BuildInfo{Version: "1.0.0"})
+	application := NewWithBuildInfoAndOptions(cfg, BuildInfo{Version: "1.0.0"}, Options{PersistentLogs: false})
 	application.Shutdown()
 	application.Shutdown() // 第二次不应 panic
 }
@@ -112,10 +119,13 @@ func TestAppShutdownLateLogsDoNotReopenFile(t *testing.T) {
 	cfg := config.Default()
 	tmp := t.TempDir()
 	cfg.IPCEndpoint = "unix:" + filepath.Join(tmp, "agent.sock")
-	application := NewWithBuildInfo(cfg, BuildInfo{Version: "1.0.0"})
+	logDir := t.TempDir()
+	application := NewWithBuildInfoAndOptions(cfg, BuildInfo{Version: "1.0.0"}, Options{
+		PersistentLogs: true,
+		LogDir:         logDir,
+	})
 
 	application.Log("info", "test", "before shutdown")
-	logDir := filepath.Join(agenthooks.RuntimeBaseDir(application.IPCEndpoint()), "logs")
 	logPath := filepath.Join(logDir, "agent.jsonl")
 	before, err := os.Stat(logPath)
 	if err != nil {

@@ -41,6 +41,7 @@ type App struct {
 	agentNotify *agentnotify.Dispatcher
 	logger      *logs.Logger
 	sink        *logs.FileSink
+	logDir      string
 	mu          sync.RWMutex
 	ipcEndpoint string
 
@@ -52,11 +53,39 @@ type App struct {
 	relayLastErrorKind RelayErrorKind
 }
 
-func New(cfg config.Config, version string) *App {
-	return NewWithBuildInfo(cfg, BuildInfo{Version: version, GitCommit: "unknown", BuildTime: "unknown"})
+// Options 控制 App 的可选行为。日志落盘被建模为显式依赖，使测试可以构造
+// 不落盘的 App，从根本上避免测试污染正式 runtime 日志目录（不依赖检测
+// os.Args 或 testing 环境变量）。
+type Options struct {
+	// LogDir 是 FileSink 落盘目录。PersistentLogs 为 true 且 LogDir 为空时，
+	// 回退到按 IPC endpoint 隔离的默认 runtime 日志目录。
+	LogDir string
+	// PersistentLogs 决定是否创建 FileSink 落盘。普通单元测试应传 false。
+	PersistentLogs bool
 }
 
+// DefaultOptions 返回生产默认：落盘到按 endpoint 隔离的 runtime 日志目录。
+func DefaultOptions(ipcEndpoint string) Options {
+	return Options{
+		LogDir:         filepath.Join(agenthooks.RuntimeBaseDir(ipcEndpoint), "logs"),
+		PersistentLogs: true,
+	}
+}
+
+// New 是测试/诊断工具用的便捷构造函数：默认不落盘，避免污染正式日志目录。
+// 生产入口请使用 NewWithBuildInfoAndOptions 并显式开启 PersistentLogs。
+func New(cfg config.Config, version string) *App {
+	return NewWithBuildInfoAndOptions(cfg,
+		BuildInfo{Version: version, GitCommit: "unknown", BuildTime: "unknown"},
+		Options{PersistentLogs: false})
+}
+
+// NewWithBuildInfo 保留生产默认行为：落盘到按 endpoint 隔离的 runtime 日志目录。
 func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
+	return NewWithBuildInfoAndOptions(cfg, buildInfo, Options{PersistentLogs: true})
+}
+
+func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options Options) *App {
 	if buildInfo.Version == "" {
 		buildInfo.Version = "0.1.0-dev"
 	}
@@ -78,12 +107,19 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 
 	// 本地 JSONL 落盘：与 ExportDiagnostics 读取的日志目录一致（按 runtime 隔离）。
 	// 落盘是非关键能力，失败时降级为仅内存 Ring，不阻塞 Agent 启动。
+	// 仅当 options.PersistentLogs 为 true 时创建 FileSink，测试可显式关闭。
+	logDir := options.LogDir
+	if logDir == "" {
+		logDir = filepath.Join(runtimeHookDir, "logs")
+	}
 	var sink *logs.FileSink
-	if fileSink, sinkErr := logs.NewFileSink(filepath.Join(runtimeHookDir, "logs"), 0, -1); sinkErr != nil {
-		logger.Add("warn", "diagnostics", fmt.Sprintf("log file sink unavailable: %v", sinkErr))
-	} else {
-		sink = fileSink
-		logger.SetSink(sink)
+	if options.PersistentLogs {
+		if fileSink, sinkErr := logs.NewFileSink(logDir, 0, -1); sinkErr != nil {
+			logger.Add("warn", "diagnostics", fmt.Sprintf("log file sink unavailable: %v", sinkErr))
+		} else {
+			sink = fileSink
+			logger.SetSink(sink)
+		}
 	}
 
 	manager := session.NewManager(session.TerminalDefaults{
@@ -122,6 +158,7 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 		runID:           runID,
 		logger:          logger,
 		sink:            sink,
+		logDir:          logDir,
 		ipcEndpoint:     ipcEndpoint,
 		sessions:        manager,
 		fileSend:        fileSendSvc,
@@ -385,7 +422,12 @@ func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path str
 		}
 	}()
 	baseDir := agenthooks.RuntimeBaseDir(app.IPCEndpoint())
-	logDir := filepath.Join(baseDir, "logs")
+	// 使用 App 实际配置的落盘目录，保证导出读取与 FileSink 写入同源；
+	// 默认即按 runtime 隔离的 logs 目录，测试可指向临时目录。
+	logDir := app.logDir
+	if logDir == "" {
+		logDir = filepath.Join(baseDir, "logs")
+	}
 	if exportDir == "" {
 		exportDir = filepath.Join(baseDir, "diagnostics")
 	}
