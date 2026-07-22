@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -13,6 +12,7 @@ import (
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/relaycore"
 	"webterm/go-core/internal/session"
+	"webterm/go-core/internal/transporterr"
 )
 
 // StreamMultiplexer 管理 relay 侧的 WebSocket 流多路复用。
@@ -128,7 +128,7 @@ func (s *relayStreamSocket) Read(ctx context.Context) (session.MessageType, []by
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
 	case <-s.done:
-		return 0, nil, errors.New("relay stream socket closed")
+		return 0, nil, transporterr.ErrRelayStreamClosed
 	case msg := <-s.incoming:
 		return msg.messageType, msg.payload, nil
 	}

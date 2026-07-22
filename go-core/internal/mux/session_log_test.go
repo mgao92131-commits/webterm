@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -13,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"nhooyr.io/websocket"
+
 	"webterm/go-core/internal/logs"
 	termsession "webterm/go-core/internal/session"
+	"webterm/go-core/internal/transporterr"
 )
 
 // fakeSocket 是一个可控的 termsession.Socket：Read 依次返回预设帧，Write 可注入错误。
@@ -70,12 +74,16 @@ func TestErrorKindClassifiesErrors(t *testing.T) {
 		want string
 	}{
 		{"nil", nil, "none"},
+		{"context cancelled", context.Canceled, "context_cancelled"},
 		{"deadline", context.DeadlineExceeded, "timeout"},
 		{"net timeout", timeoutNetError{}, "timeout"},
+		{"relay stream closed", transporterr.ErrRelayStreamClosed, "stream_closed"},
+		{"wrapped relay stream closed", fmt.Errorf("read: %w", transporterr.ErrRelayStreamClosed), "stream_closed"},
 		{"closed", net.ErrClosed, "closed"},
 		{"eof", io.EOF, "closed"},
 		{"unexpected eof", io.ErrUnexpectedEOF, "closed"},
-		{"other", errors.New("boom"), "unknown"},
+		{"websocket closed", websocket.CloseError{Code: websocket.StatusNormalClosure}, "websocket_closed"},
+		{"generic io", errors.New("boom"), "io_error"},
 	}
 	for _, tc := range cases {
 		if got := errorKind(tc.err); got != tc.want {
@@ -149,8 +157,8 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 		switch entry.Event {
 		case "mux_writer_failed":
 			writerEvents++
-			if entry.Fields["reason"] != "unknown" {
-				t.Errorf("mux_writer_failed reason = %v, want unknown", entry.Fields["reason"])
+			if entry.Fields["reason"] != "io_error" {
+				t.Errorf("mux_writer_failed reason = %v, want io_error", entry.Fields["reason"])
 			}
 		case "event_suppressed":
 			suppressedSummaries++
