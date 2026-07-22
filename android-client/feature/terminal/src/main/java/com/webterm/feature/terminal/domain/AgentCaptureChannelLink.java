@@ -96,7 +96,8 @@ public final class AgentCaptureChannelLink implements AgentCaptureLink {
             return AgentCaptureData.unavailable("no_connection");
         }
         String channelId = "capture-" + UUID.randomUUID();
-        LinkedBlockingQueue<byte[]> inbox = new LinkedBlockingQueue<>();
+        // 有界接收队列：读取线程持续 drain，容量仅作背压上界；溢出即中止本次捕获。
+        LinkedBlockingQueue<byte[]> inbox = new LinkedBlockingQueue<>(256);
         CountDownLatch connected = new CountDownLatch(1);
         final boolean[] failed = {false};
 
@@ -107,7 +108,11 @@ public final class AgentCaptureChannelLink implements AgentCaptureLink {
                     }
 
                     @Override public void onData(String id, byte[] payload, boolean binary) {
-                        inbox.offer(payload);
+                        if (!inbox.offer(payload)) {
+                            failed[0] = true; // 队列溢出：中止，避免无界堆积
+                            inbox.clear();
+                            inbox.offer(new byte[0]);
+                        }
                     }
 
                     @Override public void onFailure(String id, ChannelFailure failure) {
@@ -135,14 +140,38 @@ public final class AgentCaptureChannelLink implements AgentCaptureLink {
         }
     }
 
-    /** 解析 result 头 + 分块 blob，重组为文件集。 */
-    private AgentCaptureData readResponse(LinkedBlockingQueue<byte[]> inbox, long timeoutMillis)
+    // Agent 返回数据的接收端硬上限（与 Agent 端对齐），超限即关闭并判失败。
+    private static final long RECV_MAX_PAYLOAD_BYTES = 16L << 20;
+    private static final int RECV_MAX_FILES = 512;
+    private static final long RECV_MAX_FILE_BYTES = 8L << 20;
+
+    /** 期望文件：来自 result 的声明长度与 SHA，用于最终完整性校验。 */
+    private static final class ExpectedFile {
+        final long length;
+        final String sha256;
+        final java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        int lastSeq = 0;
+        boolean finalReceived = false;
+
+        ExpectedFile(long length, String sha256) {
+            this.length = length;
+            this.sha256 = sha256;
+        }
+    }
+
+    /**
+     * 解析 result 头 + 分块 blob，重组为文件集，并做完整性与安全校验：
+     * 路径白名单（仅 agent/ 相对路径）、chunk seq 严格递增、拒绝重复/未知/重复 final、
+     * 字节/文件数硬上限、最终长度与 SHA-256 校验。任一失败返回 available=false。
+     */
+    // 包级可见，供单元测试直接驱动校验逻辑。
+    AgentCaptureData readResponse(LinkedBlockingQueue<byte[]> inbox, long timeoutMillis)
             throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         JSONObject resultMeta = null;
-        Map<String, java.io.ByteArrayOutputStream> buffers = new HashMap<>();
-        Map<String, Boolean> finalReceived = new HashMap<>();
+        Map<String, ExpectedFile> expected = new java.util.LinkedHashMap<>();
         List<String> expectedPaths = new ArrayList<>();
+        long totalBytes = 0;
         boolean sawResult = false;
 
         while (System.currentTimeMillis() < deadline) {
@@ -166,33 +195,53 @@ public final class AgentCaptureChannelLink implements AgentCaptureLink {
                 resultMeta = json.optJSONObject("meta");
                 JSONArray files = json.optJSONArray("files");
                 if (files != null) {
+                    if (files.length() > RECV_MAX_FILES) {
+                        return AgentCaptureData.unavailable("payload_too_large");
+                    }
                     for (int i = 0; i < files.length(); i++) {
-                        String path = files.optJSONObject(i).optString("path");
+                        JSONObject fi = files.optJSONObject(i);
+                        String path = fi.optString("path");
+                        if (!isSafeAgentPath(path) || expected.containsKey(path)) {
+                            return AgentCaptureData.unavailable("unsafe_or_duplicate_path");
+                        }
                         expectedPaths.add(path);
-                        buffers.put(path, new java.io.ByteArrayOutputStream());
-                        finalReceived.put(path, false);
+                        expected.put(path, new ExpectedFile(fi.optLong("length", 0), fi.optString("sha256", "")));
                     }
                 }
                 if (expectedPaths.isEmpty()) {
-                    break; // 无文件的 result（异常），直接返回
+                    break; // 无文件的 result（异常）
                 }
             } else if ("blob".equals(op)) {
                 String path = json.optString("path");
-                java.io.ByteArrayOutputStream buf = buffers.get(path);
-                if (buf == null) continue;
+                ExpectedFile ef = expected.get(path);
+                if (ef == null) {
+                    return AgentCaptureData.unavailable("unknown_file_path"); // 未声明的文件
+                }
+                int seq = json.optInt("seq", 0);
+                if (ef.finalReceived) {
+                    return AgentCaptureData.unavailable("blob_after_final"); // 重复 final 后续块
+                }
+                if (seq <= ef.lastSeq) {
+                    return AgentCaptureData.unavailable("blob_seq_not_increasing"); // 乱序/重复
+                }
+                ef.lastSeq = seq;
                 String dataB64 = json.optString("data");
                 if (dataB64 != null && !dataB64.isEmpty()) {
                     byte[] chunk = android.util.Base64.decode(dataB64, android.util.Base64.DEFAULT);
-                    buf.write(chunk, 0, chunk.length);
+                    if (ef.buffer.size() + chunk.length > RECV_MAX_FILE_BYTES
+                            || totalBytes + chunk.length > RECV_MAX_PAYLOAD_BYTES) {
+                        return AgentCaptureData.unavailable("payload_too_large");
+                    }
+                    ef.buffer.write(chunk, 0, chunk.length);
+                    totalBytes += chunk.length;
                 }
                 if (json.optBoolean("final", false)) {
-                    finalReceived.put(path, true);
+                    ef.finalReceived = true;
                 }
-                if (allFinal(expectedPaths, finalReceived)) {
+                if (allFinal(expectedPaths, expected)) {
                     break;
                 }
             } else if ("ack".equals(op)) {
-                // finish/barrier 不应收到 ack；若收到且 ok=false 视为错误。
                 if (!json.optBoolean("ok", true)) {
                     return AgentCaptureData.unavailable(json.optString("error", "agent_error"));
                 }
@@ -202,20 +251,56 @@ public final class AgentCaptureChannelLink implements AgentCaptureLink {
         if (!sawResult) {
             return AgentCaptureData.unavailable("no_result");
         }
+        // 完整性校验：所有声明文件必须收到 final，长度与 SHA-256 必须匹配。
         List<AgentCaptureData.FileEntry> files = new ArrayList<>();
         for (String path : expectedPaths) {
-            java.io.ByteArrayOutputStream buf = buffers.get(path);
-            files.add(new AgentCaptureData.FileEntry(path, buf != null ? buf.toByteArray() : new byte[0]));
+            ExpectedFile ef = expected.get(path);
+            byte[] data = ef.buffer.toByteArray();
+            if (!ef.finalReceived) {
+                return AgentCaptureData.unavailable("incomplete_file");
+            }
+            if (ef.length > 0 && data.length != ef.length) {
+                return AgentCaptureData.unavailable("length_mismatch");
+            }
+            if (ef.sha256 != null && !ef.sha256.isEmpty() && !ef.sha256.equals(sha256Hex(data))) {
+                return AgentCaptureData.unavailable("sha256_mismatch");
+            }
+            files.add(new AgentCaptureData.FileEntry(path, data));
         }
         return new AgentCaptureData(true,
                 resultMeta != null ? resultMeta.toString() : "", files, null);
     }
 
-    private static boolean allFinal(List<String> paths, Map<String, Boolean> finalReceived) {
+    private static boolean allFinal(List<String> paths, Map<String, ExpectedFile> expected) {
         for (String path : paths) {
-            if (!Boolean.TRUE.equals(finalReceived.get(path))) return false;
+            ExpectedFile ef = expected.get(path);
+            if (ef == null || !ef.finalReceived) return false;
         }
         return true;
+    }
+
+    /**
+     * 路径白名单：仅接受 agent/ 前缀的安全相对路径。拒绝 ../、\、绝对路径、空路径、
+     * 以及 android/... 前缀（防止 Agent 覆盖 Android 侧文件）。
+     */
+    static boolean isSafeAgentPath(String path) {
+        if (path == null || path.isEmpty()) return false;
+        if (!path.startsWith("agent/")) return false;
+        if (path.contains("..") || path.contains("\\") || path.startsWith("/")) return false;
+        if (path.contains("//")) return false;
+        return true;
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(data);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format(java.util.Locale.US, "%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private String capturePath() {

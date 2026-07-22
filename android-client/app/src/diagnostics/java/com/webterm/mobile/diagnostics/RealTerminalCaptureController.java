@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -12,11 +13,14 @@ import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
+import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
+import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenPatch;
 import com.webterm.terminal.model.ScreenSnapshot;
 import com.webterm.terminal.model.capture.AgentCaptureData;
 import com.webterm.terminal.model.capture.AgentCaptureLink;
+import com.webterm.terminal.model.capture.CaptureBinding;
 import com.webterm.terminal.model.capture.CaptureCallback;
 import com.webterm.terminal.model.capture.CaptureIdentity;
 import com.webterm.terminal.model.capture.CaptureLimits;
@@ -24,7 +28,9 @@ import com.webterm.terminal.model.capture.CaptureResult;
 import com.webterm.terminal.model.capture.CaptureSessionSource;
 import com.webterm.terminal.model.capture.CaptureStatus;
 import com.webterm.terminal.model.capture.CapturedModelState;
+import com.webterm.terminal.model.capture.CapturedScreenshot;
 import com.webterm.terminal.model.capture.CapturedViewState;
+import com.webterm.terminal.model.capture.CaptureStreamIdentity;
 import com.webterm.terminal.model.capture.TerminalCaptureController;
 
 import org.json.JSONArray;
@@ -33,6 +39,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
@@ -51,14 +58,15 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Debug/Diag 专用的终端渲染路径现场捕获控制器（真实实现）。release 构建不含本类
- * （由 src/release 的同名 NOOP stub 取代）。
+ * Debug/Diag 专用的终端渲染路径现场捕获控制器（真实实现）。release 不含本类。
  *
- * 设计要点：
- * - 旁路观察：record* 只接收正常业务路径已产出的不可变结果，写入有界 ring；绝不消费业务状态。
- * - 热路径只做一次 isRecording() 判断 + 有界入队；序列化/SHA-256/ZIP/Agent 请求全在专用后台线程。
- * - ring 严格有界（条数 + wire 字节），超限丢最旧并置截断标志。
- * - 现场包含终端正文，未脱敏；UI 分享前须提示用户。
+ * 关键设计（对应审查修复）：
+ * - 会话级隔离（P1-1）：record* 携带 CaptureStreamIdentity，复制/序列化前先 matchesActive 校验；
+ *   bindSession 返回 token，unbindSession(token) 防旧页面清空新绑定；start 时快照 activeSource。
+ * - 有界（P1-2）：wire/mapped/render ring 均有字节+条数预算；limits clamp 到硬上限。
+ * - 热路径不做 JSON（P2）：mapped/render 只存不可变对象引用，JSON 在导出 executor 生成。
+ * - 保存当前现场（P1-6）：无论是否记录，都抓取 Android 当前 model/render/view/screenshot。
+ * - 截图（P2）：主线程仅取有界 ARGB 像素，PNG 压缩在后台。
  */
 public final class RealTerminalCaptureController implements TerminalCaptureController {
 
@@ -67,24 +75,37 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     private static final String EXPORT_DIR = "diagnostics-export";
     private static final long AGENT_REQUEST_TIMEOUT_MILLIS = 8_000L;
 
+    // 结构化对象 ring 字节预算（与 Agent 端硬上限对齐）。
+    private static final long MAPPED_RING_MAX_BYTES = 4L << 20;
+    private static final long RENDER_RING_MAX_BYTES = 4L << 20;
+    private static final int MAPPED_RING_MAX_COUNT = 256;
+    private static final int RENDER_RING_MAX_COUNT = 64;
+    private static final int MODEL_RING_MAX_COUNT = 256;
+    private static final long PNG_MAX_BYTES = 4L << 20;
+
     private final Context appContext;
-    private final Handler mainHandler; // 无主 Looper（纯 JVM 测试）时为 null，回调改为同步触发
+    private final Handler mainHandler; // 无主 Looper（纯 JVM 测试）时为 null
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "webterm-render-capture"));
 
     private final Object lock = new Object();
     private final ByteBoundedRing wireRing = new ByteBoundedRing();
-    private final ArrayDeque<JSONObject> mappedRing = new ArrayDeque<>();
+    private final BoundedObjects<MappedFrame> mappedRing = new BoundedObjects<>();
+    private final BoundedObjects<RenderUpdate> renderRing = new BoundedObjects<>();
     private final ArrayDeque<CapturedModelState> modelRing = new ArrayDeque<>();
-    private final ArrayDeque<RenderUpdate> renderRing = new ArrayDeque<>();
     private boolean wireTruncated;
     private boolean mappedTruncated;
-    private boolean modelTruncated;
     private boolean renderTruncated;
+    private boolean modelTruncated;
 
+    // 当前绑定（token 保护）。
+    private volatile CaptureSessionSource boundSource;
+    private volatile CaptureBinding bindingToken;
+
+    // 活跃记录状态（start 时快照，finish/cancel 清除）。
     private volatile boolean recording;
-    private volatile CaptureSessionSource source;
-    private volatile String activeCaptureId = "";
+    private volatile CaptureIdentity activeIdentity;
+    private volatile CaptureSessionSource activeSource;
     private volatile CaptureLimits activeLimits = CaptureLimits.defaults();
     private volatile long startedAtMillis;
 
@@ -99,54 +120,70 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     @Override
     public CaptureStatus status() {
-        return new CaptureStatus(recording, activeCaptureId, startedAtMillis);
+        return new CaptureStatus(recording,
+                activeIdentity != null ? activeIdentity.captureId : "", startedAtMillis);
     }
 
     @Override
-    public void bindSession(CaptureSessionSource src) {
-        this.source = src;
+    public CaptureBinding bindSession(CaptureSessionSource source) {
+        CaptureBinding token = new CaptureBinding(source);
+        this.boundSource = source;
+        this.bindingToken = token;
+        return token;
+    }
+
+    @Override
+    public void unbindSession(CaptureBinding token) {
+        // 仅当 token 仍是当前绑定时解绑，防旧页面 stop() 清空新页面的绑定。
+        if (token != null && token == bindingToken) {
+            boundSource = null;
+            bindingToken = null;
+        }
     }
 
     @Override
     public void startCapture(CaptureLimits limits) {
-        if (recording) return;
-        CaptureLimits effective = limits != null ? limits : CaptureLimits.defaults();
+        CaptureSessionSource source = boundSource;
+        if (source == null || recording) return;
+        CaptureLimits effective = clampLimits(limits != null ? limits : CaptureLimits.defaults());
         String captureId = "cap-" + UUID.randomUUID().toString().substring(0, 12);
+        CaptureIdentity identity = source.currentIdentity().withCaptureId(captureId);
         synchronized (lock) {
             clearRingsLocked();
             wireRing.configure(effective.maxStructuredFrames * 4, effective.maxAndroidWireBytes);
+            mappedRing.configure(MAPPED_RING_MAX_COUNT, MAPPED_RING_MAX_BYTES);
+            renderRing.configure(RENDER_RING_MAX_COUNT, RENDER_RING_MAX_BYTES);
+            activeIdentity = identity;
+            activeSource = source; // 快照当前源，finish 期间即使新页面绑定也不受影响
             activeLimits = effective;
-            activeCaptureId = captureId;
             startedAtMillis = System.currentTimeMillis();
             recording = true;
         }
-        // 通知 Agent 开始记录（best-effort，后台）。
-        CaptureSessionSource src = source;
-        if (src != null) {
-            CaptureIdentity identity = safeIdentity(src).withCaptureId(captureId);
-            executor.execute(() -> {
-                AgentCaptureLink link = src.agentLink();
-                if (link != null) link.notifyStart(identity, effective);
-            });
+        AgentCaptureLink link = source.agentLink();
+        if (link != null) {
+            executor.execute(() -> safeNotifyStart(link, identity, effective));
         }
     }
 
     @Override
     public void cancelCapture() {
-        String captureId;
-        CaptureSessionSource src = source;
         CaptureIdentity identity;
+        CaptureSessionSource source;
         synchronized (lock) {
             recording = false;
-            captureId = activeCaptureId;
+            identity = activeIdentity;
+            source = activeSource;
             clearRingsLocked();
-            identity = src != null ? safeIdentity(src).withCaptureId(captureId) : null;
+            activeIdentity = null;
+            activeSource = null;
         }
-        if (src != null && identity != null) {
-            executor.execute(() -> {
-                AgentCaptureLink link = src.agentLink();
-                if (link != null) link.notifyCancel(identity);
-            });
+        if (source != null && identity != null) {
+            AgentCaptureLink link = source.agentLink();
+            if (link != null) {
+                executor.execute(() -> {
+                    try { link.notifyCancel(identity); } catch (Throwable ignored) {}
+                });
+            }
         }
     }
 
@@ -161,43 +198,46 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     /**
-     * 在主线程抓取必须在主线程读取的数据（View 诊断 + 画面截图 + 当前身份），
-     * 再切换到后台线程做序列化/Agent 请求/ZIP。
+     * 组装现场包。stop=true（保存并结束）使用 activeSource 并停止记录；stop=false（保存当前现场）
+     * 使用当前 boundSource，不停止记录。无论是否记录，都抓取 Android 当前 model/render/view/screenshot。
+     * 主线程抓取必须在主线程读取的数据，随后切换到后台 executor 做序列化/Agent 请求/ZIP。
      */
     private void buildPackage(boolean stop, CaptureCallback callback) {
-        CaptureSessionSource src = source;
-        if (src == null) {
-            deliver(callback, CaptureResult.failure(activeCaptureId, "no_session"));
+        CaptureSessionSource source = stop ? activeSource : boundSource;
+        if (source == null) source = boundSource;
+        if (source == null) {
+            deliver(callback, CaptureResult.failure("", "no_session"));
             return;
         }
-        // 主线程读取（调用方在 UI 线程触发菜单动作）。
-        final CapturedViewState viewState = safeOnMain(src::viewState);
-        final byte[] screenshot = safeOnMain(src::screenshotPng);
-        final CaptureIdentity current = safeIdentity(src);
-        final String captureId;
-        final CaptureLimits limits;
-        final boolean wasRecording;
+        // —— 主线程：抓取必须在主线程/模型锁读取的当前状态 ——
+        final CaptureSessionSource src = source;
+        final CaptureIdentity identity = resolveIdentity(src, stop);
+        final CaptureLimits limits = activeLimits;
+        final CapturedViewState viewState = safeCall(src::viewState);
+        final CapturedScreenshot screenshot = safeCall(src::captureScreenshot);
+        final RemoteTerminalModel.RenderSnapshot currentModel = safeCall(src::currentModelSnapshot);
+        final RemoteTerminalModel.RenderSnapshot currentRendered = safeCall(src::currentRenderedSnapshot);
+        final RenderDirtyState lastDirty = safeCall(src::lastAppliedDirty);
+
+        // —— 快照 ring（停止时清空）——
         final List<WireEntry> wireSnap;
-        final List<JSONObject> mappedSnap;
-        final List<CapturedModelState> modelSnap;
+        final List<MappedFrame> mappedSnap;
         final List<RenderUpdate> renderSnap;
-        final boolean wTrunc, mTrunc, moTrunc, rTrunc;
+        final List<CapturedModelState> modelSnap;
+        final boolean wTrunc, mTrunc, rTrunc, moTrunc;
         synchronized (lock) {
-            wasRecording = recording;
-            captureId = (stop && wasRecording) ? activeCaptureId
-                    : (activeCaptureId.isEmpty() ? "cap-" + UUID.randomUUID().toString().substring(0, 12) : activeCaptureId);
-            limits = activeLimits;
             wireSnap = wireRing.snapshot();
-            mappedSnap = new ArrayList<>(mappedRing);
+            mappedSnap = mappedRing.snapshot();
+            renderSnap = renderRing.snapshot();
             modelSnap = new ArrayList<>(modelRing);
-            renderSnap = new ArrayList<>(renderRing);
-            wTrunc = wireTruncated; mTrunc = mappedTruncated; moTrunc = modelTruncated; rTrunc = renderTruncated;
+            wTrunc = wireTruncated; mTrunc = mappedTruncated; rTrunc = renderTruncated; moTrunc = modelTruncated;
             if (stop) {
                 recording = false;
                 clearRingsLocked();
+                activeIdentity = null;
+                activeSource = null;
             }
         }
-        final CaptureIdentity identity = current.withCaptureId(captureId);
 
         executor.execute(() -> {
             try {
@@ -207,69 +247,79 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
                     agentData = link.requestAgentCapture(identity, limits, stop, AGENT_REQUEST_TIMEOUT_MILLIS);
                 }
                 File archive = writeArchive(identity, limits, viewState, screenshot,
-                        wireSnap, mappedSnap, modelSnap, renderSnap,
-                        wTrunc, mTrunc, moTrunc, rTrunc, agentData);
-                deliver(callback, CaptureResult.ok(archive.getAbsolutePath(), captureId));
+                        currentModel, currentRendered, lastDirty,
+                        wireSnap, mappedSnap, renderSnap, modelSnap,
+                        wTrunc, mTrunc, rTrunc, moTrunc, agentData);
+                deliver(callback, CaptureResult.ok(archive.getAbsolutePath(), identity.captureId));
             } catch (Throwable t) {
-                deliver(callback, CaptureResult.failure(captureId, "build_failed"));
+                deliver(callback, CaptureResult.failure(identity.captureId, "build_failed"));
             }
         });
     }
 
-    // ---- 热路径 record*（有界入队，绝不消费业务状态）----
+    private CaptureIdentity resolveIdentity(CaptureSessionSource src, boolean stop) {
+        if (stop && activeIdentity != null) {
+            // finish：沿用 start 的 captureId，但刷新当前 revision。
+            CaptureIdentity cur = safeCall(src::currentIdentity);
+            if (cur != null) {
+                return new CaptureIdentity(activeIdentity.captureId, cur.sessionId,
+                        cur.clientInstanceId, cur.terminalInstanceId, cur.layoutEpoch,
+                        cur.androidModelRevision, cur.androidRenderedRevision);
+            }
+            return activeIdentity;
+        }
+        CaptureIdentity cur = safeCall(src::currentIdentity);
+        String captureId = "cap-" + UUID.randomUUID().toString().substring(0, 12);
+        if (cur != null) return cur.withCaptureId(captureId);
+        return new CaptureIdentity(captureId, "", "", "", 0, 0, 0);
+    }
+
+    // ---- 热路径 record*（会话级隔离 + 有界，绝不消费业务状态）----
 
     @Override
-    public void recordWireFrame(long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload) {
-        if (!recording || payload == null) return;
+    public void recordWireFrame(CaptureStreamIdentity identity, long connectionEpoch,
+                                long receivedAtMillis, String messageKind, byte[] payload) {
+        if (!recording || payload == null || !matches(identity)) return;
+        byte[] copy = payload.clone(); // 有界拷贝，避免上游复用
         synchronized (lock) {
-            if (!recording) return;
-            if (wireRing.add(new WireEntry(connectionEpoch, receivedAtMillis, messageKind, payload))) {
+            if (!recording || !matches(identity)) return;
+            if (wireRing.add(new WireEntry(connectionEpoch, receivedAtMillis, messageKind, copy))) {
                 wireTruncated = true;
             }
         }
     }
 
     @Override
-    public void recordMappedSnapshot(ScreenSnapshot snapshot) {
-        if (!recording || snapshot == null) return;
-        try {
-            JSONObject json = CaptureSerializer.mappedSnapshot(snapshot);
-            synchronized (lock) {
-                if (!recording) return;
-                mappedRing.addLast(json);
-                while (mappedRing.size() > activeLimits.maxStructuredFrames) {
-                    mappedRing.removeFirst();
-                    mappedTruncated = true;
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    @Override
-    public void recordMappedPatch(ScreenPatch patch) {
-        if (!recording || patch == null) return;
-        try {
-            JSONObject json = CaptureSerializer.mappedPatch(patch);
-            synchronized (lock) {
-                if (!recording) return;
-                mappedRing.addLast(json);
-                while (mappedRing.size() > activeLimits.maxStructuredFrames) {
-                    mappedRing.removeFirst();
-                    mappedTruncated = true;
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    @Override
-    public void recordModelState(CapturedModelState state) {
-        if (!recording || state == null) return;
+    public void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot) {
+        if (!recording || snapshot == null || !matches(identity)) return;
         synchronized (lock) {
-            if (!recording) return;
+            if (!recording || !matches(identity)) return;
+            if (mappedRing.add(new MappedFrame(snapshot, null, System.currentTimeMillis()),
+                    estimateSnapshotBytes(snapshot))) {
+                mappedTruncated = true;
+            }
+        }
+    }
+
+    @Override
+    public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch) {
+        if (!recording || patch == null || !matches(identity)) return;
+        synchronized (lock) {
+            if (!recording || !matches(identity)) return;
+            if (mappedRing.add(new MappedFrame(null, patch, System.currentTimeMillis()),
+                    estimatePatchBytes(patch))) {
+                mappedTruncated = true;
+            }
+        }
+    }
+
+    @Override
+    public void recordModelState(CaptureStreamIdentity identity, CapturedModelState state) {
+        if (!recording || state == null || !matches(identity)) return;
+        synchronized (lock) {
+            if (!recording || !matches(identity)) return;
             modelRing.addLast(state);
-            while (modelRing.size() > activeLimits.maxStructuredFrames) {
+            while (modelRing.size() > MODEL_RING_MAX_COUNT) {
                 modelRing.removeFirst();
                 modelTruncated = true;
             }
@@ -277,34 +327,32 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     @Override
-    public void recordRenderUpdate(RenderUpdate update) {
-        if (!recording || update == null) return;
-        int cap = Math.min(activeLimits.maxStructuredFrames, 64);
+    public void recordRenderUpdate(CaptureStreamIdentity identity, RenderUpdate update) {
+        if (!recording || update == null || !matches(identity)) return;
         synchronized (lock) {
-            if (!recording) return;
-            renderRing.addLast(update);
-            while (renderRing.size() > cap) {
-                renderRing.removeFirst();
+            if (!recording || !matches(identity)) return;
+            if (renderRing.add(update, estimateRenderBytes(update))) {
                 renderTruncated = true;
             }
         }
     }
 
-    // ---- 包级测试访问器 ----
-
-    int wireEntryCount() { synchronized (lock) { return wireRing.snapshot().size(); } }
-    int mappedCount() { synchronized (lock) { return mappedRing.size(); } }
-    int modelCount() { synchronized (lock) { return modelRing.size(); } }
-    int renderCount() { synchronized (lock) { return renderRing.size(); } }
+    private boolean matches(CaptureStreamIdentity identity) {
+        CaptureIdentity active = activeIdentity;
+        return identity != null && identity.matchesActive(active);
+    }
 
     // ---- ZIP 组装 ----
 
-    // 包级可见，供单元测试直接驱动 ZIP 组装（绕过 executor/主线程 Handler）。
+    // 包级可见，供单元测试直接驱动 ZIP 组装（绕过 executor/主线程）。
     File writeArchive(CaptureIdentity identity, CaptureLimits limits,
-                              CapturedViewState viewState, byte[] screenshot,
-                              List<WireEntry> wire, List<JSONObject> mapped,
-                              List<CapturedModelState> model, List<RenderUpdate> render,
-                              boolean wTrunc, boolean mTrunc, boolean moTrunc, boolean rTrunc,
+                              CapturedViewState viewState, CapturedScreenshot screenshot,
+                              RemoteTerminalModel.RenderSnapshot currentModel,
+                              RemoteTerminalModel.RenderSnapshot currentRendered,
+                              RenderDirtyState lastDirty,
+                              List<WireEntry> wire, List<MappedFrame> mapped,
+                              List<RenderUpdate> render, List<CapturedModelState> model,
+                              boolean wTrunc, boolean mTrunc, boolean rTrunc, boolean moTrunc,
                               AgentCaptureData agentData) throws Exception {
         File outDir = new File(appContext.getCacheDir(), EXPORT_DIR);
         if (!outDir.exists() && !outDir.mkdirs()) {
@@ -315,21 +363,94 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         File tmp = new File(outDir, name + ".tmp-" + System.nanoTime());
 
         Map<String, String> checksums = new LinkedHashMap<>();
-        boolean committed = false;
         try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(tmp))) {
-            // android/ 文件
+            // android/view-state.json
             writeEntry(zip, checksums, "android/view-state.json",
                     jsonBytes(CaptureSerializer.viewState(viewState)));
-            writeEntry(zip, checksums, "android/model-state.json", jsonBytes(modelArray(model)));
-            writeEntry(zip, checksums, "android/mapped-frames.jsonl", jsonlBytes(mapped));
-            writeRenderEntries(zip, checksums, render);
-            writeWireEntries(zip, checksums, wire);
-            boolean screenshotAvailable = screenshot != null && screenshot.length > 0;
-            if (screenshotAvailable) {
-                writeEntry(zip, checksums, "android/actual-screen.png", screenshot);
+
+            // android/current-model-state.json（当前完整模型状态，含 screen+history 窗口）
+            writeEntry(zip, checksums, "android/current-model-state.json",
+                    jsonBytes(CaptureSerializer.renderSnapshot(currentModel, true)));
+
+            // android/render-snapshot.json（当前实际绘制状态，含 history 窗口）
+            writeEntry(zip, checksums, "android/render-snapshot.json",
+                    jsonBytes(CaptureSerializer.renderSnapshot(currentRendered, true)));
+
+            // android/render-dirty.json（最近一次脏区）
+            writeEntry(zip, checksums, "android/render-dirty.json",
+                    jsonBytes(CaptureSerializer.dirty(lastDirty)));
+
+            // android/model-state.jsonl（记录期间的模型摘要序列）
+            JSONArray modelArr = new JSONArray();
+            for (CapturedModelState m : model) modelArr.put(CaptureSerializer.modelState(m));
+            writeEntry(zip, checksums, "android/model-state.jsonl", jsonBytes(modelArr));
+
+            // android/mapped-frames.jsonl（记录期间 Mapper 输出，导出时序列化）
+            StringBuilder mappedBuf = new StringBuilder();
+            for (MappedFrame mf : mapped) {
+                JSONObject one = mf.snapshot != null
+                        ? CaptureSerializer.mappedSnapshot(mf.snapshot)
+                        : CaptureSerializer.mappedPatch(mf.patch);
+                one.put("capturedAtMillis", mf.capturedAtMillis);
+                mappedBuf.append(one).append('\n');
+            }
+            writeEntry(zip, checksums, "android/mapped-frames.jsonl",
+                    mappedBuf.toString().getBytes(StandardCharsets.UTF_8));
+
+            // android/render-updates.jsonl + 最近一帧 render snapshot/dirty
+            StringBuilder renderBuf = new StringBuilder();
+            RenderUpdate lastUpdate = render.isEmpty() ? null : render.get(render.size() - 1);
+            for (RenderUpdate u : render) {
+                JSONObject one = new JSONObject();
+                one.put("snapshot", CaptureSerializer.renderSnapshot(u.snapshot, false));
+                one.put("dirty", CaptureSerializer.dirty(u.dirty));
+                one.put("state", CaptureSerializer.terminalState(u.state));
+                renderBuf.append(one).append('\n');
+            }
+            writeEntry(zip, checksums, "android/render-updates.jsonl",
+                    renderBuf.toString().getBytes(StandardCharsets.UTF_8));
+            if (lastUpdate != null) {
+                writeEntry(zip, checksums, "android/render-snapshot-latest.json",
+                        jsonBytes(CaptureSerializer.renderSnapshot(lastUpdate.snapshot, true)));
+                writeEntry(zip, checksums, "android/render-dirty-latest.json",
+                        jsonBytes(CaptureSerializer.dirty(lastUpdate.dirty)));
             }
 
-            // agent/ 文件（来自 capture 通道；不可用时在 manifest 标注）
+            // android/wire/index.json + .pb
+            JSONArray wireIdx = new JSONArray();
+            int seq = 0;
+            for (WireEntry e : wire) {
+                seq++;
+                String fileName = "android/wire/" + String.format(Locale.US, "%06d", seq) + ".pb";
+                writeEntry(zip, checksums, fileName, e.payload);
+                JSONObject row = new JSONObject();
+                row.put("seq", seq);
+                row.put("file", fileName);
+                row.put("connectionEpoch", e.connectionEpoch);
+                row.put("receivedAtMillis", e.receivedAtMillis);
+                row.put("messageKind", e.messageKind);
+                row.put("length", e.payload.length);
+                row.put("sha256", sha256Hex(e.payload));
+                wireIdx.put(row);
+            }
+            writeEntry(zip, checksums, "android/wire/index.json", jsonBytes(wireIdx));
+
+            // android/actual-screen.png（后台压缩）
+            boolean screenshotAvailable = false;
+            int capturedW = 0, capturedH = 0, originalW = 0, originalH = 0;
+            boolean scaled = false;
+            if (screenshot != null) {
+                byte[] png = compressPng(screenshot);
+                if (png != null && png.length > 0 && png.length <= PNG_MAX_BYTES) {
+                    writeEntry(zip, checksums, "android/actual-screen.png", png);
+                    screenshotAvailable = true;
+                    capturedW = screenshot.width; capturedH = screenshot.height;
+                    originalW = screenshot.originalWidth; originalH = screenshot.originalHeight;
+                    scaled = screenshot.scaled;
+                }
+            }
+
+            // agent/ 文件（来自 capture 通道，已在 link 中校验完整性/路径白名单）
             boolean agentAvailable = agentData != null && agentData.available;
             if (agentAvailable) {
                 for (AgentCaptureData.FileEntry f : agentData.files) {
@@ -338,21 +459,20 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             }
 
             // manifest.json
-            JSONObject manifest = buildManifest(identity, limits, viewState, screenshotAvailable,
-                    agentAvailable, agentData, wTrunc, mTrunc, moTrunc, rTrunc, wire.size());
+            JSONObject manifest = buildManifest(identity, viewState, screenshotAvailable,
+                    capturedW, capturedH, originalW, originalH, scaled,
+                    agentAvailable, agentData, wTrunc, mTrunc, rTrunc, moTrunc,
+                    wire.size(), mapped.size(), render.size());
             writeEntry(zip, checksums, "manifest.json", jsonBytes(manifest));
 
             // checksums.sha256
             writeEntry(zip, checksums, "checksums.sha256", checksumBytes(checksums));
-
-            zip.closeEntry();
         } catch (Throwable t) {
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();
             throw t;
         }
         if (target.exists() && !target.delete()) {
-            // 同名极少出现（captureId 唯一）；删除失败则换一个唯一名。
             target = new File(outDir, ARCHIVE_PREFIX + identity.captureId + "-" + System.nanoTime() + ".zip");
         }
         if (!tmp.renameTo(target)) {
@@ -360,62 +480,16 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             tmp.delete();
             throw new IOException("commit zip failed");
         }
-        committed = true;
         pruneOldArchives(outDir);
         return target;
     }
 
-    private void writeRenderEntries(ZipOutputStream zip, Map<String, String> checksums,
-                                    List<RenderUpdate> render) throws Exception {
-        // 取最近一帧作为 render-snapshot.json + render-dirty.json（“当前用于绘制的 RenderSnapshot”）。
-        RenderSnapshotHolder holder = new RenderSnapshotHolder();
-        JSONArray all = new JSONArray();
-        for (RenderUpdate u : render) {
-            JSONObject one = new JSONObject();
-            one.put("snapshot", CaptureSerializer.renderSnapshot(u.snapshot));
-            one.put("dirty", CaptureSerializer.dirty(u.dirty));
-            one.put("state", CaptureSerializer.terminalState(u.state));
-            all.put(one);
-            holder.last = u; // 迭代到最后一个即最近
-        }
-        writeEntry(zip, checksums, "android/render-updates.jsonl", jsonlBytesFromObjects(all));
-        if (holder.last != null) {
-            writeEntry(zip, checksums, "android/render-snapshot.json",
-                    jsonBytes(CaptureSerializer.renderSnapshot(holder.last.snapshot)));
-            writeEntry(zip, checksums, "android/render-dirty.json",
-                    jsonBytes(CaptureSerializer.dirty(holder.last.dirty)));
-        } else {
-            writeEntry(zip, checksums, "android/render-snapshot.json",
-                    jsonBytes(CaptureSerializer.renderSnapshot(null)));
-        }
-    }
-
-    private void writeWireEntries(ZipOutputStream zip, Map<String, String> checksums,
-                                  List<WireEntry> wire) throws Exception {
-        JSONArray index = new JSONArray();
-        int seq = 0;
-        for (WireEntry e : wire) {
-            seq++;
-            String fileName = "android/wire/" + String.format(Locale.US, "%06d", seq) + ".pb";
-            writeEntry(zip, checksums, fileName, e.payload);
-            JSONObject row = new JSONObject();
-            row.put("seq", seq);
-            row.put("file", fileName);
-            row.put("connectionEpoch", e.connectionEpoch);
-            row.put("receivedAtMillis", e.receivedAtMillis);
-            row.put("messageKind", e.messageKind);
-            row.put("length", e.payload.length);
-            row.put("sha256", sha256Hex(e.payload));
-            index.put(row);
-        }
-        writeEntry(zip, checksums, "android/wire/index.json", jsonBytes(index));
-    }
-
-    private JSONObject buildManifest(CaptureIdentity identity, CaptureLimits limits,
-                                     CapturedViewState viewState, boolean screenshotAvailable,
+    private JSONObject buildManifest(CaptureIdentity identity, CapturedViewState viewState,
+                                     boolean screenshotAvailable, int capturedW, int capturedH,
+                                     int originalW, int originalH, boolean scaled,
                                      boolean agentAvailable, AgentCaptureData agentData,
-                                     boolean wTrunc, boolean mTrunc, boolean moTrunc, boolean rTrunc,
-                                     int wireCount) throws Exception {
+                                     boolean wTrunc, boolean mTrunc, boolean rTrunc, boolean moTrunc,
+                                     int wireCount, int mappedCount, int renderCount) throws Exception {
         JSONObject m = new JSONObject();
         m.put("schemaVersion", 1);
         m.put("captureId", identity.captureId);
@@ -428,20 +502,17 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         m.put("androidDevice", Build.MANUFACTURER + " " + Build.MODEL);
         m.put("androidSdk", Build.VERSION.SDK_INT);
 
-        // Agent 构建身份与 revision 来自 Agent 返回的 capture-meta（若有）。
         JSONObject agentMeta = parseAgentMeta(agentData);
-        m.put("agentVersion", agentMeta.optJSONObject("agent") != null
-                ? agentMeta.optJSONObject("agent").optString("agentVersion") : "");
-        m.put("agentPlatform", agentMeta.optJSONObject("agent") != null
-                ? agentMeta.optJSONObject("agent").optString("agentPlatform") : "");
-        m.put("agentBuildMode", agentMeta.optJSONObject("agent") != null
-                ? agentMeta.optJSONObject("agent").optString("agentBuildMode") : "");
+        JSONObject agentInfo = agentMeta.optJSONObject("agent");
+        m.put("agentVersion", agentInfo != null ? agentInfo.optString("agentVersion") : "");
+        m.put("agentPlatform", agentInfo != null ? agentInfo.optString("agentPlatform") : "");
+        m.put("agentBuildMode", agentInfo != null ? agentInfo.optString("agentBuildMode") : "");
+        m.put("initialSyncCaptured", agentMeta.optBoolean("initialSyncCaptured", false));
 
         m.put("sessionId", identity.sessionId);
         m.put("clientInstanceId", identity.clientInstanceId);
         m.put("terminalInstanceId", identity.terminalInstanceId);
         m.put("layoutEpoch", identity.layoutEpoch);
-
         m.put("androidModelRevision", identity.androidModelRevision);
         m.put("androidRenderedRevision", identity.androidRenderedRevision);
         m.put("agentRevision", agentMeta.optLong("agentRevision", 0));
@@ -458,25 +529,36 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             m.put("fontSize", viewState.fontSizeSp);
             m.put("typeface", viewState.typefaceDescription);
             m.put("keyboardVisible", viewState.keyboardVisible);
-            m.put("activeBuffer", "");
-            m.put("compactLineEncoding", true);
         }
 
         m.put("screenshotAvailable", screenshotAvailable);
+        JSONObject shot = new JSONObject();
+        shot.put("capturedWidth", capturedW);
+        shot.put("capturedHeight", capturedH);
+        shot.put("originalWidth", originalW);
+        shot.put("originalHeight", originalH);
+        shot.put("scaled", scaled);
+        m.put("screenshot", shot);
+
         m.put("agentAvailable", agentAvailable);
-        if (!agentAvailable && agentData != null) {
+        if (!agentAvailable && agentData != null && agentData.error != null) {
             m.put("agentError", agentData.error);
         }
 
         JSONObject trunc = new JSONObject();
         trunc.put("androidWire", wTrunc);
         trunc.put("androidMapped", mTrunc);
-        trunc.put("androidModel", moTrunc);
         trunc.put("androidRender", rTrunc);
-        // Agent 截断标志透传。
+        trunc.put("androidModel", moTrunc);
         JSONObject agentTrunc = agentMeta.optJSONObject("truncated");
         if (agentTrunc != null) trunc.put("agent", agentTrunc);
         m.put("truncated", trunc);
+
+        JSONObject counts = new JSONObject();
+        counts.put("androidWire", wireCount);
+        counts.put("androidMapped", mappedCount);
+        counts.put("androidRender", renderCount);
+        m.put("counts", counts);
 
         m.put("note", "本现场包包含终端输出正文，未脱敏，分享前请确认敏感内容。");
         return m;
@@ -488,54 +570,79 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             if ("agent/capture-meta.json".equals(f.path)) {
                 try {
                     return new JSONObject(new String(f.data, StandardCharsets.UTF_8));
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
         }
-        // 退化：用 result.meta JSON。
         if (agentData.metaJson != null && !agentData.metaJson.isEmpty()) {
-            try {
-                return new JSONObject(agentData.metaJson);
-            } catch (Exception ignored) {
-            }
+            try { return new JSONObject(agentData.metaJson); } catch (Exception ignored) {}
         }
         return new JSONObject();
     }
 
-    // ---- 工具方法 ----
+    // ---- 截图后台压缩 ----
+
+    private byte[] compressPng(CapturedScreenshot shot) {
+        Bitmap bitmap = null;
+        try {
+            bitmap = Bitmap.createBitmap(shot.width, shot.height, Bitmap.Config.ARGB_8888);
+            bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(shot.argbPixels));
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)) return null;
+            return out.toByteArray();
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (bitmap != null) bitmap.recycle();
+        }
+    }
+
+    // ---- 工具 ----
+
+    private static void safeNotifyStart(AgentCaptureLink link, CaptureIdentity identity, CaptureLimits limits) {
+        try { link.notifyStart(identity, limits); } catch (Throwable ignored) {}
+    }
+
+    private interface Call<T> { T call(); }
+
+    private static <T> T safeCall(Call<T> c) {
+        try { return c.call(); } catch (Throwable t) { return null; }
+    }
 
     private void deliver(CaptureCallback callback, CaptureResult result) {
         if (callback == null) return;
         if (mainHandler != null) {
             mainHandler.post(() -> callback.onResult(result));
         } else {
-            callback.onResult(result); // 无主 Looper（纯 JVM 测试）时同步回调
-        }
-    }
-
-    private CaptureIdentity safeIdentity(CaptureSessionSource src) {
-        try {
-            CaptureIdentity id = src.currentIdentity();
-            return id != null ? id : new CaptureIdentity("", "", "", "", 0, 0, 0);
-        } catch (Throwable t) {
-            return new CaptureIdentity("", "", "", "", 0, 0, 0);
-        }
-    }
-
-    private static <T> T safeOnMain(java.util.concurrent.Callable<T> call) {
-        try {
-            return call.call();
-        } catch (Throwable t) {
-            return null;
+            callback.onResult(result);
         }
     }
 
     private void clearRingsLocked() {
         wireRing.clear();
         mappedRing.clear();
-        modelRing.clear();
         renderRing.clear();
-        wireTruncated = mappedTruncated = modelTruncated = renderTruncated = false;
+        modelRing.clear();
+        wireTruncated = mappedTruncated = renderTruncated = modelTruncated = false;
+    }
+
+    // ---- 包级测试访问器 ----
+    int wireEntryCount() { synchronized (lock) { return wireRing.snapshot().size(); } }
+    int mappedCount() { synchronized (lock) { return mappedRing.snapshot().size(); } }
+    int modelCount() { synchronized (lock) { return modelRing.size(); } }
+    int renderCount() { synchronized (lock) { return renderRing.snapshot().size(); } }
+
+    private static CaptureLimits clampLimits(CaptureLimits in) {
+        // 客户端只能降低、不能提高硬上限（与 Agent 端 Hard* 对齐）。
+        long duration = clamp(in.maxDurationMillis, 30_000L, 60_000L);
+        int wire = (int) clamp(in.maxAndroidWireBytes, 4 << 20, 8 << 20);
+        int frames = (int) clamp(in.maxStructuredFrames, 256, 512);
+        int shots = (int) clamp(in.maxScreenshots, 3, 3);
+        return new CaptureLimits(duration, wire, frames, shots);
+    }
+
+    private static long clamp(long requested, long def, long hardMax) {
+        long v = requested <= 0 ? def : requested;
+        return Math.min(v, hardMax);
     }
 
     private static void writeEntry(ZipOutputStream zip, Map<String, String> checksums,
@@ -552,27 +659,6 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     private static byte[] jsonBytes(JSONArray a) {
         return a.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] jsonlBytes(List<JSONObject> objects) {
-        StringBuilder sb = new StringBuilder();
-        for (JSONObject o : objects) sb.append(o).append('\n');
-        return sb.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] jsonlBytesFromObjects(JSONArray arr) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < arr.length(); i++) sb.append(arr.opt(i)).append('\n');
-        return sb.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    private JSONArray modelArray(List<CapturedModelState> model) {
-        JSONArray arr = new JSONArray();
-        try {
-            for (CapturedModelState m : model) arr.put(CaptureSerializer.modelState(m));
-        } catch (Exception ignored) {
-        }
-        return arr;
     }
 
     private static byte[] checksumBytes(Map<String, String> checksums) {
@@ -595,9 +681,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         }
     }
 
-    private static String isoNow() {
-        return isoMillis(System.currentTimeMillis());
-    }
+    private static String isoNow() { return isoMillis(System.currentTimeMillis()); }
 
     private static String isoMillis(long millis) {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
@@ -623,7 +707,6 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     private void pruneOldArchives(File outDir) {
         File[] archives = outDir.listFiles((dir, n) -> n.startsWith(ARCHIVE_PREFIX) && n.endsWith(".zip"));
-        // 清理遗留 .tmp。
         File[] tmps = outDir.listFiles((dir, n) -> n.contains(".tmp-"));
         if (tmps != null) for (File t : tmps) //noinspection ResultOfMethodCallIgnored
             t.delete();
@@ -654,11 +737,41 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         activity.startActivity(Intent.createChooser(send, "分享渲染现场包"));
     }
 
-    // ---- 内部数据类型 ----
+    // ---- 大小估算（上界，仅用于有界淘汰）----
 
-    private static final class RenderSnapshotHolder {
-        RenderUpdate last;
+    private static long estimateSnapshotBytes(ScreenSnapshot s) {
+        long n = 64;
+        if (s.screen != null) for (com.webterm.terminal.model.TerminalLine l : s.screen) n += estimateLineBytes(l);
+        if (s.styles != null) n += (long) s.styles.size() * 48;
+        if (s.links != null) n += (long) s.links.size() * 64;
+        return n;
     }
+
+    private static long estimatePatchBytes(ScreenPatch p) {
+        long n = 64;
+        if (p.lineUpdates != null) for (com.webterm.terminal.model.TerminalLine l : p.lineUpdates) n += estimateLineBytes(l);
+        if (p.newStyles != null) n += (long) p.newStyles.size() * 48;
+        return n;
+    }
+
+    private static long estimateRenderBytes(RenderUpdate u) {
+        if (u == null || u.snapshot == null) return 32;
+        long n = 64;
+        if (u.snapshot.screen != null)
+            for (com.webterm.terminal.model.TerminalLine l : u.snapshot.screen) n += estimateLineBytes(l);
+        return n;
+    }
+
+    private static long estimateLineBytes(com.webterm.terminal.model.TerminalLine line) {
+        if (line == null || line.cells == null) return 32;
+        long n = 32;
+        for (com.webterm.terminal.model.TerminalCell c : line.cells) {
+            n += (c.text != null ? c.text.length() : 0) + 8L;
+        }
+        return n;
+    }
+
+    // ---- 内部数据类型 ----
 
     static final class WireEntry {
         final long connectionEpoch;
@@ -674,7 +787,19 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         }
     }
 
-    /** 条数 + 字节双上限的有界 ring，超限丢最旧并返回 true（截断）。 */
+    static final class MappedFrame {
+        final ScreenSnapshot snapshot;
+        final ScreenPatch patch;
+        final long capturedAtMillis;
+
+        MappedFrame(ScreenSnapshot snapshot, ScreenPatch patch, long capturedAtMillis) {
+            this.snapshot = snapshot;
+            this.patch = patch;
+            this.capturedAtMillis = capturedAtMillis;
+        }
+    }
+
+    /** 条数 + 字节双上限的 wire ring。 */
     static final class ByteBoundedRing {
         private final ArrayDeque<WireEntry> items = new ArrayDeque<>();
         private int maxCount = 256;
@@ -688,9 +813,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
         boolean add(WireEntry entry) {
             boolean truncated = false;
-            if (entry.payload.length > maxBytes) {
-                return true; // 单条超预算，丢弃并置截断
-            }
+            if (entry.payload.length > maxBytes) return true;
             items.addLast(entry);
             currentBytes += entry.payload.length;
             while ((items.size() > maxCount || currentBytes > maxBytes) && items.size() > 1) {
@@ -701,13 +824,38 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             return truncated;
         }
 
-        List<WireEntry> snapshot() {
-            return new ArrayList<>(items);
+        List<WireEntry> snapshot() { return new ArrayList<>(items); }
+
+        void clear() { items.clear(); currentBytes = 0; }
+    }
+
+    /** 条数 + 字节双上限的通用对象 ring（mapped/render）。 */
+    static final class BoundedObjects<T> {
+        private final ArrayDeque<T> items = new ArrayDeque<>();
+        private int maxCount = 256;
+        private long maxBytes = 4L << 20;
+        private long currentBytes;
+
+        void configure(int maxCount, long maxBytes) {
+            this.maxCount = maxCount > 0 ? maxCount : 256;
+            this.maxBytes = maxBytes > 0 ? maxBytes : (4L << 20);
         }
 
-        void clear() {
-            items.clear();
-            currentBytes = 0;
+        boolean add(T item, long size) {
+            boolean truncated = false;
+            if (size > maxBytes) return true;
+            items.addLast(item);
+            currentBytes += size;
+            while ((items.size() > maxCount || currentBytes > maxBytes) && items.size() > 1) {
+                items.removeFirst();
+                currentBytes = Math.max(0, currentBytes - size); // 近似：按当前 size 估计回收
+                truncated = true;
+            }
+            return truncated;
         }
+
+        List<T> snapshot() { return new ArrayList<>(items); }
+
+        void clear() { items.clear(); currentBytes = 0; }
     }
 }

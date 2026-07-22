@@ -14,15 +14,18 @@ public class CaptureContractTest {
     @Test
     public void noopIsNoOp() {
         NoopTerminalCapture noop = NoopTerminalCapture.INSTANCE;
+        CaptureStreamIdentity id = new CaptureStreamIdentity("s1", "term-1", "client-1");
         assertFalse(noop.isSupported());
         assertFalse(noop.isRecording());
         assertFalse(noop.status().recording);
         // record* 不抛异常、无副作用。
-        noop.recordWireFrame(1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
-        noop.recordMappedSnapshot(null);
-        noop.recordMappedPatch(null);
-        noop.recordModelState(null);
-        noop.recordRenderUpdate(null);
+        noop.recordWireFrame(id, 1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
+        noop.recordMappedSnapshot(id, null);
+        noop.recordMappedPatch(id, null);
+        noop.recordModelState(id, null);
+        noop.recordRenderUpdate(id, null);
+        assertNotNull(noop.bindSession(null));
+        noop.unbindSession(null);
         noop.startCapture(CaptureLimits.defaults());
         assertFalse(noop.isRecording());
         noop.cancelCapture();
@@ -32,10 +35,26 @@ public class CaptureContractTest {
     @Test
     public void facadeDefaultsToNoop() {
         TerminalCapture.install(null);
+        CaptureStreamIdentity id = new CaptureStreamIdentity("s1", "term-1", "client-1");
         assertFalse(TerminalCapture.isSupported());
         assertFalse(TerminalCapture.isRecording());
-        TerminalCapture.recordWireFrame(0, 0L, "PATCH", new byte[]{9});
+        TerminalCapture.recordWireFrame(id, 0, 0L, "PATCH", new byte[]{9});
         assertNotNull(TerminalCapture.controller());
+    }
+
+    // 要求（P1-1）：流身份匹配规则——sessionId 必须相等，terminalInstanceId 双方非空时须相等。
+    @Test
+    public void streamIdentityMatching() {
+        CaptureIdentity active = new CaptureIdentity("cap", "sA", "clientA", "termA", 1, 5, 4);
+        assertTrue(new CaptureStreamIdentity("sA", "termA", "clientA").matchesActive(active));
+        // 同 session 但实例未确定（空）→ 放行。
+        assertTrue(new CaptureStreamIdentity("sA", "", "").matchesActive(active));
+        // 不同 session → 拒绝（多会话不串包）。
+        assertFalse(new CaptureStreamIdentity("sB", "termA", "clientA").matchesActive(active));
+        // 同 session 但不同实例（双方非空）→ 拒绝。
+        assertFalse(new CaptureStreamIdentity("sA", "termX", "clientA").matchesActive(active));
+        // 空 sessionId → 拒绝。
+        assertFalse(new CaptureStreamIdentity("", "termA", "clientA").matchesActive(active));
     }
 
     // 要求 3/11：身份携带关联字段，可在保存时刷新 revision 并回填 captureId。

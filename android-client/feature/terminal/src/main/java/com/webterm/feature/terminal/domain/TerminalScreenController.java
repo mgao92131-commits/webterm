@@ -319,8 +319,10 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     RenderUpdate update = runtime.model().consumeRenderUpdate();
     // 捕获点 D：旁路记录 controller 正常 consumeRenderUpdate() 取得的不可变 RenderUpdate
     // （RenderSnapshot + RenderDirtyState + TerminalStateUpdate）。绝不额外调用 consumeRenderUpdate()。
-    if (update != null) {
-      com.webterm.terminal.model.capture.TerminalCapture.recordRenderUpdate(update);
+    // 先做廉价 isRecording() 判断；记录时携带流身份供会话级隔离。
+    if (update != null && com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
+      com.webterm.terminal.model.capture.TerminalCapture.recordRenderUpdate(
+          runtime.captureStreamIdentity(), update);
     }
     if (update != null) applyTerminalState(update);
     if (v != null && update != null && !update.dirty.isEmpty()) {

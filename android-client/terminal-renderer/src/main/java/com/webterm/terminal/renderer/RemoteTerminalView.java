@@ -28,6 +28,7 @@ import androidx.annotation.Nullable;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
+import com.webterm.terminal.model.capture.CapturedScreenshot;
 import com.webterm.terminal.model.capture.CapturedViewState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalCell;
@@ -94,6 +95,8 @@ public final class RemoteTerminalView extends View {
   private RemoteTerminalModel model;
   /** Canvas 本帧唯一允许使用的不可变快照；绝不在 onDraw 再向模型取新快照。 */
   @Nullable private RemoteTerminalModel.RenderSnapshot renderedSnapshot;
+  /** 最近一次应用的脏区，仅供现场捕获只读快照使用。 */
+  @Nullable private RenderDirtyState lastAppliedDirty;
   private TerminalViewportState viewport = new TerminalViewportState();
   private Host host;
   private float lastFlingY;
@@ -196,6 +199,7 @@ public final class RemoteTerminalView extends View {
                                 @NonNull TerminalViewportState viewport) {
     this.viewport = viewport;
     this.renderedSnapshot = update.snapshot;
+    this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
     boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
     if (geometryChanged || !invalidateChangedRows(update.dirty, update.snapshot)) {
@@ -642,26 +646,35 @@ public final class RemoteTerminalView extends View {
         cursorBlinkScheduled, hasSelection);
   }
 
+  /** 截图像素硬上限（约 1.5MP），主线程按此下界缩放，避免整屏 bitmap OOM。 */
+  private static final int CAPTURE_MAX_PIXELS = 1_500_000;
+
   /**
-   * 捕获点 F：把当前终端 viewport 光栅化为 PNG 字节。必须在主线程调用（使用 View.draw）。
-   * 优先捕获终端 viewport 而非整个 Activity。失败（尺寸为 0、OOM 等）返回 null，
-   * 由调用方在 manifest 记录 screenshotAvailable=false，绝不抛出导致现场导出失败。
+   * 捕获点 F：在主线程把当前终端 viewport 光栅化为有界 ARGB 像素（按 CAPTURE_MAX_PIXELS
+   * 下界缩放），PNG 压缩交由控制器后台完成。优先捕获 viewport 而非整个 Activity。
+   * 失败（尺寸为 0、OOM 等）返回 null，由 manifest 记录 screenshotAvailable=false，绝不抛出。
    */
   @Nullable
-  public byte[] captureScreenshotPng() {
+  public CapturedScreenshot captureScreenshot() {
     int w = getWidth();
     int h = getHeight();
     if (w <= 0 || h <= 0) return null;
     android.graphics.Bitmap bitmap = null;
     try {
-      bitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
-      android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
-      draw(canvas);
-      java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-      if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)) {
-        return null;
+      float scale = 1f;
+      long pixels = (long) w * h;
+      if (pixels > CAPTURE_MAX_PIXELS) {
+        scale = (float) Math.sqrt((double) CAPTURE_MAX_PIXELS / pixels);
       }
-      return out.toByteArray();
+      int cw = Math.max(1, Math.round(w * scale));
+      int ch = Math.max(1, Math.round(h * scale));
+      bitmap = android.graphics.Bitmap.createBitmap(cw, ch, android.graphics.Bitmap.Config.ARGB_8888);
+      android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+      if (scale != 1f) canvas.scale(scale, scale);
+      draw(canvas);
+      java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(cw * ch * 4);
+      bitmap.copyPixelsToBuffer(buffer);
+      return new CapturedScreenshot(buffer.array(), cw, ch, w, h, scale != 1f);
     } catch (Throwable t) {
       return null;
     } finally {
@@ -669,6 +682,18 @@ public final class RemoteTerminalView extends View {
         bitmap.recycle();
       }
     }
+  }
+
+  /** 现场捕获：返回当前正在绘制的不可变 RenderSnapshot（主线程只读）。 */
+  @Nullable
+  public RemoteTerminalModel.RenderSnapshot currentRenderedSnapshot() {
+    return renderedSnapshot;
+  }
+
+  /** 现场捕获：返回最近一次应用的脏区只读引用。 */
+  @Nullable
+  public RenderDirtyState lastAppliedDirty() {
+    return lastAppliedDirty;
   }
 
   private void updateFontMetrics() {

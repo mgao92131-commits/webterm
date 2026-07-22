@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"webterm/go-core/internal/terminalengine"
 )
@@ -329,5 +330,138 @@ func TestWireMarkWritten(t *testing.T) {
 	rings, _ := c.FinishCapture("cap", "inst-A")
 	if rings.Wire[0].WriteSucceeded != triTrue || rings.Wire[0].WrittenAtNanos != 777 {
 		t.Fatalf("wire written state = %+v", rings.Wire[0])
+	}
+}
+
+// 要求（P1-5）：过期 capture 被随后的 StartCapture 懒清理，新捕获可成功开启。
+func TestStartCaptureClearsExpired(t *testing.T) {
+	c := NewCoordinator()
+	now := int64(1_000_000_000)
+	c.nowFunc = func() int64 { return now }
+	limits := DefaultLimits()
+	limits.MaxDuration = 1000
+
+	if err := c.StartCapture(testIdentity("cap-old", "inst-A", "cl"), limits); err != nil {
+		t.Fatalf("first start: %v", err)
+	}
+	now += 5_000_000_000 // 远超 MaxDuration
+	// 旧捕获已过期：新捕获应能开启（不返回 ErrCaptureActive）。
+	if err := c.StartCapture(testIdentity("cap-new", "inst-A", "cl"), limits); err != nil {
+		t.Fatalf("start after expiry must succeed, got %v", err)
+	}
+	id, ok := c.Active()
+	if !ok || id.CaptureID != "cap-new" {
+		t.Fatalf("active capture = %+v, want cap-new", id)
+	}
+}
+
+// 要求（P1-5）：同一 captureId 重复 start 幂等。
+func TestStartCaptureIdempotentSameID(t *testing.T) {
+	c := NewCoordinator()
+	limits := DefaultLimits()
+	if err := c.StartCapture(testIdentity("cap-x", "inst-A", "cl"), limits); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := c.StartCapture(testIdentity("cap-x", "inst-A", "cl"), limits); err != nil {
+		t.Fatalf("idempotent re-start must succeed, got %v", err)
+	}
+	// 不同 captureId 且未过期：拒绝。
+	if err := c.StartCapture(testIdentity("cap-y", "inst-A", "cl"), limits); err != ErrCaptureActive {
+		t.Fatalf("different active capture must return ErrCaptureActive, got %v", err)
+	}
+}
+
+// 要求（P1-2）：请求的巨大 limits 被 clamp 到服务端硬上限（只能降不能升）。
+func TestLimitsClampedToHardCaps(t *testing.T) {
+	c := NewCoordinator()
+	huge := Limits{
+		MaxDuration:          999 * time.Hour,
+		MaxPTYBytes:          1 << 40,
+		MaxAgentWireBytes:    1 << 40,
+		MaxStructuredFrames:  1 << 30,
+		MaxCanonicalFrames:   1 << 30,
+		MaxWireFrames:        1 << 30,
+		MaxCanonicalBytes:    1 << 40,
+		MaxDerivedBytes:      1 << 40,
+		MaxAgentPayloadBytes: 1 << 40,
+		MaxAgentFiles:        1 << 30,
+		MaxAgentFileBytes:    1 << 40,
+	}
+	if err := c.StartCapture(testIdentity("cap", "inst-A", "cl"), huge); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	rings, ok := c.SnapshotRings("cap", "inst-A")
+	if !ok {
+		t.Fatal("snapshot failed")
+	}
+	l := rings.Limits
+	if l.MaxPTYBytes != HardMaxPTYBytes {
+		t.Fatalf("MaxPTYBytes=%d, want hard cap %d", l.MaxPTYBytes, HardMaxPTYBytes)
+	}
+	if l.MaxStructuredFrames != HardMaxStructuredFrames {
+		t.Fatalf("MaxStructuredFrames=%d, want %d", l.MaxStructuredFrames, HardMaxStructuredFrames)
+	}
+	if l.MaxAgentPayloadBytes != HardMaxAgentPayloadBytes {
+		t.Fatalf("MaxAgentPayloadBytes=%d, want %d", l.MaxAgentPayloadBytes, HardMaxAgentPayloadBytes)
+	}
+	if l.MaxDuration != HardMaxDuration {
+		t.Fatalf("MaxDuration=%v, want %v", l.MaxDuration, HardMaxDuration)
+	}
+}
+
+// 要求（P2 meta counts）：capture-meta.json 在所有文件后最后序列化，counts 为最终值。
+func TestBuildAgentPayloadMetaCountsCorrect(t *testing.T) {
+	c := NewCoordinator()
+	_ = c.StartCapture(testIdentity("cap", "inst-A", "cl"), DefaultLimits())
+	c.RecordPTY("inst-A", PTYRecord{EventSeq: 1, Data: []byte("p1")})
+	c.RecordPTY("inst-A", PTYRecord{EventSeq: 2, Data: []byte("p2")})
+	c.RecordCanonical("inst-A", CanonicalRecord{Frame: terminalengine.ScreenFrame{Seq: 1, Rows: 1, Cols: 1}})
+	c.RecordWire("inst-A", WireRecord{Kind: "patch", Payload: []byte{1, 2, 3}})
+	rings, _ := c.FinishCapture("cap", "inst-A")
+
+	barrier := BarrierState{Available: true, AgentRevision: 5, TerminalInstanceID: "inst-A",
+		Canonical: terminalengine.ScreenFrame{Seq: 5, Rows: 1, Cols: 1}}
+	ap := BuildAgentPayload(barrier, rings, 5, 5, AgentInfo{}, 0)
+
+	var metaData []byte
+	for _, f := range ap.Files {
+		if f.Path == "agent/capture-meta.json" {
+			metaData = f.Data
+		}
+	}
+	if metaData == nil {
+		t.Fatal("capture-meta.json missing")
+	}
+	var meta AgentCaptureMeta
+	if err := json.Unmarshal(metaData, &meta); err != nil {
+		t.Fatalf("unmarshal meta: %v", err)
+	}
+	if meta.Counts.PTYChunks != 2 {
+		t.Fatalf("PTYChunks=%d, want 2 (meta must be serialized last)", meta.Counts.PTYChunks)
+	}
+	if meta.Counts.CanonicalFrames != 1 {
+		t.Fatalf("CanonicalFrames=%d, want 1", meta.Counts.CanonicalFrames)
+	}
+	if meta.Counts.WireFrames != 1 {
+		t.Fatalf("WireFrames=%d, want 1", meta.Counts.WireFrames)
+	}
+	if meta.InitialSyncCaptured {
+		t.Fatal("InitialSyncCaptured must be false in this version")
+	}
+}
+
+// 要求（P1-2）：文件收集器强制单文件/文件数/总负载上限。
+func TestFileCollectorEnforcesCaps(t *testing.T) {
+	col := newFileCollector(Limits{MaxAgentFiles: 2, MaxAgentFileBytes: 10, MaxAgentPayloadBytes: 100})
+	col.add(CaptureFile{Path: "a", Data: make([]byte, 5)})  // 保留
+	col.add(CaptureFile{Path: "b", Data: make([]byte, 50)}) // 保留（total=55）
+	col.add(CaptureFile{Path: "c", Data: make([]byte, 50)}) // 丢弃（文件数已达上限/超总负载）
+	col.add(CaptureFile{Path: "d", Data: make([]byte, 5)})  // 丢弃（文件数上限）
+	col.add(CaptureFile{Path: "e", Data: make([]byte, 20)}) // 丢弃（单文件超限）
+	if len(col.files) != 2 {
+		t.Fatalf("files=%d, want 2", len(col.files))
+	}
+	if !col.truncated || col.dropped != 3 {
+		t.Fatalf("truncated=%v dropped=%d, want true/3", col.truncated, col.dropped)
 	}
 }

@@ -120,8 +120,16 @@ final class CaptureSerializer {
         return arr;
     }
 
-    /** android/render-snapshot.json：当前用于绘制的不可变 RenderSnapshot。 */
-    static JSONObject renderSnapshot(RemoteTerminalModel.RenderSnapshot s) throws JSONException {
+    /** 历史窗口捕获行数硬上限，超出仅保留最近 N 行并置 historyTruncated。 */
+    private static final int HISTORY_CAPTURE_MAX_LINES = 300;
+
+    /**
+     * android/render-snapshot.json / current-model-state.json：不可变 RenderSnapshot 的稳定 JSON。
+     * includeHistory=true 时附带最近 HISTORY_CAPTURE_MAX_LINES 行历史窗口（含截断字段），
+     * 用于排查历史滚动/prepend/append/锚点错误；render-updates 序列为控制体积可传 false。
+     */
+    static JSONObject renderSnapshot(RemoteTerminalModel.RenderSnapshot s, boolean includeHistory)
+            throws JSONException {
         JSONObject o = new JSONObject();
         if (s == null) {
             o.put("available", false);
@@ -142,8 +150,38 @@ final class CaptureSerializer {
         o.put("workingDirectory", s.workingDirectory);
         o.put("firstAvailableHistorySeq", s.firstAvailableHistorySeq);
         o.put("hasMoreHistoryBefore", s.hasMoreHistoryBefore);
-        o.put("historySize", s.history != null ? s.history.size() : 0);
+        o.put("history", historyWindow(s, includeHistory));
         return o;
+    }
+
+    /** 序列化有界历史窗口，附 totalSize/fromSeq/toSeq/truncated 供离线核对。 */
+    private static JSONObject historyWindow(RemoteTerminalModel.RenderSnapshot s, boolean include)
+            throws JSONException {
+        JSONObject h = new JSONObject();
+        com.webterm.terminal.model.TerminalHistorySnapshot hist = s.history;
+        int total = hist != null ? hist.size() : 0;
+        h.put("historyTotalSize", total);
+        if (!include || hist == null || total == 0) {
+            h.put("historyCapturedLines", 0);
+            h.put("historyTruncated", total > 0);
+            return h;
+        }
+        int from = Math.max(0, total - HISTORY_CAPTURE_MAX_LINES);
+        boolean truncated = from > 0;
+        JSONArray arr = new JSONArray();
+        long fromSeq = -1, toSeq = -1;
+        for (int i = from; i < total; i++) {
+            com.webterm.terminal.model.TerminalLine line = hist.lineAt(i);
+            arr.put(line(line));
+            if (i == from) fromSeq = line.historyOrder();
+            toSeq = line.historyOrder();
+        }
+        h.put("historyCapturedFromSeq", fromSeq);
+        h.put("historyCapturedToSeq", toSeq);
+        h.put("historyCapturedLines", arr.length());
+        h.put("historyTruncated", truncated);
+        h.put("lines", arr);
+        return h;
     }
 
     /** android/mapped-frames.jsonl 中的 snapshot 条目。 */

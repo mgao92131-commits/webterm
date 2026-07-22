@@ -22,21 +22,23 @@ public interface TerminalCaptureSink {
     /**
      * 捕获点 A：原始 screen protocol bytes。在进入 ScreenMailbox 之前/入队时记录。
      * 不重复 parse。payload 为该消息专属字节数组，可直接持引用。
+     * identity 用于会话级隔离，控制器在复制/序列化前先校验匹配。
      */
-    void recordWireFrame(long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload);
+    void recordWireFrame(CaptureStreamIdentity identity, long connectionEpoch,
+                         long receivedAtMillis, String messageKind, byte[] payload);
 
     /** 捕获点 B：Mapper 输出的不可变 Snapshot 领域对象（mapSnapshot 返回后）。 */
-    void recordMappedSnapshot(ScreenSnapshot snapshot);
+    void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot);
 
     /** 捕获点 B：Mapper 输出的不可变 Patch 领域对象（mapPatch 返回后）。 */
-    void recordMappedPatch(ScreenPatch patch);
+    void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch);
 
     /** 捕获点 C：model.applySnapshot/applyPatch 成功后的模型摘要。 */
-    void recordModelState(CapturedModelState state);
+    void recordModelState(CaptureStreamIdentity identity, CapturedModelState state);
 
     /**
      * 捕获点 D：controller 正常调用 consumeRenderUpdate() 取得结果后旁路记录。
      * 绝不额外调用 consumeRenderUpdate()。RenderUpdate 为不可变。
      */
-    void recordRenderUpdate(RenderUpdate update);
+    void recordRenderUpdate(CaptureStreamIdentity identity, RenderUpdate update);
 }

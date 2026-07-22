@@ -40,37 +40,38 @@ public final class TerminalCapture {
 
     // ---- 热路径旁路记录（异常隔离）----
 
-    public static void recordWireFrame(long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload) {
+    public static void recordWireFrame(CaptureStreamIdentity identity, long connectionEpoch,
+                                       long receivedAtMillis, String messageKind, byte[] payload) {
         try {
-            controller.recordWireFrame(connectionEpoch, receivedAtMillis, messageKind, payload);
+            controller.recordWireFrame(identity, connectionEpoch, receivedAtMillis, messageKind, payload);
         } catch (Throwable ignored) {
         }
     }
 
-    public static void recordMappedSnapshot(ScreenSnapshot snapshot) {
+    public static void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot) {
         try {
-            controller.recordMappedSnapshot(snapshot);
+            controller.recordMappedSnapshot(identity, snapshot);
         } catch (Throwable ignored) {
         }
     }
 
-    public static void recordMappedPatch(ScreenPatch patch) {
+    public static void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch) {
         try {
-            controller.recordMappedPatch(patch);
+            controller.recordMappedPatch(identity, patch);
         } catch (Throwable ignored) {
         }
     }
 
-    public static void recordModelState(CapturedModelState state) {
+    public static void recordModelState(CaptureStreamIdentity identity, CapturedModelState state) {
         try {
-            controller.recordModelState(state);
+            controller.recordModelState(identity, state);
         } catch (Throwable ignored) {
         }
     }
 
-    public static void recordRenderUpdate(RenderUpdate update) {
+    public static void recordRenderUpdate(CaptureStreamIdentity identity, RenderUpdate update) {
         try {
-            controller.recordRenderUpdate(update);
+            controller.recordRenderUpdate(identity, update);
         } catch (Throwable ignored) {
         }
     }

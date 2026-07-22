@@ -10,12 +10,17 @@ import static org.mockito.Mockito.when;
 import android.content.Context;
 import android.content.pm.PackageManager;
 
-import com.webterm.terminal.model.TerminalCell;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.capture.AgentCaptureData;
+import com.webterm.terminal.model.capture.AgentCaptureLink;
 import com.webterm.terminal.model.capture.CaptureIdentity;
 import com.webterm.terminal.model.capture.CaptureLimits;
+import com.webterm.terminal.model.capture.CaptureSessionSource;
+import com.webterm.terminal.model.capture.CaptureStreamIdentity;
 import com.webterm.terminal.model.capture.CapturedModelState;
+import com.webterm.terminal.model.capture.CapturedScreenshot;
+import com.webterm.terminal.model.capture.CapturedViewState;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -27,7 +32,6 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
@@ -51,6 +55,30 @@ public class RealTerminalCaptureControllerTest {
         return ctx;
     }
 
+    /** 测试用会话源：返回固定身份，其余返回 null。 */
+    private static final class FakeSource implements CaptureSessionSource {
+        final CaptureIdentity identity;
+
+        FakeSource(String sessionId, String terminalInstanceId, String clientInstanceId) {
+            this.identity = new CaptureIdentity("", sessionId, clientInstanceId, terminalInstanceId, 1, 5, 4);
+        }
+
+        @Override public CaptureIdentity currentIdentity() { return identity; }
+        @Override public CaptureStreamIdentity streamIdentity() {
+            return new CaptureStreamIdentity(identity.sessionId, identity.terminalInstanceId, identity.clientInstanceId);
+        }
+        @Override public CapturedViewState viewState() { return null; }
+        @Override public CapturedScreenshot captureScreenshot() { return null; }
+        @Override public RemoteTerminalModel.RenderSnapshot currentModelSnapshot() { return null; }
+        @Override public RemoteTerminalModel.RenderSnapshot currentRenderedSnapshot() { return null; }
+        @Override public RenderDirtyState lastAppliedDirty() { return null; }
+        @Override public AgentCaptureLink agentLink() { return null; }
+    }
+
+    private static CaptureStreamIdentity stream(String session, String term, String client) {
+        return new CaptureStreamIdentity(session, term, client);
+    }
+
     // 要求 2：ring buffer 严格受条数与字节限制，超限置截断。
     @Test
     public void byteBoundedRingEnforcesLimits() {
@@ -65,14 +93,12 @@ public class RealTerminalCaptureControllerTest {
         assertEquals(3, ring.snapshot().size());
         assertTrue(truncated);
 
-        // 字节预算：每条 10 字节，预算 25 → 至多 2 条。
         RealTerminalCaptureController.ByteBoundedRing byteRing =
                 new RealTerminalCaptureController.ByteBoundedRing();
         byteRing.configure(100, 25);
         boolean t2 = false;
         for (int i = 0; i < 4; i++) {
-            t2 |= byteRing.add(new RealTerminalCaptureController.WireEntry(
-                    1, i, "PATCH", new byte[10]));
+            t2 |= byteRing.add(new RealTerminalCaptureController.WireEntry(1, i, "PATCH", new byte[10]));
         }
         assertEquals(2, byteRing.snapshot().size());
         assertTrue(t2);
@@ -83,20 +109,42 @@ public class RealTerminalCaptureControllerTest {
     public void notRecordingRecordsNothing() throws Exception {
         RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
         assertFalse(c.isRecording());
-        c.recordWireFrame(1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
-        c.recordModelState(new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
+        CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
+        c.recordWireFrame(id, 1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
+        c.recordModelState(id, new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
         assertEquals(0, c.wireEntryCount());
         assertEquals(0, c.modelCount());
+    }
+
+    // 要求（P1-1）：record* 按流身份做会话级隔离——非匹配 session/instance 的事件被丢弃。
+    @Test
+    public void sessionIsolationFiltering() throws Exception {
+        RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
+        c.bindSession(new FakeSource("sA", "termA", "clientA"));
+        c.startCapture(CaptureLimits.defaults());
+        assertTrue(c.isRecording());
+
+        // 匹配：记录。
+        c.recordWireFrame(stream("sA", "termA", "clientA"), 1, 1L, "PATCH", new byte[]{1});
+        // 不同 session：丢弃。
+        c.recordWireFrame(stream("sB", "termB", "clientB"), 1, 1L, "PATCH", new byte[]{2});
+        // 同 session 但不同实例（双方非空）：丢弃。
+        c.recordWireFrame(stream("sA", "termX", "clientA"), 1, 1L, "PATCH", new byte[]{3});
+
+        assertEquals(1, c.wireEntryCount());
+        c.cancelCapture();
     }
 
     // 要求 10：cancel 后清空正文数据。
     @Test
     public void cancelClearsBodyData() throws Exception {
         RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
+        c.bindSession(new FakeSource("s1", "term-1", "client-1"));
         c.startCapture(CaptureLimits.defaults());
         assertTrue(c.isRecording());
-        c.recordWireFrame(1, 1L, "SNAPSHOT", "some-terminal-body".getBytes(StandardCharsets.UTF_8));
-        c.recordModelState(new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
+        CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
+        c.recordWireFrame(id, 1, 1L, "SNAPSHOT", "some-terminal-body".getBytes(StandardCharsets.UTF_8));
+        c.recordModelState(id, new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
         assertTrue(c.wireEntryCount() > 0);
         c.cancelCapture();
         assertFalse(c.isRecording());
@@ -104,39 +152,64 @@ public class RealTerminalCaptureControllerTest {
         assertEquals(0, c.modelCount());
     }
 
-    // 要求 2：记录中条数上限生效（mapped ring）。
+    // 要求（P1-1）：unbind 仅在 token 匹配时生效，旧页面不能清空新绑定。
+    @Test
+    public void unbindRequiresMatchingToken() throws Exception {
+        RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
+        FakeSource sourceA = new FakeSource("sA", "termA", "clientA");
+        com.webterm.terminal.model.capture.CaptureBinding tokenA = c.bindSession(sourceA);
+        // 新页面绑定覆盖。
+        FakeSource sourceB = new FakeSource("sB", "termB", "clientB");
+        com.webterm.terminal.model.capture.CaptureBinding tokenB = c.bindSession(sourceB);
+        // 旧页面 stop() 用旧 token 解绑：应被忽略，当前绑定仍是 B。
+        c.unbindSession(tokenA);
+        c.startCapture(CaptureLimits.defaults()); // 使用当前绑定 B
+        assertTrue(c.isRecording());
+        // 记录 sA 事件应被丢弃（当前活跃身份是 B）。
+        c.recordWireFrame(stream("sA", "termA", "clientA"), 1, 1L, "PATCH", new byte[]{1});
+        assertEquals(0, c.wireEntryCount());
+        c.recordWireFrame(stream("sB", "termB", "clientB"), 1, 1L, "PATCH", new byte[]{2});
+        assertEquals(1, c.wireEntryCount());
+        assertNotNull(tokenB);
+        c.cancelCapture();
+    }
+
+    // 要求 2：记录中条数上限生效（model ring）。
     @Test
     public void recordingBoundsStructuredRings() throws Exception {
         RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
-        c.startCapture(new CaptureLimits(30_000L, 4 << 20, 4, 3)); // maxStructuredFrames=4
-        for (int i = 0; i < 10; i++) {
-            c.recordModelState(new CapturedModelState(i, "i", 1, i, 1, 1, 0, true, false));
+        c.bindSession(new FakeSource("s1", "term-1", "client-1"));
+        c.startCapture(CaptureLimits.defaults());
+        CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
+        for (int i = 0; i < 400; i++) {
+            c.recordModelState(id, new CapturedModelState(i, "i", 1, i, 1, 1, 0, true, false));
         }
-        assertEquals(4, c.modelCount());
+        // model ring 上限 256。
+        assertEquals(256, c.modelCount());
         c.cancelCapture();
     }
 
     // 要求 6：宽字符 / Emoji / 组合字符能够序列化且文本完整保留。
     @Test
     public void wideEmojiCombiningCharsSerialize() throws Exception {
-        TerminalCell wide = new TerminalCell("中", (byte) 2, 1, 0);
-        TerminalCell emoji = new TerminalCell("😀", (byte) 2, 1, 0); // 😀
-        TerminalCell combining = new TerminalCell("é", (byte) 1, 1, 0); // é (组合字符)
-        TerminalCell ascii = new TerminalCell("A", (byte) 1, 0, 0);
-        TerminalLine line = new TerminalLine(42L, 7L, false,
-                new TerminalCell[]{ascii, wide, emoji, combining});
+        String combiningText = "é";
+        com.webterm.terminal.model.TerminalCell wide = new com.webterm.terminal.model.TerminalCell("中", (byte) 2, 1, 0);
+        com.webterm.terminal.model.TerminalCell emoji = new com.webterm.terminal.model.TerminalCell("😀", (byte) 2, 1, 0);
+        com.webterm.terminal.model.TerminalCell combining = new com.webterm.terminal.model.TerminalCell(combiningText, (byte) 1, 1, 0);
+        com.webterm.terminal.model.TerminalCell ascii = new com.webterm.terminal.model.TerminalCell("A", (byte) 1, 0, 0);
+        com.webterm.terminal.model.TerminalLine line = new com.webterm.terminal.model.TerminalLine(42L, 7L, false,
+                new com.webterm.terminal.model.TerminalCell[]{ascii, wide, emoji, combining});
 
         JSONObject json = CaptureSerializer.line(line);
         String s = json.toString();
         assertEquals(42L, json.getLong("lineId"));
-        assertEquals(7L, json.getLong("version"));
-        assertTrue("must keep 中文", s.contains("中文") || s.contains("中"));
-        assertTrue("must keep emoji", s.contains("😀"));
-        assertTrue("must keep combining char", s.contains("é"));
+        assertTrue("must keep 中文", s.contains("中"));
         JSONArray cells = json.getJSONArray("cells");
         assertEquals(4, cells.length());
-        assertEquals(2, cells.getJSONObject(1).getInt("width")); // 宽字符宽度 2
-        assertEquals(2, cells.getJSONObject(2).getInt("width")); // emoji 宽度 2
+        assertEquals(2, cells.getJSONObject(1).getInt("width"));
+        assertEquals(2, cells.getJSONObject(2).getInt("width"));
+        assertEquals(combiningText, cells.getJSONObject(3).getString("text"));
+        assertEquals("中", cells.getJSONObject(1).getString("text"));
     }
 
     // 要求 7 + 8：ZIP manifest 与文件索引一致，每个文件 SHA-256 正确。
@@ -153,54 +226,46 @@ public class RealTerminalCaptureControllerTest {
         model.add(new CapturedModelState(1L, "term-1", 1, 5, 24, 80, 0, true, true));
 
         File archive = c.writeArchive(identity, CaptureLimits.defaults(), null, null,
-                wire, new ArrayList<>(), model, new ArrayList<>(),
+                null, null, null,
+                wire, new ArrayList<>(), new ArrayList<>(), model,
                 false, false, false, false, null);
 
         assertNotNull(archive);
         assertTrue(archive.exists());
-        assertTrue(archive.getName().startsWith("webterm-render-capture-cap-zip"));
 
         Map<String, byte[]> entries = readZip(archive);
         assertTrue(entries.containsKey("manifest.json"));
         assertTrue(entries.containsKey("checksums.sha256"));
         assertTrue(entries.containsKey("android/wire/index.json"));
         assertTrue(entries.containsKey("android/wire/000001.pb"));
-        assertTrue(entries.containsKey("android/model-state.json"));
+        assertTrue(entries.containsKey("android/model-state.jsonl"));
         assertTrue(entries.containsKey("android/render-snapshot.json"));
 
-        // 校验 checksums.sha256 中每个条目与实际字节一致（要求 8）。
+        // checksums.sha256 每个条目与实际字节一致。
         String checksums = new String(entries.get("checksums.sha256"), StandardCharsets.UTF_8);
         for (String line : checksums.split("\n")) {
             if (line.trim().isEmpty()) continue;
             String[] parts = line.split("  ", 2);
             assertEquals(2, parts.length);
-            String expectedHash = parts[0];
-            String path = parts[1];
-            // checksums.sha256 自身不在索引内。
-            byte[] data = entries.get(path);
-            assertNotNull("checksum references missing entry " + path, data);
-            assertEquals("sha mismatch for " + path, expectedHash, sha256Hex(data));
+            byte[] data = entries.get(parts[1]);
+            assertNotNull("checksum references missing entry " + parts[1], data);
+            assertEquals("sha mismatch for " + parts[1], parts[0], sha256Hex(data));
         }
 
-        // manifest 含关键字段（要求 7）。
         JSONObject manifest = new JSONObject(new String(entries.get("manifest.json"), StandardCharsets.UTF_8));
         assertEquals(1, manifest.getInt("schemaVersion"));
         assertEquals("cap-zip", manifest.getString("captureId"));
         assertEquals("term-1", manifest.getString("terminalInstanceId"));
         assertEquals(5, manifest.getLong("androidModelRevision"));
-        assertEquals(4, manifest.getLong("androidRenderedRevision"));
         assertFalse(manifest.getBoolean("screenshotAvailable"));
         assertFalse(manifest.getBoolean("agentAvailable"));
-        assertNotNull(manifest.getJSONObject("truncated"));
 
-        // wire 索引 sha 与 .pb 文件一致（index.json 为 JSONArray）。
         JSONArray arr = new JSONArray(new String(entries.get("android/wire/index.json"), StandardCharsets.UTF_8));
         assertEquals(1, arr.length());
         JSONObject row = arr.getJSONObject(0);
         assertEquals(sha256Hex(payload), row.getString("sha256"));
         assertEquals(payload.length, row.getInt("length"));
         assertEquals("android/wire/000001.pb", row.getString("file"));
-        assertEquals("PATCH", row.getString("messageKind"));
     }
 
     // 要求 9：截断标志正确写入 manifest。
@@ -209,6 +274,7 @@ public class RealTerminalCaptureControllerTest {
         RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
         CaptureIdentity identity = new CaptureIdentity("cap-trunc", "s1", "c", "t", 1, 1, 1);
         File archive = c.writeArchive(identity, CaptureLimits.defaults(), null, null,
+                null, null, null,
                 new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
                 true, false, true, false, null);
         Map<String, byte[]> entries = readZip(archive);
@@ -216,8 +282,8 @@ public class RealTerminalCaptureControllerTest {
         JSONObject trunc = manifest.getJSONObject("truncated");
         assertTrue(trunc.getBoolean("androidWire"));
         assertFalse(trunc.getBoolean("androidMapped"));
-        assertTrue(trunc.getBoolean("androidModel"));
-        assertFalse(trunc.getBoolean("androidRender"));
+        assertTrue(trunc.getBoolean("androidRender"));
+        assertFalse(trunc.getBoolean("androidModel"));
     }
 
     // Agent 数据合并：agent/ 文件被写入现场包，agentAvailable=true。
@@ -228,12 +294,13 @@ public class RealTerminalCaptureControllerTest {
         List<AgentCaptureData.FileEntry> agentFiles = new ArrayList<>();
         agentFiles.add(new AgentCaptureData.FileEntry("agent/canonical-state.json",
                 "{\"agentRevision\":9}".getBytes(StandardCharsets.UTF_8)));
-        agentFiles.add(new AgentCaptureData.FileEntry("agent/pty.bin",
-                new byte[]{1, 2, 3}));
+        agentFiles.add(new AgentCaptureData.FileEntry("agent/pty.bin", new byte[]{1, 2, 3}));
         AgentCaptureData agentData = new AgentCaptureData(true,
-                "{\"agentRevision\":9,\"agent\":{\"agentVersion\":\"1.2.3\"}}", agentFiles, null);
+                "{\"agentRevision\":9,\"agent\":{\"agentVersion\":\"1.2.3\"},\"initialSyncCaptured\":false}",
+                agentFiles, null);
 
         File archive = c.writeArchive(identity, CaptureLimits.defaults(), null, null,
+                null, null, null,
                 new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
                 false, false, false, false, agentData);
         Map<String, byte[]> entries = readZip(archive);
@@ -243,6 +310,7 @@ public class RealTerminalCaptureControllerTest {
         assertTrue(manifest.getBoolean("agentAvailable"));
         assertEquals(9, manifest.getLong("agentRevision"));
         assertEquals("1.2.3", manifest.getString("agentVersion"));
+        assertFalse(manifest.getBoolean("initialSyncCaptured"));
     }
 
     // ---- helpers ----

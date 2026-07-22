@@ -440,6 +440,15 @@ public final class RemoteTerminalModel {
   }
 
   /**
+   * 现场捕获专用：只读返回当前已发布的不可变 RenderSnapshot，绝不触发 publishRenderSnapshot、
+   * 不消费 pending dirty、不推进任何状态。用于“保存当前现场”抓取 Android 当前模型状态，
+   * 以及构造原子一致的捕获身份（RenderSnapshot 在模型锁内整体发布，字段组合一致）。
+   */
+  public synchronized RenderSnapshot peekRenderSnapshot() {
+    return renderSnapshot;
+  }
+
+  /**
    * 原子交换本帧累计的脏状态，并在同一把模型锁内发布与它严格对应的不可变快照。
    * 新到达的 Patch 会写入新的 pending 实例，绝不会被本帧消费后的 clear 覆盖。
    */

@@ -30,48 +30,92 @@ type Identity struct {
 }
 
 // Limits 是一次捕获的有界预算。达到上限时丢弃最旧记录并置对应 truncated 标志。
+// 所有字段都受服务端硬上限（Hard* 常量）约束：客户端请求只能降低、不能提高上限。
 type Limits struct {
-	MaxDuration         time.Duration `json:"maxDurationNanos"`
-	MaxPTYBytes         int           `json:"maxPtyBytes"`
-	MaxAgentWireBytes   int           `json:"maxAgentWireBytes"`
-	MaxStructuredFrames int           `json:"maxStructuredFrames"`
-	MaxCanonicalFrames  int           `json:"maxCanonicalFrames"`
-	MaxWireFrames       int           `json:"maxWireFrames"`
+	MaxDuration          time.Duration `json:"maxDurationNanos"`
+	MaxPTYBytes          int           `json:"maxPtyBytes"`
+	MaxAgentWireBytes    int           `json:"maxAgentWireBytes"`
+	MaxStructuredFrames  int           `json:"maxStructuredFrames"`
+	MaxCanonicalFrames   int           `json:"maxCanonicalFrames"`
+	MaxWireFrames        int           `json:"maxWireFrames"`
+	MaxCanonicalBytes    int           `json:"maxCanonicalBytes"`
+	MaxDerivedBytes      int           `json:"maxDerivedBytes"`
+	MaxAgentPayloadBytes int           `json:"maxAgentPayloadBytes"`
+	MaxAgentFiles        int           `json:"maxAgentFiles"`
+	MaxAgentFileBytes    int           `json:"maxAgentFileBytes"`
 }
 
-// DefaultLimits 返回建议默认限制（见方案 §三.3）。
+// 服务端不可突破的硬上限。请求参数经 clampLimits 只能降低、不能提高这些值，
+// 防止恶意/异常请求撑爆 Agent 内存或现场包体积。
+const (
+	HardMaxDuration          = 60 * time.Second
+	HardMaxPTYBytes          = 4 << 20  // 4 MiB
+	HardMaxAgentWireBytes    = 8 << 20  // 8 MiB
+	HardMaxStructuredFrames  = 512
+	HardMaxCanonicalFrames   = 32
+	HardMaxWireFrames        = 512
+	HardMaxCanonicalBytes    = 4 << 20  // 4 MiB
+	HardMaxDerivedBytes      = 4 << 20  // 4 MiB
+	HardMaxAgentPayloadBytes = 16 << 20 // 16 MiB
+	HardMaxAgentFiles        = 512
+	HardMaxAgentFileBytes    = 8 << 20 // 8 MiB
+)
+
+// DefaultLimits 返回建议默认限制（见方案 §三.3），均在硬上限之内。
 func DefaultLimits() Limits {
 	return Limits{
-		MaxDuration:         30 * time.Second,
-		MaxPTYBytes:         2 << 20, // 2 MiB
-		MaxAgentWireBytes:   4 << 20, // 4 MiB
-		MaxStructuredFrames: 256,
-		MaxCanonicalFrames:  16,
-		MaxWireFrames:       256,
+		MaxDuration:          30 * time.Second,
+		MaxPTYBytes:          2 << 20, // 2 MiB
+		MaxAgentWireBytes:    4 << 20, // 4 MiB
+		MaxStructuredFrames:  256,
+		MaxCanonicalFrames:   16,
+		MaxWireFrames:        256,
+		MaxCanonicalBytes:    4 << 20,
+		MaxDerivedBytes:      4 << 20,
+		MaxAgentPayloadBytes: 16 << 20,
+		MaxAgentFiles:        512,
+		MaxAgentFileBytes:    8 << 20,
 	}
 }
 
-func (l Limits) withDefaults() Limits {
+// clampLimits 把请求限制规整为有效值：非正值回退默认，随后一律对硬上限取 min，
+// 保证客户端只能降低、不能提高上限。
+func (l Limits) clampLimits() Limits {
 	d := DefaultLimits()
-	if l.MaxDuration <= 0 {
-		l.MaxDuration = d.MaxDuration
-	}
-	if l.MaxPTYBytes <= 0 {
-		l.MaxPTYBytes = d.MaxPTYBytes
-	}
-	if l.MaxAgentWireBytes <= 0 {
-		l.MaxAgentWireBytes = d.MaxAgentWireBytes
-	}
-	if l.MaxStructuredFrames <= 0 {
-		l.MaxStructuredFrames = d.MaxStructuredFrames
-	}
-	if l.MaxCanonicalFrames <= 0 {
-		l.MaxCanonicalFrames = d.MaxCanonicalFrames
-	}
-	if l.MaxWireFrames <= 0 {
-		l.MaxWireFrames = d.MaxWireFrames
-	}
+	l.MaxDuration = clampDuration(l.MaxDuration, d.MaxDuration, HardMaxDuration)
+	l.MaxPTYBytes = clampInt(l.MaxPTYBytes, d.MaxPTYBytes, HardMaxPTYBytes)
+	l.MaxAgentWireBytes = clampInt(l.MaxAgentWireBytes, d.MaxAgentWireBytes, HardMaxAgentWireBytes)
+	l.MaxStructuredFrames = clampInt(l.MaxStructuredFrames, d.MaxStructuredFrames, HardMaxStructuredFrames)
+	l.MaxCanonicalFrames = clampInt(l.MaxCanonicalFrames, d.MaxCanonicalFrames, HardMaxCanonicalFrames)
+	l.MaxWireFrames = clampInt(l.MaxWireFrames, d.MaxWireFrames, HardMaxWireFrames)
+	l.MaxCanonicalBytes = clampInt(l.MaxCanonicalBytes, d.MaxCanonicalBytes, HardMaxCanonicalBytes)
+	l.MaxDerivedBytes = clampInt(l.MaxDerivedBytes, d.MaxDerivedBytes, HardMaxDerivedBytes)
+	l.MaxAgentPayloadBytes = clampInt(l.MaxAgentPayloadBytes, d.MaxAgentPayloadBytes, HardMaxAgentPayloadBytes)
+	l.MaxAgentFiles = clampInt(l.MaxAgentFiles, d.MaxAgentFiles, HardMaxAgentFiles)
+	l.MaxAgentFileBytes = clampInt(l.MaxAgentFileBytes, d.MaxAgentFileBytes, HardMaxAgentFileBytes)
 	return l
+}
+
+func clampInt(requested, defaultVal, hardMax int) int {
+	v := requested
+	if v <= 0 {
+		v = defaultVal
+	}
+	if v > hardMax {
+		v = hardMax
+	}
+	return v
+}
+
+func clampDuration(requested, defaultVal, hardMax time.Duration) time.Duration {
+	v := requested
+	if v <= 0 {
+		v = defaultVal
+	}
+	if v > hardMax {
+		v = hardMax
+	}
+	return v
 }
 
 // 稳定失败枚举：禁止记录原始错误文本，错误一律归类为下列有限枚举。
@@ -197,13 +241,15 @@ type RingsSnapshot struct {
 
 // TruncatedFlags 记录各 ring 是否因达到上限而丢弃过最旧记录。
 type TruncatedFlags struct {
-	PTY       bool `json:"pty"`
-	Canonical bool `json:"canonical"`
-	Derived   bool `json:"derived"`
-	Wire      bool `json:"wire"`
-	WireBytes bool `json:"wireBytes"`
-	PTYBytes  bool `json:"ptyBytes"`
-	Duration  bool `json:"duration"`
+	PTY          bool `json:"pty"`
+	Canonical    bool `json:"canonical"`
+	Derived      bool `json:"derived"`
+	Wire         bool `json:"wire"`
+	WireBytes    bool `json:"wireBytes"`
+	PTYBytes     bool `json:"ptyBytes"`
+	Duration     bool `json:"duration"`
+	Payload      bool `json:"payload"`      // 导出时因总负载/单文件/文件数上限丢弃过文件
+	DroppedFiles int  `json:"droppedFiles"` // 因上限被丢弃的文件数
 }
 
 // ---------------------------------------------------------------------------

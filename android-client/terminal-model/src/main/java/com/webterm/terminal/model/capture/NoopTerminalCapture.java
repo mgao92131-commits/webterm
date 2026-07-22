@@ -17,7 +17,8 @@ public final class NoopTerminalCapture implements TerminalCaptureController {
     @Override public boolean isSupported() { return false; }
     @Override public boolean isRecording() { return false; }
     @Override public CaptureStatus status() { return CaptureStatus.idle(); }
-    @Override public void bindSession(CaptureSessionSource source) {}
+    @Override public CaptureBinding bindSession(CaptureSessionSource source) { return new CaptureBinding(source); }
+    @Override public void unbindSession(CaptureBinding token) {}
     @Override public void startCapture(CaptureLimits limits) {}
     @Override public void cancelCapture() {}
 
@@ -33,9 +34,9 @@ public final class NoopTerminalCapture implements TerminalCaptureController {
         }
     }
 
-    @Override public void recordWireFrame(long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload) {}
-    @Override public void recordMappedSnapshot(ScreenSnapshot snapshot) {}
-    @Override public void recordMappedPatch(ScreenPatch patch) {}
-    @Override public void recordModelState(CapturedModelState state) {}
-    @Override public void recordRenderUpdate(RenderUpdate update) {}
+    @Override public void recordWireFrame(CaptureStreamIdentity identity, long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload) {}
+    @Override public void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot) {}
+    @Override public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch) {}
+    @Override public void recordModelState(CaptureStreamIdentity identity, CapturedModelState state) {}
+    @Override public void recordRenderUpdate(CaptureStreamIdentity identity, RenderUpdate update) {}
 }

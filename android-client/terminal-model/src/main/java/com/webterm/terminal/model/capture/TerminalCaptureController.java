@@ -11,8 +11,14 @@ public interface TerminalCaptureController extends TerminalCaptureSink {
     /** 当前捕获状态（是否记录中、已记录时长）。 */
     CaptureStatus status();
 
-    /** 绑定当前终端会话数据源（终端画面打开时调用；关闭时传 null 解绑）。 */
-    void bindSession(CaptureSessionSource source);
+    /**
+     * 绑定当前终端会话数据源（终端画面打开时调用）。返回绑定令牌；关闭时必须用同一令牌
+     * 调用 {@link #unbindSession(CaptureBinding)}，避免旧页面 stop() 清空新页面的绑定。
+     */
+    CaptureBinding bindSession(CaptureSessionSource source);
+
+    /** 仅当 token 仍是当前绑定时解绑；否则忽略。 */
+    void unbindSession(CaptureBinding token);
 
     /** 开始现场记录（显式开启；此后热路径才开始缓存终端正文/PTY 相关数据）。 */
     void startCapture(CaptureLimits limits);

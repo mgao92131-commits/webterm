@@ -343,3 +343,31 @@ func mouseEncodingString(e terminalengine.MouseEncoding) string {
 		return "x10"
 	}
 }
+
+// estimateFrameBytes 估算一个 ScreenFrame 的近似内存占用（字节），用于 canonical/derived
+// ring 的字节预算。这是上界估计（含每 cell/line 的固定开销），仅用于有界淘汰，不要求精确。
+func estimateFrameBytes(f terminalengine.ScreenFrame) int64 {
+	n := int64(64)
+	for _, line := range f.Screen {
+		n += estimateLineBytes(line)
+	}
+	for _, line := range f.History.Lines {
+		n += estimateLineBytes(line)
+	}
+	n += int64(len(f.Styles)) * 48
+	for _, l := range f.Links {
+		n += int64(len(l.URI)) + 32
+	}
+	n += int64(len(f.Title)) + int64(len(f.WorkingDir))
+	return n
+}
+
+func estimateLineBytes(line terminalengine.Line) int64 {
+	n := int64(32)
+	for _, run := range line.Runs {
+		for _, cell := range run.Cells {
+			n += int64(len(cell.Text)) + 8
+		}
+	}
+	return n
+}

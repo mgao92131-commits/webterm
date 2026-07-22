@@ -88,10 +88,6 @@ type Runtime struct {
 	// 承担一次廉价判断；仅当用户显式开启现场记录时才拷贝/记录有界数据。它绝不
 	// 消费业务状态（dirty/baseline/revision/history watermark）。
 	captureSink terminalcapture.Sink
-	// lastCanonicalFrame 缓存最近一次 broadcastFrame 产出的完整权威帧（不可变），
-	// 供 capture barrier 在 actor 顺序中只读读取。仅在捕获激活时保留；不参与任何
-	// revision/baseline/dirty/lease/mailbox/renderer 语义。仅由 actor goroutine 访问。
-	lastCanonicalFrame terminalengine.ScreenFrame
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -449,19 +445,18 @@ func (r *Runtime) CaptureBarrier() terminalcapture.BarrierState {
 	}
 }
 
-// captureBarrierState 在 actor goroutine 上组装 barrier 快照。优先使用最近一次
-// broadcastFrame 产出的权威帧（Projector 字典，与 wire 帧 style/link ID 可比）；
-// 尚无广播帧时退化为只读 ExportSnapshot（ReadFullProjection，不消费 dirty）。
+// captureBarrierState 在 actor goroutine 上组装 barrier 快照。始终用只读 ExportSnapshot
+// 现场生成当前权威状态：其内部走 ReadFullProjection（不消费 dirty）、构建独立字典
+// （不触碰 Projector 字典/缓存/ChangeIndex）、不推进 revision、不改变 FrameDeriver baseline。
+// 因此 barrier 永远反映“当前”状态，绝不复用跨 capture 生命周期的旧缓存帧。
+// （与 wire 帧的 style/link ID 可比性由记录期间的 canonical ring——capture 点 B——提供。）
 func (r *Runtime) captureBarrierState() terminalcapture.BarrierState {
 	info := r.Info()
-	frame := r.lastCanonicalFrame
-	if frame.Seq == 0 {
-		frame = screenprojection.ExportSnapshot(
-			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
-		)
-	}
+	frame := screenprojection.ExportSnapshot(
+		r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
+	)
 	return terminalcapture.BarrierState{
-		Available:          frame.Seq != 0 || frame.Rows > 0,
+		Available:          true,
 		AgentRevision:      info.ScreenRevision,
 		LayoutEpoch:        info.LayoutEpoch,
 		TerminalInstanceID: r.instanceID,
@@ -1148,11 +1143,10 @@ func (r *Runtime) broadcastFrame() {
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
 	// 捕获点 B：在正常 ExportState 返回后旁路记录完整权威帧（持不可变引用，不拷贝、
-	// 不额外调用消费型 API）。同时缓存 lastCanonicalFrame 供 capture barrier 只读读取；
-	// 仅在捕获激活（Enabled）时保留该引用，未捕获时不额外占用内存。
+	// 不额外调用消费型 API）。仅在捕获激活（Enabled）时记录；barrier 用独立的只读
+	// ExportSnapshot 现场生成当前状态，不依赖此处缓存。
 	if r.captureSink.Enabled(r.instanceID) {
 		r.captureSink.RecordCanonical(r.instanceID, terminalcapture.CanonicalRecord{Frame: state})
-		r.lastCanonicalFrame = state
 	}
 	for _, c := range r.clients {
 		if c.synced {

@@ -35,10 +35,21 @@ func (c *Coordinator) Enabled(terminalInstanceID string) bool {
 	return ac != nil && ac.identity.TerminalInstanceID == terminalInstanceID
 }
 
-// StartCapture 开启一次有界捕获。
+// StartCapture 开启一次有界捕获。limits 经 clampLimits 规整（只能降低不能提高硬上限）。
+// 开启前先懒清理已过期的活跃捕获，避免进程被杀/断网后旧捕获永久占据唯一捕获槽；
+// 同一 captureId 的重复 start 视为幂等成功。
 func (c *Coordinator) StartCapture(identity Identity, limits Limits) error {
-	limits = limits.withDefaults()
-	ac := newActiveCapture(identity, limits, c.now())
+	limits = limits.clampLimits()
+	now := c.now()
+	if old := c.active.Load(); old != nil && old.expired(now) {
+		if c.active.CompareAndSwap(old, nil) {
+			old.release()
+		}
+	}
+	if old := c.active.Load(); old != nil && old.identity.CaptureID == identity.CaptureID {
+		return nil // 幂等：同一 captureId 重复 start
+	}
+	ac := newActiveCapture(identity, limits, now)
 	if !c.active.CompareAndSwap(nil, ac) {
 		return ErrCaptureActive
 	}
@@ -218,14 +229,23 @@ type activeCapture struct {
 }
 
 func newActiveCapture(identity Identity, limits Limits, now int64) *activeCapture {
+	// PTY chunk 条数上限：MaxStructuredFrames 已被 clamp 到 <=HardMaxStructuredFrames(512)，
+	// *4 不会溢出；仍对结果再加一道硬顶以防未来放宽上限。
+	ptyChunkCap := limits.MaxStructuredFrames * 4
+	if ptyChunkCap <= 0 || ptyChunkCap > HardMaxStructuredFrames*4 {
+		ptyChunkCap = HardMaxStructuredFrames * 4
+	}
 	return &activeCapture{
 		identity:       identity,
 		limits:         limits,
 		startedAtNanos: now,
-		ptyRing: newBoundedRing[PTYRecord](limits.MaxStructuredFrames*4, int64(limits.MaxPTYBytes),
+		ptyRing: newBoundedRing[PTYRecord](ptyChunkCap, int64(limits.MaxPTYBytes),
 			func(r PTYRecord) int64 { return int64(len(r.Data)) }),
-		canonicalRing: newBoundedRing[CanonicalRecord](limits.MaxCanonicalFrames, 0, nil),
-		derivedRing:   newBoundedRing[DerivedRecord](limits.MaxStructuredFrames, 0, nil),
+		// canonical/derived 帧按估算字节预算双重限制，避免大尺寸终端/长历史撑爆内存。
+		canonicalRing: newBoundedRing[CanonicalRecord](limits.MaxCanonicalFrames, int64(limits.MaxCanonicalBytes),
+			func(r CanonicalRecord) int64 { return estimateFrameBytes(r.Frame) }),
+		derivedRing: newBoundedRing[DerivedRecord](limits.MaxStructuredFrames, int64(limits.MaxDerivedBytes),
+			func(r DerivedRecord) int64 { return estimateFrameBytes(r.Frame) }),
 		wireRing: newBoundedRing[*WireRecord](limits.MaxWireFrames, int64(limits.MaxAgentWireBytes),
 			func(r *WireRecord) int64 { return int64(len(r.Payload)) }),
 	}

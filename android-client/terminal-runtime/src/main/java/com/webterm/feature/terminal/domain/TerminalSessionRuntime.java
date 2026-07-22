@@ -601,10 +601,12 @@ public final class TerminalSessionRuntime {
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
     // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
     TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payload.length);
-    // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse；未开启捕获时
-    // 门面内部仅一次廉价判断。payload 为该消息专属字节数组，实现可直接持引用。
-    com.webterm.terminal.model.capture.TerminalCapture.recordWireFrame(
-        messageEpoch, System.currentTimeMillis(), kind.name(), payload);
+    // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse。先做一次廉价的
+    // isRecording() 判断，未记录时不构造身份对象；记录时携带流身份供控制器做会话级隔离。
+    if (com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
+      com.webterm.terminal.model.capture.TerminalCapture.recordWireFrame(
+          captureStreamIdentity(), messageEpoch, System.currentTimeMillis(), kind.name(), payload);
+    }
     ScreenMailbox.Offer offer = screenMailbox.offer(
         messageEpoch, sourceConnection, payload, frameSize.ok, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
@@ -827,10 +829,8 @@ public final class TerminalSessionRuntime {
             startResyncRecovery(e.getMessage() != null ? e.getMessage() : "snapshot apply failed");
             return;
           }
-          // 捕获点 B：Mapper 输出的不可变 Snapshot 领域对象。
-          com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(snapshot);
-          // 捕获点 C：applySnapshot 成功后的模型摘要。
-          recordModelCaptureState(true);
+          // 捕获点 B/C：Mapper 输出的不可变 Snapshot + applySnapshot 后的模型摘要。
+          captureAfterApply(true, snapshot, null);
           resetPatchSummary();
           Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
               "instanceId", snapshot.instanceId,
@@ -891,10 +891,8 @@ public final class TerminalSessionRuntime {
                   "screenRevision", patch.screenRevision));
             }
             model.applyPatch(patch);
-            // 捕获点 B：Mapper 输出的不可变 Patch 领域对象。
-            com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(patch);
-            // 捕获点 C：applyPatch 成功后的模型摘要。
-            recordModelCaptureState(false);
+            // 捕获点 B/C：Mapper 输出的不可变 Patch + applyPatch 后的模型摘要。
+            captureAfterApply(false, null, patch);
             recordPatchSummary(message.payload.length, countScreenLineUpdates(patch), patch);
             if (resumePatch) {
               TerminalResumeMetrics.cumulativePatch(patchBase,
@@ -980,11 +978,39 @@ public final class TerminalSessionRuntime {
   }
 
   /**
-   * 捕获点 C：在 modelExecutor 上（applySnapshot/applyPatch 成功后）做有界字段读取，
-   * 记录模型摘要。绝不消费 render update、不推进任何状态。
+   * 构造当前事件流身份（sessionId/terminalInstanceId/clientInstanceId），供捕获做会话级隔离。
+   * 仅在 isRecording() 为真时调用，避免热路径在无捕获时的对象分配。
    */
-  private void recordModelCaptureState(boolean afterSnapshot) {
-    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(
+  com.webterm.terminal.model.capture.CaptureStreamIdentity captureStreamIdentity() {
+    String terminalInstanceId = model.instanceId == null ? "" : model.instanceId;
+    String clientInstanceId = "";
+    ScreenConnection c = connection;
+    if (c != null && c.reliableInputTracker() != null) {
+      clientInstanceId = c.reliableInputTracker().clientInstanceId();
+    }
+    return new com.webterm.terminal.model.capture.CaptureStreamIdentity(
+        sessionId, terminalInstanceId, clientInstanceId);
+  }
+
+  /**
+   * 捕获点 B/C：在 modelExecutor 上（applySnapshot/applyPatch 成功后）旁路记录 Mapper 输出
+   * 的不可变领域对象与模型摘要。先做一次廉价 isRecording() 判断；记录时携带流身份。
+   * 绝不消费 render update、不推进任何状态。
+   */
+  private void captureAfterApply(boolean afterSnapshot,
+                                 com.webterm.terminal.model.ScreenSnapshot snapshot,
+                                 com.webterm.terminal.model.ScreenPatch patch) {
+    if (!com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
+      return;
+    }
+    com.webterm.terminal.model.capture.CaptureStreamIdentity identity = captureStreamIdentity();
+    if (snapshot != null) {
+      com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(identity, snapshot);
+    }
+    if (patch != null) {
+      com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(identity, patch);
+    }
+    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(identity,
         new com.webterm.terminal.model.capture.CapturedModelState(
             System.currentTimeMillis(),
             model.instanceId, model.layoutEpoch, model.screenRevision,

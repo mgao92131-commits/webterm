@@ -42,6 +42,11 @@ type AgentCaptureMeta struct {
 	Limits                  Limits         `json:"limits"`
 	Counts                  AgentCounts    `json:"counts"`
 	Agent                   AgentInfo      `json:"agent"`
+	// InitialSyncCaptured 明确标注本版本捕获链路是否覆盖恢复首帧/即时同步路径。
+	// 当前仅 steady-state writeLatestScreenState 接入 wire/derived 捕获，初始同步
+	// （cold attach/resume patch/reconnect snapshot）不在链路中，故恒为 false，
+	// 避免使用者误以为现场包覆盖了完整链路。
+	InitialSyncCaptured bool `json:"initialSyncCaptured"`
 }
 
 // AgentCounts 记录各旁路数据条数，便于快速核对。
@@ -134,13 +139,15 @@ func BuildAgentPayload(barrier BarrierState, rings RingsSnapshot,
 		meta.CaptureID = barrier.TerminalInstanceID
 	}
 
-	files := []CaptureFile{}
+	// 当前版本初始同步路径未接入捕获，显式标注，避免误以为覆盖完整链路。
+	meta.InitialSyncCaptured = false
 
-	// agent/capture-meta.json
-	files = append(files, jsonFile("agent/capture-meta.json", meta))
+	// 文件收集器强制执行服务端硬上限：单文件 <= MaxAgentFileBytes，文件数 <= MaxAgentFiles，
+	// 总负载 <= MaxAgentPayloadBytes。超限丢弃并置截断标志，绝不无界增长。
+	col := newFileCollector(rings.Limits)
 
 	// agent/canonical-state.json（barrier 一致性快照）
-	files = append(files, jsonFile("agent/canonical-state.json", BarrierFile{
+	col.add(jsonFile("agent/canonical-state.json", BarrierFile{
 		BarrierAvailable:   barrier.Available,
 		AgentRevision:      barrier.AgentRevision,
 		LayoutEpoch:        barrier.LayoutEpoch,
@@ -154,7 +161,7 @@ func BuildAgentPayload(barrier BarrierState, rings RingsSnapshot,
 		writeJSONLine(&canonicalBuf, CanonicalFrameEntry{TimestampNanos: rec.TimestampNanos, Frame: FrameToJSON(rec.Frame)})
 		meta.Counts.CanonicalFrames++
 	}
-	files = append(files, CaptureFile{Path: "agent/canonical-frames.jsonl", Data: canonicalBuf.Bytes()})
+	col.add(CaptureFile{Path: "agent/canonical-frames.jsonl", Data: canonicalBuf.Bytes()})
 
 	// agent/derived-frames.jsonl
 	var derivedBuf bytes.Buffer
@@ -167,7 +174,7 @@ func BuildAgentPayload(barrier BarrierState, rings RingsSnapshot,
 		})
 		meta.Counts.DerivedFrames++
 	}
-	files = append(files, CaptureFile{Path: "agent/derived-frames.jsonl", Data: derivedBuf.Bytes()})
+	col.add(CaptureFile{Path: "agent/derived-frames.jsonl", Data: derivedBuf.Bytes()})
 
 	// agent/pty.bin + agent/pty-index.json
 	var ptyBin bytes.Buffer
@@ -187,8 +194,8 @@ func BuildAgentPayload(barrier BarrierState, rings RingsSnapshot,
 		meta.Counts.PTYChunks++
 		meta.Counts.PTYBytes += len(rec.Data)
 	}
-	files = append(files, CaptureFile{Path: "agent/pty.bin", Data: ptyBin.Bytes()})
-	files = append(files, jsonFile("agent/pty-index.json", ptyIndex))
+	col.add(CaptureFile{Path: "agent/pty.bin", Data: ptyBin.Bytes()})
+	col.add(jsonFile("agent/pty-index.json", ptyIndex))
 
 	// agent/wire/NNNNNN.pb + agent/wire/index.json
 	wireIndex := make([]WireIndexEntry, 0, len(rings.Wire))
@@ -210,12 +217,49 @@ func BuildAgentPayload(barrier BarrierState, rings RingsSnapshot,
 			WrittenAtNanos:   rec.WrittenAtNanos,
 			FailureKind:      rec.FailureKind,
 		})
-		files = append(files, CaptureFile{Path: fileName, Data: rec.Payload})
+		col.add(CaptureFile{Path: fileName, Data: rec.Payload})
 		meta.Counts.WireFrames++
 	}
-	files = append(files, jsonFile("agent/wire/index.json", wireIndex))
+	col.add(jsonFile("agent/wire/index.json", wireIndex))
 
-	return AgentPayload{Meta: meta, Files: files}
+	// 把收集器因上限丢弃文件的情况记入截断标志。
+	meta.Truncated.Payload = col.truncated
+	meta.Truncated.DroppedFiles = col.dropped
+
+	// capture-meta.json 必须在所有文件与计数构建完成后最后序列化，
+	// 否则 ZIP 内 capture-meta.json 的 counts 会是初始零值。
+	col.add(jsonFile("agent/capture-meta.json", meta))
+
+	return AgentPayload{Meta: meta, Files: col.files}
+}
+
+// fileCollector 在构建现场文件时强制执行字节/文件数硬上限。
+type fileCollector struct {
+	files        []CaptureFile
+	total        int
+	maxFiles     int
+	maxFileBytes int
+	maxPayload   int
+	truncated    bool
+	dropped      int
+}
+
+func newFileCollector(limits Limits) *fileCollector {
+	return &fileCollector{
+		maxFiles:     limits.MaxAgentFiles,
+		maxFileBytes: limits.MaxAgentFileBytes,
+		maxPayload:   limits.MaxAgentPayloadBytes,
+	}
+}
+
+func (c *fileCollector) add(f CaptureFile) {
+	if len(f.Data) > c.maxFileBytes || len(c.files) >= c.maxFiles || c.total+len(f.Data) > c.maxPayload {
+		c.truncated = true
+		c.dropped++
+		return
+	}
+	c.files = append(c.files, f)
+	c.total += len(f.Data)
 }
 
 func jsonFile(path string, v any) CaptureFile {

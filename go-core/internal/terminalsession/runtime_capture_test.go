@@ -120,29 +120,33 @@ func TestCaptureBarrierDoesNotAdvanceRevision(t *testing.T) {
 }
 
 // 要求 5：capture barrier 不消费 projection dirty——barrier 之后正常投影仍能导出新内容。
+// barrier 用只读 ExportSnapshot 反映“当前”状态（含已写入的 BBBB 是正确行为，不再是
+// 跨 capture 复用的旧缓存）；关键不变量是它绝不消费 dirty，因此随后的正常投影仍完整。
 func TestCaptureBarrierDoesNotConsumeDirty(t *testing.T) {
 	h := newCaptureHarness(t)
 	defer h.cleanup()
 
-	h.waitFrame(t)            // attach 初始快照
+	h.waitFrame(t)             // attach 初始快照
 	h.writePTY(t, "AAAA\r\n") // 第一行内容
 	frame1 := h.waitFrame(t)
 	if !strings.Contains(frameText(frame1), "AAAA") {
 		t.Fatalf("frame1 missing AAAA:\n%s", frameText(frame1))
 	}
 
-	// 写入新内容但不等待投影刷新；此时权威缓存仍是 AAAA 帧。
+	// 写入新内容但不等待投影刷新。
 	h.writePTY(t, "BBBB\r\n")
-	// 立即执行 barrier：读取已缓存的权威帧，绝不消费 BBBB 的 dirty。
-	barrier := h.r.CaptureBarrier()
-	if strings.Contains(frameText(barrier.Canonical), "BBBB") {
-		t.Fatalf("barrier canonical unexpectedly contains BBBB (read ahead of cached state):\n%s", frameText(barrier.Canonical))
-	}
-	if !strings.Contains(frameText(barrier.Canonical), "AAAA") {
-		t.Fatalf("barrier canonical missing cached AAAA:\n%s", frameText(barrier.Canonical))
+	// 连续多次 barrier：每次都现场只读导出当前状态（ReadFullProjection 不消费 dirty）。
+	for i := 0; i < 3; i++ {
+		barrier := h.r.CaptureBarrier()
+		if !barrier.Available {
+			t.Fatal("barrier must be available")
+		}
+		if !strings.Contains(frameText(barrier.Canonical), "AAAA") {
+			t.Fatalf("barrier canonical missing AAAA:\n%s", frameText(barrier.Canonical))
+		}
 	}
 
-	// 关键断言：barrier 未消费 dirty，随后的正常投影必须包含 BBBB。
+	// 关键断言：barrier 未消费 dirty，随后的正常投影必须仍包含 BBBB。
 	frame2 := h.waitFrame(t)
 	if !strings.Contains(frameText(frame2), "BBBB") {
 		t.Fatalf("barrier consumed projection dirty: BBBB lost in next frame:\n%s", frameText(frame2))

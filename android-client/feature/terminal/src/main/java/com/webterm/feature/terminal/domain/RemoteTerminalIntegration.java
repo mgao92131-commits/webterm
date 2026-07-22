@@ -78,6 +78,9 @@ public final class RemoteTerminalIntegration {
   @NonNull
   private java.util.List<TerminalScreenBuilder.DebugMenuItem> debugMenuItems =
       java.util.Collections.emptyList();
+  // 现场捕获会话绑定令牌（stop 时用于安全解绑）。
+  @Nullable
+  private com.webterm.terminal.model.capture.CaptureBinding captureBinding;
   private final TerminalConnectionStatusView connectionStatusView = new TerminalConnectionStatusView();
 
   /** 注入“更多”菜单调试项（如现场捕获入口）。必须在 start() 之前调用。 */
@@ -205,8 +208,9 @@ public final class RemoteTerminalIntegration {
         },
         debugMenuItems
     );
-    // 现场捕获：把当前会话数据源绑定到控制器（release 为 NOOP，bindSession 为空操作）。
-    com.webterm.terminal.model.capture.TerminalCapture.controller()
+    // 现场捕获：把当前会话数据源绑定到控制器（release 为 NOOP）。保存返回的绑定令牌，
+    // stop() 时仅当令牌仍有效才解绑，防止旧页面 stop() 清空新页面的绑定。
+    captureBinding = com.webterm.terminal.model.capture.TerminalCapture.controller()
         .bindSession(new TerminalCaptureSessionSource(runtime, view));
     FrameLayout viewport = (FrameLayout) shell.terminalViewport;
     viewport.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
@@ -231,8 +235,11 @@ public final class RemoteTerminalIntegration {
   }
 
   public void stop() {
-    // 现场捕获：解绑当前会话数据源，避免控制器继续引用已销毁的 View/Runtime。
-    com.webterm.terminal.model.capture.TerminalCapture.controller().bindSession(null);
+    // 现场捕获：仅当本页面仍是当前绑定时解绑，避免旧页面 stop() 清空新页面的绑定。
+    if (captureBinding != null) {
+      com.webterm.terminal.model.capture.TerminalCapture.controller().unbindSession(captureBinding);
+      captureBinding = null;
+    }
     clearViewBindings(true);
   }
 

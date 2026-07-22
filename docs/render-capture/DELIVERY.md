@@ -46,11 +46,11 @@
 | 点 | 位置 | 记录内容 | 安全性 |
 |---|---|---|---|
 | Go-A | `handlePTYOutput`，`engine.Write` 前 | eventSeq/revBefore/offset/原始 bytes（同步有界拷贝，不校验 UTF-8） | buf 复用故必须拷贝；仅 enabled 时拷贝 |
-| Go-B | `broadcastFrame` `ExportState` 后 | 完整权威 `ScreenFrame`（Projector 字典，与 wire 可比）+ 缓存 `lastCanonicalFrame` | 持不可变引用，不额外调用 |
+| Go-B | `broadcastFrame` `ExportState` 后 | 完整权威 `ScreenFrame`（Projector 字典，与 wire 可比） | 持不可变引用，不额外调用 |
 | Go-C | `writeLatestScreenState` `FrameForState` 后 | 派生帧 + screenClientID/clientInstanceID | 不额外调用 deriver |
 | Go-D | `encodeFrame` 成功后 | kind/base/screenRevision/payload（proto.Marshal 新分配，持引用）；SHA-256 导出时算 | 不在热路径算 hash |
 | Go-E | `writeMessage` 返回后 | writeSucceeded/writtenAtNanos 或稳定枚举 failureKind | 绝不记 `err.Error()` |
-| barrier | `captureBarrierEvent`（actor 顺序） | 当前 screenRevision + `lastCanonicalFrame`（无则 `ExportSnapshot` 兜底） | 不消费 dirty/不推进 |
+| barrier | `captureBarrierEvent`（actor 顺序） | 当前 screenRevision + 只读 `ExportSnapshot` 现场生成的当前权威帧 | 不消费 dirty/不改字典/不推进 |
 | And-A | `handleScreenMessage` offer 旁 | connectionEpoch/receivedAt/kind/原始 bytes（不重复 parse） | 持引用 |
 | And-B | `mapSnapshot/mapPatch` 后 | 不可变领域对象 | 持引用 |
 | And-C | `apply*` 成功后 | 模型摘要（identity/geometry/projectionHealth） | 有界字段读 |
@@ -62,8 +62,7 @@
 
 - 所有 hook 只读取正常路径已产出的**不可变**结果（`ScreenFrame`/`RenderUpdate`/领域对象/原始 bytes），从不回写。
 - 绝不调用消费型 API：`ConsumeProjectionDirty`、额外 `ExportState`、`FrameForState`、`consumeRenderUpdate`、`ScreenMailbox.poll/reset`、`requestFullRender`、`syncHistoryWindow`。
-- barrier 用缓存的 `lastCanonicalFrame`（或只读 `ExportSnapshot`，其内部 `ReadFullProjection` 不消费 dirty），不生成业务 Patch、不推进 revision/epoch/baseline/history watermark。
-- `lastCanonicalFrame` 仅在捕获激活（`Enabled`）时保留一个已分配帧的引用，是纯诊断侧通道，不参与任何业务语义。
+- barrier 始终用只读 `ExportSnapshot`（内部 `ReadFullProjection` 不消费 dirty、构建独立字典不触碰 Projector 缓存/ChangeIndex）现场生成当前权威帧，不生成业务 Patch、不推进 revision/epoch/baseline/history watermark，且绝不复用跨 capture 生命周期的旧缓存帧。
 - capture 通道独立于 screen mailbox，不参与 baseline/revision/lease/resume/input-ack/renderer。
 
 ## 6. build type / build tag 隔离
@@ -154,3 +153,29 @@ cd tools/render-capture-inspect && go run . /path/to/webterm-render-capture-<id>
 cd go-core && go test ./... && go test -tags webterm_capture ./...
 cd android-client && ./gradlew testDebugUnitTest && ./gradlew :app:assembleRelease
 ```
+
+---
+
+## 13. 合并前审查修复（P1/P2）
+
+针对代码审查，已在合并前完成以下修复并补充测试：
+
+**P1（6 项，全部修复）**
+1. **Android 会话级隔离**：所有 `record*` 携带 `CaptureStreamIdentity`（sessionId/terminalInstanceId/clientInstanceId），控制器在复制/序列化前 `matchesActive` 校验；`bindSession` 返回 `CaptureBinding` token，`unbindSession(token)` 仅在令牌匹配时解绑，`startCapture` 快照 `activeSource`，杜绝多 Session 串包与旧页面清空新绑定。
+2. **全链路硬字节上限**：Go canonical/derived ring 增加字节预算（`estimateFrameBytes`）；服务端 `Hard*` 硬上限 + `clampLimits`（请求只能降不能升），修复 `MaxStructuredFrames*4` 溢出；Agent `BuildAgentPayload` 强制单文件/文件数/总负载上限（`fileCollector`）；Android mapped/render ring 字节预算，Agent 接收用有界队列 + 字节/文件数上限，超限返回 `payload_too_large`。
+3. **Android 校验 Agent 文件**：保存期望 length/sha256；要求所有文件 `final=true`；chunk seq 严格递增；拒绝重复/未知文件；校验长度与 SHA-256；路径白名单（仅 `agent/` 相对路径，拒绝 `../`、`\`、绝对、空、重复、`android/`）；任一失败 `agentAvailable=false`。
+4. **canonical 缓存跨 capture 复用**：barrier 始终在 actor 内用只读 `ExportSnapshot`（`ReadFullProjection`，不消费 dirty/不改字典/不推进 revision/baseline）现场生成当前状态；移除 `lastCanonicalFrame` 跨生命周期复用。
+5. **过期 capture 自动释放**：`StartCapture` 懒清理过期 active（CAS 释放），同 captureId 重复 start 幂等，避免进程被杀/断网后永久占据捕获槽。
+6. **保存当前现场含 Android 当前状态**：`CaptureSessionSource` 增加 `currentModelSnapshot()`（模型锁只读 `peekRenderSnapshot`）/`currentRenderedSnapshot()`/`lastAppliedDirty()`；`buildPackage` 无论是否记录都写入 `current-model-state.json`/`render-snapshot.json`（含完整 history 窗口）。
+
+**P2（重要项，已修复）**
+- 热路径不做 JSON：mapped/render ring 只存不可变对象引用，JSON 在导出 executor 生成。
+- 截图：主线程仅取有界 ARGB 像素（`CAPTURE_MAX_PIXELS` 下界缩放），PNG 压缩在后台；manifest 记录 original/captured 尺寸与 scaled。
+- `capture-meta.json` 最后序列化，counts 为最终值；`manifest`/`meta` 标注 `initialSyncCaptured=false`。
+- `CaptureIdentity` 经模型锁内整体发布的 `peekRenderSnapshot` 原子读取，避免组合不一致。
+- `CaptureLimits` 服务端/客户端均 clamp 到硬上限。
+- 区分 `model-state.jsonl`（记录期间摘要）与 `current-model-state.json`（当前完整状态）；render-snapshot 含 history 窗口 + `historyCapturedFromSeq/ToSeq/historyTotalSize/historyTruncated`。
+
+**新增测试**：Go（自动过期/幂等 start/limits clamp/meta counts/fileCollector 上限/barrier 当前语义）；Android（会话隔离过滤/token 解绑/ring 有界/Agent 文件 length+SHA+final+seq+路径白名单校验/宽字符序列化/ZIP 一致性）。
+
+**已知遗留**：初始同步路径（cold attach/resume/reconnect 首帧）仍未接入 wire/derived 捕获，已在 manifest/agent-meta 明确 `initialSyncCaptured=false`。
