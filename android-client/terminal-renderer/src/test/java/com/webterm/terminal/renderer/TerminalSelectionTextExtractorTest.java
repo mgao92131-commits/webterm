@@ -105,7 +105,7 @@ public class TerminalSelectionTextExtractorTest {
         screenRow(1, "    gamma       ")
     };
     TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 16)).normalized();
-    assertEquals("alpha  beta\ngamma", extract(sel, Collections.emptyList(), screen));
+    assertEquals("  alpha  beta\n    gamma", extract(sel, Collections.emptyList(), screen));
   }
 
   @Test
@@ -132,7 +132,7 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void keepsUnmarkedHardRowsSeparate() {
+  public void keepsHardRowsSeparateWithoutWidthInference() {
     TerminalLine[] screen = new TerminalLine[] {
         screenRow(0, false, "1234567890"),
         screenRow(1, false, "continued ")
@@ -142,7 +142,7 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void doesNotGuessVisualWrapWithoutKnownScreenWidth() {
+  public void keepsHistoryHardRowsSeparate() {
     List<TerminalLine> history = Arrays.asList(
         historyLine(1, false, "first"),
         historyLine(2, false, "second"));
@@ -188,44 +188,18 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   @Test
-  public void joinsListContinuationAcrossHistoryAndScreenBoundary() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, "- C1 第一项"));
+  public void cleansWrappedTextThroughExtractor() {
     TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "  续行"),
-        screenRow(1, "- C2 第二项")
+        screenRow(0, true, "first     "),
+        screenRow(1, false, "continued "),
+        screenRow(2, false, "hard line   "),
+        screenRow(3, false, ""),
+        screenRow(4, false, "    "),
+        screenRow(5, false, "\t"),
+        screenRow(6, false, "    indented   ")
     };
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(1, 30)).normalized();
-    assertEquals("- C1 第一项续行\n- C2 第二项", extract(sel, history, screen));
-  }
-
-  @Test
-  public void formatsCompleteSampleThroughExtractor() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "  各提交内容"),
-        screenRow(1, "  - C1 统一连接身份：DeviceConnectionKeys.resolve() 唯一入口 + 协调器全部终端入口贯穿 direct:{configId}。"),
-        screenRow(2, "  - C2 终端/上传/通知按 key 路由：TerminalSessionArgs"),
-        screenRow(3, "  加身份字段、工厂分流、上传复用 connectionKey（删"),
-        screenRow(4, "  UploadConnectionKeys）、通知 Resolver Direct 分支。"),
-        screenRow(5, "  - C3 编辑/删除保身份：updateDirectDevice 保"),
-        screenRow(6, "  configId、去重排除自身、Registry"),
-        screenRow(7, "  地址变化重建、删除补全本地清理。"),
-        screenRow(8, "  - C4 Agent 安全加固：allowInsecureRemote +"),
-        screenRow(9, "  默认回环地址、原子 Token 旋转、登录限流、HTTP"),
-        screenRow(10, "  超时、Android 风险提示。"),
-        screenRow(11, "  - C5 文档：agent-config.md 安全加固说明。"),
-        screenRow(12, "  关键处理")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(12, 30)).normalized();
-    assertEquals(
-        "各提交内容\n"
-            + "- C1 统一连接身份：DeviceConnectionKeys.resolve() 唯一入口 + 协调器全部终端入口贯穿 direct:{configId}。\n"
-            + "- C2 终端/上传/通知按 key 路由：TerminalSessionArgs 加身份字段、工厂分流、上传复用 connectionKey（删 UploadConnectionKeys）、通知 Resolver Direct 分支。\n"
-            + "- C3 编辑/删除保身份：updateDirectDevice 保 configId、去重排除自身、Registry 地址变化重建、删除补全本地清理。\n"
-            + "- C4 Agent 安全加固：allowInsecureRemote + 默认回环地址、原子 Token 旋转、登录限流、HTTP 超时、Android 风险提示。\n"
-            + "- C5 文档：agent-config.md 安全加固说明。\n"
-            + "关键处理",
-        extract(sel, Collections.emptyList(), screen));
+    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(6, 30)).normalized();
+    assertEquals("first continued\nhard line\n\n    indented", extract(sel, Collections.emptyList(), screen));
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {
