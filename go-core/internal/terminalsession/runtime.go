@@ -74,6 +74,7 @@ type Runtime struct {
 	onTitle        func(string)
 	onBell         func()
 	onInfo         func()
+	onResize       func(cols, rows int)
 	onEffect       func(terminalEffect)
 	onResync       func(clientID string, reason string)
 	resumeExact    atomic.Uint64
@@ -891,20 +892,32 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	}
 	// 先同步 PTY winsize（触发 SIGWINCH 让 shell/TUI 感知新尺寸），再调整无头终端几何。
 	// best-effort：PTY 调整失败不阻断引擎 resize，否则屏幕投影会与客户端请求脱节。
+	ptyResized := true
 	if r.ptyResizer != nil {
-		_ = r.ptyResizer(e.cols, e.rows)
+		ptyResized = r.ptyResizer(e.cols, e.rows) == nil
 	}
+	// layoutEpoch 由 actor 单写，但 Info() 会在其他 goroutine 持 RLock 读取，
+	// 因此自增必须持锁，与 bumpScreenRevision 对 screenRevision 的保护一致。
+	r.mu.Lock()
 	r.layoutEpoch++
+	layoutEpoch := r.layoutEpoch
+	r.mu.Unlock()
 	r.engine.Resize(e.rows, e.cols)
 	// layoutEpoch scopes the live screen geometry; it does not invalidate main
 	// scrollback. The subsequent epoch-changing frame is a full snapshot, so
 	// clients replace their cached screen/history window atomically.
-	r.scrollback.SetLayoutEpoch(r.layoutEpoch)
+	r.scrollback.SetLayoutEpoch(layoutEpoch)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	// Geometry changes replace physical rows, so do not wait for the regular
 	// output coalescing window: clients need the new authoritative snapshot now.
 	r.flushProjectionNow()
+	// 只在租约有效、PTY 与 Engine resize 均成功、epoch/revision 更新完成后，
+	// 才把新几何同步回外层会话 Info。PTY 失败时不回调，避免 Info 报告一个
+	// 真实终端并未采用的尺寸。
+	if ptyResized && r.onResize != nil {
+		r.onResize(e.cols, e.rows)
+	}
 }
 
 func (r *Runtime) handleClientAttach(c *ScreenClient) {

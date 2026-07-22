@@ -155,6 +155,132 @@ func TestScreenClientResizeUpdatesPTYWinsize(t *testing.T) {
 	}
 }
 
+// acquireScreenLayoutLease 驱动 screen 客户端完成 Hello + AcquireLayout，返回授予的租约 ID。
+func acquireScreenLayoutLease(t *testing.T, client *terminalChannelRuntime) string {
+	t.Helper()
+	helloBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{Version: 1, Cols: 20, Rows: 10}},
+	})
+	client.handleBinary(helloBytes)
+
+	acquireBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload: &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{
+			RequestId: "layout-request-1", Interactive: true,
+		}},
+	})
+	client.handleBinary(acquireBytes)
+
+	leaseID := ""
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && leaseID == "" {
+		msg := readClientBinary(t, client)
+		var env pb.ScreenEnvelope
+		if err := proto.Unmarshal(msg, &env); err != nil {
+			continue
+		}
+		if lease := env.GetLayoutLease(); lease != nil && lease.GetGranted() {
+			leaseID = lease.GetLeaseId()
+		}
+	}
+	if leaseID == "" {
+		t.Fatalf("expected granted layout lease")
+	}
+	return leaseID
+}
+
+func sendScreenResize(t *testing.T, client *terminalChannelRuntime, leaseID string, cols, rows int) {
+	t.Helper()
+	resizeBytes, _ := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 1,
+		Payload:         &pb.ScreenEnvelope_Resize{Resize: &pb.Resize{Cols: int32(cols), Rows: int32(rows), LeaseId: leaseID}},
+	})
+	client.handleBinary(resizeBytes)
+}
+
+func waitForSessionInfoSize(t *testing.T, terminal *TerminalSession, cols, rows int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		info := terminal.Info()
+		if info.Cols == cols && info.Rows == rows {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	info := terminal.Info()
+	t.Fatalf("Info size = %dx%d, want %dx%d", info.Cols, info.Rows, cols, rows)
+}
+
+// 有效 resize 成功后，TerminalSession.Info() 必须返回新尺寸（而非创建时的默认值）。
+func TestScreenClientResizeUpdatesSessionInfo(t *testing.T) {
+	terminal, _ := newScreenTestTerminalWithResizer(t, func(cols, rows int) error { return nil })
+
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	leaseID := acquireScreenLayoutLease(t, client)
+	sendScreenResize(t, client, leaseID, 132, 43)
+
+	waitForSessionInfoSize(t, terminal, 132, 43)
+}
+
+// PTY resize 失败：Info() 保持原尺寸，不报告真实终端未采用的几何。
+func TestScreenClientResizePTYFailureKeepsSessionInfo(t *testing.T) {
+	terminal, _ := newScreenTestTerminalWithResizer(t, func(cols, rows int) error {
+		return errors.New("pty resize failed")
+	})
+
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	leaseID := acquireScreenLayoutLease(t, client)
+	if info := terminal.Info(); info.Cols != 20 || info.Rows != 4 {
+		t.Fatalf("initial Info size = %dx%d, want 20x4", info.Cols, info.Rows)
+	}
+
+	sendScreenResize(t, client, leaseID, 132, 43)
+
+	// 给 actor 时间处理（失败的）resize；Info 必须保持不变。
+	time.Sleep(100 * time.Millisecond)
+	if info := terminal.Info(); info.Cols != 20 || info.Rows != 4 {
+		t.Fatalf("Info after failed resize = %dx%d, want unchanged 20x4", info.Cols, info.Rows)
+	}
+}
+
+// 重复相同尺寸：不重复广播 manager session（onInfoChanged 只触发一次）。
+func TestScreenClientResizeSameSizeDoesNotRebroadcast(t *testing.T) {
+	terminal, _ := newScreenTestTerminalWithResizer(t, func(cols, rows int) error { return nil })
+	var broadcastMu sync.Mutex
+	broadcasts := 0
+	terminal.onInfoChanged = func() {
+		broadcastMu.Lock()
+		broadcasts++
+		broadcastMu.Unlock()
+	}
+
+	socket := &testSocket{protocolName: "webterm.screen.v1"}
+	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
+	client.ready.Store(true)
+
+	leaseID := acquireScreenLayoutLease(t, client)
+	sendScreenResize(t, client, leaseID, 132, 43)
+	waitForSessionInfoSize(t, terminal, 132, 43)
+
+	// 再次发送相同尺寸：handleResize 早退，不应再次广播。
+	sendScreenResize(t, client, leaseID, 132, 43)
+	time.Sleep(100 * time.Millisecond)
+
+	broadcastMu.Lock()
+	defer broadcastMu.Unlock()
+	if broadcasts != 1 {
+		t.Fatalf("onInfoChanged broadcasts = %d, want 1 (same-size must not rebroadcast)", broadcasts)
+	}
+}
+
 // 同一 screen channel 只接受一次 Hello（计划 §3.5）：第二个 Hello 是协议
 // 错误，连接必须关闭且不得再次 SendInfo。
 func TestScreenClientRejectsDuplicateHello(t *testing.T) {
@@ -443,6 +569,22 @@ func newScreenTestTerminalWithResizer(t *testing.T, resizer func(cols, rows int)
 	if resizer != nil {
 		opts = append(opts, terminalsession.WithPTYResizer(resizer))
 	}
+	// 与 NewTerminalSession 保持一致：resize 成功后把权威几何同步回 Info()。
+	opts = append(opts, terminalsession.WithOnResize(func(cols, rows int) {
+		terminal.mu.Lock()
+		if terminal.cols == cols && terminal.rows == rows {
+			terminal.mu.Unlock()
+			return
+		}
+		terminal.cols = cols
+		terminal.rows = rows
+		terminal.touchLocked()
+		onInfoChanged := terminal.onInfoChanged
+		terminal.mu.Unlock()
+		if onInfoChanged != nil {
+			onInfoChanged()
+		}
+	}))
 	terminal.runtime = terminalsession.NewRuntime(
 		terminal.id,
 		pty,

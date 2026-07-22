@@ -144,6 +144,21 @@ func NewTerminalSession(options TerminalOptions) (*TerminalSession, error) {
 			}
 		}),
 		terminalsession.WithPTYResizer(process.Resize),
+		terminalsession.WithOnResize(func(cols, rows int) {
+			terminal.mu.Lock()
+			if terminal.cols == cols && terminal.rows == rows {
+				terminal.mu.Unlock()
+				return
+			}
+			terminal.cols = cols
+			terminal.rows = rows
+			terminal.touchLocked()
+			onInfoChanged := terminal.onInfoChanged
+			terminal.mu.Unlock()
+			if onInfoChanged != nil {
+				onInfoChanged()
+			}
+		}),
 		terminalsession.WithScrollbackLimits(options.ScrollbackMaxLines, options.ScrollbackMaxBytes),
 	)
 	go terminal.waitLoop()
