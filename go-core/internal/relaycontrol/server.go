@@ -99,15 +99,15 @@ func (server *Server) authenticateRequest(w http.ResponseWriter, r *http.Request
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, relaystore.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, relaystore.ErrUnauthorized):
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, relaystore.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, relaystore.ErrConflict):
-		writeError(w, http.StatusConflict, err.Error())
+		writeError(w, http.StatusConflict, "conflict")
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
 

@@ -302,6 +302,125 @@ func TestRelayControlVerifyEmailMapsConflictAndInternalErrors(t *testing.T) {
 	}
 }
 
+func TestRelayControlRegisterPendingPersistenceErrorIsRedacted(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	base := relaystore.NewMemoryStore()
+	store := &authHandlerStore{
+		ControlStore:     base,
+		createPendingErr: errors.New("rename /home/private/webterm/store.json.tmp /home/private/webterm/store.json: permission denied"),
+	}
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+
+	response := postJSON(t, server.Handler(), "/api/auth/register", map[string]any{
+		"email": "user@example.com", "password": "secret-password",
+	}, nil)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500", response.Code, response.Body.String())
+	}
+	assertErrorResponse(t, response, http.StatusInternalServerError, "internal server error")
+	for _, secret := range []string{"/home/private", "store.json", "permission denied", "rename"} {
+		if strings.Contains(response.Body.String(), secret) {
+			t.Fatalf("register persistence details leaked %q: %s", secret, response.Body.String())
+		}
+	}
+	if sender.count() != 0 {
+		t.Fatalf("persistence failure sent OTP: %#v", sender.sends)
+	}
+	if base.UserCount() != 0 {
+		t.Fatalf("persistence failure created formal user")
+	}
+	if _, ok := base.FindPendingRegistration("user@example.com"); ok {
+		t.Fatalf("pending registration exists after failed persistence")
+	}
+}
+
+func TestRelayControlResendPersistenceErrorIsRedactedAndKeepsOldCode(t *testing.T) {
+	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
+	base := relaystore.NewMemoryStore()
+	oldCode := "111111"
+	if err := base.CreatePendingRegistration("user@example.com", "secret-password", oldCode, 10*time.Minute); err != nil {
+		t.Fatalf("CreatePendingRegistration: %v", err)
+	}
+	store := &authHandlerStore{
+		ControlStore:     base,
+		resendPendingErr: errors.New("open C:\\Users\\private\\webterm\\relay-store.json.tmp: access denied"),
+	}
+	oldWindow := resendOTPWindow
+	resendOTPWindow = 0
+	t.Cleanup(func() { resendOTPWindow = oldWindow })
+	sender := &recordingOTPSender{}
+	server := New(store, relayrouter.NewRegistry())
+	server.otpSender = sender
+	handler := server.Handler()
+
+	response := postJSON(t, handler, "/api/auth/resend-email-verification", map[string]any{
+		"email": "user@example.com", "password": "secret-password",
+	}, nil)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500", response.Code, response.Body.String())
+	}
+	assertErrorResponse(t, response, http.StatusInternalServerError, "internal server error")
+	for _, secret := range []string{"C:\\Users", "relay-store.json", "access denied", "open"} {
+		if strings.Contains(response.Body.String(), secret) {
+			t.Fatalf("resend persistence details leaked %q: %s", secret, response.Body.String())
+		}
+	}
+	if sender.count() != 1 {
+		t.Fatalf("resend sender count=%d, want 1", sender.count())
+	}
+	newCode := sender.last().code
+	if newCode == "" || newCode == oldCode {
+		t.Fatalf("resend code=%q, want a new code", newCode)
+	}
+
+	newCodeResponse := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "user@example.com", "code": newCode,
+	}, nil)
+	if newCodeResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("new code status=%d body=%s, want 401", newCodeResponse.Code, newCodeResponse.Body.String())
+	}
+	if base.UserCount() != 0 {
+		t.Fatalf("failed resend commit created formal user")
+	}
+
+	oldCodeResponse := postJSON(t, handler, "/api/auth/verify-email", map[string]any{
+		"email": "user@example.com", "code": oldCode,
+	}, nil)
+	if oldCodeResponse.Code != http.StatusCreated {
+		t.Fatalf("old code status=%d body=%s, want 201", oldCodeResponse.Code, oldCodeResponse.Body.String())
+	}
+	if base.UserCount() != 1 {
+		t.Fatalf("old code user count=%d, want 1", base.UserCount())
+	}
+}
+
+func TestWriteStoreErrorUsesStableMessages(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		text   string
+	}{
+		{name: "invalid input", err: relaystore.ErrInvalidInput, status: http.StatusBadRequest, text: "invalid input"},
+		{name: "unauthorized", err: relaystore.ErrUnauthorized, status: http.StatusUnauthorized, text: "unauthorized"},
+		{name: "not found", err: relaystore.ErrNotFound, status: http.StatusNotFound, text: "not found"},
+		{name: "conflict", err: relaystore.ErrConflict, status: http.StatusConflict, text: "conflict"},
+		{name: "internal", err: errors.New("rename /private/secret/store.json: permission denied"), status: http.StatusInternalServerError, text: "internal server error"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			writeStoreError(response, test.err)
+			assertErrorResponse(t, response, test.status, test.text)
+			if test.name == "internal" && strings.Contains(response.Body.String(), "permission denied") {
+				t.Fatalf("raw store error leaked: %s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRelayControlRegisterDeliveryFailureCleanupErrorReturnsInternalError(t *testing.T) {
 	t.Setenv("WEBTERM_RELAY_REQUIRE_EMAIL_OTP", "1")
 	base := relaystore.NewMemoryStore()
@@ -1104,8 +1223,17 @@ type otpSend struct {
 
 type authHandlerStore struct {
 	relaystore.ControlStore
-	completeErr error
-	deleteErr   error
+	completeErr      error
+	deleteErr        error
+	createPendingErr error
+	resendPendingErr error
+}
+
+func (store *authHandlerStore) CreatePendingRegistration(email, password, code string, ttl time.Duration) error {
+	if store.createPendingErr != nil {
+		return store.createPendingErr
+	}
+	return store.ControlStore.CreatePendingRegistration(email, password, code, ttl)
 }
 
 func (store *authHandlerStore) CompletePendingRegistration(email, code string, at time.Time) (relaystore.User, error) {
@@ -1120,6 +1248,13 @@ func (store *authHandlerStore) DeletePendingRegistration(email string) error {
 		return store.deleteErr
 	}
 	return store.ControlStore.DeletePendingRegistration(email)
+}
+
+func (store *authHandlerStore) ResendPendingRegistrationCode(email, password, code string, ttl, resendWindow time.Duration) error {
+	if store.resendPendingErr != nil {
+		return store.resendPendingErr
+	}
+	return store.ControlStore.ResendPendingRegistrationCode(email, password, code, ttl, resendWindow)
 }
 
 // concurrentResendStore makes the initial pending record eligible for the test
@@ -1215,6 +1350,20 @@ func (sender *recordingOTPSender) last() otpSend {
 		return otpSend{}
 	}
 	return sender.sends[len(sender.sends)-1]
+}
+
+func assertErrorResponse(t *testing.T, response *httptest.ResponseRecorder, status int, message string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status=%d body=%s, want %d", response.Code, response.Body.String(), status)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body["error"] != message {
+		t.Fatalf("error=%#v, want %q", body["error"], message)
+	}
 }
 
 func postJSON(t *testing.T, handler http.Handler, path string, value any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
