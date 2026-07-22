@@ -12,10 +12,13 @@ import okhttp3.Response;
  * 读超时设为 0，避免大文件/慢链路被默认读超时中断（见计划 Phase 8）。 */
 public final class OkHttpFileDownloader implements FileDownloader {
 
-    /** 按 connectionKey 解析目标 baseUrl 与（relay 模式需要的）cookie。 */
+    /** 按 connectionKey 解析目标 baseUrl 与（relay 模式需要的）cookie、deviceId。 */
     public interface EndpointResolver {
         String baseUrl(String connectionKey);
         String cookie(String connectionKey);
+        /** Relay 目标设备 ID。Relay 网关据此把下载请求路由到持有文件的 Agent
+         * （http_gateway.go 读取 x-device-id）。直连模式返回 null/空即可。 */
+        String deviceId(String connectionKey);
     }
 
     private final OkHttpClient http;
@@ -41,6 +44,12 @@ public final class OkHttpFileDownloader implements FileDownloader {
         String cookie = resolver.cookie(connectionKey);
         if (cookie != null && !cookie.isEmpty()) {
             builder.header("Cookie", cookie);
+        }
+        // Relay 模式必须携带目标设备 ID，否则网关在该账号在线 Agent 数 ≠ 1 时
+        // 无法定位目标 Agent，直接回 503（被 FileReceiveController 归一为 io_error）。
+        String deviceId = resolver.deviceId(connectionKey);
+        if (deviceId != null && !deviceId.isEmpty()) {
+            builder.header("X-Device-Id", deviceId);
         }
         Response response = http.newCall(builder.build()).execute();
         if (!response.isSuccessful() || response.body() == null) {

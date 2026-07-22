@@ -169,6 +169,11 @@ public final class WebTermDeviceService extends Service {
                 ServerConfig c = configs.get(connectionKey);
                 return c == null ? null : c.getCookie();
             }
+            @Override public String deviceId(String connectionKey) {
+                ServerConfig c = configs.get(connectionKey);
+                if (c == null || !c.isRelayDevice()) return null;
+                return c.getDeviceId();
+            }
         };
         FileDownloader downloader = new OkHttpFileDownloader(http, resolver);
         controller = new FileReceiveController(receiveDir, lookup, downloader, ioExecutor);
