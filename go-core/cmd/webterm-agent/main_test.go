@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // root 与 run 子命令共用同一套参数，四种调用形式应解析到相同的变量。
 func TestRootAndRunShareFlags(t *testing.T) {
@@ -50,5 +55,33 @@ func TestSocketFlagHiddenCompat(t *testing.T) {
 	}
 	if root.PersistentFlags().Lookup("ipc-endpoint") == nil {
 		t.Fatal("缺少 --ipc-endpoint 参数")
+	}
+}
+
+func TestConfigInitDirectWritesModeSpecificTemplate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "direct.json")
+	root := newRootCommand(func(string, string, string) error { return nil })
+	root.SetArgs([]string{"config", "init", "--mode", "direct", "--path", path})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config init: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{`"mode": "direct"`, `"password": ""`, `"allowInsecureRemote": false`, `"scrollback"`, `"upload"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("template missing %s: %s", want, text)
+		}
+	}
+	if strings.Contains(text, `"relay"`) {
+		t.Fatalf("direct template contains relay: %s", text)
+	}
+
+	root = newRootCommand(func(string, string, string) error { return nil })
+	root.SetArgs([]string{"config", "init", "--mode", "direct", "--path", path})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "已存在") {
+		t.Fatalf("second init error = %v", err)
 	}
 }

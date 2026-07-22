@@ -51,7 +51,7 @@ func NewWithFactory(application *app.App, factory Factory) *Supervisor {
 //
 // 两种模式互斥，绝不存在同时启动 Direct 与 Relay 的路径；未知模式返回错误。
 func DefaultFactory(cfg config.Config, app *app.App) (Runner, error) {
-	switch cfg.Mode.Normalize() {
+	switch cfg.Mode {
 	case config.ModeDirect:
 		return direct.New(cfg.Direct, app), nil
 	case config.ModeRelay:
@@ -66,7 +66,7 @@ func DefaultFactory(cfg config.Config, app *app.App) (Runner, error) {
 
 // modeLabel 返回当前接入模式（"direct" 或 "relay"），用于日志区分两种 Runtime。
 func (supervisor *Supervisor) modeLabel() string {
-	return string(supervisor.app.Config().Mode.Normalize())
+	return string(supervisor.app.Config().Mode)
 }
 
 func (supervisor *Supervisor) Start(ctx context.Context) error {
