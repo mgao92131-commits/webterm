@@ -19,6 +19,9 @@ public final class CapturedViewState {
     public final float baseline;
     public final int scrollOffsetPixels;
     public final boolean followTail;
+    public final String contentStreamIntent;
+    public final int liveScreenExitOffsetPixels;
+    public final boolean pureHistory;
     public final boolean keyboardVisible;
     public final long renderedScreenRevision;
     public final long renderedLayoutEpoch;
@@ -30,7 +33,9 @@ public final class CapturedViewState {
                              int paddingLeft, int paddingTop, int paddingRight, int paddingBottom,
                              float fontSizeSp, String typefaceDescription, float cellWidth,
                              float lineHeight, float baseline, int scrollOffsetPixels,
-                             boolean followTail, boolean keyboardVisible,
+                             boolean followTail, String contentStreamIntent,
+                             int liveScreenExitOffsetPixels, boolean pureHistory,
+                             boolean keyboardVisible,
                              long renderedScreenRevision, long renderedLayoutEpoch,
                              String renderedInstanceId, boolean cursorBlinkOn, boolean hasSelection) {
         this.capturedAtMillis = capturedAtMillis;
@@ -47,6 +52,9 @@ public final class CapturedViewState {
         this.baseline = baseline;
         this.scrollOffsetPixels = scrollOffsetPixels;
         this.followTail = followTail;
+        this.contentStreamIntent = contentStreamIntent == null ? "" : contentStreamIntent;
+        this.liveScreenExitOffsetPixels = liveScreenExitOffsetPixels;
+        this.pureHistory = pureHistory;
         this.keyboardVisible = keyboardVisible;
         this.renderedScreenRevision = renderedScreenRevision;
         this.renderedLayoutEpoch = renderedLayoutEpoch;

@@ -231,7 +231,8 @@ public final class RemoteTerminalSelectionInteractionTest {
     @Override public void onKeyEvent(KeyEvent event) {}
     @Override public void onRequestResize(int cols, int rows) {}
     @Override public void onRequestShowKeyboard() {}
-    @Override public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
+    @Override public void onScrollPixels(
+        int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels) {
       viewportScrollCalls++;
       viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
     }

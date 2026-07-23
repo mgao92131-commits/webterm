@@ -87,7 +87,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
     Canvas canvas = new Canvas(Bitmap.createBitmap(cols,
         (int) (rows * LINE_HEIGHT + renderer.getTopInset()), Bitmap.Config.ARGB_8888));
 
-    renderer.render(canvas, model.renderSnapshot(), new TerminalViewportState());
+    renderer.render(canvas, model.renderSnapshot(), new TerminalViewportState(), true);
 
     ShadowCanvas shadow = Shadow.extract(canvas);
     assertTrue("styled ASCII should not draw one text event per cell",
@@ -140,14 +140,14 @@ public final class RemoteTerminalRendererRenderBaselineTest {
           Canvas warmupCanvas = new Canvas(
               Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888));
           for (int i = 0; i < WARMUP; i++) {
-            renderer.render(warmupCanvas, snapshot, viewport);
+            renderer.render(warmupCanvas, snapshot, viewport, true);
           }
           long allocBefore = allocatedBytes();
           long[] times = new long[ITERATIONS];
           for (int i = 0; i < ITERATIONS; i++) {
             Canvas canvas = canvases[i / FRAMES_PER_BITMAP];
             long t0 = System.nanoTime();
-            renderer.render(canvas, snapshot, viewport);
+            renderer.render(canvas, snapshot, viewport, true);
             times[i] = System.nanoTime() - t0;
           }
           long allocPerOp = perOp(allocatedBytes() - allocBefore, ITERATIONS);

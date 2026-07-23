@@ -10,6 +10,45 @@ import org.junit.Test;
 public final class TerminalViewportStateTest {
 
   @Test
+  public void followTailOnlyMeansViewportIsAtBottom() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    assertTrue(viewport.followTail);
+    assertEquals(TerminalViewportState.ContentStreamIntent.LIVE,
+        viewport.contentStreamIntent);
+
+    viewport.scrollBy(1, 1_000);
+
+    assertFalse(viewport.followTail);
+    assertEquals(TerminalViewportState.ContentStreamIntent.LIVE,
+        viewport.contentStreamIntent);
+  }
+
+  @Test
+  public void pureHistoryStartsAtExactLiveScreenExitBoundary() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(719, 1_000);
+    assertFalse(viewport.isPureHistory(720));
+
+    viewport.scrollBy(1, 1_000);
+    assertTrue(viewport.isPureHistory(720));
+    assertFalse(viewport.isPureHistory(0));
+  }
+
+  @Test
+  public void returnToBottomRestoresLiveIntent() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(800, 1_000);
+    viewport.markFrozenHistory();
+
+    viewport.returnToBottom();
+
+    assertTrue(viewport.followTail);
+    assertEquals(0, viewport.scrollOffsetPixels);
+    assertEquals(TerminalViewportState.ContentStreamIntent.LIVE,
+        viewport.contentStreamIntent);
+  }
+
+  @Test
   public void resetForSnapshot_returnsViewportToAuthoritativeTail() {
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.followTail = false;
@@ -20,6 +59,7 @@ public final class TerminalViewportStateTest {
         new TerminalSelection.Anchor(42L, -1, 0),
         new TerminalSelection.Anchor(42L, -1, 3));
     viewport.loadingOlderHistory = true;
+    viewport.markFrozenHistory();
 
     viewport.resetForSnapshot();
 
@@ -29,6 +69,8 @@ public final class TerminalViewportStateTest {
     assertEquals(0, viewport.anchorPixelOffset);
     assertNull(viewport.selection);
     assertFalse(viewport.loadingOlderHistory);
+    assertEquals(TerminalViewportState.ContentStreamIntent.LIVE,
+        viewport.contentStreamIntent);
   }
 
   @Test

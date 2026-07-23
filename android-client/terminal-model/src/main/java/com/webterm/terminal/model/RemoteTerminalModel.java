@@ -30,6 +30,7 @@ public final class RemoteTerminalModel {
   private final PagedTerminalHistory pagedHistory;
   private boolean v2Projection;
   private long streamGeneration;
+  private long remoteScreenRevision;
   private HistoryExtent displayExtent = HistoryExtent.INITIAL_EMPTY;
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private boolean staleProjection;
@@ -128,6 +129,7 @@ public final class RemoteTerminalModel {
     this.instanceId = baseline.instanceId;
     this.layoutEpoch = baseline.layoutEpoch;
     this.screenRevision = baseline.screenRevision;
+    this.remoteScreenRevision = baseline.screenRevision;
     this.rows = baseline.rows;
     this.columns = baseline.cols;
     this.activeBuffer = baseline.activeBuffer;
@@ -222,6 +224,7 @@ public final class RemoteTerminalModel {
     if (patch.title != null) title = patch.title;
     if (patch.workingDirectory != null) workingDirectory = patch.workingDirectory;
     screenRevision = patch.screenRevision;
+    remoteScreenRevision = patch.screenRevision;
     pruneLineStore();
     markRenderDirty(false, changedRows, false, false,
         !Objects.equals(previousCursor, cursor),
@@ -339,13 +342,26 @@ public final class RemoteTerminalModel {
 
   /** FROZEN 模式只更新远端水位，不改变当前显示 extent 或 screen revision。 */
   public synchronized boolean observeTailStatus(String instanceId, long layoutEpoch,
+                                                long latestScreenRevision,
                                                 HistoryExtent latestExtent) {
     if (!v2Projection || latestExtent == null || this.instanceId == null
-        || !this.instanceId.equals(instanceId) || this.layoutEpoch != layoutEpoch) {
+        || !this.instanceId.equals(instanceId) || this.layoutEpoch != layoutEpoch
+        || latestScreenRevision < screenRevision
+        || latestScreenRevision < remoteScreenRevision) {
       return false;
     }
+    remoteScreenRevision = latestScreenRevision;
     remoteAvailableExtent = latestExtent;
     return true;
+  }
+
+  public synchronized long remoteScreenRevision() {
+    return remoteScreenRevision;
+  }
+
+  public synchronized boolean hasRemoteTailChanges() {
+    return remoteScreenRevision > screenRevision
+        || !remoteAvailableExtent.equals(displayExtent);
   }
 
   /** 只能在 model executor 的完整事务边界读取，返回不可变快照。 */

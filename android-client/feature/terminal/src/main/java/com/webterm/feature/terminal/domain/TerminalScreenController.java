@@ -12,6 +12,7 @@ import androidx.lifecycle.LifecycleOwner;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.TerminalViewportState;
+import com.webterm.terminal.model.TerminalViewportState.ContentStreamIntent;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 
 import java.util.Map;
@@ -33,6 +34,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     default void onHistoryAppended(int lineCount) {}
     /** 在新投影几何中恢复同一 HistorySeq 的像素位置。 */
     default void restoreHistoryAnchor(long historySeq, int pixelOffset) {}
+    default int liveScreenExitOffsetPixels() { return Integer.MAX_VALUE; }
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
     default void onLayoutLeaseStateChanged(boolean ready) {}
     default void onInputDeliveryUncertain(@NonNull String message) {}
@@ -112,25 +114,25 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   public void sendText(@NonNull String text) {
-    runtime.resumeLiveStream();
+    prepareLiveInput();
     runtime.sendTextInput(text);
   }
 
   public void sendPaste(@NonNull String text) {
-    runtime.resumeLiveStream();
+    prepareLiveInput();
     runtime.sendPasteInput(text);
   }
 
   public void sendKey(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                       boolean meta, boolean pressed) {
-    runtime.resumeLiveStream();
+    prepareLiveInput();
     runtime.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
   }
 
   public void sendMouse(int row, int col, @NonNull String button, int wheelDelta,
                         boolean shift, boolean alt, boolean ctrl, boolean meta,
                         boolean pressed) {
-    runtime.resumeLiveStream();
+    prepareLiveInput();
     runtime.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
   }
 
@@ -175,14 +177,29 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     return lifecycleObserver;
   }
 
-  public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
+  public void onScrollPixels(
+      int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels) {
     if (deltaPixels == 0) return;
-    boolean wasFollowingTail = viewport.followTail;
+    boolean wasPureHistory = viewport.isPureHistory(liveScreenExitOffsetPixels);
     viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
-    if (wasFollowingTail && !viewport.followTail) {
-      runtime.freezeStream();
-    } else if (!wasFollowingTail && viewport.followTail) {
+    boolean isPureHistory = viewport.isPureHistory(liveScreenExitOffsetPixels);
+
+    if (viewport.followTail) {
+      viewport.markLive();
       runtime.resumeLiveStream();
+    } else if (deltaPixels > 0) {
+      if (isPureHistory
+          && viewport.contentStreamIntent != ContentStreamIntent.FROZEN_HISTORY) {
+        viewport.markFrozenHistory();
+        runtime.freezeStream();
+      }
+    } else if (wasPureHistory
+        && viewport.contentStreamIntent == ContentStreamIntent.FROZEN_HISTORY) {
+      viewport.markReturningLive();
+      runtime.resumeLiveStream();
+    } else if (!isPureHistory
+        && viewport.contentStreamIntent == ContentStreamIntent.RETURNING_LIVE) {
+      viewport.markLive();
     }
     runtime.requestRender();
   }
@@ -190,6 +207,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   /** 显式回到底部；这是 FROZEN -> LIVE 的唯一滚动入口。 */
   public void returnToBottom() {
     viewport.returnToBottom();
+    viewport.markLive();
     runtime.resumeLiveStream();
     runtime.requestRender();
   }
@@ -229,6 +247,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     } else if (!viewport.followTail && viewport.anchorHistorySeq != null
         && update.state.historyChanged && view != null) {
       view.restoreHistoryAnchor(viewport.anchorHistorySeq, viewport.anchorPixelOffset);
+      freezeIfViewportBecamePureHistory();
     }
     // Only tail appends (live output scrolling into history below the visible
     // window) compensate the offset to pin the current content. A prepended
@@ -249,6 +268,24 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     if (update.state.workingDirectoryChanged) {
       dispatchEffect(TerminalScreenEffect.workingDirectory(update.snapshot.workingDirectory));
     }
+  }
+
+  private void freezeIfViewportBecamePureHistory() {
+    View currentView = view;
+    if (currentView == null) return;
+    int threshold = currentView.liveScreenExitOffsetPixels();
+    if (viewport.contentStreamIntent == ContentStreamIntent.LIVE
+        && viewport.isPureHistory(threshold)) {
+      viewport.markFrozenHistory();
+      runtime.freezeStream();
+    }
+  }
+
+  private void prepareLiveInput() {
+    if (viewport.contentStreamIntent == ContentStreamIntent.FROZEN_HISTORY) {
+      viewport.markReturningLive();
+    }
+    runtime.resumeLiveStream();
   }
 
   @Override

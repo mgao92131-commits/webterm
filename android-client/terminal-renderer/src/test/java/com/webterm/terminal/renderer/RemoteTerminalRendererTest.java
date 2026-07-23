@@ -70,6 +70,17 @@ public final class RemoteTerminalRendererTest {
     assertEquals(4f, RemoteTerminalRenderer.contentTopY(600, 0, 35, 17f, 4f, 0f), 0.001f);
   }
 
+  @Test public void liveScreenExitBoundaryUsesExactUsableViewportPixels() {
+    int threshold = RemoteTerminalRenderer.liveScreenExitOffsetPixels(721, 1.25f);
+    assertEquals(720, threshold);
+
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(threshold - 1, 2_000);
+    assertFalse(viewport.isPureHistory(threshold));
+    viewport.scrollBy(1, 2_000);
+    assertTrue(viewport.isPureHistory(threshold));
+  }
+
   @Test public void hardTopAnchorsFirstHistoryRowInsideViewport() {
     // A 680px viewport with 20px cells and a 4px inset leaves a 16px remainder
     // (676 usable = 33 rows + 16). The old bottom-anchored bound stopped the
@@ -134,7 +145,19 @@ public final class RemoteTerminalRendererTest {
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.scrollBy(6_000, 6_000); // 视口位于全是 UNLOADED 占位的历史头部。
     Canvas canvas = new Canvas(Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
-    renderer.render(canvas, model.renderSnapshot(), viewport);
+    renderer.render(canvas, model.renderSnapshot(), viewport, true);
+  }
+
+  @Test public void blinkingCursorVisibilityComesFromViewRenderState() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    TerminalCursor blinking =
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, true);
+    assertTrue(RemoteTerminalRenderer.shouldDrawCursor(viewport, blinking, true));
+    assertFalse(RemoteTerminalRenderer.shouldDrawCursor(viewport, blinking, false));
+
+    TerminalCursor steady =
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false);
+    assertTrue(RemoteTerminalRenderer.shouldDrawCursor(viewport, steady, false));
   }
 
 

@@ -2,6 +2,7 @@ package com.webterm.mobile.diagnostics;
 
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.ScreenPatchV2;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCell;
@@ -206,11 +207,23 @@ final class CaptureSerializer {
         o.put("instanceId", m.instanceId);
         o.put("layoutEpoch", m.layoutEpoch);
         o.put("screenRevision", m.screenRevision);
+        o.put("remoteScreenRevision", m.remoteScreenRevision);
+        o.put("displayHistoryExtent", historyExtent(m.displayHistoryExtent));
+        o.put("remoteHistoryExtent", historyExtent(m.remoteHistoryExtent));
         o.put("rows", m.rows);
         o.put("columns", m.columns);
         o.put("activeBuffer", m.activeBuffer);
         o.put("projectionComplete", m.projectionComplete);
-        o.put("afterSnapshot", m.afterSnapshot);
+        o.put("afterBaseline", m.afterBaseline);
+        return o;
+    }
+
+    private static JSONObject historyExtent(HistoryExtent extent) throws JSONException {
+        JSONObject o = new JSONObject();
+        HistoryExtent value = extent == null ? HistoryExtent.INITIAL_EMPTY : extent;
+        o.put("firstSeq", value.firstSeq);
+        o.put("lastSeq", value.lastSeq);
+        o.put("empty", value.isEmpty());
         return o;
     }
 
@@ -235,6 +248,9 @@ final class CaptureSerializer {
         o.put("baseline", v.baseline);
         o.put("scrollOffsetPixels", v.scrollOffsetPixels);
         o.put("followTail", v.followTail);
+        o.put("contentStreamIntent", v.contentStreamIntent);
+        o.put("liveScreenExitOffsetPixels", v.liveScreenExitOffsetPixels);
+        o.put("pureHistory", v.pureHistory);
         o.put("keyboardVisible", v.keyboardVisible);
         o.put("renderedScreenRevision", v.renderedScreenRevision);
         o.put("renderedLayoutEpoch", v.renderedLayoutEpoch);

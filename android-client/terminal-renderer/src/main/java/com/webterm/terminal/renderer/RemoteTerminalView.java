@@ -81,7 +81,8 @@ public final class RemoteTerminalView extends View {
     }
     void onRequestShowKeyboard();
     /** @param maxScrollOffsetPixels inclusive top bound for this rendered content. */
-    void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels);
+    void onScrollPixels(
+        int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels);
     /** v2 稀疏历史按当前可见 HistorySeq 页拉取；区间为闭区间。 */
     default void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {}
     void onFocusChanged(boolean focused);
@@ -130,14 +131,19 @@ public final class RemoteTerminalView extends View {
   private long autoScrollLastFrameNanos;
   private boolean autoScrollScheduled;
   private final Runnable selectionAutoScrollRunnable = this::runSelectionAutoScrollFrame;
+  private boolean cursorBlinkOn = true;
+  private int previousCursorRow = -1;
+  private int currentCursorRow = -1;
   private boolean cursorBlinkScheduled;
   private final Runnable cursorBlinkRunnable = new Runnable() {
     @Override public void run() {
       if (!shouldBlinkCursor()) {
-        cursorBlinkScheduled = false;
+        stopCursorBlinking();
         return;
       }
-      postInvalidateOnAnimation();
+      cursorBlinkOn = !cursorBlinkOn;
+      invalidateCursorRows(previousCursorRow, currentCursorRow);
+      previousCursorRow = currentCursorRow;
       postOnAnimationDelayed(this, 500L);
     }
   };
@@ -182,7 +188,7 @@ public final class RemoteTerminalView extends View {
     if (viewport != null) {
       this.viewport = viewport;
     }
-    renderedSnapshot = model != null ? model.renderSnapshot() : null;
+    updateRenderedSnapshot(model != null ? model.renderSnapshot() : null);
     requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
     // 旧测试/嵌入调用的兼容入口不再参与正式脏区链路，保守全量重画。
@@ -201,7 +207,7 @@ public final class RemoteTerminalView extends View {
   public void applyRenderUpdate(@NonNull RenderUpdate update,
                                 @NonNull TerminalViewportState viewport) {
     this.viewport = viewport;
-    this.renderedSnapshot = update.snapshot;
+    updateRenderedSnapshot(update.snapshot);
     this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
     boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
@@ -254,8 +260,7 @@ public final class RemoteTerminalView extends View {
   @Override
   protected void onDetachedFromWindow() {
     clearPendingMouseMove();
-    removeCallbacks(cursorBlinkRunnable);
-    cursorBlinkScheduled = false;
+    stopCursorBlinking();
     stopSelectionAutoScroll();
     stopSelection();
     super.onDetachedFromWindow();
@@ -266,7 +271,7 @@ public final class RemoteTerminalView extends View {
     super.onDraw(canvas);
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (snapshot == null) return;
-    renderer.render(canvas, snapshot, viewport);
+    renderer.render(canvas, snapshot, viewport, cursorBlinkOn);
     drawSelectionHandles(canvas, snapshot);
   }
 
@@ -342,7 +347,7 @@ public final class RemoteTerminalView extends View {
       int delta = (int) (scroller.getCurrY() - lastFlingY);
       lastFlingY = scroller.getCurrY();
       applyScrollDelta(delta);
-      postInvalidateOnAnimation();
+      postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
     }
   }
 
@@ -360,7 +365,8 @@ public final class RemoteTerminalView extends View {
       // rowsDown 为正发送 ArrowDown（向最新输出），与「正值向历史」相反，取负。
       host.onAlternateScreenScroll(-Math.round(deltaPixels / lineHeight()));
     } else {
-      host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
+      host.onScrollPixels(
+          deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
       updateViewportHistoryAnchor();
       requestVisibleHistoryPage();
     }
@@ -374,7 +380,8 @@ public final class RemoteTerminalView extends View {
    */
   private void scrollSelectionViewport(int deltaPixels) {
     if (host == null || deltaPixels == 0 || isAlternateBuffer()) return;
-    host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
+    host.onScrollPixels(
+        deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
     updateViewportHistoryAnchor();
     requestVisibleHistoryPage();
   }
@@ -667,6 +674,11 @@ public final class RemoteTerminalView extends View {
     return h > 0 ? h : 1;
   }
 
+  public int liveScreenExitOffsetPixels() {
+    return RemoteTerminalRenderer.liveScreenExitOffsetPixels(
+        getHeight(), renderer.getTopInset());
+  }
+
   private float cellWidth() {
     float w = renderer.getCellWidth();
     return w > 0 ? w : 1;
@@ -684,6 +696,7 @@ public final class RemoteTerminalView extends View {
     String renderedInstance = snapshot != null ? snapshot.instanceId : "";
     boolean hasSelection = selecting || selectionStart != null || selectionEnd != null;
     String typefaceDescription = userTypeface != null ? String.valueOf(userTypeface) : "monospace";
+    int liveScreenExitOffsetPixels = liveScreenExitOffsetPixels();
     return new CapturedViewState(
         System.currentTimeMillis(),
         getWidth(), getHeight(),
@@ -691,9 +704,13 @@ public final class RemoteTerminalView extends View {
         userTextSizeSp > 0 ? userTextSizeSp : 14f,
         typefaceDescription,
         cellWidth(), lineHeight(), renderer.getBaselineOffset(),
-        viewport.scrollOffsetPixels, viewport.followTail, isKeyboardVisible(),
+        viewport.scrollOffsetPixels, viewport.followTail,
+        viewport.contentStreamIntent.name(),
+        liveScreenExitOffsetPixels,
+        viewport.isPureHistory(liveScreenExitOffsetPixels),
+        isKeyboardVisible(),
         renderedRevision, renderedEpoch, renderedInstance,
-        cursorBlinkScheduled, hasSelection);
+        cursorBlinkOn, hasSelection);
   }
 
   /** 截图像素硬上限（约 1.5MP），主线程按此下界缩放，避免整屏 bitmap OOM。 */
@@ -1247,19 +1264,85 @@ public final class RemoteTerminalView extends View {
   }
 
   private boolean shouldBlinkCursor() {
-    if (model == null || !isAttachedToWindow() || !viewport.followTail) return false;
-    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    if (!isAttachedToWindow() || !viewport.followTail) return false;
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null) return false;
     return snapshot.cursor.visible && snapshot.cursor.blink;
+  }
+
+  private void updateRenderedSnapshot(
+      @Nullable RemoteTerminalModel.RenderSnapshot nextSnapshot) {
+    RemoteTerminalModel.RenderSnapshot previousSnapshot = renderedSnapshot;
+    previousCursorRow = cursorRow(previousSnapshot);
+    currentCursorRow = cursorRow(nextSnapshot);
+    renderedSnapshot = nextSnapshot;
+    TerminalCursor previousCursor =
+        previousSnapshot != null ? previousSnapshot.cursor : null;
+    TerminalCursor currentCursor =
+        nextSnapshot != null ? nextSnapshot.cursor : null;
+    if (!java.util.Objects.equals(previousCursor, currentCursor)) {
+      removeCallbacks(cursorBlinkRunnable);
+      cursorBlinkScheduled = false;
+      cursorBlinkOn = true;
+    }
+  }
+
+  private static int cursorRow(
+      @Nullable RemoteTerminalModel.RenderSnapshot snapshot) {
+    if (snapshot == null || snapshot.cursor == null || !snapshot.cursor.visible
+        || snapshot.screen == null || snapshot.cursor.row < 0
+        || snapshot.cursor.row >= snapshot.screen.length) {
+      return -1;
+    }
+    return snapshot.cursor.row;
   }
 
   private void updateCursorBlinkSchedule() {
     boolean shouldBlink = shouldBlinkCursor();
     if (!shouldBlink) {
-      removeCallbacks(cursorBlinkRunnable);
-      cursorBlinkScheduled = false;
+      stopCursorBlinking();
     } else if (!cursorBlinkScheduled) {
+      cursorBlinkOn = true;
       cursorBlinkScheduled = true;
       postOnAnimationDelayed(cursorBlinkRunnable, 500L);
+    }
+  }
+
+  private void stopCursorBlinking() {
+    removeCallbacks(cursorBlinkRunnable);
+    cursorBlinkScheduled = false;
+    cursorBlinkOn = true;
+  }
+
+  private void invalidateCursorRows(int previousRow, int currentRow) {
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null || snapshot.screen == null
+        || getWidth() <= 0 || getHeight() <= 0) {
+      return;
+    }
+    List<Integer> rows = new ArrayList<>(2);
+    if (previousRow >= 0 && previousRow < snapshot.screen.length) rows.add(previousRow);
+    if (currentRow >= 0 && currentRow < snapshot.screen.length
+        && currentRow != previousRow) {
+      rows.add(currentRow);
+    }
+    if (rows.isEmpty()) return;
+    Collections.sort(rows);
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    float rowHeight = renderer.getLineHeight();
+    if (rowHeight <= 0f) return;
+    float screenTop = RemoteTerminalRenderer.screenTopY(
+        getHeight(), history.size(), snapshot.screen.length, rowHeight,
+        renderer.getTopInset(),
+        viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+    List<Rect> dirtyRects = dirtyScreenRowRects(
+        rows, screenTop, rowHeight, getWidth(), getHeight());
+    for (Rect rect : dirtyRects) {
+      postInvalidateOnAnimation(rect.left, rect.top, rect.right, rect.bottom);
+    }
+    if (!dirtyRects.isEmpty()) {
+      TerminalRenderMetrics.partialInvalidate(dirtyRects.size());
     }
   }
 

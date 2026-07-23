@@ -148,8 +148,15 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
-    controller.onScrollPixels(deltaPixels, maxScrollOffsetPixels);
+  public void onScrollPixels(
+      int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels) {
+    controller.onScrollPixels(
+        deltaPixels, maxScrollOffsetPixels, liveScreenExitOffsetPixels);
+  }
+
+  @Override
+  public int liveScreenExitOffsetPixels() {
+    return view.liveScreenExitOffsetPixels();
   }
 
   @Override

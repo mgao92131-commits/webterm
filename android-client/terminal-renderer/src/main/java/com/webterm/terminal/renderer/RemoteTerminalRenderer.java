@@ -4,7 +4,6 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
-import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -84,6 +83,11 @@ public final class RemoteTerminalRenderer {
   /** 基线相对行顶的偏移（仅供诊断只读快照使用）。 */
   public float getBaselineOffset() { return baselineOffset; }
 
+  static int liveScreenExitOffsetPixels(int viewportHeight, float topInset) {
+    return Math.max(
+        0, (int) Math.ceil(Math.max(0f, viewportHeight - topInset)));
+  }
+
   public void setTextSize(int textSizeSp) {
     this.textSizeSp = textSizeSp;
     applyFont();
@@ -100,7 +104,7 @@ public final class RemoteTerminalRenderer {
   }
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
-                     @NonNull TerminalViewportState viewport) {
+                     @NonNull TerminalViewportState viewport, boolean cursorBlinkOn) {
     long renderStartedNanos = System.nanoTime();
     try {
     TerminalLine[] screen = model.screen;
@@ -124,8 +128,7 @@ public final class RemoteTerminalRenderer {
     TerminalSelection selection = viewport.selection;
     TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
     TerminalCursor cursor = model.cursor;
-    boolean cursorVisible = viewport.followTail && cursor.visible
-        && (!cursor.blink || ((SystemClock.uptimeMillis() / 500L) & 1L) == 0L);
+    boolean cursorVisible = shouldDrawCursor(viewport, cursor, cursorBlinkOn);
 
     Rect clip = new Rect();
     if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
@@ -153,6 +156,14 @@ public final class RemoteTerminalRenderer {
     } finally {
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
     }
+  }
+
+  static boolean shouldDrawCursor(
+      @NonNull TerminalViewportState viewport,
+      @NonNull TerminalCursor cursor,
+      boolean cursorBlinkOn) {
+    return viewport.followTail && cursor.visible
+        && (!cursor.blink || cursorBlinkOn);
   }
 
   private void drawHistoryPlaceholder(Canvas canvas, int columns, TerminalHistoryView history,

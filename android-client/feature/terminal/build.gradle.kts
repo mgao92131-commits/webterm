@@ -42,6 +42,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
     testImplementation("org.mockito:mockito-core:5.12.0")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
 
 // 性能基线测试（TerminalSessionRuntimeMailboxBaselineTest）通过 stdout 打印结构化报告。

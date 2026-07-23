@@ -163,6 +163,50 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertEquals(50, history.lineBySeq(50).historySeq);
   }
 
+  @Test
+  public void tailStatusAdvancesRemoteRevisionWithoutChangingDisplayedProjection() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    runtime.freezeStream();
+
+    connection.listener.onScreenMessage(tailStatus(2, 5, 1, 340).toByteArray());
+
+    assertEquals(1, runtime.model().screenRevision);
+    assertEquals(5, runtime.model().remoteScreenRevision());
+    assertEquals(300, runtime.model().displayExtent().lastSeq);
+    assertEquals(340, runtime.model().remoteAvailableExtent().lastSeq);
+    assertTrue(runtime.model().hasRemoteTailChanges());
+
+    connection.listener.onScreenMessage(tailStatus(2, 4, 1, 400).toByteArray());
+    assertEquals(5, runtime.model().remoteScreenRevision());
+    assertEquals(340, runtime.model().remoteAvailableExtent().lastSeq);
+  }
+
+  @Test
+  public void reconnectHelloPreservesFreezeRequestedBeforeModeSwitchCompletes() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    connection.modeSwitchSucceeds = false;
+
+    runtime.freezeStream();
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+
+    connection.listener.onDisconnected("network");
+    connection.listener.onConnected();
+
+    assertEquals(TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN,
+        connection.lastBeginSyncMode);
+    assertTrue(connection.lastBeginSyncHasFrozenProjection);
+  }
+
   private static TerminalScreenV2Proto.ScreenEnvelope baseline(long generation) {
     TerminalScreenV2Proto.Baseline.Builder baseline =
         TerminalScreenV2Proto.Baseline.newBuilder()
@@ -193,6 +237,19 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         requestId, fromSeq, toSeq,
         TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
         1, 300, 0, true);
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope tailStatus(
+      long generation, long latestScreenRevision, long extentFirst, long extentLast) {
+    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setTailStatus(TerminalScreenV2Proto.TailStatus.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStreamGeneration(generation)
+            .setLatestScreenRevision(latestScreenRevision)
+            .setLatestHistoryExtent(extent(extentFirst, extentLast)))
+        .build();
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope historyRange(
@@ -245,18 +302,25 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     int resizeRows;
     String acquireRequestId = "";
     int rangeRequests;
+    boolean modeSwitchSucceeds = true;
+    TerminalScreenV2Proto.ScreenStreamMode lastBeginSyncMode;
+    boolean lastBeginSyncHasFrozenProjection;
     final List<String> textInputs = new ArrayList<>();
     TerminalScreenV2Proto.ScreenStreamMode lastMode;
 
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
     @Override public boolean beginSync(long generation,
         @NonNull TerminalScreenV2Proto.ScreenStreamMode mode, @Nullable String instanceId,
-        long layoutEpoch, boolean hasFrozenProjection) { return true; }
+        long layoutEpoch, boolean hasFrozenProjection) {
+      lastBeginSyncMode = mode;
+      lastBeginSyncHasFrozenProjection = hasFrozenProjection;
+      return true;
+    }
     @Override public boolean setStreamMode(long generation,
         @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
       modeChanges++;
       lastMode = mode;
-      return true;
+      return modeSwitchSucceeds;
     }
     @Override public boolean requestHistoryRange(@NonNull String requestId,
         @NonNull String instanceId, long layoutEpoch, long fromSeq, long toSeq) {

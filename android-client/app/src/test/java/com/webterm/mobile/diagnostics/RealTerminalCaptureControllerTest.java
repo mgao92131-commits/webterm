@@ -12,6 +12,7 @@ import android.content.pm.PackageManager;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderDirtyState;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.capture.AgentCaptureData;
 import com.webterm.terminal.model.capture.AgentCaptureLink;
 import com.webterm.terminal.model.capture.CaptureIdentity;
@@ -79,6 +80,13 @@ public class RealTerminalCaptureControllerTest {
         return new CaptureStreamIdentity(session, term, client);
     }
 
+    private static CapturedModelState modelState(long revision, boolean afterBaseline) {
+        return new CapturedModelState(
+                1L, "i", 1, revision, revision + 2,
+                1, 1, 0, true, afterBaseline,
+                new HistoryExtent(10, 20), new HistoryExtent(10, 24));
+    }
+
     // 要求 2：ring buffer 严格受条数与字节限制，超限置截断。
     @Test
     public void byteBoundedRingEnforcesLimits() {
@@ -111,7 +119,7 @@ public class RealTerminalCaptureControllerTest {
         assertFalse(c.isRecording());
         CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
         c.recordWireFrame(id, 1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
-        c.recordModelState(id, new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
+        c.recordModelState(id, modelState(1, true));
         assertEquals(0, c.wireEntryCount());
         assertEquals(0, c.modelCount());
     }
@@ -144,7 +152,7 @@ public class RealTerminalCaptureControllerTest {
         assertTrue(c.isRecording());
         CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
         c.recordWireFrame(id, 1, 1L, "SNAPSHOT", "some-terminal-body".getBytes(StandardCharsets.UTF_8));
-        c.recordModelState(id, new CapturedModelState(1L, "i", 1, 1, 1, 1, 0, true, true));
+        c.recordModelState(id, modelState(1, true));
         assertTrue(c.wireEntryCount() > 0);
         c.cancelCapture();
         assertFalse(c.isRecording());
@@ -182,7 +190,7 @@ public class RealTerminalCaptureControllerTest {
         c.startCapture(CaptureLimits.defaults());
         CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
         for (int i = 0; i < 400; i++) {
-            c.recordModelState(id, new CapturedModelState(i, "i", 1, i, 1, 1, 0, true, false));
+            c.recordModelState(id, modelState(i, false));
         }
         // model ring 上限 256。
         assertEquals(256, c.modelCount());
@@ -191,7 +199,7 @@ public class RealTerminalCaptureControllerTest {
 
     // 要求 6：宽字符 / Emoji / 组合字符能够序列化且文本完整保留。
     @Test
-    public void wideEmojiCombiningCharsSerialize() throws Exception {
+  public void wideEmojiCombiningCharsSerialize() throws Exception {
         String combiningText = "é";
         com.webterm.terminal.model.TerminalCell wide =
                 new com.webterm.terminal.model.TerminalCell("中", (byte) 2, null, null);
@@ -214,7 +222,24 @@ public class RealTerminalCaptureControllerTest {
         assertEquals(2, cells.getJSONObject(2).getInt("width"));
         assertEquals(combiningText, cells.getJSONObject(3).getString("text"));
         assertEquals("中", cells.getJSONObject(1).getString("text"));
-    }
+  }
+
+  @Test
+  public void viewCaptureSerializesFreezeBoundaryAndIntent() throws Exception {
+    CapturedViewState state = new CapturedViewState(
+            1L, 1080, 720,
+            0, 0, 0, 0,
+            14f, "monospace", 9f, 18f, 14f,
+            850, false, "FROZEN_HISTORY", 720, true,
+            false, 5, 1, "term-1", true, false);
+
+    JSONObject json = CaptureSerializer.viewState(state);
+
+    assertEquals(850, json.getInt("scrollOffsetPixels"));
+    assertEquals(720, json.getInt("liveScreenExitOffsetPixels"));
+    assertEquals("FROZEN_HISTORY", json.getString("contentStreamIntent"));
+    assertTrue(json.getBoolean("pureHistory"));
+  }
 
     // 要求 7 + 8：ZIP manifest 与文件索引一致，每个文件 SHA-256 正确。
     @Test
@@ -227,7 +252,10 @@ public class RealTerminalCaptureControllerTest {
         wire.add(new RealTerminalCaptureController.WireEntry(1, 1000L, "PATCH", payload));
 
         List<CapturedModelState> model = new ArrayList<>();
-        model.add(new CapturedModelState(1L, "term-1", 1, 5, 24, 80, 0, true, true));
+        model.add(new CapturedModelState(
+                1L, "term-1", 1, 5, 8,
+                24, 80, 0, true, true,
+                new HistoryExtent(10, 20), new HistoryExtent(10, 25)));
 
         File archive = c.writeArchive(identity, CaptureLimits.defaults(), null, null,
                 null, null, null,
@@ -244,6 +272,17 @@ public class RealTerminalCaptureControllerTest {
         assertTrue(entries.containsKey("android/wire/000001.pb"));
         assertTrue(entries.containsKey("android/model-state.jsonl"));
         assertTrue(entries.containsKey("android/render-snapshot.json"));
+
+        JSONObject capturedModel = new JSONArray(
+                new String(entries.get("android/model-state.jsonl"), StandardCharsets.UTF_8).trim())
+                .getJSONObject(0);
+        assertEquals(5, capturedModel.getLong("screenRevision"));
+        assertEquals(8, capturedModel.getLong("remoteScreenRevision"));
+        assertEquals(20,
+                capturedModel.getJSONObject("displayHistoryExtent").getLong("lastSeq"));
+        assertEquals(25,
+                capturedModel.getJSONObject("remoteHistoryExtent").getLong("lastSeq"));
+        assertTrue(capturedModel.getBoolean("afterBaseline"));
 
         // checksums.sha256 每个条目与实际字节一致。
         String checksums = new String(entries.get("checksums.sha256"), StandardCharsets.UTF_8);

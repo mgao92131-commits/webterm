@@ -15,6 +15,7 @@ import com.webterm.terminal.model.ScreenPatchV2;
 import com.webterm.terminal.model.HistoryDelta;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
@@ -716,11 +717,12 @@ public final class TerminalSessionRuntime {
         || state != State.TRANSPORT_CONNECTED) return;
     updateState(State.SYNCING);
     long generation = ++syncGeneration;
+    boolean wantsFrozen = freezeRequested || streamState == StreamState.FROZEN;
     TerminalScreenV2Proto.ScreenStreamMode desiredMode =
-        streamState == StreamState.FROZEN
+        wantsFrozen
             ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
             : TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    boolean hasFrozenProjection = streamState == StreamState.FROZEN
+    boolean hasFrozenProjection = wantsFrozen
         && model.instanceId != null && !model.instanceId.isEmpty();
     boolean helloSent = expectedConnection.beginSync(
         streamGeneration, desiredMode, model.instanceId, model.layoutEpoch,
@@ -991,6 +993,7 @@ public final class TerminalSessionRuntime {
           }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
               captureStreamIdentity(), baseline);
+          recordCapturedModelState(true);
           streamGeneration = wire.getStreamGeneration();
           streamState = StreamState.LIVE;
           onAuthoritativeSnapshot();
@@ -1018,6 +1021,7 @@ public final class TerminalSessionRuntime {
           model.applyScreenPatch(patch);
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(
               captureStreamIdentity(), patch);
+          recordCapturedModelState(false);
           completeSynchronization();
           renderChanged = true;
           break;
@@ -1029,6 +1033,7 @@ public final class TerminalSessionRuntime {
           ScreenMessageV2Validator.validateHistoryDelta(wire);
           HistoryDelta delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
           renderChanged = model.applyHistoryDelta(delta);
+          if (renderChanged) recordCapturedModelState(false);
           break;
         }
         case HISTORY_RANGE_RESPONSE: {
@@ -1042,6 +1047,7 @@ public final class TerminalSessionRuntime {
               ScreenMessageV2Mapper.mapHistoryRange(wire, model.columns);
           renderChanged = model.applyHistoryRange(
               range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
+          if (renderChanged) recordCapturedModelState(false);
           if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
             Diagnostics.info("screen_protocol", "frozen_projection_stale", diagnosticFields(
                 "instanceId", wire.getInstanceId(),
@@ -1055,8 +1061,13 @@ public final class TerminalSessionRuntime {
         case TAIL_STATUS: {
           TerminalScreenV2Proto.TailStatus status = envelope.getTailStatus();
           requireCurrentStreamGeneration(status.getStreamGeneration());
-          model.observeTailStatus(status.getInstanceId(), status.getLayoutEpoch(),
+          boolean accepted = model.observeTailStatus(
+              status.getInstanceId(),
+              status.getLayoutEpoch(),
+              status.getLatestScreenRevision(),
               historyExtent(status.getLatestHistoryExtent()));
+          if (!accepted) return;
+          recordCapturedModelState(false);
           if (streamState == StreamState.FROZEN) completeSynchronization();
           if (status.getExited()) updateState(State.CLOSED);
           break;
@@ -1117,6 +1128,25 @@ public final class TerminalSessionRuntime {
     }
     return new com.webterm.terminal.model.capture.CaptureStreamIdentity(
         sessionId, terminalInstanceId, clientInstanceId);
+  }
+
+  private void recordCapturedModelState(boolean afterBaseline) {
+    if (!com.webterm.terminal.model.capture.TerminalCapture.isRecording()) return;
+    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(
+        captureStreamIdentity(),
+        new com.webterm.terminal.model.capture.CapturedModelState(
+            System.currentTimeMillis(),
+            model.instanceId,
+            model.layoutEpoch,
+            model.screenRevision,
+            model.remoteScreenRevision(),
+            model.rows,
+            model.columns,
+            model.activeBuffer == TerminalBufferKind.ALTERNATE ? 1 : 0,
+            model.projectionHealth().complete,
+            afterBaseline,
+            model.displayExtent(),
+            model.remoteAvailableExtent()));
   }
 
   private Map<String, Object> diagnosticFields(Object... pairs) {
