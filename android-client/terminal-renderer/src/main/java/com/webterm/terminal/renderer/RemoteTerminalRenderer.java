@@ -14,15 +14,17 @@ import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
+import com.webterm.terminal.model.TerminalHistoryView;
+import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
+import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.TerminalBufferKind;
 
-import java.util.Map;
 import java.util.List;
 
 /**
@@ -36,6 +38,7 @@ public final class RemoteTerminalRenderer {
   private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Paint bgPaint = new Paint();
   private final Paint selectionPaint = new Paint();
+  private final Paint placeholderPaint = new Paint();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
 
@@ -105,7 +108,7 @@ public final class RemoteTerminalRenderer {
 
     // Full-screen TUIs run on the alternate buffer. Its main-buffer scrollback
     // is not part of the current canvas and must never be composited underneath.
-    TerminalHistorySnapshot history = model.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    TerminalHistoryView history = model.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : model.history;
     int screenRows = screen.length;
     int historyRows = history.size();
@@ -114,7 +117,6 @@ public final class RemoteTerminalRenderer {
         getTopInset(), scrollOffset);
 
     TerminalPalette palette = model.palette;
-    Map<Integer, TerminalStyle> styles = model.styles;
     int canvasBackground = resolveColor(palette,
         palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
     canvas.drawColor(canvasBackground);
@@ -131,7 +133,7 @@ public final class RemoteTerminalRenderer {
         screenRows);
     for (int row = screenRange[0]; row < screenRange[1]; row++) {
       float y = screenTopY + row * lineHeight;
-      drawLine(canvas, model.columns, palette, styles, screen[row], y, 0, row, normalizedSelection,
+      drawLine(canvas, model.columns, palette, screen[row], y, 0, row, normalizedSelection,
           cursor, cursorVisible, canvasBackground);
     }
 
@@ -141,12 +143,25 @@ public final class RemoteTerminalRenderer {
     for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
-      drawLine(canvas, model.columns, palette, styles, line, y, line.historyOrder(), -1,
+      if (line == null) {
+        drawHistoryPlaceholder(canvas, model.columns, history, historyIndex, y, canvasBackground);
+        continue;
+      }
+      drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
           normalizedSelection, cursor, false, canvasBackground);
     }
     } finally {
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
     }
+  }
+
+  private void drawHistoryPlaceholder(Canvas canvas, int columns, TerminalHistoryView history,
+                                      int historyIndex, float y, int canvasBackground) {
+    if (!(history instanceof PagedTerminalHistorySnapshot)) return;
+    SlotState state = ((PagedTerminalHistorySnapshot) history).slotStateAt(historyIndex);
+    int alpha = state == SlotState.UNAVAILABLE ? 18 : 10;
+    placeholderPaint.setColor((canvasBackground & 0x00ffffff) | (alpha << 24));
+    canvas.drawRect(0f, y, columns * cellWidth, y + lineHeight, placeholderPaint);
   }
 
   /** Half-open row range whose cells can affect a Canvas clip, including one anti-aliasing guard. */
@@ -169,7 +184,7 @@ public final class RemoteTerminalRenderer {
   }
 
   private void drawLine(Canvas canvas, int columns, TerminalPalette palette,
-                        Map<Integer, TerminalStyle> styles, TerminalLine line, float y,
+                        TerminalLine line, float y,
                         long historySeq, int screenRow, TerminalSelection selection,
                         TerminalCursor cursor, boolean cursorVisible, int canvasBackground) {
     if (line == null) return;
@@ -186,15 +201,16 @@ public final class RemoteTerminalRenderer {
       if (startsBatchableAsciiRun(line, lineLength, selection, historySeq, screenRow, col,
           cursor, cursorVisible)) {
         int runStart = col;
-        int runStyleId = cell.styleId;
+        TerminalStyle runStyle = styleOf(cell);
         plainAsciiRun.setLength(0);
         do {
           plainAsciiRun.append(line.at(col).text.charAt(0));
           col++;
-        } while (col < lineLength && line.at(col).styleId == runStyleId
+        } while (col < lineLength && java.util.Objects.equals(
+                styleOf(line.at(col)), runStyle)
             && canBatchAscii(line.at(col), selection, historySeq, screenRow, col, cursor,
                 cursorVisible));
-        if (drawAsciiRun(canvas, palette, styles.get(runStyleId), plainAsciiRun, runStart, y,
+        if (drawAsciiRun(canvas, palette, runStyle, plainAsciiRun, runStart, y,
             canvasBackground)) {
           continue;
         }
@@ -208,8 +224,8 @@ public final class RemoteTerminalRenderer {
           && (cursor.col == col || (columnWidth == 2 && cursor.col == col + 1));
       int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
-          hasRightPadding(line, col, columnWidth, cell.styleId));
-      drawCell(canvas, palette, styles, cell, col, y, selected, insideCursor, cursor,
+          hasRightPadding(line, col, columnWidth, styleOf(cell)));
+      drawCell(canvas, palette, cell, col, y, selected, insideCursor, cursor,
           preserveAspect, canvasBackground);
       col++;
     }
@@ -231,10 +247,11 @@ public final class RemoteTerminalRenderer {
                                                  int screenRow, int col, TerminalCursor cursor,
                                                  boolean cursorVisible) {
     if (col + 2 >= lineLength) return false;
-    int styleId = line.at(col).styleId;
+    TerminalStyle style = styleOf(line.at(col));
     for (int candidate = col; candidate < col + 3; candidate++) {
       TerminalCell cell = line.at(candidate);
-      if (cell == null || cell.styleId != styleId
+      if (cell == null || !java.util.Objects.equals(
+              styleOf(cell), style)
           || !canBatchAscii(cell, selection, historySeq, screenRow,
           candidate, cursor, cursorVisible)) return false;
     }
@@ -302,11 +319,11 @@ public final class RemoteTerminalRenderer {
     return true;
   }
 
-  private void drawCell(Canvas canvas, TerminalPalette palette, Map<Integer, TerminalStyle> styles,
+  private void drawCell(Canvas canvas, TerminalPalette palette,
                         TerminalCell cell, int col, float rowY, boolean selected,
                         boolean insideCursor, TerminalCursor cursor, boolean preserveAspect,
                         int canvasBackground) {
-    TerminalStyle style = styles.get(cell.styleId);
+    TerminalStyle style = styleOf(cell);
     TerminalColor fgColor = style != null ? style.fg : palette.defaultFg;
     TerminalColor bgColor = style != null ? style.bg : palette.defaultBg;
     boolean blockCursor = insideCursor && cursor.shape == TerminalCursor.Shape.BLOCK;
@@ -395,12 +412,18 @@ public final class RemoteTerminalRenderer {
     }
   }
 
-  private boolean hasRightPadding(TerminalLine line, int col, int width, int styleId) {
+  private boolean hasRightPadding(
+      TerminalLine line, int col, int width, TerminalStyle style) {
     int nextCol = col + width;
     if (nextCol >= line.length()) return false;
     TerminalCell next = line.at(nextCol);
-    return next != null && !next.isSpacer() && next.styleId == styleId
+    return next != null && !next.isSpacer()
+        && java.util.Objects.equals(styleOf(next), style)
         && (next.text == null || next.text.isEmpty() || " ".equals(next.text));
+  }
+
+  private static TerminalStyle styleOf(TerminalCell cell) {
+    return cell == null ? null : cell.style;
   }
 
   private static boolean isCellSelected(TerminalSelection selection, long historySeq, int screenRow,

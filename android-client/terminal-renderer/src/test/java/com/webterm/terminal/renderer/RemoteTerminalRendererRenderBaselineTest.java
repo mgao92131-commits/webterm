@@ -8,9 +8,10 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 
 import com.webterm.terminal.model.HistoryBudget;
-import com.webterm.terminal.model.HistoryWindow;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
@@ -173,19 +174,21 @@ public final class RemoteTerminalRendererRenderBaselineTest {
     // 每行内容相同不影响 draw 调用次数与路径。
     TerminalCell[] historyCells = buildCells(cols, content, seed(cols, content) + 7);
     List<TerminalLine> history = new ArrayList<>(historyLines);
-    for (int i = 0; i < historyLines; i++) {
-      history.add(new TerminalLine(i + 1, false, historyCells));
+    int historyStart = Math.max(1, historyLines - 127);
+    for (int i = historyStart; i <= historyLines; i++) {
+      history.add(new TerminalLine(i, 1, i, false, historyCells));
     }
     List<TerminalLine> screen = new ArrayList<>(rows);
     for (int r = 0; r < rows; r++) {
-      screen.add(new TerminalLine(r, false, buildCells(cols, content, seed(cols, content) + r)));
+      screen.add(new TerminalLine(100_000 + r, false,
+          buildCells(cols, content, seed(cols, content) + r)));
     }
-    model.applySnapshot(new ScreenSnapshot("s1", "i1", 1, 1, rows, cols,
-        ScreenSnapshot.BufferKind.MAIN,
+    HistoryExtent extent = historyLines == 0
+        ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
+    model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, rows, cols,
+        TerminalBufferKind.MAIN, extent, history, screen,
         new TerminalCursor(rows - 1, 0, true, TerminalCursor.Shape.BLOCK, false),
-        TerminalModes.defaults(), TerminalPalette.defaults(),
-        new HistoryWindow(1, 1, historyLines, false, history), screen,
-        usesStyles(content) ? styles() : Collections.emptyMap(), Collections.emptyMap(), "", ""));
+        TerminalModes.defaults(), TerminalPalette.defaults(), "", ""));
     return model;
   }
 
@@ -219,7 +222,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
             cells[col++] = asciiCell(rnd, 1 + rnd.nextInt(4));
           } else if (p == 5) {
             cells[col++] = new TerminalCell(COMBINING[(block / 8) % COMBINING.length],
-                (byte) 1, 0, 0);
+                (byte) 1, null, null);
           } else {
             String text = (block / 8) % 2 == 0 ? cjkChar(rnd) : EMOJI[(block / 8) % EMOJI.length];
             col = wide(cells, col, cols, text);
@@ -235,17 +238,18 @@ public final class RemoteTerminalRendererRenderBaselineTest {
 
   private static int wide(TerminalCell[] cells, int col, int cols, String text) {
     if (col + 2 <= cols) {
-      cells[col] = new TerminalCell(text, (byte) 2, 0, 0);
+      cells[col] = new TerminalCell(text, (byte) 2, null, null);
       cells[col + 1] = TerminalCell.SPACER;
       return col + 2;
     }
-    cells[col] = new TerminalCell(" ", (byte) 1, 0, 0);
+    cells[col] = new TerminalCell(" ", (byte) 1, null, null);
     return col + 1;
   }
 
   private static TerminalCell asciiCell(Random rnd, int styleId) {
     char c = (char) (' ' + rnd.nextInt('~' - ' ' + 1));
-    return new TerminalCell(String.valueOf(c), (byte) 1, styleId, 0);
+    return new TerminalCell(
+        String.valueOf(c), (byte) 1, styleId == 0 ? null : styles().get(styleId), null);
   }
 
   private static String cjkChar(Random rnd) {

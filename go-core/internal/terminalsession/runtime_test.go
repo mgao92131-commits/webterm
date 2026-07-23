@@ -18,6 +18,22 @@ type reliableInputPTY struct {
 	data   bytes.Buffer
 }
 
+func TestScreenClientHistoryRangeTokenBucket(t *testing.T) {
+	var client ScreenClient
+	now := time.Unix(100, 0)
+	for i := 0; i < int(historyRangeBurst); i++ {
+		if ok, retry := client.allowHistoryRange(now); !ok || retry != 0 {
+			t.Fatalf("request %d rejected: ok=%v retry=%d", i+1, ok, retry)
+		}
+	}
+	if ok, retry := client.allowHistoryRange(now); ok || retry == 0 {
+		t.Fatalf("burst overflow = ok:%v retry:%d, want RETRYABLE delay", ok, retry)
+	}
+	if ok, _ := client.allowHistoryRange(now.Add(125 * time.Millisecond)); !ok {
+		t.Fatal("one token must refill after 125ms at 8 requests/second")
+	}
+}
+
 type closeTrackingTerminalIO struct {
 	closed atomic.Int64
 }
@@ -246,35 +262,20 @@ func TestProjectionBusyWindowFromEnv(t *testing.T) {
 func TestRuntimeLargeScrollbackTrimDoesNotSelfDeadlock(t *testing.T) {
 	r := newRuntimeTestHarness(t, WithScrollbackLimits(1, 1<<30))
 
-	trimWatermarks := make(chan uint64, 8)
 	r.AttachClient(&ScreenClient{
 		ID:   "screen-1",
 		Send: func(terminalengine.ScreenFrame) {},
-		SendHistoryTrim: func(_ uint64, firstAvailableSeq uint64) {
-			trimWatermarks <- firstAvailableSeq
-		},
 	})
 	if _, granted := r.AcquireLayout("screen-1", true); !granted {
 		t.Fatal("screen client was not attached")
 	}
 
-	// 旧实现会在同一个 engine.Write 中产生超过 events 容量的 trim 回调，
-	// actor 随后阻塞在给自己的 inbox 投递 historyTrimEvent。
+	// 大量滚屏必须在一次 engine.Write 中完成裁剪，且不能阻塞 actor。
 	r.postEvent(ptyOutputEvent{data: []byte(strings.Repeat("x\r\n", 2000))})
 	waitRuntimeSnapshot(t, r)
 
-	select {
-	case firstSeq := <-trimWatermarks:
-		if firstSeq <= 1 {
-			t.Fatalf("trim watermark=%d, want > 1", firstSeq)
-		}
-	default:
-		t.Fatal("large scrollback output did not publish a trim watermark")
-	}
-	select {
-	case extra := <-trimWatermarks:
-		t.Fatalf("trim callbacks were not coalesced, extra watermark=%d", extra)
-	default:
+	if firstSeq := r.ProjectedSnapshot().History.FirstAvailableHistorySeq; firstSeq <= 1 {
+		t.Fatalf("first available history seq=%d, want > 1", firstSeq)
 	}
 }
 

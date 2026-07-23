@@ -33,7 +33,7 @@ type LogicalChannelHandler interface {
 	Close()
 }
 
-// TerminalChannelHandler 把 webterm.screen.v1 帧直接连到权威 Terminal Runtime。
+// TerminalChannelHandler 把 webterm.screen.v2 帧直接连到权威 Terminal Runtime。
 //
 // 内部协议状态只保留 baseline/mailbox/single-writer，输入由 handler
 // 直接投递，输出只依赖 ChannelFrameSink。

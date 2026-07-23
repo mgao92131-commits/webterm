@@ -8,9 +8,8 @@ import androidx.annotation.Nullable;
 import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
-import com.webterm.terminal.protocol.ScreenMessageBuilder;
-import com.webterm.terminal.protocol.generated.TerminalScreenProto;
-import com.webterm.terminal.model.ResumeToken;
+import com.webterm.terminal.protocol.ScreenMessageV2Builder;
+import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import dagger.assisted.Assisted;
 import dagger.assisted.AssistedFactory;
@@ -19,7 +18,7 @@ import dagger.assisted.AssistedInject;
 import java.util.UUID;
 
 /**
- * 通过 device connection 建立 webterm.screen.v1 通道的 ScreenConnection 实现。
+ * 通过 device connection 建立 webterm.screen.v2 通道的 ScreenConnection 实现。
  */
 public final class TerminalChannel implements TerminalSessionRuntime.ScreenConnection {
 
@@ -113,8 +112,20 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public boolean beginSync(@NonNull ResumeToken resumeToken) {
-    return sendHello(TerminalResumePolicy.effectiveToken(resumeToken));
+  public boolean beginSync(long streamGeneration,
+                           @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
+                           @Nullable String instanceId, long layoutEpoch,
+                           boolean hasFrozenProjection) {
+    return sendHello(streamGeneration, desiredMode, instanceId, layoutEpoch,
+        hasFrozenProjection);
+  }
+
+  @Override
+  public boolean setStreamMode(long streamGeneration,
+                               @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
+    if (deviceConnection == null || channelId == null) return false;
+    return deviceConnection.sendTunnelFrame(
+        channelId, ScreenMessageV2Builder.setStreamMode(mode, streamGeneration), true);
   }
 
   @Override
@@ -129,21 +140,21 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public void sendTextInput(@NonNull String text) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
     reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageBuilder.textInput(layoutLeaseId, clientId, seq, text));
+        ScreenMessageV2Builder.textInput(layoutLeaseId, clientId, seq, text));
   }
 
   @Override
   public void sendPasteInput(@NonNull String text) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
     reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageBuilder.pasteInput(layoutLeaseId, clientId, seq, text));
+        ScreenMessageV2Builder.pasteInput(layoutLeaseId, clientId, seq, text));
   }
 
   @Override
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    reliableInputTracker.send((clientId, seq) -> ScreenMessageBuilder.keyInput(
+    reliableInputTracker.send((clientId, seq) -> ScreenMessageV2Builder.keyInput(
         layoutLeaseId, clientId, seq, key, shift, alt, ctrl, meta, pressed));
   }
 
@@ -152,8 +163,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    TerminalScreenProto.MouseButton protoButton = mouseButtonFromString(button);
-    reliableInputTracker.send((clientId, seq) -> ScreenMessageBuilder.mouseInput(
+    TerminalScreenV2Proto.MouseButton protoButton = mouseButtonFromString(button);
+    reliableInputTracker.send((clientId, seq) -> ScreenMessageV2Builder.mouseInput(
         layoutLeaseId, clientId, seq, row, col, protoButton, wheelDelta,
         shift, alt, ctrl, meta, pressed));
   }
@@ -162,7 +173,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public void sendFocusInput(boolean focused) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
     reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageBuilder.focusInput(layoutLeaseId, clientId, seq, focused));
+        ScreenMessageV2Builder.focusInput(layoutLeaseId, clientId, seq, focused));
   }
 
   @Override
@@ -172,7 +183,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     this.rows = clamp(rows, 5, 200);
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return false;
     return deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageBuilder.resize(layoutLeaseId, this.columns, this.rows), true);
+        ScreenMessageV2Builder.resize(layoutLeaseId, this.columns, this.rows), true);
   }
 
   @Override
@@ -184,7 +195,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public void acquireLayout(@NonNull String requestId, boolean interactive) {
     if (deviceConnection == null || channelId == null) return;
     deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageBuilder.acquireLayout(requestId, interactive), true);
+        channelId, ScreenMessageV2Builder.acquireLayout(requestId, interactive), true);
   }
 
   @Override
@@ -194,7 +205,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     if (deviceConnection == null || channelId == null) return;
     if (!releasedLeaseId.isEmpty()) {
       deviceConnection.sendTunnelFrame(
-          channelId, ScreenMessageBuilder.releaseLayout(releasedLeaseId), true);
+          channelId, ScreenMessageV2Builder.releaseLayout(releasedLeaseId), true);
     }
   }
 
@@ -202,21 +213,21 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
     if (deviceConnection == null || channelId == null) return;
     deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageBuilder.clipboardResponse(requestId, allowed, timeout, data), true);
+        ScreenMessageV2Builder.clipboardResponse(requestId, allowed, timeout, data), true);
   }
 
   @Override
-  public boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit) {
+  public boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
+                                     long layoutEpoch, long fromSeq, long toSeq) {
     if (deviceConnection == null || channelId == null) return false;
-    return deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageBuilder.historyRequest(requestId, beforeHistorySeq, limit), true);
+    return deviceConnection.sendTunnelFrame(channelId,
+        ScreenMessageV2Builder.historyRange(
+            requestId, instanceId, layoutEpoch, fromSeq, toSeq), true);
   }
 
   @Override
   public void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {
-    if (deviceConnection == null || channelId == null) return;
-    deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageBuilder.resync(layoutEpoch, screenRevision, reason), true);
+    // v2 没有独立 ResyncRequest；Runtime 通过新 stream generation 切回 LIVE 获取 Baseline。
   }
 
   @Override
@@ -312,11 +323,15 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     });
   }
 
-  private boolean sendHello(@NonNull ResumeToken resumeToken) {
+  private boolean sendHello(long streamGeneration,
+                            @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
+                            @Nullable String instanceId, long layoutEpoch,
+                            boolean hasFrozenProjection) {
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageBuilder.hello(
-            columns, rows, resumeToken, reliableInputTracker.clientInstanceId()), true);
+        channelId, ScreenMessageV2Builder.hello(
+            columns, rows, reliableInputTracker.clientInstanceId(), streamGeneration,
+            desiredMode, instanceId, layoutEpoch, hasFrozenProjection), true);
   }
 
   @Override
@@ -357,20 +372,20 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     }
   }
 
-  private static TerminalScreenProto.MouseButton mouseButtonFromString(@NonNull String button) {
+  private static TerminalScreenV2Proto.MouseButton mouseButtonFromString(@NonNull String button) {
     switch (button) {
       case "left":
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_LEFT;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_LEFT;
       case "middle":
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_MIDDLE;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_MIDDLE;
       case "right":
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_RIGHT;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_RIGHT;
       case "wheel":
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_WHEEL;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_WHEEL;
       case "move":
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_MOVE;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_MOVE;
       default:
-        return TerminalScreenProto.MouseButton.MOUSE_BUTTON_UNSPECIFIED;
+        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_UNSPECIFIED;
     }
   }
 

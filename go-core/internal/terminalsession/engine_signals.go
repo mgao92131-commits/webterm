@@ -8,20 +8,11 @@ import "webterm/go-core/internal/terminalengine"
 // Runtime actor 在同一个 goroutine 中执行，因此只能记录到这里，不能再次
 // postEvent 给 actor 自己。每次 engine 变更完成后由 Runtime 统一提交。
 type engineSignals struct {
-	historyTrimFirstSeq uint64
-	effects             []terminalengine.Effect
+	effects []terminalengine.Effect
 }
 
 type engineSignalBatch struct {
-	historyTrimFirstSeq uint64
-	effects             []terminalengine.Effect
-}
-
-func (s *engineSignals) recordHistoryTrim(firstSeq uint64) {
-	// HistoryTrim 是单调水位，同一轮只需要向客户端提交最新值。
-	if firstSeq > s.historyTrimFirstSeq {
-		s.historyTrimFirstSeq = firstSeq
-	}
+	effects []terminalengine.Effect
 }
 
 func (s *engineSignals) recordEffect(effect terminalengine.Effect) {
@@ -30,10 +21,8 @@ func (s *engineSignals) recordEffect(effect terminalengine.Effect) {
 
 func (s *engineSignals) drain() engineSignalBatch {
 	batch := engineSignalBatch{
-		historyTrimFirstSeq: s.historyTrimFirstSeq,
-		effects:             s.effects,
+		effects: s.effects,
 	}
-	s.historyTrimFirstSeq = 0
 	s.effects = nil
 	return batch
 }

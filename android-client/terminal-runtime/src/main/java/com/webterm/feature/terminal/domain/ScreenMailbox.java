@@ -8,10 +8,18 @@ import java.util.ArrayDeque;
 /** 连接代际感知的有界 screen mailbox；overflow 会生成先于后续消息处理的 fence。 */
 public final class ScreenMailbox {
   public enum MessageKind {
-    SNAPSHOT,
-    PATCH,
-    HISTORY_PAGE,
-    HISTORY_TRIM,
+    BASELINE,
+    SCREEN_PATCH,
+    HISTORY_DELTA,
+    HISTORY_RANGE,
+    /** @deprecated 仅供旧单元测试构造 mailbox；产品通道已使用 BASELINE。 */
+    @Deprecated SNAPSHOT,
+    /** @deprecated 产品通道已使用 SCREEN_PATCH。 */
+    @Deprecated PATCH,
+    /** @deprecated 产品通道已使用 HISTORY_RANGE。 */
+    @Deprecated HISTORY_PAGE,
+    /** @deprecated screen.v2 通过 extent/status 表达 trim。 */
+    @Deprecated HISTORY_TRIM,
     OTHER,
     UNKNOWN
   }
@@ -101,7 +109,7 @@ public final class ScreenMailbox {
     long nextBytes = pendingBytes + payload.length;
     if (!validFrameSize || messages.size() >= maxMessages || nextBytes > maxBytes) {
       Message retainedSnapshot = validFrameSize ? newestSnapshot() : null;
-      Message snapshot = kind == MessageKind.SNAPSHOT
+      Message snapshot = kind == MessageKind.BASELINE || kind == MessageKind.SNAPSHOT
           ? new Message(connectionEpoch, generation + 1L, source, payload, kind)
           : retainedSnapshot == null ? null
               : new Message(retainedSnapshot.connectionEpoch, generation + 1L,
@@ -124,7 +132,7 @@ public final class ScreenMailbox {
               : "screen mailbox exceeded frame budget");
       // A snapshot is the one frame that can release the recovery fence. Keep the newest
       // authoritative snapshot even when later patches are what exhausted the mailbox.
-      // The payload remains untouched: webterm.screen.v1 stays a protobuf-only channel.
+      // The payload remains untouched: webterm.screen.v2 stays a protobuf-only channel.
       if (snapshot != null) {
         messages.addLast(snapshot);
         pendingBytes = snapshot.payload.length;
@@ -201,7 +209,7 @@ public final class ScreenMailbox {
     java.util.Iterator<Message> iterator = messages.descendingIterator();
     while (iterator.hasNext()) {
       Message message = iterator.next();
-      if (message.kind == MessageKind.SNAPSHOT) return message;
+      if (message.kind == MessageKind.BASELINE || message.kind == MessageKind.SNAPSHOT) return message;
     }
     return null;
   }

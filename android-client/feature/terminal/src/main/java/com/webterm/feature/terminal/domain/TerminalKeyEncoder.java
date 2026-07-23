@@ -6,7 +6,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 /**
- * 把 Android {@link KeyEvent} 映射为 webterm.screen.v1 语义键名。
+ * 把 Android {@link KeyEvent} 映射为 webterm.screen.v2 语义键名。
  * 只处理需要特殊 ESC 序列的键；普通字符由 IME InputConnection 以 TextInput 发送。
  */
 public final class TerminalKeyEncoder {

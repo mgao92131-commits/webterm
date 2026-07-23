@@ -268,7 +268,6 @@ public final class RemoteTerminalInputConnectionTest {
     @Override public void onRequestResize(int cols, int rows) {}
     @Override public void onRequestShowKeyboard() {}
     @Override public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {}
-    @Override public void onRequestHistoryPage() {}
     @Override public void onFocusChanged(boolean focused) {}
     @Override public void onMouse(int row, int col, String button, int wheelDelta,
                                   boolean shift, boolean alt, boolean ctrl, boolean meta,

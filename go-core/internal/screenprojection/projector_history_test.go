@@ -255,7 +255,7 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 
 // §6.4/§6.5：baseline 已被 trim——追加量超出窗口容量（中间行客户端永远收
 // 不到），连续性无法证明，退回完整 snapshot。
-func TestProjector_LargeHistoryAdvanceUsesTailIDsWithoutSnapshot(t *testing.T) {
+func TestProjector_LargeHistoryAdvanceFallsBackToSnapshot(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 24, 20)
 	fillScreenStable(t, engine, 24)
 
@@ -270,11 +270,11 @@ func TestProjector_LargeHistoryAdvanceUsesTailIDsWithoutSnapshot(t *testing.T) {
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.FrameForState(state)
-	if frame.Kind != terminalengine.FramePatch {
-		t.Fatalf("stable-id patch must remain incremental, got kind=%v", frame.Kind)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("history gap must fall back to snapshot, got kind=%v", frame.Kind)
 	}
-	if got := len(frame.HistoryAppendSeqs); got != snapshotTailLines {
-		t.Fatalf("history append ids=%d, want tail window %d", got, snapshotTailLines)
+	if got := len(frame.History.Lines); got != snapshotTailLines {
+		t.Fatalf("snapshot history lines=%d, want tail window %d", got, snapshotTailLines)
 	}
 	if frame.History.FirstIncludedHistorySeq != state.History.FirstIncludedHistorySeq ||
 		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq ||

@@ -78,6 +78,11 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
+  public void restoreHistoryAnchor(long historySeq, int pixelOffset) {
+    view.restoreHistoryAnchor(historySeq, pixelOffset);
+  }
+
+  @Override
   public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
     if (connectionStateListener != null) connectionStateListener.onConnectionStateChanged(state);
   }
@@ -148,8 +153,8 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onRequestHistoryPage() {
-    controller.requestOlderHistoryPage();
+  public void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
+    controller.requestVisibleHistoryRange(fromSeq, toSeq, anchorSeq);
   }
 
   @Override

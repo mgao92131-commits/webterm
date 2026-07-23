@@ -16,7 +16,7 @@ Relay:  Android -- HTTPS + /ws/sessions --> Go Relay -- /ws/agent --> Go PC Agen
 ```
 
 两种模式不自动切换、不回落。终端均使用 `webterm.mux.v1` 复用通道，具体终端
-通道只接受 `webterm.screen.v1` Protobuf；Direct 与 Relay 复用同一套 Mux 与
+通道只接受 `webterm.screen.v2` Protobuf；Direct 与 Relay 复用同一套 Mux 与
 SessionRouter。Direct 经 HttpOnly Cookie `webterm_token` 认证，只适合可信局域网，
 公网访问须经 HTTPS 反向代理或 VPN。
 

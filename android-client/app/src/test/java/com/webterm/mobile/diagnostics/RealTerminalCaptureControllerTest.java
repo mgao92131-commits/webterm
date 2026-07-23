@@ -193,10 +193,14 @@ public class RealTerminalCaptureControllerTest {
     @Test
     public void wideEmojiCombiningCharsSerialize() throws Exception {
         String combiningText = "é";
-        com.webterm.terminal.model.TerminalCell wide = new com.webterm.terminal.model.TerminalCell("中", (byte) 2, 1, 0);
-        com.webterm.terminal.model.TerminalCell emoji = new com.webterm.terminal.model.TerminalCell("😀", (byte) 2, 1, 0);
-        com.webterm.terminal.model.TerminalCell combining = new com.webterm.terminal.model.TerminalCell(combiningText, (byte) 1, 1, 0);
-        com.webterm.terminal.model.TerminalCell ascii = new com.webterm.terminal.model.TerminalCell("A", (byte) 1, 0, 0);
+        com.webterm.terminal.model.TerminalCell wide =
+                new com.webterm.terminal.model.TerminalCell("中", (byte) 2, null, null);
+        com.webterm.terminal.model.TerminalCell emoji =
+                new com.webterm.terminal.model.TerminalCell("😀", (byte) 2, null, null);
+        com.webterm.terminal.model.TerminalCell combining =
+                new com.webterm.terminal.model.TerminalCell(combiningText, (byte) 1, null, null);
+        com.webterm.terminal.model.TerminalCell ascii =
+                new com.webterm.terminal.model.TerminalCell("A", (byte) 1, null, null);
         com.webterm.terminal.model.TerminalLine line = new com.webterm.terminal.model.TerminalLine(42L, 7L, false,
                 new com.webterm.terminal.model.TerminalCell[]{ascii, wide, emoji, combining});
 

@@ -5,7 +5,7 @@ import android.os.Handler;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -204,32 +204,38 @@ public final class ReliableInputTracker {
     for (int i = 0; i < resend.size(); i++) enqueue(resend.get(i), payloads.get(i), generation);
   }
 
-  public void handleInputAck(@NonNull TerminalScreenProto.InputAck ack) {
-    if (!clientInstanceId.equals(ack.getClientInstanceId()) || ack.getInputSeq() == 0) return;
+  public void handleInputAck(@NonNull TerminalScreenV2Proto.InputAck ack) {
+    handleInputAck(ack.getClientInstanceId(), ack.getInputSeq(), ack.getTerminalInstanceId(),
+        ack.getStatusValue());
+  }
+
+  private void handleInputAck(@NonNull String ackClientInstanceId, long inputSeq,
+                              @NonNull String ackTerminalInstanceId, int statusValue) {
+    if (!clientInstanceId.equals(ackClientInstanceId) || inputSeq == 0) return;
     PendingInput pending;
     synchronized (lock) {
-      pending = pendingInputs.remove(ack.getInputSeq());
+      pending = pendingInputs.remove(inputSeq);
       if (pending != null) pendingBytes -= pending.payload.length;
     }
     if (pending == null) return;
     if (!pending.terminalInstanceId.isEmpty()
-        && !pending.terminalInstanceId.equals(ack.getTerminalInstanceId())) {
+        && !pending.terminalInstanceId.equals(ackTerminalInstanceId)) {
       emit(EventType.TERMINAL_INSTANCE_CHANGED,
           "终端实例已变更，上一条输入的投递状态不确定");
       return;
     }
-    switch (ack.getStatus()) {
-      case INPUT_ACK_STATUS_WRITTEN:
+    switch (statusValue) {
+      case 1:
         emit(EventType.INPUT_WRITTEN, "输入已写入 PTY");
         return;
-      case INPUT_ACK_STATUS_IGNORED:
+      case 2:
         emit(EventType.INPUT_IGNORED, "输入无需写入 PTY");
         return;
-      case INPUT_ACK_STATUS_REJECTED:
+      case 3:
         emit(EventType.INPUT_REJECTED, "输入未被远端接受");
         return;
-      case INPUT_ACK_STATUS_UNCERTAIN:
-      case INPUT_ACK_STATUS_UNSPECIFIED:
+      case 4:
+      case 0:
       default:
         emit(EventType.INPUT_UNCERTAIN, "输入写入 PTY 的结果不确定，已禁止自动重发");
     }
@@ -328,15 +334,17 @@ public final class ReliableInputTracker {
   @Nullable
   private static byte[] withCurrentLease(byte[] payload, String leaseId) {
     try {
-      TerminalScreenProto.ScreenEnvelope envelope =
-          TerminalScreenProto.ScreenEnvelope.parseFrom(payload);
-      if (!envelope.hasInput()) return null;
-      return envelope.toBuilder()
-          .setInput(envelope.getInput().toBuilder().setLeaseId(leaseId).build())
-          .build()
-          .toByteArray();
+      TerminalScreenV2Proto.ScreenEnvelope envelope =
+          TerminalScreenV2Proto.ScreenEnvelope.parseFrom(payload);
+      if (envelope.getProtocolVersion() == 2 && envelope.hasInput()) {
+        return envelope.toBuilder()
+            .setInput(envelope.getInput().toBuilder().setLeaseId(leaseId).build())
+            .build()
+            .toByteArray();
+      }
     } catch (Exception ignored) {
       return null;
     }
+    return null;
   }
 }

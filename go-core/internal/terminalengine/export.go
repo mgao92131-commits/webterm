@@ -145,11 +145,13 @@ type HistoryWindow struct {
 	Lines                    []Line
 }
 
-// HistoryPageData 是按需历史页及其所依赖的字典。
-type HistoryPageData struct {
-	Window HistoryWindow
-	Styles []TerminalStyle
-	Links  []Hyperlink
+type HistoryRangeData struct {
+	Status       HistoryRangeStatus
+	Extent       HistoryExtent
+	Lines        []Line
+	Styles       []TerminalStyle
+	Links        []Hyperlink
+	RetryAfterMS uint32
 }
 
 // ScreenFrame 是传输无关的权威屏幕帧，也可作为 patch 的载体。
@@ -200,7 +202,7 @@ type ScreenFrame struct {
 	WorkingDirChanged bool
 	// FirstAvailableHistorySeqChanged 只用于恢复 Patch：与 History 中的
 	// FirstAvailableHistorySeq 配合表达 optional history watermark presence。
-	// 在线 Patch 仍可依赖独立 HistoryTrim，不默认携带该字段。
+	// 在线 ScreenPatch 不携带历史水位；历史变化由独立 HistoryDelta 表达。
 	FirstAvailableHistorySeqChanged bool
 	// RowChangedRevision is process-local projection metadata. It stamps each screen row with
 	// the last authoritative export revision that touched it, allowing per-client derivation to
@@ -217,6 +219,15 @@ type ScreenFrame struct {
 	// snapshot instead of a patch referencing dictionary IDs the client never
 	// received.
 	DictionaryGeneration uint64
+	// HistoryOnlyPatch is process-local derivation metadata. It is never encoded.
+	// It marks a patch frame whose only observable change is history (extent
+	// watermark movement and/or new history lines) with NO screen change. The
+	// per-client writer must emit only a HistoryDelta for such a frame and must
+	// NOT emit a ScreenPatch — otherwise an empty ScreenPatch would advance the
+	// screen revision chain on a non-screen change (violates I3: revision
+	// advances iff observable SCREEN change). The deriver still advances the
+	// history portion of its baseline so the lines are not re-emitted.
+	HistoryOnlyPatch bool
 }
 
 type EffectKind uint8

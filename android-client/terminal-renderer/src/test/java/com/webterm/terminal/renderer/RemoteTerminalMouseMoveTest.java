@@ -8,9 +8,10 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 
-import com.webterm.terminal.model.HistoryWindow;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
@@ -70,14 +71,13 @@ public final class RemoteTerminalMouseMoveTest {
     int rows = 20;
     int cols = 80;
     List<TerminalLine> screen = new ArrayList<>(rows);
-    for (int row = 0; row < rows; row++) screen.add(TerminalLine.empty(0, cols));
+    for (int row = 0; row < rows; row++) screen.add(TerminalLine.empty(1000 + row, cols));
     TerminalModes modes = new TerminalModes(false, false, false,
         TerminalModes.MouseTracking.ANY_EVENT, TerminalModes.MouseEncoding.SGR, false);
     RemoteTerminalModel model = new RemoteTerminalModel();
-    model.applySnapshot(new ScreenSnapshot("s", "i", 1, 1, rows, cols,
-        ScreenSnapshot.BufferKind.MAIN, TerminalCursor.hidden(), modes,
-        TerminalPalette.defaults(), HistoryWindow.empty(), screen,
-        Collections.emptyMap(), Collections.emptyMap(), "", ""));
+    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, rows, cols,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        TerminalCursor.hidden(), modes, TerminalPalette.defaults(), "", ""));
     return model;
   }
 
@@ -117,7 +117,6 @@ public final class RemoteTerminalMouseMoveTest {
     @Override public void onRequestResize(int cols, int rows) {}
     @Override public void onRequestShowKeyboard() {}
     @Override public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {}
-    @Override public void onRequestHistoryPage() {}
     @Override public void onFocusChanged(boolean focused) {}
     @Override public void onMouse(int row, int col, String button, int wheelDelta,
                                   boolean shift, boolean alt, boolean ctrl, boolean meta,

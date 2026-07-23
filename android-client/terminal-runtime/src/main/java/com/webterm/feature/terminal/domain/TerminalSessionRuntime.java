@@ -10,15 +10,16 @@ import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.WireFormat;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ResumeToken;
-import com.webterm.terminal.model.ScreenSnapshot;
-import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.core.contract.diagnostics.DiagnosticLevel;
+import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.HistoryDelta;
+import com.webterm.terminal.model.HistoryRangeResult;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
-import com.webterm.terminal.protocol.ScreenMessageMapper;
-import com.webterm.terminal.protocol.ScreenMessageValidator;
-import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
+import com.webterm.terminal.protocol.ScreenMessageV2Validator;
+import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -26,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayDeque;
 import java.io.IOException;
 
 /**
@@ -85,6 +87,13 @@ public final class TerminalSessionRuntime {
     CLOSED
   }
 
+  /** 投影流与 transport 状态正交；FROZEN 期间只接收 TailStatus 和按需历史。 */
+  public enum StreamState {
+    LIVE,
+    FROZEN,
+    RESYNCING
+  }
+
   /** 可注入的延迟调度器；回调内部必须重新投递到 modelExecutor 并校验 generation。 */
   public interface TimeoutScheduler {
     void schedule(@NonNull Runnable task, long delayMs);
@@ -93,8 +102,16 @@ public final class TerminalSessionRuntime {
   /** 屏幕协议连接抽象。 */
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
-    /** transport 建立后由 model executor 提供原子 resume token 并开始 Hello。 */
-    default boolean beginSync(@NonNull ResumeToken resumeToken) { return false; }
+    default boolean beginSync(long streamGeneration,
+                              @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
+                              @Nullable String instanceId, long layoutEpoch,
+                              boolean hasFrozenProjection) {
+      return false;
+    }
+    default boolean setStreamMode(long streamGeneration,
+                                  @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
+      return false;
+    }
     void setLayoutLeaseId(@NonNull String leaseId);
     void sendTextInput(@NonNull String text);
     void sendPasteInput(@NonNull String text);
@@ -105,7 +122,10 @@ public final class TerminalSessionRuntime {
     /** 返回 true 表示 resize 已被本地发送队列接受；false 表示当前无可用通道，调用方不得记录"已发送"。 */
     boolean requestResize(int cols, int rows);
     /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
-    boolean requestHistoryPage(@NonNull String requestId, long beforeHistorySeq, int limit);
+    default boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
+                                        long layoutEpoch, long fromSeq, long toSeq) {
+      return false;
+    }
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
@@ -158,15 +178,19 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
-  private long patchSummaryGeneration;
-  private long patchSummaryFirstBaseRevision = -1;
-  private long patchSummaryLastScreenRevision = -1;
-  private String patchSummaryInstanceId;
-  private long patchSummaryLayoutEpoch = -1;
-  private int patchSummaryCount;
-  private long patchSummaryBytes;
-  private int patchSummaryChangedRows;
-  private int patchSummaryHistoryAppend;
+  private long streamGeneration = 1L;
+  private volatile StreamState streamState = StreamState.LIVE;
+  private volatile boolean freezeRequested;
+  private final ArrayDeque<Runnable> pendingLiveInputs = new ArrayDeque<>();
+  private int pendingLiveInputUnits;
+  private final Object pendingResizeLock = new Object();
+  private int pendingBaselineResizeCols;
+  private int pendingBaselineResizeRows;
+  private static final int MAX_PENDING_LIVE_INPUTS = 64;
+  private static final int MAX_PENDING_LIVE_INPUT_UNITS = 1 << 20;
+  private static final long HISTORY_REQUEST_TIMEOUT_MS = 5_000L;
+  private static final long HISTORY_RETRY_MIN_MS = 200L;
+  private static final long HISTORY_RETRY_MAX_MS = 5_000L;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -470,64 +494,193 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendTextInput(@NonNull String text) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
-    ScreenConnection c = connection;
-    if (c != null) {
-      c.sendTextInput(text);
-    }
+    sendWhenLive(Math.max(1, text.length()), c -> c.sendTextInput(text));
   }
 
   public void sendPasteInput(@NonNull String text) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
-    ScreenConnection c = connection;
-    if (c != null) {
-      c.sendPasteInput(text);
-    }
+    sendWhenLive(Math.max(1, text.length()), c -> c.sendPasteInput(text));
   }
 
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
-    ScreenConnection c = connection;
-    if (c != null) {
-      c.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
-    }
+    sendWhenLive(Math.max(1, key.length()),
+        c -> c.sendKeyInput(key, shift, alt, ctrl, meta, pressed));
   }
 
   public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
-    ScreenConnection c = connection;
-    if (c != null) {
-      c.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
-    }
+    sendWhenLive(1, c -> c.sendMouseInput(
+        row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed));
   }
 
   public void sendFocusInput(boolean focused) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    // Focus reporting is terminal metadata, not an explicit user command. A window focus
+    // callback while browsing frozen history must neither queue input nor force the stream LIVE.
+    if (state != State.CONNECTED || streamState != StreamState.LIVE
+        || freezeRequested || !hasLayoutLease()) return;
     ScreenConnection c = connection;
-    if (c != null) {
-      c.sendFocusInput(focused);
+    if (c != null) c.sendFocusInput(focused);
+  }
+
+  private interface LiveInput {
+    void send(@NonNull ScreenConnection connection);
+  }
+
+  private void sendWhenLive(int units, @NonNull LiveInput input) {
+    if (state != State.CONNECTED || !hasLayoutLease()) return;
+    if (streamState == StreamState.LIVE && !freezeRequested) {
+      ScreenConnection c = connection;
+      if (c != null) input.send(c);
+      return;
+    }
+    int boundedUnits = Math.max(1, units);
+    synchronized (pendingLiveInputs) {
+      if (pendingLiveInputs.size() >= MAX_PENDING_LIVE_INPUTS
+          || pendingLiveInputUnits + boundedUnits > MAX_PENDING_LIVE_INPUT_UNITS) {
+        notifyInputDeliveryUncertain("等待实时 Baseline 的输入队列已满");
+        return;
+      }
+      pendingLiveInputs.addLast(() -> {
+        ScreenConnection c = connection;
+        if (c != null && state == State.CONNECTED && hasLayoutLease()) input.send(c);
+      });
+      pendingLiveInputUnits += boundedUnits;
+    }
+    resumeLiveStream();
+  }
+
+  private void flushPendingLiveInputs() {
+    ArrayDeque<Runnable> actions;
+    synchronized (pendingLiveInputs) {
+      actions = new ArrayDeque<>(pendingLiveInputs);
+      pendingLiveInputs.clear();
+      pendingLiveInputUnits = 0;
+    }
+    for (Runnable action : actions) action.run();
+  }
+
+  private void clearPendingLiveInputs() {
+    synchronized (pendingLiveInputs) {
+      pendingLiveInputs.clear();
+      pendingLiveInputUnits = 0;
     }
   }
 
-  public void requestResize(int cols, int rows) {
-    layoutLeaseCoordinator.requestResize(cols, rows);
+  private void notifyInputDeliveryUncertain(@NonNull String message) {
+    callbackExecutor.execute(() ->
+        notifyListeners("input_delivery_uncertain",
+            listener -> listener.onInputDeliveryUncertain(message)));
   }
 
-  /**
-   * 只有连接可用且请求成功排队后才记录 pending 请求 id 并返回 true；
-   * 否则返回 false，调用方必须清除 loading 状态并允许之后重试。
-   */
-  public boolean requestHistoryPage(long beforeHistorySeq, int limit) {
+  public void requestResize(int cols, int rows) {
+    if (cols <= 0 || rows <= 0) return;
+    if (state == State.CONNECTED && streamState == StreamState.LIVE && !freezeRequested) {
+      layoutLeaseCoordinator.requestResize(cols, rows);
+      return;
+    }
+    // FROZEN/RESYNCING/SYNCING 下只保留最新尺寸。必须等同 generation 的 Baseline
+    // 成功提交后再交给 lease 协调器，避免 resize 改 epoch 后让在途 Baseline 立即失效。
+    synchronized (pendingResizeLock) {
+      pendingBaselineResizeCols = cols;
+      pendingBaselineResizeRows = rows;
+    }
+  }
+
+  private void flushResizeAfterBaseline() {
+    int cols;
+    int rows;
+    synchronized (pendingResizeLock) {
+      cols = pendingBaselineResizeCols;
+      rows = pendingBaselineResizeRows;
+      pendingBaselineResizeCols = 0;
+      pendingBaselineResizeRows = 0;
+    }
+    if (cols > 0 && rows > 0) layoutLeaseCoordinator.requestResize(cols, rows);
+  }
+
+  /** v2 按可见固定页请求历史；相同闭区间在途时幂等忽略。 */
+  public boolean requestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
+    return requestHistoryRange(fromSeq, toSeq, anchorSeq, 0);
+  }
+
+  private boolean requestHistoryRange(
+      long fromSeq, long toSeq, long anchorSeq, int retryAttempt) {
     if (state != State.CONNECTED) return false;
     ScreenConnection c = connection;
-    if (c == null) return false;
+    if (c == null || model.instanceId == null || model.layoutEpoch == 0) return false;
+    HistoryExtent extent = model.displayExtent();
+    long boundedFrom = Math.max(extent.firstSeq, fromSeq);
+    long boundedTo = Math.min(extent.lastSeq, toSeq);
+    if (boundedFrom <= 0 || boundedTo < boundedFrom || boundedTo - boundedFrom >= 256) {
+      return false;
+    }
+    if (historyRequests.isRangePending(boundedFrom, boundedTo)) return true;
     String requestId = historyRequests.nextRequestId();
-    if (!c.requestHistoryPage(requestId, beforeHistorySeq, limit)) return false;
-    historyRequests.markPending(requestId);
+    if (!c.requestHistoryRange(
+        requestId, model.instanceId, model.layoutEpoch, boundedFrom, boundedTo)) return false;
+    historyRequests.markPending(requestId, boundedFrom, boundedTo, anchorSeq,
+        model.instanceId, model.layoutEpoch, retryAttempt);
+    scheduleHistoryRequestTimeout(requestId);
     return true;
+  }
+
+  private void scheduleHistoryRequestTimeout(@NonNull String requestId) {
+    timeoutScheduler.schedule(
+        () -> modelExecutor.execute(() -> {
+          HistoryRequestCoordinator.Pending expired = historyRequests.expire(requestId);
+          if (expired != null) scheduleHistoryRetry(expired, 0);
+        }),
+        HISTORY_REQUEST_TIMEOUT_MS);
+  }
+
+  private void scheduleHistoryRetry(
+      @NonNull HistoryRequestCoordinator.Pending pending, long serverDelayMs) {
+    int nextAttempt = Math.min(8, pending.retryAttempt + 1);
+    long exponential = Math.min(
+        HISTORY_RETRY_MAX_MS, HISTORY_RETRY_MIN_MS << Math.min(5, pending.retryAttempt));
+    long delay = Math.max(exponential, Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs));
+    timeoutScheduler.schedule(
+        () -> modelExecutor.execute(() -> {
+          if (state != State.CONNECTED
+              || !pending.instanceId.equals(model.instanceId)
+              || pending.layoutEpoch != model.layoutEpoch) return;
+          requestHistoryRange(
+              pending.fromSeq, pending.toSeq, pending.anchorSeq, nextAttempt);
+        }),
+        delay);
+  }
+
+  /** 用户离开尾部时冻结屏幕流；本地投影和 viewport 不被远端输出推进。 */
+  public void freezeStream() {
+    freezeRequested = true;
+    modelExecutor.execute(() -> {
+      if (!freezeRequested || state != State.CONNECTED
+          || streamState == StreamState.FROZEN) return;
+      ScreenConnection c = connection;
+      if (c == null) return;
+      long generation = ++streamGeneration;
+      if (c.setStreamMode(
+          generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
+        streamState = StreamState.FROZEN;
+      }
+    });
+  }
+
+  /** 回到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
+  public void resumeLiveStream() {
+    freezeRequested = false;
+    if (streamState == StreamState.LIVE) return;
+    modelExecutor.execute(() -> {
+      if (!freezeRequested && streamState != StreamState.LIVE) {
+        requestFreshBaseline("return to live");
+      }
+    });
+  }
+
+  @NonNull
+  public StreamState streamState() {
+    return streamState;
   }
 
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
@@ -542,6 +695,7 @@ public final class TerminalSessionRuntime {
     renderWakeDispatcher.cancel();
     updateState(State.CLOSED);
     screenMailbox.reset();
+    clearPendingLiveInputs();
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
     modelExecutor.execute(this::resetResyncRecovery);
     ScreenConnection c = connection;
@@ -560,12 +714,18 @@ public final class TerminalSessionRuntime {
     if (connection != expectedConnection
         || connectionEpoch.get() != expectedEpoch
         || state != State.TRANSPORT_CONNECTED) return;
-    ResumeToken token = !resyncCoordinator.isRecovering()
-        ? model.resumeToken()
-        : ResumeToken.cold(RemoteTerminalModel.SCHEMA_GENERATION);
     updateState(State.SYNCING);
     long generation = ++syncGeneration;
-    if (!expectedConnection.beginSync(token)) {
+    TerminalScreenV2Proto.ScreenStreamMode desiredMode =
+        streamState == StreamState.FROZEN
+            ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
+            : TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+    boolean hasFrozenProjection = streamState == StreamState.FROZEN
+        && model.instanceId != null && !model.instanceId.isEmpty();
+    boolean helloSent = expectedConnection.beginSync(
+        streamGeneration, desiredMode, model.instanceId, model.layoutEpoch,
+        hasFrozenProjection);
+    if (!helloSent) {
       // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
       // Snapshot 只会让页面永久闪烁；立即换 channel，并作废当前代际的迟到帧。
       connectionEpoch.incrementAndGet();
@@ -595,8 +755,7 @@ public final class TerminalSessionRuntime {
   private void handleScreenMessage(long messageEpoch,
                                    @NonNull ScreenConnection sourceConnection,
                                    @NonNull byte[] payload) {
-    ScreenMessageValidator.ValidationResult frameSize =
-        ScreenMessageValidator.validateEnvelopeSize(payload);
+    boolean frameSizeValid = payload.length > 0 && payload.length <= 2 * 1024 * 1024;
     if (state == State.CLOSED) return;
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
     // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
@@ -608,7 +767,7 @@ public final class TerminalSessionRuntime {
           captureStreamIdentity(), messageEpoch, System.currentTimeMillis(), kind.name(), payload);
     }
     ScreenMailbox.Offer offer = screenMailbox.offer(
-        messageEpoch, sourceConnection, payload, frameSize.ok, kind);
+        messageEpoch, sourceConnection, payload, frameSizeValid, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
     if (offer.scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
   }
@@ -635,7 +794,8 @@ public final class TerminalSessionRuntime {
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
-          if (message.kind == ScreenMailbox.MessageKind.PATCH && resyncCoordinator.isRecovering()) {
+          if (message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+              && streamState == StreamState.RESYNCING) {
             continue;
           }
           processScreenMessage(message);
@@ -667,14 +827,14 @@ public final class TerminalSessionRuntime {
   private static TerminalRenderMetrics.ScreenTrafficKind toScreenTrafficKind(
       ScreenMailbox.MessageKind kind) {
     switch (kind) {
-      case SNAPSHOT:
-        return TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT;
-      case PATCH:
+      case BASELINE:
+        return TerminalRenderMetrics.ScreenTrafficKind.BASELINE;
+      case SCREEN_PATCH:
         return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
-      case HISTORY_PAGE:
-        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE;
-      case HISTORY_TRIM:
-        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM;
+      case HISTORY_RANGE:
+        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
+      case HISTORY_DELTA:
+        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA;
       default:
         return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
     }
@@ -689,11 +849,11 @@ public final class TerminalSessionRuntime {
         int tag = input.readTag();
         if (tag == 0) break;
         int field = WireFormat.getTagFieldNumber(tag);
-        // ScreenEnvelope oneof fields in terminal_screen.proto.
-        if (field == 11) return ScreenMailbox.MessageKind.SNAPSHOT;
-        if (field == 12) return ScreenMailbox.MessageKind.PATCH;
-        if (field == 14) return ScreenMailbox.MessageKind.HISTORY_PAGE;
-        if (field == 15) return ScreenMailbox.MessageKind.HISTORY_TRIM;
+        // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
+        if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
+        if (field == 4) return ScreenMailbox.MessageKind.SCREEN_PATCH;
+        if (field == 5) return ScreenMailbox.MessageKind.HISTORY_DELTA;
+        if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
         if (!input.skipField(tag)) break;
       }
     } catch (IOException | RuntimeException ignored) {
@@ -739,243 +899,210 @@ public final class TerminalSessionRuntime {
       TerminalResumeMetrics.screenMailboxRecovered("snapshot");
     }
     resyncCoordinator.onAuthoritativeSnapshot();
-    historyRequests.clear();
+    historyRequests.retainCompatible(model.instanceId, model.layoutEpoch);
   }
 
   private void resetResyncRecovery() {
     resyncCoordinator.reset();
     historyRequests.clear();
     screenMailbox.reset();
-    resetPatchSummary();
   }
 
   private void sendResync(@NonNull String reason) {
+    requestFreshBaseline(reason);
+  }
+
+  private void requestFreshBaseline(@NonNull String reason) {
     ScreenConnection c = connection;
-    if (c != null) {
-      Diagnostics.warn("screen_protocol", "resync_requested", diagnosticFields(
-          "layoutEpoch", model.layoutEpoch,
-          "screenRevision", model.screenRevision,
-          "reason", reason));
-      c.requestResync(model.layoutEpoch, model.screenRevision, reason);
+    if (c == null || state == State.CLOSED) return;
+    long generation = ++streamGeneration;
+    streamState = StreamState.RESYNCING;
+    Diagnostics.warn("screen_protocol", "baseline_requested", diagnosticFields(
+        "layoutEpoch", model.layoutEpoch,
+        "screenRevision", model.screenRevision,
+        "streamGeneration", generation,
+        "reason", reason));
+    if (!c.setStreamMode(
+        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE)) {
+      c.requestReconnect("screen Baseline request failed");
     }
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
-      TerminalScreenProto.ScreenEnvelope envelope;
-      try {
-        long parseStartedNanos = System.nanoTime();
-        envelope = TerminalScreenProto.ScreenEnvelope.parseFrom(message.payload);
-        TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
-        if (envelope.getProtocolVersion() != 1) {
-          throw new IllegalArgumentException("unsupported protocol version");
-        }
-      } catch (Exception e) {
-        Diagnostics.warn("screen_protocol", "screen_frame_decode_failed", diagnosticFields(
-            "failureKind", e.getClass().getSimpleName(),
-            "localRevision", model.screenRevision));
-        startResyncRecovery(e.getMessage() != null ? e.getMessage() : "invalid screen message");
-        return;
+    TerminalScreenV2Proto.ScreenEnvelope envelope;
+    try {
+      long parseStartedNanos = System.nanoTime();
+      envelope = TerminalScreenV2Proto.ScreenEnvelope.parseFrom(message.payload);
+      TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
+      if (envelope.getProtocolVersion() != 2) {
+        throw new IllegalArgumentException("unsupported screen protocol version");
       }
+    } catch (Exception e) {
+      Diagnostics.warn("screen_protocol", "screen_frame_decode_failed", diagnosticFields(
+          "failureKind", e.getClass().getSimpleName(),
+          "localRevision", model.screenRevision));
+      startResyncRecovery("invalid screen.v2 message");
+      return;
+    }
+    if (message.connectionEpoch != connectionEpoch.get()
+        || message.sourceConnection != connection) return;
 
-      // 旧物理连接已经到达本地但尚未处理的帧不得跨代际生效。
-      if (message.connectionEpoch != connectionEpoch.get()
-          || message.sourceConnection != connection) return;
-
-      // InputAck 与 instance identity 同样消费这一次 typed parse；TerminalChannel
-      // 不再在 DeviceConnection event loop 上重复解析原始 protobuf。
-      try {
-        if (ScreenEnvelopeDispatcher.dispatchReliableInput(
-            envelope, message.sourceConnection.reliableInputTracker())) return;
-      } catch (RuntimeException e) {
-        Diagnostics.warn("screen_protocol", "input_ack_processing_failed", diagnosticFields(
-            "failureKind", e.getClass().getSimpleName(),
-            "localRevision", model.screenRevision));
-        ReliableInputTracker tracker = message.sourceConnection.reliableInputTracker();
-        if (tracker != null) tracker.clear();
-        return;
-      }
-
-      long modelApplyStartedNanos = System.nanoTime();
+    ReliableInputTracker tracker = message.sourceConnection.reliableInputTracker();
+    try {
       switch (envelope.getPayloadCase()) {
-        case SNAPSHOT: {
-          Diagnostics.info("screen_protocol", "snapshot_received", diagnosticFields(
-              "instanceId", envelope.getSnapshot().getInstanceId(),
-              "layoutEpoch", envelope.getSnapshot().getLayoutEpoch(),
-              "screenRevision", envelope.getSnapshot().getScreenRevision(),
-              "payloadBytes", message.payload.length));
-          ScreenMessageValidator.ValidationResult validation =
-              ScreenMessageValidator.validateSnapshot(envelope.getSnapshot());
-          if (!validation.ok) {
-            Diagnostics.warn("screen_protocol", "snapshot_rejected", diagnosticFields(
-                "failureKind", "INVALID_SNAPSHOT"));
-            // 无效 snapshot 不能解除围栏：等待期间按退避重发 resync，
-            // 空闲时启动一次恢复。不能静默丢弃，否则永远等不到权威帧。
-            onInvalidSnapshot(validation.reason != null ? validation.reason : "invalid snapshot");
-            return;
+        case INPUT_ACK:
+          if (tracker != null) tracker.handleInputAck(envelope.getInputAck());
+          return;
+        case INFO:
+          if (tracker != null) tracker.observeTerminalInstance(envelope.getInfo().getInstanceId());
+          break;
+        case BASELINE:
+          if (tracker != null) {
+            tracker.observeTerminalInstance(envelope.getBaseline().getInstanceId());
           }
-          ScreenSnapshot snapshot;
-          boolean geometryChanged;
-          try {
-            snapshot = ScreenMessageMapper.mapSnapshot(envelope.getSnapshot());
-            geometryChanged = model.instanceId == null
-                || !model.instanceId.equals(snapshot.instanceId)
-                || model.layoutEpoch != snapshot.layoutEpoch
-                || model.rows != snapshot.rows || model.columns != snapshot.cols;
-            model.applySnapshot(snapshot);
-          } catch (Exception e) {
-            Diagnostics.warn("screen_protocol", "snapshot_apply_failed", diagnosticFields(
-                "failureKind", e.getClass().getSimpleName(),
-                "localRevision", model.screenRevision));
-            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "snapshot apply failed");
-            return;
+          break;
+        case SCREEN_PATCH:
+          if (tracker != null) {
+            tracker.observeTerminalInstance(envelope.getScreenPatch().getInstanceId());
           }
-          // 捕获点 B/C：Mapper 输出的不可变 Snapshot + applySnapshot 后的模型摘要。
-          captureAfterApply(true, snapshot, null);
-          resetPatchSummary();
-          Diagnostics.info("screen_protocol", "snapshot_applied", diagnosticFields(
-              "instanceId", snapshot.instanceId,
-              "layoutEpoch", snapshot.layoutEpoch,
-              "screenRevision", snapshot.screenRevision,
-              "changedRows", snapshot.screen.size(),
-              "historyAppend", snapshot.history.lines.size(),
-              "payloadBytes", message.payload.length,
-              "applyDurationMs", elapsedMillis(modelApplyStartedNanos)));
-          if (geometryChanged) {
-            Diagnostics.info("screen_protocol", "layout_epoch_changed", diagnosticFields(
-                "instanceId", snapshot.instanceId,
-                "layoutEpoch", snapshot.layoutEpoch,
-                "screenRevision", snapshot.screenRevision,
-                "newCols", snapshot.cols,
-                "newRows", snapshot.rows));
+          break;
+        default:
+          break;
+      }
+    } catch (RuntimeException e) {
+      if (tracker != null) tracker.clear();
+      Diagnostics.warn("screen_protocol", "input_ack_processing_failed", diagnosticFields(
+          "failureKind", e.getClass().getSimpleName()));
+      return;
+    }
+
+    long applyStartedNanos = System.nanoTime();
+    boolean renderChanged = false;
+    try {
+      switch (envelope.getPayloadCase()) {
+        case BASELINE: {
+          TerminalScreenV2Proto.Baseline wire = envelope.getBaseline();
+          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          ScreenMessageV2Validator.validateBaseline(wire);
+          ScreenBaseline baseline = ScreenMessageV2Mapper.mapBaseline(wire);
+          String previousInstanceId = model.instanceId;
+          if (!model.applyBaseline(baseline)) {
+            throw new IllegalArgumentException("stale Baseline");
           }
-          TerminalResumeMetrics.snapshot(envelope.getSnapshot().getScreenRevision());
-          // A snapshot atomically replaces the local projection and is the
-          // only frame that may release a revision-gap recovery fence.
+          com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
+              captureStreamIdentity(), baseline);
+          streamGeneration = wire.getStreamGeneration();
+          streamState = StreamState.LIVE;
           onAuthoritativeSnapshot();
           completeSynchronization();
+          flushResizeAfterBaseline();
+          if (previousInstanceId != null
+              && !previousInstanceId.equals(baseline.instanceId)) {
+            clearPendingLiveInputs();
+            notifyInputDeliveryUncertain("终端实例已变更，等待实时恢复的输入未发送");
+          } else {
+            flushPendingLiveInputs();
+          }
+          renderChanged = true;
           break;
         }
-        case PATCH:
-          // A patch is relative to the state that failed validation. Applying
-          // queued patches while waiting for a snapshot only creates repeated
-          // revision gaps and a resync storm on slow links. The envelope is
-          // already parsed here on modelExecutor; drop without validating
-          // or touching the local revision.
-          if (resyncCoordinator.isRecovering()) return;
-          // rows 取当前模型 geometry：patch 自身不携带 geometry，
-          // 行索引上界只能相对本地投影校验（计划 §10.1）。
-          ScreenMessageValidator.ValidationResult patchValidation =
-              ScreenMessageValidator.validatePatch(envelope.getPatch(), model.rows, model.columns);
-          if (!patchValidation.ok) {
-            Diagnostics.warn("screen_protocol", "patch_rejected", diagnosticFields(
-                "failureKind", "INVALID_PATCH",
-                "localRevision", model.screenRevision));
-            startResyncRecovery(patchValidation.reason != null ? patchValidation.reason : "invalid patch");
-            return;
+        case SCREEN_PATCH: {
+          if (streamState != StreamState.LIVE) return;
+          TerminalScreenV2Proto.ScreenPatch wire = envelope.getScreenPatch();
+          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          ScreenMessageV2Validator.validatePatch(wire);
+          if (wire.getScreenLineUpdatesCount() > model.rows) {
+            throw new IllegalArgumentException("screen patch exceeds row limit");
           }
-          try {
-            boolean resumePatch = state == State.SYNCING || state == State.TRANSPORT_CONNECTED;
-            long patchBase = envelope.getPatch().getBaseRevision();
-            ScreenPatch patch = ScreenMessageMapper.mapPatch(envelope.getPatch(), model.columns);
-            if (model.instanceId == null || !model.instanceId.equals(patch.instanceId)) {
-              Diagnostics.warn("screen_protocol", "instance_mismatch", diagnosticFields(
-                  "instanceId", patch.instanceId, "localRevision", model.screenRevision,
-                  "baseRevision", patch.baseRevision));
-            } else if (model.layoutEpoch != patch.layoutEpoch) {
-              Diagnostics.warn("screen_protocol", "layout_epoch_mismatch", diagnosticFields(
-                  "layoutEpoch", patch.layoutEpoch, "localRevision", model.screenRevision,
-                  "baseRevision", patch.baseRevision));
-            } else if (model.screenRevision != patch.baseRevision) {
-              Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
-                  "baseRevision", patch.baseRevision, "localRevision", model.screenRevision,
-                  "screenRevision", patch.screenRevision));
-            }
-            model.applyPatch(patch);
-            // 捕获点 B/C：Mapper 输出的不可变 Patch + applyPatch 后的模型摘要。
-            captureAfterApply(false, null, patch);
-            recordPatchSummary(message.payload.length, countScreenLineUpdates(patch), patch);
-            if (resumePatch) {
-              TerminalResumeMetrics.cumulativePatch(patchBase,
-                  envelope.getPatch().getScreenRevision(),
-                  envelope.getPatch().getLineUpdatesCount(),
-                  envelope.getPatch().getHistoryAppendSeqsCount());
-            }
-          } catch (Exception e) {
-            Diagnostics.warn("screen_protocol", "patch_apply_failed", diagnosticFields(
-                "failureKind", e.getClass().getSimpleName(),
-                "localRevision", model.screenRevision));
-            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "patch apply failed");
-            return;
-          }
+          ScreenPatchV2 patch = ScreenMessageV2Mapper.mapPatch(wire, model.columns);
+          model.applyScreenPatch(patch);
+          com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(
+              captureStreamIdentity(), patch);
           completeSynchronization();
+          renderChanged = true;
           break;
-        case HISTORY_PAGE: {
-          // A page is anchored to the cache window that requested it. A late
-          // response after reconnect/snapshot must not prepend rows into a
-          // different viewport.
-          if (!historyRequests.accept(envelope.getHistoryPage().getRequestId())) return;
-          try {
-            requireValid(ScreenMessageValidator.validateHistoryPage(envelope.getHistoryPage()));
-            model.prependHistoryPage(
-                ScreenMessageMapper.mapHistoryPage(envelope.getHistoryPage(), model.columns));
-            historyRequests.complete(envelope.getHistoryPage().getRequestId());
-          } catch (Exception e) {
-            Diagnostics.warn("screen_protocol", "history_page_rejected", diagnosticFields(
-                "failureKind", e.getClass().getSimpleName(),
-                "localRevision", model.screenRevision));
-            historyRequests.complete(envelope.getHistoryPage().getRequestId());
-            return;
+        }
+        case HISTORY_DELTA: {
+          if (streamState != StreamState.LIVE) return;
+          TerminalScreenV2Proto.HistoryDelta wire = envelope.getHistoryDelta();
+          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          ScreenMessageV2Validator.validateHistoryDelta(wire);
+          HistoryDelta delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
+          renderChanged = model.applyHistoryDelta(delta);
+          break;
+        }
+        case HISTORY_RANGE_RESPONSE: {
+          TerminalScreenV2Proto.HistoryRangeResponse wire =
+              envelope.getHistoryRangeResponse();
+          ScreenMessageV2Validator.validateHistoryRange(wire);
+          HistoryRequestCoordinator.Pending pending =
+              historyRequests.complete(wire.getRequestId());
+          if (pending == null) return;
+          HistoryRangeResult range =
+              ScreenMessageV2Mapper.mapHistoryRange(wire, model.columns);
+          renderChanged = model.applyHistoryRange(
+              range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
+          if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
+            Diagnostics.info("screen_protocol", "frozen_projection_stale", diagnosticFields(
+                "instanceId", wire.getInstanceId(),
+                "layoutEpoch", wire.getLayoutEpoch()));
+            requestFreshBaseline("history projection stale");
+          } else if (range.status == HistoryRangeResult.Status.RETRYABLE) {
+            scheduleHistoryRetry(pending, range.retryAfterMs);
           }
           break;
         }
-        case HISTORY_TRIM:
-          model.trimHistory(envelope.getHistoryTrim().getLayoutEpoch(),
-              envelope.getHistoryTrim().getFirstAvailableHistorySeq());
+        case TAIL_STATUS: {
+          TerminalScreenV2Proto.TailStatus status = envelope.getTailStatus();
+          requireCurrentStreamGeneration(status.getStreamGeneration());
+          model.observeTailStatus(status.getInstanceId(), status.getLayoutEpoch(),
+              historyExtent(status.getLatestHistoryExtent()));
+          if (streamState == StreamState.FROZEN) completeSynchronization();
+          if (status.getExited()) updateState(State.CLOSED);
           break;
+        }
         case LAYOUT_LEASE:
-          layoutLeaseCoordinator.handle(envelope.getLayoutLease());
+          layoutLeaseCoordinator.handleV2(envelope.getLayoutLease());
           break;
         case EFFECT:
-          if (model.instanceId != null && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
-            handleEffect(envelope.getEffect());
+          if (model.instanceId != null
+              && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
+            handleEffectV2(envelope.getEffect());
           }
           break;
         case EXIT:
           updateState(State.CLOSED);
           break;
-        case RESUME_ACK:
-          long ackBase = model.screenRevision;
-          try {
-            model.applyResumeAck(
-                envelope.getResumeAck().getInstanceId(),
-                envelope.getResumeAck().getLayoutEpoch(),
-                envelope.getResumeAck().getScreenRevision());
-          } catch (RemoteTerminalModel.RevisionGapException e) {
-            Diagnostics.warn("screen_protocol", "resume_ack_rejected", diagnosticFields(
-                "failureKind", e.getClass().getSimpleName(),
-                "localRevision", model.screenRevision));
-            startResyncRecovery(e.getMessage() != null ? e.getMessage() : "resume ack rejected");
-            return;
-          }
-          TerminalResumeMetrics.exactResume(ackBase,
-              envelope.getResumeAck().getScreenRevision());
-          completeSynchronization();
-          break;
         default:
           break;
       }
-      TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - modelApplyStartedNanos);
-      if (envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.SNAPSHOT
-          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.PATCH
-          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.HISTORY_PAGE
-          || envelope.getPayloadCase() == TerminalScreenProto.ScreenEnvelope.PayloadCase.HISTORY_TRIM) {
-        dispatchRenderNeeded();
-      }
+    } catch (RemoteTerminalModel.RevisionGapException e) {
+      Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
+          "localRevision", model.screenRevision,
+          "streamGeneration", streamGeneration));
+      startResyncRecovery("screen.v2 revision gap");
+      return;
+    } catch (Exception e) {
+      Diagnostics.warn("screen_protocol", "screen_v2_apply_failed", diagnosticFields(
+          "failureKind", e.getClass().getSimpleName(),
+          "localRevision", model.screenRevision));
+      startResyncRecovery("screen.v2 apply failed");
+      return;
+    }
+    TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);
+    if (renderChanged) dispatchRenderNeeded();
   }
 
-  private static void requireValid(ScreenMessageValidator.ValidationResult result) {
-    if (!result.ok) throw new IllegalArgumentException(result.reason);
+  private void requireCurrentStreamGeneration(long generation) {
+    if (generation != streamGeneration) {
+      throw new IllegalArgumentException("stale stream generation");
+    }
   }
+
+  private static HistoryExtent historyExtent(TerminalScreenV2Proto.HistoryExtent extent) {
+    return new HistoryExtent(extent.getFirstSeq(), extent.getLastSeq());
+  }
+
 
   /**
    * 构造当前事件流身份（sessionId/terminalInstanceId/clientInstanceId），供捕获做会话级隔离。
@@ -992,34 +1119,6 @@ public final class TerminalSessionRuntime {
         sessionId, terminalInstanceId, clientInstanceId);
   }
 
-  /**
-   * 捕获点 B/C：在 modelExecutor 上（applySnapshot/applyPatch 成功后）旁路记录 Mapper 输出
-   * 的不可变领域对象与模型摘要。先做一次廉价 isRecording() 判断；记录时携带流身份。
-   * 绝不消费 render update、不推进任何状态。
-   */
-  private void captureAfterApply(boolean afterSnapshot,
-                                 com.webterm.terminal.model.ScreenSnapshot snapshot,
-                                 com.webterm.terminal.model.ScreenPatch patch) {
-    if (!com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
-      return;
-    }
-    com.webterm.terminal.model.capture.CaptureStreamIdentity identity = captureStreamIdentity();
-    if (snapshot != null) {
-      com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(identity, snapshot);
-    }
-    if (patch != null) {
-      com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(identity, patch);
-    }
-    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(identity,
-        new com.webterm.terminal.model.capture.CapturedModelState(
-            System.currentTimeMillis(),
-            model.instanceId, model.layoutEpoch, model.screenRevision,
-            model.rows, model.columns,
-            model.activeBuffer == com.webterm.terminal.model.ScreenSnapshot.BufferKind.ALTERNATE ? 1 : 0,
-            model.projectionHealth().complete,
-            afterSnapshot));
-  }
-
   private Map<String, Object> diagnosticFields(Object... pairs) {
     Map<String, Object> fields = new HashMap<>();
     fields.put("sessionId", sessionId);
@@ -1027,64 +1126,6 @@ public final class TerminalSessionRuntime {
       fields.put(String.valueOf(pairs[i]), pairs[i + 1]);
     }
     return fields;
-  }
-
-  private void recordPatchSummary(int payloadBytes, int changedRows, @NonNull ScreenPatch patch) {
-    if (!Diagnostics.isEnabled(DiagnosticLevel.INFO)) return;
-    patchSummaryCount++;
-    patchSummaryBytes += payloadBytes;
-    patchSummaryChangedRows += changedRows;
-    patchSummaryHistoryAppend += patch.historyAppendSeqs.size();
-    if (patchSummaryFirstBaseRevision < 0) patchSummaryFirstBaseRevision = patch.baseRevision;
-    patchSummaryLastScreenRevision = patch.screenRevision;
-    if (patchSummaryCount == 1) {
-      patchSummaryInstanceId = patch.instanceId;
-      patchSummaryLayoutEpoch = patch.layoutEpoch;
-      final long generation = patchSummaryGeneration;
-      timeoutScheduler.schedule(
-          () -> modelExecutor.execute(() -> flushPatchSummary(generation)), 1000L);
-    }
-  }
-
-  /** History promotion carries a HistorySeq but is not a changed visible screen row. */
-  private static int countScreenLineUpdates(@NonNull ScreenPatch patch) {
-    if (patch.lineUpdates.isEmpty()) return 0;
-    java.util.HashSet<Long> historySeqs = new java.util.HashSet<>(patch.historyAppendSeqs);
-    int count = 0;
-    for (com.webterm.terminal.model.TerminalLine line : patch.lineUpdates) {
-      if (!historySeqs.contains(line.historySeq)) count++;
-    }
-    return count;
-  }
-
-  private void flushPatchSummary(long generation) {
-    if (generation != patchSummaryGeneration || patchSummaryCount == 0) return;
-    Diagnostics.info("screen_protocol", "patch_applied_summary", diagnosticFields(
-        "instanceId", patchSummaryInstanceId,
-        "layoutEpoch", patchSummaryLayoutEpoch,
-        "firstBaseRevision", patchSummaryFirstBaseRevision,
-        "lastScreenRevision", patchSummaryLastScreenRevision,
-        "patchCount", patchSummaryCount,
-        "payloadBytes", patchSummaryBytes,
-        "changedRows", patchSummaryChangedRows,
-        "historyAppend", patchSummaryHistoryAppend));
-    resetPatchSummary();
-  }
-
-  private void resetPatchSummary() {
-    patchSummaryGeneration++;
-    patchSummaryFirstBaseRevision = -1;
-    patchSummaryLastScreenRevision = -1;
-    patchSummaryInstanceId = null;
-    patchSummaryLayoutEpoch = -1;
-    patchSummaryCount = 0;
-    patchSummaryBytes = 0;
-    patchSummaryChangedRows = 0;
-    patchSummaryHistoryAppend = 0;
-  }
-
-  private static long elapsedMillis(long startedNanos) {
-    return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
   }
 
   @NonNull
@@ -1102,7 +1143,7 @@ public final class TerminalSessionRuntime {
     });
   }
 
-  private void handleEffect(TerminalScreenProto.TerminalEffect effect) {
+  private void handleEffectV2(TerminalScreenV2Proto.TerminalEffect effect) {
     TerminalScreenEffect screenEffect = null;
     switch (effect.getEffectCase()) {
       case BELL:
@@ -1133,9 +1174,7 @@ public final class TerminalSessionRuntime {
       default:
         break;
     }
-    if (screenEffect != null) {
-      dispatchEffect(screenEffect);
-    }
+    if (screenEffect != null) dispatchEffect(screenEffect);
   }
 
   private void dispatchEffect(@NonNull TerminalScreenEffect effect) {

@@ -127,7 +127,7 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 	}
 
 	// 规则 3：字典世代内只追加，新增项记录 created revision。长度缺口填充
-	// 同时覆盖 HistoryPage 等导出表复用路径在两次导出之间追加的条目——其
+	// 同时覆盖历史范围导出表复用路径在两次导出之间追加的条目——其
 	// created revision 记到下一次导出（偏晚、偏保守：推导时只会多带不会漏带，
 	// 重发字典项幂等无害）。
 	styles := p.exporter.styleTable.Styles()

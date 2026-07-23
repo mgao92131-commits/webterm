@@ -25,7 +25,7 @@ import (
 	"webterm/go-core/internal/relay"
 	"webterm/go-core/internal/relayapp"
 	"webterm/go-core/internal/relaycore"
-	pb "webterm/go-core/internal/screenprotocol/generated"
+	pb "webterm/go-core/internal/screenprotocol/generatedv2"
 )
 
 func main() {
@@ -488,9 +488,12 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	for _, probe := range probes {
 		terminalID := "term:" + probe.sessionID
 		hello, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 1,
+			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-				Version: 1, Cols: 80, Rows: 24, ClientInstanceId: "relay-e2e-smoke",
+				ClientInstanceId: "relay-e2e-smoke",
+				DesiredMode:      pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
+				StreamGeneration: 1,
+				DesiredGeometry:  &pb.Geometry{Cols: 80, Rows: 24},
 			}},
 		})
 		if err != nil {
@@ -500,7 +503,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 			return err
 		}
 		acquire, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 1,
+			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{
 				Interactive: true,
 			}},
@@ -536,7 +539,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		terminalID := "term:" + probe.sessionID
 		command := "printf " + probe.marker + "\\n\r"
 		input, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 1,
+			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
 				LeaseId:          leaseIDs[terminalID],
 				ClientInstanceId: "relay-e2e-smoke",
@@ -589,10 +592,10 @@ func screenEnvelopeContains(data []byte, text string) bool {
 	}
 	var lines []*pb.LineData
 	switch payload := envelope.Payload.(type) {
-	case *pb.ScreenEnvelope_Snapshot:
-		lines = payload.Snapshot.ScreenLines
-	case *pb.ScreenEnvelope_Patch:
-		lines = payload.Patch.LineUpdates
+	case *pb.ScreenEnvelope_Baseline:
+		lines = payload.Baseline.ScreenLines
+	case *pb.ScreenEnvelope_ScreenPatch:
+		lines = payload.ScreenPatch.ScreenLineUpdates
 	default:
 		return false
 	}

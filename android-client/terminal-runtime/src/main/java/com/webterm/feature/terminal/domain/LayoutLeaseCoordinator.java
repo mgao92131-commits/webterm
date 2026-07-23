@@ -3,7 +3,7 @@ package com.webterm.feature.terminal.domain;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.webterm.terminal.protocol.generated.TerminalScreenProto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
@@ -86,10 +86,16 @@ public final class LayoutLeaseCoordinator {
     }
   }
 
-  public void handle(@NonNull TerminalScreenProto.LayoutLease lease) {
+  public void handleV2(@NonNull TerminalScreenV2Proto.LayoutLease lease) {
+    handleValues(lease.getRequestId(), lease.getLeaseId(), lease.getGranted(),
+        lease.getExpiresAtMs());
+  }
+
+  private void handleValues(@NonNull String responseRequestId,
+                            @NonNull String responseLeaseId,
+                            boolean granted, long responseExpiresAtMs) {
     if (!environment.isTerminalConnected() || !pageAttached) return;
-    String responseRequestId = lease.getRequestId();
-    boolean unsolicitedRevocation = !lease.getGranted() && responseRequestId.isEmpty();
+    boolean unsolicitedRevocation = !granted && responseRequestId.isEmpty();
     if (!unsolicitedRevocation) {
       if (pendingRequestId.isEmpty()) return;
       if (!responseRequestId.isEmpty() && !responseRequestId.equals(pendingRequestId)) {
@@ -98,17 +104,17 @@ public final class LayoutLeaseCoordinator {
       }
     }
     pendingRequestId = "";
-    if (lease.getGranted()) {
-      if (lease.getLeaseId().isEmpty()) {
+    if (granted) {
+      if (responseLeaseId.isEmpty()) {
         clearState();
         updateConnectionLease();
         notifyReady();
         scheduleRetry(generation.get());
         return;
       }
-      leaseId = lease.getLeaseId();
+      leaseId = responseLeaseId;
       state = State.HELD;
-      expiresAtMs = lease.getExpiresAtMs();
+      expiresAtMs = responseExpiresAtMs;
       retryAttempt = 0;
     } else {
       if (unsolicitedRevocation) TerminalResumeMetrics.leaseRevoked();

@@ -8,9 +8,10 @@ import android.app.Activity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 
-import com.webterm.terminal.model.HistoryWindow;
+import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalLine;
@@ -36,7 +37,7 @@ public final class RemoteTerminalSelectionInteractionTest {
 
   @Test
   public void sequentialStartEndStartDragsKeepBothHandlesEffective() throws Exception {
-    Fixture fixture = fixture(ScreenSnapshot.BufferKind.MAIN);
+    Fixture fixture = fixture(TerminalBufferKind.MAIN);
     invoke(fixture.view, "startSelectionAt", new Class<?>[] {float.class, float.class},
         20f, 100f);
 
@@ -75,7 +76,7 @@ public final class RemoteTerminalSelectionInteractionTest {
 
   @Test
   public void topEdgeWithoutHistoryMapsToFirstScreenRowInsteadOfCrashing() throws Exception {
-    Fixture fixture = fixture(ScreenSnapshot.BufferKind.MAIN);
+    Fixture fixture = fixture(TerminalBufferKind.MAIN);
     TerminalSelection.Anchor anchor = (TerminalSelection.Anchor) invoke(fixture.view,
         "pointToAnchor", new Class<?>[] {float.class, float.class}, 20f, -20f);
     assertNotNull(anchor);
@@ -84,7 +85,7 @@ public final class RemoteTerminalSelectionInteractionTest {
 
   @Test
   public void alternateBufferSelectionNeverTurnsEdgeDragIntoArrowKeys() throws Exception {
-    Fixture fixture = fixture(ScreenSnapshot.BufferKind.ALTERNATE);
+    Fixture fixture = fixture(TerminalBufferKind.ALTERNATE);
     invoke(fixture.view, "startSelectionAt", new Class<?>[] {float.class, float.class},
         20f, 100f);
     float[] center = handleCenter(fixture.view, true);
@@ -99,7 +100,7 @@ public final class RemoteTerminalSelectionInteractionTest {
 
   @Test
   public void mainBufferEdgeDragScrollsViewportAndStopsOnRelease() throws Exception {
-    Fixture fixture = fixture(ScreenSnapshot.BufferKind.MAIN, 50);
+    Fixture fixture = fixture(TerminalBufferKind.MAIN, 50);
     invoke(fixture.view, "startSelectionAt", new Class<?>[] {float.class, float.class},
         20f, 100f);
     float[] center = handleCenter(fixture.view, true);
@@ -117,11 +118,11 @@ public final class RemoteTerminalSelectionInteractionTest {
     assertEquals(false, scheduled.getBoolean(fixture.view));
   }
 
-  private static Fixture fixture(ScreenSnapshot.BufferKind bufferKind) {
+  private static Fixture fixture(TerminalBufferKind bufferKind) {
     return fixture(bufferKind, 0);
   }
 
-  private static Fixture fixture(ScreenSnapshot.BufferKind bufferKind, int historyLines) {
+  private static Fixture fixture(TerminalBufferKind bufferKind, int historyLines) {
     Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
     RemoteTerminalView view = new RemoteTerminalView(activity);
     TerminalViewportState viewport = new TerminalViewportState();
@@ -139,27 +140,27 @@ public final class RemoteTerminalSelectionInteractionTest {
     return new Fixture(view, viewport, host);
   }
 
-  private static RemoteTerminalModel model(ScreenSnapshot.BufferKind bufferKind, int historyLines) {
+  private static RemoteTerminalModel model(TerminalBufferKind bufferKind, int historyLines) {
     int rows = 20;
     int cols = 80;
     List<TerminalLine> screen = new ArrayList<>(rows);
     for (int row = 0; row < rows; row++) {
       TerminalCell[] cells = new TerminalCell[cols];
       for (int col = 0; col < cols; col++) {
-        cells[col] = new TerminalCell(col % 2 == 0 ? "x" : " ", (byte) 1, 0, 0);
+        cells[col] = new TerminalCell(col % 2 == 0 ? "x" : " ", (byte) 1, null, null);
       }
-      screen.add(new TerminalLine(row, false, cells));
+      screen.add(new TerminalLine(1000 + row, false, cells));
     }
     List<TerminalLine> history = new ArrayList<>(historyLines);
     for (int line = 1; line <= historyLines; line++) {
-      history.add(new TerminalLine(line, false, screen.get(0).cells));
+      history.add(new TerminalLine(line, 1, line, false, screen.get(0).cells));
     }
-    HistoryWindow historyWindow = historyLines == 0 ? HistoryWindow.empty()
-        : new HistoryWindow(1, 1, historyLines, false, history);
     RemoteTerminalModel model = new RemoteTerminalModel();
-    model.applySnapshot(new ScreenSnapshot("s", "i", 1, 1, rows, cols, bufferKind,
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        historyWindow, screen, Collections.emptyMap(), Collections.emptyMap(), "", ""));
+    HistoryExtent extent = historyLines == 0
+        ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
+    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, rows, cols, bufferKind,
+        extent, history, screen, TerminalCursor.hidden(), TerminalModes.defaults(),
+        TerminalPalette.defaults(), "", ""));
     return model;
   }
 
@@ -234,7 +235,6 @@ public final class RemoteTerminalSelectionInteractionTest {
       viewportScrollCalls++;
       viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
     }
-    @Override public void onRequestHistoryPage() {}
     @Override public void onFocusChanged(boolean focused) {}
     @Override public void onMouse(int row, int col, String button, int wheelDelta,
                                   boolean shift, boolean alt, boolean ctrl, boolean meta,

@@ -20,7 +20,7 @@ import (
 	"webterm/go-core/internal/protocol"
 	"webterm/go-core/internal/relayapp"
 	"webterm/go-core/internal/relaycore"
-	pb "webterm/go-core/internal/screenprotocol/generated"
+	pb "webterm/go-core/internal/screenprotocol/generatedv2"
 	"webterm/go-core/internal/testutil"
 )
 
@@ -114,9 +114,11 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	}
 
 	hello, err := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			Version: 1, Cols: 80, Rows: 24,
+			ClientInstanceId: "relay-test", StreamGeneration: 1,
+			DesiredMode: pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
+			DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
 		}},
 	})
 	if err != nil {
@@ -131,7 +133,7 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 			continue
 		}
 		var envelope pb.ScreenEnvelope
-		if err := proto.Unmarshal(frame.Payload, &envelope); err == nil && envelope.GetSnapshot() != nil {
+		if err := proto.Unmarshal(frame.Payload, &envelope); err == nil && envelope.GetBaseline() != nil {
 			cancel()
 			if err := <-errCh; !isContextCanceledError(err) {
 				t.Fatalf("client returned %v, want context.Canceled", err)

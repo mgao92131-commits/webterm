@@ -31,6 +31,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     void requestInvalidate();
     /** Only invoked for tail appends while the user is not following the tail. */
     default void onHistoryAppended(int lineCount) {}
+    /** 在新投影几何中恢复同一 HistorySeq 的像素位置。 */
+    default void restoreHistoryAnchor(long historySeq, int pixelOffset) {}
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
     default void onLayoutLeaseStateChanged(boolean ready) {}
     default void onInputDeliveryUncertain(@NonNull String message) {}
@@ -63,7 +65,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   @Nullable private Runnable scheduledRenderCallback;
   private long renderGeneration;
   /** 上一次成功排队的历史分页边界；用于保证 beforeSeq 严格向旧方向推进。 */
-  private long lastRequestedHistoryBeforeSeq = -1;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
     this(runtime, new TerminalViewportState(), new ChoreographerFrameScheduler());
@@ -111,21 +112,25 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   public void sendText(@NonNull String text) {
+    runtime.resumeLiveStream();
     runtime.sendTextInput(text);
   }
 
   public void sendPaste(@NonNull String text) {
+    runtime.resumeLiveStream();
     runtime.sendPasteInput(text);
   }
 
   public void sendKey(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                       boolean meta, boolean pressed) {
+    runtime.resumeLiveStream();
     runtime.sendKeyInput(key, shift, alt, ctrl, meta, pressed);
   }
 
   public void sendMouse(int row, int col, @NonNull String button, int wheelDelta,
                         boolean shift, boolean alt, boolean ctrl, boolean meta,
                         boolean pressed) {
+    runtime.resumeLiveStream();
     runtime.sendMouseInput(row, col, button, wheelDelta, shift, alt, ctrl, meta, pressed);
   }
 
@@ -172,36 +177,27 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   public void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels) {
     if (deltaPixels == 0) return;
+    boolean wasFollowingTail = viewport.followTail;
     viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
+    if (wasFollowingTail && !viewport.followTail) {
+      runtime.freezeStream();
+    } else if (!wasFollowingTail && viewport.followTail) {
+      runtime.resumeLiveStream();
+    }
     runtime.requestRender();
   }
 
-  public void requestOlderHistoryPage() {
-    RemoteTerminalModel model = runtime.model();
-    if (viewport.loadingOlderHistory) {
-      // HistoryPage 已在模型线程应用但尚未走到下一次 VSync 时，也允许分页边界立即推进；
-      // 不能让纯绘制节拍把用户的下一次翻页卡住。
-      long cachedWhileLoading = model.firstCachedHistorySeq();
-      if ((cachedWhileLoading >= 0 && cachedWhileLoading < lastRequestedHistoryBeforeSeq)
-          || !model.hasMoreHistoryBefore()) {
-        viewport.loadingOlderHistory = false;
-      } else {
-        return;
-      }
-    }
-    long firstCachedSeq = model.firstCachedHistorySeq();
-    if (firstCachedSeq < 0 && !model.hasMoreHistoryBefore()) return;
-    long beforeHistorySeq = firstCachedSeq < 0 ? Long.MAX_VALUE : firstCachedSeq;
-    if (firstCachedSeq >= 0 && firstCachedSeq <= model.firstAvailableHistorySeq()) return;
-    // 同一边界只请求一次：若上一页未能推进本地窗口（例如被预算驱逐或返回空页），
-    // 重复请求同一页只会形成热循环。模型侧驱逐保证新页存活，正常路径下
-    // firstCachedSeq 每次分页后严格变小。
-    if (beforeHistorySeq == lastRequestedHistoryBeforeSeq) return;
-    // 请求失败（无连接或通道不可用）：不记录边界、不置 loading，
-    // loadingOlderHistory 保持 false，允许之后重试同一边界。
-    if (!runtime.requestHistoryPage(beforeHistorySeq, 250)) return;
-    lastRequestedHistoryBeforeSeq = beforeHistorySeq;
-    viewport.loadingOlderHistory = true;
+  /** 显式回到底部；这是 FROZEN -> LIVE 的唯一滚动入口。 */
+  public void returnToBottom() {
+    viewport.returnToBottom();
+    runtime.resumeLiveStream();
+    runtime.requestRender();
+  }
+
+  /** v2 可见页驱动：请求当前视口中首个尚未加载的固定页。 */
+  public void requestVisibleHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
+    if (fromSeq <= 0 || toSeq < fromSeq) return;
+    runtime.requestHistoryRange(fromSeq, toSeq, anchorSeq);
   }
 
   private void sendResizeNow() {
@@ -230,7 +226,9 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // reset it when the authoritative terminal geometry changes.
     if (update.state.geometryChanged) {
       viewport.resetForSnapshot();
-      lastRequestedHistoryBeforeSeq = -1;
+    } else if (!viewport.followTail && viewport.anchorHistorySeq != null
+        && update.state.historyChanged && view != null) {
+      view.restoreHistoryAnchor(viewport.anchorHistorySeq, viewport.anchorPixelOffset);
     }
     // Only tail appends (live output scrolling into history below the visible
     // window) compensate the offset to pin the current content. A prepended

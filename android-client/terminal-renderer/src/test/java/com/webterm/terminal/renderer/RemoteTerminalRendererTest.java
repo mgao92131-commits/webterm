@@ -1,13 +1,30 @@
 package com.webterm.terminal.renderer;
 
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+
+import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.TerminalBufferKind;
+import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
+import com.webterm.terminal.model.TerminalCursor;
+import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
+import com.webterm.terminal.model.TerminalViewportState;
 import java.util.Collections;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(manifest = Config.NONE)
 public final class RemoteTerminalRendererTest {
   @Test public void resolvesAnsiIndexedAndColorCube() {
     assertEquals(0xFFCD0000, RemoteTerminalRenderer.resolveColor(TerminalColor.indexed(1)));
@@ -98,6 +115,26 @@ public final class RemoteTerminalRendererTest {
     // Includes one guard row on both sides for anti-aliased glyph edges, not all 40 rows.
     assertEquals(1, range[0]);
     assertEquals(5, range[1]);
+  }
+
+  @Test public void sparseHistoryPlaceholdersRenderWithoutDereferencingNullLine() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalLine historyTail = new TerminalLine(
+        300, 1, 300, false, new TerminalCell[] {TerminalCell.EMPTY});
+    TerminalLine screen = TerminalLine.empty(1000, 1);
+    model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, 1, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 300), Collections.singletonList(historyTail),
+        Collections.singletonList(screen), TerminalCursor.hidden(), TerminalModes.defaults(),
+        TerminalPalette.defaults(), "", ""));
+    model.consumeRenderUpdate();
+
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 20f, 15f);
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(6_000, 6_000); // 视口位于全是 UNLOADED 占位的历史头部。
+    Canvas canvas = new Canvas(Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
+    renderer.render(canvas, model.renderSnapshot(), viewport);
   }
 
 

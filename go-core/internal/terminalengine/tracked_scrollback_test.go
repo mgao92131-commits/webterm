@@ -524,6 +524,55 @@ func TestTrackedScrollback_PopThenPushAllocatesNewHistorySeq(t *testing.T) {
 	}
 }
 
+func TestTrackedScrollback_ExtentPreservesEmptyTrimWatermark(t *testing.T) {
+	sb := NewTrackedScrollback(100, nil)
+	pushBlankLines(sb, 3)
+	sb.Clear()
+
+	got := sb.Extent()
+	if got.FirstSeq != 4 || got.LastSeq != 3 || !got.Empty() {
+		t.Fatalf("Extent after clear = %+v, want empty 4..3", got)
+	}
+}
+
+func TestTrackedScrollback_RangeReportsTrimmedPrefixAndSurvivingLines(t *testing.T) {
+	sb := NewTrackedScrollback(3, nil)
+	pushBlankLines(sb, 5)
+
+	got := sb.Range(1, 5)
+	if got.Status != HistoryRangeTrimmed {
+		t.Fatalf("status = %v, want trimmed", got.Status)
+	}
+	if got.Extent.FirstSeq != 3 || got.Extent.LastSeq != 5 {
+		t.Fatalf("extent = %+v, want 3..5", got.Extent)
+	}
+	if len(got.Lines) != 3 || got.Lines[0].HistorySeq != 3 || got.Lines[2].HistorySeq != 5 {
+		t.Fatalf("lines = %+v, want seq 3..5", got.Lines)
+	}
+}
+
+func TestTrackedScrollback_RebaseForLayoutEpochMakesRetainedHistoryDense(t *testing.T) {
+	sb := NewTrackedScrollback(100, nil)
+	pushBlankLines(sb, 3)
+	sb.Pop()
+	pushBlankLines(sb, 2) // 1,2,4,5
+
+	sb.RebaseForLayoutEpoch(7)
+
+	got := sb.Range(1, 4)
+	if got.Status != HistoryRangeOK || got.Extent.FirstSeq != 1 || got.Extent.LastSeq != 4 {
+		t.Fatalf("range after rebase = %+v", got)
+	}
+	for i, line := range got.Lines {
+		if want := uint64(i + 1); line.HistorySeq != want {
+			t.Fatalf("line %d seq=%d, want %d", i, line.HistorySeq, want)
+		}
+	}
+	if sb.NextSeq() != 5 || sb.LayoutEpoch() != 7 {
+		t.Fatalf("next=%d epoch=%d, want 5/7", sb.NextSeq(), sb.LayoutEpoch())
+	}
+}
+
 func historyIDs(lines []HistoryLine) []uint64 {
 	ids := make([]uint64, len(lines))
 	for i, line := range lines {

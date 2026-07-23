@@ -1,7 +1,6 @@
 package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
-import com.webterm.terminal.model.TerminalHistory;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
@@ -20,7 +19,7 @@ import static org.junit.Assert.assertEquals;
 public class TerminalSelectionTextExtractorTest {
 
   private static TerminalCell cell(char c) {
-    return new TerminalCell(String.valueOf(c), (byte) 1, 0, 0);
+    return new TerminalCell(String.valueOf(c), (byte) 1, null, null);
   }
 
   private static TerminalCell[] cells(String text) {
@@ -239,10 +238,6 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   private static TerminalHistorySnapshot snapshot(List<TerminalLine> lines) {
-    TerminalHistory h = new TerminalHistory(line -> 100); // estimator not used in tests
-    for (TerminalLine line : lines) {
-      h.append(line);
-    }
-    return h.snapshot();
+    return new TerminalHistorySnapshot(lines);
   }
 }

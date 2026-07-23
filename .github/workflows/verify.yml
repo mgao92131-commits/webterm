@@ -110,7 +110,7 @@ jobs:
           sudo unzip -o /tmp/protoc.zip -d /usr/local
           protoc --version
       - run: scripts/generate-proto.sh
-      - run: git diff --exit-code -- go-core/internal/screenprotocol/generated/terminal_screen.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenProto.java
+      - run: git diff --exit-code -- go-core/internal/screenprotocol/generatedv2/terminal_screen_v2.pb.go android-client/terminal-protocol/src/main/java/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java
 
   generated-cli-docs:
     name: Generated CLI docs are current

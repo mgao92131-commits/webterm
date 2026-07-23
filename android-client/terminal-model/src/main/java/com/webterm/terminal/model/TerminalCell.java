@@ -6,19 +6,20 @@ import java.util.Objects;
  * 单个终端 Cell。text 为完整字符簇；width 由 Go 权威决定。
  */
 public final class TerminalCell {
-  public static final TerminalCell EMPTY = new TerminalCell(" ", (byte) 1, 0, 0);
-  public static final TerminalCell SPACER = new TerminalCell("", (byte) 0, 0, 0);
+  public static final TerminalCell EMPTY = new TerminalCell(" ", (byte) 1, null, null);
+  public static final TerminalCell SPACER = new TerminalCell("", (byte) 0, null, null);
 
   public final String text;
   public final byte width;
-  public final int styleId;
-  public final int linkId;
+  public final TerminalStyle style;
+  public final Hyperlink link;
 
-  public TerminalCell(String text, byte width, int styleId, int linkId) {
+  /** wire 字典编号在 mapper 边界被解析，不进入长期缓存。 */
+  public TerminalCell(String text, byte width, TerminalStyle style, Hyperlink link) {
     this.text = text;
     this.width = width;
-    this.styleId = styleId;
-    this.linkId = linkId;
+    this.style = style;
+    this.link = link;
   }
 
   public boolean isWideStart() {
@@ -30,7 +31,7 @@ public final class TerminalCell {
   }
 
   public boolean isDefault() {
-    return text.equals(" ") && width == 1 && styleId == 0 && linkId == 0;
+    return text.equals(" ") && width == 1 && style == null && link == null;
   }
 
   @Override
@@ -38,12 +39,13 @@ public final class TerminalCell {
     if (this == o) return true;
     if (!(o instanceof TerminalCell)) return false;
     TerminalCell that = (TerminalCell) o;
-    return width == that.width && styleId == that.styleId && linkId == that.linkId
-        && Objects.equals(text, that.text);
+    return width == that.width && Objects.equals(text, that.text)
+        && Objects.equals(style, that.style)
+        && Objects.equals(link, that.link);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(text, width, styleId, linkId);
+    return Objects.hash(text, width, style, link);
   }
 }

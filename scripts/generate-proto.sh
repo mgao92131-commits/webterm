@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROTOS_DIR="$ROOT/shared/proto"
-GO_OUT_DIR="$ROOT/go-core/internal/screenprotocol/generated"
+GO_V2_OUT_DIR="$ROOT/go-core/internal/screenprotocol/generatedv2"
 JAVA_OUT_DIR="$ROOT/android-client/terminal-protocol/src/main/java"
 PROTOC="${PROTOC:-$ROOT/tools/protoc/bin/protoc}"
 
@@ -27,38 +27,37 @@ if ! command -v protoc-gen-go >/dev/null 2>&1; then
   exit 1
 fi
 
-# Go
-echo "Generating Go code..."
-mkdir -p "$GO_OUT_DIR"
-rm -rf "$GO_OUT_DIR"/*
+# Go screen.v2
+echo "Generating Go screen.v2 code..."
+mkdir -p "$GO_V2_OUT_DIR"
+rm -rf "$GO_V2_OUT_DIR"/*
 
 "$PROTOC" \
   --proto_path="$ROOT" \
-  --go_out="$GO_OUT_DIR" \
+  --go_out="$GO_V2_OUT_DIR" \
   --go_opt=paths=source_relative \
-  "$PROTOS_DIR/terminal_screen.proto"
+  "$PROTOS_DIR/terminal_screen_v2.proto"
 
-# source_relative 会保留 shared/proto 目录层级，移动到目标目录后删除中间目录。
-mv "$GO_OUT_DIR/shared/proto/terminal_screen.pb.go" "$GO_OUT_DIR/terminal_screen.pb.go"
-rm -rf "$GO_OUT_DIR/shared"
+mv "$GO_V2_OUT_DIR/shared/proto/terminal_screen_v2.pb.go" "$GO_V2_OUT_DIR/terminal_screen_v2.pb.go"
+rm -rf "$GO_V2_OUT_DIR/shared"
 
-echo "  -> $GO_OUT_DIR/terminal_screen.pb.go"
+echo "  -> $GO_V2_OUT_DIR/terminal_screen_v2.pb.go"
 
 # Java (Android)
 echo "Generating Java code..."
 mkdir -p "$JAVA_OUT_DIR"
-# 仅删除旧生成文件，保留手写 mapper/validator。
-rm -f "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto.java"
+# 仅删除当前生成文件，保留手写 mapper/validator。
+rm -f "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
 
 "$PROTOC" \
   --proto_path="$ROOT" \
   --java_out="$JAVA_OUT_DIR" \
-  "$PROTOS_DIR/terminal_screen.proto"
+  "$PROTOS_DIR/terminal_screen_v2.proto"
 
 # protoc Java 输出的个别空行/泛型声明会带行尾空格，保持 git diff --check 可重现。
 perl -pi -e 's/[ \t]+$//' \
-  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto.java"
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
 
-echo "  -> $JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenProto.java"
+echo "  -> $JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
 
 echo "Done."

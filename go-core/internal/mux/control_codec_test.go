@@ -9,7 +9,7 @@ func TestControlCodecDecodesTypedWSConnect(t *testing.T) {
 		"channelRouteKey":"screen:s1",
 		"channelOwnerKey":"device:page",
 		"path":"/ws/sessions/s1",
-		"protocols":["webterm.screen.v1"]
+		"protocols":["webterm.screen.v2"]
 	}`))
 	if err != nil {
 		t.Fatal(err)

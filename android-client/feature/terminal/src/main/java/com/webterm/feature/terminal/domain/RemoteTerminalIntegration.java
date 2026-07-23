@@ -30,7 +30,7 @@ import javax.inject.Inject;
 import dagger.hilt.android.scopes.ActivityScoped;
 
 /**
- * 新的 webterm.screen.v1 终端集成 facade。
+ * webterm.screen.v2 终端集成 facade。
  * 把 RuntimeRegistry、Connection、Controller、Renderer 和 Activity 级行为封装在一起。
  */
 @ActivityScoped

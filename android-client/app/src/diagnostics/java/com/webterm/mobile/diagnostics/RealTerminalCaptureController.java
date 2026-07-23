@@ -16,8 +16,8 @@ import androidx.core.content.FileProvider;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.capture.AgentCaptureData;
 import com.webterm.terminal.model.capture.AgentCaptureLink;
 import com.webterm.terminal.model.capture.CaptureBinding;
@@ -290,7 +290,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     @Override
-    public void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot) {
+    public void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenBaseline snapshot) {
         if (!recording || snapshot == null || !matches(identity)) return;
         synchronized (lock) {
             if (!recording || !matches(identity)) return;
@@ -302,7 +302,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     @Override
-    public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch) {
+    public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch) {
         if (!recording || patch == null || !matches(identity)) return;
         synchronized (lock) {
             if (!recording || !matches(identity)) return;
@@ -739,18 +739,17 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     // ---- 大小估算（上界，仅用于有界淘汰）----
 
-    private static long estimateSnapshotBytes(ScreenSnapshot s) {
+    private static long estimateSnapshotBytes(ScreenBaseline s) {
         long n = 64;
         if (s.screen != null) for (com.webterm.terminal.model.TerminalLine l : s.screen) n += estimateLineBytes(l);
-        if (s.styles != null) n += (long) s.styles.size() * 48;
-        if (s.links != null) n += (long) s.links.size() * 64;
+        if (s.historyTail != null)
+            for (com.webterm.terminal.model.TerminalLine l : s.historyTail) n += estimateLineBytes(l);
         return n;
     }
 
-    private static long estimatePatchBytes(ScreenPatch p) {
+    private static long estimatePatchBytes(ScreenPatchV2 p) {
         long n = 64;
         if (p.lineUpdates != null) for (com.webterm.terminal.model.TerminalLine l : p.lineUpdates) n += estimateLineBytes(l);
-        if (p.newStyles != null) n += (long) p.newStyles.size() * 48;
         return n;
     }
 
@@ -788,11 +787,11 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     static final class MappedFrame {
-        final ScreenSnapshot snapshot;
-        final ScreenPatch patch;
+        final ScreenBaseline snapshot;
+        final ScreenPatchV2 patch;
         final long capturedAtMillis;
 
-        MappedFrame(ScreenSnapshot snapshot, ScreenPatch patch, long capturedAtMillis) {
+        MappedFrame(ScreenBaseline snapshot, ScreenPatchV2 patch, long capturedAtMillis) {
             this.snapshot = snapshot;
             this.patch = patch;
             this.capturedAtMillis = capturedAtMillis;

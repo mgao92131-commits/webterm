@@ -227,14 +227,14 @@ public final class DiagnosticLogExporter {
         render.put("protobufParseCount", screen.protobufParseCount);
         render.put("modelApplyNanos", screen.modelApplyNanos);
         render.put("mainThreadCallbackDelayNanos", screen.mainThreadCallbackDelayNanos);
-        render.put("snapshotFrameCount", screen.snapshotFrameCount);
-        render.put("snapshotFrameBytes", screen.snapshotFrameBytes);
+        render.put("baselineFrameCount", screen.baselineFrameCount);
+        render.put("baselineFrameBytes", screen.baselineFrameBytes);
         render.put("patchFrameCount", screen.patchFrameCount);
         render.put("patchFrameBytes", screen.patchFrameBytes);
-        render.put("historyPageFrameCount", screen.historyPageFrameCount);
-        render.put("historyPageFrameBytes", screen.historyPageFrameBytes);
-        render.put("historyTrimFrameCount", screen.historyTrimFrameCount);
-        render.put("historyTrimFrameBytes", screen.historyTrimFrameBytes);
+        render.put("historyRangeFrameCount", screen.historyRangeFrameCount);
+        render.put("historyRangeFrameBytes", screen.historyRangeFrameBytes);
+        render.put("historyDeltaFrameCount", screen.historyDeltaFrameCount);
+        render.put("historyDeltaFrameBytes", screen.historyDeltaFrameBytes);
         render.put("otherFrameCount", screen.otherFrameCount);
         render.put("otherFrameBytes", screen.otherFrameBytes);
         render.put("mailboxResidenceNanos", screen.mailboxResidenceNanos);
@@ -324,14 +324,14 @@ public final class DiagnosticLogExporter {
             }
         }
         sb.append('\n');
-        sb.append("screenSnapshotCount=").append(screen.snapshotFrameCount).append('\n');
-        sb.append("screenSnapshotBytes=").append(screen.snapshotFrameBytes).append('\n');
+        sb.append("screenBaselineCount=").append(screen.baselineFrameCount).append('\n');
+        sb.append("screenBaselineBytes=").append(screen.baselineFrameBytes).append('\n');
         sb.append("screenPatchCount=").append(screen.patchFrameCount).append('\n');
         sb.append("screenPatchBytes=").append(screen.patchFrameBytes).append('\n');
-        sb.append("screenHistoryPageCount=").append(screen.historyPageFrameCount).append('\n');
-        sb.append("screenHistoryPageBytes=").append(screen.historyPageFrameBytes).append('\n');
-        sb.append("screenHistoryTrimCount=").append(screen.historyTrimFrameCount).append('\n');
-        sb.append("screenHistoryTrimBytes=").append(screen.historyTrimFrameBytes).append('\n');
+        sb.append("screenHistoryRangeCount=").append(screen.historyRangeFrameCount).append('\n');
+        sb.append("screenHistoryRangeBytes=").append(screen.historyRangeFrameBytes).append('\n');
+        sb.append("screenHistoryDeltaCount=").append(screen.historyDeltaFrameCount).append('\n');
+        sb.append("screenHistoryDeltaBytes=").append(screen.historyDeltaFrameBytes).append('\n');
         sb.append("screenOtherCount=").append(screen.otherFrameCount).append('\n');
         sb.append("screenOtherBytes=").append(screen.otherFrameBytes).append('\n');
         return sb.toString();

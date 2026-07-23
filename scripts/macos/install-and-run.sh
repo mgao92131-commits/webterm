@@ -73,7 +73,7 @@ echo "[1/4] 运行 Go 测试"
 echo "[2/4] 编译 Agent 与 CLI"
 (
   cd "$GO_DIR"
-  go build -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm-agent" ./cmd/webterm-agent
+  go build -tags webterm_capture -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm-agent" ./cmd/webterm-agent
   go build -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm" ./cmd/webterm
 )
 

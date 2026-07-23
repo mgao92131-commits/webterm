@@ -1,8 +1,8 @@
 package com.webterm.terminal.model.capture;
 
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.ScreenBaseline;
 
 /**
  * 热路径旁路捕获接口（Android 侧）。所有 record* 方法必须非阻塞、有界，且不得消费
@@ -28,10 +28,10 @@ public interface TerminalCaptureSink {
                          long receivedAtMillis, String messageKind, byte[] payload);
 
     /** 捕获点 B：Mapper 输出的不可变 Snapshot 领域对象（mapSnapshot 返回后）。 */
-    void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot);
+    void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenBaseline snapshot);
 
     /** 捕获点 B：Mapper 输出的不可变 Patch 领域对象（mapPatch 返回后）。 */
-    void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch);
+    void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch);
 
     /** 捕获点 C：model.applySnapshot/applyPatch 成功后的模型摘要。 */
     void recordModelState(CaptureStreamIdentity identity, CapturedModelState state);

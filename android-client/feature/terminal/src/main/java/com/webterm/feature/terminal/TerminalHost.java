@@ -11,7 +11,7 @@ import com.webterm.core.fileupload.FileUploadController;
 public interface TerminalHost {
     /**
      * Start a terminal session within the given fragment using the new
-     * webterm.screen.v1 remote rendering path.
+     * webterm.screen.v2 remote rendering path.
      */
     void startRemoteTerminalInFragment(TerminalViewModel.TerminalSessionArgs args, TerminalFragment fragment);
 

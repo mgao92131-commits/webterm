@@ -1,16 +1,14 @@
 package com.webterm.mobile.diagnostics;
 
-import com.webterm.terminal.model.Hyperlink;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalStateUpdate;
-import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.capture.CapturedModelState;
 import com.webterm.terminal.model.capture.CapturedViewState;
 
@@ -19,7 +17,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 把 Android 终端域对象序列化为 schema 稳定的 JSON，供现场包文件使用。
@@ -34,8 +31,15 @@ final class CaptureSerializer {
         JSONObject o = new JSONObject();
         o.put("text", c.text);
         o.put("width", c.width);
-        o.put("styleId", c.styleId);
-        o.put("linkId", c.linkId);
+        if (c.style != null) {
+            JSONObject resolved = new JSONObject();
+            resolved.put("fg", color(c.style.fg));
+            resolved.put("bg", color(c.style.bg));
+            resolved.put("ulColor", color(c.style.underlineColor));
+            resolved.put("attrs", c.style.attrs);
+            o.put("resolvedStyle", resolved);
+        }
+        if (c.link != null) o.put("resolvedLinkUri", c.link.uri);
         return o;
     }
 
@@ -91,35 +95,6 @@ final class CaptureSerializer {
         return o;
     }
 
-    static JSONArray styles(Map<Integer, TerminalStyle> styles) throws JSONException {
-        JSONArray arr = new JSONArray();
-        if (styles != null) {
-            for (TerminalStyle s : styles.values()) {
-                JSONObject o = new JSONObject();
-                o.put("id", s.id);
-                o.put("fg", color(s.fg));
-                o.put("bg", color(s.bg));
-                o.put("ulColor", color(s.underlineColor));
-                o.put("attrs", s.attrs);
-                arr.put(o);
-            }
-        }
-        return arr;
-    }
-
-    static JSONArray links(Map<Integer, Hyperlink> links) throws JSONException {
-        JSONArray arr = new JSONArray();
-        if (links != null) {
-            for (Hyperlink l : links.values()) {
-                JSONObject o = new JSONObject();
-                o.put("id", l.id);
-                o.put("uri", l.uri);
-                arr.put(o);
-            }
-        }
-        return arr;
-    }
-
     /** 历史窗口捕获行数硬上限，超出仅保留最近 N 行并置 historyTruncated。 */
     private static final int HISTORY_CAPTURE_MAX_LINES = 300;
 
@@ -144,8 +119,6 @@ final class CaptureSerializer {
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
         o.put("screen", lines(s.screen));
-        o.put("styles", styles(s.styles));
-        o.put("links", links(s.links));
         o.put("title", s.title);
         o.put("workingDirectory", s.workingDirectory);
         o.put("firstAvailableHistorySeq", s.firstAvailableHistorySeq);
@@ -158,7 +131,7 @@ final class CaptureSerializer {
     private static JSONObject historyWindow(RemoteTerminalModel.RenderSnapshot s, boolean include)
             throws JSONException {
         JSONObject h = new JSONObject();
-        com.webterm.terminal.model.TerminalHistorySnapshot hist = s.history;
+        com.webterm.terminal.model.TerminalHistoryView hist = s.history;
         int total = hist != null ? hist.size() : 0;
         h.put("historyTotalSize", total);
         if (!include || hist == null || total == 0) {
@@ -172,8 +145,9 @@ final class CaptureSerializer {
         long fromSeq = -1, toSeq = -1;
         for (int i = from; i < total; i++) {
             com.webterm.terminal.model.TerminalLine line = hist.lineAt(i);
+            if (line == null) continue;
             arr.put(line(line));
-            if (i == from) fromSeq = line.historyOrder();
+            if (fromSeq < 0) fromSeq = line.historyOrder();
             toSeq = line.historyOrder();
         }
         h.put("historyCapturedFromSeq", fromSeq);
@@ -185,43 +159,42 @@ final class CaptureSerializer {
     }
 
     /** android/mapped-frames.jsonl 中的 snapshot 条目。 */
-    static JSONObject mappedSnapshot(ScreenSnapshot s) throws JSONException {
+    static JSONObject mappedSnapshot(ScreenBaseline s) throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("kind", "snapshot");
+        o.put("kind", "baseline");
         o.put("sessionId", s.sessionId);
         o.put("instanceId", s.instanceId);
         o.put("layoutEpoch", s.layoutEpoch);
         o.put("screenRevision", s.screenRevision);
+        o.put("streamGeneration", s.streamGeneration);
         o.put("rows", s.rows);
         o.put("cols", s.cols);
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
         o.put("screen", lineList(s.screen));
-        o.put("styles", styles(s.styles));
-        o.put("links", links(s.links));
+        o.put("historyExtentFirst", s.historyExtent.firstSeq);
+        o.put("historyExtentLast", s.historyExtent.lastSeq);
+        o.put("historyTail", lineList(s.historyTail));
         o.put("title", s.title);
         o.put("workingDirectory", s.workingDirectory);
         return o;
     }
 
     /** android/mapped-frames.jsonl 中的 patch 条目。 */
-    static JSONObject mappedPatch(ScreenPatch p) throws JSONException {
+    static JSONObject mappedPatch(ScreenPatchV2 p) throws JSONException {
         JSONObject o = new JSONObject();
         o.put("kind", "patch");
         o.put("instanceId", p.instanceId);
         o.put("layoutEpoch", p.layoutEpoch);
         o.put("baseRevision", p.baseRevision);
         o.put("screenRevision", p.screenRevision);
+        o.put("streamGeneration", p.streamGeneration);
         JSONArray layout = new JSONArray();
         if (p.layout != null) for (long id : p.layout) layout.put(id);
         o.put("layout", layout);
         o.put("lineUpdates", lineList(p.lineUpdates));
-        JSONArray appendSeqs = new JSONArray();
-        if (p.historyAppendSeqs != null) for (Long seq : p.historyAppendSeqs) appendSeqs.put(seq);
-        o.put("historyAppendSeqs", appendSeqs);
         o.put("cursor", cursor(p.cursor));
-        o.put("newStyles", styles(p.newStyles));
-        o.put("newLinks", links(p.newLinks));
+        o.put("activeBuffer", String.valueOf(p.activeBuffer));
         o.put("title", p.title);
         o.put("workingDirectory", p.workingDirectory);
         return o;

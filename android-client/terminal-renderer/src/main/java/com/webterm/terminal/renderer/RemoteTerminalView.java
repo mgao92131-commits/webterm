@@ -34,10 +34,12 @@ import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
+import com.webterm.terminal.model.TerminalHistoryView;
+import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
@@ -80,7 +82,8 @@ public final class RemoteTerminalView extends View {
     void onRequestShowKeyboard();
     /** @param maxScrollOffsetPixels inclusive top bound for this rendered content. */
     void onScrollPixels(int deltaPixels, int maxScrollOffsetPixels);
-    void onRequestHistoryPage();
+    /** v2 稀疏历史按当前可见 HistorySeq 页拉取；区间为闭区间。 */
+    default void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {}
     void onFocusChanged(boolean focused);
     void onMouse(int row, int col, @NonNull String button, int wheelDelta,
                  boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
@@ -206,6 +209,7 @@ public final class RemoteTerminalView extends View {
       TerminalRenderMetrics.fullInvalidate();
       invalidate();
     }
+    requestVisibleHistoryPage();
   }
 
   /**
@@ -357,7 +361,8 @@ public final class RemoteTerminalView extends View {
       host.onAlternateScreenScroll(-Math.round(deltaPixels / lineHeight()));
     } else {
       host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
-      requestOlderHistoryAtHardTop(deltaPixels);
+      updateViewportHistoryAnchor();
+      requestVisibleHistoryPage();
     }
     updateCursorBlinkSchedule();
   }
@@ -370,7 +375,8 @@ public final class RemoteTerminalView extends View {
   private void scrollSelectionViewport(int deltaPixels) {
     if (host == null || deltaPixels == 0 || isAlternateBuffer()) return;
     host.onScrollPixels(deltaPixels, maxScrollOffsetPixels());
-    requestOlderHistoryAtHardTop(deltaPixels);
+    updateViewportHistoryAnchor();
+    requestVisibleHistoryPage();
   }
 
   private void updateSelectionAutoScroll(float x, float y) {
@@ -465,7 +471,7 @@ public final class RemoteTerminalView extends View {
 
   private boolean isAlternateBuffer() {
     if (model == null) return false;
-    return model.renderSnapshot().activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE;
+    return model.renderSnapshot().activeBuffer == TerminalBufferKind.ALTERNATE;
   }
 
   private int pointerRow() {
@@ -572,18 +578,62 @@ public final class RemoteTerminalView extends View {
   }
 
   /**
-   * Loads an older page only after the user actually reaches the hard history
-   * boundary while moving further upward. Requesting on ACTION_UP while merely
-   * near the top made a returned page preserve its anchor and undo several
-   * reverse (toward-tail) swipes.
+   * v2 的 display extent 包含尚未驻留的占位行，不能等滚到整个逻辑历史硬顶才加载。
+   * 每次视口移动/分页提交后，从当前可见行中选择首个 UNLOADED 页发起请求。
    */
-  private void requestOlderHistoryAtHardTop(int deltaPixels) {
-    if (host == null) return;
-    int maxOffset = maxScrollOffsetPixels();
-    if (shouldRequestOlderHistory(deltaPixels, viewport.scrollOffsetPixels, maxOffset,
-        viewport.followTail)) {
-      host.onRequestHistoryPage();
-    }
+  @androidx.annotation.VisibleForTesting
+  void requestVisibleHistoryPage() {
+    if (host == null || model == null || isAlternateBuffer()) return;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    if (!(snapshot.history instanceof PagedTerminalHistorySnapshot)) return;
+    PagedTerminalHistorySnapshot history = (PagedTerminalHistorySnapshot) snapshot.history;
+    if (history.isEmpty() || getHeight() <= 0 || lineHeight() <= 0f) return;
+
+    int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
+    int historyRows = history.size();
+    float scrollOffset = viewport.followTail ? 0f : viewport.scrollOffsetPixels;
+    float screenTop = RemoteTerminalRenderer.screenTopY(
+        getHeight(), historyRows, screenRows, lineHeight(), renderer.getTopInset(), scrollOffset);
+    float historyTop = screenTop - historyRows * lineHeight();
+    int[] visible = RemoteTerminalRenderer.rowRangeIntersecting(
+        Math.round(renderer.getTopInset()), getHeight(), historyTop, lineHeight(), historyRows);
+    if (visible[0] >= visible[1]) return;
+    long visibleFrom = history.firstSeq() + visible[0];
+    long visibleTo = history.firstSeq() + visible[1] - 1L;
+    long[] page = history.firstRequestablePage(visibleFrom, visibleTo);
+    if (page != null) host.onRequestHistoryRange(page[0], page[1], visibleFrom);
+  }
+
+  /** 记录当前视口顶端逻辑历史行及其亚行像素偏移，供 Baseline/extent 变化后恢复。 */
+  private void updateViewportHistoryAnchor() {
+    if (model == null || viewport.followTail || isAlternateBuffer()) return;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    TerminalHistoryView history = snapshot.history;
+    if (history.isEmpty() || lineHeight() <= 0f) return;
+    int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
+    int historyRows = history.size();
+    float screenTop = RemoteTerminalRenderer.screenTopY(
+        getHeight(), historyRows, screenRows, lineHeight(), renderer.getTopInset(),
+        viewport.scrollOffsetPixels);
+    float historyTop = screenTop - historyRows * lineHeight();
+    int index = (int) Math.floor((renderer.getTopInset() - historyTop) / lineHeight());
+    index = Math.max(0, Math.min(historyRows - 1, index));
+    long seq = history.firstSeq() + index;
+    int pixelOffset = Math.round(historyTop + index * lineHeight() - renderer.getTopInset());
+    viewport.setHistoryAnchor(seq, pixelOffset);
+  }
+
+  /** 在当前 RenderSnapshot 中把指定 HistorySeq 恢复到原来的顶边像素位置。 */
+  public void restoreHistoryAnchor(long historySeq, int pixelOffset) {
+    if (model == null || viewport.followTail || isAlternateBuffer() || lineHeight() <= 0f) return;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    TerminalHistoryView history = snapshot.history;
+    int index = history.findSeqIndex(historySeq);
+    if (index < 0) return;
+    long desired = Math.round(pixelOffset + (history.size() - index) * lineHeight());
+    int bounded = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, desired));
+    viewport.scrollBy(bounded - viewport.scrollOffsetPixels, maxScrollOffsetPixels());
+    viewport.setHistoryAnchor(historySeq, pixelOffset);
   }
 
   static boolean shouldRequestOlderHistory(int deltaPixels, int scrollOffsetPixels,
@@ -771,7 +821,7 @@ public final class RemoteTerminalView extends View {
       if (row < 0 || row >= snapshot.screen.length) return false;
       if (uniqueRows.isEmpty() || uniqueRows.get(uniqueRows.size() - 1) != row) uniqueRows.add(row);
     }
-    TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     float lineHeight = renderer.getLineHeight();
     if (lineHeight <= 0f) return false;
@@ -924,7 +974,7 @@ public final class RemoteTerminalView extends View {
     int col = Math.max(0, Math.min(cols - 1, (int) (x / cellW)));
 
     TerminalLine[] screen = snapshot.screen;
-    TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     int screenRows = screen != null ? screen.length : 0;
     int historyRows = history.size();
@@ -945,6 +995,10 @@ public final class RemoteTerminalView extends View {
     int historyIndex = (int) ((y - contentTopY) / lineH);
     historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
     TerminalLine line = history.lineAt(historyIndex);
+    // 稀疏分页历史下，命中的逻辑行可能尚未加载（UNLOADED）或已被裁剪（UNAVAILABLE），
+    // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出，
+    // 而非对 null 调 historyOrder() 触发 NPE 崩溃。
+    if (line == null) return null;
     return new TerminalSelection.Anchor(line.historyOrder(), -1, normalizeSelectionColumn(line, col));
   }
 
@@ -1000,7 +1054,7 @@ public final class RemoteTerminalView extends View {
     if (selectionStart == null || selectionEnd == null || model == null) return "";
     TerminalSelection normalized = new TerminalSelection(selectionStart, selectionEnd).normalized();
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
-    TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     return TerminalSelectionTextExtractor.extract(normalized, history, snapshot.screen);
   }
@@ -1169,7 +1223,7 @@ public final class RemoteTerminalView extends View {
     if (anchor == null) return null;
     int col = anchor.col;
     float contentTop = contentTopY(snapshot);
-    TerminalHistorySnapshot history = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     if (anchor.historySeq != 0) {
       int index = history.findSeqIndex(anchor.historySeq);
@@ -1186,7 +1240,7 @@ public final class RemoteTerminalView extends View {
 
   private float contentTopY(@NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
     int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
-    int historyRows = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    int historyRows = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? 0 : snapshot.history.size();
     return RemoteTerminalRenderer.contentTopY(getHeight(), historyRows, screenRows,
         lineHeight(), renderer.getTopInset(), viewport.followTail ? 0 : viewport.scrollOffsetPixels);
@@ -1230,7 +1284,7 @@ public final class RemoteTerminalView extends View {
     int cursorRow = cursor.visible ? cursor.row : 0;
     int protectedRow = Math.max(0, Math.min(screenRows - 1, Math.max(cursorRow, lastContentRow)));
     float lineH = lineHeight();
-    int historyRows = snapshot.activeBuffer == ScreenSnapshot.BufferKind.ALTERNATE
+    int historyRows = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? 0 : snapshot.history.size();
     float contentTop = RemoteTerminalRenderer.contentTopY(getHeight(), historyRows, screenRows,
         lineH, renderer.getTopInset(), viewport.followTail ? 0 : viewport.scrollOffsetPixels);

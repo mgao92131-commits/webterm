@@ -28,13 +28,13 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void classifySnapshot() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT, 100);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.BASELINE, 100);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.snapshotFrameCount);
-    assertEquals(100L, s.snapshotFrameBytes);
+    assertEquals(1L, s.baselineFrameCount);
+    assertEquals(100L, s.baselineFrameBytes);
     assertEquals(0L, s.patchFrameCount);
-    assertEquals(0L, s.historyPageFrameCount);
-    assertEquals(0L, s.historyTrimFrameCount);
+    assertEquals(0L, s.historyRangeFrameCount);
+    assertEquals(0L, s.historyDeltaFrameCount);
     assertEquals(0L, s.otherFrameCount);
   }
 
@@ -44,23 +44,23 @@ public class TerminalRenderMetricsTest {
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.patchFrameCount);
     assertEquals(42L, s.patchFrameBytes);
-    assertEquals(0L, s.snapshotFrameCount);
+    assertEquals(0L, s.baselineFrameCount);
   }
 
   @Test
-  public void classifyHistoryPage() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE, 2048);
+  public void classifyHistoryRange() {
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE, 2048);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.historyPageFrameCount);
-    assertEquals(2048L, s.historyPageFrameBytes);
+    assertEquals(1L, s.historyRangeFrameCount);
+    assertEquals(2048L, s.historyRangeFrameBytes);
   }
 
   @Test
-  public void classifyHistoryTrim() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM, 16);
+  public void classifyHistoryDelta() {
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA, 16);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.historyTrimFrameCount);
-    assertEquals(16L, s.historyTrimFrameBytes);
+    assertEquals(1L, s.historyDeltaFrameCount);
+    assertEquals(16L, s.historyDeltaFrameBytes);
   }
 
   @Test
@@ -73,10 +73,10 @@ public class TerminalRenderMetricsTest {
 
   @Test
   public void negativeBytesTreatedAsZero() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT, -50);
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.BASELINE, -50);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.snapshotFrameCount);
-    assertEquals(0L, s.snapshotFrameBytes);
+    assertEquals(1L, s.baselineFrameCount);
+    assertEquals(0L, s.baselineFrameBytes);
   }
 
   @Test
@@ -87,10 +87,10 @@ public class TerminalRenderMetricsTest {
     CountDownLatch latch = new CountDownLatch(threads);
 
     TerminalRenderMetrics.ScreenTrafficKind[] kinds = {
-        TerminalRenderMetrics.ScreenTrafficKind.SNAPSHOT,
+        TerminalRenderMetrics.ScreenTrafficKind.BASELINE,
         TerminalRenderMetrics.ScreenTrafficKind.PATCH,
-        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_PAGE,
-        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_TRIM
+        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE,
+        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA
     };
     for (int i = 0; i < threads; i++) {
       final TerminalRenderMetrics.ScreenTrafficKind kind = kinds[i % kinds.length];
@@ -109,12 +109,12 @@ public class TerminalRenderMetricsTest {
     executor.shutdown();
 
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(threads * iterations / 4L, s.snapshotFrameCount);
+    assertEquals(threads * iterations / 4L, s.baselineFrameCount);
     assertEquals(threads * iterations / 4L, s.patchFrameCount);
-    assertEquals(threads * iterations / 4L, s.historyPageFrameCount);
-    assertEquals(threads * iterations / 4L, s.historyTrimFrameCount);
+    assertEquals(threads * iterations / 4L, s.historyRangeFrameCount);
+    assertEquals(threads * iterations / 4L, s.historyDeltaFrameCount);
     assertEquals(threads * iterations * 10L,
-        s.snapshotFrameBytes + s.patchFrameBytes
-            + s.historyPageFrameBytes + s.historyTrimFrameBytes);
+        s.baselineFrameBytes + s.patchFrameBytes
+            + s.historyRangeFrameBytes + s.historyDeltaFrameBytes);
   }
 }

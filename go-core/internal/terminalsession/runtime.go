@@ -77,16 +77,12 @@ type Runtime struct {
 	inputDedupeOrder []string
 	inputInflight    map[inputDeliveryKey][]func(InputDeliveryResult)
 
-	onTitle        func(string)
-	onBell         func()
-	onInfo         func()
-	onResize       func(cols, rows int)
-	onEffect       func(terminalEffect)
-	onResync       func(clientID string, reason string)
-	resumeExact    atomic.Uint64
-	resumePatch    atomic.Uint64
-	resumeSnapshot atomic.Uint64
-
+	onTitle         func(string)
+	onBell          func()
+	onInfo          func()
+	onResize        func(cols, rows int)
+	onEffect        func(terminalEffect)
+	onResync        func(clientID string, reason string)
 	ptyOutputEvents atomic.Uint64
 	ptyOutputBytes  atomic.Uint64
 
@@ -102,23 +98,23 @@ type ScreenClient struct {
 	Interactive   bool
 	LayoutLeaseID string
 	Send          func(terminalengine.ScreenFrame)
-	// Resume 是 Hello 携带的完整投影声明。HasProjection=false 表示 cold attach。
-	Resume ResumeToken
-	// SendInitial 把不可覆盖的恢复首帧交给单一 screen writer；done 只有在
-	// 实际写出成功后才提交 actor baseline。nil 保留给内部旧调用/测试兼容路径。
-	SendInitial func(InitialSync, func(written bool))
-	// ResetProjection invalidates the client's derived frame baseline before a
-	// forced full state (attach/resync/dictionary rotation).
-	ResetProjection func()
-	SendHistory     func(requestID string, epoch, revision uint64, page terminalengine.HistoryPageData)
-	SendHistoryTrim func(epoch, firstAvailableSeq uint64)
+	// SendInitial 把不可覆盖的 Baseline 交给单一 screen writer；done 只有在
+	// 实际写出成功后才提交 actor baseline。nil 供内部调用和测试使用。
+	SendInitial     func(InitialSync, func(written bool))
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
 	SendLayoutLease func(LayoutLeaseEvent)
+	// screen.v2 stream state.
+	Mode             StreamMode
+	StreamGeneration uint64
+	SendHistoryRange func(requestID string, instanceID string, epoch uint64, data terminalengine.HistoryRangeData, stale bool)
+	SendTailStatus   func(instanceID string, epoch, generation, revision uint64, extent terminalengine.HistoryExtent)
 
 	// 以下字段仅由 Runtime actor 访问。
-	synced            bool
-	initialGeneration uint64
-	pendingState      terminalengine.ScreenFrame
+	synced             bool
+	initialGeneration  uint64
+	pendingState       terminalengine.ScreenFrame
+	historyRangeTokens float64
+	historyRangeRefill time.Time
 }
 
 // LayoutLeaseEvent 是 runtime 发给 screen client 的租约状态。
@@ -157,36 +153,18 @@ type inputDeliveryKey struct {
 	inputSeq         uint64
 }
 
-// ResumeToken 是客户端投影的原子版本锚点。
-type ResumeToken struct {
-	HasProjection  bool
-	InstanceID     string
-	LayoutEpoch    uint64
-	ScreenRevision uint64
-}
-
-// InitialSync 是 initial-sync slot 的不可覆盖消息。Frame 用于 Snapshot/Patch；
-// Exact=true 时 writer 发送 ResumeAck。State 始终是成功后要提交的完整权威状态。
+// InitialSync 是 initial-sync slot 的不可覆盖 Baseline。
 type InitialSync struct {
-	Exact bool
-	Frame terminalengine.ScreenFrame
-	State terminalengine.ScreenFrame
-	// 仅含版本/计数，不含终端正文，可安全用于结构化观测。
-	Decision                string
-	Reason                  string
-	ClientRevision          uint64
-	ServerRevision          uint64
-	SnapshotBarrierRevision uint64
-	ChangedRows             int
-	HistoryAppendLines      int
+	State            terminalengine.ScreenFrame
+	StreamGeneration uint64
 }
 
-// ResumeMetricsSnapshot 是 runtime 内增量恢复决策计数器的无锁快照。
-type ResumeMetricsSnapshot struct {
-	Exact    uint64
-	Patch    uint64
-	Snapshot uint64
-}
+type StreamMode uint8
+
+const (
+	StreamModeLive StreamMode = iota + 1
+	StreamModeFrozen
+)
 
 // Version 标识屏幕状态版本。
 type Version struct {
@@ -246,9 +224,7 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
 	// scrollbackMaxBytes<=0 时保留 NewTrackedScrollback 的 DefaultScrollbackByteLimit。
-	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, func(ev terminalengine.ScrollbackTrimEvent) {
-		r.engineSignals.recordHistoryTrim(ev.FirstAvailableSeq)
-	})
+	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, nil)
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
 	}
@@ -366,9 +342,15 @@ func (r *Runtime) Resize(clientID, leaseID string, cols, rows int) {
 	r.postEvent(resizeEvent{clientID: clientID, leaseID: leaseID, cols: cols, rows: rows})
 }
 
-// RequestHistory 请求历史分页。
-func (r *Runtime) RequestHistory(clientID, requestID string, beforeSeq uint64, limit int) {
-	r.postEvent(historyRequestEvent{clientID: clientID, requestID: requestID, beforeSeq: beforeSeq, limit: limit})
+func (r *Runtime) RequestHistoryRange(clientID, requestID, instanceID string, epoch, fromSeq, toSeq uint64) {
+	r.postEvent(historyRangeRequestEvent{
+		clientID: clientID, requestID: requestID, instanceID: instanceID,
+		epoch: epoch, fromSeq: fromSeq, toSeq: toSeq,
+	})
+}
+
+func (r *Runtime) SetStreamMode(clientID string, mode StreamMode, generation uint64) {
+	r.postEvent(streamModeEvent{clientID: clientID, mode: mode, generation: generation})
 }
 
 func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, data []byte) {
@@ -409,11 +391,6 @@ func (r *Runtime) ReleaseLayout(clientID, leaseID string) bool {
 	case <-r.stopCh:
 		return false
 	}
-}
-
-// Resync 向指定客户端重新发送完整快照。
-func (r *Runtime) Resync(clientID string) {
-	r.postEvent(clientResyncEvent{clientID: clientID})
 }
 
 // ResizeEngine 投递引擎几何调整事件（用于管理面或旧客户端路径），不切换 layout epoch。
@@ -701,10 +678,10 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientAttach(e.client)
 	case clientDetachEvent:
 		r.handleClientDetach(e.clientID)
-	case historyRequestEvent:
-		r.handleHistoryRequest(e)
-	case clientResyncEvent:
-		r.handleClientResync(e.clientID)
+	case historyRangeRequestEvent:
+		r.handleHistoryRangeRequest(e)
+	case streamModeEvent:
+		r.handleStreamMode(e)
 	case clientInitialSyncResultEvent:
 		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
@@ -920,9 +897,6 @@ func (r *Runtime) handlePTYOutput(data []byte) {
 
 func (r *Runtime) commitEngineSignals() {
 	batch := r.engineSignals.drain()
-	if batch.historyTrimFirstSeq != 0 {
-		r.broadcastHistoryTrim(batch.historyTrimFirstSeq)
-	}
 	for _, effect := range batch.effects {
 		r.handleEffect(effect)
 	}
@@ -996,10 +970,10 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	layoutEpoch := r.layoutEpoch
 	r.mu.Unlock()
 	r.engine.Resize(e.rows, e.cols)
-	// layoutEpoch scopes the live screen geometry; it does not invalidate main
-	// scrollback. The subsequent epoch-changing frame is a full snapshot, so
-	// clients replace their cached screen/history window atomically.
-	r.scrollback.SetLayoutEpoch(layoutEpoch)
+	// layoutEpoch scopes the live screen geometry. Resize may Pop rows from the
+	// scrollback and later Push them again; rebase retained history so the new
+	// epoch exposes a dense HistorySeq space without destroying scrollback.
+	r.scrollback.RebaseForLayoutEpoch(layoutEpoch)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	// Geometry changes replace physical rows, so do not wait for the regular
@@ -1015,7 +989,12 @@ func (r *Runtime) handleResize(e resizeEvent) {
 
 func (r *Runtime) handleClientAttach(c *ScreenClient) {
 	r.clients[c.ID] = c
-	r.startInitialSync(c, false)
+	if c.Mode == StreamModeFrozen {
+		c.synced = true
+		r.sendTailStatus(c)
+		return
+	}
+	r.startInitialSync(c)
 }
 
 func (r *Runtime) handleClientDetach(clientID string) {
@@ -1063,93 +1042,101 @@ func (r *Runtime) handleReleaseLayout(e releaseLayoutEvent) {
 	e.reply <- released
 }
 
-func (r *Runtime) handleHistoryRequest(e historyRequestEvent) {
+func (r *Runtime) handleHistoryRangeRequest(e historyRangeRequestEvent) {
 	client := r.clients[e.clientID]
-	if client == nil || client.SendHistory == nil {
+	if client == nil || client.SendHistoryRange == nil {
 		return
 	}
-	client.SendHistory(e.requestID, r.layoutEpoch, r.currentRevision(), r.projector.HistoryPage(e.beforeSeq, e.limit))
-}
-
-func (r *Runtime) broadcastHistoryTrim(firstAvailableSeq uint64) {
-	for _, client := range r.clients {
-		if client.SendHistoryTrim != nil {
-			client.SendHistoryTrim(r.layoutEpoch, firstAvailableSeq)
-		}
-	}
-}
-
-func (r *Runtime) handleClientResync(clientID string) {
-	client := r.clients[clientID]
-	if client == nil || !client.synced {
-		// initial-sync 已在途时忽略重复 Resync，保证不可覆盖 slot 不会堆叠，
-		// 也避免恶意客户端阻塞 terminal actor。
+	if allowed, retryAfter := client.allowHistoryRange(time.Now()); !allowed {
+		client.SendHistoryRange(
+			e.requestID, r.instanceID, r.layoutEpoch,
+			terminalengine.HistoryRangeData{
+				Status:       terminalengine.HistoryRangeRetryable,
+				Extent:       r.scrollback.Extent(),
+				RetryAfterMS: retryAfter,
+			}, false,
+		)
 		return
 	}
-	// Resync 始终以当前 revision 发送权威 Snapshot，不推进 canonical revision。
-	r.startInitialSync(client, true)
+	stale := e.instanceID != r.instanceID || e.epoch != r.layoutEpoch
+	if stale {
+		client.SendHistoryRange(
+			e.requestID, r.instanceID, r.layoutEpoch,
+			terminalengine.HistoryRangeData{Extent: r.scrollback.Extent()}, true,
+		)
+		return
+	}
+	client.SendHistoryRange(
+		e.requestID, r.instanceID, r.layoutEpoch,
+		r.projector.HistoryRange(e.fromSeq, e.toSeq), false,
+	)
 }
 
-func (r *Runtime) startInitialSync(client *ScreenClient, forceSnapshot bool) {
+const (
+	historyRangeRequestsPerSecond = 8.0
+	historyRangeBurst             = 8.0
+)
+
+// allowHistoryRange 是 actor 内的 per-client token bucket。历史正文范围请求不能
+// 挤占实时屏幕/输入；超额请求显式返回 RETRYABLE，由客户端按 retry_after_ms 退避。
+func (c *ScreenClient) allowHistoryRange(now time.Time) (bool, uint32) {
+	if c.historyRangeRefill.IsZero() {
+		c.historyRangeRefill = now
+		c.historyRangeTokens = historyRangeBurst
+	}
+	elapsed := now.Sub(c.historyRangeRefill).Seconds()
+	if elapsed > 0 {
+		c.historyRangeTokens = min(
+			historyRangeBurst,
+			c.historyRangeTokens+elapsed*historyRangeRequestsPerSecond)
+		c.historyRangeRefill = now
+	}
+	if c.historyRangeTokens >= 1 {
+		c.historyRangeTokens--
+		return true, 0
+	}
+	waitMS := uint32(((1-c.historyRangeTokens)/historyRangeRequestsPerSecond)*1000) + 1
+	return false, waitMS
+}
+
+func (r *Runtime) handleStreamMode(e streamModeEvent) {
+	client := r.clients[e.clientID]
+	if client == nil || e.generation <= client.StreamGeneration {
+		return
+	}
+	client.StreamGeneration = e.generation
+	client.Mode = e.mode
+	if e.mode == StreamModeFrozen {
+		client.synced = true
+		client.pendingState = terminalengine.ScreenFrame{}
+		r.sendTailStatus(client)
+		return
+	}
+	r.startInitialSync(client)
+}
+
+func (r *Runtime) sendTailStatus(client *ScreenClient) {
+	if client == nil || client.SendTailStatus == nil {
+		return
+	}
+	client.SendTailStatus(
+		r.instanceID, r.layoutEpoch, client.StreamGeneration,
+		r.currentRevision(), r.scrollback.Extent(),
+	)
+}
+
+func (r *Runtime) startInitialSync(client *ScreenClient) {
 	rev := r.currentRevision()
 	state := r.projector.ExportState(r.layoutEpoch, rev)
 	state.Kind = terminalengine.FrameSnapshot
-
-	sync := InitialSync{State: state, ClientRevision: client.Resume.ScreenRevision,
-		ServerRevision: state.Seq, SnapshotBarrierRevision: r.projector.SnapshotBarrierRevision()}
-	resume := client.Resume
-	switch {
-	case forceSnapshot:
-		sync.Frame = state
-		sync.Decision, sync.Reason = "snapshot", "resync"
-	case !resume.HasProjection || os.Getenv("WEBTERM_SCREEN_RESUME") == "0":
-		sync.Frame = state
-		sync.Decision, sync.Reason = "snapshot", "cold"
-	case resume.InstanceID != r.instanceID:
-		sync.Frame = state
-		sync.Decision, sync.Reason = "snapshot", "instance"
-	case resume.LayoutEpoch != r.layoutEpoch:
-		sync.Frame = state
-		sync.Decision, sync.Reason = "snapshot", "epoch"
-	default:
-		derived := r.projector.DeriveResumeFrame(state, resume.ScreenRevision)
-		switch derived.Outcome {
-		case screenprojection.ResumeOutcomeExact:
-			sync.Exact = true
-			sync.Decision = "exact"
-		case screenprojection.ResumeOutcomePatch:
-			sync.Frame = derived.Frame
-			sync.Decision = "patch"
-			sync.ChangedRows = len(derived.Frame.Screen)
-			sync.HistoryAppendLines = len(derived.Frame.History.Lines)
-		default:
-			sync.Frame = state
-			sync.Decision = "snapshot"
-		}
-		sync.Reason = derived.Reason
-	}
-	if sync.Decision == "exact" {
-		r.resumeExact.Add(1)
-	} else if sync.Decision == "patch" {
-		r.resumePatch.Add(1)
-	} else {
-		r.resumeSnapshot.Add(1)
-	}
+	sync := InitialSync{State: state, StreamGeneration: client.StreamGeneration}
 
 	client.synced = false
 	client.pendingState = terminalengine.ScreenFrame{}
 	client.initialGeneration++
 	generation := client.initialGeneration
 	if client.SendInitial == nil {
-		// 内部旧调用/benchmark 兼容：没有异步 writer 时以调度成功作为提交点。
-		if client.ResetProjection != nil {
-			client.ResetProjection()
-		}
-		if sync.Exact {
-			client.synced = true
-			return
-		}
-		client.Send(sync.Frame)
+		client.Send(sync.State)
 		client.synced = true
 		return
 	}
@@ -1158,13 +1145,6 @@ func (r *Runtime) startInitialSync(client *ScreenClient, forceSnapshot bool) {
 			clientID: client.ID, generation: generation, revision: state.Seq, written: written,
 		})
 	})
-}
-
-// ResumeMetrics 返回不含终端内容的累计决策计数。
-func (r *Runtime) ResumeMetrics() ResumeMetricsSnapshot {
-	return ResumeMetricsSnapshot{
-		Exact: r.resumeExact.Load(), Patch: r.resumePatch.Load(), Snapshot: r.resumeSnapshot.Load(),
-	}
 }
 
 func (r *Runtime) handleClientInitialSyncResult(e clientInitialSyncResultEvent) {
@@ -1197,6 +1177,10 @@ func (r *Runtime) broadcastFrame() {
 		r.captureSink.RecordCanonical(r.instanceID, terminalcapture.CanonicalRecord{Frame: state})
 	}
 	for _, c := range r.clients {
+		if c.Mode == StreamModeFrozen {
+			r.sendTailStatus(c)
+			continue
+		}
 		if c.synced {
 			c.Send(state)
 		} else {
@@ -1344,15 +1328,19 @@ type clientDetachEvent struct {
 	clientID string
 }
 
-type historyRequestEvent struct {
-	clientID  string
-	requestID string
-	beforeSeq uint64
-	limit     int
+type historyRangeRequestEvent struct {
+	clientID   string
+	requestID  string
+	instanceID string
+	epoch      uint64
+	fromSeq    uint64
+	toSeq      uint64
 }
 
-type clientResyncEvent struct {
-	clientID string
+type streamModeEvent struct {
+	clientID   string
+	mode       StreamMode
+	generation uint64
 }
 
 type clientInitialSyncResultEvent struct {

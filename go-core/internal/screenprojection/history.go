@@ -1,10 +1,6 @@
 package screenprojection
 
-import (
-	"fmt"
-
-	"webterm/go-core/internal/terminalengine"
-)
+import "webterm/go-core/internal/terminalengine"
 
 // HistoryChange 绑定仍驻留在权威 scrollback 中的 LineID 与其首次进入可导出
 // 投影的 revision。Cell 不保存在索引里，恢复时始终从 scrollback 读取。
@@ -24,8 +20,6 @@ type HistoryChangeIndex struct {
 	lastSeq                  uint64
 	nextSeq                  uint64
 }
-
-const maxResumeHistoryAppend = 500
 
 // sync 在 Projector 的导出提交点同步一次历史索引。返回 true 表示本次发现了
 // 必须推进 snapshot barrier 的结构缺口。普通从最旧端 trim 不算缺口：恢复
@@ -87,59 +81,6 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	}
 	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
 	return gap
-}
-
-type historyResumeSelection struct {
-	firstAvailableSeq uint64
-	historySeqs      []uint64
-	watermarkChanged bool
-	reason           string
-}
-
-// selectAfter 选择 clientRevision 之后创建且仍驻留的连续历史行。历史缺口、
-// 索引遗漏或协议行数上限都会显式返回降级原因。
-func (h *HistoryChangeIndex) selectAfter(clientRevision uint64) historyResumeSelection {
-	sel := historyResumeSelection{
-		firstAvailableSeq: h.firstSeq,
-		watermarkChanged: h.WatermarkChangedRevision > clientRevision,
-	}
-	if h.GapRevision > clientRevision {
-		sel.reason = ResumeReasonHistoryGap
-		return sel
-	}
-	for _, change := range h.Changes {
-		if change.CreatedRevision > clientRevision {
-			sel.historySeqs = append(sel.historySeqs, change.HistorySeq)
-			if len(sel.historySeqs) > maxResumeHistoryAppend {
-				sel.historySeqs = nil
-				sel.reason = ResumeReasonPatchCost
-				return sel
-			}
-		}
-	}
-	for i := 1; i < len(sel.historySeqs); i++ {
-		if sel.historySeqs[i] <= sel.historySeqs[i-1] {
-			sel.historySeqs = nil
-			sel.reason = ResumeReasonHistoryGap
-			return sel
-		}
-	}
-	return sel
-}
-
-func (p *Projector) exportResumeHistoryLocked(seqs []uint64) ([]terminalengine.Line, error) {
-	if len(seqs) == 0 {
-		return nil, nil
-	}
-	lines := make([]terminalengine.Line, 0, len(seqs))
-	for _, seq := range seqs {
-		historyLine, ok := p.scrollback.LineByHistorySeq(seq)
-		if !ok {
-			return nil, fmt.Errorf("history sequence %d is no longer available", seq)
-		}
-		lines = append(lines, p.exporter.exportHistoryLine(historyLine))
-	}
-	return lines, nil
 }
 
 // HistoryView 提供分页历史查询。

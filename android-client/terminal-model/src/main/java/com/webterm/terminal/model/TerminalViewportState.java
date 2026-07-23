@@ -25,13 +25,27 @@ public final class TerminalViewportState {
     scrollOffsetPixels = (int) Math.max(0L, Math.min((long) maxOffset, requestedOffset));
     // Match Termux mTopRow == 0: reaching the bottom immediately resumes tail-following.
     followTail = scrollOffsetPixels == 0;
+    if (followTail) {
+      anchorHistorySeq = null;
+      anchorPixelOffset = 0;
+    }
   }
 
-  public void resetForSnapshot() {
+  public void setHistoryAnchor(long historySeq, int pixelOffset) {
+    if (followTail || historySeq <= 0) return;
+    anchorHistorySeq = historySeq;
+    anchorPixelOffset = pixelOffset;
+  }
+
+  public void returnToBottom() {
     followTail = true;
     anchorHistorySeq = null;
     anchorPixelOffset = 0;
     scrollOffsetPixels = 0;
+  }
+
+  public void resetForSnapshot() {
+    returnToBottom();
     selection = null;
     loadingOlderHistory = false;
   }

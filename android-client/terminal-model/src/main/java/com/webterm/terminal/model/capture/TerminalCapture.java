@@ -1,8 +1,8 @@
 package com.webterm.terminal.model.capture;
 
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatch;
-import com.webterm.terminal.model.ScreenSnapshot;
+import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.ScreenBaseline;
 
 /**
  * 现场捕获全局门面。默认 {@link NoopTerminalCapture}（release/未安装）。app 的 diagnostics
@@ -48,14 +48,14 @@ public final class TerminalCapture {
         }
     }
 
-    public static void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenSnapshot snapshot) {
+    public static void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenBaseline snapshot) {
         try {
             controller.recordMappedSnapshot(identity, snapshot);
         } catch (Throwable ignored) {
         }
     }
 
-    public static void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatch patch) {
+    public static void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch) {
         try {
             controller.recordMappedPatch(identity, patch);
         } catch (Throwable ignored) {

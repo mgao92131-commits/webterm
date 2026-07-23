@@ -12,6 +12,13 @@ const ClientModeScreen ClientMode = "screen"
 
 type testSocketFrameSink struct{ socket Socket }
 
+func (sink testSocketFrameSink) Subprotocol() string {
+	if socket, ok := sink.socket.(interface{ Subprotocol() string }); ok {
+		return socket.Subprotocol()
+	}
+	return ""
+}
+
 func (sink testSocketFrameSink) WriteFrame(ctx context.Context, payload []byte, binary bool) error {
 	messageType := MessageText
 	if binary {

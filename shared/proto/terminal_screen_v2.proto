@@ -1,0 +1,454 @@
+syntax = "proto3";
+
+package webterm.terminal.screen.v2;
+
+option go_package = "webterm/go-core/internal/screenprotocol/generatedv2";
+option java_package = "com.webterm.terminal.protocol.generated";
+option java_outer_classname = "TerminalScreenV2Proto";
+
+// webterm.screen.v2 是 Android 远程终端渲染逻辑通道协议。
+// 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
+message ScreenEnvelope {
+  uint32 protocol_version = 1; // 固定为 2
+
+  oneof payload {
+    Hello hello = 2;
+    Baseline baseline = 3;
+    ScreenPatch screen_patch = 4;
+    HistoryDelta history_delta = 5;
+    HistoryRangeRequest history_range_request = 6;
+    HistoryRangeResponse history_range_response = 7;
+    SetStreamMode set_stream_mode = 8;
+    TailStatus tail_status = 9;
+    AcquireLayout acquire_layout = 10;
+    LayoutLease layout_lease = 11;
+    ReleaseLayout release_layout = 12;
+    Resize resize = 13;
+    TerminalInput input = 14;
+    InputAck input_ack = 15;
+    TerminalEffect effect = 16;
+    ClipboardResponse clipboard_response = 17;
+    TerminalInfo info = 18;
+    Exit exit = 19;
+    Ping ping = 20;
+    Pong pong = 21;
+  }
+}
+
+enum ScreenStreamMode {
+  SCREEN_STREAM_MODE_UNSPECIFIED = 0;
+  SCREEN_STREAM_MODE_LIVE = 1;
+  SCREEN_STREAM_MODE_FROZEN = 2;
+}
+
+message Hello {
+  string client_instance_id = 1;
+  ScreenStreamMode desired_mode = 2;
+  uint64 stream_generation = 3; // >=1
+  string instance_id = 4;       // 本地冻结投影身份；冷启动为空
+  uint64 layout_epoch = 5;
+  bool has_frozen_projection = 6;
+  Geometry desired_geometry = 7;
+}
+
+message SetStreamMode {
+  ScreenStreamMode mode = 1;
+  uint64 stream_generation = 2;
+}
+
+message Geometry {
+  int32 rows = 1;
+  int32 cols = 2;
+}
+
+enum BufferKind {
+  BUFFER_KIND_UNSPECIFIED = 0;
+  BUFFER_KIND_MAIN = 1;
+  BUFFER_KIND_ALTERNATE = 2;
+}
+
+// 空历史使用 first_seq=last_seq+1，例如初始空历史 1..0。
+message HistoryExtent {
+  uint64 first_seq = 1;
+  uint64 last_seq = 2;
+}
+
+message Dictionary {
+  repeated TerminalStyle styles = 1;
+  repeated Hyperlink links = 2;
+}
+
+message HistoryTail {
+  HistoryExtent extent = 1;
+  repeated LineData lines = 2; // extent 最后至多 128 行
+}
+
+message Baseline {
+  string session_id = 1;
+  string instance_id = 2;
+  uint64 layout_epoch = 3;
+  uint64 screen_revision = 4;
+  uint64 stream_generation = 5;
+  Geometry geometry = 6;
+  BufferKind active_buffer = 7;
+  HistoryExtent history_extent = 8;
+  HistoryTail history_tail = 9;
+  ScreenLayout screen_layout = 10;
+  repeated LineData screen_lines = 11;
+  Cursor cursor = 12;
+  Modes modes = 13;
+  TerminalPalette palette = 14;
+  Dictionary dictionary = 15;
+  optional string title = 16;
+  optional string working_directory = 17;
+}
+
+message ScreenPatch {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 stream_generation = 3;
+  uint64 base_screen_revision = 4;
+  uint64 screen_revision = 5;
+  optional ScreenLayout screen_layout = 6;
+  repeated LineData screen_line_updates = 7;
+  optional Cursor cursor = 8;
+  optional Modes modes = 9;
+  optional TerminalPalette palette = 10;
+  optional BufferKind active_buffer = 11;
+  Dictionary dictionary = 12;
+  optional string title = 13;
+  optional string working_directory = 14;
+}
+
+message HistoryDelta {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 stream_generation = 3;
+  HistoryExtent available_extent = 4;
+  repeated LineData lines = 5;
+  Dictionary dictionary = 6;
+}
+
+enum HistoryRangeStatus {
+  HISTORY_RANGE_STATUS_UNSPECIFIED = 0;
+  HISTORY_RANGE_STATUS_OK = 1;
+  HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;
+  HISTORY_RANGE_STATUS_TRIMMED = 3;
+  HISTORY_RANGE_STATUS_RETRYABLE = 4;
+}
+
+message HistoryRangeRequest {
+  string request_id = 1;
+  string instance_id = 2;
+  uint64 layout_epoch = 3;
+  uint64 from_seq = 4;
+  uint64 to_seq = 5; // 闭区间，最多 256 行
+}
+
+message HistoryRangeResponse {
+  string request_id = 1;
+  string instance_id = 2;
+  uint64 layout_epoch = 3;
+  HistoryRangeStatus status = 4;
+  HistoryExtent available_extent = 5;
+  repeated LineData lines = 6;
+  Dictionary dictionary = 7;
+  uint32 retry_after_ms = 8;
+}
+
+message TailStatus {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 stream_generation = 3;
+  uint64 latest_screen_revision = 4;
+  HistoryExtent latest_history_extent = 5;
+  bool exited = 6;
+  int32 exit_code = 7;
+}
+
+message ScreenLayout {
+  repeated uint64 line_ids = 1;
+}
+
+message LineData {
+  uint64 line_id = 1;
+  uint64 line_version = 2;
+  bool wrapped = 3;
+  string text = 4;
+  repeated StyleSpan style_spans = 5;
+  repeated CellRun runs = 6;
+  uint64 history_seq = 7;
+  bytes cell_meta = 8;
+}
+
+message StyleSpan {
+  int32 start_col = 1;
+  int32 end_col = 2;
+  uint32 style_id = 3;
+  uint32 link_id = 4;
+}
+
+message CellRun {
+  int32 col = 1;
+  repeated Cell cells = 2;
+}
+
+message Cell {
+  string text = 1;
+  uint32 width = 2;
+  uint32 style_id = 3;
+  uint32 link_id = 4;
+}
+
+message Color {
+  ColorKind kind = 1;
+  int32 index = 2;
+  uint32 rgb = 3;
+}
+
+enum ColorKind {
+  COLOR_KIND_UNSPECIFIED = 0;
+  COLOR_KIND_DEFAULT_FG = 1;
+  COLOR_KIND_DEFAULT_BG = 2;
+  COLOR_KIND_CURSOR = 3;
+  COLOR_KIND_INDEXED = 4;
+  COLOR_KIND_RGB = 5;
+}
+
+message TerminalStyle {
+  uint32 id = 1;
+  Color fg = 2;
+  Color bg = 3;
+  Color underline_color = 4;
+  CellAttrs attrs = 5;
+}
+
+message CellAttrs {
+  bool bold = 1;
+  bool dim = 2;
+  bool italic = 3;
+  bool underline = 4;
+  bool double_underline = 5;
+  bool curly_underline = 6;
+  bool dotted_underline = 7;
+  bool dashed_underline = 8;
+  bool blink_slow = 9;
+  bool blink_fast = 10;
+  bool reverse = 11;
+  bool hidden = 12;
+  bool strike = 13;
+}
+
+message Hyperlink {
+  uint32 id = 1;
+  string uri = 2;
+  string params = 3;
+}
+
+message Cursor {
+  int32 row = 1;
+  int32 col = 2;
+  bool visible = 3;
+  CursorShape shape = 4;
+  bool blink = 5;
+}
+
+enum CursorShape {
+  CURSOR_SHAPE_UNSPECIFIED = 0;
+  CURSOR_SHAPE_BLOCK = 1;
+  CURSOR_SHAPE_BAR = 2;
+  CURSOR_SHAPE_UNDERLINE = 3;
+}
+
+message Modes {
+  bool application_cursor = 1;
+  bool application_keypad = 2;
+  bool bracketed_paste = 3;
+  MouseTracking mouse_tracking = 4;
+  MouseEncoding mouse_encoding = 5;
+  bool focus_reporting = 6;
+}
+
+enum MouseTracking {
+  MOUSE_TRACKING_UNSPECIFIED = 0;
+  MOUSE_TRACKING_NONE = 1;
+  MOUSE_TRACKING_X10 = 2;
+  MOUSE_TRACKING_VT200 = 3;
+  MOUSE_TRACKING_VT200_HIGHLIGHT = 4;
+  MOUSE_TRACKING_BUTTON_EVENT = 5;
+  MOUSE_TRACKING_ANY_EVENT = 6;
+  MOUSE_TRACKING_SGR_PIXELS = 7;
+}
+
+enum MouseEncoding {
+  MOUSE_ENCODING_UNSPECIFIED = 0;
+  MOUSE_ENCODING_X10 = 1;
+  MOUSE_ENCODING_UTF8 = 2;
+  MOUSE_ENCODING_SGR = 3;
+  MOUSE_ENCODING_URXVT = 4;
+}
+
+message TerminalPalette {
+  Color default_fg = 1;
+  Color default_bg = 2;
+  Color cursor_color = 3;
+  bool reverse_video = 4;
+  repeated IndexedPaletteColor indexed_colors = 5;
+  uint64 generation = 6;
+}
+
+message IndexedPaletteColor {
+  int32 index = 1;
+  uint32 rgb = 2;
+}
+
+message AcquireLayout {
+  string request_id = 1;
+  bool interactive = 2;
+}
+
+message LayoutLease {
+  string request_id = 1;
+  string lease_id = 2;
+  bool granted = 3;
+  bool interactive = 4;
+  Geometry geometry = 5;
+  uint64 expires_at_ms = 6;
+}
+
+message ReleaseLayout {
+  string lease_id = 1;
+}
+
+message Resize {
+  int32 cols = 1;
+  int32 rows = 2;
+  string lease_id = 3;
+  string request_id = 4;
+}
+
+message TerminalInput {
+  string lease_id = 1;
+  string client_instance_id = 2;
+  uint64 input_seq = 3;
+  oneof input {
+    TextInput text = 10;
+    KeyInput key = 11;
+    PasteInput paste = 12;
+    MouseInput mouse = 13;
+    FocusInput focus = 14;
+  }
+}
+
+message InputAck {
+  string client_instance_id = 1;
+  uint64 input_seq = 2;
+  string terminal_instance_id = 3;
+  InputAckStatus status = 4;
+}
+
+enum InputAckStatus {
+  INPUT_ACK_STATUS_UNSPECIFIED = 0;
+  INPUT_ACK_STATUS_WRITTEN = 1;
+  INPUT_ACK_STATUS_IGNORED = 2;
+  INPUT_ACK_STATUS_REJECTED = 3;
+  INPUT_ACK_STATUS_UNCERTAIN = 4;
+}
+
+message TextInput { string data = 1; }
+
+message KeyInput {
+  string key = 1;
+  ModifierSet modifiers = 2;
+  bool pressed = 3;
+}
+
+message PasteInput { string data = 1; }
+
+message MouseInput {
+  int32 row = 1;
+  int32 col = 2;
+  MouseButton button = 3;
+  int32 wheel_delta = 4;
+  ModifierSet modifiers = 5;
+  bool pressed = 6;
+}
+
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_MIDDLE = 2;
+  MOUSE_BUTTON_RIGHT = 3;
+  MOUSE_BUTTON_WHEEL = 4;
+  MOUSE_BUTTON_MOVE = 5;
+}
+
+message FocusInput { bool focused = 1; }
+
+message ModifierSet {
+  bool shift = 1;
+  bool alt = 2;
+  bool ctrl = 3;
+  bool meta = 4;
+}
+
+message TerminalEffect {
+  string instance_id = 1;
+  uint64 screen_revision = 2;
+  oneof effect {
+    Bell bell = 10;
+    TitleChanged title = 11;
+    WorkingDirectoryChanged cwd = 12;
+    ClipboardReadRequest clipboard_read = 13;
+    ClipboardWriteRequest clipboard_write = 14;
+    DesktopNotification notification = 15;
+    PaletteChanged palette = 16;
+    ShellIntegrationMark shell_mark = 17;
+  }
+}
+
+message Bell {}
+message TitleChanged { string title = 1; }
+message WorkingDirectoryChanged { string path = 1; }
+message ClipboardReadRequest {
+  string request_id = 1;
+  string clipboard = 2;
+}
+message ClipboardWriteRequest {
+  string request_id = 1;
+  string clipboard = 2;
+  bytes data = 3;
+}
+message DesktopNotification {
+  string title = 1;
+  string body = 2;
+}
+message PaletteChanged { TerminalPalette palette = 1; }
+message ShellIntegrationMark {
+  string type = 1;
+  string data = 2;
+}
+
+message ClipboardResponse {
+  string request_id = 1;
+  bool allowed = 2;
+  bool timeout = 3;
+  bytes data = 4;
+}
+
+message TerminalInfo {
+  string session_id = 1;
+  string instance_id = 2;
+  string title = 3;
+  string cwd = 4;
+  string command = 5;
+  string status = 6;
+  int32 cols = 7;
+  int32 rows = 8;
+  int64 created_at_ms = 9;
+  int64 last_active_at_ms = 10;
+}
+
+message Exit { int32 code = 1; }
+message Ping { uint64 screen_revision = 1; }
+message Pong { uint64 screen_revision = 1; }

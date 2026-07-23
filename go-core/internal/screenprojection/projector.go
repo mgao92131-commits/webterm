@@ -204,8 +204,7 @@ func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 }
 
-// Seed 在恢复首帧成功写出后提交该客户端的完整权威 baseline。恢复 Patch 和
-// ResumeAck 本身都不是完整状态，不能直接作为后续在线 diff 的基线。
+// Seed 在 Baseline 成功写出后提交该客户端的完整权威状态。
 func (d *FrameDeriver) Seed(state terminalengine.ScreenFrame) {
 	d.baseline = state
 }
@@ -227,12 +226,26 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 	}
 }
 
-// HistoryPage 使用与实时投影相同的字典导出历史页，保证 style/link ID 稳定。
-func (p *Projector) HistoryPage(beforeSeq uint64, limit int) terminalengine.HistoryPageData {
+// HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。
+func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	window := NewHistoryView(p.scrollback).pageWithExporter(beforeSeq, limit, p.exporter)
-	return terminalengine.HistoryPageData{Window: window, Styles: p.exporter.styleTable.Styles(), Links: p.exporter.linkTable.Links()}
+	result := p.scrollback.Range(fromSeq, toSeq)
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	lines := make([]terminalengine.Line, len(result.Lines))
+	for i, line := range result.Lines {
+		lines[i] = exp.exportHistoryLine(line)
+	}
+	return terminalengine.HistoryRangeData{
+		Status: result.Status,
+		Extent: result.Extent,
+		Lines:  lines,
+		Styles: exp.styleTable.Styles(),
+		Links:  exp.linkTable.Links(),
+	}
 }
 
 // ExportState exports the authoritative terminal once for a screen revision.
@@ -475,33 +488,80 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		*baseline = state
 		return state
 	}
+	// 客户端只持有上一帧可见的尾部窗口。若本帧的新窗口起点已经越过旧尾部
+	// 的下一条，说明单帧推进超过 snapshotTailLines，中间 HistorySeq 无法通过
+	// HistoryDelta 补齐；必须重新发 Baseline（§2.10.3）。
+	if historyWindowHasAppendGap(*baseline, state) {
+		*baseline = state
+		return state
+	}
 
 	// 否则生成 patch（整行替换）。
 	patch := diffToPatch(*baseline, state)
-	if patch.Kind == terminalengine.FramePatch && isEmptyPatch(*baseline, patch) {
+	if patch.Kind != terminalengine.FramePatch {
+		*baseline = state
+		return patch
+	}
+	screenChanged := hasScreenChanges(patch)
+	historyChanged := hasHistoryChanges(patch)
+	switch {
+	case !screenChanged && !historyChanged:
 		// 无可观察变化（bell、title 设回原值等仍会让 Runtime bump revision）：
 		// 抑制空 patch（计划 §3.4/§10.1：patch 必须携带实际变化），不推进
 		// baseline，下一帧仍相对最后实际写出的 revision 做 diff。
 		return terminalengine.ScreenFrame{}
+	case screenChanged:
+		// 有屏幕变化：正常推进 baseline 并发 ScreenPatch；若同时有历史变化，
+		// writer 会在 ScreenPatch 之后补一条 HistoryDelta。
+		*baseline = state
+		return patch
+	default:
+		// 仅历史变化（extent 水位移动 / 新增历史行），无任何屏幕变化（I3）：
+		// 只推进 baseline 的历史窗口以免下一帧重复派生这些行，但保持 baseline.Seq
+		// 与屏幕字段不变，使 screen revision 链不被非屏幕变化推进。writer 据
+		// HistoryOnlyPatch 只发 HistoryDelta、不发空 ScreenPatch。
+		baseline.History = state.History
+		patch.HistoryOnlyPatch = true
+		return patch
 	}
-	*baseline = state
-	return patch
 }
 
-// isEmptyPatch 判断 diff 出的 patch 是否不含任何可观察变化。cursor/modes/palette
-// 通过 patch presence 标志表达，避免把未变化的元数据重复编码到每一帧。
+func historyWindowHasAppendGap(old, next terminalengine.ScreenFrame) bool {
+	oldLast := old.History.LastIncludedHistorySeq
+	nextLast := next.History.LastIncludedHistorySeq
+	if nextLast <= oldLast || len(next.History.Lines) == 0 {
+		return false
+	}
+	nextFirst := next.History.FirstIncludedHistorySeq
+	return nextFirst > oldLast+1
+}
+
+// hasScreenChanges 判断 patch 是否携带任何屏幕（非历史）可观察变化。
+func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
+	return len(patch.Screen) > 0 ||
+		len(patch.Layout) > 0 ||
+		len(patch.Styles) > 0 ||
+		len(patch.Links) > 0 ||
+		patch.TitleChanged ||
+		patch.WorkingDirChanged ||
+		patch.CursorChanged ||
+		patch.ModesChanged ||
+		patch.PaletteChanged
+}
+
+// hasHistoryChanges 判断 patch 是否携带任何历史（extent/行）变化。历史与屏幕
+// revision 链正交（I2），其变化单独经 HistoryDelta 表达。
+func hasHistoryChanges(patch terminalengine.ScreenFrame) bool {
+	return len(patch.History.Lines) > 0 ||
+		len(patch.HistoryAppendSeqs) > 0 ||
+		patch.FirstAvailableHistorySeqChanged
+}
+
+// isEmptyPatch 判断 diff 出的 patch 是否不含任何可观察变化（屏幕与历史皆无）。
+// cursor/modes/palette 通过 patch presence 标志表达，避免把未变化的元数据重复
+// 编码到每一帧。
 func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
-	return len(patch.History.Lines) == 0 &&
-		len(patch.HistoryAppendSeqs) == 0 &&
-		len(patch.Screen) == 0 &&
-		len(patch.Layout) == 0 &&
-		len(patch.Styles) == 0 &&
-		len(patch.Links) == 0 &&
-		!patch.TitleChanged &&
-		!patch.WorkingDirChanged &&
-		!patch.CursorChanged &&
-		!patch.ModesChanged &&
-		!patch.PaletteChanged
+	return !hasScreenChanges(patch) && !hasHistoryChanges(patch)
 }
 
 // diffToPatch 计算两帧差异并生成 patch 帧。
@@ -586,6 +646,10 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		WorkingDir:        new.WorkingDir,
 		TitleChanged:      old.Title != new.Title,
 		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
+		// v2 的 HistoryDelta 用该 presence 位表达 extent 水位变化（包括只 trim、
+		// 没有新增行的情况）；它与 screen revision 链保持正交。
+		FirstAvailableHistorySeqChanged: old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
+			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
 	}
 }
 

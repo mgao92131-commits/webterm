@@ -48,6 +48,31 @@ type HistoryIndexEntry struct {
 	LineID     uint64
 }
 
+// HistoryExtent 是同一 layout epoch 内可加载历史的绝对序号窗口。
+// 空窗口使用 LastSeq+1==FirstSeq，保留 Clear 后的 trim 水位。
+type HistoryExtent struct {
+	FirstSeq uint64
+	LastSeq  uint64
+}
+
+func (e HistoryExtent) Empty() bool {
+	return e.FirstSeq > 0 && e.LastSeq+1 == e.FirstSeq
+}
+
+type HistoryRangeStatus uint8
+
+const (
+	HistoryRangeOK HistoryRangeStatus = iota + 1
+	HistoryRangeTrimmed
+	HistoryRangeRetryable
+)
+
+type HistoryRangeResult struct {
+	Status HistoryRangeStatus
+	Extent HistoryExtent
+	Lines  []HistoryLine
+}
+
 // TrackedScrollback 是 headless-term 的唯一 scrollback provider。LineID 来自
 // 屏幕行并永不在这里改写；firstSeq/nextSeq 仅保存严格递增的 HistorySeq。
 type TrackedScrollback struct {
@@ -99,6 +124,20 @@ func (t *TrackedScrollback) SetLayoutEpoch(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.layoutEpoch = epoch
+}
+
+// RebaseForLayoutEpoch 保留 scrollback 内容与稳定 LineID，但把新 epoch 内的
+// HistorySeq 稠密重编号。headless-term 在增大 rows 时会 Pop 尾部历史；若沿用
+// 旧序号，后续 Push 会形成永久空洞并在虚拟列表中产生假空白行。
+func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.layoutEpoch = epoch
+	for i := range t.lines {
+		t.lines[i].HistorySeq = uint64(i + 1)
+	}
+	t.firstSeq = 1
+	t.nextSeq = uint64(len(t.lines)) + 1
 }
 
 // ResetForReflow discards physical history after a real reflow rebuild. It is
@@ -215,6 +254,41 @@ func (t *TrackedScrollback) LineByHistorySeq(seq uint64) (HistoryLine, bool) {
 		return HistoryLine{}, false
 	}
 	return t.lines[index], true
+}
+
+// Extent 原子返回当前可加载窗口；空历史仍保留 first trim 水位。
+func (t *TrackedScrollback) Extent() HistoryExtent {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return HistoryExtent{FirstSeq: t.firstSeq, LastSeq: t.lastSeqLocked()}
+}
+
+// Range 返回闭区间内仍可用的行。请求前缀已被 trim 时仍返回存活后缀，
+// 让客户端一次响应即可填页并停止对已裁剪序号的重试。
+func (t *TrackedScrollback) Range(fromSeq, toSeq uint64) HistoryRangeResult {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	extent := HistoryExtent{FirstSeq: t.firstSeq, LastSeq: t.lastSeqLocked()}
+	result := HistoryRangeResult{Status: HistoryRangeOK, Extent: extent}
+	if fromSeq < extent.FirstSeq {
+		result.Status = HistoryRangeTrimmed
+		fromSeq = extent.FirstSeq
+	}
+	if fromSeq > toSeq || len(t.lines) == 0 || fromSeq > extent.LastSeq {
+		return result
+	}
+	if toSeq > extent.LastSeq {
+		toSeq = extent.LastSeq
+	}
+	start := sort.Search(len(t.lines), func(i int) bool {
+		return t.lines[i].HistorySeq >= fromSeq
+	})
+	end := sort.Search(len(t.lines), func(i int) bool {
+		return t.lines[i].HistorySeq > toSeq
+	})
+	result.Lines = make([]HistoryLine, end-start)
+	copy(result.Lines, t.lines[start:end])
+	return result
 }
 
 // PageBefore returns rows strictly before the HistorySeq cursor, in entrance order.
@@ -337,7 +411,7 @@ func (t *TrackedScrollback) Clear() {
 	t.lines = t.lines[:0]
 	t.bytes = 0
 	// clear 是同一 layout epoch 内的历史裁剪，不是 LineID 空间重建。
-	// 保持 nextSeq 单调递增，使 HistoryTrim 水位可被客户端接受，也避免后续
+	// 保持 nextSeq 单调递增，使 HistoryExtent 水位可被客户端接受，也避免后续
 	// 输出复用已经被客户端见过的历史行 ID。
 	t.firstSeq = t.nextSeq
 	t.fireTrimLocked()

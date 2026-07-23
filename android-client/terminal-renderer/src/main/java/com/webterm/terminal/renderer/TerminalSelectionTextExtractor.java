@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
+import com.webterm.terminal.model.TerminalHistoryView;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 
@@ -25,7 +26,7 @@ final class TerminalSelectionTextExtractor {
    * @param history   按 {@link TerminalLine#historyOrder()}（HistorySeq）升序排列的历史行快照；可能为空
    * @param screen    活动屏幕行数组；可能为 null
    */
-  static String extract(TerminalSelection selection, TerminalHistorySnapshot history, TerminalLine[] screen) {
+  static String extract(TerminalSelection selection, TerminalHistoryView history, TerminalLine[] screen) {
     List<CopyLine> lines = new ArrayList<>();
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
@@ -48,7 +49,7 @@ final class TerminalSelectionTextExtractor {
   }
 
   private static void appendHistoryRange(List<CopyLine> lines, long startSeq, long endSeq,
-                                         int startCol, int endCol, TerminalHistorySnapshot history) {
+                                         int startCol, int endCol, TerminalHistoryView history) {
     if (history == null || history.isEmpty()) return;
     int startIndex = history.findSeqIndex(startSeq);
     if (startIndex < 0) startIndex = 0;

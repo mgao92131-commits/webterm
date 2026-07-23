@@ -18,7 +18,7 @@ import java.util.Map;
 
 public final class DeviceConnection {
     private static final String TAG = "DeviceConnection";
-    private static final String SCREEN_SUBPROTOCOL = "webterm.screen.v1";
+    private static final String SCREEN_SUBPROTOCOL = "webterm.screen.v2";
     private static final String MUX_SUBPROTOCOL = "webterm.mux.v1";
     private static final long CHANNEL_OPEN_TIMEOUT_MS = 10_000L;
     private static final long PHYSICAL_CONNECT_TIMEOUT_MS = 10_000L;

@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"webterm/go-core/internal/screenprotocol"
-	pb "webterm/go-core/internal/screenprotocol/generated"
+	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	"webterm/go-core/internal/screenprotocolv2"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -67,7 +67,7 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if len(patch.Screen) != 1 || patch.Screen[0].ID != promptID || !strings.Contains(exportLineText(patch.Screen[0]), "user@host:~$") {
 		t.Fatalf("prompt LineData missing or wrong: %+v", patch.Screen)
 	}
-	encoded, err := screenprotocol.EncodeFrame(patch)
+	encoded, err := screenprotocolv2.EncodeScreenPatch(patch, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetPatch() == nil || len(envelope.GetPatch().GetLineUpdates()) != 1 {
-		t.Fatalf("protobuf patch omitted prompt line: %+v", envelope.GetPatch())
+	if envelope.GetScreenPatch() == nil || len(envelope.GetScreenPatch().GetScreenLineUpdates()) != 1 {
+		t.Fatalf("protobuf patch omitted prompt line: %+v", envelope.GetScreenPatch())
 	}
 }
 
@@ -278,6 +278,33 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 	}
 	if len(patch.History.Lines) != 1 || patch.History.Lines[0].ID != historySize+1 {
 		t.Fatalf("history delta=%+v, want only line %d", patch.History.Lines, historySize+1)
+	}
+}
+
+func TestFrameDeriver_ExtentOnlyChangeDoesNotCreateScreenPatch(t *testing.T) {
+	screen := []terminalengine.Line{{ID: 1, Version: 1}}
+	baseline := terminalengine.ScreenFrame{
+		Version: 1, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
+		Rows: 1, Cols: 1, Screen: screen,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1,
+			FirstIncludedHistorySeq:  1,
+			LastIncludedHistorySeq:   5,
+		},
+	}
+	next := baseline
+	next.Seq = 2
+	next.History.FirstAvailableHistorySeq = 2
+	next.History.FirstIncludedHistorySeq = 2
+
+	var deriver FrameDeriver
+	deriver.Seed(baseline)
+	frame := deriver.FrameForState(next)
+	if !frame.HistoryOnlyPatch {
+		t.Fatal("extent-only change must be represented as HistoryDelta-only")
+	}
+	if hasScreenChanges(frame) {
+		t.Fatal("extent-only frame unexpectedly contains screen changes")
 	}
 }
 

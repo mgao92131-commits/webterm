@@ -66,4 +66,20 @@ public final class TerminalViewportStateTest {
     assertEquals(1_000, viewport.scrollOffsetPixels);
     assertFalse(viewport.followTail);
   }
+
+  @Test
+  public void explicitHistoryAnchorSurvivesScrollingUntilReturnToBottom() {
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.scrollBy(300, 1_000);
+    viewport.setHistoryAnchor(77, -6);
+    assertEquals(Long.valueOf(77), viewport.anchorHistorySeq);
+    assertEquals(-6, viewport.anchorPixelOffset);
+
+    viewport.scrollBy(-100, 1_000);
+    assertEquals(Long.valueOf(77), viewport.anchorHistorySeq);
+    viewport.returnToBottom();
+    assertTrue(viewport.followTail);
+    assertNull(viewport.anchorHistorySeq);
+    assertEquals(0, viewport.scrollOffsetPixels);
+  }
 }
