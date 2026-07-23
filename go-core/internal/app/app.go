@@ -183,9 +183,9 @@ func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options 
 
 func buildSessionEnv(ipcEndpoint, runtimeHookDir string, hookReady bool) map[string]string {
 	sessionEnv := map[string]string{
-		"WEBTERM":              "1",
-		"WEBTERM_INTEGRATION":  "1",
-		"WEBTERM_IPC_ENDPOINT": ipcEndpoint,
+		"WEBTERM":                   "1",
+		"WEBTERM_INTEGRATION":       "1",
+		"WEBTERM_AGENT_SOCKET_PATH": ipcEndpoint,
 		// hook 上报失败退避状态目录，按 runtime 隔离；CLI --hook-mode 维护其中按
 		// session 命名的状态文件，避免多 Agent / 多会话相互影响。
 		"WEBTERM_HOOK_STATE_DIR": filepath.Join(runtimeHookDir, "hook-state"),
@@ -193,10 +193,6 @@ func buildSessionEnv(ipcEndpoint, runtimeHookDir string, hookReady bool) map[str
 	if hookReady {
 		sessionEnv["WEBTERM_SHELL_INIT_DIR"] = agenthooks.ShellInitDirAt(runtimeHookDir)
 		sessionEnv["WEBTERM_POWERSHELL_HOOK"] = filepath.Join(runtimeHookDir, "bin", "webterm-shell-hook.ps1")
-	}
-	if strings.HasPrefix(ipcEndpoint, "unix:") {
-		// 保留 Unix shell hook / 旧 CLI 的兼容变量；Windows 不再伪造 socket path。
-		sessionEnv["WEBTERM_SOCKET_PATH"] = strings.TrimPrefix(ipcEndpoint, "unix:")
 	}
 	return sessionEnv
 }

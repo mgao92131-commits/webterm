@@ -13,7 +13,7 @@ const shellHookTemplate = `#!/usr/bin/env bash
 
 [ "${WEBTERM_INTEGRATION:-}" = "1" ] || return 0
 [ -n "${WEBTERM_SESSION_ID:-}" ] || return 0
-[ -n "${WEBTERM_IPC_ENDPOINT:-}" ] || return 0
+[ -n "${WEBTERM_AGENT_SOCKET_PATH:-${WEBTERM_IPC_ENDPOINT:-}}" ] || return 0
 
 WEBTERM="{{.WebtermBin}}"
 [ -x "$WEBTERM" ] || WEBTERM="webterm"
@@ -94,7 +94,7 @@ const zshRcTemplate = `# WebTerm zsh 初始化文件
 `
 
 const powerShellHookTemplate = `# WebTerm PowerShell hook: reports session metadata at every prompt (non-blocking).
-if ($env:WEBTERM_INTEGRATION -ne "1" -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID) -or [string]::IsNullOrWhiteSpace($env:WEBTERM_IPC_ENDPOINT)) { return }
+if ($env:WEBTERM_INTEGRATION -ne "1" -or [string]::IsNullOrWhiteSpace($env:WEBTERM_SESSION_ID) -or ([string]::IsNullOrWhiteSpace($env:WEBTERM_AGENT_SOCKET_PATH) -and [string]::IsNullOrWhiteSpace($env:WEBTERM_IPC_ENDPOINT))) { return }
 $script:WebTermBin = "{{.WebtermBin}}"
 if (-not (Test-Path $script:WebTermBin)) { $script:WebTermBin = "webterm" }
 # Backoff state is maintained by the CLI hook mode; this hook only reads it.
