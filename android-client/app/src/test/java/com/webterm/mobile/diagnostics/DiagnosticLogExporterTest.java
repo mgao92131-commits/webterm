@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
+import com.webterm.mobile.BuildConfig;
 
 import java.io.File;
 import java.io.IOException;
@@ -62,6 +63,21 @@ public class DiagnosticLogExporterTest {
         for (String name : names) {
             assertTrue(name.endsWith(".zip"));
         }
+    }
+
+    @Test
+    public void diagnosticManifestBuildIdentityIsStableAndPathFree() {
+        assertTrue("unknown".equals(BuildConfig.GIT_COMMIT)
+                || BuildConfig.GIT_COMMIT.matches("[0-9a-fA-F]{40}"));
+        assertTrue("unknown".equals(BuildConfig.SOURCE_TREE_HASH)
+                || BuildConfig.SOURCE_TREE_HASH.matches("[0-9a-f]{64}"));
+        assertTrue("unknown".equals(BuildConfig.PROTOCOL_SCHEMA_HASH)
+                || BuildConfig.PROTOCOL_SCHEMA_HASH.matches("[0-9a-f]{64}"));
+        assertEquals("debug", BuildConfig.BUILD_VARIANT_ID);
+        String identity = BuildConfig.GIT_COMMIT + BuildConfig.SOURCE_TREE_HASH
+                + BuildConfig.BUILD_TIME_UTC + BuildConfig.PROTOCOL_SCHEMA_HASH;
+        assertFalse(identity.contains("/Users/"));
+        assertFalse(identity.matches(".*[A-Za-z]:\\\\.*"));
     }
 
     @Test

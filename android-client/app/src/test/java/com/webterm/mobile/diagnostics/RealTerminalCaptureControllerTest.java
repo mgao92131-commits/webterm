@@ -302,6 +302,18 @@ public class RealTerminalCaptureControllerTest {
         assertEquals(5, manifest.getLong("androidModelRevision"));
         assertFalse(manifest.getBoolean("screenshotAvailable"));
         assertFalse(manifest.getBoolean("agentAvailable"));
+        assertEquals(com.webterm.mobile.BuildConfig.GIT_COMMIT,
+                manifest.getString("gitCommit"));
+        assertEquals(com.webterm.mobile.BuildConfig.GIT_DIRTY,
+                manifest.getBoolean("gitDirty"));
+        assertEquals(com.webterm.mobile.BuildConfig.SOURCE_TREE_HASH,
+                manifest.getString("sourceTreeHash"));
+        assertEquals(com.webterm.mobile.BuildConfig.BUILD_TIME_UTC,
+                manifest.getString("buildTime"));
+        assertEquals("debug", manifest.getString("buildVariant"));
+        assertEquals(com.webterm.mobile.BuildConfig.PROTOCOL_SCHEMA_HASH,
+                manifest.getString("protocolSchemaHash"));
+        assertFalse(manifest.toString().contains("/Users/"));
 
         JSONArray arr = new JSONArray(new String(entries.get("android/wire/index.json"), StandardCharsets.UTF_8));
         assertEquals(1, arr.length());

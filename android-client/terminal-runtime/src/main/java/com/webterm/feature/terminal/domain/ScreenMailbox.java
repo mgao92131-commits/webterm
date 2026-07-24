@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.Iterator;
 
 /** 连接代际感知的有界 screen mailbox；overflow 会生成先于后续消息处理的 fence。 */
 public final class ScreenMailbox {
@@ -12,6 +13,13 @@ public final class ScreenMailbox {
     SCREEN_PATCH,
     HISTORY_DELTA,
     HISTORY_RANGE,
+    TAIL_STATUS,
+    INPUT_ACK,
+    LAYOUT_LEASE,
+    INFO,
+    EFFECT,
+    EXIT,
+    PONG,
     /** @deprecated 仅供旧单元测试构造 mailbox；产品通道已使用 BASELINE。 */
     @Deprecated SNAPSHOT,
     /** @deprecated 产品通道已使用 SCREEN_PATCH。 */
@@ -22,6 +30,19 @@ public final class ScreenMailbox {
     @Deprecated HISTORY_TRIM,
     OTHER,
     UNKNOWN
+  }
+
+  static boolean isProjectionMessage(@NonNull MessageKind kind) {
+    return kind == MessageKind.BASELINE
+        || kind == MessageKind.SCREEN_PATCH
+        || kind == MessageKind.HISTORY_DELTA
+        || kind == MessageKind.HISTORY_RANGE
+        || kind == MessageKind.TAIL_STATUS
+        || kind == MessageKind.SNAPSHOT
+        || kind == MessageKind.PATCH
+        || kind == MessageKind.HISTORY_PAGE
+        || kind == MessageKind.HISTORY_TRIM
+        || kind == MessageKind.UNKNOWN;
   }
 
   public static final class Message {
@@ -89,6 +110,8 @@ public final class ScreenMailbox {
   private final ArrayDeque<Message> messages = new ArrayDeque<>();
   private boolean drainScheduled;
   private long pendingBytes;
+  private int pendingProjectionMessages;
+  private long pendingProjectionBytes;
   private volatile long generation;
   private boolean fencePending;
   private String fenceReason = "";
@@ -106,8 +129,26 @@ public final class ScreenMailbox {
                                   @NonNull byte[] payload,
                                   boolean validFrameSize,
                                   @NonNull MessageKind kind) {
-    long nextBytes = pendingBytes + payload.length;
-    if (!validFrameSize || messages.size() >= maxMessages || nextBytes > maxBytes) {
+    if (validFrameSize && kind == MessageKind.TAIL_STATUS) {
+      // TailStatus 是覆盖式远端水位，不携带可绘制内容。保留同一连接最新一条即可，
+      // 避免冻结期间持续输出把 projection mailbox 的帧预算耗尽。
+      Iterator<Message> iterator = messages.iterator();
+      while (iterator.hasNext()) {
+        Message pending = iterator.next();
+        if (pending.kind == MessageKind.TAIL_STATUS
+            && pending.connectionEpoch == connectionEpoch
+            && pending.sourceConnection == source) {
+          pendingBytes -= pending.payload.length;
+          pendingProjectionBytes -= pending.payload.length;
+          pendingProjectionMessages--;
+          iterator.remove();
+        }
+      }
+    }
+    boolean projection = isProjectionMessage(kind);
+    long nextProjectionBytes = pendingProjectionBytes + (projection ? payload.length : 0L);
+    if (!validFrameSize || (projection && (pendingProjectionMessages >= maxMessages
+        || nextProjectionBytes > maxBytes))) {
       Message retainedSnapshot = validFrameSize ? newestSnapshot() : null;
       Message snapshot = kind == MessageKind.BASELINE || kind == MessageKind.SNAPSHOT
           ? new Message(connectionEpoch, generation + 1L, source, payload, kind)
@@ -115,11 +156,23 @@ public final class ScreenMailbox {
               : new Message(retainedSnapshot.connectionEpoch, generation + 1L,
                   retainedSnapshot.sourceConnection, retainedSnapshot.payload, retainedSnapshot.kind,
                   retainedSnapshot.enqueuedAtNanos);
-      long discarded = pendingBytes + payload.length
+      long discarded = pendingProjectionBytes + payload.length
           - (snapshot == null ? 0L : snapshot.payload.length);
-      long discardedMessages = messages.size() + 1L - (snapshot == null ? 0L : 1L);
+      long discardedMessages = pendingProjectionMessages + 1L
+          - (snapshot == null ? 0L : 1L);
+      ArrayDeque<Message> retainedControl = new ArrayDeque<>();
+      long retainedControlBytes = 0L;
+      for (Message message : messages) {
+        if (!isProjectionMessage(message.kind)) {
+          retainedControl.addLast(message);
+          retainedControlBytes += message.payload.length;
+        }
+      }
       messages.clear();
-      pendingBytes = 0L;
+      messages.addAll(retainedControl);
+      pendingBytes = retainedControlBytes;
+      pendingProjectionMessages = 0;
+      pendingProjectionBytes = 0L;
       generation++;
       fencePending = true;
       fenceOverflows++;
@@ -127,7 +180,7 @@ public final class ScreenMailbox {
       fenceMessages += discardedMessages;
       fenceReason = !validFrameSize
           ? "screen mailbox rejected oversized frame"
-          : (nextBytes > maxBytes
+          : (nextProjectionBytes > maxBytes
               ? "screen mailbox exceeded byte budget"
               : "screen mailbox exceeded frame budget");
       // A snapshot is the one frame that can release the recovery fence. Keep the newest
@@ -135,11 +188,17 @@ public final class ScreenMailbox {
       // The payload remains untouched: webterm.screen.v2 stays a protobuf-only channel.
       if (snapshot != null) {
         messages.addLast(snapshot);
-        pendingBytes = snapshot.payload.length;
+        pendingBytes += snapshot.payload.length;
+        pendingProjectionMessages = 1;
+        pendingProjectionBytes = snapshot.payload.length;
       }
     } else {
       messages.addLast(new Message(connectionEpoch, generation, source, payload, kind));
-      pendingBytes = nextBytes;
+      pendingBytes += payload.length;
+      if (projection) {
+        pendingProjectionMessages++;
+        pendingProjectionBytes = nextProjectionBytes;
+      }
     }
     boolean schedule = !drainScheduled;
     drainScheduled = true;
@@ -159,6 +218,10 @@ public final class ScreenMailbox {
     Message message = messages.pollFirst();
     if (message != null) {
       pendingBytes -= message.payload.length;
+      if (isProjectionMessage(message.kind)) {
+        pendingProjectionMessages--;
+        pendingProjectionBytes -= message.payload.length;
+      }
       return new Drain(message, null);
     }
     return null;
@@ -183,6 +246,8 @@ public final class ScreenMailbox {
   public synchronized void reset() {
     messages.clear();
     pendingBytes = 0L;
+    pendingProjectionMessages = 0;
+    pendingProjectionBytes = 0L;
     drainScheduled = false;
     generation++;
     fencePending = false;

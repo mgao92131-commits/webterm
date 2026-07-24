@@ -55,8 +55,11 @@ func readZip(t *testing.T, path string) map[string]string {
 
 func exportTestManifest() Manifest {
 	return Manifest{
-		Version: "test", GitCommit: "abc123", BuildTime: "2026-07-20T00:00:00Z",
-		RunID: "run-1", Platform: "darwin", Architecture: "arm64",
+		Version: "test", GitCommit: strings.Repeat("a", 40), GitDirty: true,
+		SourceTreeHash: strings.Repeat("b", 64),
+		BuildTime:      "2026-07-20T00:00:00Z", BuildVariant: "diagnostics",
+		ProtocolSchemaHash: strings.Repeat("c", 64),
+		RunID:              "run-1", Platform: "darwin", Architecture: "arm64",
 	}
 }
 
@@ -91,6 +94,16 @@ func TestExportProducesCompleteZip(t *testing.T) {
 	}
 	if manifest.SchemaVersion != 1 || !manifest.LiveState || manifest.RunID != "run-1" {
 		t.Fatalf("manifest=%+v", manifest)
+	}
+	if len(manifest.GitCommit) != 40 || !manifest.GitDirty ||
+		len(manifest.SourceTreeHash) != 64 ||
+		manifest.BuildVariant != "diagnostics" ||
+		len(manifest.ProtocolSchemaHash) != 64 {
+		t.Fatalf("build identity missing from manifest: %+v", manifest)
+	}
+	if strings.Contains(entries["manifest.json"], "/Users/") ||
+		strings.Contains(entries["manifest.json"], `C:\`) {
+		t.Fatal("manifest exposes an absolute source path")
 	}
 	lines := strings.Split(strings.TrimSpace(entries["events.jsonl"]), "\n")
 	if len(lines) != 10 {

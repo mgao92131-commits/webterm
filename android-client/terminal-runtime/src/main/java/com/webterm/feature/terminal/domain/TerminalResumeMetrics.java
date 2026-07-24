@@ -24,6 +24,7 @@ public final class TerminalResumeMetrics {
   private static final AtomicLong MAILBOX_OVERFLOW = new AtomicLong();
   private static final AtomicLong MAILBOX_MAX_PENDING_BYTES = new AtomicLong();
   private static final AtomicLong MAILBOX_RECOVERED = new AtomicLong();
+  private static final AtomicLong STALE_STREAM_GENERATION = new AtomicLong();
 
   private TerminalResumeMetrics() {}
 
@@ -54,6 +55,7 @@ public final class TerminalResumeMetrics {
     }
   }
   static void screenMailboxRecovered(String result) { MAILBOX_RECOVERED.incrementAndGet(); }
+  static void staleStreamGeneration() { STALE_STREAM_GENERATION.incrementAndGet(); }
 
   /** 生成当前全部计数器与 mailbox 高水位的不可变快照。 */
   public static Snapshot snapshot() {
@@ -61,7 +63,8 @@ public final class TerminalResumeMetrics {
         RESYNC.get(), SYNC_TIMEOUT.get(), HOT_TO_WARM.get(), WARM_TO_COLD.get(),
         LEASE_ACQUIRE.get(), LEASE_DENIED.get(), LEASE_RETRY.get(), LEASE_RENEW.get(),
         LEASE_REVOKED.get(), LEASE_STALE_RESPONSE.get(), MAILBOX_OVERFLOW.get(),
-        MAILBOX_RECOVERED.get(), MAILBOX_MAX_PENDING_BYTES.get());
+        MAILBOX_RECOVERED.get(), MAILBOX_MAX_PENDING_BYTES.get(),
+        STALE_STREAM_GENERATION.get());
   }
 
   public static final class Snapshot {
@@ -82,13 +85,15 @@ public final class TerminalResumeMetrics {
     public final long mailboxOverflowCount;
     public final long mailboxRecoveredCount;
     public final long mailboxMaxPendingBytes;
+    public final long staleStreamGenerationCount;
 
     Snapshot(long pageReattachCount, long exactResumeCount, long cumulativePatchCount,
              long snapshotCount, long resyncCount, long syncTimeoutCount,
              long hotToWarmCount, long warmToColdCount, long leaseAcquireCount,
              long leaseDeniedCount, long leaseRetryCount, long leaseRenewCount,
              long leaseRevokedCount, long leaseStaleResponseCount, long mailboxOverflowCount,
-             long mailboxRecoveredCount, long mailboxMaxPendingBytes) {
+             long mailboxRecoveredCount, long mailboxMaxPendingBytes,
+             long staleStreamGenerationCount) {
       this.pageReattachCount = pageReattachCount;
       this.exactResumeCount = exactResumeCount;
       this.cumulativePatchCount = cumulativePatchCount;
@@ -106,6 +111,7 @@ public final class TerminalResumeMetrics {
       this.mailboxOverflowCount = mailboxOverflowCount;
       this.mailboxRecoveredCount = mailboxRecoveredCount;
       this.mailboxMaxPendingBytes = mailboxMaxPendingBytes;
+      this.staleStreamGenerationCount = staleStreamGenerationCount;
     }
   }
 }

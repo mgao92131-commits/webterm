@@ -12,6 +12,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 @RunWith(RobolectricTestRunner.class)
@@ -38,5 +39,32 @@ public final class RemoteTerminalViewDirtyRowsTest {
             new Rect(0, 6, 100, 7), new Rect(0, 8, 100, 9), new Rect(0, 10, 100, 11),
             new Rect(0, 12, 100, 13), new Rect(0, 14, 100, 15), new Rect(0, 16, 100, 17)),
         100, 100));
+  }
+
+  @Test
+  public void offscreenDirtyRowsDoNotTriggerFullInvalidate() {
+    List<Rect> offscreen = RemoteTerminalView.dirtyScreenRowRects(
+        Arrays.asList(7, 8), 200f, 20f, 100, 100);
+    assertTrue(offscreen.isEmpty());
+    assertTrue(RemoteTerminalView.handlesDirtyRectsWithoutFullInvalidate(
+        true, offscreen, 100, 100));
+  }
+
+  @Test
+  public void metadataOnlyUpdateDoesNotInvalidateCanvas() {
+    assertTrue(RemoteTerminalView.handlesDirtyRectsWithoutFullInvalidate(
+        false, Collections.emptyList(), 100, 100));
+  }
+
+  @Test
+  public void visibleDirtyRowsUsePartialInvalidate() {
+    assertTrue(RemoteTerminalView.handlesDirtyRectsWithoutFullInvalidate(
+        true, Collections.singletonList(new Rect(0, 20, 100, 40)), 100, 100));
+  }
+
+  @Test
+  public void largeVisibleDirtyAreaUsesFullInvalidate() {
+    assertFalse(RemoteTerminalView.handlesDirtyRectsWithoutFullInvalidate(
+        true, Collections.singletonList(new Rect(0, 0, 100, 60)), 100, 100));
   }
 }

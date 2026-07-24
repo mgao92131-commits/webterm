@@ -1,6 +1,7 @@
 package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -12,11 +13,14 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.core.contract.diagnostics.Diagnostics;
+import com.webterm.core.contract.diagnostics.DiagnosticSink;
 
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /** v2 冻结投影必须能在 Baseline 尾页之前继续按需加载历史。 */
 public final class TerminalSessionRuntimeV2HistoryPagingTest {
@@ -207,6 +211,146 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertTrue(connection.lastBeginSyncHasFrozenProjection);
   }
 
+  @Test
+  public void repeatedResumeWhileResyncingSendsOnlyOneLiveModeRequest() {
+    QueuedExecutor executor = new QueuedExecutor();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), executor, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    executor.runAll();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    executor.runAll();
+    runtime.freezeStream();
+    executor.runAll();
+
+    runtime.resumeLiveStream();
+    runtime.resumeLiveStream();
+    runtime.resumeLiveStream();
+    executor.runAll();
+
+    assertEquals(2, connection.modeChanges);
+    assertEquals(3L, connection.lastModeGeneration);
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    connection.listener.onScreenMessage(baseline(3).toByteArray());
+    executor.runAll();
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+  }
+
+  @Test
+  public void staleProjectionFramesAreDroppedWithoutNewResync() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    long revision = runtime.model().screenRevision;
+
+    connection.listener.onScreenMessage(screenPatch(0).toByteArray());
+    connection.listener.onScreenMessage(historyDelta(0).toByteArray());
+    connection.listener.onScreenMessage(tailStatus(0, 9, 1, 400).toByteArray());
+
+    assertEquals(revision, runtime.model().screenRevision);
+    assertEquals(0, connection.modeChanges);
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+  }
+
+  @Test
+  public void staleBaselineDuringRecoveryIsDroppedAndMatchingBaselineCompletesRecovery() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    runtime.freezeStream();
+    runtime.resumeLiveStream();
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+
+    connection.listener.onScreenMessage(baseline(2).toByteArray());
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    assertEquals(2, connection.modeChanges);
+    connection.listener.onScreenMessage(baseline(3).toByteArray());
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertEquals(2, connection.modeChanges);
+  }
+
+  @Test
+  public void futureGenerationRequestsChannelRebuild() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+
+    connection.listener.onScreenMessage(screenPatch(2).toByteArray());
+
+    assertEquals(1, connection.reconnectRequests);
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+    assertEquals(1, runtime.model().screenRevision);
+  }
+
+  @Test
+  public void tailStatusIsClassifiedBeforeFullParse() {
+    assertEquals(ScreenMailbox.MessageKind.TAIL_STATUS,
+        TerminalSessionRuntime.classifyScreenMessage(
+            tailStatus(1, 2, 1, 301).toByteArray()));
+  }
+
+  @Test
+  public void smallControlFrameBurstDoesNotOverflowProjectionMailbox() {
+    QueuedExecutor executor = new QueuedExecutor();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), executor, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    executor.runAll();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    executor.runAll();
+
+    byte[] pong = TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setPong(TerminalScreenV2Proto.Pong.newBuilder().setScreenRevision(1))
+        .build().toByteArray();
+    for (int i = 0; i < 128; i++) connection.listener.onScreenMessage(pong);
+    executor.runAll();
+
+    assertEquals(TerminalSessionRuntime.State.CONNECTED, runtime.state());
+    assertEquals(0, connection.modeChanges);
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void generationDiagnosticsUseStableReasonsWithoutTerminalPayload() {
+    List<Map<String, ?>> events = new ArrayList<>();
+    Diagnostics.install((level, area, event, fields) -> {
+      if (event.startsWith("screen_v2_generation_")) events.add(fields);
+    });
+    try {
+      TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+          "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+          (task, delayMs) -> {});
+      FakeV2Connection connection = new FakeV2Connection();
+      runtime.attachConnection(connection);
+      connection.listener.onConnected();
+      connection.listener.onScreenMessage(baseline(1).toByteArray());
+      connection.listener.onScreenMessage(screenPatch(0).toByteArray());
+      connection.listener.onScreenMessage(screenPatch(2).toByteArray());
+
+      assertEquals(2, events.size());
+      assertEquals("STALE_GENERATION", events.get(0).get("failureReason"));
+      assertEquals("SCREEN_PATCH", events.get(0).get("payloadCase"));
+      assertEquals("FUTURE_GENERATION", events.get(1).get("failureReason"));
+      assertFalse(events.toString().contains("terminal-secret"));
+    } finally {
+      Diagnostics.install(DiagnosticSink.NO_OP);
+    }
+  }
+
   private static TerminalScreenV2Proto.ScreenEnvelope baseline(long generation) {
     TerminalScreenV2Proto.Baseline.Builder baseline =
         TerminalScreenV2Proto.Baseline.newBuilder()
@@ -237,6 +381,29 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         requestId, fromSeq, toSeq,
         TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
         1, 300, 0, true);
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope screenPatch(long generation) {
+    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStreamGeneration(generation)
+            .setBaseScreenRevision(1)
+            .setScreenRevision(2))
+        .build();
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope historyDelta(long generation) {
+    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setHistoryDelta(TerminalScreenV2Proto.HistoryDelta.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStreamGeneration(generation)
+            .setAvailableExtent(extent(1, 300)))
+        .build();
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope tailStatus(
@@ -307,6 +474,8 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     boolean lastBeginSyncHasFrozenProjection;
     final List<String> textInputs = new ArrayList<>();
     TerminalScreenV2Proto.ScreenStreamMode lastMode;
+    long lastModeGeneration;
+    int reconnectRequests;
 
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
     @Override public boolean beginSync(long generation,
@@ -320,6 +489,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
       modeChanges++;
       lastMode = mode;
+      lastModeGeneration = generation;
       return modeSwitchSucceeds;
     }
     @Override public boolean requestHistoryRange(@NonNull String requestId,
@@ -352,6 +522,19 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     @Override public void sendClipboardResponse(@NonNull String requestId, boolean allowed,
         boolean timeout, @Nullable byte[] data) {}
     @Override public void close() {}
+    @Override public void requestReconnect(@NonNull String reason) { reconnectRequests++; }
+  }
+
+  private static final class QueuedExecutor implements java.util.concurrent.Executor {
+    final List<Runnable> tasks = new ArrayList<>();
+
+    @Override public void execute(@NonNull Runnable command) {
+      tasks.add(command);
+    }
+
+    void runAll() {
+      while (!tasks.isEmpty()) tasks.remove(0).run();
+    }
   }
 
   private static final class FakeScheduler implements TerminalSessionRuntime.TimeoutScheduler {

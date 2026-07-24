@@ -499,6 +499,12 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
         m.put("androidAppVersion", appVersionName());
         m.put("androidBuildType", Build.TYPE);
+        m.put("gitCommit", com.webterm.mobile.BuildConfig.GIT_COMMIT);
+        m.put("gitDirty", com.webterm.mobile.BuildConfig.GIT_DIRTY);
+        m.put("sourceTreeHash", com.webterm.mobile.BuildConfig.SOURCE_TREE_HASH);
+        m.put("buildTime", com.webterm.mobile.BuildConfig.BUILD_TIME_UTC);
+        m.put("buildVariant", com.webterm.mobile.BuildConfig.BUILD_VARIANT_ID);
+        m.put("protocolSchemaHash", com.webterm.mobile.BuildConfig.PROTOCOL_SCHEMA_HASH);
         m.put("androidDevice", Build.MANUFACTURER + " " + Build.MODEL);
         m.put("androidSdk", Build.VERSION.SDK_INT);
 

@@ -689,7 +689,8 @@ public final class RemoteTerminalView extends View {
     return Math.max(0, (int) Math.ceil(historyRows * lineHeight()));
   }
 
-  private float lineHeight() {
+  @androidx.annotation.VisibleForTesting
+  float lineHeight() {
     float h = renderer.getLineHeight();
     return h > 0 ? h : 1;
   }
@@ -847,11 +848,11 @@ public final class RemoteTerminalView extends View {
       dirtyRows.add(row);
     }
     if (change.cursorChanged) {
-      if (change.previousCursorRow < 0 || change.currentCursorRow < 0) return false;
-      dirtyRows.add(change.previousCursorRow);
-      dirtyRows.add(change.currentCursorRow);
+      if (change.previousCursorRow >= 0) dirtyRows.add(change.previousCursorRow);
+      if (change.currentCursorRow >= 0) dirtyRows.add(change.currentCursorRow);
     }
-    if (dirtyRows.isEmpty()) return false;
+    // 只有字典/远端水位等非像素元数据变化时，不需要 Canvas 重绘。
+    if (dirtyRows.isEmpty()) return true;
     Collections.sort(dirtyRows);
     List<Integer> uniqueRows = new ArrayList<>();
     for (int row : dirtyRows) {
@@ -867,7 +868,9 @@ public final class RemoteTerminalView extends View {
         viewport.followTail ? 0f : viewport.scrollOffsetPixels);
     List<Rect> dirtyRects = dirtyScreenRowRects(uniqueRows, screenTop, lineHeight,
         getWidth(), getHeight());
-    if (!shouldPartiallyInvalidate(dirtyRects, getWidth(), getHeight())) return false;
+    // 脏行全部位于 viewport 外时已经正确处理；不能退化成整 View invalidate。
+    if (!handlesDirtyRectsWithoutFullInvalidate(
+        true, dirtyRects, getWidth(), getHeight())) return false;
     int invalidatedRows = 0;
     for (Rect dirtyRect : dirtyRects) {
       invalidate(dirtyRect);
@@ -877,7 +880,6 @@ public final class RemoteTerminalView extends View {
       float bottom = top + lineHeight;
       if (bottom > 0 && top < getHeight()) invalidatedRows++;
     }
-    if (invalidatedRows == 0) return true;
     TerminalRenderMetrics.partialInvalidate(invalidatedRows);
     return true;
   }
@@ -891,6 +893,16 @@ public final class RemoteTerminalView extends View {
       dirtyArea += (long) Math.max(0, rect.width()) * Math.max(0, rect.height());
     }
     return (double) dirtyArea <= (double) width * height * MAX_PARTIAL_DIRTY_AREA_RATIO;
+  }
+
+  /**
+   * 返回 true 表示该批像素脏状态无需退化成整 View invalidate：
+   * 无脏行和全部离屏都属于已处理；只有可见脏区超过局部阈值时返回 false。
+   */
+  static boolean handlesDirtyRectsWithoutFullInvalidate(
+      boolean hasPixelDirtyRows, @NonNull List<Rect> dirtyRects, int width, int height) {
+    return !hasPixelDirtyRows || dirtyRects.isEmpty()
+        || shouldPartiallyInvalidate(dirtyRects, width, height);
   }
 
   /** Coalesces adjacent screen rows into minimal clipped dirty rectangles. */

@@ -22,9 +22,13 @@ import (
 
 // 版本三元组，构建时可经 -ldflags 注入；诊断导出与事件均以此为准。
 var (
-	version   = "0.1.0-dev"
-	gitCommit = "unknown"
-	buildTime = "unknown"
+	version            = "0.1.0-dev"
+	gitCommit          = "unknown"
+	gitDirty           = "false"
+	sourceTreeHash     = "unknown"
+	buildTime          = "unknown"
+	buildVariant       = "unknown"
+	protocolSchemaHash = "unknown"
 )
 
 type usageError struct{ error }
@@ -109,7 +113,11 @@ func runAgent(configPath, ipcEndpoint, mode string) error {
 		cfg.SocketPath = ""
 	}
 	application := app.NewWithBuildInfoAndOptions(cfg,
-		app.BuildInfo{Version: version, GitCommit: gitCommit, BuildTime: buildTime},
+		app.BuildInfo{
+			Version: version, GitCommit: gitCommit, GitDirty: gitDirty == "true",
+			SourceTreeHash: sourceTreeHash, BuildTime: buildTime,
+			BuildVariant: buildVariant, ProtocolSchemaHash: protocolSchemaHash,
+		},
 		// 生产入口显式开启日志落盘与导出读盘；LogDir 留空时按 IPC endpoint
 		// 隔离到默认 runtime 日志目录。
 		app.Options{PersistentLogs: true, ReadDiskLogs: true})

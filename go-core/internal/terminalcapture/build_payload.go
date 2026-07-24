@@ -19,10 +19,14 @@ type CaptureFile struct {
 
 // AgentInfo 描述 Agent 构建身份，写入 capture-meta.json。
 type AgentInfo struct {
-	Version   string `json:"agentVersion"`
-	Platform  string `json:"agentPlatform"`
-	BuildMode string `json:"agentBuildMode"`
-	GitCommit string `json:"agentGitCommit,omitempty"`
+	Version            string `json:"agentVersion"`
+	Platform           string `json:"agentPlatform"`
+	BuildMode          string `json:"agentBuildMode"`
+	GitCommit          string `json:"agentGitCommit"`
+	GitDirty           bool   `json:"agentGitDirty"`
+	SourceTreeHash     string `json:"agentSourceTreeHash"`
+	BuildTime          string `json:"agentBuildTime"`
+	ProtocolSchemaHash string `json:"agentProtocolSchemaHash"`
 }
 
 // AgentCaptureMeta 是 Agent 现场元数据（同时用于 result 消息与 capture-meta.json）。

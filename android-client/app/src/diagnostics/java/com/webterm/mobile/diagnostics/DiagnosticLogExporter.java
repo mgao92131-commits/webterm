@@ -13,6 +13,7 @@ import android.widget.Toast;
 import androidx.core.content.FileProvider;
 
 import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
+import com.webterm.mobile.BuildConfig;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -176,6 +177,12 @@ public final class DiagnosticLogExporter {
         json.put("schemaVersion", 1);
         json.put("exportedAt", isoNow());
         json.put("appVersion", appVersionName(context));
+        json.put("gitCommit", BuildConfig.GIT_COMMIT);
+        json.put("gitDirty", BuildConfig.GIT_DIRTY);
+        json.put("sourceTreeHash", BuildConfig.SOURCE_TREE_HASH);
+        json.put("buildTime", BuildConfig.BUILD_TIME_UTC);
+        json.put("buildVariant", BuildConfig.BUILD_VARIANT_ID);
+        json.put("protocolSchemaHash", BuildConfig.PROTOCOL_SCHEMA_HASH);
         json.put("device", Build.MANUFACTURER + " " + Build.MODEL);
         json.put("sdkInt", Build.VERSION.SDK_INT);
         return json;
@@ -260,6 +267,7 @@ public final class DiagnosticLogExporter {
         resumeJson.put("mailboxOverflowCount", resume.mailboxOverflowCount);
         resumeJson.put("mailboxRecoveredCount", resume.mailboxRecoveredCount);
         resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
+        resumeJson.put("staleStreamGenerationCount", resume.staleStreamGenerationCount);
         json.put("resume", resumeJson);
         return json;
     }

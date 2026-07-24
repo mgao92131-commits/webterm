@@ -76,12 +76,20 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertEquals(100, model.renderSnapshot().history.size());
     assertEquals((Long) 10L, viewport.anchorHistorySeq);
 
-    // 几何校验：desiredX = 0 + (50 - 9) * 1 = 41；若错用 Y 则 desiredY = 91
-    int expectedOffsetUsingX = 41;
-    int incorrectOffsetUsingY = 91;
-    assertEquals("Scroll offset must be calculated strictly from Snapshot X history size (50)",
+    // 动态几何校验：根据 view.lineHeight() 计算期望与错用 Y 时的 offset
+    float lh = view.lineHeight();
+    int indexX = updateX.snapshot.history.findSeqIndex(10L);
+    int historyRowsX = updateX.snapshot.history.size();
+    int desiredX = Math.round(0 + (historyRowsX - indexX) * lh);
+    int expectedOffsetUsingX = Math.min(desiredX, view.maxScrollOffsetPixels(updateX.snapshot));
+
+    int historyRowsY = model.renderSnapshot().history.size();
+    int desiredY = Math.round(0 + (historyRowsY - indexX) * lh);
+    int incorrectOffsetUsingY = Math.min(desiredY, view.maxScrollOffsetPixels(model.renderSnapshot()));
+
+    assertEquals("Scroll offset must be calculated strictly from Snapshot X history size",
         expectedOffsetUsingX, viewport.scrollOffsetPixels);
-    org.junit.Assert.assertNotEquals("Scroll offset must NOT be contaminated by Snapshot Y history size (100)",
+    org.junit.Assert.assertNotEquals("Scroll offset must NOT be contaminated by Snapshot Y history size",
         incorrectOffsetUsingY, viewport.scrollOffsetPixels);
   }
 
@@ -109,9 +117,17 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertEquals(5L, (long) viewport.anchorHistorySeq);
     assertEquals(10, viewport.anchorPixelOffset);
 
-    // 几何校验：snapshotX maxScroll 为 30，desiredX 为 36 -> 钳制后为 30；若错用 Y 则为 100
-    int expectedOffsetUsingX = 30;
-    int incorrectOffsetUsingY = 100;
+    // 动态几何校验：根据 view.lineHeight() 计算期望与错用 Y 时的 offset
+    float lh = view.lineHeight();
+    int indexX = updateX.snapshot.history.findSeqIndex(5L);
+    int historyRowsX = updateX.snapshot.history.size();
+    int desiredX = Math.round(10 + (historyRowsX - indexX) * lh);
+    int expectedOffsetUsingX = Math.min(desiredX, view.maxScrollOffsetPixels(updateX.snapshot));
+
+    int historyRowsY = model.renderSnapshot().history.size();
+    int desiredY = Math.round(10 + (historyRowsY - indexX) * lh);
+    int incorrectOffsetUsingY = Math.min(desiredY, view.maxScrollOffsetPixels(model.renderSnapshot()));
+
     assertEquals("Scroll offset must be calculated strictly from Snapshot X geometry",
         expectedOffsetUsingX, viewport.scrollOffsetPixels);
     org.junit.Assert.assertNotEquals("Scroll offset must NOT be contaminated by Snapshot Y geometry",
@@ -159,7 +175,9 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.followTail = false;
     view.applyRenderUpdate(updateX, viewport);
-    viewport.scrollBy(128, view.maxScrollOffsetPixels(updateX.snapshot));
+    int maxScrollX = view.maxScrollOffsetPixels(updateX.snapshot);
+    int targetScroll = Math.round(130 * view.lineHeight());
+    viewport.scrollBy(targetScroll, maxScrollX);
 
     host.fromSeq = -1;
     host.toSeq = -1;
@@ -371,9 +389,14 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     // Controller applyTerminalState 阶段：传入 updateY.snapshot (MAIN) 恢复锚点（此时 View renderedSnapshot 还是 ALTERNATE）
     view.restoreHistoryAnchor(updateY.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
 
-    // 验证：成功按照新 MAIN 快照几何恢复锚点，得出正确 offset (41)，未被旧 ALTERNATE 快照拦截
+    // 验证：成功按照新 MAIN 快照几何恢复锚点，得出正确 offset，未被旧 ALTERNATE 快照拦截
+    float lh = view.lineHeight();
+    int indexY = updateY.snapshot.history.findSeqIndex(10L);
+    int historyRowsY = updateY.snapshot.history.size();
+    int expectedOffset = Math.min(Math.round(0 + (historyRowsY - indexY) * lh), view.maxScrollOffsetPixels(updateY.snapshot));
+
     assertEquals("Scroll offset must be restored using new MAIN snapshot geometry",
-        41, viewport.scrollOffsetPixels);
+        expectedOffset, viewport.scrollOffsetPixels);
 
     // Controller applyRenderUpdate 阶段：正式切回 MAIN
     view.applyRenderUpdate(updateY, viewport);

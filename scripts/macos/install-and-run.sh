@@ -63,9 +63,26 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/webterm-macos.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 VERSION="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
-COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain=v1 2>/dev/null)" ]]; then
+  GIT_DIRTY=true
+  SOURCE_TREE_HASH="$(
+    {
+      git -C "$REPO_ROOT" diff --binary HEAD
+      git -C "$REPO_ROOT" status --porcelain=v1
+      git -C "$REPO_ROOT" ls-files -co --exclude-standard |
+        while IFS= read -r source_file; do
+          (cd "$REPO_ROOT" && shasum -a 256 "$source_file")
+        done
+    } | shasum -a 256 | awk '{print $1}'
+  )"
+else
+  GIT_DIRTY=false
+  SOURCE_TREE_HASH="$(printf '%s' "$COMMIT" | shasum -a 256 | awk '{print $1}')"
+fi
+PROTOCOL_SCHEMA_HASH="$(shasum -a 256 "$REPO_ROOT/shared/proto/terminal_screen_v2.proto" | awk '{print $1}')"
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-LDFLAGS="-s -w -X main.version=$VERSION -X main.gitCommit=$COMMIT -X main.buildTime=$BUILD_TIME"
+LDFLAGS="-s -w -X main.version=$VERSION -X main.gitCommit=$COMMIT -X main.gitDirty=$GIT_DIRTY -X main.sourceTreeHash=$SOURCE_TREE_HASH -X main.buildTime=$BUILD_TIME -X main.buildVariant=webterm_capture -X main.protocolSchemaHash=$PROTOCOL_SCHEMA_HASH"
 
 echo "[1/4] 运行 Go 测试"
 (cd "$GO_DIR" && go test ./...)
@@ -112,4 +129,3 @@ echo "日志目录：$LOG_DIR"
 echo
 echo "前台启动 Agent 命令："
 echo "  webterm-agent run --mode $MODE"
-

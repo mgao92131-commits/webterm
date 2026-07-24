@@ -34,6 +34,7 @@ public class TerminalResumeMetricsTest {
     TerminalResumeMetrics.leaseStaleResponse();
     TerminalResumeMetrics.screenMailboxOverflow("test", 128, 3);
     TerminalResumeMetrics.screenMailboxRecovered("ok");
+    TerminalResumeMetrics.staleStreamGeneration();
 
     TerminalResumeMetrics.Snapshot after = TerminalResumeMetrics.snapshot();
     assertEquals(before.pageReattachCount + 1, after.pageReattachCount);
@@ -52,6 +53,7 @@ public class TerminalResumeMetricsTest {
     assertEquals(before.leaseStaleResponseCount + 1, after.leaseStaleResponseCount);
     assertEquals(before.mailboxOverflowCount + 3, after.mailboxOverflowCount);
     assertEquals(before.mailboxRecoveredCount + 1, after.mailboxRecoveredCount);
+    assertEquals(before.staleStreamGenerationCount + 1, after.staleStreamGenerationCount);
   }
 
   @Test

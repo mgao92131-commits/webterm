@@ -14,9 +14,13 @@ import (
 func installTerminalCapture(buildInfo BuildInfo) {
 	terminalcapture.Install(terminalcapture.NewCoordinator())
 	terminalcapture.SetAgentInfo(terminalcapture.AgentInfo{
-		Version:   buildInfo.Version,
-		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
-		BuildMode: "webterm_capture",
-		GitCommit: buildInfo.GitCommit,
+		Version:            buildInfo.Version,
+		Platform:           runtime.GOOS + "/" + runtime.GOARCH,
+		BuildMode:          "webterm_capture",
+		GitCommit:          buildInfo.GitCommit,
+		GitDirty:           buildInfo.GitDirty,
+		SourceTreeHash:     buildInfo.SourceTreeHash,
+		BuildTime:          buildInfo.BuildTime,
+		ProtocolSchemaHash: buildInfo.ProtocolSchemaHash,
 	})
 }

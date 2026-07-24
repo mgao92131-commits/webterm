@@ -125,7 +125,7 @@ func TestFrozenTailStatusCoalescesToLatestPerClient(t *testing.T) {
 		terminalengine.HistoryExtent{FirstSeq: 3, LastSeq: 12})
 
 	client.tailMu.Lock()
-	pending := append([]byte(nil), client.tailPending...)
+	pending := append([]byte(nil), client.tailPending.payload...)
 	has := client.tailHas
 	client.tailMu.Unlock()
 	if !has {

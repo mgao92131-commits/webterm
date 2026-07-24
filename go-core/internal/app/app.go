@@ -25,9 +25,13 @@ import (
 
 // BuildInfo 是构建时注入的版本三元组，诊断导出与事件均以此为准。
 type BuildInfo struct {
-	Version   string `json:"version"`
-	GitCommit string `json:"gitCommit"`
-	BuildTime string `json:"buildTime"`
+	Version            string `json:"version"`
+	GitCommit          string `json:"gitCommit"`
+	GitDirty           bool   `json:"gitDirty"`
+	SourceTreeHash     string `json:"sourceTreeHash"`
+	BuildTime          string `json:"buildTime"`
+	BuildVariant       string `json:"buildVariant"`
+	ProtocolSchemaHash string `json:"protocolSchemaHash"`
 }
 
 type App struct {
@@ -95,6 +99,21 @@ func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
 func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options Options) *App {
 	if buildInfo.Version == "" {
 		buildInfo.Version = "0.1.0-dev"
+	}
+	if buildInfo.GitCommit == "" {
+		buildInfo.GitCommit = "unknown"
+	}
+	if buildInfo.SourceTreeHash == "" {
+		buildInfo.SourceTreeHash = "unknown"
+	}
+	if buildInfo.BuildTime == "" {
+		buildInfo.BuildTime = "unknown"
+	}
+	if buildInfo.BuildVariant == "" {
+		buildInfo.BuildVariant = "unknown"
+	}
+	if buildInfo.ProtocolSchemaHash == "" {
+		buildInfo.ProtocolSchemaHash = "unknown"
 	}
 	// 安装终端渲染路径现场捕获（仅开启 build tag webterm_capture 的构建为真实实现，
 	// 生产构建 NOOP）。必须在任何终端会话创建之前，使 Runtime 构造时读取到正确 Sink。
@@ -331,14 +350,18 @@ func (app *App) DiagnosticsSummary(includePaths bool) map[string]any {
 
 	return map[string]any{
 		"agent": map[string]any{
-			"version":     app.version,
-			"runId":       app.runID,
-			"gitCommit":   app.buildInfo.GitCommit,
-			"buildTime":   app.buildInfo.BuildTime,
-			"ipcEndpoint": ipcEndpoint,
-			"pid":         os.Getpid(),
-			"platform":    runtime.GOOS,
-			"arch":        runtime.GOARCH,
+			"version":            app.version,
+			"runId":              app.runID,
+			"gitCommit":          app.buildInfo.GitCommit,
+			"gitDirty":           app.buildInfo.GitDirty,
+			"sourceTreeHash":     app.buildInfo.SourceTreeHash,
+			"buildTime":          app.buildInfo.BuildTime,
+			"buildVariant":       app.buildInfo.BuildVariant,
+			"protocolSchemaHash": app.buildInfo.ProtocolSchemaHash,
+			"ipcEndpoint":        ipcEndpoint,
+			"pid":                os.Getpid(),
+			"platform":           runtime.GOOS,
+			"arch":               runtime.GOARCH,
 		},
 		"relay":   app.relayDiagnostics(),
 		"metrics": diagnostics.Default.Snapshot(),
@@ -445,12 +468,16 @@ func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path str
 		LogDir: logDir,
 		OutDir: exportDir,
 		Manifest: diagnostics.Manifest{
-			Version:      app.version,
-			GitCommit:    app.buildInfo.GitCommit,
-			BuildTime:    app.buildInfo.BuildTime,
-			RunID:        app.runID,
-			Platform:     runtime.GOOS,
-			Architecture: runtime.GOARCH,
+			Version:            app.version,
+			GitCommit:          app.buildInfo.GitCommit,
+			GitDirty:           app.buildInfo.GitDirty,
+			SourceTreeHash:     app.buildInfo.SourceTreeHash,
+			BuildTime:          app.buildInfo.BuildTime,
+			BuildVariant:       app.buildInfo.BuildVariant,
+			ProtocolSchemaHash: app.buildInfo.ProtocolSchemaHash,
+			RunID:              app.runID,
+			Platform:           runtime.GOOS,
+			Architecture:       runtime.GOARCH,
 		},
 		Metrics: diagnostics.Default.Snapshot(),
 		State:   app.DiagnosticsState(includePaths),

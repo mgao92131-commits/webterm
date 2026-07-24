@@ -1,7 +1,56 @@
+import java.security.MessageDigest
+import java.time.Instant
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.hilt)
 }
+
+fun commandBytes(workingDir: File, vararg command: String): ByteArray? = try {
+    val execution = providers.exec {
+        this.workingDir = workingDir
+        commandLine(*command)
+        isIgnoreExitValue = true
+    }
+    if (execution.result.get().exitValue == 0) {
+        execution.standardOutput.asBytes.get()
+    } else {
+        null
+    }
+} catch (_: Exception) {
+    null
+}
+
+fun sha256(bytes: ByteArray): String =
+    MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+val sourceRoot = rootProject.projectDir.parentFile
+val commitBytes = commandBytes(sourceRoot, "git", "rev-parse", "HEAD")
+val buildGitCommit = commitBytes?.toString(Charsets.UTF_8)?.trim()
+    ?.takeIf { it.matches(Regex("[0-9a-fA-F]{40}")) } ?: "unknown"
+val statusBytes = commandBytes(sourceRoot, "git", "status", "--porcelain=v1", "-z")
+val buildGitDirty = statusBytes != null && statusBytes.isNotEmpty()
+val buildSourceTreeHash = if (buildGitCommit == "unknown") {
+    "unknown"
+} else if (!buildGitDirty) {
+    sha256(buildGitCommit.toByteArray(Charsets.UTF_8))
+} else {
+    val digest = MessageDigest.getInstance("SHA-256")
+    digest.update(commandBytes(sourceRoot, "git", "diff", "--binary", "HEAD") ?: byteArrayOf())
+    digest.update(statusBytes)
+    val untracked = commandBytes(
+        sourceRoot, "git", "ls-files", "--others", "--exclude-standard", "-z")
+        ?: byteArrayOf()
+    for (pathBytes in untracked.toString(Charsets.UTF_8).split('\u0000').filter { it.isNotEmpty() }) {
+        digest.update(pathBytes.toByteArray(Charsets.UTF_8))
+        val source = File(sourceRoot, pathBytes)
+        if (source.isFile) digest.update(source.readBytes())
+    }
+    digest.digest().joinToString("") { "%02x".format(it) }
+}
+val protocolFile = File(sourceRoot, "shared/proto/terminal_screen_v2.proto")
+val buildProtocolSchemaHash = if (protocolFile.isFile) sha256(protocolFile.readBytes()) else "unknown"
+val buildTimestamp = Instant.now().toString()
 
 android {
     namespace = "com.webterm.mobile"
@@ -15,12 +64,18 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
+        buildConfigField("String", "GIT_COMMIT", "\"$buildGitCommit\"")
+        buildConfigField("boolean", "GIT_DIRTY", buildGitDirty.toString())
+        buildConfigField("String", "SOURCE_TREE_HASH", "\"$buildSourceTreeHash\"")
+        buildConfigField("String", "BUILD_TIME_UTC", "\"$buildTimestamp\"")
+        buildConfigField("String", "PROTOCOL_SCHEMA_HASH", "\"$buildProtocolSchemaHash\"")
     }
 
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("String", "BUILD_VARIANT_ID", "\"debug\"")
         }
         create("diag") {
             initWith(getByName("release"))
@@ -30,6 +85,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             matchingFallbacks.add("release")
+            buildConfigField("String", "BUILD_VARIANT_ID", "\"diagnostics\"")
         }
         release {
             isMinifyEnabled = true
@@ -39,6 +95,7 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "BUILD_VARIANT_ID", "\"release\"")
         }
     }
     sourceSets {
@@ -56,7 +113,7 @@ android {
     buildFeatures {
       compose = false
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 

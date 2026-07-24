@@ -671,11 +671,10 @@ public final class TerminalSessionRuntime {
   /** 滚动到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
   public void resumeLiveStream() {
     freezeRequested = false;
-    if (streamState == StreamState.LIVE) return;
     modelExecutor.execute(() -> {
-      if (!freezeRequested && streamState != StreamState.LIVE) {
-        requestFreshBaseline("return to live");
-      }
+      if (freezeRequested || state != State.CONNECTED
+          || streamState != StreamState.FROZEN) return;
+      requestFreshBaseline("return to live");
     });
   }
 
@@ -791,12 +790,15 @@ public final class TerminalSessionRuntime {
           ScreenMailbox.Message message = drain.message;
           // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
           if (message.connectionEpoch != connectionEpoch.get()
-              || message.mailboxGeneration != screenMailbox.generation()
+              || (ScreenMailbox.isProjectionMessage(message.kind)
+                  && message.mailboxGeneration != screenMailbox.generation())
               || message.sourceConnection != connection) continue;
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
-          if (message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+          if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+              || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA
+              || message.kind == ScreenMailbox.MessageKind.TAIL_STATUS)
               && streamState == StreamState.RESYNCING) {
             continue;
           }
@@ -837,6 +839,8 @@ public final class TerminalSessionRuntime {
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
       case HISTORY_DELTA:
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA;
+      case TAIL_STATUS:
+        return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
       default:
         return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
     }
@@ -844,7 +848,7 @@ public final class TerminalSessionRuntime {
 
   /** Reads only envelope tags; it intentionally does not alter the protobuf-only wire payload. */
   @NonNull
-  private static ScreenMailbox.MessageKind classifyScreenMessage(@NonNull byte[] payload) {
+  static ScreenMailbox.MessageKind classifyScreenMessage(@NonNull byte[] payload) {
     try {
       CodedInputStream input = CodedInputStream.newInstance(payload);
       while (!input.isAtEnd()) {
@@ -856,6 +860,13 @@ public final class TerminalSessionRuntime {
         if (field == 4) return ScreenMailbox.MessageKind.SCREEN_PATCH;
         if (field == 5) return ScreenMailbox.MessageKind.HISTORY_DELTA;
         if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
+        if (field == 9) return ScreenMailbox.MessageKind.TAIL_STATUS;
+        if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
+        if (field == 15) return ScreenMailbox.MessageKind.INPUT_ACK;
+        if (field == 16) return ScreenMailbox.MessageKind.EFFECT;
+        if (field == 18) return ScreenMailbox.MessageKind.INFO;
+        if (field == 19) return ScreenMailbox.MessageKind.EXIT;
+        if (field == 21) return ScreenMailbox.MessageKind.PONG;
         if (!input.skipField(tag)) break;
       }
     } catch (IOException | RuntimeException ignored) {
@@ -980,16 +991,22 @@ public final class TerminalSessionRuntime {
 
     long applyStartedNanos = System.nanoTime();
     boolean renderChanged = false;
+    String payloadCase = envelope.getPayloadCase().name();
+    long receivedGeneration = generationOf(envelope);
+    String failureReason = "UNKNOWN_APPLY_FAILURE";
     try {
       switch (envelope.getPayloadCase()) {
         case BASELINE: {
           TerminalScreenV2Proto.Baseline wire = envelope.getBaseline();
-          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          if (!acceptStreamGeneration(
+              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
+          failureReason = "INVALID_BASELINE";
           ScreenMessageV2Validator.validateBaseline(wire);
           ScreenBaseline baseline = ScreenMessageV2Mapper.mapBaseline(wire);
           String previousInstanceId = model.instanceId;
           if (!model.applyBaseline(baseline)) {
-            throw new IllegalArgumentException("stale Baseline");
+            failureReason = "STALE_BASELINE";
+            throw new IllegalArgumentException("model rejected Baseline");
           }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
               captureStreamIdentity(), baseline);
@@ -1012,7 +1029,9 @@ public final class TerminalSessionRuntime {
         case SCREEN_PATCH: {
           if (streamState != StreamState.LIVE) return;
           TerminalScreenV2Proto.ScreenPatch wire = envelope.getScreenPatch();
-          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          if (!acceptStreamGeneration(
+              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
+          failureReason = "INVALID_PATCH";
           ScreenMessageV2Validator.validatePatch(wire);
           if (wire.getScreenLineUpdatesCount() > model.rows) {
             throw new IllegalArgumentException("screen patch exceeds row limit");
@@ -1029,7 +1048,9 @@ public final class TerminalSessionRuntime {
         case HISTORY_DELTA: {
           if (streamState != StreamState.LIVE) return;
           TerminalScreenV2Proto.HistoryDelta wire = envelope.getHistoryDelta();
-          requireCurrentStreamGeneration(wire.getStreamGeneration());
+          if (!acceptStreamGeneration(
+              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
+          failureReason = "INVALID_HISTORY_DELTA";
           ScreenMessageV2Validator.validateHistoryDelta(wire);
           HistoryDelta delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
           renderChanged = model.applyHistoryDelta(delta);
@@ -1060,7 +1081,9 @@ public final class TerminalSessionRuntime {
         }
         case TAIL_STATUS: {
           TerminalScreenV2Proto.TailStatus status = envelope.getTailStatus();
-          requireCurrentStreamGeneration(status.getStreamGeneration());
+          if (!acceptStreamGeneration(
+              payloadCase, status.getStreamGeneration(), message.mailboxGeneration)) return;
+          failureReason = "INVALID_TAIL_STATUS";
           boolean accepted = model.observeTailStatus(
               status.getInstanceId(),
               status.getLayoutEpoch(),
@@ -1089,6 +1112,8 @@ public final class TerminalSessionRuntime {
       }
     } catch (RemoteTerminalModel.RevisionGapException e) {
       Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
+          "payloadCase", payloadCase,
+          "failureReason", "INVALID_PATCH",
           "localRevision", model.screenRevision,
           "streamGeneration", streamGeneration));
       startResyncRecovery("screen.v2 revision gap");
@@ -1096,7 +1121,14 @@ public final class TerminalSessionRuntime {
     } catch (Exception e) {
       Diagnostics.warn("screen_protocol", "screen_v2_apply_failed", diagnosticFields(
           "failureKind", e.getClass().getSimpleName(),
-          "localRevision", model.screenRevision));
+          "payloadCase", payloadCase,
+          "failureReason", failureReason,
+          "expectedGeneration", streamGeneration,
+          "receivedGeneration", receivedGeneration,
+          "streamState", streamState.name(),
+          "localRevision", model.screenRevision,
+          "connectionEpoch", connectionEpoch.get(),
+          "mailboxGeneration", message.mailboxGeneration));
       startResyncRecovery("screen.v2 apply failed");
       return;
     }
@@ -1104,9 +1136,59 @@ public final class TerminalSessionRuntime {
     if (renderChanged) dispatchRenderNeeded();
   }
 
-  private void requireCurrentStreamGeneration(long generation) {
-    if (generation != streamGeneration) {
-      throw new IllegalArgumentException("stale stream generation");
+  private boolean acceptStreamGeneration(@NonNull String payloadCase,
+                                         long generation,
+                                         long mailboxGeneration) {
+    if (generation < streamGeneration) {
+      TerminalResumeMetrics.staleStreamGeneration();
+      Diagnostics.debug("screen_protocol", "screen_v2_generation_dropped", diagnosticFields(
+          "payloadCase", payloadCase,
+          "failureReason", "STALE_GENERATION",
+          "expectedGeneration", streamGeneration,
+          "receivedGeneration", generation,
+          "streamState", streamState.name(),
+          "localRevision", model.screenRevision,
+          "connectionEpoch", connectionEpoch.get(),
+          "mailboxGeneration", mailboxGeneration));
+      return false;
+    }
+    if (generation > streamGeneration) {
+      Diagnostics.warn("screen_protocol", "screen_v2_generation_rejected", diagnosticFields(
+          "payloadCase", payloadCase,
+          "failureReason", "FUTURE_GENERATION",
+          "expectedGeneration", streamGeneration,
+          "receivedGeneration", generation,
+          "streamState", streamState.name(),
+          "localRevision", model.screenRevision,
+          "connectionEpoch", connectionEpoch.get(),
+          "mailboxGeneration", mailboxGeneration));
+      rebuildScreenChannel("future screen stream generation");
+      return false;
+    }
+    return true;
+  }
+
+  private void rebuildScreenChannel(@NonNull String reason) {
+    ScreenConnection current = connection;
+    if (current == null || state == State.CLOSED) return;
+    connectionEpoch.incrementAndGet();
+    layoutLeaseCoordinator.invalidate();
+    updateState(State.RECONNECTING);
+    current.requestReconnect(reason);
+  }
+
+  private static long generationOf(@NonNull TerminalScreenV2Proto.ScreenEnvelope envelope) {
+    switch (envelope.getPayloadCase()) {
+      case BASELINE:
+        return envelope.getBaseline().getStreamGeneration();
+      case SCREEN_PATCH:
+        return envelope.getScreenPatch().getStreamGeneration();
+      case HISTORY_DELTA:
+        return envelope.getHistoryDelta().getStreamGeneration();
+      case TAIL_STATUS:
+        return envelope.getTailStatus().getStreamGeneration();
+      default:
+        return 0L;
     }
   }
 

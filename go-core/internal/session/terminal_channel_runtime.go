@@ -50,7 +50,7 @@ type terminalChannelRuntime struct {
 	// 若全部排入容量 256 的 send FIFO，慢写客户端会堆满缓冲触发 enqueue 关闭会话。
 	// 单槽覆盖保证无论多少帧只写出最新一条 TailStatus。
 	tailMu      sync.Mutex
-	tailPending []byte
+	tailPending pendingTailStatus
 	tailHas     bool
 	tailWake    chan struct{}
 
@@ -66,6 +66,11 @@ type terminalChannelRuntime struct {
 	// 避免多会话/多客户端串数据。
 	captureSink        terminalcapture.Sink
 	terminalInstanceID string
+}
+
+type pendingTailStatus struct {
+	generation uint64
+	payload    []byte
 }
 
 type outboundMessage struct {
@@ -180,6 +185,7 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 					client.screenPending = terminalengine.ScreenFrame{}
 					client.screenMu.Unlock()
 				}
+				client.clearPendingTailStatus()
 				client.streamGeneration.Store(req.StreamGeneration)
 				client.streamMode.Store(uint32(mode))
 				rt.SetStreamMode(client.screenClientID, mode, req.StreamGeneration)
@@ -665,6 +671,7 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		return
 	}
 	client.clientInstanceID = hello.GetClientInstanceId()
+	client.clearPendingTailStatus()
 	client.streamGeneration.Store(hello.GetStreamGeneration())
 	mode := terminalsession.StreamModeLive
 	if hello.GetDesiredMode() == pb.ScreenStreamMode_SCREEN_STREAM_MODE_FROZEN {
@@ -826,7 +833,7 @@ func (client *terminalChannelRuntime) sendTailStatus(
 	// per-client 覆盖式合并：只保留最新一条 TailStatus，唤醒 writer 写出。
 	// 多次调用在 writer 取出前互相覆盖，避免冻结客户端在持续输出下堆满 send 缓冲。
 	client.tailMu.Lock()
-	client.tailPending = payload
+	client.tailPending = pendingTailStatus{generation: generation, payload: payload}
 	client.tailHas = true
 	client.tailMu.Unlock()
 	select {
@@ -838,15 +845,28 @@ func (client *terminalChannelRuntime) sendTailStatus(
 // flushTailStatus 写出当前最新的合并 TailStatus（若有）。无 pending 时为 no-op。
 func (client *terminalChannelRuntime) flushTailStatus(ctx context.Context) bool {
 	client.tailMu.Lock()
+	defer client.tailMu.Unlock()
 	if !client.tailHas {
-		client.tailMu.Unlock()
 		return true
 	}
-	payload := client.tailPending
-	client.tailPending = nil
+	pending := client.tailPending
+	client.tailPending = pendingTailStatus{}
+	client.tailHas = false
+	if pending.generation != client.streamGeneration.Load() ||
+		terminalsession.StreamMode(client.streamMode.Load()) != terminalsession.StreamModeFrozen {
+		return true
+	}
+	// 校验与写出必须和 mode 切换共用 tailMu 形成线性顺序：若 SetStreamMode
+	// 已先取得锁，pending 会被清空；若 writer 先取得锁，则旧 TailStatus 必须
+	// 在 LIVE 切换正式生效前完成写出，不能在切换后越界落到 socket。
+	return client.writeMessage(ctx, outboundMessage{binary: pending.payload, kind: "other"})
+}
+
+func (client *terminalChannelRuntime) clearPendingTailStatus() {
+	client.tailMu.Lock()
+	client.tailPending = pendingTailStatus{}
 	client.tailHas = false
 	client.tailMu.Unlock()
-	return client.writeMessage(ctx, outboundMessage{binary: payload, kind: "other"})
 }
 
 // sendScreenState accepts a complete shared projection from the terminal actor.
