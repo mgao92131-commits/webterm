@@ -638,7 +638,11 @@ public final class RemoteTerminalView extends View {
   /** 在指定 RenderSnapshot 中把指定 HistorySeq 恢复到原来的顶边像素位置。 */
   public void restoreHistoryAnchor(@NonNull RemoteTerminalModel.RenderSnapshot snapshot,
                                    long historySeq, int pixelOffset) {
-    if (viewport.followTail || isAlternateBuffer() || lineHeight() <= 0f) return;
+    if (viewport.followTail
+        || snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+        || lineHeight() <= 0f) {
+      return;
+    }
     TerminalHistoryView history = snapshot.history;
     int index = history.findSeqIndex(historySeq);
     if (index < 0) return;
@@ -672,7 +676,7 @@ public final class RemoteTerminalView extends View {
 
   @androidx.annotation.VisibleForTesting
   int maxScrollOffsetPixels(@Nullable RemoteTerminalModel.RenderSnapshot snapshot) {
-    if (snapshot == null || isAlternateBuffer()) return 0;
+    if (snapshot == null || snapshot.activeBuffer == TerminalBufferKind.ALTERNATE) return 0;
     TerminalLine[] screen = snapshot.screen;
     int screenRows = screen != null ? screen.length : 0;
     int historyRows = snapshot.history.size();

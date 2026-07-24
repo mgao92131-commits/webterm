@@ -668,7 +668,7 @@ public final class TerminalSessionRuntime {
     });
   }
 
-  /** 回到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
+  /** 滚动到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
   public void resumeLiveStream() {
     freezeRequested = false;
     if (streamState == StreamState.LIVE) return;

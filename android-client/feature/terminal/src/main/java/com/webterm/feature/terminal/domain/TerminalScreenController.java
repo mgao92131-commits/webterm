@@ -207,14 +207,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     requestViewportRedraw();
   }
 
-  /** 显式回到底部；这是 FROZEN -> LIVE 的唯一滚动入口。 */
-  public void returnToBottom() {
-    viewport.returnToBottom();
-    viewport.markLive();
-    runtime.resumeLiveStream();
-    requestViewportRedraw();
-  }
-
   public void requestViewportRedraw() {
     View v = view;
     if (v != null) {

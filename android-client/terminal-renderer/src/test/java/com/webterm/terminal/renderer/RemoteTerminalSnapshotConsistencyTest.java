@@ -75,6 +75,14 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertEquals(50, updateX.snapshot.history.size());
     assertEquals(100, model.renderSnapshot().history.size());
     assertEquals((Long) 10L, viewport.anchorHistorySeq);
+
+    // 几何校验：desiredX = 0 + (50 - 9) * 1 = 41；若错用 Y 则 desiredY = 91
+    int expectedOffsetUsingX = 41;
+    int incorrectOffsetUsingY = 91;
+    assertEquals("Scroll offset must be calculated strictly from Snapshot X history size (50)",
+        expectedOffsetUsingX, viewport.scrollOffsetPixels);
+    org.junit.Assert.assertNotEquals("Scroll offset must NOT be contaminated by Snapshot Y history size (100)",
+        incorrectOffsetUsingY, viewport.scrollOffsetPixels);
   }
 
   @Test
@@ -100,6 +108,14 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     // 4. 验证锚点几何仍然完全基于 snapshotX 恢复
     assertEquals(5L, (long) viewport.anchorHistorySeq);
     assertEquals(10, viewport.anchorPixelOffset);
+
+    // 几何校验：snapshotX maxScroll 为 30，desiredX 为 36 -> 钳制后为 30；若错用 Y 则为 100
+    int expectedOffsetUsingX = 30;
+    int incorrectOffsetUsingY = 100;
+    assertEquals("Scroll offset must be calculated strictly from Snapshot X geometry",
+        expectedOffsetUsingX, viewport.scrollOffsetPixels);
+    org.junit.Assert.assertNotEquals("Scroll offset must NOT be contaminated by Snapshot Y geometry",
+        incorrectOffsetUsingY, viewport.scrollOffsetPixels);
   }
 
   @Test
@@ -127,24 +143,47 @@ public final class RemoteTerminalSnapshotConsistencyTest {
 
   @Test
   public void visibleHistoryRequestMatchesRenderedSnapshot() {
-    // 1. 初始模型 Baseline Snapshot X
-    assertTrue(model.applyBaseline(createBaseline("s1", "i1", 1, 50, 10)));
+    // 1. 构造 Baseline Snapshot X（历史范围 1..300，但仅装载尾部 173..300，未装载 1..172）
+    List<TerminalLine> tailX = new ArrayList<>();
+    for (int seq = 173; seq <= 300; seq++) {
+      tailX.add(new TerminalLine(seq, 1, seq, false, new TerminalCell[] {TerminalCell.EMPTY}));
+    }
+    ScreenBaseline baselineX = new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 10, 24, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 300), tailX, createScreenLines(10, 1000),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+    assertTrue(model.applyBaseline(baselineX));
     RenderUpdate updateX = model.consumeRenderUpdate();
     assertNotNull(updateX);
 
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.followTail = false;
     view.applyRenderUpdate(updateX, viewport);
+    viewport.scrollBy(128, view.maxScrollOffsetPixels(updateX.snapshot));
 
-    // 2. 模型推进到 Snapshot Y，且改变 active buffer 到 ALTERNATE
-    ScreenBaseline baselineAlternate = new ScreenBaseline(
-        "s1", "i1", 1, 2, 1, 10, 24, TerminalBufferKind.ALTERNATE,
-        new HistoryExtent(1, 50), createHistoryLines(1, 10), createScreenLines(10, 100),
+    host.fromSeq = -1;
+    host.toSeq = -1;
+
+    // 2. 模型推进到 Snapshot Y（历史扩展到 1..1000），View 故意不消费 Y
+    List<TerminalLine> tailY = new ArrayList<>();
+    for (int seq = 873; seq <= 1000; seq++) {
+      tailY.add(new TerminalLine(seq, 1, seq, false, new TerminalCell[] {TerminalCell.EMPTY}));
+    }
+    ScreenBaseline baselineY = new ScreenBaseline(
+        "s1", "i1", 1, 2, 1, 10, 24, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 1000), tailY, createScreenLines(10, 2000),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
-    assertTrue(model.applyBaseline(baselineAlternate));
+    assertTrue(model.applyBaseline(baselineY));
 
-    // 3. View 尚未消费 Y，View 依然使用 renderedSnapshot X (MAIN buffer)
-    assertFalse("View must report MAIN buffer from renderedSnapshot X", view.isAlternateBuffer());
+    // 3. View 在未消费 Y 的情况下调用 requestVisibleHistoryPage()
+    view.requestVisibleHistoryPage();
+
+    // 4. 验证 Host 收到的历史请求范围严格匹配 Snapshot X 几何与未装载页界 (fromSeq = 129, toSeq = 256)
+    assertTrue("Host should receive a history range request", host.fromSeq > 0);
+    assertEquals("fromSeq must match Snapshot X requestable page calculation", 129L, host.fromSeq);
+    assertEquals("toSeq must match Snapshot X requestable page calculation", 256L, host.toSeq);
+    org.junit.Assert.assertNotEquals("fromSeq must NOT be calculated from Snapshot Y (which yields 769)",
+        769L, host.fromSeq);
   }
 
   @Test
@@ -214,6 +253,131 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertNotNull(updateY);
     view.applyRenderUpdate(updateY, new TerminalViewportState());
     assertFalse("View now updates to MAIN buffer after applying RenderUpdate Y", view.isAlternateBuffer());
+  }
+
+  @Test
+  public void restoreHistoryAnchorUsesPassedSnapshotActiveBufferWhenCurrentRenderedIsAlternate() {
+    // 1. 设置 View 的 renderedSnapshot 为 ALTERNATE buffer
+    ScreenBaseline baselineAlternate = new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 10, 24, TerminalBufferKind.ALTERNATE,
+        new HistoryExtent(1, 50), createHistoryLines(1, 10), createScreenLines(10, 100),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+    assertTrue(model.applyBaseline(baselineAlternate));
+    RenderUpdate updateAlternate = model.consumeRenderUpdate();
+    view.applyRenderUpdate(updateAlternate, new TerminalViewportState());
+    assertTrue(view.isAlternateBuffer());
+
+    // 2. 构造一个新的 updateSnapshotMAIN（MAIN buffer，且有历史）
+    ScreenBaseline baselineMain = createBaseline("s1", "i1", 2, 50, 10);
+    assertTrue(model.applyBaseline(baselineMain));
+    RenderUpdate updateMain = model.consumeRenderUpdate();
+    assertNotNull(updateMain);
+
+    // 3. 构造新的 viewport 并绑定到 view（保持 renderedSnapshot 为 ALTERNATE）
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+    view.applyRenderUpdate(updateAlternate, viewport);
+    assertTrue(view.isAlternateBuffer());
+
+    // 4. 显式传入 updateMain.snapshot (MAIN) 调用 restoreHistoryAnchor
+    view.restoreHistoryAnchor(updateMain.snapshot, 10L, 0);
+
+    // 5. 验证锚点成功恢复，未因旧 renderedSnapshot 是 ALTERNATE 而被拦截
+    assertEquals((Long) 10L, viewport.anchorHistorySeq);
+  }
+
+  @Test
+  public void maxScrollOffsetPixelsUsesPassedSnapshotActiveBuffer() {
+    // 1. View renderedSnapshot 为 MAIN buffer
+    assertTrue(model.applyBaseline(createBaseline("s1", "i1", 1, 50, 10)));
+    RenderUpdate updateMain = model.consumeRenderUpdate();
+    view.applyRenderUpdate(updateMain, new TerminalViewportState());
+    assertFalse(view.isAlternateBuffer());
+
+    // 2. 构造一个 ALTERNATE buffer 的 snapshot
+    ScreenBaseline baselineAlternate = new ScreenBaseline(
+        "s1", "i1", 1, 2, 1, 10, 24, TerminalBufferKind.ALTERNATE,
+        new HistoryExtent(1, 50), createHistoryLines(1, 10), createScreenLines(10, 100),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+    assertTrue(model.applyBaseline(baselineAlternate));
+    RenderUpdate updateAlternate = model.consumeRenderUpdate();
+
+    // 3. 显式传入 updateAlternate.snapshot 给 maxScrollOffsetPixels
+    int maxScroll = view.maxScrollOffsetPixels(updateAlternate.snapshot);
+
+    // 4. 验证严格返回 0，未受旧 renderedSnapshot (MAIN) 的影响
+    assertEquals(0, maxScroll);
+  }
+
+  @Test
+  public void controllerSequenceMainToAlternateDoesNotRestoreMainHistoryAnchor() {
+    // 场景 A：初始 View 为 MAIN buffer；新 update 为 ALTERNATE
+    assertTrue(model.applyBaseline(createBaseline("s1", "i1", 1, 50, 10)));
+    RenderUpdate updateX = model.consumeRenderUpdate();
+    assertNotNull(updateX);
+
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+    view.applyRenderUpdate(updateX, viewport);
+
+    viewport.scrollBy(20, 50);
+    viewport.setHistoryAnchor(10L, 0);
+    int originalOffset = viewport.scrollOffsetPixels;
+
+    // 模型推进到 ALTERNATE buffer
+    ScreenBaseline baselineAlternate = new ScreenBaseline(
+        "s1", "i1", 1, 2, 1, 10, 24, TerminalBufferKind.ALTERNATE,
+        new HistoryExtent(1, 50), createHistoryLines(1, 10), createScreenLines(10, 100),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+    assertTrue(model.applyBaseline(baselineAlternate));
+    RenderUpdate updateY = model.consumeRenderUpdate();
+    assertNotNull(updateY);
+
+    // Controller applyTerminalState 阶段：传入 updateY.snapshot (ALTERNATE) 恢复锚点（此时 View renderedSnapshot 还是 MAIN）
+    assertFalse(view.isAlternateBuffer());
+    view.restoreHistoryAnchor(updateY.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
+
+    // 验证：识别 updateY 为 ALTERNATE 并安全拦截，scrollOffset 不被错误重计算
+    assertEquals(originalOffset, viewport.scrollOffsetPixels);
+
+    // Controller applyRenderUpdate 阶段：正式切为 ALTERNATE
+    view.applyRenderUpdate(updateY, viewport);
+    assertTrue(view.isAlternateBuffer());
+  }
+
+  @Test
+  public void controllerSequenceAlternateToMainRestoresHistoryAnchorUsingNewSnapshot() {
+    // 场景 B：初始 View 为 ALTERNATE buffer
+    ScreenBaseline baselineAlternate = new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 10, 24, TerminalBufferKind.ALTERNATE,
+        new HistoryExtent(1, 50), createHistoryLines(1, 10), createScreenLines(10, 100),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+    assertTrue(model.applyBaseline(baselineAlternate));
+    RenderUpdate updateX = model.consumeRenderUpdate();
+    assertNotNull(updateX);
+
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+    view.applyRenderUpdate(updateX, viewport);
+    assertTrue(view.isAlternateBuffer());
+
+    viewport.setHistoryAnchor(10L, 0);
+
+    // 模型推进切回 MAIN buffer (updateY，含 50 条历史)
+    assertTrue(model.applyBaseline(createBaseline("s1", "i1", 2, 50, 10)));
+    RenderUpdate updateY = model.consumeRenderUpdate();
+    assertNotNull(updateY);
+
+    // Controller applyTerminalState 阶段：传入 updateY.snapshot (MAIN) 恢复锚点（此时 View renderedSnapshot 还是 ALTERNATE）
+    view.restoreHistoryAnchor(updateY.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
+
+    // 验证：成功按照新 MAIN 快照几何恢复锚点，得出正确 offset (41)，未被旧 ALTERNATE 快照拦截
+    assertEquals("Scroll offset must be restored using new MAIN snapshot geometry",
+        41, viewport.scrollOffsetPixels);
+
+    // Controller applyRenderUpdate 阶段：正式切回 MAIN
+    view.applyRenderUpdate(updateY, viewport);
+    assertFalse(view.isAlternateBuffer());
   }
 
   private static ScreenBaseline createBaseline(String screenId, String instanceId, long seq,

@@ -107,7 +107,7 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void returningCrossesIntoVisibleLiveScreenAndBottomIsExplicitlyLive() {
+  public void returningCrossesIntoVisibleLiveScreenAndBottomIsAutomaticallyLive() {
     controller.onScrollPixels(800, 2_000, 720);
     controller.onScrollPixels(-1, 2_000, 720);
     controller.onScrollPixels(-80, 2_000, 720);
@@ -116,7 +116,8 @@ public final class TerminalScreenControllerTest {
     assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
     assertFalse(viewport.followTail);
 
-    controller.returnToBottom();
+    // 向下滚动到底部 (scrollOffsetPixels 归零)
+    controller.onScrollPixels(-719, 2_000, 720);
     assertEquals(0, viewport.scrollOffsetPixels);
     assertTrue(viewport.followTail);
     assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);

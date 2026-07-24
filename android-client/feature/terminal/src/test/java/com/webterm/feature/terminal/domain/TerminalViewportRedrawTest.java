@@ -4,10 +4,13 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import androidx.annotation.NonNull;
 
@@ -47,11 +50,22 @@ public final class TerminalViewportRedrawTest {
   public void setUp() {
     model = new RemoteTerminalModel();
     runtime = mock(TerminalSessionRuntime.class);
+
+    when(runtime.model()).thenReturn(model);
+    doAnswer(invocation -> {
+      model.requestFullRender();
+      return null;
+    }).when(runtime).requestModelRender();
+    doAnswer(invocation -> {
+      model.requestFullRender();
+      return null;
+    }).when(runtime).requestRender();
+
     viewport = new TerminalViewportState();
     controller = new TerminalScreenController(runtime, viewport, new ImmediateFrameScheduler());
     view = new CapturingView();
     controller.attach(mock(androidx.lifecycle.LifecycleOwner.class, org.mockito.Mockito.RETURNS_DEEP_STUBS), view);
-    org.mockito.Mockito.reset(runtime);
+    clearInvocations(runtime);
   }
 
   @Test
