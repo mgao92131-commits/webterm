@@ -69,7 +69,7 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
 
   @Override
   public void requestInvalidate() {
-    view.invalidate();
+    view.postInvalidateOnAnimation();
   }
 
   @Override
@@ -78,8 +78,11 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void restoreHistoryAnchor(long historySeq, int pixelOffset) {
-    view.restoreHistoryAnchor(historySeq, pixelOffset);
+  public void restoreHistoryAnchor(
+      @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+      long historySeq,
+      int pixelOffset) {
+    view.restoreHistoryAnchor(snapshot, historySeq, pixelOffset);
   }
 
   @Override

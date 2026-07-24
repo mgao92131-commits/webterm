@@ -1221,10 +1221,14 @@ public final class TerminalSessionRuntime {
     });
   }
 
-  /** 请求一次最新模型绘制，供页面 attach、恢复和本地滚动使用。 */
-  public void requestRender() {
+  /** 请求一次最新模型绘制，供页面 attach、恢复和重新绑定使用。 */
+  public void requestModelRender() {
     model.requestFullRender();
     dispatchRenderNeeded();
+  }
+
+  public void requestRender() {
+    requestModelRender();
   }
 
   private void dispatchRenderNeeded() {

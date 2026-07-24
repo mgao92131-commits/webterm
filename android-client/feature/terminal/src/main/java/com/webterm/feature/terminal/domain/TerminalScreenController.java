@@ -33,7 +33,10 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     /** Only invoked for tail appends while the user is not following the tail. */
     default void onHistoryAppended(int lineCount) {}
     /** 在新投影几何中恢复同一 HistorySeq 的像素位置。 */
-    default void restoreHistoryAnchor(long historySeq, int pixelOffset) {}
+    default void restoreHistoryAnchor(
+        @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+        long historySeq,
+        int pixelOffset) {}
     default int liveScreenExitOffsetPixels() { return Integer.MAX_VALUE; }
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
     default void onLayoutLeaseStateChanged(boolean ready) {}
@@ -201,7 +204,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
         && viewport.contentStreamIntent == ContentStreamIntent.RETURNING_LIVE) {
       viewport.markLive();
     }
-    runtime.requestRender();
+    requestViewportRedraw();
   }
 
   /** 显式回到底部；这是 FROZEN -> LIVE 的唯一滚动入口。 */
@@ -209,7 +212,15 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     viewport.returnToBottom();
     viewport.markLive();
     runtime.resumeLiveStream();
-    runtime.requestRender();
+    requestViewportRedraw();
+  }
+
+  public void requestViewportRedraw() {
+    View v = view;
+    if (v != null) {
+      v.requestInvalidate();
+    }
+    com.webterm.terminal.model.TerminalRenderMetrics.viewportRedrawRequested();
   }
 
   /** v2 可见页驱动：请求当前视口中首个尚未加载的固定页。 */
@@ -246,7 +257,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
       viewport.resetForSnapshot();
     } else if (!viewport.followTail && viewport.anchorHistorySeq != null
         && update.state.historyChanged && view != null) {
-      view.restoreHistoryAnchor(viewport.anchorHistorySeq, viewport.anchorPixelOffset);
+      view.restoreHistoryAnchor(update.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
       freezeIfViewportBecamePureHistory();
     }
     // Only tail appends (live output scrolling into history below the visible

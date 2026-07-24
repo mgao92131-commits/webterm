@@ -151,7 +151,7 @@ public final class TerminalScreenControllerTest {
       @Override public void onCursorChanged() {}
       @Override public void onTitleChanged(String title) {}
       @Override public void requestInvalidate() {}
-      @Override public void restoreHistoryAnchor(long historySeq, int pixelOffset) {
+      @Override public void restoreHistoryAnchor(RemoteTerminalModel.RenderSnapshot snapshot, long historySeq, int pixelOffset) {
         viewport.scrollOffsetPixels = 720;
         viewport.followTail = false;
       }

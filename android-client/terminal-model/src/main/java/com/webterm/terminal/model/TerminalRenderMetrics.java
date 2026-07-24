@@ -33,6 +33,8 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong OTHER_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong MAILBOX_RESIDENCE_NANOS = new AtomicLong();
   private static final AtomicLong MAILBOX_RESIDENCE_MAX_NANOS = new AtomicLong();
+  private static final AtomicLong VIEWPORT_REDRAW_REQUEST_COUNT = new AtomicLong();
+  private static final AtomicLong VIEWPORT_FULL_REDRAW_COUNT = new AtomicLong();
 
   private TerminalRenderMetrics() {}
 
@@ -40,6 +42,8 @@ public final class TerminalRenderMetrics {
   public static void uiCallbackScheduled() { UI_CALLBACK_SCHEDULE_COUNT.incrementAndGet(); }
   public static void uiCallbackCoalesced() { UI_CALLBACK_COALESCED_COUNT.incrementAndGet(); }
   public static void renderRequested() { RENDER_REQUEST_COUNT.incrementAndGet(); }
+  public static void viewportRedrawRequested() { VIEWPORT_REDRAW_REQUEST_COUNT.incrementAndGet(); }
+  public static void viewportFullRedraw() { VIEWPORT_FULL_REDRAW_COUNT.incrementAndGet(); }
   public static void vsyncRender() { VSYNC_RENDER_COUNT.incrementAndGet(); }
   public static void fullInvalidate() { FULL_INVALIDATE_COUNT.incrementAndGet(); }
   public static void partialInvalidate(int rows) {
@@ -104,7 +108,8 @@ public final class TerminalRenderMetrics {
         BASELINE_FRAME_COUNT.get(), BASELINE_FRAME_BYTES.get(), PATCH_FRAME_COUNT.get(),
         PATCH_FRAME_BYTES.get(), HISTORY_RANGE_FRAME_COUNT.get(), HISTORY_RANGE_FRAME_BYTES.get(),
         HISTORY_DELTA_FRAME_COUNT.get(), HISTORY_DELTA_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(),
-        OTHER_FRAME_BYTES.get(), MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get());
+        OTHER_FRAME_BYTES.get(), MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get(),
+        VIEWPORT_REDRAW_REQUEST_COUNT.get(), VIEWPORT_FULL_REDRAW_COUNT.get());
   }
 
   private static void updateMax(AtomicLong counter, long value) {
@@ -139,6 +144,8 @@ public final class TerminalRenderMetrics {
     public final long otherFrameBytes;
     public final long mailboxResidenceNanos;
     public final long mailboxResidenceMaxNanos;
+    public final long viewportRedrawRequestCount;
+    public final long viewportFullRedrawCount;
 
     Snapshot(long modelChangeCount, long uiCallbackScheduleCount, long uiCallbackCoalescedCount,
              long renderRequestCount, long vsyncRenderCount, long fullInvalidateCount,
@@ -149,7 +156,8 @@ public final class TerminalRenderMetrics {
              long historyRangeFrameCount, long historyRangeFrameBytes,
              long historyDeltaFrameCount, long historyDeltaFrameBytes,
              long otherFrameCount, long otherFrameBytes, long mailboxResidenceNanos,
-             long mailboxResidenceMaxNanos) {
+             long mailboxResidenceMaxNanos, long viewportRedrawRequestCount,
+             long viewportFullRedrawCount) {
       this.modelChangeCount = modelChangeCount;
       this.uiCallbackScheduleCount = uiCallbackScheduleCount;
       this.uiCallbackCoalescedCount = uiCallbackCoalescedCount;
@@ -176,6 +184,8 @@ public final class TerminalRenderMetrics {
       this.otherFrameBytes = otherFrameBytes;
       this.mailboxResidenceNanos = mailboxResidenceNanos;
       this.mailboxResidenceMaxNanos = mailboxResidenceMaxNanos;
+      this.viewportRedrawRequestCount = viewportRedrawRequestCount;
+      this.viewportFullRedrawCount = viewportFullRedrawCount;
     }
   }
 }
