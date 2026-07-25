@@ -190,10 +190,46 @@ public class RealTerminalCaptureControllerTest {
         c.startCapture(CaptureLimits.defaults());
         CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
         for (int i = 0; i < 400; i++) {
-            c.recordModelState(id, modelState(i, false));
+            c.recordModelState(id, modelState(i, true));
         }
         // model ring 上限 256。
         assertEquals(256, c.modelCount());
+        c.cancelCapture();
+    }
+
+    // ModelState 限频：50ms 窗口内非 force 事件被丢弃，窗口外恢复记录；force 事件不受限。
+    @Test
+    public void modelStateThrottleDropsNonForceWithinWindow() throws Exception {
+        RealTerminalCaptureController c = new RealTerminalCaptureController(mockContext());
+        final long[] now = {10_000L};
+        c.modelStateClock = () -> now[0];
+        c.bindSession(new FakeSource("s1", "term-1", "client-1"));
+        c.startCapture(CaptureLimits.defaults());
+        CaptureStreamIdentity id = stream("s1", "term-1", "client-1");
+
+        // 首次非 force 事件：记录。
+        c.recordModelState(id, modelState(1, false));
+        assertEquals(1, c.modelCount());
+
+        // 窗口内（+10ms）非 force 事件：丢弃。
+        now[0] += 10;
+        c.recordModelState(id, modelState(2, false));
+        assertEquals(1, c.modelCount());
+
+        // 仍在窗口内（+49ms）非 force 事件：丢弃。
+        now[0] += 39;
+        c.recordModelState(id, modelState(3, false));
+        assertEquals(1, c.modelCount());
+
+        // 窗口外（距上次记录 60ms）非 force 事件：恢复记录。
+        now[0] += 11;
+        c.recordModelState(id, modelState(4, false));
+        assertEquals(2, c.modelCount());
+
+        // 窗口内 force 事件：不受限，直接记录。
+        now[0] += 5;
+        c.recordModelState(id, modelState(5, true));
+        assertEquals(3, c.modelCount());
         c.cancelCapture();
     }
 

@@ -15,6 +15,16 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong FULL_INVALIDATE_COUNT = new AtomicLong();
   private static final AtomicLong PARTIAL_INVALIDATE_COUNT = new AtomicLong();
   private static final AtomicLong DIRTY_ROW_COUNT = new AtomicLong();
+  private static final AtomicLong SCREEN_REGION_INVALIDATE_COUNT = new AtomicLong();
+  private static final AtomicLong PARTIAL_ROW_INVALIDATE_COUNT = new AtomicLong();
+  private static final AtomicLong SCREEN_SCROLL_EVENT_COUNT = new AtomicLong();
+  private static final AtomicLong SCREEN_SCROLL_ROW_TOTAL = new AtomicLong();
+  private static final AtomicLong ROW_CACHE_HIT_COUNT = new AtomicLong();
+  private static final AtomicLong ROW_CACHE_MISS_COUNT = new AtomicLong();
+  private static final AtomicLong ROW_CACHE_STALE_FALLBACK_COUNT = new AtomicLong();
+  private static final AtomicLong ROW_NODE_RECORD_COUNT = new AtomicLong();
+  private static final AtomicLong ROW_NODE_REUSE_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_ONLY_NO_DRAW_COUNT = new AtomicLong();
   private static final AtomicLong RENDER_DURATION_NANOS = new AtomicLong();
   private static final AtomicLong RENDER_DURATION_MAX_NANOS = new AtomicLong();
   private static final AtomicLong PROTOBUF_PARSE_NANOS = new AtomicLong();
@@ -46,10 +56,30 @@ public final class TerminalRenderMetrics {
   public static void viewportFullRedraw() { VIEWPORT_FULL_REDRAW_COUNT.incrementAndGet(); }
   public static void vsyncRender() { VSYNC_RENDER_COUNT.incrementAndGet(); }
   public static void fullInvalidate() { FULL_INVALIDATE_COUNT.incrementAndGet(); }
+  public static void screenRegionInvalidate() { SCREEN_REGION_INVALIDATE_COUNT.incrementAndGet(); }
+  public static void partialRowInvalidate(int rows) {
+    PARTIAL_ROW_INVALIDATE_COUNT.incrementAndGet();
+    DIRTY_ROW_COUNT.addAndGet(Math.max(0, rows));
+  }
   public static void partialInvalidate(int rows) {
     PARTIAL_INVALIDATE_COUNT.incrementAndGet();
     DIRTY_ROW_COUNT.addAndGet(Math.max(0, rows));
   }
+  public static void screenScrollEvent(int rows) {
+    SCREEN_SCROLL_EVENT_COUNT.incrementAndGet();
+    SCREEN_SCROLL_ROW_TOTAL.addAndGet(Math.max(0, rows));
+  }
+  public static void rowCacheHit() { ROW_CACHE_HIT_COUNT.incrementAndGet(); }
+  /** 行缓存槽位的 lineId/lineVersion 与当前行不一致、回退直接绘制的次数。 */
+  public static void rowCacheStaleFallback() { ROW_CACHE_STALE_FALLBACK_COUNT.incrementAndGet(); }
+  public static void rowCacheMiss() {
+    ROW_CACHE_MISS_COUNT.incrementAndGet();
+    ROW_NODE_RECORD_COUNT.incrementAndGet();
+  }
+  public static void rowCacheReuse(long reuseCount) {
+    ROW_NODE_REUSE_COUNT.addAndGet(Math.max(0, reuseCount));
+  }
+  public static void historyOnlyNoDraw() { HISTORY_ONLY_NO_DRAW_COUNT.incrementAndGet(); }
   public static void renderDuration(long nanos) {
     long safe = Math.max(0L, nanos);
     RENDER_DURATION_NANOS.addAndGet(safe);
@@ -103,6 +133,12 @@ public final class TerminalRenderMetrics {
     return new Snapshot(MODEL_CHANGE_COUNT.get(), UI_CALLBACK_SCHEDULE_COUNT.get(),
         UI_CALLBACK_COALESCED_COUNT.get(), RENDER_REQUEST_COUNT.get(), VSYNC_RENDER_COUNT.get(),
         FULL_INVALIDATE_COUNT.get(), PARTIAL_INVALIDATE_COUNT.get(), DIRTY_ROW_COUNT.get(),
+        SCREEN_REGION_INVALIDATE_COUNT.get(), PARTIAL_ROW_INVALIDATE_COUNT.get(),
+        SCREEN_SCROLL_EVENT_COUNT.get(), SCREEN_SCROLL_ROW_TOTAL.get(),
+        ROW_CACHE_HIT_COUNT.get(), ROW_CACHE_MISS_COUNT.get(),
+        ROW_CACHE_STALE_FALLBACK_COUNT.get(),
+        ROW_NODE_RECORD_COUNT.get(), ROW_NODE_REUSE_COUNT.get(),
+        HISTORY_ONLY_NO_DRAW_COUNT.get(),
         RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
         PROTOBUF_PARSE_COUNT.get(), MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get(),
         BASELINE_FRAME_COUNT.get(), BASELINE_FRAME_BYTES.get(), PATCH_FRAME_COUNT.get(),
@@ -126,6 +162,16 @@ public final class TerminalRenderMetrics {
     public final long fullInvalidateCount;
     public final long partialInvalidateCount;
     public final long dirtyRowCount;
+    public final long screenRegionInvalidateCount;
+    public final long partialRowInvalidateCount;
+    public final long screenScrollEventCount;
+    public final long screenScrollRowTotal;
+    public final long rowCacheHitCount;
+    public final long rowCacheMissCount;
+    public final long rowCacheStaleFallbackCount;
+    public final long rowNodeRecordCount;
+    public final long rowNodeReuseCount;
+    public final long historyOnlyNoDrawCount;
     public final long renderDurationNanos;
     public final long renderDurationMaxNanos;
     public final long protobufParseNanos;
@@ -149,7 +195,10 @@ public final class TerminalRenderMetrics {
 
     Snapshot(long modelChangeCount, long uiCallbackScheduleCount, long uiCallbackCoalescedCount,
              long renderRequestCount, long vsyncRenderCount, long fullInvalidateCount,
-             long partialInvalidateCount, long dirtyRowCount, long renderDurationNanos,
+             long partialInvalidateCount, long dirtyRowCount, long screenRegionInvalidateCount,
+             long partialRowInvalidateCount, long screenScrollEventCount, long screenScrollRowTotal,
+             long rowCacheHitCount, long rowCacheMissCount, long rowCacheStaleFallbackCount,
+             long rowNodeRecordCount, long rowNodeReuseCount, long historyOnlyNoDrawCount, long renderDurationNanos,
              long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
              long modelApplyNanos, long mainThreadCallbackDelayNanos, long baselineFrameCount,
              long baselineFrameBytes, long patchFrameCount, long patchFrameBytes,
@@ -166,6 +215,16 @@ public final class TerminalRenderMetrics {
       this.fullInvalidateCount = fullInvalidateCount;
       this.partialInvalidateCount = partialInvalidateCount;
       this.dirtyRowCount = dirtyRowCount;
+      this.screenRegionInvalidateCount = screenRegionInvalidateCount;
+      this.partialRowInvalidateCount = partialRowInvalidateCount;
+      this.screenScrollEventCount = screenScrollEventCount;
+      this.screenScrollRowTotal = screenScrollRowTotal;
+      this.rowCacheHitCount = rowCacheHitCount;
+      this.rowCacheMissCount = rowCacheMissCount;
+      this.rowCacheStaleFallbackCount = rowCacheStaleFallbackCount;
+      this.rowNodeRecordCount = rowNodeRecordCount;
+      this.rowNodeReuseCount = rowNodeReuseCount;
+      this.historyOnlyNoDrawCount = historyOnlyNoDrawCount;
       this.renderDurationNanos = renderDurationNanos;
       this.renderDurationMaxNanos = renderDurationMaxNanos;
       this.protobufParseNanos = protobufParseNanos;

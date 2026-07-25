@@ -57,7 +57,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.webterm.mobile.c2"
-        minSdk = 23
+        minSdk = 29
         targetSdk = 36
         versionCode = 2
         versionName = "1.0.1"

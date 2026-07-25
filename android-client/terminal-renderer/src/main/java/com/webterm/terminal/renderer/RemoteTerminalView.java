@@ -92,9 +92,14 @@ public final class RemoteTerminalView extends View {
   }
 
   private final RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+  private final TerminalRowRenderNodeCache rowCache = new TerminalRowRenderNodeCache();
   private final GestureAndScaleRecognizer gestureRecognizer;
   private final Scroller scroller;
   private final Paint selectionHandlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  // 用于 RenderNode 行缓存的全局视觉 generation；任何影响正文字体的变化都会递增。
+  private int fontGeneration;
+  private int paletteGeneration;
+  private int styleGeneration;
 
   private RemoteTerminalModel model;
   /** Canvas 本帧唯一允许使用的不可变快照；绝不在 onDraw 再向模型取新快照。 */
@@ -211,11 +216,42 @@ public final class RemoteTerminalView extends View {
     this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
     boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
-    if (geometryChanged || !invalidateChangedRows(update.dirty, update.snapshot)) {
-      TerminalRenderMetrics.fullInvalidate();
-      invalidate();
+    updateGenerationCounters(update.dirty);
+    InvalidationResult result = resolveInvalidation(update.dirty, update.snapshot, viewport, geometryChanged);
+    switch (result) {
+      case NONE:
+        TerminalRenderMetrics.historyOnlyNoDraw();
+        break;
+      case PARTIAL:
+        prepareRowCache(update.snapshot, update.dirty);
+        invalidateChangedRows(update.dirty, update.snapshot);
+        break;
+      case SCREEN_REGION:
+        prepareRowCache(update.snapshot, update.dirty);
+        invalidateScreenRegion(update.dirty, update.snapshot);
+        break;
+      case FULL:
+        prepareRowCache(update.snapshot, update.dirty);
+        TerminalRenderMetrics.fullInvalidate();
+        invalidate();
+        break;
     }
     requestVisibleHistoryPage();
+  }
+
+  private void updateGenerationCounters(@NonNull RenderDirtyState dirty) {
+    if (dirty.geometryChanged || dirty.fullInvalidate) fontGeneration++;
+    if (dirty.paletteChanged || dirty.fullInvalidate) paletteGeneration++;
+    if (dirty.stylesChanged || dirty.linksChanged || dirty.fullInvalidate) styleGeneration++;
+  }
+
+  private void prepareRowCache(@NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+                               @NonNull RenderDirtyState dirty) {
+    if (snapshot.screen == null || snapshot.activeBuffer == null) return;
+    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
+        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+    rowCache.prepareFrame(snapshot, dirty, renderer, snapshot.palette, canvasBackground,
+        fontGeneration, paletteGeneration, styleGeneration);
   }
 
   /**
@@ -271,7 +307,7 @@ public final class RemoteTerminalView extends View {
     super.onDraw(canvas);
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (snapshot == null) return;
-    renderer.render(canvas, snapshot, viewport, cursorBlinkOn);
+    renderer.render(canvas, snapshot, viewport, cursorBlinkOn, rowCache);
     drawSelectionHandles(canvas, snapshot);
   }
 
@@ -832,16 +868,69 @@ public final class RemoteTerminalView extends View {
     return false;
   }
 
-  private boolean invalidateChangedRows(@NonNull RenderDirtyState change,
-                                        @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
-    if (getWidth() <= 0 || getHeight() <= 0
-        || change.fullInvalidate || change.geometryChanged || change.historyChanged
-        || change.paletteChanged || change.modesChanged || change.activeBufferChanged
-        || viewport.selection != null) {
-      return false;
+  @androidx.annotation.VisibleForTesting
+  InvalidationResult resolveInvalidation(@NonNull RenderDirtyState dirty,
+                                         @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+                                         @NonNull TerminalViewportState viewport,
+                                         boolean geometryChanged) {
+    if (getWidth() <= 0 || getHeight() <= 0 || snapshot.screen == null
+        || snapshot.activeBuffer == null
+        || dirty.fullInvalidate || geometryChanged || dirty.geometryChanged
+        || dirty.activeBufferChanged || dirty.paletteChanged || dirty.modesChanged) {
+      return InvalidationResult.FULL;
     }
-    if (snapshot.screen == null || snapshot.activeBuffer == null) return false;
-    List<Integer> dirtyRows = new ArrayList<>(change.changedScreenRows.cardinality());
+
+    boolean screenChanged = dirty.screenScrollRows != 0
+        || !dirty.changedScreenRows.isEmpty()
+        || !dirty.exposedScreenRows.isEmpty();
+
+    float lineHeight = renderer.getLineHeight();
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    float screenTop = lineHeight > 0f ? RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
+        snapshot.screen.length, lineHeight, renderer.getTopInset(),
+        viewport.followTail ? 0f : viewport.scrollOffsetPixels) : 0f;
+
+    boolean visibleHistoryChanged = dirty.historyChanged
+        && snapshot.activeBuffer == TerminalBufferKind.MAIN
+        && (!viewport.followTail || (screenTop > 0f && history.size() > 0));
+
+    if (!screenChanged && !visibleHistoryChanged && !dirty.cursorChanged
+        && !dirty.stylesChanged && !dirty.linksChanged) {
+      return InvalidationResult.NONE;
+    }
+
+    if (dirty.stylesChanged || dirty.linksChanged) {
+      return InvalidationResult.FULL;
+    }
+
+    if (screenChanged) {
+      if (dirty.screenScrollRows != 0) {
+        return InvalidationResult.SCREEN_REGION;
+      }
+      return shouldPartiallyInvalidateRows(dirty, snapshot)
+          ? InvalidationResult.PARTIAL : InvalidationResult.SCREEN_REGION;
+    }
+
+    if (dirty.cursorChanged) {
+      return InvalidationResult.PARTIAL;
+    }
+
+    if (visibleHistoryChanged) {
+      return InvalidationResult.FULL;
+    }
+
+    return InvalidationResult.FULL;
+  }
+
+  /**
+   * 仅处理内容变化行的局部矩形刷新。调用方已通过 {@link #resolveInvalidation}
+   * 确认当前属于 {@link InvalidationResult#PARTIAL}。
+   */
+  private void invalidateChangedRows(@NonNull RenderDirtyState change,
+                                     @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    if (snapshot.screen == null || snapshot.activeBuffer == null) return;
+    List<Integer> dirtyRows = new ArrayList<>(change.changedScreenRows.cardinality() + 2);
     for (int row = change.changedScreenRows.nextSetBit(0);
          row >= 0;
          row = change.changedScreenRows.nextSetBit(row + 1)) {
@@ -851,26 +940,22 @@ public final class RemoteTerminalView extends View {
       if (change.previousCursorRow >= 0) dirtyRows.add(change.previousCursorRow);
       if (change.currentCursorRow >= 0) dirtyRows.add(change.currentCursorRow);
     }
-    // 只有字典/远端水位等非像素元数据变化时，不需要 Canvas 重绘。
-    if (dirtyRows.isEmpty()) return true;
+    if (dirtyRows.isEmpty()) return;
     Collections.sort(dirtyRows);
     List<Integer> uniqueRows = new ArrayList<>();
     for (int row : dirtyRows) {
-      if (row < 0 || row >= snapshot.screen.length) return false;
+      if (row < 0 || row >= snapshot.screen.length) continue;
       if (uniqueRows.isEmpty() || uniqueRows.get(uniqueRows.size() - 1) != row) uniqueRows.add(row);
     }
     TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     float lineHeight = renderer.getLineHeight();
-    if (lineHeight <= 0f) return false;
+    if (lineHeight <= 0f) return;
     float screenTop = RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
         snapshot.screen.length, lineHeight, renderer.getTopInset(),
         viewport.followTail ? 0f : viewport.scrollOffsetPixels);
     List<Rect> dirtyRects = dirtyScreenRowRects(uniqueRows, screenTop, lineHeight,
         getWidth(), getHeight());
-    // 脏行全部位于 viewport 外时已经正确处理；不能退化成整 View invalidate。
-    if (!handlesDirtyRectsWithoutFullInvalidate(
-        true, dirtyRects, getWidth(), getHeight())) return false;
     int invalidatedRows = 0;
     for (Rect dirtyRect : dirtyRects) {
       invalidate(dirtyRect);
@@ -880,8 +965,56 @@ public final class RemoteTerminalView extends View {
       float bottom = top + lineHeight;
       if (bottom > 0 && top < getHeight()) invalidatedRows++;
     }
-    TerminalRenderMetrics.partialInvalidate(invalidatedRows);
-    return true;
+    TerminalRenderMetrics.partialRowInvalidate(invalidatedRows);
+  }
+
+  private void invalidateScreenRegion(@NonNull RenderDirtyState dirty,
+                                      @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    if (snapshot.screen == null || snapshot.activeBuffer == null) return;
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    float lineHeight = renderer.getLineHeight();
+    if (lineHeight <= 0f) return;
+    float screenTop = RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
+        snapshot.screen.length, lineHeight, renderer.getTopInset(),
+        viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+    float screenBottom = screenTop + snapshot.screen.length * lineHeight;
+    int left = 0;
+    int top = 0;
+    int right = getWidth();
+    int bottom = Math.min(getHeight(), (int) Math.ceil(screenBottom) + 1);
+    if (bottom > top) {
+      invalidate(left, top, right, bottom);
+      TerminalRenderMetrics.screenRegionInvalidate();
+      // 只在真实滚动时上报滚动行数；整屏回退刷新（screenScrollRows == 0）不计入滚动指标。
+      if (dirty.screenScrollRows != 0) {
+        TerminalRenderMetrics.screenScrollEvent(Math.abs(dirty.screenScrollRows));
+      }
+    }
+  }
+
+  private boolean shouldPartiallyInvalidateRows(@NonNull RenderDirtyState dirty,
+                                                @NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
+    List<Integer> rows = new ArrayList<>(dirty.changedScreenRows.cardinality());
+    for (int row = dirty.changedScreenRows.nextSetBit(0); row >= 0;
+         row = dirty.changedScreenRows.nextSetBit(row + 1)) {
+      if (row >= 0 && row < snapshot.screen.length) rows.add(row);
+    }
+    if (dirty.cursorChanged) {
+      if (dirty.previousCursorRow >= 0) rows.add(dirty.previousCursorRow);
+      if (dirty.currentCursorRow >= 0) rows.add(dirty.currentCursorRow);
+    }
+    if (rows.isEmpty()) return true;
+    Collections.sort(rows);
+    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    float lineHeight = renderer.getLineHeight();
+    if (lineHeight <= 0f) return false;
+    float screenTop = RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
+        snapshot.screen.length, lineHeight, renderer.getTopInset(),
+        viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+    List<Rect> dirtyRects = dirtyScreenRowRects(rows, screenTop, lineHeight, getWidth(), getHeight());
+    return handlesDirtyRectsWithoutFullInvalidate(true, dirtyRects, getWidth(), getHeight());
   }
 
   /** Uses visible area and merged rect count instead of a fixed dirty-row limit. */

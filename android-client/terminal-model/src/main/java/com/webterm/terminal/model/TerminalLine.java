@@ -12,6 +12,8 @@ public final class TerminalLine {
   public final long historySeq;
   public final boolean wrapped;
   public final TerminalCell[] cells;
+  /** 预估字节数，供诊断捕获直接读取，避免热路径重新遍历全部 Cell。 */
+  public final long estimatedBytes;
 
   public TerminalLine(long id, boolean wrapped, TerminalCell[] cells) {
     this(id, 1, wrapped, cells);
@@ -27,6 +29,7 @@ public final class TerminalLine {
     this.historySeq = historySeq;
     this.wrapped = wrapped;
     this.cells = cells;
+    this.estimatedBytes = estimateBytes(cells);
   }
 
   public static TerminalLine empty(long id, int cols) {
@@ -73,5 +76,17 @@ public final class TerminalLine {
   public boolean sameContent(TerminalLine other) {
     return other != null && id == other.id && version == other.version
         && wrapped == other.wrapped && Arrays.equals(cells, other.cells);
+  }
+
+  /** 热路径安全的上限字节估算；不分配临时对象。 */
+  private static long estimateBytes(TerminalCell[] cells) {
+    if (cells == null) return 32;
+    long n = 48 + cells.length * 4L;
+    for (TerminalCell cell : cells) {
+      if (cell == null) continue;
+      n += 64;
+      if (cell.text != null) n += cell.text.length() * 2L;
+    }
+    return n;
   }
 }

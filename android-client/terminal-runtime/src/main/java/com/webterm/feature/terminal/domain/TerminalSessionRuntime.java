@@ -1228,7 +1228,8 @@ public final class TerminalSessionRuntime {
             model.projectionHealth().complete,
             afterBaseline,
             model.displayExtent(),
-            model.remoteAvailableExtent()));
+            model.remoteAvailableExtent(),
+            afterBaseline));
   }
 
   private Map<String, Object> diagnosticFields(Object... pairs) {

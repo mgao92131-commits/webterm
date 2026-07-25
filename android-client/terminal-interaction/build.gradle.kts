@@ -6,7 +6,7 @@ android {
   namespace = "com.webterm.terminal.interaction"
   compileSdk = 36
 
-  defaultConfig { minSdk = 23 }
+  defaultConfig { minSdk = 29 }
 
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17

@@ -108,6 +108,16 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     private volatile CaptureSessionSource activeSource;
     private volatile CaptureLimits activeLimits = CaptureLimits.defaults();
     private volatile long startedAtMillis;
+    // ModelState 限频：普通记录每 50ms 最多一次；force 记录不受限。
+    private long lastModelStateMillis;
+    private static final long MODEL_STATE_THROTTLE_MS = 50L;
+    // 测试钩子：可替换的毫秒时钟（默认系统时钟），仅用于 ModelState 限频判定。
+    volatile MillisClock modelStateClock = System::currentTimeMillis;
+
+    /** 毫秒时钟，测试可替换。 */
+    interface MillisClock {
+        long nowMillis();
+    }
 
     public RealTerminalCaptureController(Context context) {
         this.appContext = context.getApplicationContext();
@@ -318,6 +328,11 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         if (!recording || state == null || !matches(identity)) return;
         synchronized (lock) {
             if (!recording || !matches(identity)) return;
+            long now = modelStateClock.nowMillis();
+            if (!state.force && now - lastModelStateMillis < MODEL_STATE_THROTTLE_MS) {
+                return;
+            }
+            lastModelStateMillis = now;
             modelRing.addLast(state);
             while (modelRing.size() > MODEL_RING_MAX_COUNT) {
                 modelRing.removeFirst();
@@ -629,6 +644,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         renderRing.clear();
         modelRing.clear();
         wireTruncated = mappedTruncated = renderTruncated = modelTruncated = false;
+        lastModelStateMillis = 0;
     }
 
     // ---- 包级测试访问器 ----
@@ -747,15 +763,15 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     private static long estimateSnapshotBytes(ScreenBaseline s) {
         long n = 64;
-        if (s.screen != null) for (com.webterm.terminal.model.TerminalLine l : s.screen) n += estimateLineBytes(l);
+        if (s.screen != null) for (com.webterm.terminal.model.TerminalLine l : s.screen) n += lineBytes(l);
         if (s.historyTail != null)
-            for (com.webterm.terminal.model.TerminalLine l : s.historyTail) n += estimateLineBytes(l);
+            for (com.webterm.terminal.model.TerminalLine l : s.historyTail) n += lineBytes(l);
         return n;
     }
 
     private static long estimatePatchBytes(ScreenPatchV2 p) {
         long n = 64;
-        if (p.lineUpdates != null) for (com.webterm.terminal.model.TerminalLine l : p.lineUpdates) n += estimateLineBytes(l);
+        if (p.lineUpdates != null) for (com.webterm.terminal.model.TerminalLine l : p.lineUpdates) n += lineBytes(l);
         return n;
     }
 
@@ -763,17 +779,14 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         if (u == null || u.snapshot == null) return 32;
         long n = 64;
         if (u.snapshot.screen != null)
-            for (com.webterm.terminal.model.TerminalLine l : u.snapshot.screen) n += estimateLineBytes(l);
+            for (com.webterm.terminal.model.TerminalLine l : u.snapshot.screen) n += lineBytes(l);
         return n;
     }
 
-    private static long estimateLineBytes(com.webterm.terminal.model.TerminalLine line) {
-        if (line == null || line.cells == null) return 32;
-        long n = 32;
-        for (com.webterm.terminal.model.TerminalCell c : line.cells) {
-            n += (c.text != null ? c.text.length() : 0) + 8L;
-        }
-        return n;
+    /** 直接读取行构造时预计算的估算大小，避免热路径遍历全部 Cell。 */
+    private static long lineBytes(com.webterm.terminal.model.TerminalLine line) {
+        if (line == null) return 32;
+        return Math.max(32, line.estimatedBytes);
     }
 
     // ---- 内部数据类型 ----
@@ -834,9 +847,9 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         void clear() { items.clear(); currentBytes = 0; }
     }
 
-    /** 条数 + 字节双上限的通用对象 ring（mapped/render）。 */
+    /** 条数 + 字节双上限的通用对象 ring（mapped/render）；每个元素保存自身大小。 */
     static final class BoundedObjects<T> {
-        private final ArrayDeque<T> items = new ArrayDeque<>();
+        private final ArrayDeque<SizedItem<T>> items = new ArrayDeque<>();
         private int maxCount = 256;
         private long maxBytes = 4L << 20;
         private long currentBytes;
@@ -849,18 +862,32 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         boolean add(T item, long size) {
             boolean truncated = false;
             if (size > maxBytes) return true;
-            items.addLast(item);
+            items.addLast(new SizedItem<>(item, size));
             currentBytes += size;
             while ((items.size() > maxCount || currentBytes > maxBytes) && items.size() > 1) {
-                items.removeFirst();
-                currentBytes = Math.max(0, currentBytes - size); // 近似：按当前 size 估计回收
+                SizedItem<T> old = items.removeFirst();
+                currentBytes = Math.max(0, currentBytes - old.bytes);
                 truncated = true;
             }
             return truncated;
         }
 
-        List<T> snapshot() { return new ArrayList<>(items); }
+        List<T> snapshot() {
+            List<T> result = new ArrayList<>(items.size());
+            for (SizedItem<T> item : items) result.add(item.value);
+            return result;
+        }
 
         void clear() { items.clear(); currentBytes = 0; }
+    }
+
+    static final class SizedItem<T> {
+        final T value;
+        final long bytes;
+
+        SizedItem(T value, long bytes) {
+            this.value = value;
+            this.bytes = Math.max(0, bytes);
+        }
     }
 }

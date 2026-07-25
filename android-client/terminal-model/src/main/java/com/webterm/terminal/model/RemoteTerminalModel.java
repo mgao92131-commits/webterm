@@ -151,7 +151,7 @@ public final class RemoteTerminalModel {
       lineStore.put(line.id, line);
     }
     pruneLineStore();
-    markRenderDirty(true, null, true, geometryChanged, true, -1, cursor.row,
+    markRenderDirty(true, null, 0, null, rows, true, geometryChanged, true, -1, cursor.row,
         true, true, true, true, true);
     markTerminalState(geometryChanged, true, true, true, 0, 0);
     projectionHealth = projectionIsStructurallyComplete()
@@ -194,13 +194,48 @@ public final class RemoteTerminalModel {
       }
     }
     lineStore.putAll(stagedLines);
+    int screenScrollRows = 0;
+    BitSet exposedRows = new BitSet(rows);
     BitSet changedRows = new BitSet(rows);
     if (patch.layout != null) {
-      for (int row = 0; row < rows; row++) {
-        TerminalLine next = lineStore.get(patch.layout[row]);
-        if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
-        if (screen[row] != next) changedRows.set(row);
-        screen[row] = next;
+      screenScrollRows = detectScreenScroll(screen, patch.layout);
+      if (screenScrollRows != 0) {
+        int exposedCount = Math.abs(screenScrollRows);
+        if (screenScrollRows > 0) {
+          // 向上滚动：底部暴露出新行。
+          for (int i = 0; i < exposedCount; i++) exposedRows.set(rows - 1 - i);
+        } else {
+          // 向下滚动：顶部暴露出新行。
+          for (int i = 0; i < exposedCount; i++) exposedRows.set(i);
+        }
+        // 滚动前先保存旧 screen：滚动分支中 screen[row] 的旧值是被移走的另一行，
+        // 不能直接比较。对非暴露的保留行，与旧数组中位移来源位置的行比较 version：
+        // 向上滚动（screenScrollRows > 0）时新 row 来自旧 row + screenScrollRows；
+        // 向下滚动（screenScrollRows 为负）时同样来自旧 row + screenScrollRows。
+        // id 已由 detectScreenScroll 保证匹配，version 升高即同 Patch 内 lineUpdates
+        // 更新的保留行，必须标脏，否则渲染层行缓存会复用旧录制显示陈旧内容。
+        // （同 version 重发的行内容不变，按 version 比较避免无谓整屏重录。）
+        TerminalLine[] previousScreen = screen;
+        TerminalLine[] nextScreen = new TerminalLine[rows];
+        for (int row = 0; row < rows; row++) {
+          TerminalLine next = lineStore.get(patch.layout[row]);
+          if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
+          nextScreen[row] = next;
+          int sourceRow = row + screenScrollRows;
+          if (!exposedRows.get(row) && sourceRow >= 0 && sourceRow < rows
+              && previousScreen[sourceRow].version != next.version) {
+            changedRows.set(row);
+          }
+        }
+        screen = nextScreen;
+        changedRows.or(exposedRows);
+      } else {
+        for (int row = 0; row < rows; row++) {
+          TerminalLine next = lineStore.get(patch.layout[row]);
+          if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
+          if (screen[row] != next) changedRows.set(row);
+          screen[row] = next;
+        }
       }
     } else {
       for (int row = 0; row < rows; row++) {
@@ -226,7 +261,7 @@ public final class RemoteTerminalModel {
     screenRevision = patch.screenRevision;
     remoteScreenRevision = patch.screenRevision;
     pruneLineStore();
-    markRenderDirty(false, changedRows, false, false,
+    markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows, false, false,
         !Objects.equals(previousCursor, cursor),
         previousCursor != null ? previousCursor.row : -1, cursor.row,
         !Objects.equals(previousPalette, palette), false, false,
@@ -260,7 +295,7 @@ public final class RemoteTerminalModel {
     displayExtent = nextExtent;
     firstAvailableHistorySeq = displayExtent.firstSeq;
     pruneLineStore();
-    markRenderDirty(false, null, true, false, false, -1, -1,
+    markRenderDirty(false, null, 0, null, rows, true, false, false, -1, -1,
         false, false, false, false, false);
     markTerminalState(false, true, false, false, 0, 0);
     return true;
@@ -314,7 +349,7 @@ public final class RemoteTerminalModel {
     for (TerminalLine line : acceptedLines) lineStore.put(line.id, line);
     remoteAvailableExtent = range.availableExtent;
     pruneLineStore();
-    markRenderDirty(false, null, true, false, false, -1, -1,
+    markRenderDirty(false, null, 0, null, rows, true, false, false, -1, -1,
         false, false, false, false, false);
     markTerminalState(false, true, false, false, 0, 0);
     return true;
@@ -415,7 +450,7 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized void requestFullRender() {
-    markRenderDirty(true, null, false, false, false, -1, -1,
+    markRenderDirty(true, null, 0, null, rows, false, false, false, -1, -1,
         false, false, false, false, false);
   }
 
@@ -497,6 +532,48 @@ public final class RemoteTerminalModel {
   }
 
   /**
+   * 检测实时屏幕 layout 是否只是整体位移。返回正数表示向上滚动对应行数，
+   * 负数表示向下滚动，0 表示无法识别为连续滚动。
+   *
+   * <p>只检查常见的 1～8 行滚动，避免高复杂度搜索；不计算整行 Cell 哈希；
+   * 任何异常都安全回退到 0。</p>
+   */
+  private static int detectScreenScroll(TerminalLine[] previousScreen, long[] nextLayout) {
+    if (previousScreen == null || nextLayout == null) return 0;
+    int rowCount = previousScreen.length;
+    if (nextLayout.length != rowCount || rowCount <= 1) return 0;
+    int maxShift = Math.min(8, rowCount - 1);
+
+    // 向上滚动：new[row] == old[row + shift]
+    for (int shift = 1; shift <= maxShift; shift++) {
+      boolean matched = true;
+      for (int row = 0; row < rowCount - shift; row++) {
+        TerminalLine previousLine = previousScreen[row + shift];
+        if (previousLine == null || previousLine.id != nextLayout[row]) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) return shift;
+    }
+
+    // 向下滚动：new[row] == old[row - shift]
+    for (int shift = 1; shift <= maxShift; shift++) {
+      boolean matched = true;
+      for (int row = shift; row < rowCount; row++) {
+        TerminalLine previousLine = previousScreen[row - shift];
+        if (previousLine == null || previousLine.id != nextLayout[row]) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) return -shift;
+    }
+
+    return 0;
+  }
+
+  /**
    * 单行近似字节（JVM 口径，HotSpot 17 + compressed oops）：
    *   - 48B 基线 = TerminalLine 对象（32B）+ cells 数组头（16B）。
    *     旧 TreeMap 实现中 112B 还包含 TreeMap.Entry（40B）+ Long key（24B）共 64B
@@ -525,15 +602,16 @@ public final class RemoteTerminalModel {
     return new TerminalLine(id, false, cells);
   }
 
-  private void markRenderDirty(boolean fullInvalidate, BitSet changedRows, boolean historyChanged,
+  private void markRenderDirty(boolean fullInvalidate, BitSet changedRows, int screenScrollRows,
+                               BitSet exposedRows, int rowCount, boolean historyChanged,
                                boolean geometryChanged, boolean cursorChanged,
                                int previousCursorRow, int currentCursorRow,
                                boolean paletteChanged, boolean stylesChanged,
                                boolean linksChanged, boolean modesChanged,
                                boolean activeBufferChanged) {
-    pendingRenderDirty.merge(fullInvalidate, changedRows, historyChanged, geometryChanged,
-        cursorChanged, previousCursorRow, currentCursorRow, paletteChanged, stylesChanged,
-        linksChanged, modesChanged, activeBufferChanged);
+    pendingRenderDirty.merge(fullInvalidate, changedRows, screenScrollRows, exposedRows, rowCount,
+        historyChanged, geometryChanged, cursorChanged, previousCursorRow, currentCursorRow,
+        paletteChanged, stylesChanged, linksChanged, modesChanged, activeBufferChanged);
     renderPublicationPending = !pendingRenderDirty.isEmpty();
   }
 
@@ -550,7 +628,7 @@ public final class RemoteTerminalModel {
   private synchronized void publishRenderSnapshot(boolean historyChanged, boolean stylesChanged,
                                                   boolean linksChanged) {
     RenderDirtyState dirty = new RenderDirtyState();
-    dirty.merge(false, null, historyChanged, false, false, -1, -1,
+    dirty.merge(false, null, 0, null, rows, historyChanged, false, false, -1, -1,
         false, stylesChanged, linksChanged, false, false);
     publishRenderSnapshot(dirty);
   }
@@ -560,7 +638,8 @@ public final class RemoteTerminalModel {
     // TerminalLine is immutable. Metadata-only and history-only patches therefore safely reuse
     // the previous screen array rather than cloning rows that did not change.
     boolean screenChanged = dirty.fullInvalidate || dirty.geometryChanged
-        || dirty.activeBufferChanged || !dirty.changedScreenRows.isEmpty();
+        || dirty.activeBufferChanged || !dirty.changedScreenRows.isEmpty()
+        || dirty.screenScrollRows != 0 || !dirty.exposedScreenRows.isEmpty();
     TerminalLine[] screenCopy = screenChanged && screen != null ? screen.clone() : previous.screen;
     TerminalHistoryView historySnapshot = dirty.historyChanged || dirty.fullInvalidate
         ? pagedHistory.snapshot()

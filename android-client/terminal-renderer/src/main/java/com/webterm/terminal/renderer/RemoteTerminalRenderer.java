@@ -105,6 +105,17 @@ public final class RemoteTerminalRenderer {
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn) {
+    render(canvas, model, viewport, cursorBlinkOn, null);
+  }
+
+  /**
+   * 绘制完整终端帧。screen 行优先通过 {@link TerminalRowRenderNodeCache} 绘制；
+   * 缓存不存在或行数不匹配时回退到直接 {@link #drawLine}。光标和选择作为动态覆盖层
+   * 在静态正文之后绘制，避免光标闪烁或选择变化触发整行重录。
+   */
+  public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
+                     @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
+                     @Nullable TerminalRowRenderNodeCache rowCache) {
     long renderStartedNanos = System.nanoTime();
     try {
     TerminalLine[] screen = model.screen;
@@ -132,14 +143,27 @@ public final class RemoteTerminalRenderer {
 
     Rect clip = new Rect();
     if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
+
+    // 实时 screen 行：优先使用 RenderNode 缓存；无缓存时直接绘制。
     int[] screenRange = rowRangeIntersecting(clip.top, clip.bottom, screenTopY, lineHeight,
         screenRows);
+    boolean useCache = rowCache != null && rowCache.rowCount() == screenRows;
     for (int row = screenRange[0]; row < screenRange[1]; row++) {
       float y = screenTopY + row * lineHeight;
-      drawLine(canvas, model.columns, palette, screen[row], y, 0, row, normalizedSelection,
-          cursor, cursorVisible, canvasBackground);
+      // 缓存命中（含 lineId/lineVersion 兑底校验）则走缓存；否则回退直接绘制静态正文，
+      // 光标和选择仍由下方覆盖层统一绘制，不会重复。
+      if (!useCache || !rowCache.drawRow(canvas, row, y, screen[row])) {
+        if (useCache) {
+          drawTerminalLineContent(canvas, model.columns, palette, screen[row], y,
+              canvasBackground);
+        } else {
+          drawLine(canvas, model.columns, palette, screen[row], y, 0, row, normalizedSelection,
+              cursor, cursorVisible, canvasBackground);
+        }
+      }
     }
 
+    // 历史行继续使用直接 Canvas 绘制（本次任务不重构历史缓存）。
     float historyTopY = screenTopY - historyRows * lineHeight;
     int[] historyRange = rowRangeIntersecting(clip.top, clip.bottom, historyTopY, lineHeight,
         historyRows);
@@ -152,6 +176,23 @@ public final class RemoteTerminalRenderer {
       }
       drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
           normalizedSelection, cursor, false, canvasBackground);
+    }
+
+    // 使用缓存时，光标和选择作为覆盖层在静态正文之后绘制。
+    if (useCache) {
+      for (int row = screenRange[0]; row < screenRange[1]; row++) {
+        float y = screenTopY + row * lineHeight;
+        drawSelectionOverlayForRow(canvas, model.columns, palette, screen[row], y, 0, row,
+            normalizedSelection, canvasBackground);
+      }
+      if (cursorVisible) {
+        int cursorRow = cursor.row;
+        if (cursorRow >= screenRange[0] && cursorRow < screenRange[1]) {
+          float y = screenTopY + cursorRow * lineHeight;
+          drawCursorOverlayForRow(canvas, model.columns, palette, screen[cursorRow], y,
+              cursorRow, cursor, canvasBackground);
+        }
+      }
     }
     } finally {
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
@@ -239,6 +280,117 @@ public final class RemoteTerminalRenderer {
       drawCell(canvas, palette, cell, col, y, selected, insideCursor, cursor,
           preserveAspect, canvasBackground);
       col++;
+    }
+  }
+
+  /**
+   * 仅绘制终端行的静态正文：背景、字符、样式装饰，不包含光标和选择。
+   * 用于 RenderNode 行缓存录制，保证光标闪烁和选择变化不会触发整行重录。
+   */
+  void drawTerminalLineContent(Canvas canvas, int columns, TerminalPalette palette,
+                               TerminalLine line, float y, int canvasBackground) {
+    if (line == null) return;
+    int lineLength = Math.min(line.length(), columns);
+    for (int col = 0; col < lineLength; ) {
+      TerminalCell cell = line.at(col);
+      if (cell == null || cell.isSpacer()) {
+        col++;
+        continue;
+      }
+
+      // 静态正文没有光标和选择边界，统一传 null / false 以复用现有批处理路径。
+      if (startsBatchableAsciiRun(line, lineLength, null, 0, -1, col,
+          null, false)) {
+        int runStart = col;
+        TerminalStyle runStyle = styleOf(cell);
+        plainAsciiRun.setLength(0);
+        do {
+          plainAsciiRun.append(line.at(col).text.charAt(0));
+          col++;
+        } while (col < lineLength && java.util.Objects.equals(
+                styleOf(line.at(col)), runStyle)
+            && canBatchAscii(line.at(col), null, 0, -1, col, null,
+                false));
+        if (drawAsciiRun(canvas, palette, runStyle, plainAsciiRun, runStart, y,
+            canvasBackground)) {
+          continue;
+        }
+        col = runStart;
+      }
+      int columnWidth = cell.isWideStart() ? 2 : 1;
+      int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
+      boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
+          hasRightPadding(line, col, columnWidth, styleOf(cell)));
+      drawCell(canvas, palette, cell, col, y, false, false, null,
+          preserveAspect, canvasBackground);
+      col++;
+    }
+  }
+
+  /** 在已绘制的行上追加选择高亮覆盖层。 */
+  private void drawSelectionOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
+                                          TerminalLine line, float y, long historySeq, int screenRow,
+                                          TerminalSelection selection, int canvasBackground) {
+    if (line == null || selection == null) return;
+    TerminalSelection normalized = selection.normalized();
+    int lineLength = Math.min(line.length(), columns);
+    for (int col = 0; col < lineLength; ) {
+      TerminalCell cell = line.at(col);
+      if (cell == null || cell.isSpacer()) {
+        col++;
+        continue;
+      }
+      int columnWidth = cell.isWideStart() ? 2 : 1;
+      boolean selected = isCellSelected(normalized, historySeq, screenRow, col, columnWidth);
+      if (selected) {
+        selectionPaint.setColor(SELECTION_OVERLAY);
+        float x = col * cellWidth;
+        float width = columnWidth * cellWidth;
+        canvas.drawRect(x, y, x + width, y + lineHeight, selectionPaint);
+      }
+      col += columnWidth;
+    }
+  }
+
+  /** 在已绘制的行上追加光标覆盖层。 */
+  private void drawCursorOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
+                                       TerminalLine line, float y, int screenRow,
+                                       TerminalCursor cursor, int canvasBackground) {
+    if (line == null || cursor == null || !cursor.visible || screenRow != cursor.row
+        || cursor.col < 0 || cursor.col >= columns) {
+      return;
+    }
+    int col = cursor.col;
+    TerminalCell cell = col < line.length() ? line.at(col) : null;
+    // 光标落在宽字符右半（spacer 列）时归一到宽字符起始格：整格 2 列高亮，
+    // 与 drawCell 旧路径 `cursor.col == col + 1` 的块光标行为一致。
+    if (cell != null && cell.isSpacer() && col > 0) {
+      TerminalCell left = line.at(col - 1);
+      if (left != null && left.isWideStart()) {
+        col--;
+        cell = left;
+      }
+    }
+    int columnWidth = cell != null && cell.isWideStart() ? 2 : 1;
+    int cursorColor = resolveColor(palette, palette.cursorColor);
+    float x = col * cellWidth;
+    float width = columnWidth * cellWidth;
+    bgPaint.setColor(cursorColor);
+    if (cursor.shape == TerminalCursor.Shape.BAR) {
+      canvas.drawRect(x, y, x + width / 4f, y + lineHeight, bgPaint);
+    } else if (cursor.shape == TerminalCursor.Shape.UNDERLINE) {
+      canvas.drawRect(x, y + lineHeight * 3f / 4f, x + width, y + lineHeight, bgPaint);
+    } else if (cell == null || cell.isSpacer()) {
+      // 空 cell（或左侧无宽字符起始格的异常 spacer）没有字形可重绘，只画光标矩形。
+      canvas.drawRect(x, y, x + width, y + lineHeight, bgPaint);
+    } else {
+      // BLOCK 光标：复用 drawCell 的 insideCursor 路径——先画反色背景与不透明光标矩形，
+      // 再以反色前景重绘字形，保证块光标下的字符可见（对齐旧 drawLine 路径）。
+      int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
+      boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint,
+          columnWidth, hasRightPadding(line, col, columnWidth, styleOf(cell)));
+      drawCell(canvas, palette, cell, col, y, false, true, cursor, preserveAspect,
+          canvasBackground);
     }
   }
 

@@ -20,6 +20,8 @@ public final class CapturedModelState {
     public final boolean afterBaseline;
     public final HistoryExtent displayHistoryExtent;
     public final HistoryExtent remoteHistoryExtent;
+    /** 是否属于重要事件（如 Baseline），不受 ModelState 限频影响。 */
+    public final boolean force;
 
     public CapturedModelState(long capturedAtMillis, String instanceId, long layoutEpoch,
                               long screenRevision, long remoteScreenRevision,
@@ -27,6 +29,18 @@ public final class CapturedModelState {
                               boolean projectionComplete, boolean afterBaseline,
                               HistoryExtent displayHistoryExtent,
                               HistoryExtent remoteHistoryExtent) {
+        this(capturedAtMillis, instanceId, layoutEpoch, screenRevision, remoteScreenRevision,
+            rows, columns, activeBuffer, projectionComplete, afterBaseline,
+            displayHistoryExtent, remoteHistoryExtent, afterBaseline);
+    }
+
+    public CapturedModelState(long capturedAtMillis, String instanceId, long layoutEpoch,
+                              long screenRevision, long remoteScreenRevision,
+                              int rows, int columns, int activeBuffer,
+                              boolean projectionComplete, boolean afterBaseline,
+                              HistoryExtent displayHistoryExtent,
+                              HistoryExtent remoteHistoryExtent,
+                              boolean force) {
         this.capturedAtMillis = capturedAtMillis;
         this.instanceId = instanceId == null ? "" : instanceId;
         this.layoutEpoch = layoutEpoch;
@@ -41,5 +55,6 @@ public final class CapturedModelState {
                 ? HistoryExtent.INITIAL_EMPTY : displayHistoryExtent;
         this.remoteHistoryExtent = remoteHistoryExtent == null
                 ? HistoryExtent.INITIAL_EMPTY : remoteHistoryExtent;
+        this.force = force;
     }
 }
