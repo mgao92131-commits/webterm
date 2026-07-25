@@ -189,6 +189,77 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
+  public void liveRecoveryBaselineConvergesBackToPageHiddenFreezeBeforeFlushingWork() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    grantLayoutLease(connection);
+
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, true);
+    assertTrue(runtime.requestHistoryRange(1, 128, 1));
+    connection.listener.onScreenMessage(historyRange(
+        connection.requestId, 1, 128,
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION,
+        1, 300, 0, false).toByteArray());
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    assertEquals(TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE,
+        connection.lastMode);
+
+    runtime.sendTextInput("queued");
+    runtime.requestResize(120, 40);
+    connection.listener.onScreenMessage(baseline(3).toByteArray());
+
+    assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
+    assertEquals(TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN,
+        connection.lastMode);
+    assertEquals(0, connection.textInputs.size());
+    assertEquals(0, connection.resizeRequests);
+
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, false);
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    connection.listener.onScreenMessage(baseline(5).toByteArray());
+
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertEquals(1, connection.textInputs.size());
+    assertEquals("queued", connection.textInputs.get(0));
+    assertEquals(1, connection.resizeRequests);
+    connection.listener.onScreenMessage(screenPatch(5).toByteArray());
+    assertEquals(2, runtime.model().screenRevision);
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void appBackgroundRecoveryBaselineRemainsFrozenAndDropsFollowingPatch() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_APP_BACKGROUND, true);
+    assertTrue(runtime.requestHistoryRange(1, 128, 1));
+    connection.listener.onScreenMessage(historyRange(
+        connection.requestId, 1, 128,
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION,
+        1, 300, 0, false).toByteArray());
+    connection.listener.onScreenMessage(baseline(3).toByteArray());
+
+    assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
+    connection.listener.onScreenMessage(screenPatch(4).toByteArray());
+    assertEquals(1, runtime.model().screenRevision);
+
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_APP_BACKGROUND, false);
+    connection.listener.onScreenMessage(baseline(5).toByteArray());
+    connection.listener.onScreenMessage(screenPatch(5).toByteArray());
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertEquals(2, runtime.model().screenRevision);
+  }
+
+  @Test
   public void okRangeMarksRequestedPartOutsideAvailableExtentUnavailable() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
@@ -234,7 +305,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
-  public void reconnectHelloPreservesFreezeRequestedBeforeModeSwitchCompletes() {
+  public void failedFrozenModeSendImmediatelyRebuildsAndReconnectHelloStaysFrozen() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -244,9 +315,9 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.modeSwitchSucceeds = false;
 
     runtime.freezeStream();
-    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertEquals(1, connection.reconnectRequests);
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
 
-    connection.listener.onDisconnected("network");
     connection.listener.onConnected();
 
     assertEquals(TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN,
@@ -418,6 +489,17 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         .build();
   }
 
+  private static void grantLayoutLease(FakeV2Connection connection) {
+    connection.listener.onScreenMessage(TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setLayoutLease(TerminalScreenV2Proto.LayoutLease.newBuilder()
+            .setRequestId(connection.acquireRequestId)
+            .setLeaseId("lease-1")
+            .setGranted(true)
+            .setInteractive(true))
+        .build().toByteArray());
+  }
+
   private static TerminalScreenV2Proto.ScreenEnvelope historyRange(
       String requestId, long fromSeq, long toSeq) {
     return historyRange(
@@ -434,7 +516,8 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
             .setLayoutEpoch(1)
             .setStreamGeneration(generation)
             .setBaseScreenRevision(1)
-            .setScreenRevision(2))
+            .setScreenRevision(2)
+            .setTitle("updated"))
         .build();
   }
 

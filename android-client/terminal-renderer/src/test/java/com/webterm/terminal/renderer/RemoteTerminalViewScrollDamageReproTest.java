@@ -334,7 +334,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       return;
     }
     if (after.screenRegionInvalidateCount != before.screenRegionInvalidateCount) {
-      // 镜像 RemoteTerminalView.invalidateScreenRegion 的矩形计算。
+      // 镜像正式 InvalidationPlan 的 SCREEN_REGION 矩形计算。
       float screenTop = RemoteTerminalRenderer.screenTopY(VIEW_H, snapshot.history.size(),
           snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
           viewport.followTail ? 0f : viewport.scrollOffsetPixels);
@@ -345,7 +345,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       return;
     }
     if (after.partialRowInvalidateCount != before.partialRowInvalidateCount) {
-      // 镜像 RemoteTerminalView.invalidateChangedRows 的行矩形计算。
+      // 镜像正式 InvalidationPlan 的 PARTIAL 行矩形计算。
       List<Integer> rows = new ArrayList<>();
       for (int row = update.dirty.changedScreenRows.nextSetBit(0); row >= 0;
            row = update.dirty.changedScreenRows.nextSetBit(row + 1)) {
@@ -363,12 +363,35 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       float screenTop = RemoteTerminalRenderer.screenTopY(VIEW_H, snapshot.history.size(),
           snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
           viewport.followTail ? 0f : viewport.scrollOffsetPixels);
-      for (Rect rect : RemoteTerminalView.dirtyScreenRowRects(rows, screenTop, LINE_HEIGHT,
-          VIEW_W, VIEW_H)) {
+      for (Rect rect : dirtyRectsForRows(rows, screenTop, LINE_HEIGHT, VIEW_W, VIEW_H)) {
         recordDamage(rect);
       }
     }
     // 其余（NONE/historyOnlyNoDraw）：无受损区域。
+  }
+
+  private static List<Rect> dirtyRectsForRows(
+      List<Integer> sortedRows, float screenTop, float lineHeight, int width, int height) {
+    List<Rect> result = new ArrayList<>();
+    if (sortedRows.isEmpty()) return result;
+    int start = sortedRows.get(0);
+    int previous = start;
+    for (int index = 1; index <= sortedRows.size(); index++) {
+      if (index < sortedRows.size() && sortedRows.get(index) == previous + 1) {
+        previous = sortedRows.get(index);
+        continue;
+      }
+      float top = screenTop + start * lineHeight;
+      float bottom = screenTop + (previous + 1) * lineHeight;
+      if (bottom > 0f && top < height) {
+        result.add(new Rect(0, Math.max(0, (int) Math.floor(top) - 1), width,
+            Math.min(height, (int) Math.ceil(bottom) + 1)));
+      }
+      if (index < sortedRows.size()) {
+        start = previous = sortedRows.get(index);
+      }
+    }
+    return result;
   }
 
   /** 记录绘制结果的 Canvas：drawColor 受 clip 约束（与设备一致），文本/节点写入帧缓冲区。 */

@@ -58,6 +58,8 @@ public final class RemoteTerminalModel {
   private boolean renderPublicationPending;
   private volatile ProjectionHealth projectionHealth =
       ProjectionHealth.incomplete(SCHEMA_GENERATION);
+  /** 仅供确定性回归测试确认完整结构检查没有重新进入 ScreenPatch 热路径。 */
+  private long structuralHistorySlotVisitCount;
 
   public RemoteTerminalModel() {
     this(HistoryBudget.defaults());
@@ -265,9 +267,10 @@ public final class RemoteTerminalModel {
         !Objects.equals(previousModes, modes), previousBuffer != activeBuffer);
     markTerminalState(false, false, !Objects.equals(previousTitle, title),
         !Objects.equals(previousCwd, workingDirectory), 0, 0);
-    projectionHealth = projectionIsStructurallyComplete()
-        ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
-        : ProjectionHealth.incomplete(SCHEMA_GENERATION);
+    // Patch 的身份、revision、layout、更新行和最终 screen 已在本事务内完成验证。
+    // 历史归 PagedTerminalHistory 独立所有，不能在高频 Patch 热路径重新扫描逻辑 extent。
+    projectionHealth = ProjectionHealth.complete(
+        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
   }
 
   public synchronized boolean applyHistoryDelta(HistoryDelta delta) {
@@ -404,6 +407,7 @@ public final class RemoteTerminalModel {
     }
     TerminalHistoryView historySnapshot = pagedHistory.snapshot();
     for (int i = 0; i < historySnapshot.size(); i++) {
+      structuralHistorySlotVisitCount++;
       TerminalLine line = historySnapshot.lineAt(i);
       if (line != null && !referencesComplete(line)) return false;
     }
@@ -458,6 +462,14 @@ public final class RemoteTerminalModel {
   /** 供规模回归测试与无正文诊断确认 screen store 始终有界。 */
   synchronized int screenLineStoreSize() {
     return screenLineStore.size();
+  }
+
+  synchronized long loadedHistoryLineCountForTest() {
+    return pagedHistory.snapshot().loadedLineCount();
+  }
+
+  synchronized long structuralHistorySlotVisitCountForTest() {
+    return structuralHistorySlotVisitCount;
   }
 
   public synchronized TerminalCursor cursor() {

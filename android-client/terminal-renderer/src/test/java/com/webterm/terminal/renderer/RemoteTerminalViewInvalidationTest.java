@@ -1,6 +1,7 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 
 import org.robolectric.RuntimeEnvironment;
 
@@ -194,38 +195,39 @@ public final class RemoteTerminalViewInvalidationTest {
   }
 
   @Test
-  public void screenRegionReportsScrollRowsOnlyForRealScroll() throws Exception {
+  public void screenScrollUsesFormalScreenRegionPlan() {
     RemoteTerminalModel model = modelWithScreen(5, 10);
     RemoteTerminalView view = view(100, 200);
-    TerminalRenderMetrics.Snapshot base = TerminalRenderMetrics.snapshot();
+    TerminalViewportState viewport = new TerminalViewportState();
 
-    // 真实滚动：按 dirty.screenScrollRows 的绝对值累计滚动行数。
     RenderDirtyState scrollUp = new RenderDirtyState();
     scrollUp.screenScrollRows = 3;
-    invokeInvalidateScreenRegion(view, scrollUp, model.renderSnapshot());
+    assertEquals(InvalidationResult.SCREEN_REGION,
+        view.resolveInvalidation(scrollUp, model.renderSnapshot(), viewport, false));
 
-    // 非滚动回退（screenScrollRows == 0）不再把整屏行数计入滚动指标。
-    RenderDirtyState fallback = new RenderDirtyState();
-    invokeInvalidateScreenRegion(view, fallback, model.renderSnapshot());
-
-    RenderDirtyState scrollDown = new RenderDirtyState();
-    scrollDown.screenScrollRows = -2;
-    invokeInvalidateScreenRegion(view, scrollDown, model.renderSnapshot());
-
-    TerminalRenderMetrics.Snapshot after = TerminalRenderMetrics.snapshot();
-    assertEquals(2, after.screenScrollEventCount - base.screenScrollEventCount);
-    assertEquals(5, after.screenScrollRowTotal - base.screenScrollRowTotal);
-    assertEquals(3, after.screenRegionInvalidateCount - base.screenRegionInvalidateCount);
+    RenderDirtyState changedRow = new RenderDirtyState();
+    changedRow.changedScreenRows.set(2);
+    assertEquals(InvalidationResult.PARTIAL,
+        view.resolveInvalidation(changedRow, model.renderSnapshot(), viewport, false));
   }
 
-  private static void invokeInvalidateScreenRegion(RemoteTerminalView view,
-                                                   RenderDirtyState dirty,
-                                                   RemoteTerminalModel.RenderSnapshot snapshot)
-      throws Exception {
-    java.lang.reflect.Method method = RemoteTerminalView.class.getDeclaredMethod(
-        "invalidateScreenRegion", RenderDirtyState.class,
-        RemoteTerminalModel.RenderSnapshot.class);
-    method.setAccessible(true);
-    method.invoke(view, dirty, snapshot);
+  @Test
+  public void fullInvalidateDoesNotChangeRenderNodeVisualGenerations() {
+    RemoteTerminalView view = view(100, 200);
+    int[] initial = view.visualGenerationsForTest();
+
+    RenderDirtyState full = new RenderDirtyState();
+    full.fullInvalidate = true;
+    view.updateGenerationCounters(full);
+    assertArrayEquals(initial, view.visualGenerationsForTest());
+
+    RenderDirtyState visualChange = new RenderDirtyState();
+    visualChange.geometryChanged = true;
+    visualChange.paletteChanged = true;
+    visualChange.stylesChanged = true;
+    view.updateGenerationCounters(visualChange);
+
+    assertArrayEquals(new int[] {initial[0] + 1, initial[1] + 1, initial[2] + 1},
+        view.visualGenerationsForTest());
   }
 }

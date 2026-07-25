@@ -150,6 +150,26 @@ public final class TerminalLineRenderNodeCacheTest {
   }
 
   @Test
+  public void ordinaryFullRenderKeepsExistingNodeWhenVisualIdentityIsUnchanged() {
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
+    TerminalLineRenderNodeCache cache = newCache();
+    begin(cache, snapshot, 1, 1, 1);
+    TerminalLine line = snapshot.screen[0];
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, line, 0f, false));
+    TerminalRowNode recorded = cache.nodeForLineForTest(line.id);
+    int recordings = totalRecordings();
+    cache.endFrame();
+
+    // fullInvalidate 只改变 View 的受损区域；传给缓存的视觉 generation 保持不变。
+    begin(cache, snapshot, 1, 1, 1);
+    assertSame(recorded, cache.nodeForLineForTest(line.id));
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
+        cache.drawOrRecord(canvas, line, 0f, false));
+    assertEquals(recordings, totalRecordings());
+  }
+
+  @Test
   public void capacityIsDynamicAndStrictlyBounded() {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(100, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();

@@ -182,6 +182,9 @@ public final class TerminalSessionRuntime {
   private long syncGeneration;
   private long streamGeneration = 1L;
   private volatile StreamState streamState = StreamState.LIVE;
+  /** modelExecutor 串行维护：当前 streamGeneration 已请求的权威目标模式。 */
+  private TerminalScreenV2Proto.ScreenStreamMode requestedModeForGeneration =
+      TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
   public static final int FREEZE_HISTORY = 1;
   public static final int FREEZE_PAGE_HIDDEN = 1 << 1;
   public static final int FREEZE_APP_BACKGROUND = 1 << 2;
@@ -687,15 +690,7 @@ public final class TerminalSessionRuntime {
     boolean wantsFrozen = freezeReasons.get() != 0;
     if (wantsFrozen) {
       if (streamState == StreamState.FROZEN) return;
-      ScreenConnection c = connection;
-      if (c == null) return;
-      long generation = ++streamGeneration;
-      if (c.setStreamMode(
-        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
-        streamState = StreamState.FROZEN;
-        int dropped = screenMailbox.dropLiveProjectionDeltas();
-        for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundPatchDropped();
-      }
+      requestFrozenMode("freeze reasons changed");
       return;
     }
     if (streamState == StreamState.FROZEN) requestFreshBaseline("return to live");
@@ -748,6 +743,7 @@ public final class TerminalSessionRuntime {
         wantsFrozen
             ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
             : TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+    requestedModeForGeneration = desiredMode;
     boolean hasFrozenProjection = wantsFrozen
         && model.instanceId != null && !model.instanceId.isEmpty();
     boolean helloSent = expectedConnection.beginSync(
@@ -963,6 +959,8 @@ public final class TerminalSessionRuntime {
     if (c == null || state == State.CLOSED) return;
     long generation = ++streamGeneration;
     streamState = StreamState.RESYNCING;
+    requestedModeForGeneration =
+        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
     Diagnostics.warn("screen_protocol", "baseline_requested", diagnosticFields(
         "layoutEpoch", model.layoutEpoch,
         "screenRevision", model.screenRevision,
@@ -970,8 +968,25 @@ public final class TerminalSessionRuntime {
         "reason", reason));
     if (!c.setStreamMode(
         generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE)) {
-      c.requestReconnect("screen Baseline request failed");
+      rebuildScreenChannel("screen Baseline request failed");
     }
+  }
+
+  /** 请求覆盖式冻结；发送失败意味着本地 generation 已推进，必须立即重建 channel。 */
+  private void requestFrozenMode(@NonNull String reason) {
+    ScreenConnection c = connection;
+    if (c == null || state == State.CLOSED) return;
+    long generation = ++streamGeneration;
+    requestedModeForGeneration =
+        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN;
+    if (!c.setStreamMode(
+        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
+      rebuildScreenChannel("screen FROZEN mode send failed: " + reason);
+      return;
+    }
+    streamState = StreamState.FROZEN;
+    int dropped = screenMailbox.dropLiveProjectionDeltas();
+    for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundPatchDropped();
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
@@ -1051,16 +1066,36 @@ public final class TerminalSessionRuntime {
               captureStreamIdentity(), baseline);
           recordCapturedModelState(true);
           streamGeneration = wire.getStreamGeneration();
-          streamState = StreamState.LIVE;
           onAuthoritativeSnapshot();
           completeSynchronization();
-          flushResizeAfterBaseline();
-          if (previousInstanceId != null
-              && !previousInstanceId.equals(baseline.instanceId)) {
+          boolean terminalInstanceChanged = previousInstanceId != null
+              && !previousInstanceId.equals(baseline.instanceId);
+          if (terminalInstanceChanged) {
             clearPendingLiveInputs();
             notifyInputDeliveryUncertain("终端实例已变更，等待实时恢复的输入未发送");
+          }
+          boolean remainFrozen = freezeReasons.get() != 0;
+          boolean baselineGenerationWasLive = requestedModeForGeneration
+              == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+          if (remainFrozen && baselineGenerationWasLive) {
+            // Baseline 只完成这一 generation 的权威模型提交；生命周期/历史冻结原因仍然
+            // 有效时，立即推进到新的 FROZEN generation，禁止刷新 resize 或用户输入。
+            streamState = StreamState.LIVE;
+            requestFrozenMode("freeze reasons remain after Baseline");
+          } else if (remainFrozen) {
+            // 初始 Hello 本来就请求了 FROZEN；该 generation 无需重复切换模式。
+            streamState = StreamState.FROZEN;
+          } else if (!baselineGenerationWasLive) {
+            // 冻结原因在 FROZEN generation 的 Baseline 到达前已解除，服务端仍处于
+            // FROZEN；必须请求新的 LIVE Baseline，不能仅凭本地快照猜成 LIVE。
+            streamState = StreamState.FROZEN;
+            requestFreshBaseline("freeze reasons cleared during FROZEN Baseline");
           } else {
-            flushPendingLiveInputs();
+            requestedModeForGeneration =
+                TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+            streamState = StreamState.LIVE;
+            flushResizeAfterBaseline();
+            if (!terminalInstanceChanged) flushPendingLiveInputs();
           }
           renderChanged = true;
           break;

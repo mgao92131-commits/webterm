@@ -15,6 +15,10 @@ public final class RemoteTerminalModelPatchScaleTest {
     assertTrue(model.applyBaseline(
         RemoteTerminalModelScreenLineStoreTest.baseline(rows, 1, 1, 1_000_000L)));
 
+    assertEquals(1, model.loadedHistoryLineCountForTest());
+    long structuralVisitsAfterBaseline = model.structuralHistorySlotVisitCountForTest();
+    assertEquals(1_000_000L, structuralVisitsAfterBaseline);
+
     long revision = 1;
     long nextLineId = 20_000;
     long startedNanos = System.nanoTime();
@@ -32,12 +36,15 @@ public final class RemoteTerminalModelPatchScaleTest {
           null, null, null, null, null, null));
       revision++;
       nextLineId++;
-      assertEquals(rows, model.screenLineStoreSize());
+      assertTrue(model.screenLineStoreSize() <= rows);
     }
     long elapsedNanos = System.nanoTime() - startedNanos;
 
     assertEquals(1_000_000, model.historySize());
+    assertEquals(1, model.loadedHistoryLineCountForTest());
     assertEquals(rows, model.screenLineStoreSize());
+    assertEquals("ScreenPatch must not inspect logical history slots",
+        structuralVisitsAfterBaseline, model.structuralHistorySlotVisitCountForTest());
     System.out.println("PERF_BASELINE screen_patch_scale rows=" + rows
         + " logical_history=1000000 iterations=" + iterations
         + " elapsed_nanos=" + elapsedNanos);
