@@ -123,6 +123,14 @@ public final class PagedTerminalHistory {
       if (line == null || line.historySeq != historySeq) {
         throw new IllegalArgumentException("line historySeq does not match target");
       }
+      if (line.cells == null) {
+        throw new IllegalArgumentException("history line cells are missing");
+      }
+      for (TerminalCell cell : line.cells) {
+        if (cell == null) {
+          throw new IllegalArgumentException("history line contains null cell");
+        }
+      }
       HistoryPageChunk page = mutablePage(pageNumber(historySeq));
       int offset = pageOffset(historySeq);
       TerminalLine old = page.slots[offset];

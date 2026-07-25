@@ -3,6 +3,7 @@ package com.webterm.terminal.renderer;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -12,6 +13,7 @@ import android.graphics.Canvas;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenPatchV2;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -109,6 +111,55 @@ public final class TerminalLineRenderNodeCacheTest {
         cache.drawOrRecord(canvas, changed, 0f, false));
     assertEquals(2, node.beginRecordingCount);
     assertEquals(3, node.drawCount);
+  }
+
+  @Test
+  public void modelVersionInvariantKeepsReplayHitAndRerecordsOnlyHigherVersion() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baseline(1, 10)));
+    model.consumeRenderUpdate();
+    TerminalLineRenderNodeCache cache = newCache();
+    RemoteTerminalModel.RenderSnapshot first = model.renderSnapshot();
+    TerminalLine original = first.screen[0];
+    begin(cache, first, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, original, 0f, false));
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(original.id);
+    int recordsAfterBaseline = totalRecordings();
+    cache.endFrame();
+
+    TerminalLine replay = new TerminalLine(
+        original.id, original.version, 0, original.wrapped,
+        Arrays.copyOf(original.cells, original.cells.length));
+    model.applyScreenPatch(patch(1, 2, replay));
+    assertNull(model.consumeRenderUpdate());
+    RemoteTerminalModel.RenderSnapshot replaySnapshot = model.renderSnapshot();
+    assertSame(original, replaySnapshot.screen[0]);
+    begin(cache, replaySnapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
+        cache.drawOrRecord(canvas, replaySnapshot.screen[0], 0f, false));
+    assertEquals(recordsAfterBaseline, totalRecordings());
+    cache.endFrame();
+
+    try {
+      model.applyScreenPatch(patch(2, 3,
+          textLine(original.id, original.version, 10, "changed-without-version")));
+      throw new AssertionError("same-version content change must be rejected");
+    } catch (RemoteTerminalModel.RevisionGapException expected) {
+      assertEquals(2, model.screenRevision);
+      assertSame(original, model.renderSnapshot().screen[0]);
+    }
+
+    model.applyScreenPatch(patch(2, 3,
+        textLine(original.id, original.version + 1, 10, "changed")));
+    assertTrue(model.consumeRenderUpdate().dirty.changedScreenRows.get(0));
+    RemoteTerminalModel.RenderSnapshot changedSnapshot = model.renderSnapshot();
+    assertEquals("changed", changedSnapshot.screen[0].at(0).text);
+    begin(cache, changedSnapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, changedSnapshot.screen[0], 0f, false));
+    assertSame(node, cache.nodeForLineForTest(original.id));
+    assertEquals(recordsAfterBaseline + 1, totalRecordings());
   }
 
   @Test
@@ -218,6 +269,31 @@ public final class TerminalLineRenderNodeCacheTest {
   private static RemoteTerminalModel.RenderSnapshot snapshot(
       int rows, int columns, long layoutEpoch, String instanceId) {
     return snapshot(rows, columns, layoutEpoch, instanceId, 1L);
+  }
+
+  private static ScreenBaseline baseline(int rows, int columns) {
+    List<TerminalLine> screen = new ArrayList<>(rows);
+    for (int row = 0; row < rows; row++) {
+      screen.add(textLine(1L + row, 1, columns, "original"));
+    }
+    return new ScreenBaseline(
+        "session-1", "instance-1", 1L, 1L, 1L, rows, columns,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+  }
+
+  private static ScreenPatchV2 patch(long baseRevision, long revision, TerminalLine line) {
+    return new ScreenPatchV2(
+        "instance-1", 1L, 1L, baseRevision, revision, null,
+        Collections.singletonList(line), null, null, null, null, null, null);
+  }
+
+  private static TerminalLine textLine(
+      long id, long version, int columns, String text) {
+    TerminalCell[] cells = new TerminalCell[columns];
+    cells[0] = new TerminalCell(text, (byte) 1, null, null);
+    for (int column = 1; column < columns; column++) cells[column] = TerminalCell.EMPTY;
+    return new TerminalLine(id, version, 0, false, cells);
   }
 
   private static RemoteTerminalModel.RenderSnapshot snapshot(

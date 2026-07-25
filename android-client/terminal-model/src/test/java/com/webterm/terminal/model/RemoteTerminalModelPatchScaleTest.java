@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
 
 public final class RemoteTerminalModelPatchScaleTest {
@@ -11,13 +12,15 @@ public final class RemoteTerminalModelPatchScaleTest {
   public void millionLineLogicalExtentDoesNotGrowScreenStore() throws Exception {
     final int rows = 40;
     final int iterations = 1_000;
-    RemoteTerminalModel model = new RemoteTerminalModel();
+    AtomicLong baselineHistoryVisits = new AtomicLong();
+    RemoteTerminalModel model = new RemoteTerminalModel(
+        HistoryBudget.defaults(), ignored -> baselineHistoryVisits.incrementAndGet());
     assertTrue(model.applyBaseline(
         RemoteTerminalModelScreenLineStoreTest.baseline(rows, 1, 1, 1_000_000L)));
 
     assertEquals(1, model.loadedHistoryLineCountForTest());
-    long structuralVisitsAfterBaseline = model.structuralHistorySlotVisitCountForTest();
-    assertEquals(1_000_000L, structuralVisitsAfterBaseline);
+    long structuralVisitsAfterBaseline = baselineHistoryVisits.get();
+    assertTrue(structuralVisitsAfterBaseline <= model.loadedHistoryLineCountForTest());
 
     long revision = 1;
     long nextLineId = 20_000;
@@ -43,8 +46,7 @@ public final class RemoteTerminalModelPatchScaleTest {
     assertEquals(1_000_000, model.historySize());
     assertEquals(1, model.loadedHistoryLineCountForTest());
     assertEquals(rows, model.screenLineStoreSize());
-    assertEquals("ScreenPatch must not inspect logical history slots",
-        structuralVisitsAfterBaseline, model.structuralHistorySlotVisitCountForTest());
+    assertEquals(structuralVisitsAfterBaseline, baselineHistoryVisits.get());
     System.out.println("PERF_BASELINE screen_patch_scale rows=" + rows
         + " logical_history=1000000 iterations=" + iterations
         + " elapsed_nanos=" + elapsedNanos);

@@ -758,6 +758,12 @@ public final class TerminalSessionRuntime {
       expectedConnection.requestReconnect("screen Hello send failed");
       return;
     }
+    if (desiredMode
+        == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN) {
+      // streamState 可能仍是上一 generation 遗留的 LIVE。当前 generation 的 Hello
+      // 已明确请求 FROZEN，后续 TailStatus 必须能作为该 generation 的权威完成帧。
+      streamState = StreamState.FROZEN;
+    }
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
         RESYNC_SNAPSHOT_TIMEOUT_MS);
@@ -774,6 +780,53 @@ public final class TerminalSessionRuntime {
     syncGeneration++;
     updateState(State.CONNECTED);
     layoutLeaseCoordinator.onSynchronizationComplete();
+  }
+
+  /** FROZEN generation 只由 TailStatus 收口，不刷新 LIVE 专属的输入或 resize。 */
+  private void finishFrozenGeneration() {
+    streamState = StreamState.FROZEN;
+    completeSynchronization();
+    if (state == State.CONNECTED && freezeReasons.get() == 0) {
+      requestFreshBaseline("freeze reasons cleared during FROZEN synchronization");
+    }
+  }
+
+  /**
+   * Baseline 完成当前 generation 后统一收敛生命周期目标模式。只有最终保持 LIVE 的
+   * LIVE Baseline 可以刷新 resize/input，避免发出下一 generation 后继续执行旧分支副作用。
+   */
+  private void finishBaselineGeneration(
+      boolean terminalInstanceChanged,
+      @NonNull TerminalScreenV2Proto.ScreenStreamMode completedMode) {
+    completeSynchronization();
+    if (terminalInstanceChanged) {
+      clearPendingLiveInputs();
+      notifyInputDeliveryUncertain("终端实例已变更，等待实时恢复的输入未发送");
+    }
+
+    boolean wantsFrozen = freezeReasons.get() != 0;
+    boolean completedLive = completedMode
+        == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+    if (wantsFrozen && completedLive) {
+      streamState = StreamState.LIVE;
+      requestFrozenMode("freeze reasons remain after Baseline");
+      return;
+    }
+    if (wantsFrozen) {
+      streamState = StreamState.FROZEN;
+      return;
+    }
+    if (!completedLive) {
+      streamState = StreamState.FROZEN;
+      requestFreshBaseline("freeze reasons cleared during FROZEN Baseline");
+      return;
+    }
+
+    requestedModeForGeneration =
+        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
+    streamState = StreamState.LIVE;
+    flushResizeAfterBaseline();
+    if (!terminalInstanceChanged) flushPendingLiveInputs();
   }
 
   private void handleScreenMessage(long messageEpoch,
@@ -1067,36 +1120,10 @@ public final class TerminalSessionRuntime {
           recordCapturedModelState(true);
           streamGeneration = wire.getStreamGeneration();
           onAuthoritativeSnapshot();
-          completeSynchronization();
           boolean terminalInstanceChanged = previousInstanceId != null
               && !previousInstanceId.equals(baseline.instanceId);
-          if (terminalInstanceChanged) {
-            clearPendingLiveInputs();
-            notifyInputDeliveryUncertain("终端实例已变更，等待实时恢复的输入未发送");
-          }
-          boolean remainFrozen = freezeReasons.get() != 0;
-          boolean baselineGenerationWasLive = requestedModeForGeneration
-              == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-          if (remainFrozen && baselineGenerationWasLive) {
-            // Baseline 只完成这一 generation 的权威模型提交；生命周期/历史冻结原因仍然
-            // 有效时，立即推进到新的 FROZEN generation，禁止刷新 resize 或用户输入。
-            streamState = StreamState.LIVE;
-            requestFrozenMode("freeze reasons remain after Baseline");
-          } else if (remainFrozen) {
-            // 初始 Hello 本来就请求了 FROZEN；该 generation 无需重复切换模式。
-            streamState = StreamState.FROZEN;
-          } else if (!baselineGenerationWasLive) {
-            // 冻结原因在 FROZEN generation 的 Baseline 到达前已解除，服务端仍处于
-            // FROZEN；必须请求新的 LIVE Baseline，不能仅凭本地快照猜成 LIVE。
-            streamState = StreamState.FROZEN;
-            requestFreshBaseline("freeze reasons cleared during FROZEN Baseline");
-          } else {
-            requestedModeForGeneration =
-                TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-            streamState = StreamState.LIVE;
-            flushResizeAfterBaseline();
-            if (!terminalInstanceChanged) flushPendingLiveInputs();
-          }
+          TerminalScreenV2Proto.ScreenStreamMode completedMode = requestedModeForGeneration;
+          finishBaselineGeneration(terminalInstanceChanged, completedMode);
           renderChanged = true;
           break;
         }
@@ -1188,7 +1215,10 @@ public final class TerminalSessionRuntime {
               historyExtent(status.getLatestHistoryExtent()));
           if (!accepted) return;
           recordCapturedModelState(false);
-          if (streamState == StreamState.FROZEN) completeSynchronization();
+          if (requestedModeForGeneration
+              == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN) {
+            finishFrozenGeneration();
+          }
           if (status.getExited()) updateState(State.CLOSED);
           break;
         }

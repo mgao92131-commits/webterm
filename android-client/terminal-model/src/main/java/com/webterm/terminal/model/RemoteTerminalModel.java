@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.LongConsumer;
 
 /**
  * Android 远程终端模型。只维护投影和缓存，可由 Go 权威快照重建。
@@ -58,8 +59,8 @@ public final class RemoteTerminalModel {
   private boolean renderPublicationPending;
   private volatile ProjectionHealth projectionHealth =
       ProjectionHealth.incomplete(SCHEMA_GENERATION);
-  /** 仅供确定性回归测试确认完整结构检查没有重新进入 ScreenPatch 热路径。 */
-  private long structuralHistorySlotVisitCount;
+  /** 仅由单元测试注入；生产实例为 null，不在 Patch 热路径执行。 */
+  private final LongConsumer baselineHistoryValidationProbe;
 
   public RemoteTerminalModel() {
     this(HistoryBudget.defaults());
@@ -77,8 +78,13 @@ public final class RemoteTerminalModel {
   }
 
   public RemoteTerminalModel(HistoryBudget budget) {
+    this(budget, null);
+  }
+
+  RemoteTerminalModel(HistoryBudget budget, LongConsumer baselineHistoryValidationProbe) {
     this.activeBuffer = TerminalBufferKind.MAIN;
     this.pagedHistory = new PagedTerminalHistory(budget, RemoteTerminalModel::estimateHistoryLineBytes);
+    this.baselineHistoryValidationProbe = baselineHistoryValidationProbe;
   }
 
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
@@ -92,16 +98,27 @@ public final class RemoteTerminalModel {
       return false;
     }
     java.util.HashSet<Long> baselineLineIds = new java.util.HashSet<>();
+    List<TerminalLine> normalizedHistoryTail = new ArrayList<>(baseline.historyTail.size());
+    List<TerminalLine> normalizedScreen = new ArrayList<>(baseline.rows);
     long previousHistorySeq = 0;
     for (TerminalLine line : baseline.historyTail) {
       if (line == null || line.id <= 0 || line.historySeq <= previousHistorySeq
           || !baseline.historyExtent.contains(line.historySeq)
           || !baselineLineIds.add(line.id)) return false;
+      TerminalLine normalized = normalizeCompleteLine(line, baseline.cols);
+      if (normalized == null) return false;
+      if (baselineHistoryValidationProbe != null) {
+        baselineHistoryValidationProbe.accept(normalized.historySeq);
+      }
+      normalizedHistoryTail.add(normalized);
       previousHistorySeq = line.historySeq;
     }
     for (TerminalLine line : baseline.screen) {
       if (line == null || line.id <= 0 || line.historySeq != 0
           || !baselineLineIds.add(line.id)) return false;
+      TerminalLine normalized = normalizeCompleteLine(line, baseline.cols);
+      if (normalized == null) return false;
+      normalizedScreen.add(normalized);
     }
     boolean sameProjection = v2Projection
         && baseline.instanceId.equals(instanceId)
@@ -113,8 +130,7 @@ public final class RemoteTerminalModel {
       historyEditor.setExtent(1, 0);
     }
     historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
-    for (TerminalLine line : baseline.historyTail) {
-      TerminalLine normalized = padOrCopyLine(line, baseline.cols);
+    for (TerminalLine normalized : normalizedHistoryTail) {
       if (baseline.historyExtent.contains(normalized.historySeq)) {
         historyEditor.put(normalized.historySeq, normalized);
       }
@@ -144,7 +160,7 @@ public final class RemoteTerminalModel {
     this.screen = new TerminalLine[rows];
     screenLineStore.clear();
     for (int row = 0; row < rows; row++) {
-      TerminalLine line = padOrCopyLine(baseline.screen.get(row), columns);
+      TerminalLine line = normalizedScreen.get(row);
       this.screen[row] = line;
       screenLineStore.put(line.id, line);
     }
@@ -152,10 +168,9 @@ public final class RemoteTerminalModel {
     markRenderDirty(true, null, 0, null, rows, true, geometryChanged, true, -1, cursor.row,
         true, true, true, true, true);
     markTerminalState(geometryChanged, true, true, true, 0, 0);
-    projectionHealth = projectionIsStructurallyComplete()
-        ? ProjectionHealth.complete(instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION)
-        : ProjectionHealth.incomplete(SCHEMA_GENERATION);
-    return projectionHealth.complete;
+    projectionHealth = ProjectionHealth.complete(
+        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+    return true;
   }
 
   public synchronized void applyScreenPatch(ScreenPatchV2 patch) throws RevisionGapException {
@@ -175,8 +190,17 @@ public final class RemoteTerminalModel {
         throw new RevisionGapException("screen.v2 patch contains invalid screen line");
       }
       TerminalLine previous = screenLineStore.get(normalized.id);
-      if (previous != null && normalized.version < previous.version) {
-        throw new RevisionGapException("screen.v2 line version regressed");
+      if (previous != null) {
+        if (normalized.version < previous.version) {
+          throw new RevisionGapException("screen.v2 line version regressed");
+        }
+        if (normalized.version == previous.version) {
+          if (!normalized.sameContent(previous)) {
+            throw new RevisionGapException(
+                "screen.v2 line content changed without version increment");
+          }
+          normalized = previous;
+        }
       }
       if (stagedLines.put(normalized.id, normalized) != null) {
         throw new RevisionGapException("screen.v2 patch repeats line id");
@@ -397,23 +421,6 @@ public final class RemoteTerminalModel {
   }
 
 
-  private boolean projectionIsStructurallyComplete() {
-    if (instanceId == null || instanceId.isEmpty() || layoutEpoch < 1 || screenRevision < 1
-        || rows <= 0 || columns <= 0 || screen == null || screen.length != rows) {
-      return false;
-    }
-    for (TerminalLine line : screen) {
-      if (line == null || line.length() != columns || !referencesComplete(line)) return false;
-    }
-    TerminalHistoryView historySnapshot = pagedHistory.snapshot();
-    for (int i = 0; i < historySnapshot.size(); i++) {
-      structuralHistorySlotVisitCount++;
-      TerminalLine line = historySnapshot.lineAt(i);
-      if (line != null && !referencesComplete(line)) return false;
-    }
-    return true;
-  }
-
   private boolean referencesComplete(TerminalLine line) {
     for (int i = 0; i < line.length(); i++) {
       if (line.at(i) == null) return false;
@@ -468,10 +475,6 @@ public final class RemoteTerminalModel {
     return pagedHistory.snapshot().loadedLineCount();
   }
 
-  synchronized long structuralHistorySlotVisitCountForTest() {
-    return structuralHistorySlotVisitCount;
-  }
-
   public synchronized TerminalCursor cursor() {
     return cursor;
   }
@@ -522,6 +525,12 @@ public final class RemoteTerminalModel {
     }
     return new TerminalLine(
         line.id, line.version, line.historySeq, line.wrapped, cells);
+  }
+
+  private TerminalLine normalizeCompleteLine(TerminalLine line, int cols) {
+    if (line == null || line.cells == null) return null;
+    TerminalLine normalized = padOrCopyLine(line, cols);
+    return referencesComplete(normalized) ? normalized : null;
   }
 
   /** Patch 提交后仅按当前 screen 重建，成本严格受 rows 上限约束。 */
