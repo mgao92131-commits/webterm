@@ -246,6 +246,21 @@ public final class DiagnosticLogExporter {
         render.put("otherFrameBytes", screen.otherFrameBytes);
         render.put("mailboxResidenceNanos", screen.mailboxResidenceNanos);
         render.put("mailboxResidenceMaxNanos", screen.mailboxResidenceMaxNanos);
+        render.put("screenPatchApplyLatencyBuckets",
+            latencyBucketsJson(screen.screenPatchApplyLatencyBuckets));
+        render.put("protobufParseLatencyBuckets",
+            latencyBucketsJson(screen.protobufParseLatencyBuckets));
+        render.put("mapperLatencyBuckets",
+            latencyBucketsJson(screen.mapperLatencyBuckets));
+        render.put("renderNodeRecordLatencyBuckets",
+            latencyBucketsJson(screen.renderNodeRecordLatencyBuckets));
+        render.put("mailboxResidenceLatencyBuckets",
+            latencyBucketsJson(screen.mailboxResidenceLatencyBuckets));
+        render.put("historyCacheHitCount", screen.historyCacheHitCount);
+        render.put("historyCacheMissCount", screen.historyCacheMissCount);
+        render.put("backgroundPatchDroppedCount", screen.backgroundPatchDroppedCount);
+        render.put("screenLineStoreMaxSize", screen.screenLineStoreMaxSize);
+        render.put("visibleHistoryRowsDrawn", screen.visibleHistoryRowsDrawn);
         json.put("render", render);
 
         TerminalResumeMetrics.Snapshot resume = TerminalResumeMetrics.snapshot();
@@ -269,6 +284,12 @@ public final class DiagnosticLogExporter {
         resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
         resumeJson.put("staleStreamGenerationCount", resume.staleStreamGenerationCount);
         json.put("resume", resumeJson);
+        return json;
+    }
+
+    private static JSONArray latencyBucketsJson(long[] buckets) {
+        JSONArray json = new JSONArray();
+        for (long bucket : buckets) json.put(bucket);
         return json;
     }
 

@@ -243,6 +243,24 @@ public final class ScreenMailbox {
     return fencePending || !messages.isEmpty();
   }
 
+  /** FROZEN 切换边界：丢弃尚未解析的实时增量，保留 TailStatus、Baseline 与控制帧。 */
+  public synchronized int dropLiveProjectionDeltas() {
+    int dropped = 0;
+    Iterator<Message> iterator = messages.iterator();
+    while (iterator.hasNext()) {
+      Message message = iterator.next();
+      if (message.kind != MessageKind.SCREEN_PATCH
+          && message.kind != MessageKind.HISTORY_DELTA
+          && message.kind != MessageKind.PATCH) continue;
+      iterator.remove();
+      dropped++;
+      pendingBytes -= message.payload.length;
+      pendingProjectionMessages--;
+      pendingProjectionBytes -= message.payload.length;
+    }
+    return dropped;
+  }
+
   public synchronized void reset() {
     messages.clear();
     pendingBytes = 0L;

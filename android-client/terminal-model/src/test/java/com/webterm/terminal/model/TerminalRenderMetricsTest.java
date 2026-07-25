@@ -1,6 +1,7 @@
 package com.webterm.terminal.model;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -11,6 +12,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 public class TerminalRenderMetricsTest {
 
@@ -22,8 +24,53 @@ public class TerminalRenderMetricsTest {
         field.setAccessible(true);
         AtomicLong counter = (AtomicLong) field.get(null);
         counter.set(0L);
+      } else if (field.getType() == AtomicLongArray.class
+          && java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+        field.setAccessible(true);
+        AtomicLongArray counters = (AtomicLongArray) field.get(null);
+        for (int i = 0; i < counters.length(); i++) counters.set(i, 0L);
       }
     }
+  }
+
+  @Test
+  public void latencyBucketsUseFixedExclusiveUpperBounds() {
+    long[] samples = {
+        249_999L, 250_000L, 500_000L, 1_000_000L,
+        2_000_000L, 4_000_000L, 8_000_000L, 16_000_000L
+    };
+    for (long sample : samples) {
+      TerminalRenderMetrics.screenPatchApplyDuration(sample);
+      TerminalRenderMetrics.protobufParseDuration(sample);
+      TerminalRenderMetrics.mapperDuration(sample);
+      TerminalRenderMetrics.renderNodeRecordDuration(sample);
+      TerminalRenderMetrics.mailboxResidenceDuration(sample);
+    }
+
+    long[] expected = {1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L};
+    TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
+    assertArrayEquals(expected, snapshot.screenPatchApplyLatencyBuckets);
+    assertArrayEquals(expected, snapshot.protobufParseLatencyBuckets);
+    assertArrayEquals(expected, snapshot.mapperLatencyBuckets);
+    assertArrayEquals(expected, snapshot.renderNodeRecordLatencyBuckets);
+    assertArrayEquals(expected, snapshot.mailboxResidenceLatencyBuckets);
+  }
+
+  @Test
+  public void boundedCountersNeverCaptureContent() {
+    TerminalRenderMetrics.historyCacheHit();
+    TerminalRenderMetrics.historyCacheMiss();
+    TerminalRenderMetrics.backgroundPatchDropped();
+    TerminalRenderMetrics.screenLineStoreSize(40);
+    TerminalRenderMetrics.screenLineStoreSize(10);
+    TerminalRenderMetrics.visibleHistoryRowsDrawn(12);
+
+    TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
+    assertEquals(1L, snapshot.historyCacheHitCount);
+    assertEquals(1L, snapshot.historyCacheMissCount);
+    assertEquals(1L, snapshot.backgroundPatchDroppedCount);
+    assertEquals(40L, snapshot.screenLineStoreMaxSize);
+    assertEquals(12L, snapshot.visibleHistoryRowsDrawn);
   }
 
   @Test

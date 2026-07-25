@@ -109,13 +109,13 @@ public final class RemoteTerminalRenderer {
   }
 
   /**
-   * 绘制完整终端帧。screen 行优先通过 {@link TerminalRowRenderNodeCache} 绘制；
-   * 缓存不存在或行数不匹配时回退到直接 {@link #drawLine}。光标和选择作为动态覆盖层
+   * 绘制完整终端帧。screen/history 行优先通过 {@link TerminalLineRenderNodeCache}
+   * 绘制；缓存不可用时回退到直接 {@link #drawLine}。光标和选择作为动态覆盖层
    * 在静态正文之后绘制，避免光标闪烁或选择变化触发整行重录。
    */
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
-                     @Nullable TerminalRowRenderNodeCache rowCache) {
+                     @Nullable TerminalLineRenderNodeCache lineCache) {
     long renderStartedNanos = System.nanoTime();
     try {
     TerminalLine[] screen = model.screen;
@@ -147,12 +147,15 @@ public final class RemoteTerminalRenderer {
     // 实时 screen 行：优先使用 RenderNode 缓存；无缓存时直接绘制。
     int[] screenRange = rowRangeIntersecting(clip.top, clip.bottom, screenTopY, lineHeight,
         screenRows);
-    boolean useCache = rowCache != null && rowCache.rowCount() == screenRows;
+    boolean useCache = canvas.isHardwareAccelerated() && lineCache != null;
     for (int row = screenRange[0]; row < screenRange[1]; row++) {
       float y = screenTopY + row * lineHeight;
       // 缓存命中（含 lineId/lineVersion 兑底校验）则走缓存；否则回退直接绘制静态正文，
       // 光标和选择仍由下方覆盖层统一绘制，不会重复。
-      if (!useCache || !rowCache.drawRow(canvas, row, y, screen[row])) {
+      TerminalLineRenderNodeCache.LineDrawResult cacheResult = useCache
+          ? lineCache.drawOrRecord(canvas, screen[row], y, false)
+          : TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
+      if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
         if (useCache) {
           drawTerminalLineContent(canvas, model.columns, palette, screen[row], y,
               canvasBackground);
@@ -163,7 +166,7 @@ public final class RemoteTerminalRenderer {
       }
     }
 
-    // 历史行继续使用直接 Canvas 绘制（本次任务不重构历史缓存）。
+    // 历史和实时 screen 共用同一个按 lineId/version 定位的缓存。
     // 历史只应出现在 [topInset, screenTopY) 区间；followTail 时 screenTopY == topInset，
     // 该区间为空，因此不会把上一条历史行的残片画进第一行终端文字上方的字体留白。
     float topInset = getTopInset();
@@ -172,6 +175,7 @@ public final class RemoteTerminalRenderer {
         historyRows);
     canvas.save();
     canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
+    int visibleHistoryRows = 0;
     for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
@@ -183,9 +187,19 @@ public final class RemoteTerminalRenderer {
         drawHistoryPlaceholder(canvas, model.columns, history, historyIndex, y, canvasBackground);
         continue;
       }
-      drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
-          normalizedSelection, cursor, false, canvasBackground);
+      visibleHistoryRows++;
+      TerminalLineRenderNodeCache.LineDrawResult cacheResult = useCache
+          ? lineCache.drawOrRecord(canvas, line, y, true)
+          : TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
+      if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
+        drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
+            normalizedSelection, cursor, false, canvasBackground);
+      } else {
+        drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
+            line.historyOrder(), -1, normalizedSelection, canvasBackground);
+      }
     }
+    TerminalRenderMetrics.visibleHistoryRowsDrawn(visibleHistoryRows);
     canvas.restore();
 
     // 使用缓存时，光标和选择作为覆盖层在静态正文之后绘制。

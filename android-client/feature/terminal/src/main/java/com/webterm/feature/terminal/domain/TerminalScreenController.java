@@ -204,15 +204,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
         && viewport.contentStreamIntent == ContentStreamIntent.RETURNING_LIVE) {
       viewport.markLive();
     }
-    requestViewportRedraw();
-  }
-
-  public void requestViewportRedraw() {
-    View v = view;
-    if (v != null) {
-      v.requestInvalidate();
-    }
-    com.webterm.terminal.model.TerminalRenderMetrics.viewportRedrawRequested();
   }
 
   /** v2 可见页驱动：请求当前视口中首个尚未加载的固定页。 */

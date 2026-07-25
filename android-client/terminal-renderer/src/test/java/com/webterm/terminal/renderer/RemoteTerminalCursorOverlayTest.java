@@ -159,16 +159,16 @@ public final class RemoteTerminalCursorOverlayTest {
     model.requestFullRender();
     RenderUpdate update = model.consumeRenderUpdate();
     if (update == null) throw new AssertionError("expected initial RenderUpdate");
-    TerminalRowRenderNodeCache cache = new TerminalRowRenderNodeCache(
-        name -> new TerminalRowRenderNodeCacheTest.FakeNode(name));
+    TerminalLineRenderNodeCache cache = new TerminalLineRenderNodeCache(
+        name -> new TerminalLineRenderNodeCacheTest.FakeNode(name));
     int canvasBackground = RemoteTerminalRenderer.resolveColor(palette,
         palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
-    cache.prepareFrame(update.snapshot, update.dirty, renderer, palette, canvasBackground,
-        1, 1, 1);
+    cache.beginFrame(update.snapshot, renderer, palette, canvasBackground, 1, 1, 1);
 
     RecordingCanvas canvas = new RecordingCanvas(
         (int) (columns * CELL_WIDTH * 10), (int) (rows * LINE_HEIGHT + 10));
     renderer.render(canvas, model.renderSnapshot(), new TerminalViewportState(), true, cache);
+    cache.endFrame();
     return canvas;
   }
 
@@ -210,6 +210,11 @@ public final class RemoteTerminalCursorOverlayTest {
     RecordingCanvas(int width, int height) {
       super(Bitmap.createBitmap(Math.max(1, width), Math.max(1, height),
           Bitmap.Config.ARGB_8888));
+    }
+
+    @Override
+    public boolean isHardwareAccelerated() {
+      return true;
     }
 
     @Override

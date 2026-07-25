@@ -52,6 +52,22 @@ import java.util.Collections;
  * 远程终端自定义 View。负责 Android View 生命周期、IME、触摸滚动、选择和触发渲染。
  */
 public final class RemoteTerminalView extends View {
+  private static final class InvalidationPlan {
+    InvalidationResult result = InvalidationResult.NONE;
+    final Rect[] rects = new Rect[MAX_PARTIAL_DIRTY_RECTS];
+    int rectCount;
+    int dirtyRowCount;
+
+    InvalidationPlan() {
+      for (int i = 0; i < rects.length; i++) rects[i] = new Rect();
+    }
+
+    void reset() {
+      result = InvalidationResult.NONE;
+      rectCount = 0;
+      dirtyRowCount = 0;
+    }
+  }
 
   private static final int HANDLE_NONE = 0;
   private static final int HANDLE_START = 1;
@@ -92,10 +108,15 @@ public final class RemoteTerminalView extends View {
   }
 
   private final RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
-  private final TerminalRowRenderNodeCache rowCache = new TerminalRowRenderNodeCache();
+  private final TerminalLineRenderNodeCache lineCache = new TerminalLineRenderNodeCache();
   private final GestureAndScaleRecognizer gestureRecognizer;
   private final Scroller scroller;
   private final Paint selectionHandlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final InvalidationPlan invalidationPlan = new InvalidationPlan();
+  private final Rect oldSelectionDamage = new Rect();
+  private final Rect newSelectionDamage = new Rect();
+  private final Rect oldHandleDamage = new Rect();
+  private final Rect newHandleDamage = new Rect();
   // 用于 RenderNode 行缓存的全局视觉 generation；任何影响正文字体的变化都会递增。
   private int fontGeneration;
   private int paletteGeneration;
@@ -217,21 +238,24 @@ public final class RemoteTerminalView extends View {
     boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
     updateGenerationCounters(update.dirty);
-    InvalidationResult result = resolveInvalidation(update.dirty, update.snapshot, viewport, geometryChanged);
-    switch (result) {
+    InvalidationPlan plan = buildInvalidationPlan(
+        update.dirty, update.snapshot, viewport, geometryChanged, invalidationPlan);
+    switch (plan.result) {
       case NONE:
         TerminalRenderMetrics.historyOnlyNoDraw();
         break;
       case PARTIAL:
-        prepareRowCache(update.snapshot, update.dirty);
-        invalidateChangedRows(update.dirty, update.snapshot);
+        for (int i = 0; i < plan.rectCount; i++) invalidate(plan.rects[i]);
+        TerminalRenderMetrics.partialRowInvalidate(plan.dirtyRowCount);
         break;
       case SCREEN_REGION:
-        prepareRowCache(update.snapshot, update.dirty);
-        invalidateScreenRegion(update.dirty, update.snapshot);
+        if (plan.rectCount > 0) invalidate(plan.rects[0]);
+        TerminalRenderMetrics.screenRegionInvalidate();
+        if (update.dirty.screenScrollRows != 0) {
+          TerminalRenderMetrics.screenScrollEvent(Math.abs(update.dirty.screenScrollRows));
+        }
         break;
       case FULL:
-        prepareRowCache(update.snapshot, update.dirty);
         TerminalRenderMetrics.fullInvalidate();
         invalidate();
         break;
@@ -243,15 +267,6 @@ public final class RemoteTerminalView extends View {
     if (dirty.geometryChanged || dirty.fullInvalidate) fontGeneration++;
     if (dirty.paletteChanged || dirty.fullInvalidate) paletteGeneration++;
     if (dirty.stylesChanged || dirty.linksChanged || dirty.fullInvalidate) styleGeneration++;
-  }
-
-  private void prepareRowCache(@NonNull RemoteTerminalModel.RenderSnapshot snapshot,
-                               @NonNull RenderDirtyState dirty) {
-    if (snapshot.screen == null || snapshot.activeBuffer == null) return;
-    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
-        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
-    rowCache.prepareFrame(snapshot, dirty, renderer, snapshot.palette, canvasBackground,
-        fontGeneration, paletteGeneration, styleGeneration);
   }
 
   /**
@@ -270,12 +285,14 @@ public final class RemoteTerminalView extends View {
   }
 
   public void setTextSize(int sizeSp) {
+    if (this.userTextSizeSp != sizeSp) fontGeneration++;
     this.userTextSizeSp = sizeSp;
     requestLayoutIfSizeChanged();
     invalidate();
   }
 
   public void setTypeface(@Nullable Typeface typeface) {
+    if (this.userTypeface != typeface) fontGeneration++;
     this.userTypeface = typeface;
     requestLayoutIfSizeChanged();
     invalidate();
@@ -307,8 +324,19 @@ public final class RemoteTerminalView extends View {
     super.onDraw(canvas);
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (snapshot == null) return;
-    renderer.render(canvas, snapshot, viewport, cursorBlinkOn, rowCache);
-    drawSelectionHandles(canvas, snapshot);
+    TerminalLineRenderNodeCache cache = canvas.isHardwareAccelerated() ? lineCache : null;
+    if (cache != null) {
+      int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
+          snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+      cache.beginFrame(snapshot, renderer, snapshot.palette, canvasBackground,
+          fontGeneration, paletteGeneration, styleGeneration);
+    }
+    try {
+      renderer.render(canvas, snapshot, viewport, cursorBlinkOn, cache);
+      drawSelectionHandles(canvas, snapshot);
+    } finally {
+      if (cache != null) cache.endFrame();
+    }
   }
 
   @Override
@@ -383,7 +411,6 @@ public final class RemoteTerminalView extends View {
       int delta = (int) (scroller.getCurrY() - lastFlingY);
       lastFlingY = scroller.getCurrY();
       applyScrollDelta(delta);
-      postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
     }
   }
 
@@ -393,6 +420,7 @@ public final class RemoteTerminalView extends View {
    */
   private void applyScrollDelta(int deltaPixels) {
     if (host == null || selecting || deltaPixels == 0) return;
+    boolean viewportChanged = false;
     if (isMouseTracking()) {
       // wheel_delta 协议约定：正值向上、负值向下，与「正值向历史」一致。
       host.onMouse(pointerRow(), pointerColumn(), "wheel",
@@ -405,8 +433,12 @@ public final class RemoteTerminalView extends View {
           deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
       updateViewportHistoryAnchor();
       requestVisibleHistoryPage();
+      viewportChanged = true;
     }
     updateCursorBlinkSchedule();
+    if (viewportChanged) {
+      postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
+    }
   }
 
   /**
@@ -420,6 +452,7 @@ public final class RemoteTerminalView extends View {
         deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
     updateViewportHistoryAnchor();
     requestVisibleHistoryPage();
+    postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
   }
 
   private void updateSelectionAutoScroll(float x, float y) {
@@ -617,7 +650,6 @@ public final class RemoteTerminalView extends View {
       float wheel = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
       if (wheel != 0f) {
         applyScrollDelta(wheel > 0f ? Math.round(lineHeight() * 3) : -Math.round(lineHeight() * 3));
-        invalidate();
       }
       return true;
     }
@@ -873,11 +905,24 @@ public final class RemoteTerminalView extends View {
                                          @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
                                          @NonNull TerminalViewportState viewport,
                                          boolean geometryChanged) {
+    return buildInvalidationPlan(dirty, snapshot, viewport, geometryChanged,
+        new InvalidationPlan()).result;
+  }
+
+  @NonNull
+  private InvalidationPlan buildInvalidationPlan(
+      @NonNull RenderDirtyState dirty,
+      @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+      @NonNull TerminalViewportState viewport,
+      boolean geometryChanged,
+      @NonNull InvalidationPlan plan) {
+    plan.reset();
     if (getWidth() <= 0 || getHeight() <= 0 || snapshot.screen == null
         || snapshot.activeBuffer == null
         || dirty.fullInvalidate || geometryChanged || dirty.geometryChanged
         || dirty.activeBufferChanged || dirty.paletteChanged || dirty.modesChanged) {
-      return InvalidationResult.FULL;
+      plan.result = InvalidationResult.FULL;
+      return plan;
     }
 
     boolean screenChanged = dirty.screenScrollRows != 0
@@ -899,35 +944,101 @@ public final class RemoteTerminalView extends View {
 
     if (!screenChanged && !visibleHistoryChanged && !dirty.cursorChanged
         && !dirty.stylesChanged && !dirty.linksChanged) {
-      return InvalidationResult.NONE;
+      return plan;
     }
 
     if (dirty.stylesChanged || dirty.linksChanged) {
-      return InvalidationResult.FULL;
+      plan.result = InvalidationResult.FULL;
+      return plan;
+    }
+    // 分页 history 和 screen Patch 可以在同一 VSync 合帧；可见 history 页
+    // 变化必须覆盖 screen 局部计划，否则新加载的历史行不会出现。
+    if (visibleHistoryChanged) {
+      plan.result = InvalidationResult.FULL;
+      return plan;
     }
 
     if (screenChanged) {
       // 实时 screen 完全滚出当前视口且没有可见历史变化时，不需要刷新。
       boolean screenVisible = screenBottom > 0f && screenTop < getHeight();
       if (!screenVisible && !visibleHistoryChanged && !dirty.cursorChanged) {
-        return InvalidationResult.NONE;
+        return plan;
       }
       if (dirty.screenScrollRows != 0) {
-        return InvalidationResult.SCREEN_REGION;
+        buildScreenRegion(plan, screenTop, screenBottom);
+        return plan;
       }
-      return shouldPartiallyInvalidateRows(dirty, snapshot)
-          ? InvalidationResult.PARTIAL : InvalidationResult.SCREEN_REGION;
+      buildPartialRows(plan, dirty, snapshot.screen.length, screenTop, lineHeight);
+      if (plan.result == InvalidationResult.FULL) {
+        buildScreenRegion(plan, screenTop, screenBottom);
+      }
+      return plan;
     }
 
     if (dirty.cursorChanged) {
-      return InvalidationResult.PARTIAL;
+      buildPartialRows(plan, dirty, snapshot.screen.length, screenTop, lineHeight);
+      return plan;
     }
 
-    if (visibleHistoryChanged) {
-      return InvalidationResult.FULL;
-    }
+    plan.result = InvalidationResult.FULL;
+    return plan;
+  }
 
-    return InvalidationResult.FULL;
+  private void buildPartialRows(@NonNull InvalidationPlan plan,
+                                @NonNull RenderDirtyState dirty,
+                                int screenRows, float screenTop, float lineHeight) {
+    int runStart = -1;
+    int previous = -2;
+    long dirtyArea = 0L;
+    for (int row = 0; row <= screenRows; row++) {
+      boolean selected = row < screenRows && (dirty.changedScreenRows.get(row)
+          || dirty.exposedScreenRows.get(row)
+          || (dirty.cursorChanged
+          && (row == dirty.previousCursorRow || row == dirty.currentCursorRow)));
+      if (selected && (runStart < 0 || row == previous + 1)) {
+        if (runStart < 0) runStart = row;
+        previous = row;
+        continue;
+      }
+      if (runStart >= 0) {
+        float rawTop = screenTop + runStart * lineHeight;
+        float rawBottom = screenTop + (previous + 1) * lineHeight;
+        if (rawBottom > 0f && rawTop < getHeight()) {
+          if (plan.rectCount >= MAX_PARTIAL_DIRTY_RECTS) {
+            plan.result = InvalidationResult.FULL;
+            return;
+          }
+          Rect rect = plan.rects[plan.rectCount++];
+          rect.set(0, Math.max(0, (int) Math.floor(rawTop) - 1), getWidth(),
+              Math.min(getHeight(), (int) Math.ceil(rawBottom) + 1));
+          dirtyArea += (long) rect.width() * rect.height();
+          plan.dirtyRowCount += previous - runStart + 1;
+        }
+        runStart = selected ? row : -1;
+        previous = selected ? row : -2;
+      } else if (selected) {
+        runStart = previous = row;
+      }
+    }
+    if (plan.rectCount == 0) {
+      plan.result = InvalidationResult.NONE;
+    } else if ((double) dirtyArea
+        <= (double) getWidth() * getHeight() * MAX_PARTIAL_DIRTY_AREA_RATIO) {
+      plan.result = InvalidationResult.PARTIAL;
+    } else {
+      plan.result = InvalidationResult.FULL;
+    }
+  }
+
+  private void buildScreenRegion(@NonNull InvalidationPlan plan,
+                                 float screenTop, float screenBottom) {
+    plan.reset();
+    int top = Math.max(0, (int) Math.floor(screenTop) - 1);
+    int bottom = Math.min(getHeight(), (int) Math.ceil(screenBottom) + 1);
+    if (bottom <= top) return;
+    plan.rects[0].set(0, top, getWidth(), bottom);
+    plan.rectCount = 1;
+    plan.result = InvalidationResult.SCREEN_REGION;
   }
 
   /**
@@ -1077,13 +1188,14 @@ public final class RemoteTerminalView extends View {
   private void startSelectionAt(float x, float y) {
     TerminalSelection.Anchor anchor = pointToAnchor(x, y);
     if (anchor == null) return;
+    captureSelectionDamage(oldSelectionDamage, oldHandleDamage);
     selecting = true;
     selectionStart = anchor;
     selectionEnd = anchor;
     expandSelectionToWord();
     updateViewportSelection();
     startSelectionActionMode();
-    invalidate();
+    invalidateSelectionTransition();
   }
 
   private void extendSelectionTo(float x, float y) {
@@ -1091,17 +1203,17 @@ public final class RemoteTerminalView extends View {
     TerminalSelection.Anchor anchor = pointToAnchor(x, y);
     if (anchor == null) return;
     updateSelectionEndpoint(HANDLE_END, anchor);
-    invalidate();
   }
 
   private void clearSelection() {
     stopSelectionAutoScroll();
+    captureSelectionDamage(oldSelectionDamage, oldHandleDamage);
     selecting = false;
     draggingHandle = HANDLE_NONE;
     selectionStart = null;
     selectionEnd = null;
     updateViewportSelection();
-    invalidate();
+    invalidateSelectionTransition();
   }
 
   private void stopSelection() {
@@ -1132,8 +1244,69 @@ public final class RemoteTerminalView extends View {
     }
   }
 
+  private void invalidateSelectionTransition() {
+    captureSelectionDamage(newSelectionDamage, newHandleDamage);
+    invalidateDamagePair(oldSelectionDamage, newSelectionDamage);
+    invalidateDamagePair(oldHandleDamage, newHandleDamage);
+    oldSelectionDamage.setEmpty();
+    oldHandleDamage.setEmpty();
+  }
+
+  private void invalidateDamagePair(@NonNull Rect oldDamage, @NonNull Rect newDamage) {
+    if (oldDamage.isEmpty() && newDamage.isEmpty()) return;
+    if (oldDamage.isEmpty()) {
+      invalidate(newDamage);
+      return;
+    }
+    if (newDamage.isEmpty()) {
+      invalidate(oldDamage);
+      return;
+    }
+    oldDamage.union(newDamage);
+    invalidate(oldDamage);
+  }
+
+  private void captureSelectionDamage(@NonNull Rect selectionDamage,
+                                      @NonNull Rect handleDamage) {
+    selectionDamage.setEmpty();
+    handleDamage.setEmpty();
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null || selectionStart == null || selectionEnd == null) return;
+    TerminalSelection normalized = new TerminalSelection(selectionStart, selectionEnd).normalized();
+    float[] start = anchorToPoint(normalized.start, false, snapshot);
+    float[] end = anchorToPoint(normalized.end, true, snapshot);
+    if (start != null && end != null) {
+      int top = Math.max(0, (int) Math.floor(Math.min(start[1], end[1])) - 1);
+      int bottom = Math.min(getHeight(),
+          (int) Math.ceil(Math.max(start[1], end[1]) + lineHeight()) + 1);
+      if (bottom > top) {
+        boolean singleRow = Math.abs(start[1] - end[1]) < 0.5f;
+        int left = singleRow
+            ? Math.max(0, (int) Math.floor(Math.min(start[0], end[0])) - 1) : 0;
+        int right = singleRow
+            ? Math.min(getWidth(), (int) Math.ceil(Math.max(start[0], end[0])) + 1)
+            : getWidth();
+        if (right > left) selectionDamage.set(left, top, right, bottom);
+      }
+    }
+    if (!selecting) return;
+    addHandleDamage(handleDamage, anchorToHandleCenter(selectionStart, snapshot));
+    addHandleDamage(handleDamage, anchorToHandleCenter(selectionEnd, snapshot));
+  }
+
+  private void addHandleDamage(@NonNull Rect damage, @Nullable float[] center) {
+    if (center == null) return;
+    float radius = handleRadius() + 2f;
+    int left = Math.max(0, (int) Math.floor(center[0] - radius));
+    int top = Math.max(0, (int) Math.floor(center[1] - radius));
+    int right = Math.min(getWidth(), (int) Math.ceil(center[0] + radius));
+    int bottom = Math.min(getHeight(), (int) Math.ceil(center[1] + radius));
+    if (right > left && bottom > top) damage.union(left, top, right, bottom);
+  }
+
   private void updateSelectionEndpoint(int handle, @NonNull TerminalSelection.Anchor proposed) {
     if (selectionStart == null || selectionEnd == null) return;
+    captureSelectionDamage(oldSelectionDamage, oldHandleDamage);
     if (handle == HANDLE_START) {
       selectionStart = constrainSelectionEndpoint(true, proposed, selectionStart, selectionEnd);
     } else if (handle == HANDLE_END) {
@@ -1141,7 +1314,7 @@ public final class RemoteTerminalView extends View {
     }
     updateViewportSelection();
     if (selectionActionMode != null) selectionActionMode.invalidate();
-    invalidate();
+    invalidateSelectionTransition();
   }
 
   static TerminalSelection.Anchor constrainSelectionEndpoint(
@@ -1212,12 +1385,13 @@ public final class RemoteTerminalView extends View {
     // 简单规则：向左右扩展直到空格或边界
     while (startCol > 0 && !isWordBoundary(line.at(startCol - 1))) startCol--;
     while (endCol < line.length() && !isWordBoundary(line.at(endCol))) endCol++;
+    captureSelectionDamage(oldSelectionDamage, oldHandleDamage);
     selecting = true;
     selectionStart = new TerminalSelection.Anchor(anchor.historySeq, anchor.screenRow, startCol);
     selectionEnd = new TerminalSelection.Anchor(anchor.historySeq, anchor.screenRow, endCol);
     updateViewportSelection();
     startSelectionActionMode();
-    invalidate();
+    invalidateSelectionTransition();
   }
 
   private boolean isWordBoundary(TerminalCell cell) {
@@ -1610,7 +1784,6 @@ public final class RemoteTerminalView extends View {
         // 与 applyScrollDelta「正值向历史」的约定相反，取负。
         applyScrollDelta(-(int) distanceY);
       }
-      invalidate();
       return true;
     }
 

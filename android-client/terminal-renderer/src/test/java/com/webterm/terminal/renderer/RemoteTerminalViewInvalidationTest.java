@@ -124,6 +124,22 @@ public final class RemoteTerminalViewInvalidationTest {
   }
 
   @Test
+  public void visibleHistoryAndScreenChangeInSameFrameIsFull() {
+    RemoteTerminalModel model = modelWithScreenAndHistory(5, 10, 5);
+    RemoteTerminalView view = view(100, 200);
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+
+    RenderDirtyState dirty = new RenderDirtyState();
+    dirty.historyChanged = true;
+    dirty.changedScreenRows.set(2);
+
+    InvalidationResult result =
+        view.resolveInvalidation(dirty, model.renderSnapshot(), viewport, false);
+    assertEquals(InvalidationResult.FULL, result);
+  }
+
+  @Test
   public void singleRowChangeIsPartial() {
     RemoteTerminalModel model = modelWithScreen(5, 10);
     RemoteTerminalView view = view(100, 200);

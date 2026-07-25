@@ -32,6 +32,11 @@ final class RenderNodeTerminalRowNode implements TerminalRowNode {
   }
 
   @Override
+  public boolean hasDisplayList() {
+    return renderNode.hasDisplayList();
+  }
+
+  @Override
   public void draw(@NonNull Canvas canvas, float y) {
     canvas.save();
     canvas.translate(0f, y);

@@ -1,12 +1,18 @@
 package com.webterm.terminal.model;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
  * Process-local terminal rendering counters. They deliberately contain no terminal content,
  * session id, title, path, or clipboard data, so callers can expose a snapshot for diagnostics.
  */
 public final class TerminalRenderMetrics {
+  public static final int LATENCY_BUCKET_COUNT = 8;
+  private static final long[] LATENCY_BUCKET_UPPER_BOUNDS_NANOS = {
+      250_000L, 500_000L, 1_000_000L, 2_000_000L,
+      4_000_000L, 8_000_000L, 16_000_000L
+  };
   private static final AtomicLong MODEL_CHANGE_COUNT = new AtomicLong();
   private static final AtomicLong UI_CALLBACK_SCHEDULE_COUNT = new AtomicLong();
   private static final AtomicLong UI_CALLBACK_COALESCED_COUNT = new AtomicLong();
@@ -45,6 +51,21 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong MAILBOX_RESIDENCE_MAX_NANOS = new AtomicLong();
   private static final AtomicLong VIEWPORT_REDRAW_REQUEST_COUNT = new AtomicLong();
   private static final AtomicLong VIEWPORT_FULL_REDRAW_COUNT = new AtomicLong();
+  private static final AtomicLongArray SCREEN_PATCH_APPLY_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray PROTOBUF_PARSE_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray MAPPER_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray RENDER_NODE_RECORD_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray MAILBOX_RESIDENCE_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLong HISTORY_CACHE_HIT_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_CACHE_MISS_COUNT = new AtomicLong();
+  private static final AtomicLong BACKGROUND_PATCH_DROPPED_COUNT = new AtomicLong();
+  private static final AtomicLong SCREEN_LINE_STORE_MAX_SIZE = new AtomicLong();
+  private static final AtomicLong VISIBLE_HISTORY_ROWS_DRAWN = new AtomicLong();
 
   private TerminalRenderMetrics() {}
 
@@ -87,7 +108,27 @@ public final class TerminalRenderMetrics {
   }
   public static void protobufParseDuration(long nanos) {
     PROTOBUF_PARSE_COUNT.incrementAndGet();
-    PROTOBUF_PARSE_NANOS.addAndGet(Math.max(0L, nanos));
+    long safe = Math.max(0L, nanos);
+    PROTOBUF_PARSE_NANOS.addAndGet(safe);
+    recordLatency(PROTOBUF_PARSE_LATENCY_BUCKETS, safe);
+  }
+  public static void screenPatchApplyDuration(long nanos) {
+    recordLatency(SCREEN_PATCH_APPLY_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
+  public static void mapperDuration(long nanos) {
+    recordLatency(MAPPER_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
+  public static void renderNodeRecordDuration(long nanos) {
+    recordLatency(RENDER_NODE_RECORD_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
+  public static void historyCacheHit() { HISTORY_CACHE_HIT_COUNT.incrementAndGet(); }
+  public static void historyCacheMiss() { HISTORY_CACHE_MISS_COUNT.incrementAndGet(); }
+  public static void backgroundPatchDropped() { BACKGROUND_PATCH_DROPPED_COUNT.incrementAndGet(); }
+  public static void screenLineStoreSize(long size) {
+    updateMax(SCREEN_LINE_STORE_MAX_SIZE, Math.max(0L, size));
+  }
+  public static void visibleHistoryRowsDrawn(int rows) {
+    VISIBLE_HISTORY_ROWS_DRAWN.addAndGet(Math.max(0, rows));
   }
   public static void modelApplyDuration(long nanos) {
     MODEL_APPLY_NANOS.addAndGet(Math.max(0L, nanos));
@@ -127,6 +168,7 @@ public final class TerminalRenderMetrics {
     long safe = Math.max(0L, nanos);
     MAILBOX_RESIDENCE_NANOS.addAndGet(safe);
     updateMax(MAILBOX_RESIDENCE_MAX_NANOS, safe);
+    recordLatency(MAILBOX_RESIDENCE_LATENCY_BUCKETS, safe);
   }
 
   public static Snapshot snapshot() {
@@ -145,7 +187,32 @@ public final class TerminalRenderMetrics {
         PATCH_FRAME_BYTES.get(), HISTORY_RANGE_FRAME_COUNT.get(), HISTORY_RANGE_FRAME_BYTES.get(),
         HISTORY_DELTA_FRAME_COUNT.get(), HISTORY_DELTA_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(),
         OTHER_FRAME_BYTES.get(), MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get(),
-        VIEWPORT_REDRAW_REQUEST_COUNT.get(), VIEWPORT_FULL_REDRAW_COUNT.get());
+        VIEWPORT_REDRAW_REQUEST_COUNT.get(), VIEWPORT_FULL_REDRAW_COUNT.get(),
+        copyBuckets(SCREEN_PATCH_APPLY_LATENCY_BUCKETS),
+        copyBuckets(PROTOBUF_PARSE_LATENCY_BUCKETS),
+        copyBuckets(MAPPER_LATENCY_BUCKETS),
+        copyBuckets(RENDER_NODE_RECORD_LATENCY_BUCKETS),
+        copyBuckets(MAILBOX_RESIDENCE_LATENCY_BUCKETS),
+        HISTORY_CACHE_HIT_COUNT.get(), HISTORY_CACHE_MISS_COUNT.get(),
+        BACKGROUND_PATCH_DROPPED_COUNT.get(), SCREEN_LINE_STORE_MAX_SIZE.get(),
+        VISIBLE_HISTORY_ROWS_DRAWN.get());
+  }
+
+  private static void recordLatency(AtomicLongArray buckets, long nanos) {
+    int bucket = LATENCY_BUCKET_UPPER_BOUNDS_NANOS.length;
+    for (int i = 0; i < LATENCY_BUCKET_UPPER_BOUNDS_NANOS.length; i++) {
+      if (nanos < LATENCY_BUCKET_UPPER_BOUNDS_NANOS[i]) {
+        bucket = i;
+        break;
+      }
+    }
+    buckets.incrementAndGet(bucket);
+  }
+
+  private static long[] copyBuckets(AtomicLongArray source) {
+    long[] copy = new long[source.length()];
+    for (int i = 0; i < copy.length; i++) copy[i] = source.get(i);
+    return copy;
   }
 
   private static void updateMax(AtomicLong counter, long value) {
@@ -192,6 +259,16 @@ public final class TerminalRenderMetrics {
     public final long mailboxResidenceMaxNanos;
     public final long viewportRedrawRequestCount;
     public final long viewportFullRedrawCount;
+    public final long[] screenPatchApplyLatencyBuckets;
+    public final long[] protobufParseLatencyBuckets;
+    public final long[] mapperLatencyBuckets;
+    public final long[] renderNodeRecordLatencyBuckets;
+    public final long[] mailboxResidenceLatencyBuckets;
+    public final long historyCacheHitCount;
+    public final long historyCacheMissCount;
+    public final long backgroundPatchDroppedCount;
+    public final long screenLineStoreMaxSize;
+    public final long visibleHistoryRowsDrawn;
 
     Snapshot(long modelChangeCount, long uiCallbackScheduleCount, long uiCallbackCoalescedCount,
              long renderRequestCount, long vsyncRenderCount, long fullInvalidateCount,
@@ -206,7 +283,12 @@ public final class TerminalRenderMetrics {
              long historyDeltaFrameCount, long historyDeltaFrameBytes,
              long otherFrameCount, long otherFrameBytes, long mailboxResidenceNanos,
              long mailboxResidenceMaxNanos, long viewportRedrawRequestCount,
-             long viewportFullRedrawCount) {
+             long viewportFullRedrawCount, long[] screenPatchApplyLatencyBuckets,
+             long[] protobufParseLatencyBuckets, long[] mapperLatencyBuckets,
+             long[] renderNodeRecordLatencyBuckets,
+             long[] mailboxResidenceLatencyBuckets, long historyCacheHitCount,
+             long historyCacheMissCount, long backgroundPatchDroppedCount,
+             long screenLineStoreMaxSize, long visibleHistoryRowsDrawn) {
       this.modelChangeCount = modelChangeCount;
       this.uiCallbackScheduleCount = uiCallbackScheduleCount;
       this.uiCallbackCoalescedCount = uiCallbackCoalescedCount;
@@ -245,6 +327,16 @@ public final class TerminalRenderMetrics {
       this.mailboxResidenceMaxNanos = mailboxResidenceMaxNanos;
       this.viewportRedrawRequestCount = viewportRedrawRequestCount;
       this.viewportFullRedrawCount = viewportFullRedrawCount;
+      this.screenPatchApplyLatencyBuckets = screenPatchApplyLatencyBuckets;
+      this.protobufParseLatencyBuckets = protobufParseLatencyBuckets;
+      this.mapperLatencyBuckets = mapperLatencyBuckets;
+      this.renderNodeRecordLatencyBuckets = renderNodeRecordLatencyBuckets;
+      this.mailboxResidenceLatencyBuckets = mailboxResidenceLatencyBuckets;
+      this.historyCacheHitCount = historyCacheHitCount;
+      this.historyCacheMissCount = historyCacheMissCount;
+      this.backgroundPatchDroppedCount = backgroundPatchDroppedCount;
+      this.screenLineStoreMaxSize = screenLineStoreMaxSize;
+      this.visibleHistoryRowsDrawn = visibleHistoryRowsDrawn;
     }
   }
 }

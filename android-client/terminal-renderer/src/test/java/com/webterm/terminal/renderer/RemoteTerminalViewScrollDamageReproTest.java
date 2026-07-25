@@ -388,6 +388,11 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     }
 
     @Override
+    public boolean isHardwareAccelerated() {
+      return true;
+    }
+
+    @Override
     public boolean getClipBounds(Rect outBounds) {
       outBounds.set(currentClip);
       return true;
@@ -484,6 +489,11 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     }
 
     @Override
+    public boolean hasDisplayList() {
+      return true;
+    }
+
+    @Override
     public void draw(Canvas canvas, float y) {
       if (canvas instanceof RemoteTerminalViewScrollDamageReproTest.FrameCanvas) {
         ((RemoteTerminalViewScrollDamageReproTest.FrameCanvas) canvas)
@@ -499,7 +509,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     viewport.scrollBy(deltaPixels, view.maxScrollOffsetPixels());
     if (viewport.followTail) viewport.markLive();
     view.updateViewportHistoryAnchor();
-    // 生产链路：controller.requestViewportRedraw() → postInvalidateOnAnimation()
+    // 生产链路：RemoteTerminalView 更新 viewport 后直接 postInvalidateOnAnimation()。
     // 与 GestureListener.onScroll 的 invalidate()，均为整 View 失效。
     recordFullDamage();
     vsync("userScrollBy(" + deltaPixels + ")");
@@ -805,9 +815,9 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   private void injectFakeRowCache(RemoteTerminalView view) {
     try {
       java.lang.reflect.Field cacheField =
-          RemoteTerminalView.class.getDeclaredField("rowCache");
+          RemoteTerminalView.class.getDeclaredField("lineCache");
       cacheField.setAccessible(true);
-      cacheField.set(view, new TerminalRowRenderNodeCache(name -> {
+      cacheField.set(view, new TerminalLineRenderNodeCache(name -> {
         FakeNode node = new FakeNode();
         createdNodes.add(node);
         return node;

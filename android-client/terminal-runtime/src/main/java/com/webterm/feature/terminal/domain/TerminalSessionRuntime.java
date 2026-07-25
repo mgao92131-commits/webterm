@@ -26,6 +26,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayDeque;
@@ -181,7 +182,10 @@ public final class TerminalSessionRuntime {
   private long syncGeneration;
   private long streamGeneration = 1L;
   private volatile StreamState streamState = StreamState.LIVE;
-  private volatile boolean freezeRequested;
+  public static final int FREEZE_HISTORY = 1;
+  public static final int FREEZE_PAGE_HIDDEN = 1 << 1;
+  public static final int FREEZE_APP_BACKGROUND = 1 << 2;
+  private final AtomicInteger freezeReasons = new AtomicInteger();
   private final ArrayDeque<Runnable> pendingLiveInputs = new ArrayDeque<>();
   private int pendingLiveInputUnits;
   private final Object pendingResizeLock = new Object();
@@ -519,7 +523,7 @@ public final class TerminalSessionRuntime {
     // Focus reporting is terminal metadata, not an explicit user command. A window focus
     // callback while browsing frozen history must neither queue input nor force the stream LIVE.
     if (state != State.CONNECTED || streamState != StreamState.LIVE
-        || freezeRequested || !hasLayoutLease()) return;
+        || freezeReasons.get() != 0 || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) c.sendFocusInput(focused);
   }
@@ -530,7 +534,7 @@ public final class TerminalSessionRuntime {
 
   private void sendWhenLive(int units, @NonNull LiveInput input) {
     if (state != State.CONNECTED || !hasLayoutLease()) return;
-    if (streamState == StreamState.LIVE && !freezeRequested) {
+    if (streamState == StreamState.LIVE && freezeReasons.get() == 0) {
       ScreenConnection c = connection;
       if (c != null) input.send(c);
       return;
@@ -576,7 +580,8 @@ public final class TerminalSessionRuntime {
 
   public void requestResize(int cols, int rows) {
     if (cols <= 0 || rows <= 0) return;
-    if (state == State.CONNECTED && streamState == StreamState.LIVE && !freezeRequested) {
+    if (state == State.CONNECTED && streamState == StreamState.LIVE
+        && freezeReasons.get() == 0) {
       layoutLeaseCoordinator.requestResize(cols, rows);
       return;
     }
@@ -654,28 +659,50 @@ public final class TerminalSessionRuntime {
 
   /** 用户离开尾部时冻结屏幕流；本地投影和 viewport 不被远端输出推进。 */
   public void freezeStream() {
-    freezeRequested = true;
-    modelExecutor.execute(() -> {
-      if (!freezeRequested || state != State.CONNECTED
-          || streamState == StreamState.FROZEN) return;
-      ScreenConnection c = connection;
-      if (c == null) return;
-      long generation = ++streamGeneration;
-      if (c.setStreamMode(
-          generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
-        streamState = StreamState.FROZEN;
-      }
-    });
+    setFreezeReason(FREEZE_HISTORY, true);
   }
 
   /** 滚动到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
   public void resumeLiveStream() {
-    freezeRequested = false;
-    modelExecutor.execute(() -> {
-      if (freezeRequested || state != State.CONNECTED
-          || streamState != StreamState.FROZEN) return;
-      requestFreshBaseline("return to live");
-    });
+    setFreezeReason(FREEZE_HISTORY, false);
+  }
+
+  public void setFreezeReason(int reason, boolean enabled) {
+    if (reason != FREEZE_HISTORY && reason != FREEZE_PAGE_HIDDEN
+        && reason != FREEZE_APP_BACKGROUND) {
+      throw new IllegalArgumentException("unknown freeze reason");
+    }
+    int previous;
+    int next;
+    do {
+      previous = freezeReasons.get();
+      next = enabled ? previous | reason : previous & ~reason;
+      if (previous == next) return;
+    } while (!freezeReasons.compareAndSet(previous, next));
+    modelExecutor.execute(this::reconcileDesiredStreamMode);
+  }
+
+  private void reconcileDesiredStreamMode() {
+    if (state != State.CONNECTED) return;
+    boolean wantsFrozen = freezeReasons.get() != 0;
+    if (wantsFrozen) {
+      if (streamState == StreamState.FROZEN) return;
+      ScreenConnection c = connection;
+      if (c == null) return;
+      long generation = ++streamGeneration;
+      if (c.setStreamMode(
+        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
+        streamState = StreamState.FROZEN;
+        int dropped = screenMailbox.dropLiveProjectionDeltas();
+        for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundPatchDropped();
+      }
+      return;
+    }
+    if (streamState == StreamState.FROZEN) requestFreshBaseline("return to live");
+  }
+
+  int freezeReasons() {
+    return freezeReasons.get();
   }
 
   @NonNull
@@ -716,7 +743,7 @@ public final class TerminalSessionRuntime {
         || state != State.TRANSPORT_CONNECTED) return;
     updateState(State.SYNCING);
     long generation = ++syncGeneration;
-    boolean wantsFrozen = freezeRequested || streamState == StreamState.FROZEN;
+    boolean wantsFrozen = freezeReasons.get() != 0 || streamState == StreamState.FROZEN;
     TerminalScreenV2Proto.ScreenStreamMode desiredMode =
         wantsFrozen
             ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
@@ -794,6 +821,12 @@ public final class TerminalSessionRuntime {
                   && message.mailboxGeneration != screenMailbox.generation())
               || message.sourceConnection != connection) continue;
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
+          if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+              || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA)
+              && freezeReasons.get() != 0) {
+            TerminalRenderMetrics.backgroundPatchDropped();
+            continue;
+          }
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
           if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
@@ -1002,7 +1035,13 @@ public final class TerminalSessionRuntime {
               payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
           failureReason = "INVALID_BASELINE";
           ScreenMessageV2Validator.validateBaseline(wire);
-          ScreenBaseline baseline = ScreenMessageV2Mapper.mapBaseline(wire);
+          long mapStartedNanos = System.nanoTime();
+          ScreenBaseline baseline;
+          try {
+            baseline = ScreenMessageV2Mapper.mapBaseline(wire);
+          } finally {
+            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
+          }
           String previousInstanceId = model.instanceId;
           if (!model.applyBaseline(baseline)) {
             failureReason = "STALE_BASELINE";
@@ -1036,8 +1075,20 @@ public final class TerminalSessionRuntime {
           if (wire.getScreenLineUpdatesCount() > model.rows) {
             throw new IllegalArgumentException("screen patch exceeds row limit");
           }
-          ScreenPatchV2 patch = ScreenMessageV2Mapper.mapPatch(wire, model.columns);
-          model.applyScreenPatch(patch);
+          long mapStartedNanos = System.nanoTime();
+          ScreenPatchV2 patch;
+          try {
+            patch = ScreenMessageV2Mapper.mapPatch(wire, model.columns);
+          } finally {
+            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
+          }
+          long patchApplyStartedNanos = System.nanoTime();
+          try {
+            model.applyScreenPatch(patch);
+          } finally {
+            TerminalRenderMetrics.screenPatchApplyDuration(
+                System.nanoTime() - patchApplyStartedNanos);
+          }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(
               captureStreamIdentity(), patch);
           recordCapturedModelState(false);
@@ -1052,7 +1103,13 @@ public final class TerminalSessionRuntime {
               payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
           failureReason = "INVALID_HISTORY_DELTA";
           ScreenMessageV2Validator.validateHistoryDelta(wire);
-          HistoryDelta delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
+          long mapStartedNanos = System.nanoTime();
+          HistoryDelta delta;
+          try {
+            delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
+          } finally {
+            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
+          }
           renderChanged = model.applyHistoryDelta(delta);
           if (renderChanged) recordCapturedModelState(false);
           break;
@@ -1064,8 +1121,13 @@ public final class TerminalSessionRuntime {
           HistoryRequestCoordinator.Pending pending =
               historyRequests.complete(wire.getRequestId());
           if (pending == null) return;
-          HistoryRangeResult range =
-              ScreenMessageV2Mapper.mapHistoryRange(wire, model.columns);
+          long mapStartedNanos = System.nanoTime();
+          HistoryRangeResult range;
+          try {
+            range = ScreenMessageV2Mapper.mapHistoryRange(wire, model.columns);
+          } finally {
+            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
+          }
           renderChanged = model.applyHistoryRange(
               range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
           if (renderChanged) recordCapturedModelState(false);

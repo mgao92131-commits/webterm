@@ -244,9 +244,9 @@ public final class RemoteTerminalViewScrollBlankReproTest {
   private void injectFakeRowCache(RemoteTerminalView view) {
     try {
       java.lang.reflect.Field cacheField =
-          RemoteTerminalView.class.getDeclaredField("rowCache");
+          RemoteTerminalView.class.getDeclaredField("lineCache");
       cacheField.setAccessible(true);
-      cacheField.set(view, new TerminalRowRenderNodeCache(name -> {
+      cacheField.set(view, new TerminalLineRenderNodeCache(name -> {
         FakeNode node = new FakeNode(name);
         createdNodes.add(node);
         return node;
@@ -280,6 +280,11 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     }
 
     @Override
+    public boolean hasDisplayList() {
+      return true;
+    }
+
+    @Override
     public void draw(Canvas canvas, float y) {
       drawCount++;
     }
@@ -294,6 +299,11 @@ public final class RemoteTerminalViewScrollBlankReproTest {
 
     CountingCanvas(int w, int h) {
       super(Bitmap.createBitmap(Math.max(1, w), Math.max(1, h), Bitmap.Config.ARGB_8888));
+    }
+
+    @Override
+    public boolean isHardwareAccelerated() {
+      return true;
     }
 
     int contentOps() {

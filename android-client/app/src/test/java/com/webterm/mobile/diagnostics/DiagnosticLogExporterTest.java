@@ -131,6 +131,11 @@ public class DiagnosticLogExporterTest {
         assertEquals(summaryServerHash,
             DiagnosticIdHasher.hash(salt, com.webterm.core.api.WebTermUrls.normalizeBaseUrl(server)));
         assertEquals(summaryDeviceHash, DiagnosticIdHasher.hash(salt, deviceId));
+        assertTrue(metrics.contains("\"screenPatchApplyLatencyBuckets\":["));
+        assertTrue(metrics.contains("\"protobufParseLatencyBuckets\":["));
+        assertTrue(metrics.contains("\"mapperLatencyBuckets\":["));
+        assertTrue(metrics.contains("\"renderNodeRecordLatencyBuckets\":["));
+        assertTrue(metrics.contains("\"screenLineStoreMaxSize\":"));
 
         // 换 salt（另一次导出）后 hash 必须不同，跨包不可关联。
         String otherSalt = DiagnosticIdHasher.randomSalt();

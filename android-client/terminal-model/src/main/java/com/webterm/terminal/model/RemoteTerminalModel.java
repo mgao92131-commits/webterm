@@ -35,8 +35,8 @@ public final class RemoteTerminalModel {
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private boolean staleProjection;
   private TerminalLine[] screen;
-  /** 当前 layout 与缓存历史引用的不可变行内容。 */
-  private final Map<Long, TerminalLine> lineStore = new HashMap<>();
+  /** 只保存当前实时 screen 可引用的行；历史行完全由 PagedTerminalHistory 所有。 */
+  private final Map<Long, TerminalLine> screenLineStore = new HashMap<>();
 
   private long firstAvailableHistorySeq;
   private boolean hasMoreHistoryBefore;
@@ -111,19 +111,14 @@ public final class RemoteTerminalModel {
       historyEditor.setExtent(1, 0);
     }
     historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
-    List<TerminalLine> normalizedHistoryTail = new ArrayList<>();
     for (TerminalLine line : baseline.historyTail) {
       TerminalLine normalized = padOrCopyLine(line, baseline.cols);
       if (baseline.historyExtent.contains(normalized.historySeq)) {
         historyEditor.put(normalized.historySeq, normalized);
-        normalizedHistoryTail.add(normalized);
       }
     }
     historyEditor.evictIfNeeded(
         baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq).commit();
-    if (!sameProjection) lineStore.clear();
-    for (TerminalLine line : normalizedHistoryTail) lineStore.put(line.id, line);
-
     this.v2Projection = true;
     this.streamGeneration = baseline.streamGeneration;
     this.instanceId = baseline.instanceId;
@@ -145,12 +140,13 @@ public final class RemoteTerminalModel {
     this.hasMoreHistoryBefore = false;
 
     this.screen = new TerminalLine[rows];
+    screenLineStore.clear();
     for (int row = 0; row < rows; row++) {
       TerminalLine line = padOrCopyLine(baseline.screen.get(row), columns);
       this.screen[row] = line;
-      lineStore.put(line.id, line);
+      screenLineStore.put(line.id, line);
     }
-    pruneLineStore();
+    TerminalRenderMetrics.screenLineStoreSize(screenLineStore.size());
     markRenderDirty(true, null, 0, null, rows, true, geometryChanged, true, -1, cursor.row,
         true, true, true, true, true);
     markTerminalState(geometryChanged, true, true, true, 0, 0);
@@ -176,7 +172,7 @@ public final class RemoteTerminalModel {
       if (normalized.id <= 0 || normalized.historySeq != 0) {
         throw new RevisionGapException("screen.v2 patch contains invalid screen line");
       }
-      TerminalLine previous = lineStore.get(normalized.id);
+      TerminalLine previous = screenLineStore.get(normalized.id);
       if (previous != null && normalized.version < previous.version) {
         throw new RevisionGapException("screen.v2 line version regressed");
       }
@@ -188,12 +184,11 @@ public final class RemoteTerminalModel {
       Set<Long> layoutIds = new HashSet<>();
       for (long id : patch.layout) {
         if (id <= 0 || !layoutIds.add(id)
-            || (!stagedLines.containsKey(id) && !lineStore.containsKey(id))) {
+            || (!stagedLines.containsKey(id) && !screenLineStore.containsKey(id))) {
           throw new RevisionGapException("screen.v2 layout line missing or repeated");
         }
       }
     }
-    lineStore.putAll(stagedLines);
     int screenScrollRows = 0;
     BitSet exposedRows = new BitSet(rows);
     BitSet changedRows = new BitSet(rows);
@@ -218,7 +213,8 @@ public final class RemoteTerminalModel {
         TerminalLine[] previousScreen = screen;
         TerminalLine[] nextScreen = new TerminalLine[rows];
         for (int row = 0; row < rows; row++) {
-          TerminalLine next = lineStore.get(patch.layout[row]);
+          TerminalLine next = stagedLines.get(patch.layout[row]);
+          if (next == null) next = screenLineStore.get(patch.layout[row]);
           if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
           nextScreen[row] = next;
           int sourceRow = row + screenScrollRows;
@@ -231,7 +227,8 @@ public final class RemoteTerminalModel {
         changedRows.or(exposedRows);
       } else {
         for (int row = 0; row < rows; row++) {
-          TerminalLine next = lineStore.get(patch.layout[row]);
+          TerminalLine next = stagedLines.get(patch.layout[row]);
+          if (next == null) next = screenLineStore.get(patch.layout[row]);
           if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
           if (screen[row] != next) changedRows.set(row);
           screen[row] = next;
@@ -239,7 +236,7 @@ public final class RemoteTerminalModel {
       }
     } else {
       for (int row = 0; row < rows; row++) {
-        TerminalLine next = lineStore.get(screen[row].id);
+        TerminalLine next = stagedLines.get(screen[row].id);
         if (next != null && next != screen[row]) {
           screen[row] = next;
           changedRows.set(row);
@@ -260,7 +257,7 @@ public final class RemoteTerminalModel {
     if (patch.workingDirectory != null) workingDirectory = patch.workingDirectory;
     screenRevision = patch.screenRevision;
     remoteScreenRevision = patch.screenRevision;
-    pruneLineStore();
+    rebuildScreenLineStore();
     markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows, false, false,
         !Objects.equals(previousCursor, cursor),
         previousCursor != null ? previousCursor.row : -1, cursor.row,
@@ -281,20 +278,16 @@ public final class RemoteTerminalModel {
     HistoryExtent nextExtent = delta.availableExtent;
     PagedTerminalHistory.Editor editor = pagedHistory.edit()
         .setExtent(nextExtent.firstSeq, nextExtent.lastSeq);
-    List<TerminalLine> acceptedLines = new ArrayList<>();
     for (TerminalLine line : delta.lines) {
       TerminalLine normalized = padOrCopyLine(line, columns);
       if (nextExtent.contains(normalized.historySeq)) {
         editor.put(normalized.historySeq, normalized);
-        acceptedLines.add(normalized);
       }
     }
     editor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq).commit();
-    for (TerminalLine line : acceptedLines) lineStore.put(line.id, line);
     remoteAvailableExtent = nextExtent;
     displayExtent = nextExtent;
     firstAvailableHistorySeq = displayExtent.firstSeq;
-    pruneLineStore();
     markRenderDirty(false, null, 0, null, rows, true, false, false, -1, -1,
         false, false, false, false, false);
     markTerminalState(false, true, false, false, 0, 0);
@@ -337,18 +330,14 @@ public final class RemoteTerminalModel {
         }
       }
     }
-    List<TerminalLine> acceptedLines = new ArrayList<>();
     for (TerminalLine line : range.lines) {
       TerminalLine normalized = padOrCopyLine(line, columns);
       if (displayExtent.contains(normalized.historySeq)) {
         editor.put(normalized.historySeq, normalized);
-        acceptedLines.add(normalized);
       }
     }
     editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
-    for (TerminalLine line : acceptedLines) lineStore.put(line.id, line);
     remoteAvailableExtent = range.availableExtent;
-    pruneLineStore();
     markRenderDirty(false, null, 0, null, rows, true, false, false, -1, -1,
         false, false, false, false, false);
     markTerminalState(false, true, false, false, 0, 0);
@@ -466,6 +455,11 @@ public final class RemoteTerminalModel {
     return pagedHistory.snapshot().estimatedByteCount();
   }
 
+  /** 供规模回归测试与无正文诊断确认 screen store 始终有界。 */
+  synchronized int screenLineStoreSize() {
+    return screenLineStore.size();
+  }
+
   public synchronized TerminalCursor cursor() {
     return cursor;
   }
@@ -518,17 +512,15 @@ public final class RemoteTerminalModel {
         line.id, line.version, line.historySeq, line.wrapped, cells);
   }
 
-  /** 只保留活动 Layout 或 Android 历史缓存仍引用的行，防止 LineStore 无界增长。 */
-  private void pruneLineStore() {
-    java.util.HashSet<Long> retained = new java.util.HashSet<>();
-    if (screen != null) for (TerminalLine line : screen) if (line != null) retained.add(line.id);
-    TerminalHistoryView snapshot = pagedHistory.snapshot();
-    for (int i = 0; i < snapshot.size(); i++) {
-      TerminalLine line = snapshot.lineAt(i);
-      if (line != null) retained.add(line.id);
+  /** Patch 提交后仅按当前 screen 重建，成本严格受 rows 上限约束。 */
+  private void rebuildScreenLineStore() {
+    screenLineStore.clear();
+    if (screen != null) {
+      for (TerminalLine line : screen) {
+        if (line != null) screenLineStore.put(line.id, line);
+      }
     }
-    java.util.Iterator<Long> it = lineStore.keySet().iterator();
-    while (it.hasNext()) if (!retained.contains(it.next())) it.remove();
+    TerminalRenderMetrics.screenLineStoreSize(screenLineStore.size());
   }
 
   /**

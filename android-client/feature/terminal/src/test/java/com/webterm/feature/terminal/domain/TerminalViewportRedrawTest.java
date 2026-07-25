@@ -87,11 +87,12 @@ public final class TerminalViewportRedrawTest {
   }
 
   @Test
-  public void scrollRequestsViewInvalidate() {
+  public void scrollLeavesPixelInvalidationToRendererView() {
     controller.onScrollPixels(50, 1000, 720);
 
-    // 验证：普通滚动触发 View 的 requestInvalidate
-    assertTrue("Scroll must trigger view invalidate", view.invalidateCalled);
+    // Controller 只持有 viewport 状态；像素刷新由发起滚动的 RemoteTerminalView 负责。
+    assertFalse("Controller must not request duplicate view invalidation",
+        view.invalidateCalled);
     assertEquals(50, viewport.scrollOffsetPixels);
   }
 
@@ -139,7 +140,7 @@ public final class TerminalViewportRedrawTest {
   }
 
   @Test
-  public void multipleScrollEventsAreCoalescedByViewInvalidation() {
+  public void multipleScrollEventsOnlyUpdateViewportState() {
     view.invalidateCount = 0;
 
     // 短时间内连续产生多个滚动事件
@@ -147,8 +148,9 @@ public final class TerminalViewportRedrawTest {
     controller.onScrollPixels(15, 1000, 720);
     controller.onScrollPixels(20, 1000, 720);
 
-    // 验证连续滚动触发了 requestInvalidate 重绘请求，且没有调用 model.requestFullRender()
-    assertTrue(view.invalidateCount > 0);
+    // 连续滚动不反向请求同一 View 刷新，也不污染 model。
+    assertEquals(0, view.invalidateCount);
+    assertEquals(45, viewport.scrollOffsetPixels);
     verify(runtime, never()).requestModelRender();
     verify(runtime, never()).requestRender();
   }

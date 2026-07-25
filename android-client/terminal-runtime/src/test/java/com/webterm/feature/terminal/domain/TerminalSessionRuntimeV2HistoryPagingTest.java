@@ -12,6 +12,7 @@ import androidx.annotation.Nullable;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.SlotState;
+import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.core.contract.diagnostics.DiagnosticSink;
@@ -24,6 +25,48 @@ import java.util.Map;
 
 /** v2 冻结投影必须能在 Baseline 尾页之前继续按需加载历史。 */
 public final class TerminalSessionRuntimeV2HistoryPagingTest {
+  @Test
+  public void frozenRuntimeDropsLiveDeltasBeforeProtobufParseButAcceptsTailStatus() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, true);
+    assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
+
+    TerminalRenderMetrics.Snapshot before = TerminalRenderMetrics.snapshot();
+    connection.listener.onScreenMessage(screenPatch(2).toByteArray());
+    connection.listener.onScreenMessage(historyDelta(2).toByteArray());
+    connection.listener.onScreenMessage(tailStatus(2, 5, 1, 340).toByteArray());
+    TerminalRenderMetrics.Snapshot after = TerminalRenderMetrics.snapshot();
+
+    assertEquals(1L, after.protobufParseCount - before.protobufParseCount);
+    assertEquals(2L, after.backgroundPatchDroppedCount - before.backgroundPatchDroppedCount);
+    assertEquals(1, runtime.model().screenRevision);
+    assertEquals(5, runtime.model().remoteScreenRevision());
+    assertEquals(340, runtime.model().remoteAvailableExtent().lastSeq);
+  }
+
+  @Test
+  public void clearingHistoryFreezeCannotClearLifecycleFreeze() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+
+    runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, true);
+    runtime.freezeStream();
+    runtime.resumeLiveStream();
+
+    assertEquals(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, runtime.freezeReasons());
+    assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
+    assertEquals(1, connection.modeChanges);
+  }
+
   @Test
   public void frozenProjectionLoadsRangeBeforeBaselineTail() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(

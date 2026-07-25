@@ -16,5 +16,13 @@ interface TerminalRowNode {
 
   void endRecording();
 
+  /**
+   * 当前节点是否仍持有可绘制的 display list。
+   *
+   * <p>Java 层缓存元数据有效，不代表底层 RenderNode 的 display list
+   * 一定仍然存在。</p>
+   */
+  boolean hasDisplayList();
+
   void draw(@NonNull Canvas canvas, float y);
 }
