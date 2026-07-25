@@ -35,13 +35,30 @@ public final class RemoteTerminalViewInvalidationTest {
     return new TerminalLine(id, false, cells);
   }
 
+  private static TerminalLine historyLine(long id, long historySeq, int cols) {
+    TerminalCell[] cells = new TerminalCell[cols];
+    Arrays.fill(cells, TerminalCell.EMPTY);
+    return new TerminalLine(id, 1, historySeq, false, cells);
+  }
+
   private static RemoteTerminalModel modelWithScreen(int rows, int cols) {
+    return modelWithScreenAndHistory(rows, cols, 0);
+  }
+
+  private static RemoteTerminalModel modelWithScreenAndHistory(int rows, int cols, int historyRows) {
     RemoteTerminalModel model = new RemoteTerminalModel();
     TerminalLine[] screen = new TerminalLine[rows];
     for (int i = 0; i < rows; i++) screen[i] = line(i + 1, cols);
+    TerminalLine[] history = new TerminalLine[historyRows];
+    for (int i = 0; i < historyRows; i++) {
+      history[i] = historyLine(1000L + i, i + 1L, cols);
+    }
+    HistoryExtent extent = historyRows == 0
+        ? HistoryExtent.INITIAL_EMPTY
+        : new HistoryExtent(1, historyRows);
     ScreenBaseline baseline = new ScreenBaseline(
         "session-1", "term-1", 1L, 1L, 1L, rows, cols, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Arrays.asList(), Arrays.asList(screen),
+        extent, Arrays.asList(history), Arrays.asList(screen),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
         "", "");
     model.applyBaseline(baseline);
@@ -71,6 +88,20 @@ public final class RemoteTerminalViewInvalidationTest {
     viewport.followTail = true;
 
     // 模拟 history-only 更新：不修改 screen。
+    RenderDirtyState dirty = new RenderDirtyState();
+    dirty.historyChanged = true;
+
+    InvalidationResult result = view.resolveInvalidation(dirty, model.renderSnapshot(), viewport, false);
+    assertEquals(InvalidationResult.NONE, result);
+  }
+
+  @Test
+  public void nonEmptyHistoryFollowTailHistoryOnlyIsNone() {
+    RemoteTerminalModel model = modelWithScreenAndHistory(5, 10, 5);
+    RemoteTerminalView view = view(100, 200);
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = true;
+
     RenderDirtyState dirty = new RenderDirtyState();
     dirty.historyChanged = true;
 

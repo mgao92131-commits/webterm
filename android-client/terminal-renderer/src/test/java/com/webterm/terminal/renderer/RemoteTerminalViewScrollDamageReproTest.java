@@ -120,25 +120,20 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   }
 
   /**
-   * 聚焦复现 Bug A：followTail 时历史尾部追加，顶部可见历史条带（约 topInset 高）
-   * 不被刷新，残留上一行内容。两种子情形：
-   * (1) scroll patch + history delta 同帧消费 → SCREEN_REGION 矩形从 screenTop-1 开始，
-   *     漏掉 y < floor(screenTop)-1 的区域；
-   * (2) history-only delta → resolveInvalidation 返回 NONE，完全不刷新。
-   * 修复前此测试应失败。
+   * 验证修复：followTail 时历史行不得侵入第一行终端文字上方的 topInset 留白。
+   * 顶部条带 y∈[0,4] 必须保持默认背景，而不是显示上一条历史行残片。
    */
   @Test
-  public void followTailHistoryAppendRepaintsTopHistoryStrip() {
-    // 基线后顶部条带 y∈[0,4] 显示最后一行历史 hist-30 的底部像素。
-    assertPixelRow(0, "hist-30", "baseline strip");
+  public void followTailHistoryDoesNotBleedIntoTopInset() {
+    assertPixelRow(0, "BG", "baseline top inset");
 
-    // 子情形 (1)：滚动 patch + 历史追加同帧。
+    // 滚动 patch + 历史追加同帧。
     pumpLiveScrollPatch();
-    assertPixelRow(0, "screen-1", "strip after scroll patch + delta");
+    assertPixelRow(0, "BG", "strip after scroll patch + delta");
 
-    // 子情形 (2)：纯历史追加（仅水位前移，不滚屏）。
+    // 纯历史追加（仅水位前移，不滚屏）。
     pumpHistoryOnlyDelta();
-    assertPixelRow(0, "hist-only", "strip after history-only delta");
+    assertPixelRow(0, "BG", "strip after history-only delta");
   }
 
   /** 纯历史追加（屏幕不动）：extent 尾部 +1。 */
@@ -344,7 +339,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
           snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
           viewport.followTail ? 0f : viewport.scrollOffsetPixels);
       float screenBottom = screenTop + snapshot.screen.length * LINE_HEIGHT;
-      int top = 0;
+      int top = Math.max(0, (int) Math.floor(screenTop) - 1);
       int bottom = Math.min(VIEW_H, (int) Math.ceil(screenBottom) + 1);
       if (bottom > top) recordDamage(new Rect(0, top, VIEW_W, bottom));
       return;
@@ -380,23 +375,50 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   private final class FrameCanvas extends Canvas {
     final Rect clip;
     final String[] fb;
+    /** 当前有效裁剪区；save/restore 会维护栈，以模拟 Renderer 内部的 clipRect。 */
+    private final Rect currentClip;
+    private final java.util.ArrayList<Rect> clipStack = new java.util.ArrayList<>();
 
     FrameCanvas(Rect clip, String[] fb) {
       super(Bitmap.createBitmap(Math.max(1, clip.width()), Math.max(1, clip.height()),
           Bitmap.Config.ARGB_8888));
       this.clip = new Rect(clip);
+      this.currentClip = new Rect(clip);
       this.fb = fb;
     }
 
     @Override
     public boolean getClipBounds(Rect outBounds) {
-      outBounds.set(clip);
+      outBounds.set(currentClip);
       return true;
     }
 
     @Override
+    public int save() {
+      clipStack.add(new Rect(currentClip));
+      return clipStack.size();
+    }
+
+    @Override
+    public void restore() {
+      if (!clipStack.isEmpty()) {
+        currentClip.set(clipStack.remove(clipStack.size() - 1));
+      }
+    }
+
+    @Override
+    public boolean clipRect(float left, float top, float right, float bottom) {
+      currentClip.set(
+          Math.max(currentClip.left, (int) Math.floor(left)),
+          Math.max(currentClip.top, (int) Math.floor(top)),
+          Math.min(currentClip.right, (int) Math.ceil(right)),
+          Math.min(currentClip.bottom, (int) Math.ceil(bottom)));
+      return !currentClip.isEmpty();
+    }
+
+    @Override
     public void drawColor(int color) {
-      fill(clip.top, clip.bottom, "BG");
+      fill(currentClip.top, currentClip.bottom, "BG");
     }
 
     @Override
@@ -416,14 +438,14 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     }
 
     void fill(int y0, int y1, String token) {
-      int from = Math.max(Math.max(y0, clip.top), 0);
-      int to = Math.min(Math.min(y1, clip.bottom), fb.length);
+      int from = Math.max(Math.max(y0, currentClip.top), 0);
+      int to = Math.min(Math.min(y1, currentClip.bottom), fb.length);
       for (int y = from; y < to; y++) fb[y] = token;
     }
 
     void append(int y0, int y1, String token) {
-      int from = Math.max(Math.max(y0, clip.top), 0);
-      int to = Math.min(Math.min(y1, clip.bottom), fb.length);
+      int from = Math.max(Math.max(y0, currentClip.top), 0);
+      int to = Math.min(Math.min(y1, currentClip.bottom), fb.length);
       for (int y = from; y < to; y++) {
         String prev = fb[y];
         fb[y] = (prev == null || "BG".equals(prev)) ? token : prev + "|" + token;
@@ -716,16 +738,6 @@ public final class RemoteTerminalViewScrollDamageReproTest {
 
     StringBuilder mismatch = new StringBuilder();
     for (int y = 0; y < VIEW_H; y++) {
-      // 已知 Bug A：followTail 时顶部可见历史条带 [0, floor(screenTop)) 不随历史追加刷新
-      // （SCREEN_REGION 矩形从 floor(screenTop)-1 起算 / history-only delta 返回 NONE），
-      // 由 followTailHistoryAppendRepaintsTopHistoryStrip 专项覆盖；
-      // 此处跳过该条带内的历史行，以验证其余渲染路径逐像素正确。
-      if (viewport.followTail && y < Math.floor(screenTop)) {
-        int stripHistoryIndex = (int) ((y - historyTop) / LINE_HEIGHT);
-        if (stripHistoryIndex >= 0 && stripHistoryIndex < historyRows) {
-          continue;
-        }
-      }
       String expected = expectedTokenAt(y, snapshot, screenTop, historyTop, historyRows);
       String actual = framebuffer[y];
       if (expected == null || expected.isEmpty()) {
@@ -748,6 +760,10 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   /** 该像素行按当前几何应显示的正文文本；内容区域之外返回 null（应为背景）。 */
   private static String expectedTokenAt(int y, RemoteTerminalModel.RenderSnapshot snapshot,
                                         float screenTop, float historyTop, int historyRows) {
+    // 历史绘制裁剪到 [TOP_INSET, screenTop)，因此该留白区域必须保持默认背景。
+    if (y < TOP_INSET) {
+      return null;
+    }
     if (y >= screenTop) {
       int row = (int) ((y - screenTop) / LINE_HEIGHT);
       if (row >= 0 && row < snapshot.screen.length) {

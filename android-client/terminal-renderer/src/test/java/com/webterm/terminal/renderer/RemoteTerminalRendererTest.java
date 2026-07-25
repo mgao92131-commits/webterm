@@ -13,8 +13,11 @@ import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
+import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.TerminalViewportState;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -173,5 +176,50 @@ public final class RemoteTerminalRendererTest {
         | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES;
     assertEquals(0, type & capFlags);
     assertEquals(0, type & android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
+  }
+
+  @Test public void historyDoesNotBleedIntoTopInsetWhenFollowingTail() {
+    // 5 行红色背景历史 + 1 行默认背景 screen。followTail 时 screenTopY == topInset，
+    // 历史绘制裁剪到 [topInset, screenTopY) 后应为空，topInset 留白必须保持默认背景。
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    int cols = 1;
+    TerminalColor red = TerminalColor.rgb(0xFF0000);
+    TerminalCell redCell = new TerminalCell(" ", (byte) 1,
+        new TerminalStyle(1, TerminalColor.DEFAULT_FG, red, null, 0), null);
+    List<TerminalLine> history = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      TerminalCell[] cells = new TerminalCell[] { redCell };
+      history.add(new TerminalLine(1000L + i, 1, i + 1L, false, cells));
+    }
+    model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, cols, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 5), history,
+        Collections.singletonList(TerminalLine.empty(2000, cols)),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
+        "", ""));
+    model.consumeRenderUpdate();
+
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 20f, 15f); // topInset = 20 - 15 = 5
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = true;
+
+    Bitmap bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
+    int defaultBg = RemoteTerminalRenderer.resolveColor(TerminalPalette.defaults(),
+        TerminalColor.DEFAULT_BG);
+    bitmap.eraseColor(defaultBg);
+    Canvas canvas = new Canvas(bitmap);
+    renderer.render(canvas, model.renderSnapshot(), viewport, true);
+
+    int topInset = 5;
+    for (int y = 0; y < topInset; y++) {
+      for (int x = 0; x < cols * 10; x += 2) {
+        assertEquals("history must not bleed into topInset at y=" + y,
+            defaultBg, bitmap.getPixel(x, y));
+      }
+    }
+    // 作为对照，第一行 screen 下方区域应为默认背景（screen 行没有自定义背景）。
+    int screenRowTop = topInset;
+    assertEquals(defaultBg, bitmap.getPixel(5, screenRowTop + 2));
   }
 }

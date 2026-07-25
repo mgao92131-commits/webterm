@@ -890,10 +890,12 @@ public final class RemoteTerminalView extends View {
     float screenTop = lineHeight > 0f ? RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
         snapshot.screen.length, lineHeight, renderer.getTopInset(),
         viewport.followTail ? 0f : viewport.scrollOffsetPixels) : 0f;
-
+    float screenBottom = screenTop + snapshot.screen.length * lineHeight;
+    // 历史可见区域只可能是 [topInset, screenTop)，当 followTail 时 screenTop == topInset，
+    // 该区域为空，因此 history-only 不应触发任何重绘。
     boolean visibleHistoryChanged = dirty.historyChanged
         && snapshot.activeBuffer == TerminalBufferKind.MAIN
-        && (!viewport.followTail || (screenTop > 0f && history.size() > 0));
+        && !viewport.followTail;
 
     if (!screenChanged && !visibleHistoryChanged && !dirty.cursorChanged
         && !dirty.stylesChanged && !dirty.linksChanged) {
@@ -905,6 +907,11 @@ public final class RemoteTerminalView extends View {
     }
 
     if (screenChanged) {
+      // 实时 screen 完全滚出当前视口且没有可见历史变化时，不需要刷新。
+      boolean screenVisible = screenBottom > 0f && screenTop < getHeight();
+      if (!screenVisible && !visibleHistoryChanged && !dirty.cursorChanged) {
+        return InvalidationResult.NONE;
+      }
       if (dirty.screenScrollRows != 0) {
         return InvalidationResult.SCREEN_REGION;
       }
@@ -980,16 +987,17 @@ public final class RemoteTerminalView extends View {
         viewport.followTail ? 0f : viewport.scrollOffsetPixels);
     float screenBottom = screenTop + snapshot.screen.length * lineHeight;
     int left = 0;
-    int top = 0;
+    int top = Math.max(0, (int) Math.floor(screenTop) - 1);
     int right = getWidth();
     int bottom = Math.min(getHeight(), (int) Math.ceil(screenBottom) + 1);
-    if (bottom > top) {
-      invalidate(left, top, right, bottom);
-      TerminalRenderMetrics.screenRegionInvalidate();
-      // 只在真实滚动时上报滚动行数；整屏回退刷新（screenScrollRows == 0）不计入滚动指标。
-      if (dirty.screenScrollRows != 0) {
-        TerminalRenderMetrics.screenScrollEvent(Math.abs(dirty.screenScrollRows));
-      }
+    if (bottom <= top) {
+      return;
+    }
+    invalidate(left, top, right, bottom);
+    TerminalRenderMetrics.screenRegionInvalidate();
+    // 只在真实滚动时上报滚动行数；整屏回退刷新（screenScrollRows == 0）不计入滚动指标。
+    if (dirty.screenScrollRows != 0) {
+      TerminalRenderMetrics.screenScrollEvent(Math.abs(dirty.screenScrollRows));
     }
   }
 

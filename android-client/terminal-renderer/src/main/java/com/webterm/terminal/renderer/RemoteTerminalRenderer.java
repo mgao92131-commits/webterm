@@ -164,12 +164,21 @@ public final class RemoteTerminalRenderer {
     }
 
     // 历史行继续使用直接 Canvas 绘制（本次任务不重构历史缓存）。
+    // 历史只应出现在 [topInset, screenTopY) 区间；followTail 时 screenTopY == topInset，
+    // 该区间为空，因此不会把上一条历史行的残片画进第一行终端文字上方的字体留白。
+    float topInset = getTopInset();
     float historyTopY = screenTopY - historyRows * lineHeight;
     int[] historyRange = rowRangeIntersecting(clip.top, clip.bottom, historyTopY, lineHeight,
         historyRows);
+    canvas.save();
+    canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
     for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
+      // 整行都在 topInset 上方的历史行不可见；在 followTail 时所有历史行都被跳过。
+      if (y + lineHeight <= topInset + 0.001f) {
+        continue;
+      }
       if (line == null) {
         drawHistoryPlaceholder(canvas, model.columns, history, historyIndex, y, canvasBackground);
         continue;
@@ -177,6 +186,7 @@ public final class RemoteTerminalRenderer {
       drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
           normalizedSelection, cursor, false, canvasBackground);
     }
+    canvas.restore();
 
     // 使用缓存时，光标和选择作为覆盖层在静态正文之后绘制。
     if (useCache) {
