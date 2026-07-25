@@ -738,16 +738,16 @@ public final class TerminalSessionRuntime {
         || state != State.TRANSPORT_CONNECTED) return;
     updateState(State.SYNCING);
     long generation = ++syncGeneration;
-    boolean wantsFrozen = freezeReasons.get() != 0 || streamState == StreamState.FROZEN;
+    boolean wantsFrozen = freezeReasons.get() != 0;
     TerminalScreenV2Proto.ScreenStreamMode desiredMode =
         wantsFrozen
             ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
             : TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    requestedModeForGeneration = desiredMode;
+    long streamGenerationForHello = bindModeToStreamGeneration(desiredMode);
     boolean hasFrozenProjection = wantsFrozen
         && model.instanceId != null && !model.instanceId.isEmpty();
     boolean helloSent = expectedConnection.beginSync(
-        streamGeneration, desiredMode, model.instanceId, model.layoutEpoch,
+        streamGenerationForHello, desiredMode, model.instanceId, model.layoutEpoch,
         hasFrozenProjection);
     if (!helloSent) {
       // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
@@ -767,6 +767,14 @@ public final class TerminalSessionRuntime {
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
         RESYNC_SNAPSHOT_TIMEOUT_MS);
+  }
+
+  /** modelExecutor 串行调用；同一 stream generation 永远只绑定一种请求模式。 */
+  private long bindModeToStreamGeneration(
+      @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode) {
+    if (desiredMode != requestedModeForGeneration) streamGeneration++;
+    requestedModeForGeneration = desiredMode;
+    return streamGeneration;
   }
 
   private void onSynchronizationTimeout(long generation) {
@@ -1146,7 +1154,7 @@ public final class TerminalSessionRuntime {
           }
           long patchApplyStartedNanos = System.nanoTime();
           try {
-            model.applyScreenPatch(patch);
+            renderChanged = model.applyScreenPatch(patch);
           } finally {
             TerminalRenderMetrics.screenPatchApplyDuration(
                 System.nanoTime() - patchApplyStartedNanos);
@@ -1155,7 +1163,6 @@ public final class TerminalSessionRuntime {
               captureStreamIdentity(), patch);
           recordCapturedModelState(false);
           completeSynchronization();
-          renderChanged = true;
           break;
         }
         case HISTORY_DELTA: {

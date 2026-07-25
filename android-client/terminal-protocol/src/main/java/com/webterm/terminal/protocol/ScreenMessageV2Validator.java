@@ -74,7 +74,7 @@ public final class ScreenMessageV2Validator {
     long first = extent.getFirstSeq();
     long last = extent.getLastSeq();
     if (first == 0 && last == 0) return; // 宽容 proto3 默认空值，Mapper 规范化为 1..0。
-    if (first < 1 || last < 0 || (last != Long.MAX_VALUE && last + 1 < first)) {
+    if (first < 1 || last < 0 || last == Long.MAX_VALUE || first > last + 1) {
       throw new IllegalArgumentException("invalid history extent");
     }
   }

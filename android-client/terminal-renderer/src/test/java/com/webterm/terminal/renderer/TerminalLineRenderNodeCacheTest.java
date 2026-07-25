@@ -104,6 +104,8 @@ public final class TerminalLineRenderNodeCacheTest {
     cache.drawOrRecord(canvas, original, 0f, false);
     FakeNode node = (FakeNode) cache.nodeForLineForTest(original.id);
     TerminalLine changed = line(original.id, original.version + 1, 10);
+    cache.endFrame();
+    begin(cache, snapshot, 1, 1, 1);
 
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, changed, 0f, false));
@@ -111,6 +113,37 @@ public final class TerminalLineRenderNodeCacheTest {
         cache.drawOrRecord(canvas, changed, 0f, false));
     assertEquals(2, node.beginRecordingCount);
     assertEquals(3, node.drawCount);
+  }
+
+  @Test
+  public void pinnedStaleEntryFallsBackWithoutOverwritingThisFramesDisplayList() {
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
+    TerminalLineRenderNodeCache cache = newCache();
+    begin(cache, snapshot, 1, 1, 1);
+    TerminalLine original = textLine(500, 1, 10, "A");
+    TerminalLine changed = textLine(500, 2, 10, "B");
+    TerminalRenderMetrics.Snapshot metricsBefore = TerminalRenderMetrics.snapshot();
+
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, original, 0f, false));
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(500);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE,
+        cache.drawOrRecord(canvas, changed, 20f, true));
+
+    assertSame(node, cache.nodeForLineForTest(500));
+    assertEquals(1, node.beginRecordingCount);
+    assertEquals(1, node.drawCount);
+    assertEquals(metricsBefore.rowCachePinnedConflictCount + 1,
+        TerminalRenderMetrics.snapshot().rowCachePinnedConflictCount);
+
+    cache.endFrame();
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, changed, 0f, true));
+    assertEquals(2, node.beginRecordingCount);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
+        cache.drawOrRecord(canvas, changed, 20f, false));
+    assertEquals(2, node.beginRecordingCount);
   }
 
   @Test

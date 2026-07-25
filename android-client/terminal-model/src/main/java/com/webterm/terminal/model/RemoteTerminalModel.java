@@ -126,17 +126,27 @@ public final class RemoteTerminalModel {
     boolean geometryChanged = !sameProjection || rows != baseline.rows || columns != baseline.cols;
 
     PagedTerminalHistory.Editor historyEditor = pagedHistory.edit();
-    if (!sameProjection) {
-      historyEditor.setExtent(1, 0);
-    }
-    historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
-    for (TerminalLine normalized : normalizedHistoryTail) {
-      if (baseline.historyExtent.contains(normalized.historySeq)) {
-        historyEditor.put(normalized.historySeq, normalized);
+    try {
+      if (!sameProjection) {
+        historyEditor.setExtent(1, 0);
       }
+      historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
+      for (TerminalLine normalized : normalizedHistoryTail) {
+        if (baseline.historyExtent.contains(normalized.historySeq)) {
+          historyEditor.put(normalized.historySeq, normalized);
+        }
+      }
+      historyEditor.evictIfNeeded(
+          baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq);
+      // 同 projection 的 Baseline 可以保留旧驻留页；提交前用有界索引验证新 screen，
+      // 不能让同一 LineID 同时归属于 screen 与 loaded history。
+      for (TerminalLine normalized : normalizedScreen) {
+        if (historyEditor.historySeqByLineId(normalized.id) != null) return false;
+      }
+    } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
+      return false;
     }
-    historyEditor.evictIfNeeded(
-        baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq).commit();
+    historyEditor.commit();
     this.v2Projection = true;
     this.streamGeneration = baseline.streamGeneration;
     this.instanceId = baseline.instanceId;
@@ -173,7 +183,7 @@ public final class RemoteTerminalModel {
     return true;
   }
 
-  public synchronized void applyScreenPatch(ScreenPatchV2 patch) throws RevisionGapException {
+  public synchronized boolean applyScreenPatch(ScreenPatchV2 patch) throws RevisionGapException {
     if (!v2Projection || patch == null || patch.streamGeneration != streamGeneration
         || instanceId == null || !instanceId.equals(patch.instanceId)
         || layoutEpoch != patch.layoutEpoch || screenRevision != patch.baseRevision
@@ -184,10 +194,14 @@ public final class RemoteTerminalModel {
       throw new RevisionGapException("screen.v2 layout length mismatch");
     }
     Map<Long, TerminalLine> stagedLines = new HashMap<>();
+    PagedTerminalHistorySnapshot historySnapshot = pagedHistory.snapshot();
     for (TerminalLine line : patch.lineUpdates) {
       TerminalLine normalized = padOrCopyLine(line, columns);
       if (normalized.id <= 0 || normalized.historySeq != 0) {
         throw new RevisionGapException("screen.v2 patch contains invalid screen line");
+      }
+      if (historySnapshot.historySeqByLineId(normalized.id) != null) {
+        throw new RevisionGapException("screen.v2 LineID is owned by loaded history");
       }
       TerminalLine previous = screenLineStore.get(normalized.id);
       if (previous != null) {
@@ -281,20 +295,28 @@ public final class RemoteTerminalModel {
     if (patch.activeBuffer != null) activeBuffer = patch.activeBuffer;
     if (patch.title != null) title = patch.title;
     if (patch.workingDirectory != null) workingDirectory = patch.workingDirectory;
+    boolean cursorChanged = !Objects.equals(previousCursor, cursor);
+    boolean paletteChanged = !Objects.equals(previousPalette, palette);
+    boolean modesChanged = !Objects.equals(previousModes, modes);
+    boolean activeBufferChanged = previousBuffer != activeBuffer;
+    boolean titleChanged = !Objects.equals(previousTitle, title);
+    boolean workingDirectoryChanged = !Objects.equals(previousCwd, workingDirectory);
+    boolean publicationChanged = !changedRows.isEmpty() || screenScrollRows != 0
+        || !exposedRows.isEmpty() || cursorChanged || paletteChanged || modesChanged
+        || activeBufferChanged || titleChanged || workingDirectoryChanged;
     screenRevision = patch.screenRevision;
     remoteScreenRevision = patch.screenRevision;
     rebuildScreenLineStore();
     markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows, false, false,
-        !Objects.equals(previousCursor, cursor),
+        cursorChanged,
         previousCursor != null ? previousCursor.row : -1, cursor.row,
-        !Objects.equals(previousPalette, palette), false, false,
-        !Objects.equals(previousModes, modes), previousBuffer != activeBuffer);
-    markTerminalState(false, false, !Objects.equals(previousTitle, title),
-        !Objects.equals(previousCwd, workingDirectory), 0, 0);
+        paletteChanged, false, false, modesChanged, activeBufferChanged);
+    markTerminalState(false, false, titleChanged, workingDirectoryChanged, 0, 0);
     // Patch 的身份、revision、layout、更新行和最终 screen 已在本事务内完成验证。
     // 历史归 PagedTerminalHistory 独立所有，不能在高频 Patch 热路径重新扫描逻辑 extent。
     projectionHealth = ProjectionHealth.complete(
         instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+    return publicationChanged;
   }
 
   public synchronized boolean applyHistoryDelta(HistoryDelta delta) {
@@ -306,7 +328,7 @@ public final class RemoteTerminalModel {
     PagedTerminalHistory.Editor editor = pagedHistory.edit()
         .setExtent(nextExtent.firstSeq, nextExtent.lastSeq);
     for (TerminalLine line : delta.lines) {
-      TerminalLine normalized = padOrCopyLine(line, columns);
+      TerminalLine normalized = normalizeHistoryLine(line);
       if (nextExtent.contains(normalized.historySeq)) {
         editor.put(normalized.historySeq, normalized);
       }
@@ -358,7 +380,7 @@ public final class RemoteTerminalModel {
       }
     }
     for (TerminalLine line : range.lines) {
-      TerminalLine normalized = padOrCopyLine(line, columns);
+      TerminalLine normalized = normalizeHistoryLine(line);
       if (displayExtent.contains(normalized.historySeq)) {
         editor.put(normalized.historySeq, normalized);
       }
@@ -438,8 +460,11 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized RenderUpdate consumeRenderUpdate() {
-    if (!renderPublicationPending
-        || (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty())) return null;
+    if (!renderPublicationPending) return null;
+    if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) {
+      renderPublicationPending = false;
+      return null;
+    }
     RenderDirtyState consumed = pendingRenderDirty;
     TerminalStateUpdate consumedState = pendingTerminalState;
     pendingRenderDirty = new RenderDirtyState();
@@ -473,6 +498,18 @@ public final class RemoteTerminalModel {
 
   synchronized long loadedHistoryLineCountForTest() {
     return pagedHistory.snapshot().loadedLineCount();
+  }
+
+  synchronized int loadedLineIdentityCountForTest() {
+    return screenLineStore.size() + pagedHistory.snapshot().loadedLineIdentityCount();
+  }
+
+  synchronized Long loadedHistorySeqForLineIdForTest(long lineId) {
+    return pagedHistory.snapshot().historySeqByLineId(lineId);
+  }
+
+  synchronized boolean renderPublicationPendingForTest() {
+    return renderPublicationPending;
   }
 
   public synchronized TerminalCursor cursor() {
@@ -531,6 +568,19 @@ public final class RemoteTerminalModel {
     if (line == null || line.cells == null) return null;
     TerminalLine normalized = padOrCopyLine(line, cols);
     return referencesComplete(normalized) ? normalized : null;
+  }
+
+  private TerminalLine normalizeHistoryLine(TerminalLine line) {
+    TerminalLine normalized = normalizeCompleteLine(line, columns);
+    if (normalized == null || normalized.id <= 0 || normalized.historySeq <= 0) {
+      throw new IllegalStateException("screen.v2 contains invalid history line");
+    }
+    // Go writer 的生产顺序是先用 ScreenPatch 移出 screen，再发送 HistoryDelta；
+    // 因此这里仍有 screen owner 不是合法迁移窗口，而是乱序或身份冲突。
+    if (screenLineStore.containsKey(normalized.id)) {
+      throw new IllegalStateException("screen.v2 history LineID is owned by screen");
+    }
+    return normalized;
   }
 
   /** Patch 提交后仅按当前 screen 重建，成本严格受 rows 上限约束。 */
@@ -625,7 +675,7 @@ public final class RemoteTerminalModel {
     pendingRenderDirty.merge(fullInvalidate, changedRows, screenScrollRows, exposedRows, rowCount,
         historyChanged, geometryChanged, cursorChanged, previousCursorRow, currentCursorRow,
         paletteChanged, stylesChanged, linksChanged, modesChanged, activeBufferChanged);
-    renderPublicationPending = !pendingRenderDirty.isEmpty();
+    if (!pendingRenderDirty.isEmpty()) renderPublicationPending = true;
   }
 
   private void markTerminalState(boolean geometryChanged, boolean historyChanged,
@@ -633,7 +683,7 @@ public final class RemoteTerminalModel {
                                  int tailAppendedLines, int historyPrependedLines) {
     pendingTerminalState.merge(geometryChanged, historyChanged, titleChanged,
         workingDirectoryChanged, tailAppendedLines, historyPrependedLines);
-    renderPublicationPending = true;
+    if (!pendingTerminalState.isEmpty()) renderPublicationPending = true;
   }
 
   /** 保留给性能基线的反射入口；正式路径只在 consumeRenderUpdate 时发布。 */

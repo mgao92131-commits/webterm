@@ -105,6 +105,12 @@ public final class TerminalLineRenderNodeCache {
 
     if (cached != null) {
       TerminalRenderMetrics.rowCacheStaleFallback();
+      if (cached.pinnedThisFrame) {
+        // draw() 已把该 display list 提交给本帧 Canvas。此时重录同一节点会让前面
+        // 已绘制的逻辑行看到新 version；安全回退由调用方直接 Canvas 绘制。
+        TerminalRenderMetrics.rowCachePinnedConflict();
+        return LineDrawResult.UNAVAILABLE;
+      }
     } else {
       cached = obtainEntry(line.id);
       if (cached == null) return LineDrawResult.UNAVAILABLE;

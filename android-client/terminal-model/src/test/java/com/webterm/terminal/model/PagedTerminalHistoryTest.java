@@ -66,6 +66,27 @@ public final class PagedTerminalHistoryTest {
     assertEquals(2, history.snapshot().logicalSize());
   }
 
+  @Test
+  public void trimReleasesLoadedLineIdentityWithoutGrowingAProjectionWideIndex() {
+    PagedTerminalHistory history = history(new HistoryBudget(100, 100, 0, 0));
+    TerminalLine firstOwner = new TerminalLine(
+        500, 1, 1, false, new TerminalCell[] {TerminalCell.EMPTY});
+    history.edit().setExtent(1, 2).put(1, firstOwner).commit();
+    assertEquals(Long.valueOf(1), history.snapshot().historySeqByLineId(500));
+    assertEquals(1, history.snapshot().loadedLineIdentityCount());
+
+    history.edit().setExtent(2, 2).commit();
+    assertNull(history.snapshot().historySeqByLineId(500));
+    assertEquals(0, history.snapshot().loadedLineIdentityCount());
+
+    TerminalLine secondOwner = new TerminalLine(
+        500, 2, 3, false, new TerminalCell[] {TerminalCell.EMPTY});
+    history.edit().setExtent(2, 3).put(3, secondOwner).commit();
+    assertEquals(Long.valueOf(3), history.snapshot().historySeqByLineId(500));
+    assertEquals(history.snapshot().loadedLineCount(),
+        history.snapshot().loadedLineIdentityCount());
+  }
+
   @Test(expected = IllegalStateException.class)
   public void sameSeqCannotBeRewritten() {
     PagedTerminalHistory history = history(new HistoryBudget(100, 100, 0, 0));

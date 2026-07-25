@@ -37,6 +37,96 @@ public final class RemoteTerminalModelScreenLineStoreTest {
 
     assertEquals("screen", model.renderSnapshot().screen[0].at(0).text);
     assertEquals(3, model.screenLineStoreSize());
+    assertEquals(Long.valueOf(1_000_001L), model.loadedHistorySeqForLineIdForTest(10_001));
+    assertEquals(model.screenLineStoreSize() + model.loadedHistoryLineCountForTest(),
+        model.loadedLineIdentityCountForTest());
+  }
+
+  @Test
+  public void duplicateLoadedHistoryLineIdIsRejectedWithoutPartialCommit() {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    model.consumeRenderUpdate();
+    RemoteTerminalModel.RenderSnapshot before = model.renderSnapshot();
+    long loadedBefore = model.loadedHistoryLineCountForTest();
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_002L),
+          java.util.Arrays.asList(
+              line(500, 1, 1_000_001L, "A"),
+              line(500, 1, 1_000_002L, "B"))));
+    } catch (IllegalStateException expected) {
+      assertSame(before, model.renderSnapshot());
+      assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(500));
+      assertEquals(new HistoryExtent(1, 1_000_000L), model.displayExtent());
+      return;
+    }
+    throw new AssertionError("one loaded LineID must not own two history positions");
+  }
+
+  @Test
+  public void duplicateLoadedHistoryLineIdWithSameContentIsStillRejected() {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_002L),
+          java.util.Arrays.asList(
+              line(500, 1, 1_000_001L, "A"),
+              line(500, 1, 1_000_002L, "A"))));
+    } catch (IllegalStateException expected) {
+      assertEquals(1, model.loadedHistoryLineCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(500));
+      return;
+    }
+    throw new AssertionError("LineID uniqueness is positional, not content based");
+  }
+
+  @Test
+  public void loadedHistoryCannotClaimCurrentScreenLineId() {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    TerminalLine original = model.renderSnapshot().screen[0];
+    long loadedBefore = model.loadedHistoryLineCountForTest();
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_001L),
+          Collections.singletonList(line(original.id, 1, 1_000_001L, "different"))));
+    } catch (IllegalStateException expected) {
+      assertSame(original, model.renderSnapshot().screen[0]);
+      assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(original.id));
+      return;
+    }
+    throw new AssertionError("loaded history must not claim a current screen LineID");
+  }
+
+  @Test
+  public void sameProjectionBaselineRejectsScreenConflictWithRetainedLoadedPageTransactionally() {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    assertTrue(model.applyHistoryDelta(new HistoryDelta(
+        "i1", 1, 1, new HistoryExtent(1, 1_000_000L),
+        Collections.singletonList(line(500, 1, 900_000L, "loaded")))));
+    model.consumeRenderUpdate();
+    RemoteTerminalModel.RenderSnapshot before = model.renderSnapshot();
+    long loadedBefore = model.loadedHistoryLineCountForTest();
+    List<TerminalLine> replacementScreen = java.util.Arrays.asList(
+        line(500, 1, 0, "screen-conflict"),
+        line(20_002, 1, 0, "s1"),
+        line(20_003, 1, 0, "s2"));
+
+    assertFalse(model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 2, 1, 3, 1, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 1_000_000L),
+        Collections.singletonList(line(9_000, 1, 1_000_000L, "tail")),
+        replacementScreen, TerminalCursor.hidden(), TerminalModes.defaults(),
+        TerminalPalette.defaults(), "replacement", "")));
+
+    assertSame(before, model.renderSnapshot());
+    assertEquals(1, model.screenRevision);
+    assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
+    assertEquals(Long.valueOf(900_000L), model.loadedHistorySeqForLineIdForTest(500));
   }
 
   @Test
@@ -79,16 +169,38 @@ public final class RemoteTerminalModelScreenLineStoreTest {
   public void identicalSameVersionReplayIsIdempotentAndDoesNotDirtyRow() throws Exception {
     RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
     model.consumeRenderUpdate();
-    TerminalLine original = model.renderSnapshot().screen[0];
+    RemoteTerminalModel.RenderSnapshot published = model.renderSnapshot();
+    TerminalLine original = published.screen[0];
 
-    model.applyScreenPatch(patch(1, 2, null,
-        Collections.singletonList(line(original.id, original.version, 0, "s0"))));
+    assertFalse(model.applyScreenPatch(patch(1, 2, null,
+        Collections.singletonList(line(original.id, original.version, 0, "s0")))));
+
+    assertEquals(2, model.screenRevision);
+    assertFalse(model.renderPublicationPendingForTest());
+    assertNull(model.consumeRenderUpdate());
+    assertNull(model.consumeRenderUpdate());
+    assertSame(published, model.renderSnapshot());
+    assertSame(published, model.renderSnapshot());
+    assertSame(original, model.renderSnapshot().screen[0]);
+    assertEquals(3, model.screenLineStoreSize());
+  }
+
+  @Test
+  public void realPatchAfterRevisionOnlyReplayPublishesLatestRevisionOnce() throws Exception {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    model.consumeRenderUpdate();
+    TerminalLine original = model.renderSnapshot().screen[0];
+    assertFalse(model.applyScreenPatch(patch(1, 2, null,
+        Collections.singletonList(line(original.id, original.version, 0, "s0")))));
+
+    assertTrue(model.applyScreenPatch(patch(2, 3, null,
+        Collections.singletonList(line(original.id, original.version + 1, 0, "changed")))));
 
     RenderUpdate update = model.consumeRenderUpdate();
-    assertEquals(2, model.screenRevision);
-    assertSame(original, model.renderSnapshot().screen[0]);
-    assertNull(update);
-    assertEquals(3, model.screenLineStoreSize());
+    assertEquals(3, update.snapshot.screenRevision);
+    assertEquals("changed", update.snapshot.screen[0].at(0).text);
+    assertNull(model.consumeRenderUpdate());
+    assertFalse(model.renderPublicationPendingForTest());
   }
 
   @Test

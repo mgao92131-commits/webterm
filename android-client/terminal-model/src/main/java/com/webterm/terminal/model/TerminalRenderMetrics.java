@@ -28,6 +28,7 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong ROW_CACHE_HIT_COUNT = new AtomicLong();
   private static final AtomicLong ROW_CACHE_MISS_COUNT = new AtomicLong();
   private static final AtomicLong ROW_CACHE_STALE_FALLBACK_COUNT = new AtomicLong();
+  private static final AtomicLong ROW_CACHE_PINNED_CONFLICT_COUNT = new AtomicLong();
   private static final AtomicLong ROW_NODE_RECORD_COUNT = new AtomicLong();
   private static final AtomicLong ROW_NODE_REUSE_COUNT = new AtomicLong();
   private static final AtomicLong HISTORY_ONLY_NO_DRAW_COUNT = new AtomicLong();
@@ -93,6 +94,8 @@ public final class TerminalRenderMetrics {
   public static void rowCacheHit() { ROW_CACHE_HIT_COUNT.incrementAndGet(); }
   /** 行缓存槽位的 lineId/lineVersion 与当前行不一致、回退直接绘制的次数。 */
   public static void rowCacheStaleFallback() { ROW_CACHE_STALE_FALLBACK_COUNT.incrementAndGet(); }
+  /** 本帧已绘制的节点遇到同 LineID 新 version，禁止重录并回退直接 Canvas。 */
+  public static void rowCachePinnedConflict() { ROW_CACHE_PINNED_CONFLICT_COUNT.incrementAndGet(); }
   public static void rowCacheMiss() {
     ROW_CACHE_MISS_COUNT.incrementAndGet();
     ROW_NODE_RECORD_COUNT.incrementAndGet();
@@ -178,7 +181,7 @@ public final class TerminalRenderMetrics {
         SCREEN_REGION_INVALIDATE_COUNT.get(), PARTIAL_ROW_INVALIDATE_COUNT.get(),
         SCREEN_SCROLL_EVENT_COUNT.get(), SCREEN_SCROLL_ROW_TOTAL.get(),
         ROW_CACHE_HIT_COUNT.get(), ROW_CACHE_MISS_COUNT.get(),
-        ROW_CACHE_STALE_FALLBACK_COUNT.get(),
+        ROW_CACHE_STALE_FALLBACK_COUNT.get(), ROW_CACHE_PINNED_CONFLICT_COUNT.get(),
         ROW_NODE_RECORD_COUNT.get(), ROW_NODE_REUSE_COUNT.get(),
         HISTORY_ONLY_NO_DRAW_COUNT.get(),
         RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
@@ -236,6 +239,7 @@ public final class TerminalRenderMetrics {
     public final long rowCacheHitCount;
     public final long rowCacheMissCount;
     public final long rowCacheStaleFallbackCount;
+    public final long rowCachePinnedConflictCount;
     public final long rowNodeRecordCount;
     public final long rowNodeReuseCount;
     public final long historyOnlyNoDrawCount;
@@ -275,6 +279,7 @@ public final class TerminalRenderMetrics {
              long partialInvalidateCount, long dirtyRowCount, long screenRegionInvalidateCount,
              long partialRowInvalidateCount, long screenScrollEventCount, long screenScrollRowTotal,
              long rowCacheHitCount, long rowCacheMissCount, long rowCacheStaleFallbackCount,
+             long rowCachePinnedConflictCount,
              long rowNodeRecordCount, long rowNodeReuseCount, long historyOnlyNoDrawCount, long renderDurationNanos,
              long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
              long modelApplyNanos, long mainThreadCallbackDelayNanos, long baselineFrameCount,
@@ -304,6 +309,7 @@ public final class TerminalRenderMetrics {
       this.rowCacheHitCount = rowCacheHitCount;
       this.rowCacheMissCount = rowCacheMissCount;
       this.rowCacheStaleFallbackCount = rowCacheStaleFallbackCount;
+      this.rowCachePinnedConflictCount = rowCachePinnedConflictCount;
       this.rowNodeRecordCount = rowNodeRecordCount;
       this.rowNodeReuseCount = rowNodeReuseCount;
       this.historyOnlyNoDrawCount = historyOnlyNoDrawCount;

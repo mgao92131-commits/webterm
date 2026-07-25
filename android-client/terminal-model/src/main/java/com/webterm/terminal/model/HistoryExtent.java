@@ -10,7 +10,9 @@ public final class HistoryExtent {
   public final long lastSeq;
 
   public HistoryExtent(long firstSeq, long lastSeq) {
-    if (firstSeq < 1 || lastSeq < 0 || lastSeq + 1 < firstSeq) {
+    // lastSeq + 1 同时用于空窗口判断；排除 MAX_VALUE 后所有领域运算均不会溢出。
+    if (firstSeq < 1 || lastSeq < 0 || lastSeq == Long.MAX_VALUE
+        || firstSeq > lastSeq + 1) {
       throw new IllegalArgumentException("invalid history extent " + firstSeq + ".." + lastSeq);
     }
     this.firstSeq = firstSeq;

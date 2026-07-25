@@ -20,10 +20,12 @@ public final class PagedTerminalHistory {
   private final ToLongFunction<TerminalLine> byteEstimator;
   private HistoryExtent extent = HistoryExtent.INITIAL_EMPTY;
   private Map<Long, HistoryPageChunk> pages = new HashMap<>();
+  /** 只覆盖当前驻留行；页驱逐或 extent trim 时同步移除，绝不记录完整历史。 */
+  private Map<Long, Long> loadedLineIdToSeq = new HashMap<>();
   private long loadedLineCount;
   private long estimatedByteCount;
   private PagedTerminalHistorySnapshot snapshot =
-      new PagedTerminalHistorySnapshot(extent, new HashMap<>(), 0, 0);
+      new PagedTerminalHistorySnapshot(extent, new HashMap<>(), new HashMap<>(), 0, 0);
 
   public PagedTerminalHistory(
       HistoryBudget budget, ToLongFunction<TerminalLine> byteEstimator) {
@@ -90,6 +92,7 @@ public final class PagedTerminalHistory {
   public final class Editor {
     private HistoryExtent workingExtent = extent;
     private final Map<Long, HistoryPageChunk> workingPages = new HashMap<>(pages);
+    private final Map<Long, Long> workingLineIdToSeq = new HashMap<>(loadedLineIdToSeq);
     private final Set<Long> copiedPages = new HashSet<>();
     private long workingLoaded = loadedLineCount;
     private long workingBytes = estimatedByteCount;
@@ -131,6 +134,11 @@ public final class PagedTerminalHistory {
           throw new IllegalArgumentException("history line contains null cell");
         }
       }
+      Long ownedSeq = workingLineIdToSeq.get(line.id);
+      if (ownedSeq != null && ownedSeq != historySeq) {
+        throw new IllegalStateException(
+            "history LineID already loaded at seq " + ownedSeq);
+      }
       HistoryPageChunk page = mutablePage(pageNumber(historySeq));
       int offset = pageOffset(historySeq);
       TerminalLine old = page.slots[offset];
@@ -144,6 +152,7 @@ public final class PagedTerminalHistory {
       page.slots[offset] = line;
       page.lineBytes[offset] = bytes;
       page.unavailable[offset] = false;
+      workingLineIdToSeq.put(line.id, historySeq);
       workingLoaded++;
       workingBytes += bytes;
       return this;
@@ -153,6 +162,10 @@ public final class PagedTerminalHistory {
       ensureOpen();
       for (TerminalLine line : lines) put(line.historySeq, line);
       return this;
+    }
+
+    Long historySeqByLineId(long lineId) {
+      return workingLineIdToSeq.get(lineId);
     }
 
     public Editor markUnavailable(long fromSeq, long toSeq) {
@@ -188,6 +201,7 @@ public final class PagedTerminalHistory {
         HistoryPageChunk page = mutablePage(pageNumber);
         for (int i = 0; i < PAGE_SIZE; i++) {
           if (page.slots[i] == null) continue;
+          workingLineIdToSeq.remove(page.slots[i].id);
           page.slots[i] = null;
           workingLoaded--;
           workingBytes -= page.lineBytes[i];
@@ -204,10 +218,12 @@ public final class PagedTerminalHistory {
         committed = true;
         PagedTerminalHistory.this.extent = workingExtent;
         PagedTerminalHistory.this.pages = workingPages;
+        PagedTerminalHistory.this.loadedLineIdToSeq = workingLineIdToSeq;
         PagedTerminalHistory.this.loadedLineCount = workingLoaded;
         PagedTerminalHistory.this.estimatedByteCount = workingBytes;
         PagedTerminalHistory.this.snapshot = new PagedTerminalHistorySnapshot(
-            workingExtent, new HashMap<>(workingPages), workingLoaded, workingBytes);
+            workingExtent, new HashMap<>(workingPages), new HashMap<>(workingLineIdToSeq),
+            workingLoaded, workingBytes);
         return PagedTerminalHistory.this.snapshot;
       }
     }
@@ -229,6 +245,7 @@ public final class PagedTerminalHistory {
 
     private void clearSlot(HistoryPageChunk page, int offset) {
       if (page.slots[offset] != null) {
+        workingLineIdToSeq.remove(page.slots[offset].id);
         workingLoaded--;
         workingBytes -= page.lineBytes[offset];
       }
@@ -242,6 +259,7 @@ public final class PagedTerminalHistory {
       if (page == null) return;
       for (int i = 0; i < PAGE_SIZE; i++) {
         if (page.slots[i] != null) {
+          workingLineIdToSeq.remove(page.slots[i].id);
           workingLoaded--;
           workingBytes -= page.lineBytes[i];
         }

@@ -7,16 +7,19 @@ import java.util.Map;
 public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   private final HistoryExtent extent;
   private final Map<Long, PagedTerminalHistory.HistoryPageChunk> pages;
+  private final Map<Long, Long> loadedLineIdToSeq;
   private final long loadedLineCount;
   private final long estimatedByteCount;
 
   PagedTerminalHistorySnapshot(
       HistoryExtent extent,
       Map<Long, PagedTerminalHistory.HistoryPageChunk> pages,
+      Map<Long, Long> loadedLineIdToSeq,
       long loadedLineCount,
       long estimatedByteCount) {
     this.extent = extent;
     this.pages = Collections.unmodifiableMap(pages);
+    this.loadedLineIdToSeq = Collections.unmodifiableMap(loadedLineIdToSeq);
     this.loadedLineCount = loadedLineCount;
     this.estimatedByteCount = estimatedByteCount;
   }
@@ -44,6 +47,15 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
 
   public long loadedLineCount() {
     return loadedLineCount;
+  }
+
+  /** 当前驻留历史中 LineID 的唯一逻辑位置；未加载或已驱逐时返回 null。 */
+  public Long historySeqByLineId(long lineId) {
+    return loadedLineIdToSeq.get(lineId);
+  }
+
+  int loadedLineIdentityCount() {
+    return loadedLineIdToSeq.size();
   }
 
   public long estimatedByteCount() {
