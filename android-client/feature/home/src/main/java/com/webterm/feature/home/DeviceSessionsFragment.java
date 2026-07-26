@@ -20,6 +20,8 @@ import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.PageTransitionAnimator;
 import com.webterm.ui.common.UIUtils;
 
+import java.util.Set;
+
 import javax.inject.Inject;
 
 import dagger.hilt.android.AndroidEntryPoint;
@@ -117,13 +119,23 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
 
         mSessionAdapter = new SessionRecyclerAdapter(requireActivity(), this,
             () -> mViewModel.refresh());
-        mScreen.sessionList.setAdapter(mSessionAdapter);
+        mSessionAdapter.setCollapseState(new SessionRecyclerAdapter.CollapseState() {
+            @Override
+            public boolean isCollapsed(String groupKey) {
+                return mViewModel.isGroupCollapsed(groupKey);
+            }
 
-        // 禁用内容更新时的默认 change 动画，防止列表因数据高频更新而在滚动时产生乱晃和闪烁
-        RecyclerView.ItemAnimator animator = mScreen.sessionList.getItemAnimator();
-        if (animator instanceof androidx.recyclerview.widget.SimpleItemAnimator) {
-            ((androidx.recyclerview.widget.SimpleItemAnimator) animator).setSupportsChangeAnimations(false);
-        }
+            @Override
+            public void setCollapsed(String groupKey, boolean collapsed) {
+                mViewModel.setGroupCollapsed(groupKey, collapsed);
+            }
+
+            @Override
+            public void retainActiveGroups(Set<String> activeGroupKeys) {
+                mViewModel.retainActiveGroups(activeGroupKeys);
+            }
+        });
+        mScreen.sessionList.setAdapter(mSessionAdapter);
 
         setupSwipeToDelete(mScreen.sessionList, mSessionAdapter);
         return mScreen.root;

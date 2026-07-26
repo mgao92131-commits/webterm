@@ -8,6 +8,9 @@ import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.config.ServerConfig;
 import com.webterm.feature.home.repository.SessionRepository;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import javax.inject.Inject;
 
 import dagger.hilt.android.lifecycle.HiltViewModel;
@@ -22,6 +25,7 @@ public final class DeviceSessionsViewModel extends ViewModel {
     private final SessionRepository sessionRepository;
     private final MediatorLiveData<DeviceSessionsUiState> uiState = new MediatorLiveData<>();
     private final MediatorLiveData<ServerConfig> authEvent = new MediatorLiveData<>();
+    private final Set<String> collapsedGroupKeys = new HashSet<>();
 
     private ServerConfig server;
 
@@ -37,6 +41,7 @@ public final class DeviceSessionsViewModel extends ViewModel {
             uiState.removeSource(sessionRepository.observeSessions(this.server));
         }
         this.server = server;
+        collapsedGroupKeys.clear();
         if (server != null) {
             uiState.addSource(sessionRepository.observeSessions(server), this::applyResult);
         }
@@ -63,6 +68,28 @@ public final class DeviceSessionsViewModel extends ViewModel {
         sessionRepository.refresh(server);
     }
 
+    public boolean isGroupCollapsed(String groupKey) {
+        return groupKey != null && collapsedGroupKeys.contains(groupKey);
+    }
+
+    public void setGroupCollapsed(String groupKey, boolean collapsed) {
+        if (groupKey == null || groupKey.isEmpty()) return;
+        if (collapsed) {
+            collapsedGroupKeys.add(groupKey);
+        } else {
+            collapsedGroupKeys.remove(groupKey);
+        }
+    }
+
+    /** 清理已不存在目录的折叠状态，避免 Set 无限增长。 */
+    public void retainActiveGroups(Set<String> activeGroupKeys) {
+        if (activeGroupKeys == null || activeGroupKeys.isEmpty()) {
+            collapsedGroupKeys.clear();
+            return;
+        }
+        collapsedGroupKeys.retainAll(activeGroupKeys);
+    }
+
     @Override
     protected void onCleared() {
         super.onCleared();
@@ -70,6 +97,7 @@ public final class DeviceSessionsViewModel extends ViewModel {
             uiState.removeSource(sessionRepository.observeSessions(server));
         }
         authEvent.removeSource(sessionRepository.observeAuthEvents());
+        collapsedGroupKeys.clear();
     }
 
     private void applyResult(SessionRepository.SessionListResult result) {
