@@ -1,8 +1,6 @@
 package com.webterm.feature.home;
 
 import android.app.Activity;
-import android.graphics.Color;
-import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -13,7 +11,6 @@ import android.widget.TextView;
 
 import com.webterm.core.cache.TerminalCacheScope;
 import com.webterm.core.config.ServerConfig;
-import com.webterm.core.api.SessionIdentity;
 import com.webterm.ui.common.DesignTokens;
 import com.webterm.ui.common.UIUtils;
 
@@ -25,7 +22,11 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private static final int TYPE_SESSION = 1;
@@ -52,6 +53,11 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
 
     public void setCollapseState(CollapseState collapseState) {
         this.collapseState = collapseState;
+    }
+
+    /** 会话行 DiffUtil 内容指纹；单测用来断言 cwd/title/notification 变化会触发重绑。 */
+    public static String sessionContentFingerprint(JSONObject session) {
+        return RowItem.uiContent(session);
     }
 
     public void submitSessions(ServerConfig server, JSONArray sessions) {
@@ -187,6 +193,56 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         return null;
     }
 
+    /** 测试与调试：返回 session 行当前绑定的 cwd。 */
+    public String getSessionCwd(int position) {
+        if (position >= 0 && position < items.size()) {
+            RowItem item = items.get(position);
+            if (item.type == TYPE_SESSION && item.session != null) {
+                return item.session.optString("cwd", "");
+            }
+        }
+        return null;
+    }
+
+    /** 测试与调试：返回分组头或 session 行的 groupKey。 */
+    public String getGroupKey(int position) {
+        if (position >= 0 && position < items.size()) {
+            return items.get(position).groupKey;
+        }
+        return null;
+    }
+
+    /** 测试：按列表顺序返回目录分组的规范化 cwd（仅 header）。 */
+    public List<String> orderedGroupCwds() {
+        List<String> cwds = new ArrayList<>();
+        for (RowItem item : items) {
+            if (item.type != TYPE_GROUP_HEADER) continue;
+            int hash = item.groupKey == null ? -1 : item.groupKey.lastIndexOf('#');
+            cwds.add(hash >= 0 ? item.groupKey.substring(hash + 1) : "");
+        }
+        return cwds;
+    }
+
+    /** 测试：按列表顺序返回某目录下的 session id。 */
+    public List<String> orderedSessionIdsInGroup(String normalizedCwd) {
+        String suffix = "#" + (normalizedCwd == null ? "" : normalizedCwd);
+        List<String> ids = new ArrayList<>();
+        for (RowItem item : items) {
+            if (item.type != TYPE_SESSION || item.groupKey == null) continue;
+            if (!item.groupKey.endsWith(suffix)) continue;
+            ids.add(item.id);
+        }
+        return ids;
+    }
+
+    /** 测试：session 行 DiffUtil key（基于 Session Identity）。 */
+    public String getRowKey(int position) {
+        if (position >= 0 && position < items.size()) {
+            return items.get(position).key;
+        }
+        return null;
+    }
+
     private void updateItems(List<RowItem> next) {
         List<RowItem> previous = new ArrayList<>(items);
         DiffUtil.DiffResult diff = DiffUtil.calculateDiff(new DiffCallback(previous, next));
@@ -196,28 +252,35 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
     }
 
     private List<RowItem> buildGroupedItems(ServerConfig server, JSONArray sessions) {
-        List<SessionGroup> groups = new ArrayList<>();
+        Map<String, SessionGroup> byKey = new HashMap<>();
         String serverKey = server == null ? "" : TerminalCacheScope.key(server);
         for (int i = 0; sessions != null && i < sessions.length(); i++) {
             JSONObject session = sessions.optJSONObject(i);
             if (session == null) continue;
-            String cwd = normalizedCwd(session.optString("cwd", ""));
+            String cwd = SessionListOrdering.normalizedCwd(session.optString("cwd", ""));
             String groupKey = serverKey + "#" + cwd;
-            SessionGroup group = findGroup(groups, groupKey);
+            SessionGroup group = byKey.get(groupKey);
             if (group == null) {
                 group = new SessionGroup(groupKey, cwd);
-                groups.add(group);
+                byKey.put(groupKey, group);
             }
             group.sessions.add(session);
         }
+
+        List<SessionGroup> groups = new ArrayList<>(byKey.values());
+        Collections.sort(groups, (a, b) ->
+            SessionListOrdering.compareDirectoryCwds(a.cwd, b.cwd));
         for (SessionGroup group : groups) {
-            Collections.sort(group.sessions, SessionRecyclerAdapter::compareSessionOrder);
-            group.sortKey = group.sessions.isEmpty() ? "" : sessionSortKey(group.sessions.get(0));
+            Collections.sort(group.sessions, SessionListOrdering::compareSessionOrder);
         }
-        Collections.sort(groups, (a, b) -> {
-            int byTime = a.sortKey.compareTo(b.sortKey);
-            return byTime != 0 ? byTime : a.cwd.compareTo(b.cwd);
-        });
+
+        Set<String> activeGroupKeys = new HashSet<>();
+        for (SessionGroup group : groups) {
+            activeGroupKeys.add(group.groupKey);
+        }
+        if (collapseState != null) {
+            collapseState.retainActiveGroups(activeGroupKeys);
+        }
 
         List<RowItem> next = new ArrayList<>();
         for (SessionGroup group : groups) {
@@ -231,13 +294,6 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
             }
         }
         return next;
-    }
-
-    private static SessionGroup findGroup(List<SessionGroup> groups, String groupKey) {
-        for (SessionGroup group : groups) {
-            if (group.groupKey.equals(groupKey)) return group;
-        }
-        return null;
     }
 
     private View createGroupHeaderView(ViewGroup parent) {
@@ -370,37 +426,6 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         return copy;
     }
 
-    private static int compareSessionOrder(JSONObject first, JSONObject second) {
-        int byTime = sessionSortKey(first).compareTo(sessionSortKey(second));
-        if (byTime != 0) return byTime;
-        return sessionIdentity(first).compareTo(sessionIdentity(second));
-    }
-
-    private static String sessionSortKey(JSONObject session) {
-        String createdAt = session.optString("createdAt", "").trim();
-        if (!createdAt.isEmpty()) return createdAt;
-        return "~" + sessionIdentity(session);
-    }
-
-    private static String sessionIdentity(JSONObject session) {
-        String id = session.optString("id");
-        String identity = SessionIdentity.value(
-            id,
-            session.optString("instanceId", ""),
-            session.optString("createdAt", "")
-        );
-        return identity.isEmpty() ? "id:" + id : identity;
-    }
-
-    private static String normalizedCwd(String cwd) {
-        String value = String.valueOf(cwd == null ? "" : cwd).trim();
-        if (value.isEmpty()) return "";
-        while (value.length() > 1 && (value.endsWith("/") || value.endsWith("\\"))) {
-            value = value.substring(0, value.length() - 1);
-        }
-        return value;
-    }
-
     private static final class DiffCallback extends DiffUtil.Callback {
         private final List<RowItem> oldItems;
         private final List<RowItem> newItems;
@@ -463,8 +488,7 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
 
         static RowItem session(String groupKey, JSONObject session) {
             String id = session.optString("id");
-            String identity = sessionIdentity(session);
-            return new RowItem(TYPE_SESSION, "session:" + identity, id, groupKey, session, uiContent(session), "", "", 0, false);
+            return new RowItem(TYPE_SESSION, SessionListOrdering.sessionRowKey(session), id, groupKey, session, uiContent(session), "", "", 0, false);
         }
 
         static RowItem empty() {
@@ -485,6 +509,8 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
             append(builder, session.optString("instanceId"));
             append(builder, session.optString("createdAt"));
             append(builder, session.optString("termTitle"));
+            // cwd 变化会改分组并影响点击 listener；必须纳入差分，否则仅 cwd 更新时不重绑。
+            append(builder, session.optString("cwd"));
             append(builder, session.optString("shellState"));
             append(builder, session.optString("lastCommand"));
             append(builder, session.optString("recentInputLines"));
@@ -509,7 +535,6 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
         final String groupKey;
         final String cwd;
         final List<JSONObject> sessions = new ArrayList<>();
-        String sortKey = "";
 
         SessionGroup(String groupKey, String cwd) {
             this.groupKey = groupKey;
@@ -541,5 +566,8 @@ public final class SessionRecyclerAdapter extends RecyclerView.Adapter<RecyclerV
     public interface CollapseState {
         boolean isCollapsed(String groupKey);
         void setCollapsed(String groupKey, boolean collapsed);
+
+        /** 仅保留仍存在的分组 key，清理已消失目录的折叠状态。 */
+        void retainActiveGroups(Set<String> activeGroupKeys);
     }
 }

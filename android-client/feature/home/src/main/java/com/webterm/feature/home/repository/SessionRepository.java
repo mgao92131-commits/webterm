@@ -193,10 +193,31 @@ public final class SessionRepository {
                     false
                 ));
             }
-            cancelFallback();
             if (!wsStarted) {
+                // channel 不存在：重建 manager channel；取消旧 fallback，由连接回调接管。
+                cancelFallback();
                 wsStarted = true;
                 wsSource.start(server, this);
+                return;
+            }
+            // channel 仍标记为已启动（例如 mux 自愈重连中）。重新获得活跃观察者时，
+            // 绝不能 cancelFallback 后留下 DISCONNECTED/ERROR 且无恢复任务的死状态。
+            SessionListResult current = liveData.getValue();
+            if (current == null) return;
+            switch (current.state) {
+                case DISCONNECTED:
+                case ERROR:
+                    scheduleFallback();
+                    break;
+                case CONNECTED:
+                case CONNECTING:
+                    cancelFallback();
+                    break;
+                case AUTH_REQUIRED:
+                    // 明确鉴权失败：等待凭据恢复，不在此处热循环重试。
+                    break;
+                default:
+                    break;
             }
         }
 

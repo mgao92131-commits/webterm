@@ -54,6 +54,7 @@ public class SessionRepositoryObserveTest {
     private final Executor executor = Runnable::run;
 
     /** postDelayed 的任务只捕获不执行，便于断言退避间隔、手动推进。 */
+    private final List<DelayedTask> delayedTasks = new ArrayList<>();
     private Runnable delayedRunnable;
     private long delayedMs = -1L;
     private final Handler mainHandler = fakeHandler();
@@ -63,6 +64,9 @@ public class SessionRepositoryObserveTest {
 
     @Before
     public void setUp() {
+        delayedTasks.clear();
+        delayedRunnable = null;
+        delayedMs = -1L;
         doAnswer(invocation -> {
             wsListener.set(invocation.getArgument(1));
             return null;
@@ -285,15 +289,211 @@ public class SessionRepositoryObserveTest {
         verify(wsSource, never()).stop(server);
         verify(api, never()).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
         // 仅安排 HTTP fallback 补偿
-        assertNotNull(delayedRunnable);
+        assertNotNull(findFallbackTask());
+    }
+
+    // ── 观察者交接 / 断线恢复 ────────────────────────────────────────
+
+    @Test
+    public void observeSessions_inactiveThenActive_stillReceivesLatestSessionPush() throws JSONException {
+        ServerConfig server = server();
+        RecordingObserver observer = new RecordingObserver();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+
+        wsListener.get().onConnected();
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"s1\",\"termTitle\":\"old\",\"cwd\":\"/a\"}]"));
+        liveData.removeObserver(observer);
+
+        wsListener.get().onSession(session(
+            "{\"id\":\"s1\",\"termTitle\":\"new-title\",\"cwd\":\"/b\"}"));
+
+        RecordingObserver resumed = new RecordingObserver();
+        liveData.observeForever(resumed);
+
+        SessionRepository.SessionListResult latest = resumed.latest();
+        assertNotNull(latest);
+        assertEquals("new-title", latest.sessions.optJSONObject(0).optString("termTitle"));
+        assertEquals("/b", latest.sessions.optJSONObject(0).optString("cwd"));
+    }
+
+    @Test
+    public void observeSessions_secondObserverKeepsManagerChannelAlive() {
+        ServerConfig server = server();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver listObserver = new RecordingObserver();
+        RecordingObserver terminalObserver = new RecordingObserver();
+        liveData.observeForever(listObserver);
+        liveData.observeForever(terminalObserver);
+
+        liveData.removeObserver(listObserver);
+
+        verify(wsSource, never()).stop(server);
+        assertTrue("仍有活跃观察者时不应留下 grace stop", findGraceStopTask() == null);
+
+        liveData.removeObserver(terminalObserver);
+        assertNotNull("最后一个观察者失活后应安排 grace stop", findGraceStopTask());
+    }
+
+    @Test
+    public void observeSessions_briefZeroObserverWithinGrace_doesNotDropSubscription() {
+        ServerConfig server = server();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver terminal = new RecordingObserver();
+        liveData.observeForever(terminal);
+        wsListener.get().onConnected();
+
+        // 终端 observer 移除与列表 observer 激活之间短暂 observerCount==0
+        liveData.removeObserver(terminal);
+        DelayedTask grace = findGraceStopTask();
+        assertNotNull(grace);
+
+        RecordingObserver list = new RecordingObserver();
+        liveData.observeForever(list);
+
+        // 推进原 grace 任务：活跃后应被取消，即使手动跑也不停 WS
+        grace.runnable.run();
+        verify(wsSource, never()).stop(server);
+        verify(wsSource, times(1)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+    }
+
+    @Test
+    public void observeSessions_muxTemporaryThenReactivate_mustNotStuckWithoutRecovery()
+            throws JSONException {
+        ServerConfig server = server("cookie");
+        stubFetchReadyWith("[{\"id\":\"s1\",\"termTitle\":\"from-http\",\"cwd\":\"/recovered\"}]");
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver terminal = new RecordingObserver();
+        liveData.observeForever(terminal);
+        wsListener.get().onConnected();
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"s1\",\"termTitle\":\"stale\",\"cwd\":\"/old\"}]"));
+
+        // 终端页期间临时断线：保留 channel，安排 fallback
+        wsListener.get().onDisconnected(ChannelFailure.muxTemporary(0, "temporary"));
+        assertEquals(SessionRepository.SessionListResult.State.DISCONNECTED, terminal.latest().state);
+        assertNotNull(findFallbackTask());
+
+        // 返回列表：terminal 移除 → list 激活，期间短暂 count==0
+        liveData.removeObserver(terminal);
+        clearDelayedTasks();
+        RecordingObserver list = new RecordingObserver();
+        liveData.observeForever(list);
+
+        assertEquals(
+            "返回后状态仍为断线",
+            SessionRepository.SessionListResult.State.DISCONNECTED,
+            list.latest().state);
+        DelayedTask fallback = findFallbackTask();
+        assertNotNull(
+            "DISCONNECTED+wsStarted 重新活跃后必须恢复 fallback，否则会卡死",
+            fallback);
+        verify(wsSource, never()).stop(server);
+        verify(wsSource, times(1)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+
+        // 推进 fallback → HTTP 校准，列表拿到最新数据
+        fallback.runnable.run();
+        verify(api, times(1)).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED, list.latest().state);
+        assertEquals("from-http", list.latest().sessions.optJSONObject(0).optString("termTitle"));
+        assertEquals("/recovered", list.latest().sessions.optJSONObject(0).optString("cwd"));
+    }
+
+    @Test
+    public void observeSessions_disconnectWhileZeroObservers_thenReactivate_restoresFallback()
+            throws JSONException {
+        ServerConfig server = server("cookie");
+        stubFetchReadyWith("[{\"id\":\"s1\",\"termTitle\":\"calibrated\"}]");
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver observer = new RecordingObserver();
+        liveData.observeForever(observer);
+        wsListener.get().onConnected();
+        wsListener.get().onSessions(sessions("[{\"id\":\"s1\",\"termTitle\":\"stale\"}]"));
+
+        liveData.removeObserver(observer);
+        clearDelayedTasks();
+        // observerCount==0 时 scheduleFallback 直接退出
+        wsListener.get().onDisconnected(ChannelFailure.muxTemporary(0, "temporary"));
+        assertTrue(findFallbackTask() == null);
+
+        RecordingObserver resumed = new RecordingObserver();
+        liveData.observeForever(resumed);
+        assertEquals(SessionRepository.SessionListResult.State.DISCONNECTED, resumed.latest().state);
+        DelayedTask fallback = findFallbackTask();
+        assertNotNull("零观察者期间断线后重新激活必须安排 fallback", fallback);
+
+        fallback.runnable.run();
+        assertEquals("calibrated", resumed.latest().sessions.optJSONObject(0).optString("termTitle"));
+    }
+
+    @Test
+    public void observeSessions_serverTemporary_keepsChannelAndSchedulesFallback() {
+        ServerConfig server = server("cookie");
+        RecordingObserver observer = new RecordingObserver();
+        repository.observeSessions(server).observeForever(observer);
+
+        wsListener.get().onDisconnected(ChannelFailure.serverTemporary(503, "unavailable"));
+
+        assertEquals(SessionRepository.SessionListResult.State.DISCONNECTED, observer.latest().state);
+        verify(wsSource, never()).stop(server);
+        assertNotNull(findFallbackTask());
+    }
+
+    @Test
+    public void observeSessions_clientClosed_doesNotAutoRecover() {
+        ServerConfig server = server("cookie");
+        RecordingObserver observer = new RecordingObserver();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        liveData.observeForever(observer);
+        wsListener.get().onConnected();
+        clearDelayedTasks();
+
+        wsListener.get().onDisconnected(ChannelFailure.clientClosed(0, "client closed"));
+
+        verify(api, never()).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
+        assertTrue(findFallbackTask() == null);
+        // 本地关闭不改写为 DISCONNECTED 自动恢复语义
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED, observer.latest().state);
+    }
+
+    @Test
+    public void observeSessions_authRequired_doesNotHotLoopFallbackWithoutRecoveryFlag() {
+        ServerConfig server = server("expired");
+        RecordingObserver observer = new RecordingObserver();
+        AtomicInteger fetchCalls = new AtomicInteger();
+        doAnswer(invocation -> {
+            fetchCalls.incrementAndGet();
+            WebTermApi.SessionsCallback callback = invocation.getArgument(1);
+            callback.onError(401, "unauthorized");
+            return null;
+        }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
+
+        repository.observeSessions(server).observeForever(observer);
+        wsListener.get().onDisconnected(ChannelFailure.authRequired(401, "unauthorized"));
+
+        assertEquals(SessionRepository.SessionListResult.State.AUTH_REQUIRED, observer.latest().state);
+        assertEquals(1, fetchCalls.get());
+        assertTrue("AUTH_REQUIRED 明确失败后不得安排 fallback 热循环", findFallbackTask() == null);
+
+        // 重新活跃也不应因 startObserving 自动热循环
+        clearDelayedTasks();
+        repository.observeSessions(server).removeObserver(observer);
+        repository.observeSessions(server).observeForever(observer);
+        assertTrue(findFallbackTask() == null);
+        assertEquals(1, fetchCalls.get());
     }
 
     // ── helpers ──────────────────────────────────────────────────────
 
     private void stubFetchReady() {
+        stubFetchReadyWith("[{\"id\":\"s1\"}]");
+    }
+
+    private void stubFetchReadyWith(String sessionsJson) {
         doAnswer(invocation -> {
             WebTermApi.SessionsCallback callback = invocation.getArgument(1);
-            callback.onReady(sessions("[{\"id\":\"s1\"}]"));
+            callback.onReady(sessions(sessionsJson));
             return null;
         }).when(api).fetchSessions(any(ServerConfig.class), any(WebTermApi.SessionsCallback.class));
     }
@@ -331,11 +531,67 @@ public class SessionRepositoryObserveTest {
         // postDelayed is captured but not executed synchronously so grace-period and
         // backoff tests can assert the delay and advance manually.
         doAnswer(invocation -> {
-            delayedRunnable = invocation.getArgument(0);
-            delayedMs = invocation.getArgument(1);
+            Runnable runnable = invocation.getArgument(0);
+            long delay = invocation.getArgument(1);
+            delayedTasks.removeIf(task -> task.runnable == runnable);
+            DelayedTask task = new DelayedTask(runnable, delay);
+            delayedTasks.add(task);
+            delayedRunnable = runnable;
+            delayedMs = delay;
             return true;
         }).when(handler).postDelayed(any(Runnable.class), anyLong());
+        doAnswer(invocation -> {
+            Runnable runnable = invocation.getArgument(0);
+            delayedTasks.removeIf(task -> task.runnable == runnable);
+            if (delayedRunnable == runnable) {
+                delayedRunnable = delayedTasks.isEmpty()
+                    ? null
+                    : delayedTasks.get(delayedTasks.size() - 1).runnable;
+                delayedMs = delayedTasks.isEmpty()
+                    ? -1L
+                    : delayedTasks.get(delayedTasks.size() - 1).delayMs;
+            }
+            return null;
+        }).when(handler).removeCallbacks(any(Runnable.class));
         return handler;
+    }
+
+    private void clearDelayedTasks() {
+        delayedTasks.clear();
+        delayedRunnable = null;
+        delayedMs = -1L;
+    }
+
+    private DelayedTask findFallbackTask() {
+        for (DelayedTask task : delayedTasks) {
+            if (task.delayMs >= 3000L && task.delayMs <= 60000L && task.delayMs != 30000L) {
+                return task;
+            }
+            // fallback 初始 3000；grace 固定 30000。若 delay==3000 即 fallback。
+            if (task.delayMs == 3000L) return task;
+        }
+        // 退避翻倍后可能是 6000/12000...；grace 只有 30000
+        for (DelayedTask task : delayedTasks) {
+            if (task.delayMs != 30000L) return task;
+        }
+        return null;
+    }
+
+    private DelayedTask findGraceStopTask() {
+        for (DelayedTask task : delayedTasks) {
+            if (task.delayMs == 30000L) return task;
+        }
+        return null;
+    }
+
+    private static final class DelayedTask {
+        final Runnable runnable;
+        final long delayMs;
+
+        DelayedTask(Runnable runnable, long delayMs) {
+            this.runnable = runnable;
+            this.delayMs = delayMs;
+        }
     }
 
     private static final class RecordingObserver implements Observer<SessionRepository.SessionListResult> {

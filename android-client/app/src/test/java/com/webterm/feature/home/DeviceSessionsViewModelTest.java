@@ -1,7 +1,9 @@
 package com.webterm.feature.home;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -78,6 +80,72 @@ public class DeviceSessionsViewModelTest {
         viewModel.refresh();
 
         verify(repository).refresh(server);
+    }
+
+    @Test
+    public void getUiState_afterInactivePeriod_emitsLatestRepositoryResultWithoutNewViewModel() {
+        ServerConfig server = server();
+        RecordingObserver<DeviceSessionsUiState> observer = new RecordingObserver<>();
+        viewModel.setServer(server);
+        viewModel.getUiState().observeForever(observer);
+
+        repoData.setValue(new SessionRepository.SessionListResult(
+            sessions("[{\"id\":\"s1\",\"termTitle\":\"old\",\"cwd\":\"/a\"}]"),
+            SessionRepository.SessionListResult.State.CONNECTED,
+            null,
+            false
+        ));
+        assertEquals("old", observer.latest().sessions.optJSONObject(0).optString("termTitle"));
+
+        // 模拟离开列表：MediatorLiveData 失活
+        viewModel.getUiState().removeObserver(observer);
+
+        // Repository 在失活期间更新（终端页观察者仍活跃时的推送）
+        repoData.setValue(new SessionRepository.SessionListResult(
+            sessions("[{\"id\":\"s1\",\"termTitle\":\"latest\",\"cwd\":\"/b\","
+                + "\"notification\":{\"source\":\"claude\",\"message\":\"done\",\"importance\":\"normal\"}}]"),
+            SessionRepository.SessionListResult.State.CONNECTED,
+            null,
+            false
+        ));
+
+        // 返回列表：同一 ViewModel 重新观察，必须拿到最新结果
+        viewModel.getUiState().observeForever(observer);
+        DeviceSessionsUiState uiState = observer.latest();
+        assertNotNull(uiState);
+        assertEquals("latest", uiState.sessions.optJSONObject(0).optString("termTitle"));
+        assertEquals("/b", uiState.sessions.optJSONObject(0).optString("cwd"));
+        assertEquals(DeviceSessionsUiState.ConnectionState.CONNECTED, uiState.connectionState);
+    }
+
+    @Test
+    public void getUiState_disconnectedStateSurfacesToStatusIndicatorMapping() {
+        ServerConfig server = server();
+        RecordingObserver<DeviceSessionsUiState> observer = new RecordingObserver<>();
+        viewModel.setServer(server);
+        viewModel.getUiState().observeForever(observer);
+
+        repoData.setValue(new SessionRepository.SessionListResult(
+            sessions("[{\"id\":\"s1\"}]"),
+            SessionRepository.SessionListResult.State.DISCONNECTED,
+            null,
+            false
+        ));
+
+        assertEquals(DeviceSessionsUiState.ConnectionState.DISCONNECTED,
+            observer.latest().connectionState);
+    }
+
+    @Test
+    public void collapseState_persistsUntilGroupRemoved() {
+        viewModel.setGroupCollapsed("srv#/a", true);
+        assertTrue(viewModel.isGroupCollapsed("srv#/a"));
+
+        viewModel.retainActiveGroups(java.util.Collections.singleton("srv#/a"));
+        assertTrue(viewModel.isGroupCollapsed("srv#/a"));
+
+        viewModel.retainActiveGroups(java.util.Collections.singleton("srv#/b"));
+        assertFalse(viewModel.isGroupCollapsed("srv#/a"));
     }
 
     @Test
