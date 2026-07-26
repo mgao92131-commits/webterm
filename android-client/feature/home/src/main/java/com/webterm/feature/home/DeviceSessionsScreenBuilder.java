@@ -7,7 +7,6 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -92,7 +91,8 @@ public final class DeviceSessionsScreenBuilder {
 
         RecyclerView sessionList = new RecyclerView(activity);
         sessionList.setLayoutManager(new LinearLayoutManager(activity));
-        sessionList.setItemAnimator(new DefaultItemAnimator());
+        SessionListItemAnimator animator = new SessionListItemAnimator();
+        sessionList.setItemAnimator(animator);
         sessionList.setClipToPadding(false);
         sessionList.setPadding(
             UIUtils.dp(activity, DesignTokens.SPACE_3),
