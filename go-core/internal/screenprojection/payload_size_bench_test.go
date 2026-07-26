@@ -1,6 +1,7 @@
 package screenprojection
 
 import (
+	"encoding/binary"
 	"fmt"
 	"testing"
 
@@ -56,6 +57,15 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		Status: terminalengine.HistoryRangeOK, Extent: terminalengine.HistoryExtent{FirstSeq: 1, LastSeq: 32},
 		Lines: payloadHistory(1, 32, "page").Lines, HistoryGeneration: 1,
 	}
+	prompt80 := payloadCommit(24, 80,
+		paddedPayloadLine(300, 2, 23, 80, "user@host:~$ ", false))
+	command120 := payloadCommit(24, 120,
+		paddedPayloadLine(301, 2, 23, 120, "git status --short", false))
+	styledBlank80 := payloadCommit(24, 80,
+		paddedPayloadLine(302, 2, 23, 80, "prompt", true))
+	styledBlank80.Styles = []terminalengine.TerminalStyle{{ID: 1}}
+	cjkEmoji80 := payloadCommit(24, 80,
+		paddedPayloadLine(303, 2, 23, 80, "你好 👩‍💻 e\u0301", false))
 
 	type benchmarkCase struct {
 		name   string
@@ -89,6 +99,30 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		{"18_HistoryRangeLocalDictionary", func() ([]byte, error) {
 			return screenprotocolv2.EncodeHistoryRangeResponse("r", "instance", 1, historyRange)
 		}},
+		{"19a_Prompt80_UntrimmedBefore", func() ([]byte, error) {
+			return encodeCommitWithUntrimmedLines(prompt80)
+		}},
+		{"19b_Prompt80_TrimmedAfter", func() ([]byte, error) {
+			return screenprotocolv2.EncodeTerminalCommit(prompt80, 0)
+		}},
+		{"20a_Command120_UntrimmedBefore", func() ([]byte, error) {
+			return encodeCommitWithUntrimmedLines(command120)
+		}},
+		{"20b_Command120_TrimmedAfter", func() ([]byte, error) {
+			return screenprotocolv2.EncodeTerminalCommit(command120, 0)
+		}},
+		{"21a_StyledBlank80_UntrimmedBefore", func() ([]byte, error) {
+			return encodeCommitWithUntrimmedLines(styledBlank80)
+		}},
+		{"21b_StyledBlank80_TrimmedAfter", func() ([]byte, error) {
+			return screenprotocolv2.EncodeTerminalCommit(styledBlank80, 0)
+		}},
+		{"22a_CJKEmoji80_UntrimmedBefore", func() ([]byte, error) {
+			return encodeCommitWithUntrimmedLines(cjkEmoji80)
+		}},
+		{"22b_CJKEmoji80_TrimmedAfter", func() ([]byte, error) {
+			return screenprotocolv2.EncodeTerminalCommit(cjkEmoji80, 0)
+		}},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
@@ -106,6 +140,94 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 			b.ReportMetric(float64(len(payload)), "protobuf_payload_bytes")
 		})
 	}
+}
+
+func paddedPayloadLine(
+	id, version uint64, row, columns int, text string, styledTrailingBlank bool,
+) terminalengine.Line {
+	cells := make([]terminalengine.Cell, 0, columns)
+	physicalColumns := 0
+	for _, r := range []rune(text) {
+		width := uint8(1)
+		if r > 0x2fff {
+			width = 2
+		}
+		cells = append(cells, terminalengine.Cell{Text: string(r), Width: width})
+		physicalColumns += int(width)
+	}
+	for physicalColumns < columns {
+		cell := terminalengine.Cell{Text: " ", Width: 1}
+		if styledTrailingBlank && physicalColumns == columns-1 {
+			cell.StyleID = 1
+		}
+		cells = append(cells, cell)
+		physicalColumns++
+	}
+	return terminalengine.Line{
+		ID: id, Version: version, Row: row,
+		Runs: []terminalengine.CellRun{{Col: 0, Cells: cells}},
+	}
+}
+
+// encodeCommitWithUntrimmedLines recreates the immediately previous compact
+// encoder's behavior for benchmark comparison only: every default trailing
+// blank contributes UTF-8 and glyph metadata.
+func encodeCommitWithUntrimmedLines(frame terminalengine.ScreenFrame) ([]byte, error) {
+	wire, err := screenprotocolv2.EncodeTerminalCommit(frame, 0)
+	if err != nil {
+		return nil, err
+	}
+	var envelope pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &envelope); err != nil {
+		return nil, err
+	}
+	for i, line := range frame.Screen {
+		envelope.GetTerminalCommit().GetScreen().Writes[i].Line = untrimmedLineData(line)
+	}
+	return proto.Marshal(&envelope)
+}
+
+func untrimmedLineData(line terminalengine.Line) *pb.LineData {
+	result := &pb.LineData{
+		LineId: line.ID, LineVersion: line.Version,
+		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq,
+	}
+	var open *pb.StyleSpan
+	for _, run := range line.Runs {
+		col := run.Col
+		for _, cell := range run.Cells {
+			width := int(cell.Width)
+			if width != 2 {
+				width = 1
+			}
+			text := cell.Text
+			if text == "" {
+				text = " "
+			}
+			encoded := []byte(text)
+			result.Utf8Text = append(result.Utf8Text, encoded...)
+			var scratch [binary.MaxVarintLen64]byte
+			n := binary.PutUvarint(
+				scratch[:], uint64(len(encoded))<<1|uint64(width-1))
+			result.GlyphMeta = append(result.GlyphMeta, scratch[:n]...)
+			if cell.StyleID != 0 || cell.LinkID != 0 {
+				if open != nil && open.EndCol == int32(col) &&
+					open.StyleId == cell.StyleID && open.LinkId == cell.LinkID {
+					open.EndCol = int32(col + width)
+				} else {
+					open = &pb.StyleSpan{
+						StartCol: int32(col), EndCol: int32(col + width),
+						StyleId: cell.StyleID, LinkId: cell.LinkID,
+					}
+					result.StyleSpans = append(result.StyleSpans, open)
+				}
+			} else {
+				open = nil
+			}
+			col += width
+		}
+	}
+	return result
 }
 
 func compactASCII80LinePayload() ([]byte, error) {

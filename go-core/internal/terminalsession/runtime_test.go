@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	headlessterm "github.com/danielgatis/go-headless-term"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -31,6 +32,74 @@ func TestScreenClientHistoryRangeTokenBucket(t *testing.T) {
 	}
 	if ok, _ := client.allowHistoryRange(now.Add(125 * time.Millisecond)); !ok {
 		t.Fatal("one token must refill after 125ms at 8 requests/second")
+	}
+}
+
+func TestRuntimeHistoryRangeBindsGenerationAcrossAllStatuses(t *testing.T) {
+	r := newRuntimeTestHarness(t, WithScrollbackLimits(2, 0))
+	for i := 0; i < 4; i++ {
+		r.scrollback.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(100 + i), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+	type response struct {
+		data  terminalengine.HistoryRangeData
+		stale bool
+	}
+	responses := make(chan response, 3)
+	r.AttachClient(&ScreenClient{
+		ID: "history-generation", Send: func(terminalengine.ScreenFrame) {},
+		SendHistoryRange: func(_ string, _ string, _ uint64,
+			data terminalengine.HistoryRangeData, stale bool) {
+			responses <- response{data: data, stale: stale}
+		},
+	})
+	info := r.Info()
+
+	r.RequestHistoryRange(
+		"history-generation", "ok", info.InstanceID,
+		info.LayoutEpoch, 1, 3, 4)
+	ok := <-responses
+	if ok.stale || ok.data.Status != terminalengine.HistoryRangeOK ||
+		ok.data.HistoryGeneration != 1 {
+		t.Fatalf("OK response=%+v", ok)
+	}
+
+	r.RequestHistoryRange(
+		"history-generation", "trimmed", info.InstanceID,
+		info.LayoutEpoch, 1, 1, 4)
+	trimmed := <-responses
+	if trimmed.stale || trimmed.data.Status != terminalengine.HistoryRangeTrimmed ||
+		trimmed.data.HistoryGeneration != 1 {
+		t.Fatalf("TRIMMED response=%+v", trimmed)
+	}
+
+	r.RequestHistoryRange(
+		"history-generation", "stale", info.InstanceID,
+		info.LayoutEpoch, 99, 3, 4)
+	stale := <-responses
+	if !stale.stale || stale.data.HistoryGeneration != 1 ||
+		stale.data.Extent.FirstSeq != 3 || stale.data.Extent.LastSeq != 4 {
+		t.Fatalf("STALE response=%+v", stale)
+	}
+
+	for i := 0; i < 6; i++ {
+		r.RequestHistoryRange(
+			"history-generation", "burst", info.InstanceID,
+			info.LayoutEpoch, 1, 3, 4)
+		if got := <-responses; got.data.Status != terminalengine.HistoryRangeOK {
+			t.Fatalf("burst response %d=%+v", i, got)
+		}
+	}
+	r.RequestHistoryRange(
+		"history-generation", "retry", info.InstanceID,
+		info.LayoutEpoch, 1, 3, 4)
+	retry := <-responses
+	if retry.stale || retry.data.Status != terminalengine.HistoryRangeRetryable ||
+		retry.data.HistoryGeneration != 1 || retry.data.RetryAfterMS == 0 ||
+		retry.data.Extent.FirstSeq != 3 || retry.data.Extent.LastSeq != 4 {
+		t.Fatalf("RETRYABLE response=%+v", retry)
 	}
 }
 

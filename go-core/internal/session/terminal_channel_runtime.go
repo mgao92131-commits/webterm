@@ -20,19 +20,20 @@ import (
 )
 
 type terminalChannelRuntime struct {
-	sink             ChannelFrameSink
-	session          *TerminalSession
-	send             chan outboundMessage
-	ready            atomic.Bool
-	done             chan struct{}
-	doneOnce         chan struct{}
-	logger           *logs.Logger
-	screenClientID   string
-	ownerKey         string
-	clientInstanceID string
-	screenAttached   atomic.Bool
-	writerStarted    atomic.Bool
-	screenHandler    *screenprotocolv2.Handler
+	sink                 ChannelFrameSink
+	session              *TerminalSession
+	send                 chan outboundMessage
+	ready                atomic.Bool
+	done                 chan struct{}
+	doneOnce             chan struct{}
+	logger               *logs.Logger
+	screenClientID       string
+	ownerKey             string
+	clientInstanceID     string
+	coldHistoryTailLines uint32
+	screenAttached       atomic.Bool
+	writerStarted        atomic.Bool
+	screenHandler        *screenprotocolv2.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -102,7 +103,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 	}
 	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
 		if frame.Kind == terminalengine.FrameSnapshot {
-			return screenprotocolv2.EncodeBaseline(frame, 0)
+			return screenprotocolv2.EncodeBaseline(frame, client.coldHistoryTailLines)
 		}
 		return screenprotocolv2.EncodeTerminalCommit(frame, 0)
 	}
@@ -153,7 +154,7 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 		screenprotocolv2.WithHistoryRangeCallback(func(req *pb.HistoryRangeRequest) {
 			if rt != nil {
 				rt.RequestHistoryRange(client.screenClientID, req.RequestId, req.InstanceId,
-					req.LayoutEpoch, req.FromSeq, req.ToSeq)
+					req.LayoutEpoch, req.HistoryGeneration, req.FromSeq, req.ToSeq)
 			}
 		}),
 		screenprotocolv2.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
@@ -541,6 +542,7 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		return
 	}
 	client.clientInstanceID = hello.GetClientInstanceId()
+	client.coldHistoryTailLines = hello.GetColdHistoryTailLines()
 	client.attachScreenClient(hello)
 	client.ready.Store(true)
 }
@@ -655,13 +657,15 @@ func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage termin
 		baseline := syncMessage.State
 		baseline.Kind = terminalengine.FrameSnapshot
 		baseline.PreserveCompatibleHistory = true
-		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(baseline, 0)
+		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(
+			baseline, client.coldHistoryTailLines)
 		if baselineErr == nil && len(commitPayload) >= len(baselinePayload) {
 			return baselinePayload, "baseline", nil
 		}
 		return commitPayload, "commit", nil
 	}
-	payload, err := screenprotocolv2.EncodeBaseline(syncMessage.Projection, 0)
+	payload, err := screenprotocolv2.EncodeBaseline(
+		syncMessage.Projection, client.coldHistoryTailLines)
 	return payload, "baseline", err
 }
 
@@ -680,7 +684,7 @@ func (client *terminalChannelRuntime) sendScreenHistoryRange(
 	var err error
 	if stale {
 		payload, err = screenprotocolv2.EncodeStaleHistoryRange(
-			requestID, instanceID, epoch, data.Extent)
+			requestID, instanceID, epoch, data.HistoryGeneration, data.Extent)
 	} else {
 		payload, err = screenprotocolv2.EncodeHistoryRangeResponse(
 			requestID, instanceID, epoch, data)

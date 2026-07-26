@@ -269,6 +269,14 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 	}
 }
 
+// HistoryGeneration returns the identity of the currently published history
+// lineage. HistoryRange responses use it even when no line body is returned.
+func (p *Projector) HistoryGeneration() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.historyGeneration
+}
+
 // ExportState exports the authoritative terminal once for a screen revision.
 // Runtime shares this immutable value across all clients before deriving their
 // individual snapshot/patch frames. This keeps export cost independent of the
@@ -590,6 +598,8 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 	for _, line := range old.History.Lines {
 		oldHistory[line.HistorySeq] = struct{}{}
 	}
+	oldHistoryFirst := old.History.FirstIncludedHistorySeq
+	oldHistoryLast := old.History.LastIncludedHistorySeq
 	promotedIDs := make(map[uint64]struct{})
 	activeNow := make(map[uint64]struct{}, len(new.Screen))
 	for _, line := range new.Screen {
@@ -615,7 +625,10 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 	var historyAppend []terminalengine.Line
 	historyBytes := 0
 	for _, line := range new.History.Lines {
-		if _, seen := oldHistory[line.HistorySeq]; !seen {
+		_, explicitlySeen := oldHistory[line.HistorySeq]
+		knownByContiguousRange := oldHistoryFirst > 0 &&
+			line.HistorySeq >= oldHistoryFirst && line.HistorySeq <= oldHistoryLast
+		if !explicitlySeen && !knownByContiguousRange {
 			if _, promoted := promotedIDs[line.ID]; promoted {
 				continue
 			}

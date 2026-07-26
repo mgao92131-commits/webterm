@@ -62,9 +62,6 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeRes
 			tailLast > state.History.LastIncludedHistorySeq)) {
 		return baseline(compatibleHistory)
 	}
-	if tailLast == 0 {
-		tailFirst = 1
-	}
 	seen := make(map[uint64]struct{}, len(token.ActiveRows))
 	oldScreen := make([]terminalengine.Line, len(token.ActiveRows))
 	identityEqual := token.ActiveBuffer == state.ActiveBuffer
@@ -90,8 +87,15 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeRes
 		Rows: state.Rows, Cols: state.Cols, ActiveBuffer: token.ActiveBuffer,
 		Screen: oldScreen, DictionaryGeneration: token.DictionaryGeneration,
 		HistoryGeneration: token.HistoryGeneration,
-		History: terminalengine.HistoryWindow{FirstAvailableHistorySeq: tailFirst,
-			LastIncludedHistorySeq: tailLast},
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: state.History.FirstAvailableHistorySeq,
+			LastIncludedHistorySeq:   tailLast,
+		},
+	}
+	if tailLast > 0 {
+		// Resume appends only content newer than the client's contiguous tail.
+		// Any older local gap remains a HistoryRange concern.
+		old.History.FirstIncludedHistorySeq = state.History.FirstAvailableHistorySeq
 	}
 	for i, created := range p.changeIndex.StyleCreatedRevision {
 		if created <= token.ScreenRevision && i < len(state.Styles) {

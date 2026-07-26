@@ -12,9 +12,29 @@ import (
 
 const ProtocolVersion uint32 = 2
 
-func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint64) ([]byte, error) {
+const (
+	DefaultColdHistoryTailLines uint32 = 128
+	MaxColdHistoryTailLines     uint32 = 128
+)
+
+func EncodeBaseline(frame terminalengine.ScreenFrame, requestedColdTailLines uint32) ([]byte, error) {
 	screen := encodeLines(screenLines(frame.Screen))
-	history := encodeLines(historyLines(frame.History.Lines))
+	historyLines := historyLines(frame.History.Lines)
+	if frame.PreserveCompatibleHistory {
+		historyLines = nil
+	} else {
+		limit := requestedColdTailLines
+		if limit == 0 {
+			limit = DefaultColdHistoryTailLines
+		}
+		if limit > MaxColdHistoryTailLines {
+			limit = MaxColdHistoryTailLines
+		}
+		if len(historyLines) > int(limit) {
+			historyLines = historyLines[len(historyLines)-int(limit):]
+		}
+	}
+	history := encodeLines(historyLines)
 	baseline := &pb.Baseline{
 		SessionId:      frame.SessionID,
 		InstanceId:     frame.InstanceID,
@@ -144,15 +164,17 @@ func EncodeHistoryRangeResponse(
 }
 
 func EncodeStaleHistoryRange(
-	requestID, instanceID string, epoch uint64, extent terminalengine.HistoryExtent,
+	requestID, instanceID string, epoch, historyGeneration uint64,
+	extent terminalengine.HistoryExtent,
 ) ([]byte, error) {
 	return marshalPayload(&pb.ScreenEnvelope_HistoryRangeResponse{
 		HistoryRangeResponse: &pb.HistoryRangeResponse{
-			RequestId:       requestID,
-			InstanceId:      instanceID,
-			LayoutEpoch:     epoch,
-			Status:          pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_PROJECTION,
-			AvailableExtent: encodeExtent(extent),
+			RequestId:         requestID,
+			InstanceId:        instanceID,
+			LayoutEpoch:       epoch,
+			Status:            pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_PROJECTION,
+			AvailableExtent:   encodeExtent(extent),
+			HistoryGeneration: historyGeneration,
 		},
 	})
 }
@@ -275,7 +297,7 @@ func encodeLine(line terminalengine.Line) *pb.LineData {
 			}
 			cells = append(cells, positionedCell{col: col, cell: cell})
 			col += width
-			if col > lastCol {
+			if !isDefaultTrailingCell(cell) && col > lastCol {
 				lastCol = col
 			}
 		}
@@ -316,6 +338,12 @@ func encodeLine(line terminalengine.Line) *pb.LineData {
 		col += width
 	}
 	return wire
+}
+
+func isDefaultTrailingCell(cell terminalengine.Cell) bool {
+	return cell.Width != 2 &&
+		(cell.Text == "" || cell.Text == " ") &&
+		cell.StyleID == 0 && cell.LinkID == 0
 }
 
 func lineIDs(lines []terminalengine.Line) []uint64 {

@@ -38,8 +38,191 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 	if got := baseline.GetHistoryExtent(); got.GetFirstSeq() != 4 || got.GetLastSeq() != 3 {
 		t.Fatalf("empty extent = %d..%d, want 4..3", got.GetFirstSeq(), got.GetLastSeq())
 	}
-	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x " {
-		t.Fatal("baseline line content was not encoded")
+	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x" {
+		t.Fatal("default trailing blank was not trimmed")
+	}
+}
+
+func TestEncodeHistoryRangeStatusesAlwaysCarryGenerationAndExtent(t *testing.T) {
+	extent := terminalengine.HistoryExtent{FirstSeq: 10, LastSeq: 20}
+	staleWire, err := EncodeStaleHistoryRange("stale", "i1", 2, 7, extent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var staleEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(staleWire, &staleEnv); err != nil {
+		t.Fatal(err)
+	}
+	stale := staleEnv.GetHistoryRangeResponse()
+	if stale.GetHistoryGeneration() != 7 ||
+		stale.GetAvailableExtent().GetFirstSeq() != 10 ||
+		stale.GetAvailableExtent().GetLastSeq() != 20 {
+		t.Fatalf("stale response lost identity/extent: %+v", stale)
+	}
+
+	retryWire, err := EncodeHistoryRangeResponse("retry", "i1", 2,
+		terminalengine.HistoryRangeData{
+			Status: terminalengine.HistoryRangeRetryable, Extent: extent,
+			RetryAfterMS: 250, HistoryGeneration: 7,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retryEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(retryWire, &retryEnv); err != nil {
+		t.Fatal(err)
+	}
+	retry := retryEnv.GetHistoryRangeResponse()
+	if retry.GetHistoryGeneration() != 7 ||
+		retry.GetAvailableExtent().GetFirstSeq() != 10 ||
+		retry.GetAvailableExtent().GetLastSeq() != 20 ||
+		retry.GetRetryAfterMs() != 250 {
+		t.Fatalf("retry response lost generation/extent/backoff: %+v", retry)
+	}
+}
+
+func TestEncodeBaselineHonorsColdTailAndPreservePolicy(t *testing.T) {
+	history := make([]terminalengine.Line, 200)
+	for i := range history {
+		seq := uint64(i + 1)
+		history[i] = terminalengine.Line{
+			ID: seq + 1000, Version: 1, HistorySeq: seq,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
+				{Text: "x", Width: 1},
+			}}},
+		}
+	}
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "s", InstanceID: "i",
+		Epoch: 1, Seq: 1, Rows: 1, Cols: 1,
+		DictionaryGeneration: 1, HistoryGeneration: 1,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 1,
+			LastIncludedHistorySeq: 200, Lines: history,
+		},
+		Screen: []terminalengine.Line{{ID: 1, Version: 1}},
+	}
+	for _, tc := range []struct {
+		name      string
+		requested uint32
+		want      int
+	}{
+		{"sixteen", 16, 16},
+		{"sixty-four", 64, 64},
+		{"clamped", 999, 128},
+		{"default", 0, 128},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := EncodeBaseline(frame, tc.requested)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var env pb.ScreenEnvelope
+			if err := proto.Unmarshal(wire, &env); err != nil {
+				t.Fatal(err)
+			}
+			baseline := env.GetBaseline()
+			if got := len(baseline.GetHistoryTail().GetLines()); got != tc.want {
+				t.Fatalf("tail lines=%d, want %d", got, tc.want)
+			}
+			if baseline.GetHistoryExtent().GetFirstSeq() != 1 ||
+				baseline.GetHistoryExtent().GetLastSeq() != 200 {
+				t.Fatalf("extent changed by per-client tail policy: %+v",
+					baseline.GetHistoryExtent())
+			}
+		})
+	}
+	if len(frame.History.Lines) != 200 {
+		t.Fatalf("shared canonical history mutated: %d", len(frame.History.Lines))
+	}
+	short := frame
+	short.History.Lines = short.History.Lines[:5]
+	short.History.LastIncludedHistorySeq = 5
+	wire, err := EncodeBaseline(short, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shortEnv pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &shortEnv); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(shortEnv.GetBaseline().GetHistoryTail().GetLines()); got != 5 {
+		t.Fatalf("short history tail=%d, want existing 5", got)
+	}
+	frame.PreserveCompatibleHistory = true
+	wire, err = EncodeBaseline(frame, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(env.GetBaseline().GetHistoryTail().GetLines()); got != 0 {
+		t.Fatalf("preserve baseline repeated %d history bodies", got)
+	}
+	if env.GetBaseline().GetHistoryExtent().GetLastSeq() != 200 {
+		t.Fatal("preserve baseline lost authoritative extent")
+	}
+}
+
+func TestEncodeLineTrimsOnlySemanticallyDefaultTrailingCells(t *testing.T) {
+	line := terminalengine.Line{
+		ID: 1, Version: 1,
+		Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
+			{Text: "a", Width: 1},
+			{Text: " ", Width: 1},
+			{Text: "b", Width: 1},
+			{Text: " ", Width: 1},
+			{Text: " ", Width: 1},
+		}}},
+	}
+	wire := encodeLine(line)
+	if got := string(wire.GetUtf8Text()); got != "a b" {
+		t.Fatalf("trimmed text=%q, want internal blank preserved", got)
+	}
+	if len(wire.GetGlyphMeta()) != 3 {
+		t.Fatalf("glyph count=%d, want 3", len(wire.GetGlyphMeta()))
+	}
+
+	line.Runs[0].Cells[4].StyleID = 1
+	styled := encodeLine(line)
+	if got := string(styled.GetUtf8Text()); got != "a b  " {
+		t.Fatalf("styled trailing blank was trimmed: %q", got)
+	}
+	if len(styled.GetStyleSpans()) != 1 ||
+		styled.GetStyleSpans()[0].GetStartCol() != 4 ||
+		styled.GetStyleSpans()[0].GetEndCol() != 5 {
+		t.Fatalf("styled span=%+v", styled.GetStyleSpans())
+	}
+
+	line.Runs[0].Cells[4].StyleID = 0
+	line.Runs[0].Cells[4].LinkID = 1
+	linked := encodeLine(line)
+	if got := string(linked.GetUtf8Text()); got != "a b  " {
+		t.Fatalf("linked trailing blank was trimmed: %q", got)
+	}
+}
+
+func TestEncodeLinePreservesWideEmojiCombiningAndColumnHoles(t *testing.T) {
+	line := terminalengine.Line{
+		ID: 1, Version: 1,
+		Runs: []terminalengine.CellRun{
+			{Col: 0, Cells: []terminalengine.Cell{
+				{Text: "你", Width: 2},
+			}},
+			{Col: 3, Cells: []terminalengine.Cell{
+				{Text: "e\u0301", Width: 1},
+				{Text: "👩‍💻", Width: 2},
+			}},
+		},
+	}
+	wire := encodeLine(line)
+	if got := string(wire.GetUtf8Text()); got != "你 e\u0301👩‍💻" {
+		t.Fatalf("wide/hole/combining text=%q", got)
+	}
+	if len(wire.GetGlyphMeta()) != 4 {
+		t.Fatalf("glyph metadata entries=%d, want 4", len(wire.GetGlyphMeta()))
 	}
 }
 

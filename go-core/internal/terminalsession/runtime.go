@@ -333,10 +333,13 @@ func (r *Runtime) Resize(clientID, leaseID string, cols, rows int) {
 	r.postEvent(resizeEvent{clientID: clientID, leaseID: leaseID, cols: cols, rows: rows})
 }
 
-func (r *Runtime) RequestHistoryRange(clientID, requestID, instanceID string, epoch, fromSeq, toSeq uint64) {
+func (r *Runtime) RequestHistoryRange(
+	clientID, requestID, instanceID string,
+	epoch, historyGeneration, fromSeq, toSeq uint64,
+) {
 	r.postEvent(historyRangeRequestEvent{
 		clientID: clientID, requestID: requestID, instanceID: instanceID,
-		epoch: epoch, fromSeq: fromSeq, toSeq: toSeq,
+		epoch: epoch, historyGeneration: historyGeneration, fromSeq: fromSeq, toSeq: toSeq,
 	})
 }
 
@@ -1033,22 +1036,27 @@ func (r *Runtime) handleHistoryRangeRequest(e historyRangeRequestEvent) {
 	if client == nil || client.SendHistoryRange == nil {
 		return
 	}
+	currentHistoryGeneration := r.projector.HistoryGeneration()
+	stale := e.instanceID != r.instanceID || e.epoch != r.layoutEpoch ||
+		e.historyGeneration != currentHistoryGeneration
+	if stale {
+		client.SendHistoryRange(
+			e.requestID, r.instanceID, r.layoutEpoch,
+			terminalengine.HistoryRangeData{
+				Extent: r.scrollback.Extent(), HistoryGeneration: currentHistoryGeneration,
+			}, true,
+		)
+		return
+	}
 	if allowed, retryAfter := client.allowHistoryRange(time.Now()); !allowed {
 		client.SendHistoryRange(
 			e.requestID, r.instanceID, r.layoutEpoch,
 			terminalengine.HistoryRangeData{
-				Status:       terminalengine.HistoryRangeRetryable,
-				Extent:       r.scrollback.Extent(),
-				RetryAfterMS: retryAfter,
+				Status:            terminalengine.HistoryRangeRetryable,
+				Extent:            r.scrollback.Extent(),
+				RetryAfterMS:      retryAfter,
+				HistoryGeneration: currentHistoryGeneration,
 			}, false,
-		)
-		return
-	}
-	stale := e.instanceID != r.instanceID || e.epoch != r.layoutEpoch
-	if stale {
-		client.SendHistoryRange(
-			e.requestID, r.instanceID, r.layoutEpoch,
-			terminalengine.HistoryRangeData{Extent: r.scrollback.Extent()}, true,
 		)
 		return
 	}
@@ -1289,12 +1297,13 @@ type clientDetachEvent struct {
 }
 
 type historyRangeRequestEvent struct {
-	clientID   string
-	requestID  string
-	instanceID string
-	epoch      uint64
-	fromSeq    uint64
-	toSeq      uint64
+	clientID          string
+	requestID         string
+	instanceID        string
+	epoch             uint64
+	historyGeneration uint64
+	fromSeq           uint64
+	toSeq             uint64
 }
 
 type clientInitialSyncResultEvent struct {

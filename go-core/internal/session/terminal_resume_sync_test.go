@@ -1,0 +1,139 @@
+package session
+
+import (
+	"fmt"
+	"testing"
+
+	"google.golang.org/protobuf/proto"
+
+	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	"webterm/go-core/internal/terminalengine"
+	"webterm/go-core/internal/terminalsession"
+)
+
+func TestInitialResumeSyncComparesActualCommitAndBodylessPreserveBaseline(t *testing.T) {
+	state := resumeSyncState(200, 80, 128)
+	small := state
+	small.Kind = terminalengine.FramePatch
+	small.BaseRevision = 1
+	small.Seq = 2
+	small.Screen = []terminalengine.Line{state.Screen[199]}
+	small.Screen[0].Version++
+
+	client := &terminalChannelRuntime{coldHistoryTailLines: 16}
+	payload, kind, err := client.encodeInitialScreenSync(terminalsession.InitialSync{
+		State: state, Projection: small,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "commit" {
+		t.Fatalf("small resume candidate kind=%q, want commit", kind)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(payload, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.GetTerminalCommit() == nil {
+		t.Fatal("small resume candidate did not encode TerminalCommit")
+	}
+
+	large := state
+	large.Kind = terminalengine.FramePatch
+	large.BaseRevision = 1
+	large.Seq = 2
+	large.Screen = append([]terminalengine.Line(nil), state.Screen...)
+	for i := range large.Screen {
+		large.Screen[i].Version++
+	}
+	payload, kind, err = client.encodeInitialScreenSync(terminalsession.InitialSync{
+		State: state, Projection: large,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "baseline" {
+		t.Fatalf("large resume candidate kind=%q, want baseline", kind)
+	}
+	env.Reset()
+	if err := proto.Unmarshal(payload, &env); err != nil {
+		t.Fatal(err)
+	}
+	baseline := env.GetBaseline()
+	if baseline == nil ||
+		baseline.GetHistoryPolicy() != pb.BaselineHistoryPolicy_BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE {
+		t.Fatalf("large resume candidate did not encode preserve baseline: %+v", baseline)
+	}
+	if got := len(baseline.GetHistoryTail().GetLines()); got != 0 {
+		t.Fatalf("preserve baseline repeated %d resident history bodies", got)
+	}
+	if baseline.GetHistoryExtent().GetLastSeq() != 128 {
+		t.Fatalf("preserve baseline extent=%+v", baseline.GetHistoryExtent())
+	}
+}
+
+func TestColdBaselineTailRequestIsPerClientAndDoesNotMutateCanonicalState(t *testing.T) {
+	state := resumeSyncState(2, 20, 100)
+	first := &terminalChannelRuntime{coldHistoryTailLines: 16}
+	second := &terminalChannelRuntime{coldHistoryTailLines: 64}
+	for _, tc := range []struct {
+		name   string
+		client *terminalChannelRuntime
+		want   int
+	}{
+		{"sixteen", first, 16},
+		{"sixty-four", second, 64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, kind, err := tc.client.encodeInitialScreenSync(
+				terminalsession.InitialSync{Projection: state})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind != "baseline" {
+				t.Fatalf("kind=%q, want baseline", kind)
+			}
+			var env pb.ScreenEnvelope
+			if err := proto.Unmarshal(payload, &env); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(env.GetBaseline().GetHistoryTail().GetLines()); got != tc.want {
+				t.Fatalf("tail=%d, want %d", got, tc.want)
+			}
+		})
+	}
+	if got := len(state.History.Lines); got != 100 {
+		t.Fatalf("per-client encoding mutated canonical history: %d", got)
+	}
+}
+
+func resumeSyncState(rows, cols, historyLines int) terminalengine.ScreenFrame {
+	state := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "s", InstanceID: "i",
+		Epoch: 1, Seq: 2, Rows: rows, Cols: cols,
+		ActiveBuffer:         terminalengine.BufferMain,
+		DictionaryGeneration: 1, HistoryGeneration: 1,
+	}
+	for row := 0; row < rows; row++ {
+		state.Screen = append(state.Screen, terminalengine.Line{
+			ID: uint64(row + 1), Version: 1, Row: row,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
+				{Text: fmt.Sprintf("row-%02d", row), Width: 1},
+			}}},
+		})
+	}
+	state.History = terminalengine.HistoryWindow{
+		FirstAvailableHistorySeq: 1,
+		FirstIncludedHistorySeq:  1,
+		LastIncludedHistorySeq:   uint64(historyLines),
+	}
+	for seq := 1; seq <= historyLines; seq++ {
+		state.History.Lines = append(state.History.Lines, terminalengine.Line{
+			ID: uint64(1000 + seq), Version: 1, HistorySeq: uint64(seq), Row: -1,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
+				{Text: fmt.Sprintf("history-%03d", seq), Width: 1},
+			}}},
+		})
+	}
+	return state
+}
