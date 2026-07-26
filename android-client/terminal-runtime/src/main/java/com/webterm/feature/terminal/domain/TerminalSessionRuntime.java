@@ -17,6 +17,7 @@ import com.webterm.terminal.model.HistoryDelta;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.TerminalBufferKind;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
@@ -932,6 +933,7 @@ public final class TerminalSessionRuntime {
               || message.sourceConnection != connection) continue;
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+              || message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
               || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA)
               && freezeReasons.get() != 0) {
             TerminalRenderMetrics.backgroundPatchDropped();
@@ -940,6 +942,7 @@ public final class TerminalSessionRuntime {
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
           if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
+              || message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
               || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA
               || message.kind == ScreenMailbox.MessageKind.TAIL_STATUS)
               && streamState == StreamState.RESYNCING) {
@@ -978,6 +981,8 @@ public final class TerminalSessionRuntime {
         return TerminalRenderMetrics.ScreenTrafficKind.BASELINE;
       case SCREEN_PATCH:
         return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
+      case TERMINAL_COMMIT:
+        return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
       case HISTORY_RANGE:
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
       case HISTORY_DELTA:
@@ -1010,6 +1015,7 @@ public final class TerminalSessionRuntime {
         if (field == 18) return ScreenMailbox.MessageKind.INFO;
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
         if (field == 21) return ScreenMailbox.MessageKind.PONG;
+        if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
         if (!input.skipField(tag)) break;
       }
     } catch (IOException | RuntimeException ignored) {
@@ -1141,6 +1147,11 @@ public final class TerminalSessionRuntime {
             tracker.observeTerminalInstance(envelope.getScreenPatch().getInstanceId());
           }
           break;
+        case TERMINAL_COMMIT:
+          if (tracker != null) {
+            tracker.observeTerminalInstance(envelope.getTerminalCommit().getInstanceId());
+          }
+          break;
         default:
           break;
       }
@@ -1215,6 +1226,25 @@ public final class TerminalSessionRuntime {
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(
               captureStreamIdentity(), patch);
           recordCapturedModelState(false);
+          completeSynchronization();
+          break;
+        }
+        case TERMINAL_COMMIT: {
+          if (streamState != StreamState.LIVE) return;
+          TerminalScreenV2Proto.TerminalCommit wire = envelope.getTerminalCommit();
+          if (!acceptStreamGeneration(
+              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
+          failureReason = "INVALID_TERMINAL_COMMIT";
+          ScreenMessageV2Validator.validateTerminalCommit(wire, model.rows);
+          long mapStartedNanos = System.nanoTime();
+          TerminalCommit commit;
+          try {
+            commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, model.rows, model.columns);
+          } finally {
+            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
+          }
+          renderChanged = model.applyTerminalCommit(commit);
+          if (renderChanged) recordCapturedModelState(false);
           completeSynchronization();
           break;
         }
@@ -1388,6 +1418,8 @@ public final class TerminalSessionRuntime {
         return envelope.getBaseline().getStreamGeneration();
       case SCREEN_PATCH:
         return envelope.getScreenPatch().getStreamGeneration();
+      case TERMINAL_COMMIT:
+        return envelope.getTerminalCommit().getStreamGeneration();
       case HISTORY_DELTA:
         return envelope.getHistoryDelta().getStreamGeneration();
       case TAIL_STATUS:

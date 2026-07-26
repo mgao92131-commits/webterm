@@ -111,4 +111,19 @@ public final class ScreenMailboxTest {
     assertEquals(2, mailbox.poll().message.payload[0]);
     assertEquals(3, mailbox.poll().message.payload[0]);
   }
+
+  @Test
+  public void frozenBoundaryDropsCommitButKeepsHistoryRange() {
+    ScreenMailbox mailbox = new ScreenMailbox(4, 100L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    mailbox.offer(1L, source, new byte[] {1}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {2}, true,
+        ScreenMailbox.MessageKind.HISTORY_RANGE);
+
+    assertEquals(1, mailbox.dropLiveProjectionDeltas());
+    assertEquals(ScreenMailbox.MessageKind.HISTORY_RANGE, mailbox.poll().message.kind);
+    assertNull(mailbox.poll());
+  }
 }

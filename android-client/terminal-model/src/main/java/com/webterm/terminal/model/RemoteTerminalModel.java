@@ -420,6 +420,141 @@ public final class RemoteTerminalModel {
     return publicationChanged;
   }
 
+  /** 原子应用一个实时投影 Commit；任一阶段失败都不会修改模型或发布渲染。 */
+  public synchronized boolean applyTerminalCommit(TerminalCommit commit)
+      throws RevisionGapException {
+    if (!v2Projection || commit == null || commit.streamGeneration != streamGeneration
+        || !Objects.equals(instanceId, commit.instanceId) || layoutEpoch != commit.layoutEpoch
+        || screenRevision != commit.baseRevision || commit.revision <= commit.baseRevision) {
+      throw new RevisionGapException("screen.v2 commit identity/revision mismatch");
+    }
+
+    TerminalLine[] stagedScreen = screen;
+    BitSet changedRows = new BitSet(rows);
+    BitSet exposedRows = new BitSet(rows);
+    int screenScrollRows = 0;
+    if (commit.screen != null) {
+      stagedScreen = java.util.Arrays.copyOf(screen, rows);
+      ScreenScroll scroll = commit.screen.scroll;
+      if (scroll != null) {
+        int height = scroll.bottomRowExclusive - scroll.topRow;
+        int shift = scroll.deltaRows;
+        if (scroll.topRow < 0 || scroll.bottomRowExclusive > rows || height <= 0
+            || shift == 0 || Math.abs((long) shift) >= height) {
+          throw new RevisionGapException("screen.v2 commit contains invalid scroll");
+        }
+        screenScrollRows = shift;
+        if (shift > 0) {
+          System.arraycopy(stagedScreen, scroll.topRow + shift, stagedScreen,
+              scroll.topRow, height - shift);
+          exposedRows.set(scroll.bottomRowExclusive - shift, scroll.bottomRowExclusive);
+        } else {
+          int amount = -shift;
+          System.arraycopy(stagedScreen, scroll.topRow, stagedScreen,
+              scroll.topRow + amount, height - amount);
+          exposedRows.set(scroll.topRow, scroll.topRow + amount);
+        }
+        changedRows.set(scroll.topRow, scroll.bottomRowExclusive);
+      }
+      BitSet writtenRows = new BitSet(rows);
+      for (ScreenRowWrite write : commit.screen.writes) {
+        if (write == null || write.row < 0 || write.row >= rows || writtenRows.get(write.row)) {
+          throw new RevisionGapException("screen.v2 commit repeats or exceeds screen row");
+        }
+        writtenRows.set(write.row);
+        TerminalLine normalized = normalizeCompleteLine(write.line, columns);
+        if (normalized == null || normalized.id <= 0 || normalized.historySeq != 0) {
+          throw new RevisionGapException("screen.v2 commit contains invalid screen line");
+        }
+        TerminalLine previous = stagedScreen[write.row];
+        if (previous != null && previous.id == normalized.id) {
+          if (normalized.version < previous.version
+              || (normalized.version == previous.version && !normalized.sameContent(previous))) {
+            throw new RevisionGapException("screen.v2 commit line version/content mismatch");
+          }
+          if (normalized.version == previous.version) normalized = previous;
+        }
+        stagedScreen[write.row] = normalized;
+        changedRows.set(write.row);
+      }
+      for (TerminalLine line : stagedScreen) {
+        if (line == null || line.historySeq != 0) {
+          throw new RevisionGapException("screen.v2 commit leaves incomplete screen");
+        }
+      }
+    }
+
+    HistoryExtent oldExtent = displayExtent;
+    HistoryExtent nextExtent = oldExtent;
+    List<TerminalLine> appendedLines = Collections.emptyList();
+    PagedTerminalHistory.Editor historyEditor = null;
+    if (commit.history != null) {
+      if (commit.history.finalExtent == null || commit.history.appendedLines.size() > 128) {
+        throw new RevisionGapException("screen.v2 commit contains invalid history mutation");
+      }
+      nextExtent = commit.history.finalExtent;
+      appendedLines = new ArrayList<>(commit.history.appendedLines.size());
+      long previousSeq = 0;
+      for (TerminalLine line : commit.history.appendedLines) {
+        TerminalLine normalized = normalizeCompleteLine(line, columns);
+        if (normalized == null || normalized.id <= 0 || normalized.historySeq <= previousSeq
+            || !nextExtent.contains(normalized.historySeq)) {
+          throw new RevisionGapException("screen.v2 commit contains invalid history line");
+        }
+        appendedLines.add(normalized);
+        previousSeq = normalized.historySeq;
+      }
+      historyEditor = pagedHistory.edit()
+          .setExtent(nextExtent.firstSeq, nextExtent.lastSeq)
+          .setAvailableExtent(nextExtent.firstSeq, nextExtent.lastSeq);
+      try {
+        for (TerminalLine line : appendedLines) historyEditor.put(line.historySeq, line);
+        historyEditor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq);
+      } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
+        throw new RevisionGapException("screen.v2 commit history rejected", invalidHistory);
+      }
+    }
+
+    TerminalCursor nextCursor = commit.cursor != null ? commit.cursor : cursor;
+    TerminalModes nextModes = commit.modes != null ? commit.modes : modes;
+    TerminalPalette nextPalette = commit.palette != null ? commit.palette : palette;
+    boolean cursorChanged = !Objects.equals(cursor, nextCursor);
+    boolean modesChanged = !Objects.equals(modes, nextModes);
+    boolean paletteChanged = !Objects.equals(palette, nextPalette);
+    TerminalCursor previousCursor = cursor;
+    long appendedCount = nextExtent.lastSeq > oldExtent.lastSeq
+        ? nextExtent.lastSeq - oldExtent.lastSeq : 0;
+    int tailAppendedLines = appendedCount > Integer.MAX_VALUE
+        ? Integer.MAX_VALUE : (int) appendedCount;
+
+    if (historyEditor != null) historyEditor.commit();
+    screen = stagedScreen;
+    cursor = nextCursor;
+    modes = nextModes;
+    palette = nextPalette;
+    displayExtent = nextExtent;
+    remoteAvailableExtent = nextExtent;
+    firstAvailableHistorySeq = nextExtent.firstSeq;
+    screenRevision = commit.revision;
+    remoteScreenRevision = commit.revision;
+    projectionHealth = ProjectionHealth.complete(
+        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+
+    boolean historyChanged = !oldExtent.equals(nextExtent) || !appendedLines.isEmpty();
+    markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows,
+        historyChanged, false, cursorChanged,
+        previousCursor != null ? previousCursor.row : -1,
+        nextCursor != null ? nextCursor.row : -1,
+        paletteChanged, false, false, modesChanged, false);
+    if (historyChanged) mergeHistoryDirtyRange(appendedLines, !oldExtent.equals(nextExtent));
+    markTerminalState(false, historyChanged, false, false, tailAppendedLines, 0);
+    boolean renderChanged = !changedRows.isEmpty() || screenScrollRows != 0 || historyChanged
+        || cursorChanged || modesChanged || paletteChanged;
+    if (renderChanged) publishPendingRenderUpdate();
+    else publishProjectionReadView();
+    return renderChanged;
+  }
+
   private int applyPatchMetadata(ScreenPatchV2 patch) {
     int changes = 0;
     if (patch.cursor != null && !Objects.equals(cursor, patch.cursor)) {
@@ -1102,6 +1237,10 @@ public final class RemoteTerminalModel {
   public static final class RevisionGapException extends Exception {
     public RevisionGapException(String message) {
       super(message);
+    }
+
+    public RevisionGapException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 }

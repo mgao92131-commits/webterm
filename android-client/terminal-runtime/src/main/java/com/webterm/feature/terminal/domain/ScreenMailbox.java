@@ -10,6 +10,7 @@ import java.util.Iterator;
 public final class ScreenMailbox {
   public enum MessageKind {
     BASELINE,
+    TERMINAL_COMMIT,
     SCREEN_PATCH,
     HISTORY_DELTA,
     HISTORY_RANGE,
@@ -34,6 +35,7 @@ public final class ScreenMailbox {
 
   static boolean isProjectionMessage(@NonNull MessageKind kind) {
     return kind == MessageKind.BASELINE
+        || kind == MessageKind.TERMINAL_COMMIT
         || kind == MessageKind.SCREEN_PATCH
         || kind == MessageKind.HISTORY_DELTA
         || kind == MessageKind.HISTORY_RANGE
@@ -250,6 +252,7 @@ public final class ScreenMailbox {
     while (iterator.hasNext()) {
       Message message = iterator.next();
       if (message.kind != MessageKind.SCREEN_PATCH
+          && message.kind != MessageKind.TERMINAL_COMMIT
           && message.kind != MessageKind.HISTORY_DELTA
           && message.kind != MessageKind.PATCH) continue;
       iterator.remove();
