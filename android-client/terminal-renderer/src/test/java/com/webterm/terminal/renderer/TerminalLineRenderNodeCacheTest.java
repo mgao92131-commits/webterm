@@ -69,6 +69,48 @@ public final class TerminalLineRenderNodeCacheTest {
   }
 
   @Test
+  public void renderPathDrawsCachedRowsAtPixelAlignedY() {
+    // 小数 ascent 量化后，硬件加速路径下每行 RenderNode 的 translate Y 必须是整数，
+    // 否则相邻 display list 边界采样会透出黑色背景。
+    renderer.setFontMetrics(10f, 42f, 33.75f);
+    assertEquals(8f, renderer.getTopInset(), 0f);
+
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    int rows = 5;
+    int cols = 8;
+    List<TerminalLine> screen = new ArrayList<>(rows);
+    for (int row = 0; row < rows; row++) {
+      screen.add(line(100L + row, 1, cols));
+    }
+    model.applyBaseline(new ScreenBaseline(
+        "session-1", "instance-1", 1L, 1L, 1L, 1, false,
+        com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+
+    TerminalLineRenderNodeCache cache = newCache();
+    begin(cache, snapshot, 1, 1, 1);
+    Canvas hwCanvas = new Canvas(Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888)) {
+      @Override public boolean isHardwareAccelerated() { return true; }
+    };
+    renderer.render(hwCanvas, snapshot, new com.webterm.terminal.model.TerminalViewportState(),
+        true, cache);
+    cache.endFrame();
+
+    assertEquals(rows, createdNodes.size());
+    float expectedY = renderer.getTopInset();
+    for (int i = 0; i < createdNodes.size(); i++) {
+      FakeNode node = createdNodes.get(i);
+      assertEquals(1, node.drawYs.size());
+      float y = node.drawYs.get(0);
+      assertEquals("cached row translate Y must be whole pixels",
+          (float) Math.round(y), y, 0f);
+      assertEquals(expectedY + i * 42f, y, 0f);
+    }
+  }
+
+  @Test
   public void baselineDoesNotRecordUntilVisibleLineIsDrawn() {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(40, 80, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
@@ -416,6 +458,7 @@ public final class TerminalLineRenderNodeCacheTest {
     final String name;
     int beginRecordingCount;
     int drawCount;
+    final List<Float> drawYs = new ArrayList<>();
 
     FakeNode(String name) { this.name = name; }
 
@@ -429,6 +472,10 @@ public final class TerminalLineRenderNodeCacheTest {
 
     @Override public void endRecording() {}
     @Override public boolean hasDisplayList() { return beginRecordingCount > 0; }
-    @Override public void draw(Canvas canvas, float y) { drawCount++; }
+
+    @Override public void draw(Canvas canvas, float y) {
+      drawCount++;
+      drawYs.add(y);
+    }
   }
 }

@@ -57,6 +57,8 @@ public final class RemoteTerminalRenderer {
     typeface = tf;
     textPaint.setTextSize(textSizePx);
     textPaint.setTypeface(tf != null ? tf : Typeface.MONOSPACE);
+    // ceil 保证行高落在整数像素；与像素对齐的 topInset 一起，使相邻行
+    // RenderNode 的上下边界都落在整数 Y，避免硬件合成时出现 1px 暗缝。
     lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
     // rowY is the top of a terminal cell. Match Termux TerminalRenderer:
     // its baseline is the cell top minus Paint.ascent(), not the full line
@@ -77,9 +79,17 @@ public final class RemoteTerminalRenderer {
   public float getCellWidth() { return cellWidth; }
   public float getLineHeight() { return lineHeight; }
 
-  /** Font-metric space above the first terminal cell, matching Termux. */
+  /**
+   * Font-metric space above the first terminal cell, matching Termux.
+   *
+   * <p>对原始 {@code lineHeight - baselineOffset} 做一次整像素量化。基线来自
+   * {@link Paint#ascent()}，常为小数；若不量化，{@code contentTopY + row * lineHeight}
+   * 整列落在亚像素 Y 上，硬件加速下相邻行级 RenderNode 边界会透出底层背景，
+   * 形成周期性约 1px 暗线。绘制、命中测试、选择手柄与脏区一律走本值，
+   * 保证坐标系一致。</p>
+   */
   public float getTopInset() {
-    return Math.max(0f, lineHeight - baselineOffset);
+    return (float) Math.round(Math.max(0f, lineHeight - baselineOffset));
   }
 
   /** 基线相对行顶的偏移（仅供诊断只读快照使用）。 */
