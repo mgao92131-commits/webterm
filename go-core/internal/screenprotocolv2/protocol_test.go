@@ -133,3 +133,64 @@ func TestEncodeRetryableHistoryRangeCarriesBackoff(t *testing.T) {
 			response.GetStatus(), response.GetRetryAfterMs())
 	}
 }
+
+func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
+		BaseRevision: 4, Seq: 9, Rows: 3, Cols: 1,
+		ScreenScroll: &terminalengine.ScreenScroll{TopRow: 0, BottomRowExclusive: 3, DeltaRows: 1},
+		Screen:       []terminalengine.Line{{ID: 9, Version: 1, Row: 2}},
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 1000,
+			Lines: []terminalengine.Line{{ID: 8, Version: 1, HistorySeq: 1000}},
+		},
+		FirstAvailableHistorySeqChanged: true,
+	}
+	wire, err := EncodeTerminalCommit(frame, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	commit := env.GetTerminalCommit()
+	if commit == nil || commit.GetBaseRevision() != 4 || commit.GetRevision() != 9 {
+		t.Fatalf("commit revision missing: %+v", commit)
+	}
+	if commit.GetScreen().GetScroll().GetDeltaRows() != 1 || len(commit.GetScreen().GetWrites()) != 1 {
+		t.Fatalf("screen mutation missing: %+v", commit.GetScreen())
+	}
+	if commit.GetHistory().GetFinalExtent().GetLastSeq() != 1000 ||
+		len(commit.GetHistory().GetAppendedLines()) != 1 {
+		t.Fatalf("history mutation missing: %+v", commit.GetHistory())
+	}
+}
+
+func TestEncodeTerminalCommitBoundsHistoryBodiesButKeepsExtent(t *testing.T) {
+	lines := make([]terminalengine.Line, 200)
+	for i := range lines {
+		lines[i] = terminalengine.Line{ID: uint64(i + 1), Version: 1, HistorySeq: uint64(i + 1)}
+	}
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
+		BaseRevision: 1, Seq: 2, Rows: 1, Cols: 1,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 10000, Lines: lines,
+		},
+		FirstAvailableHistorySeqChanged: true,
+	}
+	wire, err := EncodeTerminalCommit(frame, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	history := env.GetTerminalCommit().GetHistory()
+	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetAppendedLines()) != 128 {
+		t.Fatalf("bounded history=%d extent=%d, want 128/10000",
+			len(history.GetAppendedLines()), history.GetFinalExtent().GetLastSeq())
+	}
+}

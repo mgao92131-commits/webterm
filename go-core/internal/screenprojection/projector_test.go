@@ -108,8 +108,8 @@ func TestFrameDeriver_LayoutReentryCarriesLineDataAfterHistoryPrune(t *testing.T
 	current.Seq = 2
 	current.Screen = []terminalengine.Line{line(30, 1, 0, "h"), line(20, 1, 1, "y")}
 	patch := frameForBaseline(&old, current)
-	if patch.Kind != terminalengine.FramePatch || !sameLayout(patch.Layout, []uint64{30, 20}) {
-		t.Fatalf("patch kind/layout=%d/%v, want patch/[30 20]", patch.Kind, patch.Layout)
+	if patch.Kind != terminalengine.FramePatch {
+		t.Fatalf("patch kind=%d, want patch", patch.Kind)
 	}
 	if len(patch.Screen) != 1 || patch.Screen[0].ID != 30 {
 		t.Fatalf("re-entered history line was not self-contained: %+v", patch.Screen)
@@ -281,7 +281,7 @@ func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
 	}
 }
 
-func TestFrameDeriver_ExtentOnlyChangeDoesNotCreateScreenPatch(t *testing.T) {
+func TestFrameDeriver_ExtentOnlyChangeCreatesCommitRevision(t *testing.T) {
 	screen := []terminalengine.Line{{ID: 1, Version: 1}}
 	baseline := terminalengine.ScreenFrame{
 		Version: 1, SessionID: "s1", InstanceID: "i1", Epoch: 1, Seq: 1,
@@ -300,8 +300,8 @@ func TestFrameDeriver_ExtentOnlyChangeDoesNotCreateScreenPatch(t *testing.T) {
 	var deriver FrameDeriver
 	deriver.Seed(baseline)
 	frame := deriver.FrameForState(next)
-	if !frame.HistoryOnlyPatch {
-		t.Fatal("extent-only change must be represented as HistoryDelta-only")
+	if frame.Kind != terminalengine.FramePatch || frame.BaseRevision != 1 || frame.Seq != 2 {
+		t.Fatalf("extent-only commit=%+v, want revision 1->2", frame)
 	}
 	if hasScreenChanges(frame) {
 		t.Fatal("extent-only frame unexpectedly contains screen changes")

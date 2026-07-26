@@ -133,6 +133,16 @@ func envelopeContainsText(envelope *pb.ScreenEnvelope, needle string) bool {
 	if delta := envelope.GetHistoryDelta(); delta != nil {
 		lines = append(lines, delta.GetLines()...)
 	}
+	if commit := envelope.GetTerminalCommit(); commit != nil {
+		if commit.GetScreen() != nil {
+			for _, write := range commit.GetScreen().GetWrites() {
+				lines = append(lines, write.GetLine())
+			}
+		}
+		if commit.GetHistory() != nil {
+			lines = append(lines, commit.GetHistory().GetAppendedLines()...)
+		}
+	}
 	for _, line := range lines {
 		var text strings.Builder
 		text.WriteString(line.GetText())

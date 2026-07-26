@@ -123,7 +123,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 		if frame.Kind == terminalengine.FrameSnapshot {
 			return screenprotocolv2.EncodeBaseline(frame, generation)
 		}
-		return screenprotocolv2.EncodeScreenPatch(frame, generation)
+		return screenprotocolv2.EncodeTerminalCommit(frame, generation)
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
@@ -382,7 +382,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	}
 	state := client.screenPending
 	client.hasScreenData = false
-	frame := client.screenDeriver.FrameForState(state)
+	frame := client.screenDeriver.DeriveForState(state)
 	client.screenMu.Unlock()
 
 	if frame.Kind == 0 {
@@ -392,16 +392,6 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	// 捕获点 C：正常 FrameForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
 	// 不推进 baseline）。未开启捕获时 sink 内部仅一次廉价判断。
 	client.recordDerivedFrame(frame)
-
-	// I3：仅历史变化的 patch 不含任何屏幕变化——只发 HistoryDelta，绝不发空
-	// ScreenPatch（否则会以非屏幕变化推进 screen revision 链）。冻结客户端则
-	// 连 HistoryDelta 也不发。
-	if frame.HistoryOnlyPatch {
-		if terminalsession.StreamMode(client.streamMode.Load()) == terminalsession.StreamModeFrozen {
-			return true
-		}
-		return client.writeHistoryDelta(ctx, frame, state)
-	}
 
 	wireFrame := client.withCanonicalDictionary(frame, state)
 	payload, err := client.encodeFrame(wireFrame)
@@ -444,25 +434,10 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	if !client.writeScreenMessage(ctx, outboundMessage{binary: payload, kind: kind}, handle) {
 		return false
 	}
-	if frame.Kind == terminalengine.FramePatch &&
-		(len(frame.History.Lines) > 0 || frame.FirstAvailableHistorySeqChanged) {
-		return client.writeHistoryDelta(ctx, frame, state)
-	}
+	client.screenMu.Lock()
+	client.screenDeriver.Seed(state)
+	client.screenMu.Unlock()
 	return true
-}
-
-// writeHistoryDelta 编码并写出一条 HistoryDelta（历史 extent/行变化，非 revision）。
-// 屏幕变化与历史变化正交（I2）：ScreenPatch 走 screen revision 链，HistoryDelta
-// 可丢、按 seq 幂等，仅作 LIVE 下的历史预热与 extent 通知。
-func (client *terminalChannelRuntime) writeHistoryDelta(ctx context.Context,
-	frame, state terminalengine.ScreenFrame) bool {
-	deltaFrame := client.withCanonicalDictionary(frame, state)
-	delta, err := screenprotocolv2.EncodeHistoryDelta(deltaFrame, client.streamGeneration.Load())
-	if err != nil {
-		client.logScreenEncodeFailure("history_delta", state, err)
-		return false
-	}
-	return client.writeMessage(ctx, outboundMessage{binary: delta, kind: "historyRange"})
 }
 
 // writeScreenMessage 包装 writeMessage 并在物理写完成后补写捕获 wire 记录的写状态
@@ -875,7 +850,7 @@ func (client *terminalChannelRuntime) clearPendingTailStatus() {
 // that intentionally use terminalChannelRuntime without Run retain the old immediate path.
 func (client *terminalChannelRuntime) sendScreenState(state terminalengine.ScreenFrame) {
 	if !client.writerStarted.Load() {
-		frame := client.screenDeriver.FrameForState(state)
+		frame := client.screenDeriver.DeriveForState(state)
 		if frame.Kind != 0 { // Kind==0：空 patch 被抑制，不发送
 			client.sendScreenFrameNow(frame, state)
 		}
@@ -913,6 +888,7 @@ func (client *terminalChannelRuntime) sendScreenFrameNow(frame, state terminalen
 		kind = "baseline"
 	}
 	client.enqueueBinary(payload, kind)
+	client.screenDeriver.Seed(state)
 }
 
 func (client *terminalChannelRuntime) withCanonicalDictionary(

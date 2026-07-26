@@ -92,6 +92,72 @@ func EncodeHistoryDelta(state terminalengine.ScreenFrame, generation uint64) ([]
 	return marshalPayload(&pb.ScreenEnvelope_HistoryDelta{HistoryDelta: delta})
 }
 
+func EncodeTerminalCommit(frame terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
+	if frame.Kind != terminalengine.FramePatch {
+		return nil, fmt.Errorf("terminal commit requires patch frame")
+	}
+	commit := &pb.TerminalCommit{
+		InstanceId:       frame.InstanceID,
+		LayoutEpoch:      frame.Epoch,
+		StreamGeneration: generation,
+		BaseRevision:     frame.BaseRevision,
+		Revision:         frame.Seq,
+	}
+	lines := make([]terminalengine.Line, 0, len(frame.Screen)+len(frame.History.Lines))
+	if frame.ScreenScroll != nil || len(frame.Screen) > 0 {
+		mutation := &pb.ScreenMutation{}
+		if frame.ScreenScroll != nil {
+			mutation.Scroll = &pb.ScreenScroll{
+				TopRow:             int32(frame.ScreenScroll.TopRow),
+				BottomRowExclusive: int32(frame.ScreenScroll.BottomRowExclusive),
+				DeltaRows:          int32(frame.ScreenScroll.DeltaRows),
+			}
+		}
+		for _, line := range frame.Screen {
+			if line.HistorySeq != 0 || line.Row < 0 || line.Row >= frame.Rows {
+				return nil, fmt.Errorf("invalid commit screen row")
+			}
+			mutation.Writes = append(mutation.Writes, &pb.ScreenRowWrite{
+				Row: int32(line.Row), Line: encodeLines([]terminalengine.Line{line})[0],
+			})
+			lines = append(lines, line)
+		}
+		commit.Screen = mutation
+	}
+	if frame.FirstAvailableHistorySeqChanged || len(frame.History.Lines) > 0 {
+		historyLines := historyLines(frame.History.Lines)
+		if len(historyLines) > 128 {
+			historyLines = historyLines[len(historyLines)-128:]
+		}
+		commit.History = &pb.HistoryMutation{
+			FinalExtent: &pb.HistoryExtent{
+				FirstSeq: canonicalHistoryFirst(frame.History.FirstAvailableHistorySeq),
+				LastSeq:  frame.History.LastIncludedHistorySeq,
+			},
+			AppendedLines: encodeLines(historyLines),
+		}
+		lines = append(lines, historyLines...)
+	}
+	if frame.CursorChanged {
+		commit.Cursor = encodeCursor(frame.Cursor)
+	}
+	if frame.ModesChanged {
+		commit.Modes = encodeModes(frame.Modes)
+	}
+	if frame.PaletteChanged {
+		commit.Palette = encodePalette(frame)
+	}
+	commit.Dictionary = encodeDictionaryForLines(lines, frame.Styles, frame.Links)
+	return marshalPayload(&pb.ScreenEnvelope_TerminalCommit{TerminalCommit: commit})
+}
+
+func canonicalHistoryFirst(first uint64) uint64 {
+	if first == 0 {
+		return 1
+	}
+	return first
+}
+
 func EncodeHistoryRangeResponse(
 	requestID, instanceID string,
 	epoch uint64,
@@ -160,6 +226,8 @@ func marshalPayload(payload any) ([]byte, error) {
 	case *pb.ScreenEnvelope_ScreenPatch:
 		env.Payload = p
 	case *pb.ScreenEnvelope_HistoryDelta:
+		env.Payload = p
+	case *pb.ScreenEnvelope_TerminalCommit:
 		env.Payload = p
 	case *pb.ScreenEnvelope_HistoryRangeResponse:
 		env.Payload = p

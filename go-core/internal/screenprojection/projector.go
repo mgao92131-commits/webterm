@@ -215,6 +215,12 @@ func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminale
 	return frameForBaseline(&d.baseline, state)
 }
 
+// DeriveForState 只派生、不推进 baseline；物理写成功后调用 Seed 提交。
+func (d *FrameDeriver) DeriveForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	baseline := d.baseline
+	return frameForBaseline(&baseline, state)
+}
+
 // NewProjector 创建新的 screen projector。
 func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.TrackedScrollback, sessionID, instanceID string) *Projector {
 	return &Projector{
@@ -488,14 +494,6 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		*baseline = state
 		return state
 	}
-	// 客户端只持有上一帧可见的尾部窗口。若本帧的新窗口起点已经越过旧尾部
-	// 的下一条，说明单帧推进超过 snapshotTailLines，中间 HistorySeq 无法通过
-	// HistoryDelta 补齐；必须重新发 Baseline（§2.10.3）。
-	if historyWindowHasAppendGap(*baseline, state) {
-		*baseline = state
-		return state
-	}
-
 	// 否则生成 patch（整行替换）。
 	patch := diffToPatch(*baseline, state)
 	if patch.Kind != terminalengine.FramePatch {
@@ -510,36 +508,17 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		// 抑制空 patch（计划 §3.4/§10.1：patch 必须携带实际变化），不推进
 		// baseline，下一帧仍相对最后实际写出的 revision 做 diff。
 		return terminalengine.ScreenFrame{}
-	case screenChanged:
-		// 有屏幕变化：正常推进 baseline 并发 ScreenPatch；若同时有历史变化，
-		// writer 会在 ScreenPatch 之后补一条 HistoryDelta。
+	default:
+		// 屏幕、历史与渲染元数据统一推进同一条 projection revision 链。
 		*baseline = state
 		return patch
-	default:
-		// 仅历史变化（extent 水位移动 / 新增历史行），无任何屏幕变化（I3）：
-		// 只推进 baseline 的历史窗口以免下一帧重复派生这些行，但保持 baseline.Seq
-		// 与屏幕字段不变，使 screen revision 链不被非屏幕变化推进。writer 据
-		// HistoryOnlyPatch 只发 HistoryDelta、不发空 ScreenPatch。
-		baseline.History = state.History
-		patch.HistoryOnlyPatch = true
-		return patch
 	}
-}
-
-func historyWindowHasAppendGap(old, next terminalengine.ScreenFrame) bool {
-	oldLast := old.History.LastIncludedHistorySeq
-	nextLast := next.History.LastIncludedHistorySeq
-	if nextLast <= oldLast || len(next.History.Lines) == 0 {
-		return false
-	}
-	nextFirst := next.History.FirstIncludedHistorySeq
-	return nextFirst > oldLast+1
 }
 
 // hasScreenChanges 判断 patch 是否携带任何屏幕（非历史）可观察变化。
 func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 	return len(patch.Screen) > 0 ||
-		len(patch.Layout) > 0 ||
+		patch.ScreenScroll != nil ||
 		len(patch.Styles) > 0 ||
 		len(patch.Links) > 0 ||
 		patch.TitleChanged ||
@@ -553,7 +532,6 @@ func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 // revision 链正交（I2），其变化单独经 HistoryDelta 表达。
 func hasHistoryChanges(patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) > 0 ||
-		len(patch.HistoryAppendSeqs) > 0 ||
 		patch.FirstAvailableHistorySeqChanged
 }
 
@@ -592,12 +570,8 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 			historyAppend = append(historyAppend, line)
 		}
 	}
-	screenRows := changedLinesByID(old, new.Screen)
-	newLayout := screenLayout(new.Screen)
-	var layout []uint64
-	if !sameLayout(screenLayout(old.Screen), newLayout) {
-		layout = newLayout
-	}
+	scroll := deriveFullScreenScroll(old.Screen, new.Screen)
+	screenRows := commitScreenWrites(old.Screen, new.Screen, scroll)
 
 	return terminalengine.ScreenFrame{
 		Version:           1,
@@ -635,7 +609,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		},
 		HistoryAppendSeqs: historyAppendSeqs,
 		Screen:            screenRows,
-		Layout:            layout,
+		ScreenScroll:      scroll,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
 		// appeared after the recipient's baseline; repeatedly sending the whole
 		// table was pure wire and allocation overhead.
@@ -651,6 +625,62 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		FirstAvailableHistorySeqChanged: old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
 	}
+}
+
+// deriveFullScreenScroll 只用稳定 LineID 唯一确认全屏连续位移。
+func deriveFullScreenScroll(oldScreen, newScreen []terminalengine.Line) *terminalengine.ScreenScroll {
+	rows := len(oldScreen)
+	if rows <= 1 || len(newScreen) != rows {
+		return nil
+	}
+	var matched []int
+	for shift := 1; shift < rows; shift++ {
+		up := true
+		for row := 0; row < rows-shift; row++ {
+			if oldScreen[row+shift].ID != newScreen[row].ID {
+				up = false
+				break
+			}
+		}
+		if up {
+			matched = append(matched, shift)
+		}
+		down := true
+		for row := shift; row < rows; row++ {
+			if oldScreen[row-shift].ID != newScreen[row].ID {
+				down = false
+				break
+			}
+		}
+		if down {
+			matched = append(matched, -shift)
+		}
+	}
+	if len(matched) != 1 {
+		return nil
+	}
+	return &terminalengine.ScreenScroll{TopRow: 0, BottomRowExclusive: rows, DeltaRows: matched[0]}
+}
+
+func commitScreenWrites(oldScreen, newScreen []terminalengine.Line, scroll *terminalengine.ScreenScroll) []terminalengine.Line {
+	writes := make([]terminalengine.Line, 0, len(newScreen))
+	for row, next := range newScreen {
+		write := false
+		if row >= len(oldScreen) {
+			write = true
+		} else if scroll == nil {
+			write = oldScreen[row].ID != next.ID || oldScreen[row].Version != next.Version
+		} else {
+			source := row + scroll.DeltaRows
+			write = source < 0 || source >= len(oldScreen) ||
+				oldScreen[source].ID != next.ID || oldScreen[source].Version != next.Version
+		}
+		if write {
+			next.Row = row
+			writes = append(writes, next)
+		}
+	}
+	return writes
 }
 
 func screenLayout(lines []terminalengine.Line) []uint64 {

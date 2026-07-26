@@ -253,9 +253,8 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 	assertStateEquivalent(t, state, forceFullExport(p, 3))
 }
 
-// §6.4/§6.5：baseline 已被 trim——追加量超出窗口容量（中间行客户端永远收
-// 不到），连续性无法证明，退回完整 snapshot。
-func TestProjector_LargeHistoryAdvanceFallsBackToSnapshot(t *testing.T) {
+// Commit 用 final extent 解耦逻辑历史推进与随帧正文，因此大窗口不回退 Snapshot。
+func TestProjector_LargeHistoryAdvanceStaysCommit(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 24, 20)
 	fillScreenStable(t, engine, 24)
 
@@ -270,16 +269,16 @@ func TestProjector_LargeHistoryAdvanceFallsBackToSnapshot(t *testing.T) {
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.FrameForState(state)
-	if frame.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("history gap must fall back to snapshot, got kind=%v", frame.Kind)
+	if frame.Kind != terminalengine.FramePatch {
+		t.Fatalf("large history advance must stay incremental, got kind=%v", frame.Kind)
 	}
 	if got := len(frame.History.Lines); got != snapshotTailLines {
-		t.Fatalf("snapshot history lines=%d, want tail window %d", got, snapshotTailLines)
+		t.Fatalf("commit history lines=%d, want bounded tail %d", got, snapshotTailLines)
 	}
 	if frame.History.FirstIncludedHistorySeq != state.History.FirstIncludedHistorySeq ||
 		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq ||
 		!frame.History.HasMoreBefore {
-		t.Fatalf("snapshot window bounds wrong: %+v", frame.History)
+		t.Fatalf("commit window bounds wrong: %+v", frame.History)
 	}
 	assertMonotoneIDs(t, frame.History)
 	assertStateEquivalent(t, state, forceFullExport(p, 3))

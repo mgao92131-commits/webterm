@@ -185,12 +185,12 @@ type TerminalCommit struct {
 	Revision         uint64
 	Screen           *ScreenMutation
 	History          *HistoryMutation
-	Cursor            *Cursor
-	Modes             *Modes
-	PaletteChanged    bool
-	Palette           ScreenFrame
-	Styles            []TerminalStyle
-	Links             []Hyperlink
+	Cursor           *Cursor
+	Modes            *Modes
+	PaletteChanged   bool
+	Palette          ScreenFrame
+	Styles           []TerminalStyle
+	Links            []Hyperlink
 }
 
 // ScreenFrame 是传输无关的权威屏幕帧，也可作为 patch 的载体。
@@ -227,6 +227,8 @@ type ScreenFrame struct {
 	// not need its content serialized again.
 	HistoryAppendSeqs []uint64
 	Screen            []Line
+	// ScreenScroll 是 patch/commit 的可选全屏滚动描述；Screen 中的行按 Row 写入。
+	ScreenScroll *ScreenScroll
 	// Layout is patch-only presence data. Snapshot layout is always derived from
 	// Screen, while a patch omits it when line positions did not change.
 	Layout     []uint64
