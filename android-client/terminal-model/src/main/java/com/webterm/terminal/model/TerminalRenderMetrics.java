@@ -56,13 +56,18 @@ public final class TerminalRenderMetrics {
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLongArray MAPPER_LATENCY_BUCKETS =
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray DICTIONARY_STAGING_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray RENDER_PUBLICATION_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLongArray RENDER_NODE_RECORD_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLongArray VSYNC_DRAW_LATENCY_BUCKETS =
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLongArray MAILBOX_RESIDENCE_LATENCY_BUCKETS =
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLong HISTORY_CACHE_HIT_COUNT = new AtomicLong();
   private static final AtomicLong HISTORY_CACHE_MISS_COUNT = new AtomicLong();
-  private static final AtomicLong BACKGROUND_COMMIT_DROPPED_COUNT = new AtomicLong();
   private static final AtomicLong VISIBLE_HISTORY_ROWS_DRAWN = new AtomicLong();
   private static final AtomicLong RENDER_NODE_VICTIM_SCAN_COUNT = new AtomicLong();
   private static final AtomicLong RENDER_NODE_VICTIM_SCANNED_ENTRIES = new AtomicLong();
@@ -121,8 +126,17 @@ public final class TerminalRenderMetrics {
   public static void mapperDuration(long nanos) {
     recordLatency(MAPPER_LATENCY_BUCKETS, Math.max(0L, nanos));
   }
+  public static void dictionaryStagingDuration(long nanos) {
+    recordLatency(DICTIONARY_STAGING_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
+  public static void renderPublicationDuration(long nanos) {
+    recordLatency(RENDER_PUBLICATION_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
   public static void renderNodeRecordDuration(long nanos) {
     recordLatency(RENDER_NODE_RECORD_LATENCY_BUCKETS, Math.max(0L, nanos));
+  }
+  public static void vsyncDrawDuration(long nanos) {
+    recordLatency(VSYNC_DRAW_LATENCY_BUCKETS, Math.max(0L, nanos));
   }
   public static void historyCacheHit() { HISTORY_CACHE_HIT_COUNT.incrementAndGet(); }
   public static void historyCacheMiss() { HISTORY_CACHE_MISS_COUNT.incrementAndGet(); }
@@ -146,7 +160,6 @@ public final class TerminalRenderMetrics {
     RENDER_NODE_VICTIM_SCANNED_ENTRIES.addAndGet(Math.max(0, scannedEntries));
     if (allPinned) RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.incrementAndGet();
   }
-  public static void backgroundCommitDropped() { BACKGROUND_COMMIT_DROPPED_COUNT.incrementAndGet(); }
   public static void visibleHistoryRowsDrawn(int rows) {
     VISIBLE_HISTORY_ROWS_DRAWN.addAndGet(Math.max(0, rows));
   }
@@ -208,10 +221,12 @@ public final class TerminalRenderMetrics {
         copyBuckets(TERMINAL_COMMIT_APPLY_LATENCY_BUCKETS),
         copyBuckets(PROTOBUF_PARSE_LATENCY_BUCKETS),
         copyBuckets(MAPPER_LATENCY_BUCKETS),
+        copyBuckets(DICTIONARY_STAGING_LATENCY_BUCKETS),
+        copyBuckets(RENDER_PUBLICATION_LATENCY_BUCKETS),
         copyBuckets(RENDER_NODE_RECORD_LATENCY_BUCKETS),
+        copyBuckets(VSYNC_DRAW_LATENCY_BUCKETS),
         copyBuckets(MAILBOX_RESIDENCE_LATENCY_BUCKETS),
         HISTORY_CACHE_HIT_COUNT.get(), HISTORY_CACHE_MISS_COUNT.get(),
-        BACKGROUND_COMMIT_DROPPED_COUNT.get(),
         VISIBLE_HISTORY_ROWS_DRAWN.get(), RENDER_NODE_VICTIM_SCAN_COUNT.get(),
         RENDER_NODE_VICTIM_SCANNED_ENTRIES.get(),
         RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.get());
@@ -280,11 +295,13 @@ public final class TerminalRenderMetrics {
     public final long[] terminalCommitApplyLatencyBuckets;
     public final long[] protobufParseLatencyBuckets;
     public final long[] mapperLatencyBuckets;
+    public final long[] dictionaryStagingLatencyBuckets;
+    public final long[] renderPublicationLatencyBuckets;
     public final long[] renderNodeRecordLatencyBuckets;
+    public final long[] vsyncDrawLatencyBuckets;
     public final long[] mailboxResidenceLatencyBuckets;
     public final long historyCacheHitCount;
     public final long historyCacheMissCount;
-    public final long backgroundCommitDroppedCount;
     public final long visibleHistoryRowsDrawn;
     public final long renderNodeVictimScanCount;
     public final long renderNodeVictimScannedEntries;
@@ -305,9 +322,12 @@ public final class TerminalRenderMetrics {
              long mailboxResidenceMaxNanos, long viewportRedrawRequestCount,
              long viewportFullRedrawCount, long[] terminalCommitApplyLatencyBuckets,
              long[] protobufParseLatencyBuckets, long[] mapperLatencyBuckets,
+             long[] dictionaryStagingLatencyBuckets,
+             long[] renderPublicationLatencyBuckets,
              long[] renderNodeRecordLatencyBuckets,
+             long[] vsyncDrawLatencyBuckets,
              long[] mailboxResidenceLatencyBuckets, long historyCacheHitCount,
-             long historyCacheMissCount, long backgroundCommitDroppedCount,
+             long historyCacheMissCount,
              long visibleHistoryRowsDrawn,
              long renderNodeVictimScanCount, long renderNodeVictimScannedEntries,
              long renderNodeAllPinnedFallbackCount) {
@@ -351,11 +371,13 @@ public final class TerminalRenderMetrics {
       this.terminalCommitApplyLatencyBuckets = terminalCommitApplyLatencyBuckets;
       this.protobufParseLatencyBuckets = protobufParseLatencyBuckets;
       this.mapperLatencyBuckets = mapperLatencyBuckets;
+      this.dictionaryStagingLatencyBuckets = dictionaryStagingLatencyBuckets;
+      this.renderPublicationLatencyBuckets = renderPublicationLatencyBuckets;
       this.renderNodeRecordLatencyBuckets = renderNodeRecordLatencyBuckets;
+      this.vsyncDrawLatencyBuckets = vsyncDrawLatencyBuckets;
       this.mailboxResidenceLatencyBuckets = mailboxResidenceLatencyBuckets;
       this.historyCacheHitCount = historyCacheHitCount;
       this.historyCacheMissCount = historyCacheMissCount;
-      this.backgroundCommitDroppedCount = backgroundCommitDroppedCount;
       this.visibleHistoryRowsDrawn = visibleHistoryRowsDrawn;
       this.renderNodeVictimScanCount = renderNodeVictimScanCount;
       this.renderNodeVictimScannedEntries = renderNodeVictimScannedEntries;

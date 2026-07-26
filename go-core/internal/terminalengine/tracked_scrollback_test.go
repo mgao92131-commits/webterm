@@ -31,6 +31,22 @@ func TestTrackedScrollback_LineID(t *testing.T) {
 	}
 }
 
+func TestTrackedScrollbackPromotionKeepsTransferredLineBody(t *testing.T) {
+	sb := NewTrackedScrollback(10, nil)
+	line := headlessterm.ScrollbackLine{
+		LineID: 77, LineVersion: 3,
+		Cells: []headlessterm.Cell{headlessterm.NewCell()},
+	}
+	sb.Push(line)
+	stored, ok := sb.LineByHistorySeq(1)
+	if !ok {
+		t.Fatal("promoted line missing")
+	}
+	if len(stored.Cells) != 1 || &stored.Cells[0] != &line.Cells[0] {
+		t.Fatal("promotion copied terminal body instead of retaining transferred Line cells")
+	}
+}
+
 func TestTrackedScrollback_PreservesNonMonotonicLineIDsAndAssignsHistorySeq(t *testing.T) {
 	sb := NewTrackedScrollback(100, nil)
 	for _, id := range []uint64{100, 7, 55} {
@@ -224,7 +240,7 @@ func TestTrackedScrollback_SetMaxBytesZeroDisablesByteTrim(t *testing.T) {
 }
 
 // historyBenchSink 防止编译器把基准里的分配优化掉。
-var historyBenchSink []HistoryLine
+var historyBenchSink []ScrollbackEntry
 
 type historySampleStyle int
 
@@ -267,12 +283,12 @@ func buildBenchmarkLine(cols int, style historySampleStyle, seed int, sharedFg, 
 
 // measureRetainedHeap 测量 build 产物的驻留堆大小。所有中间产物在测量期间
 // 保持可达，避免 GC 清扫时机污染 HeapInuse 差值。
-func measureRetainedHeap(build func() []HistoryLine, repeats int) int64 {
+func measureRetainedHeap(build func() []ScrollbackEntry, repeats int) int64 {
 	runtime.GC()
 	runtime.GC()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	var all [][]HistoryLine
+	var all [][]ScrollbackEntry
 	for r := 0; r < repeats; r++ {
 		all = append(all, build())
 	}
@@ -287,12 +303,12 @@ func measureRetainedHeap(build func() []HistoryLine, repeats int) int64 {
 	return int64(after.HeapInuse) - int64(before.HeapInuse)
 }
 
-// BenchmarkHistoryLineMemory 实测历史行的典型堆占用，用于校准
-// estimateHistoryLineBytes 的常量。构造路径与 TrackedScrollback.Push 相同。
+// BenchmarkScrollbackEntryMemory 实测历史行的典型堆占用，用于校准
+// estimateScrollbackEntryBytes 的常量。构造路径与 TrackedScrollback.Push 相同。
 // 它不是 CI 门禁，手动运行：
 //
-//	go test ./internal/terminalengine/ -run '^$' -bench HistoryLineMemory -benchtime 3x
-func BenchmarkHistoryLineMemory(b *testing.B) {
+//	go test ./internal/terminalengine/ -run '^$' -bench ScrollbackEntryMemory -benchtime 3x
+func BenchmarkScrollbackEntryMemory(b *testing.B) {
 	const linesPerRun = 1024
 	cases := []struct {
 		name  string
@@ -307,26 +323,26 @@ func BenchmarkHistoryLineMemory(b *testing.B) {
 		{"200col-rich-styled", 200, sampleRichStyled},
 	}
 	b.ReportMetric(float64(unsafe.Sizeof(headlessterm.Cell{})), "cell-struct-B")
-	b.ReportMetric(float64(unsafe.Sizeof(HistoryLine{})), "line-struct-B")
+	b.ReportMetric(float64(unsafe.Sizeof(ScrollbackEntry{})), "line-struct-B")
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			// 共享颜色对象在测量窗口外分配，模拟 parser template 跨行复用。
 			sharedFg := color.Color(&headlessterm.NamedColor{Name: headlessterm.NamedColorForeground})
 			sharedBg := color.Color(&headlessterm.NamedColor{Name: headlessterm.NamedColorBackground})
 			sample := buildBenchmarkLine(tc.cols, tc.style, 0, sharedFg, sharedBg)
-			estimate := estimateHistoryLineBytes(sample.Cells)
+			estimate := estimateScrollbackEntryBytes(sample.Cells)
 			b.ReportMetric(float64(estimate), "estimate-B/line")
 			var measured float64
 			for n := 0; n < b.N; n++ {
 				// 直接填充驻留数组，等价于 TrackedScrollback.Push 复制后保留的
 				// 对象图；先构造临时行再复制会产生大量瞬时垃圾，污染
 				// HeapInuse 差值（大对象 span 清扫滞后）。
-				delta := measureRetainedHeap(func() []HistoryLine {
-					lines := make([]HistoryLine, linesPerRun)
+				delta := measureRetainedHeap(func() []ScrollbackEntry {
+					lines := make([]ScrollbackEntry, linesPerRun)
 					for i := 0; i < linesPerRun; i++ {
 						cells := make([]headlessterm.Cell, tc.cols)
 						fillBenchmarkCells(cells, tc.style, i, sharedFg, sharedBg)
-						lines[i] = HistoryLine{LineID: uint64(i + 1), Cells: cells, bytes: estimateHistoryLineBytes(cells)}
+						lines[i] = ScrollbackEntry{LineID: uint64(i + 1), Cells: cells, bytes: estimateScrollbackEntryBytes(cells)}
 					}
 					return lines
 				}, 1)
@@ -573,7 +589,7 @@ func TestTrackedScrollback_RebaseForLayoutEpochMakesRetainedHistoryDense(t *test
 	}
 }
 
-func historyIDs(lines []HistoryLine) []uint64 {
+func historyIDs(lines []ScrollbackEntry) []uint64 {
 	ids := make([]uint64, len(lines))
 	for i, line := range lines {
 		ids[i] = line.LineID

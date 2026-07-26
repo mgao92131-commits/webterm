@@ -20,7 +20,7 @@ func BenchmarkProjectorExportOnceFanout(b *testing.B) {
 			derivers := make([]FrameDeriver, viewers)
 			state := projector.ExportState(0, 1)
 			for i := 0; i < viewers; i++ {
-				derivers[i].FrameForState(state)
+				derivers[i].deriveAndSeedForTest(state)
 			}
 
 			b.ReportAllocs()
@@ -31,7 +31,7 @@ func BenchmarkProjectorExportOnceFanout(b *testing.B) {
 				}
 				state := projector.ExportState(0, uint64(i+2))
 				for viewer := 0; viewer < viewers; viewer++ {
-					derivers[viewer].FrameForState(state)
+					derivers[viewer].deriveAndSeedForTest(state)
 				}
 			}
 		})

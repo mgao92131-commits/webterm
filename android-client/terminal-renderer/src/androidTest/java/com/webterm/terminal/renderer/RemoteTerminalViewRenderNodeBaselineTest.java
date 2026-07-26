@@ -79,7 +79,8 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       afterBaseline = TerminalRenderMetrics.snapshot();
 
       model.applyTerminalCommit(new TerminalCommit(
-          "i1", 1, 1, 1, 2,
+          "i1", 1, 1, 2, 1, 1,
+          com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           new ScreenMutation(new ScreenScroll(0, ROWS, 1),
               Collections.singletonList(new ScreenRowWrite(
                   ROWS - 1, line(200_000, 1, 0, "new")))),
@@ -121,7 +122,9 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       screen.add(line(100_000 + row, 1, 0, "row"));
     }
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, ROWS, COLS, TerminalBufferKind.MAIN,
+        "s1", "i1", 1, 1, 1, 1, false,
+        com.webterm.terminal.model.DictionaryEntries.EMPTY,
+        ROWS, COLS, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
@@ -161,4 +164,3 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     }
   }
 }
-

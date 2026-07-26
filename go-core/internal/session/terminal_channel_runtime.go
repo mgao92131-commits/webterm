@@ -20,22 +20,19 @@ import (
 )
 
 type terminalChannelRuntime struct {
-	sink                ChannelFrameSink
-	session             *TerminalSession
-	send                chan outboundMessage
-	ready               atomic.Bool
-	done                chan struct{}
-	doneOnce            chan struct{}
-	logger              *logs.Logger
-	screenClientID      string
-	ownerKey            string
-	clientInstanceID    string
-	screenAttached      atomic.Bool
-	writerStarted       atomic.Bool
-	compactLineEncoding atomic.Bool
-	screenHandler       *screenprotocolv2.Handler
-	streamGeneration    atomic.Uint64
-	streamMode          atomic.Uint32
+	sink             ChannelFrameSink
+	session          *TerminalSession
+	send             chan outboundMessage
+	ready            atomic.Bool
+	done             chan struct{}
+	doneOnce         chan struct{}
+	logger           *logs.Logger
+	screenClientID   string
+	ownerKey         string
+	clientInstanceID string
+	screenAttached   atomic.Bool
+	writerStarted    atomic.Bool
+	screenHandler    *screenprotocolv2.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -44,15 +41,6 @@ type terminalChannelRuntime struct {
 	screenInitial chan initialScreenMessage
 	screenDeriver screenprojection.FrameDeriver
 	encodeFrame   func(terminalengine.ScreenFrame) ([]byte, error)
-
-	// TailStatus 走独立的单槽覆盖通道做 per-client 合并（§7.4：只保留最新）。
-	// 冻结客户端在远端持续大量输出时，每个 canonical 帧都会产生一条 TailStatus；
-	// 若全部排入容量 256 的 send FIFO，慢写客户端会堆满缓冲触发 enqueue 关闭会话。
-	// 单槽覆盖保证无论多少帧只写出最新一条 TailStatus。
-	tailMu      sync.Mutex
-	tailPending pendingTailStatus
-	tailHas     bool
-	tailWake    chan struct{}
 
 	screenFrameCount      atomic.Uint64
 	screenWireBytes       atomic.Uint64
@@ -66,11 +54,6 @@ type terminalChannelRuntime struct {
 	// 避免多会话/多客户端串数据。
 	captureSink        terminalcapture.Sink
 	terminalInstanceID string
-}
-
-type pendingTailStatus struct {
-	generation uint64
-	payload    []byte
 }
 
 type outboundMessage struct {
@@ -116,14 +99,12 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 		ownerKey:       ownerKey,
 		screenWake:     make(chan struct{}, 1),
 		screenInitial:  make(chan initialScreenMessage, 1),
-		tailWake:       make(chan struct{}, 1),
 	}
 	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
-		generation := client.streamGeneration.Load()
 		if frame.Kind == terminalengine.FrameSnapshot {
-			return screenprotocolv2.EncodeBaseline(frame, generation)
+			return screenprotocolv2.EncodeBaseline(frame, 0)
 		}
-		return screenprotocolv2.EncodeTerminalCommit(frame, generation)
+		return screenprotocolv2.EncodeTerminalCommit(frame, 0)
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
@@ -173,22 +154,6 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 			if rt != nil {
 				rt.RequestHistoryRange(client.screenClientID, req.RequestId, req.InstanceId,
 					req.LayoutEpoch, req.FromSeq, req.ToSeq)
-			}
-		}),
-		screenprotocolv2.WithSetStreamModeCallback(func(req *pb.SetStreamMode) {
-			if rt != nil {
-				mode := terminalsession.StreamModeLive
-				if req.Mode == pb.ScreenStreamMode_SCREEN_STREAM_MODE_FROZEN {
-					mode = terminalsession.StreamModeFrozen
-					client.screenMu.Lock()
-					client.hasScreenData = false
-					client.screenPending = terminalengine.ScreenFrame{}
-					client.screenMu.Unlock()
-				}
-				client.clearPendingTailStatus()
-				client.streamGeneration.Store(req.StreamGeneration)
-				client.streamMode.Store(uint32(mode))
-				rt.SetStreamMode(client.screenClientID, mode, req.StreamGeneration)
 			}
 		}),
 		screenprotocolv2.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
@@ -305,10 +270,6 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 			if !client.writeLatestScreenState(ctx) {
 				return
 			}
-		case <-client.tailWake:
-			if !client.flushTailStatus(ctx) {
-				return
-			}
 		case initial := <-client.screenInitial:
 			if !client.writeInitialScreenSync(ctx, initial) {
 				return
@@ -331,20 +292,13 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 		return false
 	}
 	client.screenMu.Lock()
-	client.screenDeriver.Seed(initial.sync.State)
+	client.screenDeriver.SeedAfterSuccessfulWrite(initial.sync.State)
 	client.screenMu.Unlock()
 	initial.done(true)
 	return true
 }
 
 func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context) bool {
-	if terminalsession.StreamMode(client.streamMode.Load()) == terminalsession.StreamModeFrozen {
-		client.screenMu.Lock()
-		client.hasScreenData = false
-		client.screenPending = terminalengine.ScreenFrame{}
-		client.screenMu.Unlock()
-		return true
-	}
 	client.screenMu.Lock()
 	if !client.hasScreenData {
 		client.screenMu.Unlock()
@@ -359,43 +313,19 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		// 空 commit 被抑制：无可观察变化，不写出；deriver baseline 未推进。
 		return true
 	}
-	// 捕获点 C：正常 FrameForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
+	// 捕获点 C：正常 DeriveForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
 	// 不推进 baseline）。未开启捕获时 sink 内部仅一次廉价判断。
 	client.recordDerivedFrame(frame)
 
-	wireFrame := client.withCanonicalDictionary(frame, state)
-	payload, err := client.encodeFrame(wireFrame)
+	payload, err := client.encodeFrame(frame)
 	if err != nil {
 		client.logScreenEncodeFailure("frame", state, err)
-		// A failed Patch must not leave the logical channel alive with an old
-		// baseline. Immediately encode the current canonical state as a complete
-		// Snapshot; only a successful physical write commits the new baseline.
-		snapshot := state
-		snapshot.Kind = terminalengine.FrameSnapshot
-		snapshot.BaseRevision = 0
-		snapshot.FirstAvailableHistorySeqChanged = false
-		payload, err = client.encodeFrame(snapshot)
-		if err != nil {
-			client.logScreenEncodeFailure("snapshot_fallback", state, err)
-			client.Close()
-			return false
-		}
-		// 捕获点 D/E（snapshot 回退路径）。
-		handle := client.recordWireFrame("baseline", snapshot.Seq, snapshot.BaseRevision, payload)
-		if !client.writeScreenMessage(ctx, outboundMessage{binary: payload, kind: "baseline"}, handle) {
-			return false
-		}
-		client.screenMu.Lock()
-		client.screenDeriver.Seed(state)
-		client.screenMu.Unlock()
-		return true
+		client.Close()
+		return false
 	}
 	kind := "commit"
 	if frame.Kind == terminalengine.FrameSnapshot {
 		kind = "baseline"
-	}
-	if terminalsession.StreamMode(client.streamMode.Load()) == terminalsession.StreamModeFrozen {
-		return true
 	}
 	// 捕获点 D：正常编码成功后旁路记录 wire bytes（SHA-256 在导出时异步计算，不在热路径）。
 	handle := client.recordWireFrame(kind, frame.Seq, frame.BaseRevision, payload)
@@ -403,7 +333,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		return false
 	}
 	client.screenMu.Lock()
-	client.screenDeriver.Seed(state)
+	client.screenDeriver.SeedAfterSuccessfulWrite(state)
 	client.screenMu.Unlock()
 	return true
 }
@@ -455,9 +385,6 @@ func (client *terminalChannelRuntime) recordWireFrame(kind string,
 func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	state terminalengine.ScreenFrame, err error) {
 	diagnostics.Default.ScreenEncodeFailureCount.Add(1)
-	if stage == "snapshot_fallback" || stage == "snapshot_fallback_immediate" {
-		diagnostics.Default.SnapshotFallbackCount.Add(1)
-	}
 	if client.logger == nil {
 		return
 	}
@@ -614,16 +541,6 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		return
 	}
 	client.clientInstanceID = hello.GetClientInstanceId()
-	client.clearPendingTailStatus()
-	client.streamGeneration.Store(hello.GetStreamGeneration())
-	mode := terminalsession.StreamModeLive
-	if hello.GetDesiredMode() == pb.ScreenStreamMode_SCREEN_STREAM_MODE_FROZEN {
-		mode = terminalsession.StreamModeFrozen
-	}
-	client.streamMode.Store(uint32(mode))
-	// Stable LineData has one final Compact encoding: UTF-8 text plus per-cell
-	// metadata preserves Go-authoritative widths even for wide/combined glyphs.
-	client.compactLineEncoding.Store(true)
 	client.attachScreenClient(hello)
 	client.ready.Store(true)
 }
@@ -679,38 +596,35 @@ func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {
 }
 
 func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
-	mode := terminalsession.StreamModeLive
-	if hello.GetDesiredMode() == pb.ScreenStreamMode_SCREEN_STREAM_MODE_FROZEN {
-		mode = terminalsession.StreamModeFrozen
+	var resume *screenprojection.ResumeToken
+	if token := hello.GetResume(); token != nil {
+		rows := make([]screenprojection.ResumeScreenLine, len(token.GetActiveRows()))
+		for i, row := range token.GetActiveRows() {
+			rows[i] = screenprojection.ResumeScreenLine{LineID: row.GetLineId(), LineVersion: row.GetLineVersion()}
+		}
+		buffer := terminalengine.BufferMain
+		if token.GetActiveBuffer() == pb.BufferKind_BUFFER_KIND_ALTERNATE {
+			buffer = terminalengine.BufferAlternate
+		}
+		resume = &screenprojection.ResumeToken{InstanceID: token.GetInstanceId(),
+			LayoutEpoch: token.GetLayoutEpoch(), ScreenRevision: token.GetScreenRevision(),
+			DictionaryGeneration: token.GetDictionaryGeneration(), HistoryGeneration: token.GetHistoryGeneration(),
+			ContiguousHistoryTailFirstSeq: token.GetContiguousHistoryTailFirstSeq(),
+			ContiguousHistoryTailLastSeq:  token.GetContiguousHistoryTailLastSeq(),
+			ActiveBuffer:                  buffer, ActiveRows: rows}
 	}
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
 		ID:               client.screenClientID,
-		Mode:             mode,
-		StreamGeneration: hello.GetStreamGeneration(),
+		ResumeToken:      resume,
 		Send:             client.sendScreenState,
 		SendInitial:      client.sendInitialScreenSync,
 		SendHistoryRange: client.sendScreenHistoryRange,
-		SendTailStatus:   client.sendTailStatus,
 		SendEffect:       client.sendScreenEffect,
 		SendLayoutLease:  client.sendLayoutLease,
 	})
 }
 
 func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminalsession.InitialSync, done func(bool)) {
-	if !client.writerStarted.Load() {
-		payload, kind, err := client.encodeInitialScreenSync(syncMessage)
-		if err != nil {
-			done(false)
-			return
-		}
-		client.screenMu.Lock()
-		client.screenDeriver.Seed(syncMessage.State)
-		client.screenMu.Unlock()
-		client.enqueueBinary(payload, kind)
-		done(true)
-		return
-	}
-
 	// 初始同步不可被 mailbox 覆盖。开始新的 resync 前清掉尚未写出的实时状态；
 	// actor 会在初始帧提交后从最新 canonical state 重新派生。
 	client.screenMu.Lock()
@@ -725,11 +639,29 @@ func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminal
 }
 
 func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, string, error) {
-	generation := syncMessage.StreamGeneration
-	if generation == 0 {
-		generation = client.streamGeneration.Load()
+	if syncMessage.ResumeAccepted {
+		payload, err := screenprotocolv2.EncodeResumeAccepted(syncMessage.State)
+		return payload, "other", err
 	}
-	payload, err := screenprotocolv2.EncodeBaseline(syncMessage.State, generation)
+	if syncMessage.Projection.Kind == terminalengine.FramePatch {
+		commitPayload, err := screenprotocolv2.EncodeTerminalCommit(syncMessage.Projection, 0)
+		if err != nil {
+			return nil, "commit", err
+		}
+		// A resume commit is useful only while it is materially smaller than an
+		// authoritative rebuild. The compatible baseline preserves resident
+		// history and viewport anchors, so choosing it here does not redownload
+		// history or reset local navigation.
+		baseline := syncMessage.State
+		baseline.Kind = terminalengine.FrameSnapshot
+		baseline.PreserveCompatibleHistory = true
+		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(baseline, 0)
+		if baselineErr == nil && len(commitPayload) >= len(baselinePayload) {
+			return baselinePayload, "baseline", nil
+		}
+		return commitPayload, "commit", nil
+	}
+	payload, err := screenprotocolv2.EncodeBaseline(syncMessage.Projection, 0)
 	return payload, "baseline", err
 }
 
@@ -758,71 +690,11 @@ func (client *terminalChannelRuntime) sendScreenHistoryRange(
 	}
 }
 
-func (client *terminalChannelRuntime) sendTailStatus(
-	instanceID string, epoch, generation, revision uint64,
-	extent terminalengine.HistoryExtent,
-) {
-	payload, err := screenprotocolv2.EncodeTailStatus(
-		instanceID, epoch, generation, revision, extent, false, 0)
-	if err != nil {
-		return
-	}
-	if !client.writerStarted.Load() {
-		// 测试模式（未启动 writer 循环）：直接入 send 供测试读取。
-		client.enqueueBinary(payload, "other")
-		return
-	}
-	// per-client 覆盖式合并：只保留最新一条 TailStatus，唤醒 writer 写出。
-	// 多次调用在 writer 取出前互相覆盖，避免冻结客户端在持续输出下堆满 send 缓冲。
-	client.tailMu.Lock()
-	client.tailPending = pendingTailStatus{generation: generation, payload: payload}
-	client.tailHas = true
-	client.tailMu.Unlock()
-	select {
-	case client.tailWake <- struct{}{}:
-	default:
-	}
-}
-
-// flushTailStatus 写出当前最新的合并 TailStatus（若有）。无 pending 时为 no-op。
-func (client *terminalChannelRuntime) flushTailStatus(ctx context.Context) bool {
-	client.tailMu.Lock()
-	defer client.tailMu.Unlock()
-	if !client.tailHas {
-		return true
-	}
-	pending := client.tailPending
-	client.tailPending = pendingTailStatus{}
-	client.tailHas = false
-	if pending.generation != client.streamGeneration.Load() ||
-		terminalsession.StreamMode(client.streamMode.Load()) != terminalsession.StreamModeFrozen {
-		return true
-	}
-	// 校验与写出必须和 mode 切换共用 tailMu 形成线性顺序：若 SetStreamMode
-	// 已先取得锁，pending 会被清空；若 writer 先取得锁，则旧 TailStatus 必须
-	// 在 LIVE 切换正式生效前完成写出，不能在切换后越界落到 socket。
-	return client.writeMessage(ctx, outboundMessage{binary: pending.payload, kind: "other"})
-}
-
-func (client *terminalChannelRuntime) clearPendingTailStatus() {
-	client.tailMu.Lock()
-	client.tailPending = pendingTailStatus{}
-	client.tailHas = false
-	client.tailMu.Unlock()
-}
-
 // sendScreenState accepts a complete shared projection from the terminal actor.
 // In production it only replaces one mailbox slot; the socket writer derives a
-// commit relative to the last state it actually scheduled for writing. Tests
-// that intentionally use terminalChannelRuntime without Run retain the old immediate path.
+// commit relative to the last state it physically wrote successfully. Tests use
+// a synchronous fake writer through the same derive/encode/write/seed sequence.
 func (client *terminalChannelRuntime) sendScreenState(state terminalengine.ScreenFrame) {
-	if !client.writerStarted.Load() {
-		frame := client.screenDeriver.DeriveForState(state)
-		if frame.Kind != 0 { // Kind==0：空 commit 被抑制，不发送
-			client.sendScreenFrameNow(frame, state)
-		}
-		return
-	}
 	client.screenMu.Lock()
 	client.screenPending = state
 	client.hasScreenData = true
@@ -831,39 +703,6 @@ func (client *terminalChannelRuntime) sendScreenState(state terminalengine.Scree
 	case client.screenWake <- struct{}{}:
 	default:
 	}
-}
-
-func (client *terminalChannelRuntime) sendScreenFrameNow(frame, state terminalengine.ScreenFrame) {
-	payload, err := client.encodeFrame(client.withCanonicalDictionary(frame, state))
-	if err != nil {
-		client.logScreenEncodeFailure("frame_immediate", state, err)
-		snapshot := state
-		snapshot.Kind = terminalengine.FrameSnapshot
-		snapshot.BaseRevision = 0
-		payload, err = client.encodeFrame(snapshot)
-		if err != nil {
-			client.logScreenEncodeFailure("snapshot_fallback_immediate", state, err)
-			client.Close()
-			return
-		}
-		client.screenDeriver.Seed(state)
-		client.enqueueBinary(payload, "baseline")
-		return
-	}
-	kind := "commit"
-	if frame.Kind == terminalengine.FrameSnapshot {
-		kind = "baseline"
-	}
-	client.enqueueBinary(payload, kind)
-	client.screenDeriver.Seed(state)
-}
-
-func (client *terminalChannelRuntime) withCanonicalDictionary(
-	frame, state terminalengine.ScreenFrame,
-) terminalengine.ScreenFrame {
-	frame.Styles = state.Styles
-	frame.Links = state.Links
-	return frame
 }
 
 func (client *terminalChannelRuntime) enqueueBinary(bytes []byte, kind string) {

@@ -64,8 +64,6 @@ func TestTerminalExitDeliversFinalOutputBeforeExit(t *testing.T) {
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			ClientInstanceId: "exit-drain-client",
-			StreamGeneration: 1,
-			DesiredMode:      pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
 			DesiredGeometry:  &pb.Geometry{Cols: 100, Rows: 30},
 		}},
 	})
@@ -137,14 +135,7 @@ func envelopeContainsText(envelope *pb.ScreenEnvelope, needle string) bool {
 		}
 	}
 	for _, line := range lines {
-		var text strings.Builder
-		text.WriteString(line.GetText())
-		for _, run := range line.GetRuns() {
-			for _, cell := range run.GetCells() {
-				text.WriteString(cell.GetText())
-			}
-		}
-		if strings.Contains(text.String(), needle) {
+		if strings.Contains(string(line.GetUtf8Text()), needle) {
 			return true
 		}
 	}

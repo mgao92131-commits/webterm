@@ -3,6 +3,7 @@ package com.webterm.terminal.protocol;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
+import com.google.protobuf.ByteString;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
@@ -21,14 +22,16 @@ public final class ScreenMessageV2MapperTest {
     TerminalScreenV2Proto.LineData line =
         TerminalScreenV2Proto.LineData.newBuilder()
             .setLineId(9).setLineVersion(1)
-            .addRuns(TerminalScreenV2Proto.CellRun.newBuilder().setCol(0)
-                .addCells(TerminalScreenV2Proto.Cell.newBuilder()
-                    .setText("A").setWidth(1).setStyleId(4)))
+            .setUtf8Text(ByteString.copyFromUtf8("A"))
+            .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
+            .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+                .setStartCol(0).setEndCol(1).setStyleId(4))
             .build();
     TerminalScreenV2Proto.Baseline wire =
         TerminalScreenV2Proto.Baseline.newBuilder()
             .setSessionId("s").setInstanceId("i")
-            .setLayoutEpoch(1).setScreenRevision(1).setStreamGeneration(1)
+            .setLayoutEpoch(1).setScreenRevision(1)
+            .setDictionaryGeneration(1).setHistoryGeneration(1)
             .setGeometry(TerminalScreenV2Proto.Geometry.newBuilder().setRows(1).setCols(1))
             .setActiveBuffer(TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN)
             .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
@@ -66,28 +69,32 @@ public final class ScreenMessageV2MapperTest {
 
     TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, 2, 1);
     assertEquals(1, commit.screen.scroll.deltaRows);
-    assertEquals(12, commit.screen.writes.get(0).line.id);
+    assertEquals(12, commit.screen.writes.get(0).lineData.lineId);
     assertEquals(7, commit.history.appendedLines.get(0).historySeq);
   }
 
-  @Test(expected = IllegalArgumentException.class)
-  public void terminalCommitRejectsIncompleteDictionaryReferences() {
+  @Test
+  public void terminalCommitPreservesDictionaryReferencesForModelStaging() {
     TerminalScreenV2Proto.LineData styled = line(12, 0).toBuilder()
-        .addRuns(TerminalScreenV2Proto.CellRun.newBuilder().setCol(0)
-            .addCells(TerminalScreenV2Proto.Cell.newBuilder()
-                .setText("X").setWidth(1).setStyleId(99)))
+        .setUtf8Text(ByteString.copyFromUtf8("X"))
+        .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
+        .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+            .setStartCol(0).setEndCol(1).setStyleId(99))
         .build();
     TerminalScreenV2Proto.TerminalCommit wire = commitBuilder()
         .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
             .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
                 .setRow(0).setLine(styled)))
         .build();
-    ScreenMessageV2Mapper.mapTerminalCommit(wire, 1, 1);
+    TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, 1, 1);
+    // Commit dictionaries are canonical staged state; unknown references fail at model staging.
+    assertEquals(99, commit.screen.writes.get(0).lineData.styleSpans.get(0).styleId);
   }
 
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {
     return TerminalScreenV2Proto.TerminalCommit.newBuilder()
-        .setInstanceId("i").setLayoutEpoch(1).setStreamGeneration(1)
+        .setInstanceId("i").setLayoutEpoch(1)
+        .setDictionaryGeneration(1).setHistoryGeneration(1)
         .setBaseRevision(1).setRevision(2);
   }
 

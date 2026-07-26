@@ -46,28 +46,36 @@ func (pty *fakeScreenPTY) Close() error {
 
 type testSocket struct {
 	protocolName string
+	writes       chan []byte
 }
 
 func (socket *testSocket) Read(ctx context.Context) (MessageType, []byte, error) {
 	<-ctx.Done()
 	return 0, nil, ctx.Err()
 }
-func (socket *testSocket) Write(context.Context, MessageType, []byte) error { return nil }
-func (socket *testSocket) Close() error                                     { return nil }
-func (socket *testSocket) Subprotocol() string                              { return socket.protocolName }
+func (socket *testSocket) Write(_ context.Context, _ MessageType, payload []byte) error {
+	if socket.writes != nil {
+		socket.writes <- append([]byte(nil), payload...)
+	}
+	return nil
+}
+func (socket *testSocket) Close() error        { return nil }
+func (socket *testSocket) Subprotocol() string { return socket.protocolName }
 
 func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) []byte {
+	var resume *pb.ResumeToken
+	if hasProjection {
+		resume = &pb.ResumeToken{InstanceId: instanceID, LayoutEpoch: epoch,
+			ScreenRevision: revision, DictionaryGeneration: 1, HistoryGeneration: 1,
+			ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN,
+			ActiveRows:   []*pb.ResumeScreenLine{{LineId: 1, LineVersion: 1}}}
+	}
 	wire, _ := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId:    "handler-test-client",
-			StreamGeneration:    1,
-			DesiredMode:         pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
-			HasFrozenProjection: hasProjection,
-			InstanceId:          instanceID,
-			LayoutEpoch:         epoch,
+			ClientInstanceId: "handler-test-client",
+			Resume:           resume,
 		}},
 	})
-	_ = revision
 	return wire
 }

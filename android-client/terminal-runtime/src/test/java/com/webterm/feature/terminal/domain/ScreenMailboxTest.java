@@ -10,15 +10,18 @@ import org.junit.Test;
 
 public final class ScreenMailboxTest {
   @Test
-  public void overflowDiscardsPatchChainAndEmitsFenceBeforeNewMessages() {
+  public void overflowDiscardsCommitChainAndEmitsFenceBeforeNewMessages() {
     ScreenMailbox mailbox = new ScreenMailbox(2, 10L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1, 2}, true, ScreenMailbox.MessageKind.PATCH);
-    mailbox.offer(1L, source, new byte[] {3, 4}, true, ScreenMailbox.MessageKind.PATCH);
+    mailbox.offer(1L, source, new byte[] {1, 2}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {3, 4}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
     long oldGeneration = mailbox.generation();
 
-    mailbox.offer(1L, source, new byte[] {5}, true, ScreenMailbox.MessageKind.PATCH);
+    mailbox.offer(1L, source, new byte[] {5}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
 
     ScreenMailbox.Drain first = mailbox.poll();
     assertNotNull(first.fence);
@@ -29,20 +32,19 @@ public final class ScreenMailboxTest {
   }
 
   @Test
-  public void overflowRetainsNewestSnapshotForRecovery() {
+  public void overflowDiscardsAllPendingProjectionMessages() {
     ScreenMailbox mailbox = new ScreenMailbox(2, 10L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.PATCH);
-    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.SNAPSHOT);
+    mailbox.offer(1L, source, new byte[] {1}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.BASELINE);
 
-    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.PATCH);
+    mailbox.offer(1L, source, new byte[] {3}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
 
     assertNotNull(mailbox.poll().fence);
-    ScreenMailbox.Drain retained = mailbox.poll();
-    assertNotNull(retained.message);
-    assertEquals(ScreenMailbox.MessageKind.SNAPSHOT, retained.message.kind);
-    assertEquals(2, retained.message.payload[0]);
+    assertNull(mailbox.poll());
   }
 
   @Test
@@ -52,29 +54,27 @@ public final class ScreenMailboxTest {
         mock(TerminalSessionRuntime.ScreenConnection.class);
 
     assertTrue(mailbox.offer(1L, source, new byte[] {1}, true,
-        ScreenMailbox.MessageKind.PATCH).scheduleDrain);
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT).scheduleDrain);
     mailbox.reset();
     assertTrue(mailbox.offer(2L, source, new byte[] {2}, true,
-        ScreenMailbox.MessageKind.PATCH).scheduleDrain);
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT).scheduleDrain);
     mailbox.abandonDrain();
     assertTrue(mailbox.offer(2L, source, new byte[] {3}, true,
-        ScreenMailbox.MessageKind.PATCH).scheduleDrain);
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT).scheduleDrain);
   }
 
   @Test
-  public void tailStatusUsesSingleReplaceableSlot() {
+  public void historyAndControlMessagesRemainFifo() {
     ScreenMailbox mailbox = new ScreenMailbox(2, 10L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.TAIL_STATUS);
-    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.TAIL_STATUS);
-    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.HISTORY_RANGE);
+    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.PONG);
+    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.INPUT_ACK);
 
-    ScreenMailbox.Drain tail = mailbox.poll();
-    assertNotNull(tail.message);
-    assertEquals(ScreenMailbox.MessageKind.TAIL_STATUS, tail.message.kind);
-    assertEquals(2, tail.message.payload[0]);
-    assertEquals(ScreenMailbox.MessageKind.TERMINAL_COMMIT, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.HISTORY_RANGE, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.PONG, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.INPUT_ACK, mailbox.poll().message.kind);
     assertNull(mailbox.poll());
   }
 
@@ -112,18 +112,4 @@ public final class ScreenMailboxTest {
     assertEquals(3, mailbox.poll().message.payload[0]);
   }
 
-  @Test
-  public void frozenBoundaryDropsCommitButKeepsHistoryRange() {
-    ScreenMailbox mailbox = new ScreenMailbox(4, 100L);
-    TerminalSessionRuntime.ScreenConnection source =
-        mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true,
-        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
-    mailbox.offer(1L, source, new byte[] {2}, true,
-        ScreenMailbox.MessageKind.HISTORY_RANGE);
-
-    assertEquals(1, mailbox.dropLiveProjectionDeltas());
-    assertEquals(ScreenMailbox.MessageKind.HISTORY_RANGE, mailbox.poll().message.kind);
-    assertNull(mailbox.poll());
-  }
 }

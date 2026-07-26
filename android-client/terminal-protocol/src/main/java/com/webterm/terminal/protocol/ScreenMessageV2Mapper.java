@@ -26,15 +26,15 @@ public final class ScreenMessageV2Mapper {
         pb.getHistoryTail().getLinesList(), columns, dictionary);
     return new ScreenBaseline(
         pb.getSessionId(), pb.getInstanceId(), pb.getLayoutEpoch(),
-        pb.getScreenRevision(), pb.getStreamGeneration(),
-        pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
+        pb.getScreenRevision(), pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
+        pb.getHistoryPolicy() == TerminalScreenV2Proto.BaselineHistoryPolicy.BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE,
+        dictionary.entries(), pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
         extent(pb.getHistoryExtent()), history, screen,
         cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
   }
 
   public static TerminalCommit mapTerminalCommit(
       TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns) {
-    Dictionary dictionary = dictionary(pb.getDictionary());
     ScreenMutation screen = null;
     if (pb.hasScreen()) {
       ScreenScroll scroll = pb.getScreen().hasScroll()
@@ -48,7 +48,7 @@ public final class ScreenMessageV2Mapper {
           throw new IllegalArgumentException("invalid or duplicate screen row write");
         }
         seenRows[write.getRow()] = true;
-        TerminalLine mapped = line(write.getLine(), columns, dictionary);
+        LineData mapped = lineData(write.getLine());
         if (mapped.historySeq != 0) {
           throw new IllegalArgumentException("screen line has history sequence");
         }
@@ -59,20 +59,29 @@ public final class ScreenMessageV2Mapper {
     HistoryMutation history = null;
     if (pb.hasHistory()) {
       HistoryExtent finalExtent = extent(pb.getHistory().getFinalExtent());
-      List<TerminalLine> lines = mapLineList(
-          pb.getHistory().getAppendedLinesList(), columns, dictionary);
+      List<LineData> lines = new ArrayList<>();
+      for (TerminalScreenV2Proto.LineData line : pb.getHistory().getAppendedLinesList()) {
+        lines.add(lineData(line));
+      }
       long previous = 0;
-      for (TerminalLine line : lines) {
+      for (LineData line : lines) {
         if (line.historySeq <= previous || !finalExtent.contains(line.historySeq)) {
           throw new IllegalArgumentException("invalid appended history sequence");
         }
         previous = line.historySeq;
       }
-      history = new HistoryMutation(finalExtent, lines);
+      List<HistoryPromotion> promotions = new ArrayList<>();
+      for (TerminalScreenV2Proto.HistoryPromotion promotion : pb.getHistory().getPromotionsList()) {
+        promotions.add(new HistoryPromotion(promotion.getLineId(), promotion.getLineVersion(),
+            promotion.getHistorySeq()));
+      }
+      history = HistoryMutation.fromLineData(finalExtent, lines, promotions);
     }
     return new TerminalCommit(
-        pb.getInstanceId(), pb.getLayoutEpoch(), pb.getStreamGeneration(),
-        pb.getBaseRevision(), pb.getRevision(), screen, history,
+        pb.getInstanceId(), pb.getLayoutEpoch(), pb.getBaseRevision(), pb.getRevision(),
+        pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
+        dictionary(pb.getDictionaryAdditions()).entries(),
+        pb.hasActiveBuffer() ? buffer(pb.getActiveBuffer()) : null, screen, history,
         pb.hasCursor() ? cursor(pb.getCursor()) : null,
         pb.hasModes() ? modes(pb.getModes()) : null,
         pb.hasPalette() ? palette(pb.getPalette()) : null);
@@ -99,7 +108,7 @@ public final class ScreenMessageV2Mapper {
         throw new IllegalArgumentException("unspecified history range status");
     }
     return new HistoryRangeResult(
-        pb.getRequestId(), pb.getInstanceId(), pb.getLayoutEpoch(), status,
+        pb.getRequestId(), pb.getInstanceId(), pb.getLayoutEpoch(), pb.getHistoryGeneration(), status,
         extent(pb.getAvailableExtent()),
         mapLineList(pb.getLinesList(), columns, dictionary),
         pb.getRetryAfterMs());
@@ -134,28 +143,49 @@ public final class ScreenMessageV2Mapper {
     int columns = requestedColumns;
     TerminalCell[] cells = new TerminalCell[columns];
     java.util.Arrays.fill(cells, TerminalCell.EMPTY);
-    for (TerminalScreenV2Proto.CellRun run : pb.getRunsList()) {
-      int col = run.getCol();
-      if (col < 0 || col >= columns) throw new IllegalArgumentException("invalid run column");
-      for (TerminalScreenV2Proto.Cell wire : run.getCellsList()) {
-        int width = wire.getWidth();
-        if ((width != 1 && width != 2) || col + width > cells.length) {
-          throw new IllegalArgumentException("invalid cell width");
-        }
-        TerminalStyle style = dictionary.style(wire.getStyleId());
-        Hyperlink link = dictionary.link(wire.getLinkId());
-        String text = wire.getText().isEmpty() ? " " : wire.getText();
-        if (width == 1 && " ".equals(text) && style == null && link == null) {
-          cells[col] = TerminalCell.EMPTY;
-        } else {
-          cells[col] = new TerminalCell(text, (byte) width, style, link);
-        }
-        if (width == 2) cells[col + 1] = TerminalCell.SPACER;
-        col += width;
+    byte[] textBytes = pb.getUtf8Text().toByteArray();
+    byte[] meta = pb.getGlyphMeta().toByteArray();
+    int textOffset = 0, metaOffset = 0, col = 0;
+    while (metaOffset < meta.length) {
+      long value = 0; int shift = 0;
+      while (true) {
+        if (metaOffset >= meta.length || shift >= 64) throw new IllegalArgumentException("invalid glyph metadata");
+        int b = meta[metaOffset++] & 0xff;
+        value |= (long) (b & 0x7f) << shift;
+        if ((b & 0x80) == 0) break;
+        shift += 7;
       }
+      int length = (int) (value >>> 1);
+      int width = (value & 1L) == 0 ? 1 : 2;
+      if (length <= 0 || textOffset + length > textBytes.length || col + width > columns) {
+        throw new IllegalArgumentException("invalid glyph metadata");
+      }
+      String text = new String(textBytes, textOffset, length, java.nio.charset.StandardCharsets.UTF_8);
+      textOffset += length;
+      int styleId = 0, linkId = 0;
+      for (TerminalScreenV2Proto.StyleSpan span : pb.getStyleSpansList()) {
+        if (col >= span.getStartCol() && col < span.getEndCol()) { styleId = span.getStyleId(); linkId = span.getLinkId(); break; }
+      }
+      TerminalStyle style = dictionary.style(styleId);
+      Hyperlink link = dictionary.link(linkId);
+      cells[col] = width == 1 && " ".equals(text) && style == null && link == null
+          ? TerminalCell.EMPTY : new TerminalCell(text, (byte) width, style, link);
+      if (width == 2) cells[col + 1] = TerminalCell.SPACER;
+      col += width;
     }
+    if (textOffset != textBytes.length) throw new IllegalArgumentException("glyph metadata/text mismatch");
     return new TerminalLine(
         pb.getLineId(), pb.getLineVersion(), pb.getHistorySeq(), pb.getWrapped(), cells);
+  }
+
+  private static LineData lineData(TerminalScreenV2Proto.LineData pb) {
+    List<LineData.Span> spans = new ArrayList<>(pb.getStyleSpansCount());
+    for (TerminalScreenV2Proto.StyleSpan span : pb.getStyleSpansList()) {
+      spans.add(new LineData.Span(span.getStartCol(), span.getEndCol(),
+          span.getStyleId(), span.getLinkId()));
+    }
+    return new LineData(pb.getLineId(), pb.getLineVersion(), pb.getWrapped(),
+        pb.getHistorySeq(), pb.getUtf8Text().toByteArray(), pb.getGlyphMeta().toByteArray(), spans);
   }
 
   private static Dictionary dictionary(TerminalScreenV2Proto.Dictionary pb) {
@@ -166,14 +196,14 @@ public final class ScreenMessageV2Mapper {
     for (TerminalScreenV2Proto.TerminalStyle style : pb.getStylesList()) {
       if (style.getId() == 0) continue;
       TerminalStyle previous = styles.put(style.getId(), new TerminalStyle(
-          0, color(style.getFg()), color(style.getBg()), color(style.getUnderlineColor()),
+          style.getId(), color(style.getFg()), color(style.getBg()), color(style.getUnderlineColor()),
           attrs(style.getAttrs())));
       if (previous != null) throw new IllegalArgumentException("duplicate style id");
     }
     Map<Integer, Hyperlink> links = new HashMap<>();
     for (TerminalScreenV2Proto.Hyperlink link : pb.getLinksList()) {
       if (link.getId() == 0) continue;
-      Hyperlink previous = links.put(link.getId(), new Hyperlink(0, link.getUri()));
+      Hyperlink previous = links.put(link.getId(), new Hyperlink(link.getId(), link.getUri()));
       if (previous != null) throw new IllegalArgumentException("duplicate link id");
     }
     return new Dictionary(styles, links);
@@ -283,6 +313,14 @@ public final class ScreenMessageV2Mapper {
       Hyperlink value = links.get(id);
       if (value == null) throw new IllegalArgumentException("unknown link id " + id);
       return value;
+    }
+
+    DictionaryEntries entries() {
+      List<TerminalStyle> styleList = new ArrayList<>(styles.values());
+      styleList.sort(java.util.Comparator.comparingInt(value -> value.id));
+      List<Hyperlink> linkList = new ArrayList<>(links.values());
+      linkList.sort(java.util.Comparator.comparingInt(value -> value.id));
+      return new DictionaryEntries(styleList, linkList);
     }
   }
 }

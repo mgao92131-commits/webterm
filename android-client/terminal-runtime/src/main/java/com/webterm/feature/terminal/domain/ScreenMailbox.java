@@ -4,41 +4,27 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayDeque;
-import java.util.Iterator;
 
 /** 连接代际感知的有界 screen mailbox；overflow 会生成先于后续消息处理的 fence。 */
 public final class ScreenMailbox {
   public enum MessageKind {
     BASELINE,
+    RESUME_ACCEPTED,
     TERMINAL_COMMIT,
     HISTORY_RANGE,
-    TAIL_STATUS,
     INPUT_ACK,
     LAYOUT_LEASE,
     EFFECT,
     EXIT,
     PONG,
-    /** @deprecated 仅供旧单元测试构造 mailbox；产品通道已使用 BASELINE。 */
-    @Deprecated SNAPSHOT,
-    /** @deprecated 产品通道已使用 TERMINAL_COMMIT。 */
-    @Deprecated PATCH,
-    /** @deprecated 产品通道已使用 HISTORY_RANGE。 */
-    @Deprecated HISTORY_PAGE,
-    /** @deprecated screen.v2 通过 extent/status 表达 trim。 */
-    @Deprecated HISTORY_TRIM,
     OTHER,
     UNKNOWN
   }
 
   static boolean isProjectionMessage(@NonNull MessageKind kind) {
     return kind == MessageKind.BASELINE
+        || kind == MessageKind.RESUME_ACCEPTED
         || kind == MessageKind.TERMINAL_COMMIT
-        || kind == MessageKind.HISTORY_RANGE
-        || kind == MessageKind.TAIL_STATUS
-        || kind == MessageKind.SNAPSHOT
-        || kind == MessageKind.PATCH
-        || kind == MessageKind.HISTORY_PAGE
-        || kind == MessageKind.HISTORY_TRIM
         || kind == MessageKind.UNKNOWN;
   }
 
@@ -104,7 +90,10 @@ public final class ScreenMailbox {
 
   private final int maxMessages;
   private final long maxBytes;
-  private final ArrayDeque<Message> messages = new ArrayDeque<>();
+  /** Revision-bearing lane. Encoded projection messages are never merged or reordered. */
+  private final ArrayDeque<Message> projectionMessages = new ArrayDeque<>();
+  /** Revision-independent history/control lane. */
+  private final ArrayDeque<Message> controlMessages = new ArrayDeque<>();
   private boolean drainScheduled;
   private long pendingBytes;
   private int pendingProjectionMessages;
@@ -126,48 +115,14 @@ public final class ScreenMailbox {
                                   @NonNull byte[] payload,
                                   boolean validFrameSize,
                                   @NonNull MessageKind kind) {
-    if (validFrameSize && kind == MessageKind.TAIL_STATUS) {
-      // TailStatus 是覆盖式远端水位，不携带可绘制内容。保留同一连接最新一条即可，
-      // 避免冻结期间持续输出把 projection mailbox 的帧预算耗尽。
-      Iterator<Message> iterator = messages.iterator();
-      while (iterator.hasNext()) {
-        Message pending = iterator.next();
-        if (pending.kind == MessageKind.TAIL_STATUS
-            && pending.connectionEpoch == connectionEpoch
-            && pending.sourceConnection == source) {
-          pendingBytes -= pending.payload.length;
-          pendingProjectionBytes -= pending.payload.length;
-          pendingProjectionMessages--;
-          iterator.remove();
-        }
-      }
-    }
     boolean projection = isProjectionMessage(kind);
     long nextProjectionBytes = pendingProjectionBytes + (projection ? payload.length : 0L);
     if (!validFrameSize || (projection && (pendingProjectionMessages >= maxMessages
         || nextProjectionBytes > maxBytes))) {
-      Message retainedSnapshot = validFrameSize ? newestSnapshot() : null;
-      Message snapshot = kind == MessageKind.BASELINE || kind == MessageKind.SNAPSHOT
-          ? new Message(connectionEpoch, generation + 1L, source, payload, kind)
-          : retainedSnapshot == null ? null
-              : new Message(retainedSnapshot.connectionEpoch, generation + 1L,
-                  retainedSnapshot.sourceConnection, retainedSnapshot.payload, retainedSnapshot.kind,
-                  retainedSnapshot.enqueuedAtNanos);
-      long discarded = pendingProjectionBytes + payload.length
-          - (snapshot == null ? 0L : snapshot.payload.length);
-      long discardedMessages = pendingProjectionMessages + 1L
-          - (snapshot == null ? 0L : 1L);
-      ArrayDeque<Message> retainedControl = new ArrayDeque<>();
-      long retainedControlBytes = 0L;
-      for (Message message : messages) {
-        if (!isProjectionMessage(message.kind)) {
-          retainedControl.addLast(message);
-          retainedControlBytes += message.payload.length;
-        }
-      }
-      messages.clear();
-      messages.addAll(retainedControl);
-      pendingBytes = retainedControlBytes;
+      long discarded = pendingProjectionBytes + payload.length;
+      long discardedMessages = pendingProjectionMessages + 1L;
+      projectionMessages.clear();
+      pendingBytes -= pendingProjectionBytes;
       pendingProjectionMessages = 0;
       pendingProjectionBytes = 0L;
       generation++;
@@ -180,17 +135,10 @@ public final class ScreenMailbox {
           : (nextProjectionBytes > maxBytes
               ? "screen mailbox exceeded byte budget"
               : "screen mailbox exceeded frame budget");
-      // A snapshot is the one frame that can release the recovery fence. Keep the newest
-      // authoritative snapshot even when later patches are what exhausted the mailbox.
-      // The payload remains untouched: webterm.screen.v2 stays a protobuf-only channel.
-      if (snapshot != null) {
-        messages.addLast(snapshot);
-        pendingBytes += snapshot.payload.length;
-        pendingProjectionMessages = 1;
-        pendingProjectionBytes = snapshot.payload.length;
-      }
     } else {
-      messages.addLast(new Message(connectionEpoch, generation, source, payload, kind));
+      Message message = new Message(connectionEpoch, generation, source, payload, kind);
+      if (projection) projectionMessages.addLast(message);
+      else controlMessages.addLast(message);
       pendingBytes += payload.length;
       if (projection) {
         pendingProjectionMessages++;
@@ -212,7 +160,8 @@ public final class ScreenMailbox {
       fenceOverflows = 0L;
       return new Drain(null, fence);
     }
-    Message message = messages.pollFirst();
+    Message message = projectionMessages.pollFirst();
+    if (message == null) message = controlMessages.pollFirst();
     if (message != null) {
       pendingBytes -= message.payload.length;
       if (isProjectionMessage(message.kind)) {
@@ -226,7 +175,7 @@ public final class ScreenMailbox {
 
   /** Atomically releases the current drain or reserves the next time slice. */
   public synchronized boolean finishDrain() {
-    if (fencePending || !messages.isEmpty()) return true;
+    if (fencePending || !projectionMessages.isEmpty() || !controlMessages.isEmpty()) return true;
     drainScheduled = false;
     return false;
   }
@@ -237,28 +186,12 @@ public final class ScreenMailbox {
   }
 
   public synchronized boolean hasPending() {
-    return fencePending || !messages.isEmpty();
-  }
-
-  /** FROZEN 切换边界：丢弃尚未解析的实时增量，保留 TailStatus、Baseline 与控制帧。 */
-  public synchronized int dropLiveProjectionDeltas() {
-    int dropped = 0;
-    Iterator<Message> iterator = messages.iterator();
-    while (iterator.hasNext()) {
-      Message message = iterator.next();
-      if (message.kind != MessageKind.TERMINAL_COMMIT
-          && message.kind != MessageKind.PATCH) continue;
-      iterator.remove();
-      dropped++;
-      pendingBytes -= message.payload.length;
-      pendingProjectionMessages--;
-      pendingProjectionBytes -= message.payload.length;
-    }
-    return dropped;
+    return fencePending || !projectionMessages.isEmpty() || !controlMessages.isEmpty();
   }
 
   public synchronized void reset() {
-    messages.clear();
+    projectionMessages.clear();
+    controlMessages.clear();
     pendingBytes = 0L;
     pendingProjectionMessages = 0;
     pendingProjectionBytes = 0L;
@@ -276,20 +209,11 @@ public final class ScreenMailbox {
   }
 
   synchronized int pendingMessages() {
-    return messages.size();
+    return projectionMessages.size() + controlMessages.size();
   }
 
   synchronized long pendingBytes() {
     return pendingBytes;
   }
 
-  @Nullable
-  private Message newestSnapshot() {
-    java.util.Iterator<Message> iterator = messages.descendingIterator();
-    while (iterator.hasNext()) {
-      Message message = iterator.next();
-      if (message.kind == MessageKind.BASELINE || message.kind == MessageKind.SNAPSHOT) return message;
-    }
-    return null;
-  }
 }

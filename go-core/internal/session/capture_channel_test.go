@@ -91,7 +91,8 @@ func TestCaptureDoesNotAdvanceDeriverBaseline(t *testing.T) {
 	}
 
 	var deriver screenprojection.FrameDeriver
-	frame1 := deriver.FrameForState(state) // 首帧 → snapshot，baseline=state
+	frame1 := deriver.DeriveForState(state) // 首帧 → snapshot
+	deriver.SeedAfterSuccessfulWrite(state) // 模拟物理写成功
 	if frame1.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame kind = %v, want snapshot", frame1.Kind)
 	}
@@ -102,7 +103,7 @@ func TestCaptureDoesNotAdvanceDeriverBaseline(t *testing.T) {
 	})
 
 	// 对完全相同的状态再次派生：baseline 已等于 state，应无可观察变化 → Kind=0。
-	frame2 := deriver.FrameForState(state)
+	frame2 := deriver.DeriveForState(state)
 	if frame2.Kind != 0 {
 		t.Fatalf("second derive of same state kind=%v, want 0 (capture must not advance baseline)", frame2.Kind)
 	}

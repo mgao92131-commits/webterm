@@ -165,7 +165,6 @@ final class CaptureSerializer {
         o.put("instanceId", s.instanceId);
         o.put("layoutEpoch", s.layoutEpoch);
         o.put("screenRevision", s.screenRevision);
-        o.put("streamGeneration", s.streamGeneration);
         o.put("rows", s.rows);
         o.put("cols", s.cols);
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
@@ -185,7 +184,6 @@ final class CaptureSerializer {
         o.put("layoutEpoch", p.layoutEpoch);
         o.put("baseRevision", p.baseRevision);
         o.put("screenRevision", p.revision);
-        o.put("streamGeneration", p.streamGeneration);
         JSONArray writes = new JSONArray();
         if (p.screen != null) for (com.webterm.terminal.model.ScreenRowWrite write : p.screen.writes) {
             writes.put(write.row);
@@ -201,7 +199,6 @@ final class CaptureSerializer {
         o.put("instanceId", m.instanceId);
         o.put("layoutEpoch", m.layoutEpoch);
         o.put("screenRevision", m.screenRevision);
-        o.put("remoteScreenRevision", m.remoteScreenRevision);
         o.put("displayHistoryExtent", historyExtent(m.displayHistoryExtent));
         o.put("remoteHistoryExtent", historyExtent(m.remoteHistoryExtent));
         o.put("rows", m.rows);
@@ -242,7 +239,7 @@ final class CaptureSerializer {
         o.put("baseline", v.baseline);
         o.put("scrollOffsetPixels", v.scrollOffsetPixels);
         o.put("followTail", v.followTail);
-        o.put("contentStreamIntent", v.contentStreamIntent);
+        o.put("viewportPosition", v.viewportPosition);
         o.put("liveScreenExitOffsetPixels", v.liveScreenExitOffsetPixels);
         o.put("pureHistory", v.pureHistory);
         o.put("keyboardVisible", v.keyboardVisible);

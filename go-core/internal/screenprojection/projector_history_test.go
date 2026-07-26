@@ -212,27 +212,30 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 	if got := len(baseline.History.Lines); got != snapshotTailLines {
 		t.Fatalf("expected full %d-line window, got %d", snapshotTailLines, got)
 	}
-	if snap := deriver.FrameForState(baseline); snap.Kind != terminalengine.FrameSnapshot {
+	if snap := deriver.deriveAndSeedForTest(baseline); snap.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("baseline must be snapshot, got kind=%v", snap.Kind)
 	}
 
 	const k = 7
 	regionScrollLines(t, engine, k)
 	state := p.ExportState(0, 2)
-	patch := deriver.FrameForState(state)
+	patch := deriver.deriveAndSeedForTest(state)
 	if patch.BaseRevision != 1 {
 		t.Fatalf("expected patch base=1, got %d (snapshot fallback?)", patch.BaseRevision)
 	}
 
-	// 滚入历史的 k 行都携带 HistorySeq 与完整行正文。
-	wantIDs := state.History.Lines[len(state.History.Lines)-k:]
-	for i, line := range patch.History.Lines {
-		if line.HistorySeq != wantIDs[i].HistorySeq {
-			t.Fatalf("append sequence[%d]=%d, want %d", i, line.HistorySeq, wantIDs[i].HistorySeq)
-		}
+	// 只有客户端可证明持有相同 ID/version 的行才 Promotion；其余行带正文。
+	if len(patch.HistoryPromotions) == 0 || len(patch.HistoryPromotions)+len(patch.History.Lines) != k {
+		t.Fatalf("promotions=%d appended bodies=%d, want total %d", len(patch.HistoryPromotions), len(patch.History.Lines), k)
 	}
-	if len(patch.History.Lines) != k {
-		t.Fatalf("history append must include seq-to-line bindings: %d", len(patch.History.Lines))
+	promoted := make(map[uint64]struct{})
+	for _, promotion := range patch.HistoryPromotions {
+		promoted[promotion.LineID] = struct{}{}
+	}
+	for _, line := range patch.History.Lines {
+		if _, duplicate := promoted[line.ID]; duplicate {
+			t.Fatalf("promotion repeated body for LineID=%d", line.ID)
+		}
 	}
 
 	// 窗口旧端被裁 k 行：边界必须与新 State 完全一致。
@@ -260,24 +263,30 @@ func TestProjector_LargeHistoryAdvanceStaysCommit(t *testing.T) {
 	if len(baseline.History.Lines) != 0 {
 		t.Fatalf("expected empty history baseline, got %d lines", len(baseline.History.Lines))
 	}
-	deriver.FrameForState(baseline)
+	deriver.deriveAndSeedForTest(baseline)
 
 	// 历史追加量超过首屏窗口容量，中间行无法由 append 补齐。
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
-	frame := deriver.FrameForState(state)
+	frame := deriver.deriveAndSeedForTest(state)
 	if frame.Kind != terminalengine.FramePatch {
 		t.Fatalf("large history advance must stay incremental, got kind=%v", frame.Kind)
 	}
-	if got := len(frame.History.Lines); got != snapshotTailLines {
-		t.Fatalf("commit history lines=%d, want bounded tail %d", got, snapshotTailLines)
+	if got := len(frame.History.Lines); got > defaultMaxAppendedScrollbackEntrys {
+		t.Fatalf("commit history lines=%d, exceeds budget %d", got, defaultMaxAppendedScrollbackEntrys)
 	}
-	if frame.History.FirstIncludedHistorySeq != state.History.FirstIncludedHistorySeq ||
-		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq ||
-		!frame.History.HasMoreBefore {
-		t.Fatalf("commit window bounds wrong: %+v", frame.History)
+	if len(frame.HistoryPromotions) == 0 {
+		t.Fatal("old active rows were not promoted")
 	}
-	assertMonotoneIDs(t, frame.History)
+	if frame.History.FirstAvailableHistorySeq != state.History.FirstAvailableHistorySeq ||
+		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq {
+		t.Fatalf("commit final extent wrong: %+v", frame.History)
+	}
+	for i := 1; i < len(frame.History.Lines); i++ {
+		if frame.History.Lines[i-1].HistorySeq >= frame.History.Lines[i].HistorySeq {
+			t.Fatal("budgeted appended history is not monotone")
+		}
+	}
 	assertStateEquivalent(t, state, forceFullExport(p, 3))
 }
 
@@ -287,11 +296,11 @@ func TestProjector_ResizeRebuildsHistoryOnEpochChange(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 5, 20)
 	writeScrollLines(t, engine, 0, 30) // 历史 26 行
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	engine.Resize(7, 24) // 放大还会从 scrollback 拉回（Pop）2 行
 	state := p.ExportState(1, 2)
-	frame := deriver.FrameForState(state)
+	frame := deriver.deriveAndSeedForTest(state)
 	if frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("epoch change must derive snapshot, got kind=%v", frame.Kind)
 	}
@@ -361,7 +370,7 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	}
 
 	var deriver FrameDeriver
-	deriver.FrameForState(main)
+	deriver.deriveAndSeedForTest(main)
 
 	if err := engine.Write([]byte("\x1b[?1049h\x1b[Halt screen")); err != nil {
 		t.Fatal(err)
@@ -373,8 +382,8 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	if len(alt.History.Lines) != 0 {
 		t.Fatalf("alternate buffer leaked %d history lines", len(alt.History.Lines))
 	}
-	if frame := deriver.FrameForState(alt); frame.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("buffer switch must derive snapshot, got kind=%v", frame.Kind)
+	if frame := deriver.deriveAndSeedForTest(alt); frame.Kind != terminalengine.FramePatch || !frame.ActiveBufferChanged {
+		t.Fatalf("buffer switch must derive active-buffer commit, got kind=%v changed=%v", frame.Kind, frame.ActiveBufferChanged)
 	}
 
 	if err := engine.Write([]byte("\x1b[?1049l")); err != nil {
@@ -384,8 +393,8 @@ func TestProjector_AlternateBufferRoundTripRestoresHistory(t *testing.T) {
 	if back.ActiveBuffer != terminalengine.BufferMain {
 		t.Fatalf("expected main buffer, got %v", back.ActiveBuffer)
 	}
-	if frame := deriver.FrameForState(back); frame.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("buffer switch back must derive snapshot, got kind=%v", frame.Kind)
+	if frame := deriver.deriveAndSeedForTest(back); frame.Kind != terminalengine.FramePatch || !frame.ActiveBufferChanged {
+		t.Fatalf("buffer switch back must derive active-buffer commit, got kind=%v changed=%v", frame.Kind, frame.ActiveBufferChanged)
 	}
 	if back.History.LastIncludedHistorySeq != main.History.LastIncludedHistorySeq {
 		t.Fatalf("history lost across alt round trip: lastSeq %d -> %d",
@@ -452,7 +461,7 @@ func TestProjector_AttachSnapshotIncludesFullHistoryWindow(t *testing.T) {
 	p.ExportState(0, 1)
 
 	var deriver FrameDeriver
-	snap := deriver.FrameForState(p.ExportState(0, 2))
+	snap := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if snap.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("attach must derive snapshot, got kind=%v", snap.Kind)
 	}

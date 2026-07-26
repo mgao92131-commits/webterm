@@ -13,7 +13,7 @@ import (
 // 投影/导出部分。覆盖：
 //   - ExportState 全量导出在各场景/尺寸下的成本（BenchmarkExportStateBaseline）
 //   - 活动屏幕导出 vs 历史窗口导出的分配差异（BenchmarkExportSplitBaseline）
-//   - 单客户端 FrameForState diff 在 1/2/4 客户端下的成本（BenchmarkFrameDeriverDiffBaseline）
+//   - 单客户端 DeriveForState diff 在 1/2/4 客户端下的成本（BenchmarkFrameDeriverDiffBaseline）
 //   - export-once + N 客户端 diff 扇出的端到端成本（BenchmarkProjectorExportFanoutBaseline，
 //     与既有 BenchmarkProjectorExportOnceFanout 互补：1/2/4 客户端 × 三种尺寸）
 //
@@ -254,7 +254,7 @@ func BenchmarkProjectorSingleDirtyRow(b *testing.B) {
 	}
 }
 
-// BenchmarkFrameDeriverDiffBaseline 单独测量每客户端 FrameForState diff
+// BenchmarkFrameDeriverDiffBaseline 单独测量每客户端 DeriveForState diff
 // （linesEqual 全屏逐行比较 + history append 计算），不含 Write 与导出。
 // clients 维度模拟 1/2/4 个 screen client 各自的基线推导。
 //
@@ -282,14 +282,14 @@ func BenchmarkFrameDeriverDiffBaseline(b *testing.B) {
 					}
 					derivers := make([]FrameDeriver, clients)
 					for c := 0; c < clients; c++ {
-						baselineFrameSink = derivers[c].FrameForState(states[0])
+						baselineFrameSink = derivers[c].deriveAndSeedForTest(states[0])
 					}
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						state := states[(i+1)%stateRing]
 						for c := 0; c < clients; c++ {
-							baselineFrameSink = derivers[c].FrameForState(state)
+							baselineFrameSink = derivers[c].deriveAndSeedForTest(state)
 						}
 					}
 				})
@@ -299,7 +299,7 @@ func BenchmarkFrameDeriverDiffBaseline(b *testing.B) {
 }
 
 // BenchmarkProjectorExportFanoutBaseline 测量"每次修订导出一次 + 每客户端
-// diff"的完整扇出成本（Write + ExportState + N×FrameForState 全部计时），
+// diff"的完整扇出成本（Write + ExportState + N×DeriveForState 全部计时），
 // 客户端数取计划 §5.1 要求的 1/2/4。tui 场景下全屏变化触发 snapshot 路径，
 // 是扇出成本的最坏形态。
 func BenchmarkProjectorExportFanoutBaseline(b *testing.B) {
@@ -311,7 +311,7 @@ func BenchmarkProjectorExportFanoutBaseline(b *testing.B) {
 				derivers := make([]FrameDeriver, clients)
 				state := projector.ExportState(0, 1)
 				for c := 0; c < clients; c++ {
-					baselineFrameSink = derivers[c].FrameForState(state)
+					baselineFrameSink = derivers[c].deriveAndSeedForTest(state)
 				}
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -321,7 +321,7 @@ func BenchmarkProjectorExportFanoutBaseline(b *testing.B) {
 					}
 					state = projector.ExportState(0, uint64(i+2))
 					for c := 0; c < clients; c++ {
-						baselineFrameSink = derivers[c].FrameForState(state)
+						baselineFrameSink = derivers[c].deriveAndSeedForTest(state)
 					}
 				}
 			})

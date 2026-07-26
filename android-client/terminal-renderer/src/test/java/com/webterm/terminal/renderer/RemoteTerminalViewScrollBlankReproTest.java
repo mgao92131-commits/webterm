@@ -37,7 +37,7 @@ import java.util.List;
 
 /**
  * 复现用户报告：贴底(followTail) → 上滚查看历史（不足一屏，流未冻结）→ 再滚回底部
- * → 屏幕全空白。只有滚动超过一屏（触发 FROZEN→resume→Baseline→FULL）才恢复。
+ * → 屏幕全空白。该回归必须仅靠本地 viewport 重绘恢复，不能依赖网络重同步。
  *
  * <p>测试忠实模拟生产链路：
  * <ul>
@@ -53,7 +53,7 @@ public final class RemoteTerminalViewScrollBlankReproTest {
 
   private static final String INSTANCE = "term-1";
   private static final long LAYOUT_EPOCH = 1L;
-  private static final long STREAM_GENERATION = 1L;
+  private static final long DICTIONARY_GENERATION = 1L;
   private static final int ROWS = 19;      // (400 - 5) / 20，与 view 几何推导一致
   private static final int COLS = 20;
   private static final int HISTORY = 30;   // 30 行历史 → maxScrollOffset = 600px
@@ -79,7 +79,7 @@ public final class RemoteTerminalViewScrollBlankReproTest {
       screen.add(textLine(i + 1, 1, 0, "screen-" + (i + 1)));
     }
     model.applyBaseline(new ScreenBaseline(
-        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, STREAM_GENERATION,
+        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, DICTIONARY_GENERATION, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY,
         ROWS, COLS, TerminalBufferKind.MAIN,
         new HistoryExtent(1, HISTORY), history, screen,
         new TerminalCursor(0, 1, true, TerminalCursor.Shape.BLOCK, false),
@@ -92,8 +92,6 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     injectFakeRowCache(view);
 
     viewport = new TerminalViewportState();
-    viewport.followTail = true;
-
     // 初始全量帧：等价于 Controller attach 后的第一次 renderOnFrame。
     RenderUpdate initial = model.consumeRenderUpdate();
     assertNotNull(initial);
@@ -107,14 +105,14 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     // 0. 基线：贴底绘制有内容。
     assertDrawsContent("baseline followTail");
 
-    // 1. 用户上滚 100px（5 行，不足一屏 395px，流保持 LIVE，不会 FROZEN）。
+    // 1. 用户上滚 100px（5 行，不足一屏 395px，远端投影始终保持 LIVE）。
     userScroll(100);
-    org.junit.Assert.assertFalse(viewport.followTail);
+    org.junit.Assert.assertFalse(followingTail());
     assertDrawsContent("scrolled up 5 lines");
 
     // 2. 滚回底部。
     userScroll(-100);
-    assertTrue(viewport.followTail);
+    assertTrue(followingTail());
     assertDrawsContent("back at bottom (idle model)");
   }
 
@@ -135,8 +133,8 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     assertDrawsContent("scrolled, after content patch");
 
     // 4. 用户滚回底部（anchor 钉住期间 offset 被补偿过，按当前 offset 全部滚回）。
-    userScroll(-viewport.scrollOffsetPixels);
-    assertTrue(viewport.followTail);
+    userScroll(-scrollOffset());
+    assertTrue(followingTail());
     assertDrawsContent("back at bottom after live output");
 
     // 5. 回到底部后模型继续输出一帧滚动。
@@ -148,31 +146,28 @@ public final class RemoteTerminalViewScrollBlankReproTest {
 
   /** 模拟用户手势滚动：Controller 只 mutate 共享 viewport，View 靠 invalidate 重绘。 */
   private void userScroll(int deltaPixels) {
-    viewport.scrollBy(deltaPixels, view.maxScrollOffsetPixels());
-    if (viewport.followTail) {
-      viewport.markLive();
-    }
-    // applyScrollDelta 的后续动作（host 非空分支）。
-    view.updateViewportHistoryAnchor();
+    viewport.scrollBy(deltaPixels, view.maxScrollOffsetPixels(),
+        view.currentRenderedSnapshot(), view.lineHeight());
   }
 
   /** 模拟 Controller renderOnFrame：consume → applyTerminalState → applyRenderUpdate。 */
   private void renderPendingModelUpdate() {
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull("expected pending RenderUpdate", update);
-    // applyTerminalState 的视口相关部分。
-    boolean restoredHistoryAnchor = false;
-    if (!viewport.followTail && viewport.anchorHistorySeq != null && update.state.historyChanged) {
-      view.restoreHistoryAnchor(update.snapshot, viewport.anchorHistorySeq,
-          viewport.anchorPixelOffset);
-      restoredHistoryAnchor = true;
-    }
-    if (!restoredHistoryAnchor && !viewport.followTail && update.state.tailAppendedLines > 0) {
-      view.preserveViewportForAppendedLines(update.state.tailAppendedLines);
-    }
     if (!update.dirty.isEmpty()) {
       view.applyRenderUpdate(update, viewport);
     }
+  }
+
+  private boolean followingTail() {
+    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    return snapshot == null || viewport.isFollowTail(snapshot.activeBuffer);
+  }
+
+  private int scrollOffset() {
+    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    return snapshot == null ? 0 : viewport.derivedScrollOffsetPixels(
+        snapshot, view.lineHeight(), view.maxScrollOffsetPixels(snapshot));
   }
 
   /** 屏幕向上滚动 scrollRows 行：新行从底部暴露，顶部行进入历史。 */
@@ -196,7 +191,8 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     }
     try {
       model.applyTerminalCommit(new TerminalCommit(
-          INSTANCE, LAYOUT_EPOCH, STREAM_GENERATION, nextRevision, nextRevision + 1,
+          INSTANCE, LAYOUT_EPOCH, nextRevision, nextRevision + 1,
+          1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           new ScreenMutation(new ScreenScroll(0, ROWS, scrollRows), writes),
           new HistoryMutation(new HistoryExtent(1, HISTORY + nextRevision), scrolledOff),
           null, null, null));
@@ -214,7 +210,8 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     TerminalLine updated = textLine(old.id, old.version + 1, 0, text);
     try {
       model.applyTerminalCommit(new TerminalCommit(
-          INSTANCE, LAYOUT_EPOCH, STREAM_GENERATION, nextRevision, nextRevision + 1,
+          INSTANCE, LAYOUT_EPOCH, nextRevision, nextRevision + 1,
+          1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           new ScreenMutation(null, java.util.Collections.singletonList(
               new ScreenRowWrite(row, updated))), null, null, null, null));
     } catch (RemoteTerminalModel.RevisionGapException e) {

@@ -67,7 +67,7 @@ public final class RemoteTerminalViewFlingTest {
     TerminalLine line = new TerminalLine(1, 1, 0, false,
         new TerminalCell[] {TerminalCell.EMPTY});
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, 1, buffer, HistoryExtent.INITIAL_EMPTY,
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1, buffer, HistoryExtent.INITIAL_EMPTY,
         Collections.emptyList(), Collections.singletonList(line), TerminalCursor.hidden(),
         modes, TerminalPalette.defaults()));
     view.setModel(model, new TerminalViewportState());

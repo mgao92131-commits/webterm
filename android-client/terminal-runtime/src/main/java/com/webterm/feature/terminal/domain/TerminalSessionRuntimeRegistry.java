@@ -89,9 +89,6 @@ public final class TerminalSessionRuntimeRegistry {
     entry.state = LifecycleState.HOT;
     entry.lastUsedMs = clock.nowMs();
     entry.transitionGeneration++;
-    entry.runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, false);
-    entry.runtime.setFreezeReason(
-        TerminalSessionRuntime.FREEZE_APP_BACKGROUND, !appVisible);
     entry.runtime.attachPage();
     enforceLimitsLocked();
     return entry.runtime;
@@ -103,7 +100,6 @@ public final class TerminalSessionRuntimeRegistry {
     if (entry == null) return;
     entry.visible = false;
     entry.lastUsedMs = clock.nowMs();
-    entry.runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, true);
     entry.runtime.detachPage();
     long generation = ++entry.transitionGeneration;
     long delay = appVisible ? HOT_GRACE_MS : BACKGROUND_WARM_DELAY_MS;
@@ -119,22 +115,13 @@ public final class TerminalSessionRuntimeRegistry {
         if (entry.visible) {
           entry.state = LifecycleState.HOT;
           entry.lastUsedMs = clock.nowMs();
-          entry.runtime.setFreezeReason(
-              TerminalSessionRuntime.FREEZE_APP_BACKGROUND, false);
-          entry.runtime.setFreezeReason(
-              TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, false);
           entry.runtime.attachPage();
-        } else {
-          entry.runtime.setFreezeReason(
-              TerminalSessionRuntime.FREEZE_APP_BACKGROUND, false);
         }
       }
       enforceLimitsLocked();
       return;
     }
     for (Entry entry : entries.values()) {
-      entry.runtime.setFreezeReason(
-          TerminalSessionRuntime.FREEZE_APP_BACKGROUND, true);
       /*
        * Fragment/View 仍可能存在，但应用已经不可交互。这里必须释放页面布局租约，
        * 并将 pageAttached 标记为 false；应用回到前台时 attachPage() 才能识别出
@@ -142,8 +129,6 @@ public final class TerminalSessionRuntimeRegistry {
        * detachPage() 不会关闭 TerminalChannel，也不会删除终端模型。
        */
       if (entry.visible) {
-        entry.runtime.setFreezeReason(
-            TerminalSessionRuntime.FREEZE_PAGE_HIDDEN, false);
         entry.runtime.detachPage();
       }
       if (entry.state != LifecycleState.HOT) continue;

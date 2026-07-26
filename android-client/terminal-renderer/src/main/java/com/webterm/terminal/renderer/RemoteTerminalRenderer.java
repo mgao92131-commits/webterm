@@ -23,6 +23,7 @@ import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalBufferKind;
+import com.webterm.terminal.model.UnifiedContentAxis;
 
 import java.util.List;
 
@@ -122,15 +123,20 @@ public final class RemoteTerminalRenderer {
     TerminalLine[] screen = model.screen;
     if (screen == null || lineHeight <= 0 || cellWidth <= 0) return;
 
-    // Full-screen TUIs run on the alternate buffer. Its main-buffer scrollback
-    // is not part of the current canvas and must never be composited underneath.
+    UnifiedContentAxis axis = model.contentAxis;
+    // The content axis is the only vertical coordinate space. History and
+    // ActiveRows remain semantic item kinds, not independent layout systems.
     TerminalHistoryView history = model.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : model.history;
     int screenRows = screen.length;
-    int historyRows = history.size();
-    float scrollOffset = viewport.followTail ? 0 : viewport.scrollOffsetPixels;
-    float screenTopY = screenTopY(canvas.getHeight(), historyRows, screenRows, lineHeight,
+    long historyRowsLong = axis.historyRowCount();
+    int historyRows = (int) Math.min(Integer.MAX_VALUE, historyRowsLong);
+    int maxScrollOffset = Math.round(historyRows * lineHeight);
+    float scrollOffset = viewport.derivedScrollOffsetPixels(
+        model, lineHeight, maxScrollOffset);
+    float contentTopY = contentTopY(canvas.getHeight(), historyRows, screenRows, lineHeight,
         getTopInset(), scrollOffset);
+    float screenTopY = contentTopY + historyRows * lineHeight;
 
     TerminalPalette palette = model.palette;
     int canvasBackground = resolveColor(palette,
@@ -140,89 +146,69 @@ public final class RemoteTerminalRenderer {
     TerminalSelection selection = viewport.selection;
     TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
     TerminalCursor cursor = model.cursor;
-    boolean cursorVisible = shouldDrawCursor(viewport, cursor, cursorBlinkOn);
+    boolean cursorVisible = shouldDrawCursor(
+        viewport, model.activeBuffer, cursor, cursorBlinkOn);
 
     Rect clip = clipBounds;
     if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
 
-    // 实时 screen 行：优先使用 RenderNode 缓存；无缓存时直接绘制。
-    long screenRange = rowRangeIntersectingPacked(
-        clip.top, clip.bottom, screenTopY, lineHeight, screenRows);
-    int screenRangeFirst = (int) (screenRange >> 32);
-    int screenRangeLast = (int) screenRange;
     boolean useCache = canvas.isHardwareAccelerated() && lineCache != null;
-    for (int row = screenRangeFirst; row < screenRangeLast; row++) {
-      float y = screenTopY + row * lineHeight;
-      // 缓存命中（含 lineId/lineVersion 兑底校验）则走缓存；否则回退直接绘制静态正文，
-      // 光标和选择仍由下方覆盖层统一绘制，不会重复。
+    float topInset = getTopInset();
+    int visibleHistoryRows = 0;
+    long axisRows = axis.rowCount();
+    long firstAxisRow = Math.max(0L,
+        (long) Math.floor((clip.top - contentTopY) / lineHeight) - 1L);
+    long lastAxisRow = Math.min(axisRows,
+        (long) Math.ceil((clip.bottom - contentTopY) / lineHeight) + 1L);
+    for (long axisRow = firstAxisRow; axisRow < lastAxisRow; axisRow++) {
+      UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
+      float y = contentTopY + axisRow * lineHeight;
+      boolean active = item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE;
+      if (!active && (y + lineHeight <= topInset + 0.001f || y >= screenTopY)) continue;
+
+      if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE) {
+        long historySeq = item.fromHistorySeq + (axisRow - item.startRow);
+        long historyIndex = historySeq - ((PagedTerminalHistorySnapshot) history).firstSeq();
+        if (historyIndex >= 0 && historyIndex <= Integer.MAX_VALUE) {
+          canvas.save();
+          canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
+          drawHistoryPlaceholder(canvas, model.columns, history, (int) historyIndex, y,
+              canvasBackground);
+          canvas.restore();
+        }
+        continue;
+      }
+
+      TerminalLine line = item.line;
+      int screenRow = active ? (int) (axisRow - historyRowsLong) : -1;
+      long historySeq = active ? 0 : item.fromHistorySeq;
+      if (!active) {
+        visibleHistoryRows++;
+        canvas.save();
+        canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
+      }
       TerminalLineRenderNodeCache.LineDrawResult cacheResult = useCache
-          ? lineCache.drawOrRecord(canvas, screen[row], y, false)
+          ? lineCache.drawOrRecord(canvas, line, y, !active)
           : TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
         if (useCache) {
-          drawTerminalLineContent(canvas, model.columns, palette, screen[row], y,
-              canvasBackground);
+          drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
         } else {
-          drawLine(canvas, model.columns, palette, screen[row], y, 0, row, normalizedSelection,
-              cursor, cursorVisible, canvasBackground);
+          drawLine(canvas, model.columns, palette, line, y, historySeq, screenRow,
+              normalizedSelection, cursor, active && cursorVisible, canvasBackground);
         }
       }
-    }
-
-    // 历史和实时 screen 共用同一个按 lineId/version 定位的缓存。
-    // 历史只应出现在 [topInset, screenTopY) 区间；followTail 时 screenTopY == topInset，
-    // 该区间为空，因此不会把上一条历史行的残片画进第一行终端文字上方的字体留白。
-    float topInset = getTopInset();
-    float historyTopY = screenTopY - historyRows * lineHeight;
-    long historyRange = rowRangeIntersectingPacked(
-        clip.top, clip.bottom, historyTopY, lineHeight, historyRows);
-    int historyRangeFirst = (int) (historyRange >> 32);
-    int historyRangeLast = (int) historyRange;
-    canvas.save();
-    canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
-    int visibleHistoryRows = 0;
-    for (int historyIndex = historyRangeFirst; historyIndex < historyRangeLast; historyIndex++) {
-      TerminalLine line = history.lineAt(historyIndex);
-      float y = historyTopY + historyIndex * lineHeight;
-      // 整行都在 topInset 上方的历史行不可见；在 followTail 时所有历史行都被跳过。
-      if (y + lineHeight <= topInset + 0.001f) {
-        continue;
-      }
-      if (line == null) {
-        drawHistoryPlaceholder(canvas, model.columns, history, historyIndex, y, canvasBackground);
-        continue;
-      }
-      visibleHistoryRows++;
-      TerminalLineRenderNodeCache.LineDrawResult cacheResult = useCache
-          ? lineCache.drawOrRecord(canvas, line, y, true)
-          : TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
-      if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
-        drawLine(canvas, model.columns, palette, line, y, line.historyOrder(), -1,
-            normalizedSelection, cursor, false, canvasBackground);
-      } else {
+      if (useCache) {
         drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
-            line.historyOrder(), -1, normalizedSelection, canvasBackground);
+            historySeq, screenRow, normalizedSelection, canvasBackground);
+        if (active && cursorVisible && cursor.row == screenRow) {
+          drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
+              screenRow, cursor, canvasBackground);
+        }
       }
+      if (!active) canvas.restore();
     }
     TerminalRenderMetrics.visibleHistoryRowsDrawn(visibleHistoryRows);
-    canvas.restore();
-
-    // 使用缓存时，光标和选择作为覆盖层在静态正文之后绘制。
-    if (useCache) {
-      for (int row = screenRangeFirst; row < screenRangeLast; row++) {
-        float y = screenTopY + row * lineHeight;
-        drawSelectionOverlayForRow(canvas, model.columns, palette, screen[row], y, 0, row,
-            normalizedSelection, canvasBackground);
-      }
-      if (cursorVisible) {
-        int cursorRow = cursor.row;
-        if (cursorRow >= screenRangeFirst && cursorRow < screenRangeLast) {
-          float y = screenTopY + cursorRow * lineHeight;
-          drawCursorOverlayForRow(canvas, model.columns, palette, screen[cursorRow], y,
-              cursorRow, cursor, canvasBackground);
-        }
-      }
-    }
     } finally {
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
     }
@@ -232,7 +218,16 @@ public final class RemoteTerminalRenderer {
       @NonNull TerminalViewportState viewport,
       @NonNull TerminalCursor cursor,
       boolean cursorBlinkOn) {
-    return viewport.followTail && cursor.visible
+    return shouldDrawCursor(
+        viewport, TerminalBufferKind.MAIN, cursor, cursorBlinkOn);
+  }
+
+  static boolean shouldDrawCursor(
+      @NonNull TerminalViewportState viewport,
+      @NonNull TerminalBufferKind buffer,
+      @NonNull TerminalCursor cursor,
+      boolean cursorBlinkOn) {
+    return viewport.isFollowTail(buffer) && cursor.visible
         && (!cursor.blink || cursorBlinkOn);
   }
 

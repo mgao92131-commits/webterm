@@ -36,13 +36,13 @@ public final class RemoteTerminalViewVisibleHistoryTest {
     List<TerminalLine> tail = new ArrayList<>();
     for (long seq = 173; seq <= 300; seq++) tail.add(line(seq, seq));
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, 1, TerminalBufferKind.MAIN,
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 300), tail, Collections.singletonList(line(1000, 0)),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     model.consumeRenderUpdate();
 
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.scrollBy(3_400, 6_000);
+    viewport.scrollBy(3_400, 6_000, model.renderSnapshot(), 20f);
     RemoteTerminalView view = new RemoteTerminalView(RuntimeEnvironment.getApplication());
     CapturingHost host = new CapturingHost();
     view.setHost(host);

@@ -1,6 +1,7 @@
 package screenprotocolv2
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
@@ -11,42 +12,47 @@ import (
 
 const ProtocolVersion uint32 = 2
 
-func EncodeBaseline(frame terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
+func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint64) ([]byte, error) {
 	screen := encodeLines(screenLines(frame.Screen))
 	history := encodeLines(historyLines(frame.History.Lines))
 	baseline := &pb.Baseline{
-		SessionId:        frame.SessionID,
-		InstanceId:       frame.InstanceID,
-		LayoutEpoch:      frame.Epoch,
-		ScreenRevision:   frame.Seq,
-		StreamGeneration: generation,
-		Geometry:         &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
-		ActiveBuffer:     encodeBuffer(frame.ActiveBuffer),
-		HistoryExtent:    encodeHistoryWindowExtent(frame.History),
+		SessionId:      frame.SessionID,
+		InstanceId:     frame.InstanceID,
+		LayoutEpoch:    frame.Epoch,
+		ScreenRevision: frame.Seq,
+		Geometry:       &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
+		ActiveBuffer:   encodeBuffer(frame.ActiveBuffer),
+		HistoryExtent:  encodeHistoryWindowExtent(frame.History),
 		HistoryTail: &pb.HistoryTail{
 			Extent: encodeHistoryWindowExtent(frame.History),
 			Lines:  history,
 		},
-		ScreenLayout: &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
-		ScreenLines:  screen,
-		Cursor:       encodeCursor(frame.Cursor),
-		Modes:        encodeModes(frame.Modes),
-		Palette:      encodePalette(frame),
-		Dictionary:   encodeDictionary(frame.Styles, frame.Links),
+		ScreenLayout:         &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
+		ScreenLines:          screen,
+		Cursor:               encodeCursor(frame.Cursor),
+		Modes:                encodeModes(frame.Modes),
+		Palette:              encodePalette(frame),
+		Dictionary:           encodeDictionary(frame.Styles, frame.Links),
+		DictionaryGeneration: frame.DictionaryGeneration,
+		HistoryGeneration:    frame.HistoryGeneration,
+	}
+	if frame.PreserveCompatibleHistory {
+		baseline.HistoryPolicy = pb.BaselineHistoryPolicy_BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE
 	}
 	return marshalPayload(&pb.ScreenEnvelope_Baseline{Baseline: baseline})
 }
 
-func EncodeTerminalCommit(frame terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
+func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, error) {
 	if frame.Kind != terminalengine.FramePatch {
 		return nil, fmt.Errorf("terminal commit requires patch frame")
 	}
 	commit := &pb.TerminalCommit{
-		InstanceId:       frame.InstanceID,
-		LayoutEpoch:      frame.Epoch,
-		StreamGeneration: generation,
-		BaseRevision:     frame.BaseRevision,
-		Revision:         frame.Seq,
+		InstanceId:           frame.InstanceID,
+		LayoutEpoch:          frame.Epoch,
+		BaseRevision:         frame.BaseRevision,
+		Revision:             frame.Seq,
+		DictionaryGeneration: frame.DictionaryGeneration,
+		HistoryGeneration:    frame.HistoryGeneration,
 	}
 	lines := make([]terminalengine.Line, 0, len(frame.Screen)+len(frame.History.Lines))
 	if frame.ScreenScroll != nil || len(frame.Screen) > 0 {
@@ -69,17 +75,20 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, generation uint64) (
 		}
 		commit.Screen = mutation
 	}
-	if frame.FirstAvailableHistorySeqChanged || len(frame.History.Lines) > 0 {
+	if frame.FirstAvailableHistorySeqChanged || len(frame.History.Lines) > 0 || len(frame.HistoryPromotions) > 0 {
 		historyLines := historyLines(frame.History.Lines)
-		if len(historyLines) > 128 {
-			historyLines = historyLines[len(historyLines)-128:]
-		}
 		commit.History = &pb.HistoryMutation{
 			FinalExtent: &pb.HistoryExtent{
 				FirstSeq: canonicalHistoryFirst(frame.History.FirstAvailableHistorySeq),
 				LastSeq:  frame.History.LastIncludedHistorySeq,
 			},
 			AppendedLines: encodeLines(historyLines),
+		}
+		for _, promotion := range frame.HistoryPromotions {
+			commit.History.Promotions = append(commit.History.Promotions, &pb.HistoryPromotion{
+				LineId: promotion.LineID, LineVersion: promotion.LineVersion,
+				HistorySeq: promotion.HistorySeq,
+			})
 		}
 		lines = append(lines, historyLines...)
 	}
@@ -92,7 +101,11 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, generation uint64) (
 	if frame.PaletteChanged {
 		commit.Palette = encodePalette(frame)
 	}
-	commit.Dictionary = encodeDictionaryForLines(lines, frame.Styles, frame.Links)
+	commit.DictionaryAdditions = encodeDictionary(frame.Styles, frame.Links)
+	if frame.ActiveBufferChanged {
+		buffer := encodeBuffer(frame.ActiveBuffer)
+		commit.ActiveBuffer = &buffer
+	}
 	return marshalPayload(&pb.ScreenEnvelope_TerminalCommit{TerminalCommit: commit})
 }
 
@@ -124,7 +137,8 @@ func EncodeHistoryRangeResponse(
 		Lines:           encodeLines(historyLines(data.Lines)),
 		Dictionary: encodeDictionaryForLines(
 			historyLines(data.Lines), data.Styles, data.Links),
-		RetryAfterMs: data.RetryAfterMS,
+		RetryAfterMs:      data.RetryAfterMS,
+		HistoryGeneration: data.HistoryGeneration,
 	}
 	return marshalPayload(&pb.ScreenEnvelope_HistoryRangeResponse{HistoryRangeResponse: response})
 }
@@ -143,23 +157,17 @@ func EncodeStaleHistoryRange(
 	})
 }
 
-func EncodeTailStatus(
-	instanceID string, epoch, generation, revision uint64,
-	extent terminalengine.HistoryExtent, exited bool, exitCode int,
-) ([]byte, error) {
-	return marshalPayload(&pb.ScreenEnvelope_TailStatus{TailStatus: &pb.TailStatus{
-		InstanceId:           instanceID,
-		LayoutEpoch:          epoch,
-		StreamGeneration:     generation,
-		LatestScreenRevision: revision,
-		LatestHistoryExtent:  encodeExtent(extent),
-		Exited:               exited,
-		ExitCode:             int32(exitCode),
-	}})
-}
-
 func EncodePong(revision uint64) ([]byte, error) {
 	return marshalPayload(&pb.ScreenEnvelope_Pong{Pong: &pb.Pong{ScreenRevision: revision}})
+}
+
+func EncodeResumeAccepted(frame terminalengine.ScreenFrame) ([]byte, error) {
+	return marshalPayload(&pb.ScreenEnvelope_ResumeAccepted{ResumeAccepted: &pb.ResumeAccepted{
+		InstanceId: frame.InstanceID, LayoutEpoch: frame.Epoch, ScreenRevision: frame.Seq,
+		DictionaryGeneration: frame.DictionaryGeneration,
+		HistoryGeneration:    frame.HistoryGeneration,
+		HistoryExtent:        encodeHistoryWindowExtent(frame.History),
+	}})
 }
 
 // oneof 包装类型不能直接实现本地接口，下面的 marshalPayload 负责类型分派。
@@ -172,7 +180,7 @@ func marshalPayload(payload any) ([]byte, error) {
 		env.Payload = p
 	case *pb.ScreenEnvelope_HistoryRangeResponse:
 		env.Payload = p
-	case *pb.ScreenEnvelope_TailStatus:
+	case *pb.ScreenEnvelope_ResumeAccepted:
 		env.Payload = p
 	case *pb.ScreenEnvelope_Pong:
 		env.Payload = p
@@ -244,30 +252,70 @@ func historyLines(lines []terminalengine.Line) []terminalengine.Line {
 func encodeLines(lines []terminalengine.Line) []*pb.LineData {
 	out := make([]*pb.LineData, len(lines))
 	for i, line := range lines {
-		out[i] = &pb.LineData{
-			LineId:      line.ID,
-			LineVersion: line.Version,
-			Wrapped:     line.Wrapped,
-			HistorySeq:  line.HistorySeq,
-			Runs:        encodeRuns(line.Runs),
-		}
+		out[i] = encodeLine(line)
 	}
 	return out
 }
 
-func encodeRuns(runs []terminalengine.CellRun) []*pb.CellRun {
-	out := make([]*pb.CellRun, len(runs))
-	for i, run := range runs {
-		cells := make([]*pb.Cell, len(run.Cells))
-		for j, cell := range run.Cells {
-			cells[j] = &pb.Cell{
-				Text: cell.Text, Width: uint32(cell.Width),
-				StyleId: cell.StyleID, LinkId: cell.LinkID,
+func encodeLine(line terminalengine.Line) *pb.LineData {
+	wire := &pb.LineData{LineId: line.ID, LineVersion: line.Version,
+		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq}
+	type positionedCell struct {
+		col  int
+		cell terminalengine.Cell
+	}
+	var cells []positionedCell
+	lastCol := 0
+	for _, run := range line.Runs {
+		col := run.Col
+		for _, cell := range run.Cells {
+			width := int(cell.Width)
+			if width != 2 {
+				width = 1
+			}
+			cells = append(cells, positionedCell{col: col, cell: cell})
+			col += width
+			if col > lastCol {
+				lastCol = col
 			}
 		}
-		out[i] = &pb.CellRun{Col: int32(run.Col), Cells: cells}
 	}
-	return out
+	byCol := make(map[int]terminalengine.Cell, len(cells))
+	for _, item := range cells {
+		byCol[item.col] = item.cell
+	}
+	var span *pb.StyleSpan
+	for col := 0; col < lastCol; {
+		cell, ok := byCol[col]
+		if !ok {
+			cell = terminalengine.Cell{Text: " ", Width: 1}
+		}
+		width := int(cell.Width)
+		if width != 2 {
+			width = 1
+		}
+		text := cell.Text
+		if text == "" {
+			text = " "
+		}
+		encoded := []byte(text)
+		wire.Utf8Text = append(wire.Utf8Text, encoded...)
+		var scratch [binary.MaxVarintLen64]byte
+		n := binary.PutUvarint(scratch[:], uint64(len(encoded))<<1|uint64(width-1))
+		wire.GlyphMeta = append(wire.GlyphMeta, scratch[:n]...)
+		if cell.StyleID != 0 || cell.LinkID != 0 {
+			if span != nil && span.EndCol == int32(col) && span.StyleId == cell.StyleID && span.LinkId == cell.LinkID {
+				span.EndCol = int32(col + width)
+			} else {
+				span = &pb.StyleSpan{StartCol: int32(col), EndCol: int32(col + width), StyleId: cell.StyleID, LinkId: cell.LinkID}
+				wire.StyleSpans = append(wire.StyleSpans, span)
+			}
+		} else {
+			span = nil
+		}
+		col += width
+	}
+	return wire
 }
 
 func lineIDs(lines []terminalengine.Line) []uint64 {

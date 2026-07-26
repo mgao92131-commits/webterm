@@ -16,6 +16,9 @@ import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCommit;
+import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.CommitFailure;
+import com.webterm.terminal.model.CommitValidationException;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
@@ -83,19 +86,19 @@ public final class TerminalSessionRuntime {
   }
 
   public enum State {
+    DISCONNECTED,
     CONNECTING,
-    TRANSPORT_CONNECTED,
     SYNCING,
-    CONNECTED,
+    LIVE,
     RECONNECTING,
     CLOSED
   }
 
-  /** 投影流与 transport 状态正交；FROZEN 期间只接收 TailStatus 和按需历史。 */
-  public enum StreamState {
-    LIVE,
-    FROZEN,
-    RESYNCING
+  public enum ProjectionContinuityState {
+    EMPTY,
+    SYNCING,
+    CONTINUOUS,
+    LOST
   }
 
   /** 可注入的延迟调度器；回调内部必须重新投递到 modelExecutor 并校验 generation。 */
@@ -106,14 +109,7 @@ public final class TerminalSessionRuntime {
   /** 屏幕协议连接抽象。 */
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
-    default boolean beginSync(long streamGeneration,
-                              @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
-                              @Nullable String instanceId, long layoutEpoch,
-                              boolean hasFrozenProjection) {
-      return false;
-    }
-    default boolean setStreamMode(long streamGeneration,
-                                  @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
+    default boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
       return false;
     }
     void setLayoutLeaseId(@NonNull String leaseId);
@@ -127,7 +123,8 @@ public final class TerminalSessionRuntime {
     boolean requestResize(int cols, int rows);
     /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
     default boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
-                                        long layoutEpoch, long fromSeq, long toSeq) {
+                                        long layoutEpoch, long historyGeneration,
+                                        long fromSeq, long toSeq) {
       return false;
     }
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
@@ -173,7 +170,7 @@ public final class TerminalSessionRuntime {
   private final ScreenMailbox screenMailbox =
       new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
 
-  private volatile State state = State.CONNECTING;
+  private volatile State state = State.DISCONNECTED;
   private final LayoutLeaseCoordinator layoutLeaseCoordinator;
   /**
    * Screen 连接代际。网络回调可以早于 modelExecutor 中的任务完成；任何断线、替换或
@@ -190,22 +187,8 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
-  private long streamGeneration = 1L;
-  private volatile StreamState streamState = StreamState.LIVE;
-  /** modelExecutor 串行维护：当前 streamGeneration 已请求的权威目标模式。 */
-  private TerminalScreenV2Proto.ScreenStreamMode requestedModeForGeneration =
-      TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-  public static final int FREEZE_HISTORY = 1;
-  public static final int FREEZE_PAGE_HIDDEN = 1 << 1;
-  public static final int FREEZE_APP_BACKGROUND = 1 << 2;
-  private final AtomicInteger freezeReasons = new AtomicInteger();
-  private final ArrayDeque<Runnable> pendingLiveInputs = new ArrayDeque<>();
-  private int pendingLiveInputUnits;
-  private final Object pendingResizeLock = new Object();
-  private int pendingBaselineResizeCols;
-  private int pendingBaselineResizeRows;
-  private static final int MAX_PENDING_LIVE_INPUTS = 64;
-  private static final int MAX_PENDING_LIVE_INPUT_UNITS = 1 << 20;
+  private volatile ProjectionContinuityState projectionContinuity =
+      ProjectionContinuityState.EMPTY;
   private static final long HISTORY_REQUEST_TIMEOUT_MS = 5_000L;
   private static final long HISTORY_RETRY_MIN_MS = 200L;
   private static final long HISTORY_RETRY_MAX_MS = 5_000L;
@@ -287,7 +270,7 @@ public final class TerminalSessionRuntime {
         }, MAX_RESYNC_RETRIES, RESYNC_SNAPSHOT_TIMEOUT_MS, RETRY_BACKOFF_MS);
     this.layoutLeaseCoordinator = new LayoutLeaseCoordinator(
         leaseScheduler, modelExecutor, new LayoutLeaseCoordinator.Environment() {
-          @Override public boolean isTerminalConnected() { return state == State.CONNECTED; }
+          @Override public boolean isTerminalConnected() { return state == State.LIVE; }
           @Override public ScreenConnection connection() {
             return TerminalSessionRuntime.this.connection;
           }
@@ -330,6 +313,7 @@ public final class TerminalSessionRuntime {
     }
     connectionEpoch.incrementAndGet();
     this.connection = connection;
+    updateState(State.CONNECTING);
     this.connectionRequiresReplacement = false;
     connection.setListener(new ScreenConnection.Listener() {
       @Override
@@ -346,7 +330,7 @@ public final class TerminalSessionRuntime {
         State currentState = state;
         if (currentState != State.CONNECTING && currentState != State.RECONNECTING) return;
         long epoch = connectionEpoch.get();
-        updateState(State.TRANSPORT_CONNECTED);
+        updateState(State.SYNCING);
         modelExecutor.execute(() -> beginSynchronization(connection, epoch));
       }
 
@@ -466,7 +450,7 @@ public final class TerminalSessionRuntime {
   public void attachPage() {
     boolean wasAttached = layoutLeaseCoordinator.isPageAttached();
     layoutLeaseCoordinator.attachPage();
-    if (!wasAttached && state != State.CONNECTED && state != State.CLOSED) {
+    if (!wasAttached && state != State.LIVE && state != State.CLOSED) {
       recoverUnhealthyConnectionOnPageReattach();
     }
   }
@@ -478,7 +462,7 @@ public final class TerminalSessionRuntime {
    */
   private void recoverUnhealthyConnectionOnPageReattach() {
     ScreenConnection current = connection;
-    if (current == null || state == State.CLOSED || state == State.CONNECTED) return;
+    if (current == null || state == State.CLOSED || state == State.LIVE) return;
     connectionEpoch.incrementAndGet();
     layoutLeaseCoordinator.invalidate();
     updateState(State.RECONNECTING);
@@ -570,10 +554,8 @@ public final class TerminalSessionRuntime {
   }
 
   public void sendFocusInput(boolean focused) {
-    // Focus reporting is terminal metadata, not an explicit user command. A window focus
-    // callback while browsing frozen history must neither queue input nor force the stream LIVE.
-    if (state != State.CONNECTED || streamState != StreamState.LIVE
-        || freezeReasons.get() != 0 || !hasLayoutLease()) return;
+    if (state != State.LIVE || projectionContinuity != ProjectionContinuityState.CONTINUOUS
+        || !hasLayoutLease()) return;
     ScreenConnection c = connection;
     if (c != null) c.sendFocusInput(focused);
   }
@@ -583,43 +565,13 @@ public final class TerminalSessionRuntime {
   }
 
   private void sendWhenLive(int units, @NonNull LiveInput input) {
-    if (state != State.CONNECTED || !hasLayoutLease()) return;
-    if (streamState == StreamState.LIVE && freezeReasons.get() == 0) {
-      ScreenConnection c = connection;
-      if (c != null) input.send(c);
+    if (state != State.LIVE || projectionContinuity != ProjectionContinuityState.CONTINUOUS
+        || !hasLayoutLease()) {
+      notifyInputDeliveryUncertain("INPUT_NOT_LIVE");
       return;
     }
-    int boundedUnits = Math.max(1, units);
-    synchronized (pendingLiveInputs) {
-      if (pendingLiveInputs.size() >= MAX_PENDING_LIVE_INPUTS
-          || pendingLiveInputUnits + boundedUnits > MAX_PENDING_LIVE_INPUT_UNITS) {
-        notifyInputDeliveryUncertain("等待实时 Baseline 的输入队列已满");
-        return;
-      }
-      pendingLiveInputs.addLast(() -> {
-        ScreenConnection c = connection;
-        if (c != null && state == State.CONNECTED && hasLayoutLease()) input.send(c);
-      });
-      pendingLiveInputUnits += boundedUnits;
-    }
-    resumeLiveStream();
-  }
-
-  private void flushPendingLiveInputs() {
-    ArrayDeque<Runnable> actions;
-    synchronized (pendingLiveInputs) {
-      actions = new ArrayDeque<>(pendingLiveInputs);
-      pendingLiveInputs.clear();
-      pendingLiveInputUnits = 0;
-    }
-    for (Runnable action : actions) action.run();
-  }
-
-  private void clearPendingLiveInputs() {
-    synchronized (pendingLiveInputs) {
-      pendingLiveInputs.clear();
-      pendingLiveInputUnits = 0;
-    }
+    ScreenConnection c = connection;
+    if (c != null) input.send(c);
   }
 
   private void notifyInputDeliveryUncertain(@NonNull String message) {
@@ -630,29 +582,7 @@ public final class TerminalSessionRuntime {
 
   public void requestResize(int cols, int rows) {
     if (cols <= 0 || rows <= 0) return;
-    if (state == State.CONNECTED && streamState == StreamState.LIVE
-        && freezeReasons.get() == 0) {
-      layoutLeaseCoordinator.requestResize(cols, rows);
-      return;
-    }
-    // FROZEN/RESYNCING/SYNCING 下只保留最新尺寸。必须等同 generation 的 Baseline
-    // 成功提交后再交给 lease 协调器，避免 resize 改 epoch 后让在途 Baseline 立即失效。
-    synchronized (pendingResizeLock) {
-      pendingBaselineResizeCols = cols;
-      pendingBaselineResizeRows = rows;
-    }
-  }
-
-  private void flushResizeAfterBaseline() {
-    int cols;
-    int rows;
-    synchronized (pendingResizeLock) {
-      cols = pendingBaselineResizeCols;
-      rows = pendingBaselineResizeRows;
-      pendingBaselineResizeCols = 0;
-      pendingBaselineResizeRows = 0;
-    }
-    if (cols > 0 && rows > 0) layoutLeaseCoordinator.requestResize(cols, rows);
+    layoutLeaseCoordinator.requestResize(cols, rows);
   }
 
   /** v2 按可见固定页请求历史；相同闭区间在途时幂等忽略。 */
@@ -662,7 +592,7 @@ public final class TerminalSessionRuntime {
 
   private boolean requestHistoryRange(
       long fromSeq, long toSeq, long anchorSeq, int retryAttempt) {
-    if (state != State.CONNECTED) return false;
+    if (state != State.LIVE) return false;
     ScreenConnection c = connection;
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (c == null || !projection.projectionComplete || projection.instanceId.isEmpty()
@@ -676,7 +606,8 @@ public final class TerminalSessionRuntime {
     if (historyRequests.isRangePending(boundedFrom, boundedTo)) return true;
     String requestId = historyRequests.nextRequestId();
     if (!c.requestHistoryRange(
-        requestId, projection.instanceId, projection.layoutEpoch, boundedFrom, boundedTo)) {
+        requestId, projection.instanceId, projection.layoutEpoch,
+        model.historyGeneration(), boundedFrom, boundedTo)) {
       return false;
     }
     historyRequests.markPending(requestId, boundedFrom, boundedTo, anchorSeq,
@@ -703,7 +634,7 @@ public final class TerminalSessionRuntime {
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
           RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-          if (state != State.CONNECTED
+          if (state != State.LIVE
               || !pending.instanceId.equals(projection.instanceId)
               || pending.layoutEpoch != projection.layoutEpoch) return;
           requestHistoryRange(
@@ -712,49 +643,9 @@ public final class TerminalSessionRuntime {
         delay);
   }
 
-  /** 用户离开尾部时冻结屏幕流；本地投影和 viewport 不被远端输出推进。 */
-  public void freezeStream() {
-    setFreezeReason(FREEZE_HISTORY, true);
-  }
-
-  /** 滚动到底部或输入前切回 LIVE；新的 Baseline 是唯一解冻提交点。 */
-  public void resumeLiveStream() {
-    setFreezeReason(FREEZE_HISTORY, false);
-  }
-
-  public void setFreezeReason(int reason, boolean enabled) {
-    if (reason != FREEZE_HISTORY && reason != FREEZE_PAGE_HIDDEN
-        && reason != FREEZE_APP_BACKGROUND) {
-      throw new IllegalArgumentException("unknown freeze reason");
-    }
-    int previous;
-    int next;
-    do {
-      previous = freezeReasons.get();
-      next = enabled ? previous | reason : previous & ~reason;
-      if (previous == next) return;
-    } while (!freezeReasons.compareAndSet(previous, next));
-    modelExecutor.execute(this::reconcileDesiredStreamMode);
-  }
-
-  private void reconcileDesiredStreamMode() {
-    if (state != State.CONNECTED) return;
-    boolean wantsFrozen = freezeReasons.get() != 0;
-    if (wantsFrozen) {
-      if (streamState == StreamState.FROZEN) return;
-      requestFrozenMode("freeze reasons changed");
-      return;
-    }
-    if (streamState == StreamState.FROZEN) requestFreshBaseline("return to live");
-  }
-
-  int freezeReasons() {
-    return freezeReasons.get();
-  }
-
   @NonNull
-  public StreamState streamState() {
-    return streamState;
+  public ProjectionContinuityState projectionContinuityState() {
+    return projectionContinuity;
   }
 
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
@@ -769,7 +660,6 @@ public final class TerminalSessionRuntime {
     renderWakeDispatcher.cancel();
     updateState(State.CLOSED);
     screenMailbox.reset();
-    clearPendingLiveInputs();
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
     modelExecutor.execute(this::resetResyncRecovery);
     ScreenConnection c = connection;
@@ -787,20 +677,32 @@ public final class TerminalSessionRuntime {
                                     long expectedEpoch) {
     if (connection != expectedConnection
         || connectionEpoch.get() != expectedEpoch
-        || state != State.TRANSPORT_CONNECTED) return;
-    updateState(State.SYNCING);
+        || state != State.SYNCING) return;
+    projectionContinuity = ProjectionContinuityState.SYNCING;
     long generation = ++syncGeneration;
-    boolean wantsFrozen = freezeReasons.get() != 0;
-    TerminalScreenV2Proto.ScreenStreamMode desiredMode =
-        wantsFrozen
-            ? TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN
-            : TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    long streamGenerationForHello = bindModeToStreamGeneration(desiredMode);
-    boolean hasFrozenProjection = wantsFrozen
-        && model.instanceId != null && !model.instanceId.isEmpty();
-    boolean helloSent = expectedConnection.beginSync(
-        streamGenerationForHello, desiredMode, model.instanceId, model.layoutEpoch,
-        hasFrozenProjection);
+    TerminalScreenV2Proto.ResumeToken resume = null;
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    if (model.projectionReadView().projectionComplete && snapshot.screen != null
+        && snapshot.screen.length > 0) {
+      TerminalScreenV2Proto.ResumeToken.Builder builder =
+          TerminalScreenV2Proto.ResumeToken.newBuilder()
+              .setInstanceId(snapshot.instanceId)
+              .setLayoutEpoch(snapshot.layoutEpoch)
+              .setScreenRevision(snapshot.screenRevision)
+              .setDictionaryGeneration(model.dictionaryGeneration())
+              .setHistoryGeneration(model.historyGeneration())
+              .setContiguousHistoryTailFirstSeq(model.contiguousHistoryTailFirstSeq())
+              .setContiguousHistoryTailLastSeq(model.contiguousHistoryTailLastSeq())
+              .setActiveBuffer(snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+                  ? TerminalScreenV2Proto.BufferKind.BUFFER_KIND_ALTERNATE
+                  : TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN);
+      for (TerminalLine line : snapshot.screen) {
+        builder.addActiveRows(TerminalScreenV2Proto.ResumeScreenLine.newBuilder()
+            .setLineId(line.id).setLineVersion(line.version));
+      }
+      resume = builder.build();
+    }
+    boolean helloSent = expectedConnection.beginSync(resume);
     if (!helloSent) {
       // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
       // Snapshot 只会让页面永久闪烁；立即换 channel，并作废当前代际的迟到帧。
@@ -810,23 +712,9 @@ public final class TerminalSessionRuntime {
       expectedConnection.requestReconnect("screen Hello send failed");
       return;
     }
-    if (desiredMode
-        == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN) {
-      // streamState 可能仍是上一 generation 遗留的 LIVE。当前 generation 的 Hello
-      // 已明确请求 FROZEN，后续 TailStatus 必须能作为该 generation 的权威完成帧。
-      streamState = StreamState.FROZEN;
-    }
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> onSynchronizationTimeout(generation)),
         RESYNC_SNAPSHOT_TIMEOUT_MS);
-  }
-
-  /** modelExecutor 串行调用；同一 stream generation 永远只绑定一种请求模式。 */
-  private long bindModeToStreamGeneration(
-      @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode) {
-    if (desiredMode != requestedModeForGeneration) streamGeneration++;
-    requestedModeForGeneration = desiredMode;
-    return streamGeneration;
   }
 
   private void onSynchronizationTimeout(long generation) {
@@ -836,57 +724,11 @@ public final class TerminalSessionRuntime {
   }
 
   private void completeSynchronization() {
-    if (state != State.SYNCING && state != State.TRANSPORT_CONNECTED) return;
+    if (state != State.SYNCING) return;
     syncGeneration++;
-    updateState(State.CONNECTED);
+    updateState(State.LIVE);
+    projectionContinuity = ProjectionContinuityState.CONTINUOUS;
     layoutLeaseCoordinator.onSynchronizationComplete();
-  }
-
-  /** FROZEN generation 只由 TailStatus 收口，不刷新 LIVE 专属的输入或 resize。 */
-  private void finishFrozenGeneration() {
-    streamState = StreamState.FROZEN;
-    completeSynchronization();
-    if (state == State.CONNECTED && freezeReasons.get() == 0) {
-      requestFreshBaseline("freeze reasons cleared during FROZEN synchronization");
-    }
-  }
-
-  /**
-   * Baseline 完成当前 generation 后统一收敛生命周期目标模式。只有最终保持 LIVE 的
-   * LIVE Baseline 可以刷新 resize/input，避免发出下一 generation 后继续执行旧分支副作用。
-   */
-  private void finishBaselineGeneration(
-      boolean terminalInstanceChanged,
-      @NonNull TerminalScreenV2Proto.ScreenStreamMode completedMode) {
-    completeSynchronization();
-    if (terminalInstanceChanged) {
-      clearPendingLiveInputs();
-      notifyInputDeliveryUncertain("终端实例已变更，等待实时恢复的输入未发送");
-    }
-
-    boolean wantsFrozen = freezeReasons.get() != 0;
-    boolean completedLive = completedMode
-        == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    if (wantsFrozen && completedLive) {
-      streamState = StreamState.LIVE;
-      requestFrozenMode("freeze reasons remain after Baseline");
-      return;
-    }
-    if (wantsFrozen) {
-      streamState = StreamState.FROZEN;
-      return;
-    }
-    if (!completedLive) {
-      streamState = StreamState.FROZEN;
-      requestFreshBaseline("freeze reasons cleared during FROZEN Baseline");
-      return;
-    }
-
-    requestedModeForGeneration =
-        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    streamState = StreamState.LIVE;
-    flushResizeAfterBaseline();
-    if (!terminalInstanceChanged) flushPendingLiveInputs();
   }
 
   private void handleScreenMessage(long messageEpoch,
@@ -930,18 +772,6 @@ public final class TerminalSessionRuntime {
                   && message.mailboxGeneration != screenMailbox.generation())
               || message.sourceConnection != connection) continue;
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
-          if (message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
-              && freezeReasons.get() != 0) {
-            TerminalRenderMetrics.backgroundCommitDropped();
-            continue;
-          }
-          // A recovery fence only accepts the authority frame that can release it. Dropping
-          // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
-          if ((message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
-              || message.kind == ScreenMailbox.MessageKind.TAIL_STATUS)
-              && streamState == StreamState.RESYNCING) {
-            continue;
-          }
           processScreenMessage(message);
         } catch (RuntimeException e) {
           // Fence handling, epoch checks and message processing all share this safety net. An
@@ -977,8 +807,6 @@ public final class TerminalSessionRuntime {
         return TerminalRenderMetrics.ScreenTrafficKind.COMMIT;
       case HISTORY_RANGE:
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
-      case TAIL_STATUS:
-        return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
       default:
         return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
     }
@@ -996,13 +824,13 @@ public final class TerminalSessionRuntime {
         // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
         if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
         if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
-        if (field == 9) return ScreenMailbox.MessageKind.TAIL_STATUS;
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
         if (field == 15) return ScreenMailbox.MessageKind.INPUT_ACK;
         if (field == 16) return ScreenMailbox.MessageKind.EFFECT;
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
         if (field == 21) return ScreenMailbox.MessageKind.PONG;
         if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
+        if (field == 23) return ScreenMailbox.MessageKind.RESUME_ACCEPTED;
         if (!input.skipField(tag)) break;
       }
     } catch (IOException | RuntimeException ignored) {
@@ -1022,6 +850,7 @@ public final class TerminalSessionRuntime {
                                  long discardedMessages,
                                  long overflowCount) {
     TerminalResumeMetrics.screenMailboxOverflow(reason, discardedBytes, overflowCount);
+    projectionContinuity = ProjectionContinuityState.LOST;
     boolean wasRecovering = resyncCoordinator.isRecovering();
     // 先推进状态机再读诊断字段，suppressedOverflowCount 才包含本次 overflow。
     resyncCoordinator.onMailboxOverflow(reason);
@@ -1058,42 +887,8 @@ public final class TerminalSessionRuntime {
   }
 
   private void sendResync(@NonNull String reason) {
-    requestFreshBaseline(reason);
-  }
-
-  private void requestFreshBaseline(@NonNull String reason) {
-    ScreenConnection c = connection;
-    if (c == null || state == State.CLOSED) return;
-    long generation = ++streamGeneration;
-    streamState = StreamState.RESYNCING;
-    requestedModeForGeneration =
-        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE;
-    Diagnostics.warn("screen_protocol", "baseline_requested", diagnosticFields(
-        "layoutEpoch", model.layoutEpoch,
-        "screenRevision", model.screenRevision,
-        "streamGeneration", generation,
-        "reason", reason));
-    if (!c.setStreamMode(
-        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE)) {
-      rebuildScreenChannel("screen Baseline request failed");
-    }
-  }
-
-  /** 请求覆盖式冻结；发送失败意味着本地 generation 已推进，必须立即重建 channel。 */
-  private void requestFrozenMode(@NonNull String reason) {
-    ScreenConnection c = connection;
-    if (c == null || state == State.CLOSED) return;
-    long generation = ++streamGeneration;
-    requestedModeForGeneration =
-        TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN;
-    if (!c.setStreamMode(
-        generation, TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN)) {
-      rebuildScreenChannel("screen FROZEN mode send failed: " + reason);
-      return;
-    }
-    streamState = StreamState.FROZEN;
-    int dropped = screenMailbox.dropLiveProjectionDeltas();
-    for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundCommitDropped();
+    projectionContinuity = ProjectionContinuityState.LOST;
+    rebuildScreenChannel(reason);
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
@@ -1144,14 +939,13 @@ public final class TerminalSessionRuntime {
     long applyStartedNanos = System.nanoTime();
     boolean renderChanged = false;
     String payloadCase = envelope.getPayloadCase().name();
-    long receivedGeneration = generationOf(envelope);
     String failureReason = "UNKNOWN_APPLY_FAILURE";
+    long commitBaseRevision = 0;
+    long commitTargetRevision = 0;
     try {
       switch (envelope.getPayloadCase()) {
         case BASELINE: {
           TerminalScreenV2Proto.Baseline wire = envelope.getBaseline();
-          if (!acceptStreamGeneration(
-              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
           failureReason = "INVALID_BASELINE";
           ScreenMessageV2Validator.validateBaseline(wire);
           long mapStartedNanos = System.nanoTime();
@@ -1161,7 +955,6 @@ public final class TerminalSessionRuntime {
           } finally {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
-          String previousInstanceId = model.instanceId;
           if (!model.applyBaseline(baseline)) {
             failureReason = "STALE_BASELINE";
             throw new IllegalArgumentException("model rejected Baseline");
@@ -1169,30 +962,53 @@ public final class TerminalSessionRuntime {
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
               captureStreamIdentity(), baseline);
           recordCapturedModelState(true);
-          streamGeneration = wire.getStreamGeneration();
           onAuthoritativeSnapshot();
-          boolean terminalInstanceChanged = previousInstanceId != null
-              && !previousInstanceId.equals(baseline.instanceId);
-          TerminalScreenV2Proto.ScreenStreamMode completedMode = requestedModeForGeneration;
-          finishBaselineGeneration(terminalInstanceChanged, completedMode);
+          completeSynchronization();
           renderChanged = true;
           break;
         }
+        case RESUME_ACCEPTED: {
+          TerminalScreenV2Proto.ResumeAccepted accepted = envelope.getResumeAccepted();
+          if (!accepted.getInstanceId().equals(model.instanceId)
+              || accepted.getLayoutEpoch() != model.layoutEpoch
+              || accepted.getScreenRevision() != model.screenRevision
+              || accepted.getDictionaryGeneration() != model.dictionaryGeneration()
+              || accepted.getHistoryGeneration() != model.historyGeneration()
+              || !accepted.hasHistoryExtent()
+              || !historyExtent(accepted.getHistoryExtent()).equals(model.displayExtent())) {
+            throw new CommitValidationException(CommitFailure.IDENTITY_MISMATCH);
+          }
+          resyncCoordinator.onAuthoritativeSnapshot();
+          completeSynchronization();
+          break;
+        }
         case TERMINAL_COMMIT: {
-          if (streamState != StreamState.LIVE) return;
           TerminalScreenV2Proto.TerminalCommit wire = envelope.getTerminalCommit();
-          if (!acceptStreamGeneration(
-              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
-          failureReason = "INVALID_TERMINAL_COMMIT";
+          commitBaseRevision = wire.getBaseRevision();
+          commitTargetRevision = wire.getRevision();
+          failureReason = CommitFailure.INVALID_LINE_DATA.name();
           ScreenMessageV2Validator.validateTerminalCommit(wire, model.rows);
           long mapStartedNanos = System.nanoTime();
           TerminalCommit commit;
           try {
-            commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, model.rows, model.columns);
+            try {
+              commit = ScreenMessageV2Mapper.mapTerminalCommit(
+                  wire, model.rows, model.columns);
+            } catch (RuntimeException invalidLineData) {
+              throw new CommitValidationException(
+                  CommitFailure.INVALID_LINE_DATA, invalidLineData);
+            }
           } finally {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
-          renderChanged = model.applyTerminalCommit(commit);
+          RemoteTerminalModel.StagedCommit stagedCommit = model.stageCommit(commit);
+          long commitApplyStartedNanos = System.nanoTime();
+          try {
+            renderChanged = stagedCommit.commit();
+          } finally {
+            TerminalRenderMetrics.terminalCommitApplyDuration(
+                System.nanoTime() - commitApplyStartedNanos);
+          }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
               captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);
@@ -1235,32 +1051,12 @@ public final class TerminalSessionRuntime {
           }
           if (renderChanged) recordCapturedModelState(false);
           if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
-            Diagnostics.info("screen_protocol", "frozen_projection_stale", diagnosticFields(
+            Diagnostics.info("screen_protocol", "history_generation_stale", diagnosticFields(
                 "instanceId", wire.getInstanceId(),
                 "layoutEpoch", wire.getLayoutEpoch()));
-            requestFreshBaseline("history projection stale");
           } else if (range.status == HistoryRangeResult.Status.RETRYABLE) {
             scheduleHistoryRetry(pending, range.retryAfterMs);
           }
-          break;
-        }
-        case TAIL_STATUS: {
-          TerminalScreenV2Proto.TailStatus status = envelope.getTailStatus();
-          if (!acceptStreamGeneration(
-              payloadCase, status.getStreamGeneration(), message.mailboxGeneration)) return;
-          failureReason = "INVALID_TAIL_STATUS";
-          boolean accepted = model.observeTailStatus(
-              status.getInstanceId(),
-              status.getLayoutEpoch(),
-              status.getLatestScreenRevision(),
-              historyExtent(status.getLatestHistoryExtent()));
-          if (!accepted) return;
-          recordCapturedModelState(false);
-          if (requestedModeForGeneration
-              == TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN) {
-            finishFrozenGeneration();
-          }
-          if (status.getExited()) updateState(State.CLOSED);
           break;
         }
         case LAYOUT_LEASE:
@@ -1281,9 +1077,16 @@ public final class TerminalSessionRuntime {
     } catch (RemoteTerminalModel.RevisionGapException e) {
       Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
           "payloadCase", payloadCase,
-          "failureReason", "INVALID_TERMINAL_COMMIT",
+          "failureReason", e instanceof CommitValidationException
+              ? ((CommitValidationException) e).failure.name() : CommitFailure.REVISION_GAP.name(),
+          "baseRevision", commitBaseRevision,
+          "targetRevision", commitTargetRevision,
           "localRevision", model.screenRevision,
-          "streamGeneration", streamGeneration));
+          "rows", model.rows,
+          "columns", model.columns,
+          "payloadBytes", message.payload.length,
+          "mailboxMessages", screenMailbox.pendingMessages(),
+          "mailboxBytes", screenMailbox.pendingBytes()));
       startResyncRecovery("TerminalCommit revision gap");
       return;
     } catch (Exception e) {
@@ -1291,9 +1094,7 @@ public final class TerminalSessionRuntime {
           "failureKind", e.getClass().getSimpleName(),
           "payloadCase", payloadCase,
           "failureReason", failureReason,
-          "expectedGeneration", streamGeneration,
-          "receivedGeneration", receivedGeneration,
-          "streamState", streamState.name(),
+          "projectionContinuity", projectionContinuity.name(),
           "localRevision", model.screenRevision,
           "connectionEpoch", connectionEpoch.get(),
           "mailboxGeneration", message.mailboxGeneration));
@@ -1304,38 +1105,6 @@ public final class TerminalSessionRuntime {
     if (renderChanged) dispatchRenderNeeded();
   }
 
-  private boolean acceptStreamGeneration(@NonNull String payloadCase,
-                                         long generation,
-                                         long mailboxGeneration) {
-    if (generation < streamGeneration) {
-      TerminalResumeMetrics.staleStreamGeneration();
-      Diagnostics.debug("screen_protocol", "screen_v2_generation_dropped", diagnosticFields(
-          "payloadCase", payloadCase,
-          "failureReason", "STALE_GENERATION",
-          "expectedGeneration", streamGeneration,
-          "receivedGeneration", generation,
-          "streamState", streamState.name(),
-          "localRevision", model.screenRevision,
-          "connectionEpoch", connectionEpoch.get(),
-          "mailboxGeneration", mailboxGeneration));
-      return false;
-    }
-    if (generation > streamGeneration) {
-      Diagnostics.warn("screen_protocol", "screen_v2_generation_rejected", diagnosticFields(
-          "payloadCase", payloadCase,
-          "failureReason", "FUTURE_GENERATION",
-          "expectedGeneration", streamGeneration,
-          "receivedGeneration", generation,
-          "streamState", streamState.name(),
-          "localRevision", model.screenRevision,
-          "connectionEpoch", connectionEpoch.get(),
-          "mailboxGeneration", mailboxGeneration));
-      rebuildScreenChannel("future screen stream generation");
-      return false;
-    }
-    return true;
-  }
-
   private void rebuildScreenChannel(@NonNull String reason) {
     ScreenConnection current = connection;
     if (current == null || state == State.CLOSED) return;
@@ -1343,19 +1112,6 @@ public final class TerminalSessionRuntime {
     layoutLeaseCoordinator.invalidate();
     updateState(State.RECONNECTING);
     current.requestReconnect(reason);
-  }
-
-  private static long generationOf(@NonNull TerminalScreenV2Proto.ScreenEnvelope envelope) {
-    switch (envelope.getPayloadCase()) {
-      case BASELINE:
-        return envelope.getBaseline().getStreamGeneration();
-      case TERMINAL_COMMIT:
-        return envelope.getTerminalCommit().getStreamGeneration();
-      case TAIL_STATUS:
-        return envelope.getTailStatus().getStreamGeneration();
-      default:
-        return 0L;
-    }
   }
 
   private static HistoryExtent historyExtent(TerminalScreenV2Proto.HistoryExtent extent) {
@@ -1387,7 +1143,6 @@ public final class TerminalSessionRuntime {
             model.instanceId,
             model.layoutEpoch,
             model.screenRevision,
-            model.remoteScreenRevision(),
             model.rows,
             model.columns,
             model.activeBuffer == TerminalBufferKind.ALTERNATE ? 1 : 0,

@@ -4,13 +4,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CommitValidationException;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import org.junit.Test;
 
 public final class ScreenMessageV2ValidatorTest {
-  @Test(expected = IllegalArgumentException.class)
-  public void terminalCommitRejectsPartialScrollRegion() {
+  @Test(expected = CommitValidationException.class)
+  public void terminalCommitRejectsPartialScrollRegion() throws Exception {
     ScreenMessageV2Validator.validateTerminalCommit(commitBuilder()
         .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
             .setScroll(TerminalScreenV2Proto.ScreenScroll.newBuilder()
@@ -19,7 +20,7 @@ public final class ScreenMessageV2ValidatorTest {
   }
 
   @Test
-  public void historyExtentBoundaryMatchesDomainModel() {
+  public void historyExtentBoundaryMatchesDomainModel() throws Exception {
     assertAcceptedExtent(1, 0);
     assertAcceptedExtent(1, 1);
     assertAcceptedExtent(10, 9);
@@ -29,7 +30,7 @@ public final class ScreenMessageV2ValidatorTest {
   }
 
   @Test
-  public void nonDataHistoryRangeStatusesRejectLinesButTrimmedAllowsIntersection() {
+  public void nonDataHistoryRangeStatusesRejectLinesButTrimmedAllowsIntersection() throws Exception {
     assertHistoryRangeLineRejected(
         TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION);
     assertHistoryRangeLineRejected(
@@ -39,7 +40,7 @@ public final class ScreenMessageV2ValidatorTest {
   }
 
   @Test
-  public void terminalCommitAcceptsScrollWritesAndBoundedHistory() {
+  public void terminalCommitAcceptsScrollWritesAndBoundedHistory() throws Exception {
     ScreenMessageV2Validator.validateTerminalCommit(commitBuilder()
         .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
             .setScroll(TerminalScreenV2Proto.ScreenScroll.newBuilder()
@@ -53,8 +54,8 @@ public final class ScreenMessageV2ValidatorTest {
         .build(), 3);
   }
 
-  @Test(expected = IllegalArgumentException.class)
-  public void terminalCommitRejectsDuplicateScreenRows() {
+  @Test(expected = CommitValidationException.class)
+  public void terminalCommitRejectsDuplicateScreenRows() throws Exception {
     ScreenMessageV2Validator.validateTerminalCommit(commitBuilder()
         .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
             .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
@@ -64,8 +65,8 @@ public final class ScreenMessageV2ValidatorTest {
         .build(), 2);
   }
 
-  @Test(expected = IllegalArgumentException.class)
-  public void terminalCommitRejectsMoreThan128HistoryBodies() {
+  @Test(expected = CommitValidationException.class)
+  public void terminalCommitRejectsMoreThan128HistoryBodies() throws Exception {
     TerminalScreenV2Proto.HistoryMutation.Builder history =
         TerminalScreenV2Proto.HistoryMutation.newBuilder()
             .setFinalExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
@@ -77,7 +78,8 @@ public final class ScreenMessageV2ValidatorTest {
 
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {
     return TerminalScreenV2Proto.TerminalCommit.newBuilder()
-        .setInstanceId("i1").setLayoutEpoch(1).setStreamGeneration(1)
+        .setInstanceId("i1").setLayoutEpoch(1)
+        .setDictionaryGeneration(1).setHistoryGeneration(1)
         .setBaseRevision(1).setRevision(2);
   }
 
@@ -103,6 +105,7 @@ public final class ScreenMessageV2ValidatorTest {
             .setRequestId("r1")
             .setInstanceId("i1")
             .setLayoutEpoch(1)
+            .setHistoryGeneration(1)
             .setStatus(status)
             .setAvailableExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
                 .setFirstSeq(1).setLastSeq(10));
@@ -113,7 +116,7 @@ public final class ScreenMessageV2ValidatorTest {
     return response.build();
   }
 
-  private static void assertAcceptedExtent(long first, long last) {
+  private static void assertAcceptedExtent(long first, long last) throws Exception {
     ScreenMessageV2Validator.validateTerminalCommit(historyCommit(first, last), 1);
     new HistoryExtent(first, last);
   }
@@ -122,7 +125,8 @@ public final class ScreenMessageV2ValidatorTest {
     try {
       ScreenMessageV2Validator.validateTerminalCommit(historyCommit(first, last), 1);
       fail("validator accepted invalid extent " + first + ".." + last);
-    } catch (IllegalArgumentException expected) {
+    } catch (IllegalArgumentException
+        | com.webterm.terminal.model.CommitValidationException expected) {
       // Expected.
     }
     try {

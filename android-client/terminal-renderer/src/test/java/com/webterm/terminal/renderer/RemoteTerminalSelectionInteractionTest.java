@@ -114,7 +114,9 @@ public final class RemoteTerminalSelectionInteractionTest {
     send(fixture.view, MotionEvent.ACTION_UP, center[0], 1f);
 
     assertTrue(fixture.host.viewportScrollCalls > 0);
-    assertTrue(fixture.viewport.scrollOffsetPixels > 0);
+    assertTrue(fixture.viewport.derivedScrollOffsetPixels(
+        fixture.view.currentRenderedSnapshot(), fixture.view.lineHeight(),
+        fixture.view.maxScrollOffsetPixels()) > 0);
     assertEquals(false, scheduled.getBoolean(fixture.view));
   }
 
@@ -158,7 +160,7 @@ public final class RemoteTerminalSelectionInteractionTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     HistoryExtent extent = historyLines == 0
         ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
-    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, rows, cols, bufferKind,
+    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, bufferKind,
         extent, history, screen, TerminalCursor.hidden(), TerminalModes.defaults(),
         TerminalPalette.defaults()));
     return model;
@@ -234,7 +236,6 @@ public final class RemoteTerminalSelectionInteractionTest {
     @Override public void onScrollPixels(
         int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels) {
       viewportScrollCalls++;
-      viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
     }
     @Override public void onFocusChanged(boolean focused) {}
     @Override public void onMouse(int row, int col, String button, int wheelDelta,

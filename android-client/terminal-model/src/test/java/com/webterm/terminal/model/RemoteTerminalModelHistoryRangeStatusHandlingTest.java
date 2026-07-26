@@ -19,7 +19,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
     assertFalse(model.applyHistoryRange(new HistoryRangeResult(
         "r1", "i1", 1, HistoryRangeResult.Status.STALE_PROJECTION,
         new HistoryExtent(2, 300), Collections.emptyList(), 0), 1, 1, 128));
-    assertTrue(model.staleProjection());
+    assertFalse(model.staleProjection());
     assertEquals(173, model.firstCachedHistorySeq());
 
     assertFalse(model.applyHistoryRange(new HistoryRangeResult(
@@ -42,7 +42,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
     assertEquals(SlotState.UNAVAILABLE, history.slotStateAt(0));
     assertNull(history.firstRequestablePage(1, 49));
-    assertEquals(50, history.lineBySeq(50).historySeq);
+    assertEquals(50, history.lineBySeq(50).id);
   }
 
   @Test
@@ -125,7 +125,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(173, history.lineBySeq(173).historySeq);
+    assertEquals(173, history.lineBySeq(173).id);
     assertEquals(SlotState.LOADED, history.slotStateAt(172));
     assertEquals(SlotState.UNAVAILABLE, history.slotStateAt(99));
     assertNull(history.firstRequestablePage(100, 199));

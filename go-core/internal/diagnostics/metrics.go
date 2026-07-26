@@ -27,7 +27,6 @@ type AgentMetrics struct {
 	MuxWriterFailureCount   atomic.Uint64
 
 	// 屏幕编码/投影。
-	SnapshotFallbackCount    atomic.Uint64
 	ScreenEncodeFailureCount atomic.Uint64
 
 	// writer 队列拒绝。
@@ -69,7 +68,6 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"muxChannelOpenedCount":    m.MuxChannelOpenedCount.Load(),
 		"muxChannelReplacedCount":  m.MuxChannelReplacedCount.Load(),
 		"muxWriterFailureCount":    m.MuxWriterFailureCount.Load(),
-		"snapshotFallbackCount":    m.SnapshotFallbackCount.Load(),
 		"screenEncodeFailureCount": m.ScreenEncodeFailureCount.Load(),
 		"writerQueueRejectedCount": m.WriterQueueRejectedCount.Load(),
 		"capabilities":             capabilities,

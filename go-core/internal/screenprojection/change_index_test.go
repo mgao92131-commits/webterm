@@ -109,9 +109,9 @@ func TestChangeIndex_StyleLinkCreatedRevisions(t *testing.T) {
 	}
 }
 
-// main/alternate buffer 切换（§4.2）：推进 barrier，活动行全部重新定义
+// main/alternate buffer 切换由 Commit 表达，不推进 barrier；活动行全部重新定义
 // （row 索引重置为切换 revision）；未变化的元数据不推进。
-func TestChangeIndex_BufferSwitchAdvancesBarrierAndResetsRows(t *testing.T) {
+func TestChangeIndex_BufferSwitchKeepsBarrierAndResetsRows(t *testing.T) {
 	engine, _, p := newChangeIndexFixture(5, 10)
 	mustEngineWrite(t, engine, "main\r\nsecond")
 	p.ExportState(0, 1)
@@ -123,8 +123,8 @@ func TestChangeIndex_BufferSwitchAdvancesBarrierAndResetsRows(t *testing.T) {
 	if state.ActiveBuffer != terminalengine.BufferAlternate {
 		t.Fatal("expected alternate buffer")
 	}
-	if p.changeIndex.SnapshotBarrierRevision != 3 {
-		t.Fatalf("barrier=%d after buffer switch, want 3", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("barrier=%d after buffer switch, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 	for r, rev := range p.changeIndex.RowChangedRevision {
 		if rev != 3 {
@@ -138,15 +138,15 @@ func TestChangeIndex_BufferSwitchAdvancesBarrierAndResetsRows(t *testing.T) {
 	if p.changeIndex.RowChangedRevision[0] != 4 {
 		t.Fatalf("alt row 0 revision=%d, want 4", p.changeIndex.RowChangedRevision[0])
 	}
-	if p.changeIndex.SnapshotBarrierRevision != 3 {
-		t.Fatalf("barrier=%d, want 3", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("barrier=%d, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 
-	// 切回主屏再次推进 barrier 并重置 row 索引。
+	// 切回主屏仍不推进 barrier，但重置 row 索引。
 	mustEngineWrite(t, engine, "\x1b[?1049l")
 	p.ExportState(0, 5)
-	if p.changeIndex.SnapshotBarrierRevision != 5 {
-		t.Fatalf("barrier=%d after switching back, want 5", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("barrier=%d after switching back, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 	for r, rev := range p.changeIndex.RowChangedRevision {
 		if rev != 5 {
@@ -244,7 +244,7 @@ func TestChangeIndex_DictionaryRotationAdvancesBarrierAndRebuilds(t *testing.T) 
 }
 
 // barrier 在同一 epoch 内单调不减：元数据/行变化不推进；普通清屏（ED 2）
-// 不推进；buffer 切换推进。
+// 不推进；buffer 切换也保持连续。
 func TestChangeIndex_BarrierMonotonicWithinEpoch(t *testing.T) {
 	engine, _, p := newChangeIndexFixture(5, 10)
 	mustEngineWrite(t, engine, "hello")
@@ -258,34 +258,34 @@ func TestChangeIndex_BarrierMonotonicWithinEpoch(t *testing.T) {
 
 	mustEngineWrite(t, engine, "\x1b[?1049h")
 	p.ExportState(0, 3)
-	if p.changeIndex.SnapshotBarrierRevision != 3 {
-		t.Fatalf("barrier=%d after buffer switch, want 3", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("barrier=%d after buffer switch, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 
 	mustEngineWrite(t, engine, "\x1b]0;u\x07alt-content")
 	p.ExportState(0, 4)
-	if p.changeIndex.SnapshotBarrierRevision != 3 {
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
 		t.Fatalf("metadata/row changes advanced barrier to %d", p.changeIndex.SnapshotBarrierRevision)
 	}
 
 	mustEngineWrite(t, engine, "\x1b[?1049l")
 	p.ExportState(0, 5)
-	if p.changeIndex.SnapshotBarrierRevision != 5 {
-		t.Fatalf("barrier=%d after switching back, want 5", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("barrier=%d after switching back, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 
 	// 普通清屏（ED 2）与全屏重绘不推进 barrier。
 	mustEngineWrite(t, engine, "\x1b[2J")
 	p.ExportState(0, 6)
-	if p.changeIndex.SnapshotBarrierRevision != 5 {
-		t.Fatalf("plain clear advanced barrier to %d, want 5", p.changeIndex.SnapshotBarrierRevision)
+	if p.changeIndex.SnapshotBarrierRevision != 1 {
+		t.Fatalf("plain clear advanced barrier to %d, want 1", p.changeIndex.SnapshotBarrierRevision)
 	}
 }
 
 // 历史 LineID 体系重置（ResetForReflow 的探测 seam 是 nextSeq 回退）：
 // 推进 barrier；重置后新写入不再误推进。普通 Clear 只推进历史水位，
 // 不重置 LineID 空间。
-func TestChangeIndex_HistoryLineIDResetAdvancesBarrier(t *testing.T) {
+func TestChangeIndex_ScrollbackEntryIDResetAdvancesBarrier(t *testing.T) {
 	engine, sb, p := newChangeIndexFixture(5, 10)
 	for i := 0; i < 20; i++ {
 		mustEngineWrite(t, engine, fmt.Sprintf("line-%02d\r\n", i))

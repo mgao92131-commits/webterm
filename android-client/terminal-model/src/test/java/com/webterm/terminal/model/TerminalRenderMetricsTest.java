@@ -43,7 +43,10 @@ public class TerminalRenderMetricsTest {
       TerminalRenderMetrics.terminalCommitApplyDuration(sample);
       TerminalRenderMetrics.protobufParseDuration(sample);
       TerminalRenderMetrics.mapperDuration(sample);
+      TerminalRenderMetrics.dictionaryStagingDuration(sample);
+      TerminalRenderMetrics.renderPublicationDuration(sample);
       TerminalRenderMetrics.renderNodeRecordDuration(sample);
+      TerminalRenderMetrics.vsyncDrawDuration(sample);
       TerminalRenderMetrics.mailboxResidenceDuration(sample);
     }
 
@@ -52,7 +55,10 @@ public class TerminalRenderMetricsTest {
     assertArrayEquals(expected, snapshot.terminalCommitApplyLatencyBuckets);
     assertArrayEquals(expected, snapshot.protobufParseLatencyBuckets);
     assertArrayEquals(expected, snapshot.mapperLatencyBuckets);
+    assertArrayEquals(expected, snapshot.dictionaryStagingLatencyBuckets);
+    assertArrayEquals(expected, snapshot.renderPublicationLatencyBuckets);
     assertArrayEquals(expected, snapshot.renderNodeRecordLatencyBuckets);
+    assertArrayEquals(expected, snapshot.vsyncDrawLatencyBuckets);
     assertArrayEquals(expected, snapshot.mailboxResidenceLatencyBuckets);
   }
 
@@ -60,13 +66,11 @@ public class TerminalRenderMetricsTest {
   public void boundedCountersNeverCaptureContent() {
     TerminalRenderMetrics.historyCacheHit();
     TerminalRenderMetrics.historyCacheMiss();
-    TerminalRenderMetrics.backgroundCommitDropped();
     TerminalRenderMetrics.visibleHistoryRowsDrawn(12);
 
     TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
     assertEquals(1L, snapshot.historyCacheHitCount);
     assertEquals(1L, snapshot.historyCacheMissCount);
-    assertEquals(1L, snapshot.backgroundCommitDroppedCount);
     assertEquals(12L, snapshot.visibleHistoryRowsDrawn);
   }
 

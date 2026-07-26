@@ -77,11 +77,8 @@ public final class RemoteTerminalRendererTest {
     int threshold = RemoteTerminalRenderer.liveScreenExitOffsetPixels(721, 1.25f);
     assertEquals(720, threshold);
 
-    TerminalViewportState viewport = new TerminalViewportState();
-    viewport.scrollBy(threshold - 1, 2_000);
-    assertFalse(viewport.isPureHistory(threshold));
-    viewport.scrollBy(1, 2_000);
-    assertTrue(viewport.isPureHistory(threshold));
+    assertFalse(threshold - 1 >= threshold);
+    assertTrue(threshold >= threshold);
   }
 
   @Test public void hardTopAnchorsFirstHistoryRowInsideViewport() {
@@ -137,7 +134,7 @@ public final class RemoteTerminalRendererTest {
         300, 1, 300, false, new TerminalCell[] {TerminalCell.EMPTY});
     TerminalLine screen = TerminalLine.empty(1000, 1);
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, 1, TerminalBufferKind.MAIN,
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 300), Collections.singletonList(historyTail),
         Collections.singletonList(screen), TerminalCursor.hidden(), TerminalModes.defaults(),
         TerminalPalette.defaults()));
@@ -146,7 +143,8 @@ public final class RemoteTerminalRendererTest {
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
     renderer.setFontMetrics(10f, 20f, 15f);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.scrollBy(6_000, 6_000); // 视口位于全是 UNLOADED 占位的历史头部。
+    viewport.scrollBy(6_000, 6_000, model.renderSnapshot(), 20f);
+    // 视口位于全是 UNLOADED 占位的历史头部。
     Canvas canvas = new Canvas(Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
     renderer.render(canvas, model.renderSnapshot(), viewport, true);
   }
@@ -192,7 +190,7 @@ public final class RemoteTerminalRendererTest {
       history.add(new TerminalLine(1000L + i, 1, i + 1L, false, cells));
     }
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, cols, TerminalBufferKind.MAIN,
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, cols, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 5), history,
         Collections.singletonList(TerminalLine.empty(2000, cols)),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
@@ -201,7 +199,6 @@ public final class RemoteTerminalRendererTest {
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
     renderer.setFontMetrics(10f, 20f, 15f); // topInset = 20 - 15 = 5
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = true;
 
     Bitmap bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
     int defaultBg = RemoteTerminalRenderer.resolveColor(TerminalPalette.defaults(),

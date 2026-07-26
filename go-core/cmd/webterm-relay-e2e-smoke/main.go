@@ -491,8 +491,6 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 				ClientInstanceId: "relay-e2e-smoke",
-				DesiredMode:      pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
-				StreamGeneration: 1,
 				DesiredGeometry:  &pb.Geometry{Cols: 80, Rows: 24},
 			}},
 		})
@@ -608,12 +606,7 @@ func screenEnvelopeContains(data []byte, text string) bool {
 	}
 	for _, line := range lines {
 		var builder strings.Builder
-		builder.WriteString(line.Text)
-		for _, run := range line.Runs {
-			for _, cell := range run.Cells {
-				builder.WriteString(cell.Text)
-			}
-		}
+		builder.Write(line.Utf8Text)
 		if strings.Contains(builder.String(), text) {
 			return true
 		}

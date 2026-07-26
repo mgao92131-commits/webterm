@@ -373,14 +373,15 @@ public final class TerminalLineRenderNodeCacheTest {
       screen.add(textLine(1L + row, 1, columns, "original"));
     }
     return new ScreenBaseline(
-        "session-1", "instance-1", 1L, 1L, 1L, rows, columns,
+        "session-1", "instance-1", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
         TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
   private static TerminalCommit patch(long baseRevision, long revision, TerminalLine line) {
     return new TerminalCommit(
-        "instance-1", 1L, 1L, baseRevision, revision,
+        "instance-1", 1L, baseRevision, revision,
+        1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
         new ScreenMutation(null, Collections.singletonList(new ScreenRowWrite(0, line))),
         null, null, null, null);
   }
@@ -399,7 +400,7 @@ public final class TerminalLineRenderNodeCacheTest {
     for (int row = 0; row < rows; row++) screen.add(line(firstLineId + row, 1, columns));
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(new ScreenBaseline(
-        "session-1", instanceId, layoutEpoch, 1L, 1L, rows, columns,
+        "session-1", instanceId, layoutEpoch, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
         TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     return model.renderSnapshot();

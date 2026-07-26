@@ -408,9 +408,8 @@ func TestMuxTerminalChannelRoundTrip(t *testing.T) {
 	helloFrame, err := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "mux-test", StreamGeneration: 1,
-			DesiredMode: pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
-			DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
+			ClientInstanceId: "mux-test",
+			DesiredGeometry:  &pb.Geometry{Cols: 80, Rows: 24},
 		}},
 	})
 	if err != nil {

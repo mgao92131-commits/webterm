@@ -12,37 +12,26 @@ public final class ScreenMessageV2Builder {
 
   @NonNull
   public static byte[] hello(int cols, int rows, @NonNull String clientInstanceId,
-                             long streamGeneration,
-                             @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
-                             @Nullable String instanceId, long layoutEpoch,
-                             boolean hasFrozenProjection) {
-    TerminalScreenV2Proto.Hello hello = TerminalScreenV2Proto.Hello.newBuilder()
+                             @Nullable TerminalScreenV2Proto.ResumeToken resume,
+                             int coldHistoryTailLines) {
+    TerminalScreenV2Proto.Hello.Builder builder = TerminalScreenV2Proto.Hello.newBuilder()
         .setClientInstanceId(clientInstanceId)
-        .setDesiredMode(desiredMode)
-        .setStreamGeneration(streamGeneration)
-        .setInstanceId(instanceId == null ? "" : instanceId)
-        .setLayoutEpoch(layoutEpoch)
-        .setHasFrozenProjection(hasFrozenProjection)
+        .setColdHistoryTailLines(coldHistoryTailLines)
         .setDesiredGeometry(TerminalScreenV2Proto.Geometry.newBuilder()
-            .setCols(cols).setRows(rows))
-        .build();
-    return envelope().setHello(hello).build().toByteArray();
-  }
-
-  @NonNull
-  public static byte[] setStreamMode(@NonNull TerminalScreenV2Proto.ScreenStreamMode mode,
-                                     long streamGeneration) {
-    return envelope().setSetStreamMode(TerminalScreenV2Proto.SetStreamMode.newBuilder()
-        .setMode(mode).setStreamGeneration(streamGeneration)).build().toByteArray();
+            .setCols(cols).setRows(rows));
+    if (resume != null) builder.setResume(resume);
+    return envelope().setHello(builder).build().toByteArray();
   }
 
   @NonNull
   public static byte[] historyRange(@NonNull String requestId, @NonNull String instanceId,
-                                    long layoutEpoch, long fromSeq, long toSeq) {
+                                    long layoutEpoch, long historyGeneration,
+                                    long fromSeq, long toSeq) {
     return envelope().setHistoryRangeRequest(
         TerminalScreenV2Proto.HistoryRangeRequest.newBuilder()
             .setRequestId(requestId).setInstanceId(instanceId)
-            .setLayoutEpoch(layoutEpoch).setFromSeq(fromSeq).setToSeq(toSeq))
+            .setLayoutEpoch(layoutEpoch).setHistoryGeneration(historyGeneration)
+            .setFromSeq(fromSeq).setToSeq(toSeq))
         .build().toByteArray();
   }
 

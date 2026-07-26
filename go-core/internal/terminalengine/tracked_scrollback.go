@@ -7,8 +7,9 @@ import (
 	headlessterm "github.com/danielgatis/go-headless-term"
 )
 
-// HistoryLine 是带稳定 LineID 和独立 HistorySeq 的历史行，由 TrackedScrollback 维护。
-type HistoryLine struct {
+// ScrollbackEntry 只把权威 LineID 绑定到 HistorySeq；Cells 是 Buffer
+// 移交给 scrollback provider 的同一份不可变正文，不创建第二种历史行正文。
+type ScrollbackEntry struct {
 	HistorySeq uint64
 	LineID     uint64
 	Version    uint64
@@ -23,12 +24,12 @@ type ScrollbackTrimEvent struct {
 }
 
 // ScrollbackWindow 是 TrackedScrollback 一次原子读到的连续行窗口及其边界。
-// Lines 中 HistoryLine 的 Cells 与 scrollback 内部共享且不可变（Push 时已
-// 拷贝，推出后不再修改）；切片本身是新分配的副本，可安全在锁外使用。
+// Lines 中 ScrollbackEntry 的 Cells 与 scrollback 内部共享且不可变；切片本身
+// 是新分配的位置条目副本，可安全在锁外使用。
 type ScrollbackWindow struct {
-	FirstSeq uint64        // 当前最老可用 HistorySeq
-	LastSeq  uint64        // 当前最新 HistorySeq；历史为空时为 FirstSeq-1
-	Lines    []HistoryLine // 窗口内的行，按 HistorySeq 升序
+	FirstSeq uint64            // 当前最老可用 HistorySeq
+	LastSeq  uint64            // 当前最新 HistorySeq；历史为空时为 FirstSeq-1
+	Lines    []ScrollbackEntry // 窗口内的行，按 HistorySeq 升序
 }
 
 // ScrollbackIndexWindow 是供版本索引使用的轻量窗口。它只复制 LineID，
@@ -44,8 +45,9 @@ type ScrollbackIndexWindow struct {
 }
 
 type HistoryIndexEntry struct {
-	HistorySeq uint64
-	LineID     uint64
+	HistorySeq  uint64
+	LineID      uint64
+	LineVersion uint64
 }
 
 // HistoryExtent 是同一 layout epoch 内可加载历史的绝对序号窗口。
@@ -70,7 +72,7 @@ const (
 type HistoryRangeResult struct {
 	Status HistoryRangeStatus
 	Extent HistoryExtent
-	Lines  []HistoryLine
+	Lines  []ScrollbackEntry
 }
 
 // TrackedScrollback 是 headless-term 的唯一 scrollback provider。LineID 来自
@@ -82,9 +84,10 @@ type TrackedScrollback struct {
 	bytes    int
 
 	layoutEpoch uint64
+	generation  uint64
 	firstSeq    uint64
 	nextSeq     uint64
-	lines       []HistoryLine
+	lines       []ScrollbackEntry
 
 	onTrim func(ScrollbackTrimEvent)
 }
@@ -107,11 +110,12 @@ func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *Track
 		capacity = DefaultScrollbackLineLimit
 	}
 	return &TrackedScrollback{
-		capacity: capacity,
-		maxBytes: DefaultScrollbackByteLimit,
-		onTrim:   onTrim,
-		firstSeq: 1,
-		nextSeq:  1,
+		capacity:   capacity,
+		maxBytes:   DefaultScrollbackByteLimit,
+		onTrim:     onTrim,
+		firstSeq:   1,
+		nextSeq:    1,
+		generation: 1,
 	}
 }
 
@@ -133,6 +137,7 @@ func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.layoutEpoch = epoch
+	t.generation++
 	for i := range t.lines {
 		t.lines[i].HistorySeq = uint64(i + 1)
 	}
@@ -147,6 +152,7 @@ func (t *TrackedScrollback) ResetForReflow(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.layoutEpoch = epoch
+	t.generation++
 	t.firstSeq = 1
 	t.nextSeq = 1
 	t.lines = t.lines[:0]
@@ -160,21 +166,24 @@ func (t *TrackedScrollback) LayoutEpoch() uint64 {
 	return t.layoutEpoch
 }
 
+func (t *TrackedScrollback) Generation() uint64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.generation
+}
+
 // Push 追加一行到历史。
 func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	cells := make([]headlessterm.Cell, len(line.Cells))
-	copy(cells, line.Cells)
-
-	historyLine := HistoryLine{
+	historyLine := ScrollbackEntry{
 		HistorySeq: t.nextSeq,
 		LineID:     line.LineID,
 		Wrapped:    line.Wrapped,
 		Version:    line.LineVersion,
-		Cells:      cells,
-		bytes:      estimateHistoryLineBytes(cells),
+		Cells:      line.Cells,
+		bytes:      estimateScrollbackEntryBytes(line.Cells),
 	}
 	if historyLine.LineID == 0 {
 		// Buffer-created rows always have an ID. Keep the provider defensive for
@@ -233,7 +242,7 @@ func (t *TrackedScrollback) Line(index int) headlessterm.ScrollbackLine {
 
 // LineByID 按稳定逻辑 LineID 返回历史行；历史本身按 HistorySeq 排列，故不能
 // 用 ID 二分。
-func (t *TrackedScrollback) LineByID(id uint64) (HistoryLine, bool) {
+func (t *TrackedScrollback) LineByID(id uint64) (ScrollbackEntry, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	for _, line := range t.lines {
@@ -241,17 +250,17 @@ func (t *TrackedScrollback) LineByID(id uint64) (HistoryLine, bool) {
 			return line, true
 		}
 	}
-	return HistoryLine{}, false
+	return ScrollbackEntry{}, false
 }
 
 // LineByHistorySeq returns the history entry selected by pagination/trim
 // cursor. It is distinct from LineByID because LineID is not ordered by time.
-func (t *TrackedScrollback) LineByHistorySeq(seq uint64) (HistoryLine, bool) {
+func (t *TrackedScrollback) LineByHistorySeq(seq uint64) (ScrollbackEntry, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	index := sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq >= seq })
 	if index >= len(t.lines) || t.lines[index].HistorySeq != seq {
-		return HistoryLine{}, false
+		return ScrollbackEntry{}, false
 	}
 	return t.lines[index], true
 }
@@ -286,13 +295,13 @@ func (t *TrackedScrollback) Range(fromSeq, toSeq uint64) HistoryRangeResult {
 	end := sort.Search(len(t.lines), func(i int) bool {
 		return t.lines[i].HistorySeq > toSeq
 	})
-	result.Lines = make([]HistoryLine, end-start)
+	result.Lines = make([]ScrollbackEntry, end-start)
 	copy(result.Lines, t.lines[start:end])
 	return result
 }
 
 // PageBefore returns rows strictly before the HistorySeq cursor, in entrance order.
-func (t *TrackedScrollback) PageBefore(beforeSeq uint64, limit int) []HistoryLine {
+func (t *TrackedScrollback) PageBefore(beforeSeq uint64, limit int) []ScrollbackEntry {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if limit <= 0 || len(t.lines) == 0 || beforeSeq <= t.firstSeq {
@@ -306,7 +315,7 @@ func (t *TrackedScrollback) PageBefore(beforeSeq uint64, limit int) []HistoryLin
 	if start < 0 {
 		start = 0
 	}
-	result := make([]HistoryLine, end-start)
+	result := make([]ScrollbackEntry, end-start)
 	copy(result, t.lines[start:end])
 	return result
 }
@@ -329,7 +338,7 @@ func (t *TrackedScrollback) LinesAfter(lastSeq uint64, limit int) ScrollbackWind
 	if len(t.lines)-start > limit {
 		start = len(t.lines) - limit
 	}
-	w.Lines = make([]HistoryLine, len(t.lines)-start)
+	w.Lines = make([]ScrollbackEntry, len(t.lines)-start)
 	copy(w.Lines, t.lines[start:])
 	return w
 }
@@ -347,7 +356,7 @@ func (t *TrackedScrollback) Window(limit int) ScrollbackWindow {
 	if len(t.lines) > limit {
 		start = len(t.lines) - limit
 	}
-	w.Lines = make([]HistoryLine, len(t.lines)-start)
+	w.Lines = make([]ScrollbackEntry, len(t.lines)-start)
 	copy(w.Lines, t.lines[start:])
 	return w
 }
@@ -373,7 +382,7 @@ func (t *TrackedScrollback) IndexAfter(lastSeq uint64) ScrollbackIndexWindow {
 	w.Entries = make([]HistoryIndexEntry, len(t.lines)-start)
 	w.LineIDs = make([]uint64, len(t.lines)-start)
 	for i := start; i < len(t.lines); i++ {
-		w.Entries[i-start] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID}
+		w.Entries[i-start] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID, LineVersion: t.lines[i].Version}
 		w.LineIDs[i-start] = t.lines[i].LineID
 	}
 	return w
@@ -405,6 +414,7 @@ func (t *TrackedScrollback) NextSeq() uint64 {
 func (t *TrackedScrollback) Clear() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.generation++
 	if len(t.lines) == 0 {
 		return
 	}
@@ -479,10 +489,10 @@ func (t *TrackedScrollback) trimToLimitsLocked() bool {
 	return true
 }
 
-// estimateHistoryLineBytes 返回一行的近似堆占用。这是容量记账预算而非精确的
+// estimateScrollbackEntryBytes 返回一行的近似堆占用。这是容量记账预算而非精确的
 // Go 堆内省：只要求不明显低估，允许与真实占用有 ±15% 左右的偏差。
 //
-// 常量依据 BenchmarkHistoryLineMemory（go 1.25.1, darwin/arm64）的实测
+// 常量依据 BenchmarkScrollbackEntryMemory（go 1.25.1, darwin/arm64）的实测
 // （80/200 列 × 纯 ASCII/宽字符/逐 cell 样式样本，1024 行驻留堆）：
 //
 //	样本                  实测 B/行   本函数估算   偏差
@@ -495,10 +505,10 @@ func (t *TrackedScrollback) trimToLimitsLocked() bool {
 //
 // 组成：headlessterm.Cell 结构体 88B（unsafe.Sizeof）+ 每 cell 字符串数据
 // 最小 size class 8B + 颜色/样式对象摊销 8B = 每 cell 104B；len(Char)*2 覆盖
-// 多字节字符簇的字符串数据；基线 64B 覆盖 HistoryLine 结构体（48B）与
+// 多字节字符簇的字符串数据；基线 64B 覆盖 ScrollbackEntry 结构体（48B）与
 // cells 切片的分配/size-class 取整开销。逐 cell 独立颜色的极端样式输出
 // （每 cell 两个 8B 颜色对象）仍可能低估约 15%，可接受。
-func estimateHistoryLineBytes(cells []headlessterm.Cell) int {
+func estimateScrollbackEntryBytes(cells []headlessterm.Cell) int {
 	bytes := 64
 	for _, cell := range cells {
 		bytes += 104 + len(cell.Char)*2

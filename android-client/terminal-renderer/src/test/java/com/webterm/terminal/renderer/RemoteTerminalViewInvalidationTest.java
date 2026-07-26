@@ -60,7 +60,7 @@ public final class RemoteTerminalViewInvalidationTest {
         ? HistoryExtent.INITIAL_EMPTY
         : new HistoryExtent(1, historyRows);
     ScreenBaseline baseline = new ScreenBaseline(
-        "session-1", "term-1", 1L, 1L, 1L, rows, cols, TerminalBufferKind.MAIN,
+        "session-1", "term-1", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, TerminalBufferKind.MAIN,
         extent, Arrays.asList(history), Arrays.asList(screen),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
     model.applyBaseline(baseline);
@@ -87,7 +87,6 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithScreen(5, 10);
     RemoteTerminalView view = view(100, 200);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = true;
 
     // 模拟 history-only 更新：不修改 screen。
     RenderDirtyState dirty = new RenderDirtyState();
@@ -102,7 +101,6 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithScreenAndHistory(5, 10, 5);
     RemoteTerminalView view = view(100, 200);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = true;
 
     RenderDirtyState dirty = new RenderDirtyState();
     dirty.historyChanged = true;
@@ -116,7 +114,7 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithScreen(5, 10);
     RemoteTerminalView view = view(100, 200);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = false;
+    viewport.anchorLine(TerminalBufferKind.MAIN, model.renderSnapshot().screen[0].id, 0);
 
     RenderDirtyState dirty = new RenderDirtyState();
     dirty.historyChanged = true;
@@ -130,7 +128,7 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithScreenAndHistory(5, 10, 5);
     RemoteTerminalView view = view(100, 200);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = false;
+    viewport.anchorLine(TerminalBufferKind.MAIN, model.renderSnapshot().screen[0].id, 0);
 
     RenderDirtyState dirty = new RenderDirtyState();
     dirty.historyChanged = true;
@@ -146,8 +144,7 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithLargeHistory(1, 10, 1, 1100);
     RemoteTerminalView view = view(100, 720);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = false;
-    viewport.scrollOffsetPixels = 2020;
+    viewport.scrollBy(2020, 22_000, model.renderSnapshot(), 20f);
     RenderDirtyState dirty = new RenderDirtyState();
     dirty.historyChanged = true;
     dirty.changedHistoryFromSeq = 896;
@@ -164,8 +161,7 @@ public final class RemoteTerminalViewInvalidationTest {
     RemoteTerminalModel model = modelWithLargeHistory(1, 10, 1, 1100);
     RemoteTerminalView view = view(100, 720);
     TerminalViewportState viewport = new TerminalViewportState();
-    viewport.followTail = false;
-    viewport.scrollOffsetPixels = 2020;
+    viewport.scrollBy(2020, 22_000, model.renderSnapshot(), 20f);
     RenderDirtyState invisible = new RenderDirtyState();
     invisible.historyChanged = true;
     invisible.changedHistoryFromSeq = 896;
@@ -280,7 +276,7 @@ public final class RemoteTerminalViewInvalidationTest {
     List<TerminalLine> screen = new ArrayList<>();
     for (int row = 0; row < rows; row++) screen.add(line(1_000_000L + row, cols));
     assertEquals(true, model.applyBaseline(new ScreenBaseline(
-        "session-large", "term-large", 1L, 1L, 1L, rows, cols,
+        "session-large", "term-large", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
         TerminalBufferKind.MAIN, new HistoryExtent(firstSeq, lastSeq), historyTail, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();

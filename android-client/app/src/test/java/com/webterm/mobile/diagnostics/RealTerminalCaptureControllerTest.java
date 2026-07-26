@@ -82,7 +82,7 @@ public class RealTerminalCaptureControllerTest {
 
     private static CapturedModelState modelState(long revision, boolean afterBaseline) {
         return new CapturedModelState(
-                1L, "i", 1, revision, revision + 2,
+                1L, "i", 1, revision,
                 1, 1, 0, true, afterBaseline,
                 new HistoryExtent(10, 20), new HistoryExtent(10, 24));
     }
@@ -261,19 +261,19 @@ public class RealTerminalCaptureControllerTest {
   }
 
   @Test
-  public void viewCaptureSerializesFreezeBoundaryAndIntent() throws Exception {
+  public void viewCaptureSerializesViewportPositionAndDerivedOffset() throws Exception {
     CapturedViewState state = new CapturedViewState(
             1L, 1080, 720,
             0, 0, 0, 0,
             14f, "monospace", 9f, 18f, 14f,
-            850, false, "FROZEN_HISTORY", 720, true,
+            850, false, "LINE_ANCHOR", 720, true,
             false, 5, 1, "term-1", true, false);
 
     JSONObject json = CaptureSerializer.viewState(state);
 
     assertEquals(850, json.getInt("scrollOffsetPixels"));
     assertEquals(720, json.getInt("liveScreenExitOffsetPixels"));
-    assertEquals("FROZEN_HISTORY", json.getString("contentStreamIntent"));
+    assertEquals("LINE_ANCHOR", json.getString("viewportPosition"));
     assertTrue(json.getBoolean("pureHistory"));
   }
 
@@ -289,7 +289,7 @@ public class RealTerminalCaptureControllerTest {
 
         List<CapturedModelState> model = new ArrayList<>();
         model.add(new CapturedModelState(
-                1L, "term-1", 1, 5, 8,
+                1L, "term-1", 1, 5,
                 24, 80, 0, true, true,
                 new HistoryExtent(10, 20), new HistoryExtent(10, 25)));
 
@@ -313,7 +313,6 @@ public class RealTerminalCaptureControllerTest {
                 new String(entries.get("android/model-state.jsonl"), StandardCharsets.UTF_8).trim())
                 .getJSONObject(0);
         assertEquals(5, capturedModel.getLong("screenRevision"));
-        assertEquals(8, capturedModel.getLong("remoteScreenRevision"));
         assertEquals(20,
                 capturedModel.getJSONObject("displayHistoryExtent").getLong("lastSeq"));
         assertEquals(25,

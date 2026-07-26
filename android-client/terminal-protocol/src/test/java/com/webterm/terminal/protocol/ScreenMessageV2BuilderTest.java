@@ -8,27 +8,34 @@ import org.junit.Test;
 
 public final class ScreenMessageV2BuilderTest {
   @Test
-  public void frozenHelloCarriesProjectionIdentityAndGeneration() throws Exception {
+  public void helloCarriesResumeToken() throws Exception {
+    TerminalScreenV2Proto.ResumeToken resume = TerminalScreenV2Proto.ResumeToken.newBuilder()
+        .setInstanceId("instance-1").setLayoutEpoch(3).setScreenRevision(7)
+        .setDictionaryGeneration(2).setHistoryGeneration(4)
+        .setActiveBuffer(TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN)
+        .addActiveRows(TerminalScreenV2Proto.ResumeScreenLine.newBuilder()
+            .setLineId(11).setLineVersion(5))
+        .build();
     TerminalScreenV2Proto.ScreenEnvelope envelope =
         TerminalScreenV2Proto.ScreenEnvelope.parseFrom(ScreenMessageV2Builder.hello(
-            80, 24, "client-1", 7,
-            TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_FROZEN,
-            "instance-1", 3, true));
+            80, 24, "client-1", resume, 64));
 
     assertEquals(2, envelope.getProtocolVersion());
-    assertEquals(7, envelope.getHello().getStreamGeneration());
-    assertEquals("instance-1", envelope.getHello().getInstanceId());
-    assertEquals(3, envelope.getHello().getLayoutEpoch());
-    assertTrue(envelope.getHello().getHasFrozenProjection());
+    assertEquals("client-1", envelope.getHello().getClientInstanceId());
+    assertEquals(7, envelope.getHello().getResume().getScreenRevision());
+    assertEquals("instance-1", envelope.getHello().getResume().getInstanceId());
+    assertEquals(3, envelope.getHello().getResume().getLayoutEpoch());
+    assertEquals(11, envelope.getHello().getResume().getActiveRows(0).getLineId());
   }
 
   @Test
   public void historyRangeUsesClosedAbsoluteSequenceInterval() throws Exception {
     TerminalScreenV2Proto.HistoryRangeRequest request =
         TerminalScreenV2Proto.ScreenEnvelope.parseFrom(
-            ScreenMessageV2Builder.historyRange("r-1", "instance-1", 4, 129, 256))
+            ScreenMessageV2Builder.historyRange("r-1", "instance-1", 4, 9, 129, 256))
             .getHistoryRangeRequest();
 
+    assertEquals(9, request.getHistoryGeneration());
     assertEquals(129, request.getFromSeq());
     assertEquals(256, request.getToSeq());
   }

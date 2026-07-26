@@ -100,14 +100,11 @@ type ScreenClient struct {
 	Send          func(terminalengine.ScreenFrame)
 	// SendInitial 把不可覆盖的 Baseline 交给单一 screen writer；done 只有在
 	// 实际写出成功后才提交 actor baseline。nil 供内部调用和测试使用。
-	SendInitial     func(InitialSync, func(written bool))
-	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
-	SendLayoutLease func(LayoutLeaseEvent)
-	// screen.v2 stream state.
-	Mode             StreamMode
-	StreamGeneration uint64
+	SendInitial      func(InitialSync, func(written bool))
+	SendEffect       func(instanceID string, revision uint64, effect terminalengine.Effect)
+	SendLayoutLease  func(LayoutLeaseEvent)
 	SendHistoryRange func(requestID string, instanceID string, epoch uint64, data terminalengine.HistoryRangeData, stale bool)
-	SendTailStatus   func(instanceID string, epoch, generation, revision uint64, extent terminalengine.HistoryExtent)
+	ResumeToken      *screenprojection.ResumeToken
 
 	// 以下字段仅由 Runtime actor 访问。
 	synced             bool
@@ -155,16 +152,10 @@ type inputDeliveryKey struct {
 
 // InitialSync 是 initial-sync slot 的不可覆盖 Baseline。
 type InitialSync struct {
-	State            terminalengine.ScreenFrame
-	StreamGeneration uint64
+	State          terminalengine.ScreenFrame
+	Projection     terminalengine.ScreenFrame
+	ResumeAccepted bool
 }
-
-type StreamMode uint8
-
-const (
-	StreamModeLive StreamMode = iota + 1
-	StreamModeFrozen
-)
 
 // Version 标识屏幕状态版本。
 type Version struct {
@@ -347,10 +338,6 @@ func (r *Runtime) RequestHistoryRange(clientID, requestID, instanceID string, ep
 		clientID: clientID, requestID: requestID, instanceID: instanceID,
 		epoch: epoch, fromSeq: fromSeq, toSeq: toSeq,
 	})
-}
-
-func (r *Runtime) SetStreamMode(clientID string, mode StreamMode, generation uint64) {
-	r.postEvent(streamModeEvent{clientID: clientID, mode: mode, generation: generation})
 }
 
 func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, data []byte) {
@@ -680,8 +667,6 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientDetach(e.clientID)
 	case historyRangeRequestEvent:
 		r.handleHistoryRangeRequest(e)
-	case streamModeEvent:
-		r.handleStreamMode(e)
 	case clientInitialSyncResultEvent:
 		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
@@ -995,11 +980,6 @@ func (r *Runtime) handleResize(e resizeEvent) {
 
 func (r *Runtime) handleClientAttach(c *ScreenClient) {
 	r.clients[c.ID] = c
-	if c.Mode == StreamModeFrozen {
-		c.synced = true
-		r.sendTailStatus(c)
-		return
-	}
 	r.startInitialSync(c)
 }
 
@@ -1105,44 +1085,22 @@ func (c *ScreenClient) allowHistoryRange(now time.Time) (bool, uint32) {
 	return false, waitMS
 }
 
-func (r *Runtime) handleStreamMode(e streamModeEvent) {
-	client := r.clients[e.clientID]
-	if client == nil || e.generation <= client.StreamGeneration {
-		return
-	}
-	client.StreamGeneration = e.generation
-	client.Mode = e.mode
-	if e.mode == StreamModeFrozen {
-		client.synced = true
-		client.pendingState = terminalengine.ScreenFrame{}
-		r.sendTailStatus(client)
-		return
-	}
-	r.startInitialSync(client)
-}
-
-func (r *Runtime) sendTailStatus(client *ScreenClient) {
-	if client == nil || client.SendTailStatus == nil {
-		return
-	}
-	client.SendTailStatus(
-		r.instanceID, r.layoutEpoch, client.StreamGeneration,
-		r.currentRevision(), r.scrollback.Extent(),
-	)
-}
-
 func (r *Runtime) startInitialSync(client *ScreenClient) {
 	rev := r.currentRevision()
-	state := r.projector.ExportState(r.layoutEpoch, rev)
-	state.Kind = terminalengine.FrameSnapshot
-	sync := InitialSync{State: state, StreamGeneration: client.StreamGeneration}
+	result := r.projector.Resume(client.ResumeToken, r.layoutEpoch, rev)
+	client.ResumeToken = nil
+	state := result.State
+	sync := InitialSync{State: state, Projection: result.Frame,
+		ResumeAccepted: result.Kind == screenprojection.ResumeAccepted}
 
 	client.synced = false
 	client.pendingState = terminalengine.ScreenFrame{}
 	client.initialGeneration++
 	generation := client.initialGeneration
 	if client.SendInitial == nil {
-		client.Send(sync.State)
+		if !sync.ResumeAccepted {
+			client.Send(sync.Projection)
+		}
 		client.synced = true
 		return
 	}
@@ -1183,10 +1141,6 @@ func (r *Runtime) broadcastFrame() {
 		r.captureSink.RecordCanonical(r.instanceID, terminalcapture.CanonicalRecord{Frame: state})
 	}
 	for _, c := range r.clients {
-		if c.Mode == StreamModeFrozen {
-			r.sendTailStatus(c)
-			continue
-		}
 		if c.synced {
 			c.Send(state)
 		} else {
@@ -1341,12 +1295,6 @@ type historyRangeRequestEvent struct {
 	epoch      uint64
 	fromSeq    uint64
 	toSeq      uint64
-}
-
-type streamModeEvent struct {
-	clientID   string
-	mode       StreamMode
-	generation uint64
 }
 
 type clientInitialSyncResultEvent struct {

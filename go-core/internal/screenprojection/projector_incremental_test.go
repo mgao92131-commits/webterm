@@ -193,14 +193,14 @@ func TestFrameDeriver_CursorDependentExportVersionEmitsChangedLine(t *testing.T)
 	}
 	p := NewProjector(engine, sb, "s", "i")
 	var deriver FrameDeriver
-	baseline := deriver.FrameForState(p.ExportState(0, 1))
+	baseline := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if len(baseline.Screen[0].Runs) == 0 {
 		t.Fatal("live software cursor was unexpectedly filtered")
 	}
 	if err := engine.Write([]byte("\x1b[2;1H")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(0, 2))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("kind=%v, want patch", patch.Kind)
 	}
@@ -285,8 +285,8 @@ func TestProjector_ResizeRebuildsCacheWithNewGeometry(t *testing.T) {
 
 	engine.Resize(6, 12)
 	var deriver FrameDeriver
-	deriver.FrameForState(first)
-	frame := deriver.FrameForState(p.ExportState(1, 2))
+	deriver.deriveAndSeedForTest(first)
+	frame := deriver.deriveAndSeedForTest(p.ExportState(1, 2))
 	if frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("epoch change must derive snapshot, got kind=%v", frame.Kind)
 	}
@@ -302,14 +302,14 @@ func TestProjector_ResizeRebuildsCacheWithNewGeometry(t *testing.T) {
 func TestProjector_AlternateBufferSwitchExportsFullSnapshot(t *testing.T) {
 	engine, _, p := newFilledRig(t, 5, 10)
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	if err := engine.Write([]byte("\x1b[?1049h\x1b[Halt")); err != nil {
 		t.Fatal(err)
 	}
-	frame := deriver.FrameForState(p.ExportState(0, 2))
-	if frame.Kind != terminalengine.FrameSnapshot {
-		t.Fatalf("buffer switch must derive snapshot, got kind=%v", frame.Kind)
+	frame := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
+	if frame.Kind != terminalengine.FramePatch || !frame.ActiveBufferChanged {
+		t.Fatalf("buffer switch must derive active-buffer commit, got kind=%v changed=%v", frame.Kind, frame.ActiveBufferChanged)
 	}
 	if frame.ActiveBuffer != terminalengine.BufferAlternate {
 		t.Fatalf("expected alternate buffer, got %v", frame.ActiveBuffer)
@@ -328,21 +328,21 @@ func TestProjector_AlternateBufferSwitchExportsFullSnapshot(t *testing.T) {
 func TestProjector_AttachResyncDerivesCompleteSnapshot(t *testing.T) {
 	engine, _, p := newFilledRig(t, 5, 10)
 	var d1 FrameDeriver
-	d1.FrameForState(p.ExportState(0, 1))
+	d1.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	// 广播一次增量修订。
 	if err := engine.Write([]byte("\rZ")); err != nil {
 		t.Fatal(err)
 	}
 	broadcast := p.ExportState(0, 2)
-	if patch := d1.FrameForState(broadcast); patch.BaseRevision != 1 {
+	if patch := d1.deriveAndSeedForTest(broadcast); patch.BaseRevision != 1 {
 		t.Fatalf("existing client expected patch base=1, got %d", patch.BaseRevision)
 	}
 
 	// 新客户端 attach：无新写入，导出必须服务完整当前状态。
 	var d2 FrameDeriver
 	attach := p.ExportState(0, 3)
-	snap := d2.FrameForState(attach)
+	snap := d2.deriveAndSeedForTest(attach)
 	if snap.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("attach must derive snapshot, got kind=%v", snap.Kind)
 	}
@@ -353,7 +353,7 @@ func TestProjector_AttachResyncDerivesCompleteSnapshot(t *testing.T) {
 
 	// resync：同样无变化，新 deriver 仍得完整 snapshot。
 	var d3 FrameDeriver
-	resync := d3.FrameForState(p.ExportState(0, 5))
+	resync := d3.deriveAndSeedForTest(p.ExportState(0, 5))
 	if resync.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("resync must derive snapshot, got kind=%v", resync.Kind)
 	}

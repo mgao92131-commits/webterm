@@ -76,10 +76,8 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 	}
 
 	if prev.valid && s.activeBuffer != prev.activeBuffer {
-		// main/alternate buffer 切换（§4.2）：推进 barrier；活动行全部重新
-		// 定义，row 索引重置为本次导出 revision。切换时引擎标 dirtyAll
-		// （Full 投影），下面的 dirty 行循环会把各行再写成同一 seq。
-		idx.advanceBarrier(seq)
+		// main/alternate buffer 切换由普通原子 Commit 表达；活动行全部重新定义，
+		// 但不破坏 projection continuity，也不推进 snapshot barrier。
 		for i := range idx.RowChangedRevision {
 			idx.RowChangedRevision[i] = seq
 		}

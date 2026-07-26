@@ -116,9 +116,8 @@ func TestV2ClientWorksWithGoRelayMuxWebSocket(t *testing.T) {
 	hello, err := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "relay-test", StreamGeneration: 1,
-			DesiredMode: pb.ScreenStreamMode_SCREEN_STREAM_MODE_LIVE,
-			DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
+			ClientInstanceId: "relay-test",
+			DesiredGeometry:  &pb.Geometry{Cols: 80, Rows: 24},
 		}},
 	})
 	if err != nil {

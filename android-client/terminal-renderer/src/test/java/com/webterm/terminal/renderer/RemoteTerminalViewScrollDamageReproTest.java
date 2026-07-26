@@ -43,7 +43,7 @@ import java.util.List;
  * 每一帧后断言每个可见像素行的内容与当前快照+视口几何一致。
  *
  * <p>用户报告：贴底 → 上滚（不足一屏，流未冻结）→ 滚回底部 → 全空白；
- * 滚超一屏再回来（触发 FROZEN→resume→Baseline→FULL）才恢复。
+ * 不能依赖滚动触发网络重同步或 Baseline 才恢复。
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -51,7 +51,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
 
   private static final String INSTANCE = "term-1";
   private static final long LAYOUT_EPOCH = 1L;
-  private static final long STREAM_GENERATION = 1L;
+  private static final long DICTIONARY_GENERATION = 1L;
   private static final int ROWS = 19;
   private static final int COLS = 20;
   private static final int HISTORY = 30;
@@ -89,7 +89,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       screen.add(textLine(i + 1, 1, 0, "screen-" + (i + 1)));
     }
     model.applyBaseline(new ScreenBaseline(
-        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, STREAM_GENERATION,
+        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, DICTIONARY_GENERATION, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY,
         ROWS, COLS, TerminalBufferKind.MAIN,
         new HistoryExtent(1, HISTORY), history, screen,
         new TerminalCursor(0, COLS - 1, true, TerminalCursor.Shape.BLOCK, false),
@@ -102,8 +102,6 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     injectFakeRowCache(view);
 
     viewport = new TerminalViewportState();
-    viewport.followTail = true;
-
     RenderUpdate initial = model.consumeRenderUpdate();
     assertNotNull(initial);
     recordDamageForRenderUpdate(initial, initial.snapshot);
@@ -118,7 +116,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     userScrollBy(100);
     assertFramebufferConsistent("scrolled up 5 lines (idle)");
     userScrollBy(-100);
-    assertTrue(viewport.followTail);
+    assertTrue(followingTail());
     assertFramebufferConsistent("back at bottom (idle)");
   }
 
@@ -173,8 +171,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     assertFramebufferConsistent("scrolled, content patch");
 
     // 滚回底部。
-    userScrollBy(-viewport.scrollOffsetPixels);
-    assertTrue(viewport.followTail);
+    userScrollBy(-scrollOffset());
+    assertTrue(followingTail());
     assertFramebufferConsistent("back at bottom after live output");
 
     // 回到底部后模型继续输出。
@@ -186,7 +184,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
 
   /**
    * Controller 层完整语义复现：onScrollPixels 小滚动（锚定 pin）→ live 输出持续推进
-   * （restoreHistoryAnchor 每帧补偿 scrollOffset，内容保持静止）→ 滚回底部 →
+   * （LineAnchor 每帧从同一 publication 的内容轴派生 offset，内容保持静止）→ 滚回底部 →
    * 再无模型更新。断言每一帧帧缓冲区与快照+视口一致，且滚回后空闲帧保持画面。
    * 对应用户报告：贴底 → 上滚 < 一屏（不冻结）→ 回滚到底 → 应保持有内容。
    */
@@ -194,11 +192,11 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   public void pinnedScrollWithLiveOutputThenReturnKeepsFramebufferConsistent() {
     assertFramebufferConsistent("baseline");
 
-    // 上滚 100px（远不足一屏 395px，不触发 freeze）。
+    // 上滚 100px（远不足一屏 395px，仍只修改本地 viewport）。
     userScrollBy(100);
-    assertNotNull("gesture scroll must record a history anchor", viewport.anchorHistorySeq);
-    long anchorSeq = viewport.anchorHistorySeq;
-    int anchorPixelOffset = viewport.anchorPixelOffset;
+    assertNotNull("gesture scroll must record a history anchor", anchorHistorySeq());
+    long anchorSeq = anchorHistorySeq();
+    int anchorPixelOffset = anchor().pixelOffset;
     float anchorY = historyRowY(anchorSeq);
     assertFramebufferConsistent("scrolled up 100px");
 
@@ -209,20 +207,20 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       pumpLiveScrollPatch();
       expectedOffset += Math.round(LINE_HEIGHT);
       assertEquals("pinned offset after live patch #" + i,
-          expectedOffset, viewport.scrollOffsetPixels);
+          expectedOffset, scrollOffset());
       assertEquals("anchor row Y must stay pinned after live patch #" + i,
           anchorY, historyRowY(anchorSeq), 1f);
-      assertEquals(anchorPixelOffset, viewport.anchorPixelOffset);
+      assertEquals(anchorPixelOffset, anchor().pixelOffset);
       assertFramebufferConsistent("pinned, live scroll patch #" + i);
     }
     // 确认本场景不触发冻结：offset 仍低于 liveScreenExitOffsetPixels（≈395px）。
-    assertTrue("scenario must stay below freeze threshold",
-        viewport.scrollOffsetPixels < view.liveScreenExitOffsetPixels());
+    assertTrue("scenario must stay within one viewport",
+        scrollOffset() < view.liveScreenExitOffsetPixels());
 
     // 滚回底部：scrollBy 恰好到 0 → followTail，controller 发全量重绘。
-    userScrollBy(-viewport.scrollOffsetPixels);
-    assertTrue(viewport.followTail);
-    assertEquals(0, viewport.scrollOffsetPixels);
+    userScrollBy(-scrollOffset());
+    assertTrue(followingTail());
+    assertEquals(0, scrollOffset());
     assertFramebufferConsistent("back at bottom after pinned live output");
 
     // 终端无新输出：空闲帧（无 invalidate、无 consume）帧缓冲区必须保持。
@@ -248,8 +246,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
 
     // patch 到达但不消费；用户在其尚未渲染时滚回底部。
     stageScrollPatchOnly();
-    userScrollBy(-viewport.scrollOffsetPixels);
-    assertTrue(viewport.followTail);
+    userScrollBy(-scrollOffset());
+    assertTrue(followingTail());
     assertFramebufferConsistent("back at bottom with patch pending");
 
     // 下一帧 VSync 消费滞留 patch（merge 后可能退化 fullInvalidate）。
@@ -266,7 +264,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     assertNotNull(snapshot);
     int index = snapshot.history.findSeqIndex(historySeq);
     assertTrue("anchor seq must be present in history", index >= 0);
-    float scrollOffset = viewport.followTail ? 0f : viewport.scrollOffsetPixels;
+    float scrollOffset = followingTail() ? 0f : scrollOffset();
     float screenTop = RemoteTerminalRenderer.screenTopY(
         VIEW_H, snapshot.history.size(), snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
         scrollOffset);
@@ -338,7 +336,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       // 镜像正式 InvalidationPlan 的 SCREEN_REGION 矩形计算。
       float screenTop = RemoteTerminalRenderer.screenTopY(VIEW_H, snapshot.history.size(),
           snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
-          viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+          followingTail() ? 0f : scrollOffset());
       float screenBottom = screenTop + snapshot.screen.length * LINE_HEIGHT;
       int top = Math.max(0, (int) Math.floor(screenTop) - 1);
       int bottom = Math.min(VIEW_H, (int) Math.ceil(screenBottom) + 1);
@@ -363,7 +361,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
       java.util.Collections.sort(rows);
       float screenTop = RemoteTerminalRenderer.screenTopY(VIEW_H, snapshot.history.size(),
           snapshot.screen.length, LINE_HEIGHT, TOP_INSET,
-          viewport.followTail ? 0f : viewport.scrollOffsetPixels);
+          followingTail() ? 0f : scrollOffset());
       for (Rect rect : dirtyRectsForRows(rows, screenTop, LINE_HEIGHT, VIEW_W, VIEW_H)) {
         recordDamage(rect);
       }
@@ -530,9 +528,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
 
   /** 用户手势滚动：Controller mutate 共享 viewport，随后请求 View 重绘。 */
   private void userScrollBy(int deltaPixels) {
-    viewport.scrollBy(deltaPixels, view.maxScrollOffsetPixels());
-    if (viewport.followTail) viewport.markLive();
-    view.updateViewportHistoryAnchor();
+    viewport.scrollBy(deltaPixels, view.maxScrollOffsetPixels(),
+        view.currentRenderedSnapshot(), view.lineHeight());
     // 生产链路：RemoteTerminalView 更新 viewport 后直接 postInvalidateOnAnimation()。
     // 与 GestureListener.onScroll 的 invalidate()，均为整 View 失效。
     recordFullDamage();
@@ -555,19 +552,42 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   }
 
   private void applyModelUpdate(RenderUpdate update) {
-    boolean restoredHistoryAnchor = false;
-    if (!viewport.followTail && viewport.anchorHistorySeq != null && update.state.historyChanged) {
-      view.restoreHistoryAnchor(update.snapshot, viewport.anchorHistorySeq,
-          viewport.anchorPixelOffset);
-      restoredHistoryAnchor = true;
-    }
-    if (!restoredHistoryAnchor && !viewport.followTail && update.state.tailAppendedLines > 0) {
-      view.preserveViewportForAppendedLines(update.state.tailAppendedLines);
-    }
     if (!update.dirty.isEmpty()) {
       recordDamageForRenderUpdate(update, update.snapshot);
     }
     vsync("renderPendingModelUpdate");
+  }
+
+  private boolean followingTail() {
+    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    return snapshot == null || viewport.isFollowTail(snapshot.activeBuffer);
+  }
+
+  private int scrollOffset() {
+    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    return snapshot == null ? 0 : viewport.derivedScrollOffsetPixels(
+        snapshot, view.lineHeight(), view.maxScrollOffsetPixels(snapshot));
+  }
+
+  private com.webterm.terminal.model.ViewportPosition.LineAnchor anchor() {
+    return (com.webterm.terminal.model.ViewportPosition.LineAnchor)
+        viewport.position(view.currentRenderedSnapshot().activeBuffer);
+  }
+
+  private Long anchorHistorySeq() {
+    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    com.webterm.terminal.model.ViewportPosition position =
+        viewport.position(snapshot.activeBuffer);
+    if (!(position instanceof com.webterm.terminal.model.ViewportPosition.LineAnchor)) return null;
+    long lineId = ((com.webterm.terminal.model.ViewportPosition.LineAnchor) position).lineId;
+    for (int index = 0; index < snapshot.history.size(); index++) {
+      TerminalLine line = snapshot.history.lineAt(index);
+      if (line != null && line.id == lineId) {
+        return ((com.webterm.terminal.model.PagedTerminalHistorySnapshot) snapshot.history)
+            .firstSeq() + index;
+      }
+    }
+    return null;
   }
 
   private void pumpLiveScrollPatch() {
@@ -636,7 +656,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
             pumpHeadEvictionDelta();
             break;
           case 8:
-            userScrollBy(-viewport.scrollOffsetPixels);
+            userScrollBy(-scrollOffset());
             break;
           default:
             pumpScrollDownPatch();
@@ -692,7 +712,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
                            TerminalCursor cursor) {
     try {
       model.applyTerminalCommit(new TerminalCommit(
-          INSTANCE, LAYOUT_EPOCH, STREAM_GENERATION, nextRevision, nextRevision + 1,
+          INSTANCE, LAYOUT_EPOCH, nextRevision, nextRevision + 1,
+          1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           screen, history, cursor, null, null));
     } catch (RemoteTerminalModel.RevisionGapException e) {
       throw new AssertionError(e);
@@ -711,7 +732,7 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     assertNotNull(snapshot);
     int screenRows = snapshot.screen.length;
     int historyRows = snapshot.history.size();
-    float scrollOffset = viewport.followTail ? 0f : viewport.scrollOffsetPixels;
+    float scrollOffset = followingTail() ? 0f : scrollOffset();
     float screenTop = RemoteTerminalRenderer.screenTopY(
         VIEW_H, historyRows, screenRows, LINE_HEIGHT, TOP_INSET, scrollOffset);
     float historyTop = screenTop - historyRows * LINE_HEIGHT;

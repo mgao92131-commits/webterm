@@ -147,7 +147,7 @@ public final class RemoteTerminalIntegration {
           @Override
           public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
             connectionStatusView.updateRemote(state);
-            if (state != TerminalSessionRuntime.State.CONNECTED && inputCoordinator != null) {
+            if (state != TerminalSessionRuntime.State.LIVE && inputCoordinator != null) {
               inputCoordinator.clearModifiers();
             }
           }

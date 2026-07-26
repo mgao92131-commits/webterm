@@ -249,23 +249,23 @@ func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrol
 		}
 	}
 
-	lines := exportHistoryLines(exp, w.Lines)
+	lines := exportScrollbackEntries(exp, w.Lines)
 	return historyWindowFromLines(lines, w.FirstSeq)
 }
 
-// exportHistoryLines 把不可变历史行批量转换为导出 Line。
-func exportHistoryLines(exp *exporter, lines []terminalengine.HistoryLine) []terminalengine.Line {
+// exportScrollbackEntries 把不可变 scrollback 位置条目批量映射为统一 Line。
+func exportScrollbackEntries(exp *exporter, lines []terminalengine.ScrollbackEntry) []terminalengine.Line {
 	if len(lines) == 0 {
 		return nil
 	}
 	out := make([]terminalengine.Line, len(lines))
 	for i, hl := range lines {
-		out[i] = exp.exportHistoryLine(hl)
+		out[i] = exp.exportScrollbackEntry(hl)
 	}
 	return out
 }
 
-func (exp *exporter) exportHistoryLine(hl terminalengine.HistoryLine) terminalengine.Line {
+func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry) terminalengine.Line {
 	return terminalengine.Line{
 		ID:         hl.LineID,
 		Version:    hl.Version,

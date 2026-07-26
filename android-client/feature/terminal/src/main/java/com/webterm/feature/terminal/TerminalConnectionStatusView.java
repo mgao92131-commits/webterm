@@ -39,7 +39,7 @@ public final class TerminalConnectionStatusView {
     private void render() {
         if (indicator == null) return;
         switch (remoteState) {
-            case CONNECTED:
+            case LIVE:
                 indicator.setStatus(inputReady
                     ? StatusIndicatorView.Status.CONNECTED
                     : StatusIndicatorView.Status.CONNECTING);

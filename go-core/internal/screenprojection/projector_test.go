@@ -12,6 +12,16 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
+// deriveAndSeedForTest models a synchronous fake writer: derive/encode are
+// complete before the fake sink reports success, and only then is state seeded.
+func (d *FrameDeriver) deriveAndSeedForTest(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	frame := d.DeriveForState(state)
+	if frame.Kind != 0 {
+		d.SeedAfterSuccessfulWrite(state)
+	}
+	return frame
+}
+
 func TestProjector_FirstFrameIsSnapshot(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(5, 10, sb)
@@ -19,7 +29,7 @@ func TestProjector_FirstFrameIsSnapshot(t *testing.T) {
 
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	frame := deriver.FrameForState(p.ExportState(0, 1))
+	frame := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("expected snapshot, got kind=%v", frame.Kind)
 	}
@@ -32,10 +42,10 @@ func TestProjector_PatchAfterBaseline(t *testing.T) {
 
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	engine.Write([]byte("world\n"))
-	frame := deriver.FrameForState(p.ExportState(0, 2))
+	frame := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if frame.BaseRevision != 1 {
 		t.Fatalf("expected patch base=1, got %d", frame.BaseRevision)
 	}
@@ -52,7 +62,7 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	engine := terminalengine.NewEngine(5, 24, sb)
 	p := NewProjector(engine, sb, "s", "i")
 	var deriver FrameDeriver
-	initial := deriver.FrameForState(p.ExportState(1, 1))
+	initial := deriver.deriveAndSeedForTest(p.ExportState(1, 1))
 	if initial.Kind != terminalengine.FrameSnapshot || len(initial.Screen) == 0 {
 		t.Fatal("empty terminal did not produce initial snapshot layout")
 	}
@@ -60,7 +70,7 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if err := engine.Write([]byte("user@host:~$ ")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(1, 2))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(1, 2))
 	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != 1 || patch.Layout != nil {
 		t.Fatalf("prompt frame kind/base/layout=%v/%d/%v, want patch/1/no layout", patch.Kind, patch.BaseRevision, patch.Layout)
 	}
@@ -107,7 +117,7 @@ func TestFrameDeriver_LayoutReentryCarriesLineDataAfterHistoryPrune(t *testing.T
 	current := old
 	current.Seq = 2
 	current.Screen = []terminalengine.Line{line(30, 1, 0, "h"), line(20, 1, 1, "y")}
-	patch := frameForBaseline(&old, current)
+	patch := frameForBaseline(&old, current, defaultMaxAppendedScrollbackEntrys, defaultMaxAppendedHistoryBytes)
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("patch kind=%d, want patch", patch.Kind)
 	}
@@ -121,13 +131,13 @@ func TestProjector_DynamicPaletteProducesMetadataOnlyPatch(t *testing.T) {
 	engine := terminalengine.NewEngine(5, 10, sb)
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	initial := deriver.FrameForState(p.ExportState(1, 1))
+	initial := deriver.deriveAndSeedForTest(p.ExportState(1, 1))
 
 	if err := engine.Write([]byte("\x1b]4;42;#010203\x07" +
 		"\x1b]10;#112233\x07\x1b]11;#223344\x07\x1b]12;#334455\x07")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(1, 2))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(1, 2))
 	if patch.Kind != terminalengine.FramePatch || len(patch.Screen) != 0 {
 		t.Fatalf("palette-only update kind=%d rows=%d, want metadata patch", patch.Kind, len(patch.Screen))
 	}
@@ -146,7 +156,7 @@ func TestProjector_DynamicPaletteProducesMetadataOnlyPatch(t *testing.T) {
 	if err := engine.Write([]byte("\x1b]104;42\x07\x1b]110\x07\x1b]111\x07\x1b]112\x07")); err != nil {
 		t.Fatal(err)
 	}
-	reset := deriver.FrameForState(p.ExportState(1, 3))
+	reset := deriver.deriveAndSeedForTest(p.ExportState(1, 3))
 	if reset.Kind != terminalengine.FramePatch || len(reset.Screen) != 0 {
 		t.Fatalf("palette reset kind=%d rows=%d, want metadata patch", reset.Kind, len(reset.Screen))
 	}
@@ -176,7 +186,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	var deriver FrameDeriver
 
 	// 首帧：snapshot。
-	first := deriver.FrameForState(p.ExportState(0, 1))
+	first := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame kind=%d, want FrameSnapshot", first.Kind)
 	}
@@ -185,7 +195,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	if err := engine.Write([]byte("!")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(0, 2))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("patch kind=%d, want FramePatch", patch.Kind)
 	}
@@ -196,7 +206,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	if err := engine.Write([]byte("\x1b]7;file://localhost/tmp/work\x07")); err != nil {
 		t.Fatal(err)
 	}
-	metaCommit := deriver.FrameForState(p.ExportState(0, 3))
+	metaCommit := deriver.deriveAndSeedForTest(p.ExportState(0, 3))
 	if metaCommit.Kind != 0 {
 		t.Fatalf("title/cwd produced screen commit kind=%d", metaCommit.Kind)
 	}
@@ -206,7 +216,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	if err := engine.Write([]byte("row0\r\nrow1\r\nrow2\r\nrow3")); err != nil {
 		t.Fatal(err)
 	}
-	full := deriver.FrameForState(p.ExportState(0, 4))
+	full := deriver.deriveAndSeedForTest(p.ExportState(0, 4))
 	if full.Kind != terminalengine.FramePatch {
 		t.Fatalf("full-screen delta kind=%d, want FramePatch", full.Kind)
 	}
@@ -256,8 +266,8 @@ func TestFrameDeriver_FullScreenCommitCarriesBoundedHistory(t *testing.T) {
 	}
 
 	var deriver FrameDeriver
-	deriver.Seed(baseline)
-	patch := deriver.FrameForState(current)
+	deriver.SeedAfterSuccessfulWrite(baseline)
+	patch := deriver.deriveAndSeedForTest(current)
 	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != baseline.Seq {
 		t.Fatalf("kind=%d base=%d, want patch based on %d", patch.Kind, patch.BaseRevision, baseline.Seq)
 	}
@@ -286,8 +296,8 @@ func TestFrameDeriver_ExtentOnlyChangeCreatesCommitRevision(t *testing.T) {
 	next.History.FirstIncludedHistorySeq = 2
 
 	var deriver FrameDeriver
-	deriver.Seed(baseline)
-	frame := deriver.FrameForState(next)
+	deriver.SeedAfterSuccessfulWrite(baseline)
+	frame := deriver.deriveAndSeedForTest(next)
 	if frame.Kind != terminalengine.FramePatch || frame.BaseRevision != 1 || frame.Seq != 2 {
 		t.Fatalf("extent-only commit=%+v, want revision 1->2", frame)
 	}
@@ -306,10 +316,10 @@ func TestProjector_OneExportFeedsIndependentClientBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := p.ExportState(0, 1)
-	if first := d1.FrameForState(initial); first.Kind != terminalengine.FrameSnapshot {
+	if first := d1.deriveAndSeedForTest(initial); first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("c1 first frame must be snapshot, got kind=%v", first.Kind)
 	}
-	if first := d2.FrameForState(initial); first.Kind != terminalengine.FrameSnapshot {
+	if first := d2.deriveAndSeedForTest(initial); first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("c2 first frame must be snapshot, got kind=%v", first.Kind)
 	}
 
@@ -318,7 +328,7 @@ func TestProjector_OneExportFeedsIndependentClientBaselines(t *testing.T) {
 	}
 	next := p.ExportState(0, 2)
 	for clientID, deriver := range map[string]*FrameDeriver{"c1": &d1, "c2": &d2} {
-		if patch := deriver.FrameForState(next); patch.BaseRevision != 1 {
+		if patch := deriver.deriveAndSeedForTest(next); patch.BaseRevision != 1 {
 			t.Fatalf("%s patch base=%d, want 1", clientID, patch.BaseRevision)
 		}
 	}
@@ -329,12 +339,12 @@ func TestProjector_PatchOnlyCarriesNewDictionaryEntries(t *testing.T) {
 	engine := terminalengine.NewEngine(3, 12, sb)
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	if err := engine.Write([]byte("\x1b[31mred")); err != nil {
 		t.Fatal(err)
 	}
-	firstStyledPatch := deriver.FrameForState(p.ExportState(0, 2))
+	firstStyledPatch := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if len(firstStyledPatch.Styles) == 0 {
 		t.Fatal("first styled patch omitted its new style")
 	}
@@ -342,7 +352,7 @@ func TestProjector_PatchOnlyCarriesNewDictionaryEntries(t *testing.T) {
 	if err := engine.Write([]byte(" more")); err != nil {
 		t.Fatal(err)
 	}
-	reusedStylePatch := deriver.FrameForState(p.ExportState(0, 3))
+	reusedStylePatch := deriver.deriveAndSeedForTest(p.ExportState(0, 3))
 	if len(reusedStylePatch.Styles) != 0 {
 		t.Fatalf("reused style was resent in patch: %d entries", len(reusedStylePatch.Styles))
 	}
@@ -357,7 +367,7 @@ func TestFrameDeriver_CanSkipIntermediateStatesWithoutRevisionGap(t *testing.T) 
 	if err := engine.Write([]byte("one")); err != nil {
 		t.Fatal(err)
 	}
-	first := deriver.FrameForState(p.ExportState(0, 1))
+	first := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
 	}
@@ -369,7 +379,7 @@ func TestFrameDeriver_CanSkipIntermediateStatesWithoutRevisionGap(t *testing.T) 
 	if err := engine.Write([]byte(" three")); err != nil {
 		t.Fatal(err)
 	}
-	latest := deriver.FrameForState(p.ExportState(0, 3))
+	latest := deriver.deriveAndSeedForTest(p.ExportState(0, 3))
 	if latest.BaseRevision != 1 {
 		t.Fatalf("coalesced frame base=%d, want the last sent revision 1", latest.BaseRevision)
 	}
@@ -386,13 +396,13 @@ func TestProjector_ClearLineIsExportedAsScreenPatch(t *testing.T) {
 	}
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	// Typical TUI redraw: return to the line, erase it, then draw a shorter value.
 	if err := engine.Write([]byte("\r\x1b[2Kok")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(0, 2))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(0, 2))
 	if patch.BaseRevision != 1 {
 		t.Fatalf("expected patch after baseline, got base=%d", patch.BaseRevision)
 	}
@@ -415,7 +425,7 @@ func TestFrameDeriver_CoalescedEraseAndRewriteClearsOldMixedWidthTail(t *testing
 	}
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	first := deriver.FrameForState(p.ExportState(0, 1))
+	first := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame kind=%d, want snapshot", first.Kind)
 	}
@@ -427,7 +437,7 @@ func TestFrameDeriver_CoalescedEraseAndRewriteClearsOldMixedWidthTail(t *testing
 	if err := engine.Write([]byte("ok")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(0, 3))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(0, 3))
 	if patch.Kind != terminalengine.FramePatch || patch.BaseRevision != 1 || patch.Seq != 3 {
 		t.Fatalf("coalesced frame kind=%d base=%d seq=%d, want patch 1->3",
 			patch.Kind, patch.BaseRevision, patch.Seq)
@@ -460,10 +470,10 @@ func TestProjector_LayoutEpochChangeIsSnapshot(t *testing.T) {
 
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
-	deriver.FrameForState(p.ExportState(0, 1))
+	deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 
 	engine.Resize(6, 12)
-	frame := deriver.FrameForState(p.ExportState(1, 2))
+	frame := deriver.deriveAndSeedForTest(p.ExportState(1, 2))
 	if frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("expected snapshot after epoch change, got kind=%v", frame.Kind)
 	}
@@ -482,12 +492,12 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 	if err := engine.Write([]byte("start")); err != nil {
 		t.Fatal(err)
 	}
-	first := deriver.FrameForState(p.ExportState(0, 1))
+	first := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
 	}
-	if first.DictionaryGeneration != 0 {
-		t.Fatalf("initial dictionary generation=%d, want 0", first.DictionaryGeneration)
+	if first.DictionaryGeneration != 1 {
+		t.Fatalf("initial dictionary generation=%d, want 1", first.DictionaryGeneration)
 	}
 
 	// Rewrite one row with fresh RGB colors per export. The dictionary only
@@ -519,7 +529,7 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 		}
 		// Keep the deriver baseline current with every delivered state; a
 		// single changed row must stay on the patch path before rotation.
-		if frame := deriver.FrameForState(state); frame.Kind == terminalengine.FrameSnapshot {
+		if frame := deriver.deriveAndSeedForTest(state); frame.Kind == terminalengine.FrameSnapshot {
 			t.Fatalf("pre-rotation frame seq=%d unexpectedly became snapshot", state.Seq)
 		}
 	}
@@ -539,7 +549,7 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 		t.Fatalf("ordinary state generation=%d, want rotated generation %d",
 			next.DictionaryGeneration, rotated.DictionaryGeneration)
 	}
-	frame := deriver.FrameForState(next)
+	frame := deriver.deriveAndSeedForTest(next)
 	if frame.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("frame after dropped rotation must be snapshot, got kind=%v rev=%d",
 			frame.Kind, frame.Seq)
@@ -548,7 +558,7 @@ func TestProjector_DictionaryGenerationForcesSnapshotAfterMailboxOverwrite(t *te
 	// Within the same generation, later changes may be patches again.
 	repaint()
 	later := p.ExportState(0, seq)
-	patch := deriver.FrameForState(later)
+	patch := deriver.deriveAndSeedForTest(later)
 	if patch.BaseRevision == 0 {
 		t.Fatal("same-generation frame after the snapshot should be a patch")
 	}
@@ -583,7 +593,7 @@ func TestFrameDeriver_SuppressesEmptyPatch(t *testing.T) {
 	p := NewProjector(engine, sb, "s1", "i1")
 	var deriver FrameDeriver
 
-	first := deriver.FrameForState(p.ExportState(0, 1))
+	first := deriver.deriveAndSeedForTest(p.ExportState(0, 1))
 	if first.Kind != terminalengine.FrameSnapshot {
 		t.Fatalf("first frame must be snapshot, got kind=%v", first.Kind)
 	}
@@ -592,7 +602,7 @@ func TestFrameDeriver_SuppressesEmptyPatch(t *testing.T) {
 	if err := engine.Write([]byte("\x07")); err != nil {
 		t.Fatal(err)
 	}
-	if frame := deriver.FrameForState(p.ExportState(0, 2)); frame.Kind != 0 {
+	if frame := deriver.deriveAndSeedForTest(p.ExportState(0, 2)); frame.Kind != 0 {
 		t.Fatalf("bell-only state must be suppressed, got kind=%v", frame.Kind)
 	}
 
@@ -600,7 +610,7 @@ func TestFrameDeriver_SuppressesEmptyPatch(t *testing.T) {
 	if err := engine.Write([]byte("\x1b]0;\x07")); err != nil {
 		t.Fatal(err)
 	}
-	if frame := deriver.FrameForState(p.ExportState(0, 3)); frame.Kind != 0 {
+	if frame := deriver.deriveAndSeedForTest(p.ExportState(0, 3)); frame.Kind != 0 {
 		t.Fatalf("same-title state must be suppressed, got kind=%v", frame.Kind)
 	}
 
@@ -608,7 +618,7 @@ func TestFrameDeriver_SuppressesEmptyPatch(t *testing.T) {
 	if err := engine.Write([]byte("!")); err != nil {
 		t.Fatal(err)
 	}
-	patch := deriver.FrameForState(p.ExportState(0, 4))
+	patch := deriver.deriveAndSeedForTest(p.ExportState(0, 4))
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("real change must derive patch, got kind=%v", patch.Kind)
 	}

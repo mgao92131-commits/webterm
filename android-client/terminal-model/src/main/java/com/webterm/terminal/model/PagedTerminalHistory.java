@@ -26,6 +26,8 @@ public final class PagedTerminalHistory {
   private long loadedLineCount;
   private long estimatedByteCount;
   private long mutationVersion;
+  private final Set<EvictionPins.CriticalEvictionReason> criticalEvictionReasons =
+      new HashSet<>();
   private PagedTerminalHistorySnapshot snapshot =
       new PagedTerminalHistorySnapshot(extent, availableExtent, new HashMap<>(), 0, 0);
 
@@ -61,6 +63,10 @@ public final class PagedTerminalHistory {
 
   synchronized int residentPageCountForTest() {
     return pages.size();
+  }
+
+  public synchronized Set<EvictionPins.CriticalEvictionReason> criticalEvictionReasons() {
+    return java.util.Collections.unmodifiableSet(new HashSet<>(criticalEvictionReasons));
   }
 
   /** 连续权威 extent 已完整表达 unavailable，因此没有离散 unavailable 元数据。 */
@@ -131,6 +137,8 @@ public final class PagedTerminalHistory {
     private final long baseMutationVersion = mutationVersion;
     private long workingLoaded = loadedLineCount;
     private long workingBytes = estimatedByteCount;
+    private final Set<EvictionPins.CriticalEvictionReason> workingCriticalEvictions =
+        new HashSet<>();
     private boolean committed;
 
     public Editor setExtent(long firstSeq, long lastSeq) {
@@ -166,9 +174,7 @@ public final class PagedTerminalHistory {
         throw new IllegalArgumentException(
             "seq " + historySeq + " outside extent " + workingExtent);
       }
-      if (line == null || line.historySeq != historySeq) {
-        throw new IllegalArgumentException("line historySeq does not match target");
-      }
+      if (line == null) throw new IllegalArgumentException("history line is missing");
       if (line.cells == null) {
         throw new IllegalArgumentException("history line cells are missing");
       }
@@ -213,11 +219,23 @@ public final class PagedTerminalHistory {
     }
 
     public Editor evictIfNeeded(long anchorSeq) {
+      return evictIfNeeded(EvictionPins.forAnchor(anchorSeq));
+    }
+
+    /**
+     * Soft-budget eviction never selects a page intersecting a viewport,
+     * anchor, request, selection, or prefetch pin.
+     */
+    public Editor evictIfNeeded(EvictionPins pins) {
       ensureOpen();
       boolean overLines = budget.hardLines > 0 && workingLoaded > budget.hardLines;
       boolean overBytes = budget.hardBytes > 0 && workingBytes > budget.hardBytes;
       if (!overLines && !overBytes) return this;
 
+      EvictionPins safePins = pins == null ? EvictionPins.NONE : pins;
+      long anchorSeq = safePins.anchorLineHistoryRange != null
+          ? safePins.anchorLineHistoryRange.first
+          : (workingExtent.isEmpty() ? 1 : workingExtent.lastSeq);
       long anchorPage = pageNumber(Math.max(1, anchorSeq));
       List<Long> candidates = new ArrayList<>(workingPages.keySet());
       candidates.sort(Comparator
@@ -228,6 +246,9 @@ public final class PagedTerminalHistory {
         boolean targetLinesReached = budget.softLines <= 0 || workingLoaded <= budget.softLines;
         boolean targetBytesReached = budget.softBytes <= 0 || workingBytes <= budget.softBytes;
         if (targetLinesReached && targetBytesReached) break;
+        long pageFirst = pageFirstSeq(pageNumber);
+        long pageLast = pageLastSeq(pageNumber);
+        if (safePins.intersectsAny(pageFirst, pageLast)) continue;
         HistoryPageChunk page = mutablePage(pageNumber);
         for (int i = 0; i < PAGE_SIZE; i++) {
           if (page.slots[i] == null) continue;
@@ -238,6 +259,29 @@ public final class PagedTerminalHistory {
           page.lineBytes[i] = 0;
         }
         if (page.empty()) workingPages.remove(pageNumber);
+      }
+      boolean stillOverHard =
+          (budget.hardLines > 0 && workingLoaded > budget.hardLines)
+              || (budget.hardBytes > 0 && workingBytes > budget.hardBytes);
+      if (stillOverHard) {
+        candidates = new ArrayList<>(workingPages.keySet());
+        candidates.sort(Comparator
+            .comparingInt((Long page) -> safePins.protectionRank(
+                pageFirstSeq(page), pageLastSeq(page)))
+            .thenComparing(Comparator
+                .comparingLong((Long page) -> Math.abs(page - anchorPage)).reversed()));
+        for (long pageNumber : candidates) {
+          boolean underHard =
+              (budget.hardLines <= 0 || workingLoaded <= budget.hardLines)
+                  && (budget.hardBytes <= 0 || workingBytes <= budget.hardBytes);
+          if (underHard) break;
+          long pageFirst = pageFirstSeq(pageNumber);
+          long pageLast = pageLastSeq(pageNumber);
+          EvictionPins.CriticalEvictionReason reason =
+              safePins.criticalReason(pageFirst, pageLast);
+          if (reason != null) workingCriticalEvictions.add(reason);
+          removePage(pageNumber);
+        }
       }
       return this;
     }
@@ -256,6 +300,8 @@ public final class PagedTerminalHistory {
         PagedTerminalHistory.this.pages = workingPages;
         PagedTerminalHistory.this.loadedLineCount = workingLoaded;
         PagedTerminalHistory.this.estimatedByteCount = workingBytes;
+        PagedTerminalHistory.this.criticalEvictionReasons.clear();
+        PagedTerminalHistory.this.criticalEvictionReasons.addAll(workingCriticalEvictions);
         PagedTerminalHistory.this.mutationVersion++;
         PagedTerminalHistory.this.snapshot = new PagedTerminalHistorySnapshot(
             workingExtent, workingAvailableExtent, workingPages, workingLoaded, workingBytes);

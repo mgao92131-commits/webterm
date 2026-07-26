@@ -7,6 +7,7 @@ import "webterm/go-core/internal/terminalengine"
 type HistoryChange struct {
 	HistorySeq      uint64
 	LineID          uint64
+	LineVersion     uint64
 	CreatedRevision uint64
 }
 
@@ -66,7 +67,7 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 			gap = true
 		}
 		if last == 0 || entry.HistorySeq > last {
-			h.Changes = append(h.Changes, HistoryChange{HistorySeq: entry.HistorySeq, LineID: entry.LineID, CreatedRevision: revision})
+			h.Changes = append(h.Changes, HistoryChange{HistorySeq: entry.HistorySeq, LineID: entry.LineID, LineVersion: entry.LineVersion, CreatedRevision: revision})
 			last = entry.HistorySeq
 		}
 	}
@@ -134,7 +135,7 @@ func (v *HistoryView) pageWithExporter(beforeSeq uint64, limit int, exp *exporte
 
 	exported := make([]terminalengine.Line, len(lines))
 	for i, hl := range lines {
-		exported[i] = exp.exportHistoryLine(hl)
+		exported[i] = exp.exportScrollbackEntry(hl)
 	}
 
 	return terminalengine.HistoryWindow{

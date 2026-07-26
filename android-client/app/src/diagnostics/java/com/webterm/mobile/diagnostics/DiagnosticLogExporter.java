@@ -250,13 +250,18 @@ public final class DiagnosticLogExporter {
             latencyBucketsJson(screen.protobufParseLatencyBuckets));
         render.put("mapperLatencyBuckets",
             latencyBucketsJson(screen.mapperLatencyBuckets));
+        render.put("dictionaryStagingLatencyBuckets",
+            latencyBucketsJson(screen.dictionaryStagingLatencyBuckets));
+        render.put("renderPublicationLatencyBuckets",
+            latencyBucketsJson(screen.renderPublicationLatencyBuckets));
         render.put("renderNodeRecordLatencyBuckets",
             latencyBucketsJson(screen.renderNodeRecordLatencyBuckets));
+        render.put("vsyncDrawLatencyBuckets",
+            latencyBucketsJson(screen.vsyncDrawLatencyBuckets));
         render.put("mailboxResidenceLatencyBuckets",
             latencyBucketsJson(screen.mailboxResidenceLatencyBuckets));
         render.put("historyCacheHitCount", screen.historyCacheHitCount);
         render.put("historyCacheMissCount", screen.historyCacheMissCount);
-        render.put("backgroundCommitDroppedCount", screen.backgroundCommitDroppedCount);
         render.put("visibleHistoryRowsDrawn", screen.visibleHistoryRowsDrawn);
         json.put("render", render);
 
@@ -279,7 +284,6 @@ public final class DiagnosticLogExporter {
         resumeJson.put("mailboxOverflowCount", resume.mailboxOverflowCount);
         resumeJson.put("mailboxRecoveredCount", resume.mailboxRecoveredCount);
         resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
-        resumeJson.put("staleStreamGenerationCount", resume.staleStreamGenerationCount);
         json.put("resume", resumeJson);
         return json;
     }

@@ -12,10 +12,6 @@ import androidx.lifecycle.LifecycleOwner;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.TerminalViewportState.ContentStreamIntent;
-import com.webterm.core.contract.diagnostics.Diagnostics;
-
-import java.util.Map;
 
 /**
  * 页面级屏幕控制器。持有 View / Renderer / Viewport，负责 attach/detach 和用户输入。
@@ -29,13 +25,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     void render(@NonNull RenderUpdate update, @NonNull TerminalViewportState viewport);
     void onCursorChanged();
     void requestInvalidate();
-    /** Only invoked for tail appends while the user is not following the tail. */
-    default void onHistoryAppended(int lineCount) {}
-    /** 在新投影几何中恢复同一 HistorySeq 的像素位置。 */
-    default void restoreHistoryAnchor(
-        @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
-        long historySeq,
-        int pixelOffset) {}
     default int liveScreenExitOffsetPixels() { return Integer.MAX_VALUE; }
     default void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {}
     default void onLayoutLeaseStateChanged(boolean ready) {}
@@ -56,13 +45,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   private int pendingCols;
   private int pendingRows;
-  private int sentCols = -1;
-  private int sentRows = -1;
-  private int pendingViewWidth;
-  private int pendingViewHeight;
-  private float pendingCellWidth;
-  private float pendingLineHeight;
-  private boolean pendingKeyboardVisible;
   private EffectListener effectListener;
   private View view;
   private boolean renderScheduled;
@@ -168,11 +150,6 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     if (cols <= 0 || rows <= 0) return;
     pendingCols = cols;
     pendingRows = rows;
-    pendingViewWidth = viewWidth;
-    pendingViewHeight = viewHeight;
-    pendingCellWidth = cellWidth;
-    pendingLineHeight = lineHeight;
-    pendingKeyboardVisible = keyboardVisible;
     mainHandler.removeCallbacks(sendResizeRunnable);
     mainHandler.postDelayed(sendResizeRunnable, RESIZE_DEBOUNCE_MS);
   }
@@ -194,28 +171,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   public void onScrollPixels(
       int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels) {
-    if (deltaPixels == 0) return;
-    boolean wasPureHistory = viewport.isPureHistory(liveScreenExitOffsetPixels);
-    viewport.scrollBy(deltaPixels, maxScrollOffsetPixels);
-    boolean isPureHistory = viewport.isPureHistory(liveScreenExitOffsetPixels);
-
-    if (viewport.followTail) {
-      viewport.markLive();
-      runtime.resumeLiveStream();
-    } else if (deltaPixels > 0) {
-      if (isPureHistory
-          && viewport.contentStreamIntent != ContentStreamIntent.FROZEN_HISTORY) {
-        viewport.markFrozenHistory();
-        runtime.freezeStream();
-      }
-    } else if (wasPureHistory
-        && viewport.contentStreamIntent == ContentStreamIntent.FROZEN_HISTORY) {
-      viewport.markReturningLive();
-      runtime.resumeLiveStream();
-    } else if (!isPureHistory
-        && viewport.contentStreamIntent == ContentStreamIntent.RETURNING_LIVE) {
-      viewport.markLive();
-    }
+    // RemoteTerminalView 已使用同一个 immutable RenderSnapshot 建立 LineAnchor。
+    // Controller 不保存像素 offset，也不触发任何网络状态变化。
   }
 
   /** v2 可见页驱动：请求当前视口中首个尚未加载的固定页。 */
@@ -226,67 +183,19 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
 
   private void sendResizeNow() {
     if (pendingCols <= 0 || pendingRows <= 0) return;
-    if (pendingCols == sentCols && pendingRows == sentRows) return;
-    Diagnostics.info("terminal_view", "terminal_resize_requested", Map.ofEntries(
-        Map.entry("sessionId", runtime.sessionId()),
-        Map.entry("oldCols", sentCols),
-        Map.entry("oldRows", sentRows),
-        Map.entry("newCols", pendingCols),
-        Map.entry("newRows", pendingRows),
-        Map.entry("viewWidth", pendingViewWidth),
-        Map.entry("viewHeight", pendingViewHeight),
-        Map.entry("cellWidth", pendingCellWidth),
-        Map.entry("lineHeight", pendingLineHeight),
-        Map.entry("keyboardVisible", pendingKeyboardVisible),
-        Map.entry("layoutEpoch", runtime.model().layoutEpoch)));
+    // LayoutLeaseCoordinator owns dedupe, lease/connection gating, and the
+    // last-successfully-sent geometry. The controller only debounces measurement.
     runtime.requestResize(pendingCols, pendingRows);
-    sentCols = pendingCols;
-    sentRows = pendingRows;
   }
 
   private void applyTerminalState(@NonNull RenderUpdate update) {
-    // A resize/new-instance snapshot replaces physical screen rows and history
-    // anchors. Keep a user's viewport during same-geometry full snapshots, but
-    // reset it when the authoritative terminal geometry changes.
-    boolean restoredHistoryAnchor = false;
-    if (update.state.geometryChanged) {
-      viewport.resetForSnapshot();
-    } else if (!viewport.followTail && viewport.anchorHistorySeq != null
-        && update.state.historyChanged && view != null) {
-      view.restoreHistoryAnchor(update.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
-      restoredHistoryAnchor = true;
-      freezeIfViewportBecamePureHistory();
-    }
-    // Only tail appends (live output scrolling into history below the visible
-    // window) compensate the offset to pin the current content. A prepended
-    // history page lands above the cached rows; in the bottom-anchored geometry
-    // it shifts historyRows and old row indices together, so old lines keep
-    // their screen Y and the offset must stay untouched — otherwise a returned
-    // page would undo the user's reverse swipes.
-    if (!restoredHistoryAnchor && !viewport.followTail
-        && update.state.tailAppendedLines > 0 && view != null) {
-      view.onHistoryAppended(update.state.tailAppendedLines);
-    }
+    // LineAnchor 由 publication 内同一个 RenderSnapshot 解析。Baseline、分页和
+    // Promotion 都不能在 Controller 中读取更晚模型或重置 viewport。
     if (update.state.historyChanged) viewport.loadingOlderHistory = false;
-
-  }
-
-  private void freezeIfViewportBecamePureHistory() {
-    View currentView = view;
-    if (currentView == null) return;
-    int threshold = currentView.liveScreenExitOffsetPixels();
-    if (viewport.contentStreamIntent == ContentStreamIntent.LIVE
-        && viewport.isPureHistory(threshold)) {
-      viewport.markFrozenHistory();
-      runtime.freezeStream();
-    }
   }
 
   private void prepareLiveInput() {
-    if (viewport.contentStreamIntent == ContentStreamIntent.FROZEN_HISTORY) {
-      viewport.markReturningLive();
-    }
-    runtime.resumeLiveStream();
+    // Viewport position never controls projection continuity or input delivery.
   }
 
   @Override
@@ -360,7 +269,13 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     if (update != null) applyTerminalState(update);
     if (v != null && update != null && !update.dirty.isEmpty()) {
       com.webterm.terminal.model.TerminalRenderMetrics.vsyncRender();
-      v.render(update, viewport);
+      long drawStartedNanos = System.nanoTime();
+      try {
+        v.render(update, viewport);
+      } finally {
+        com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(
+            System.nanoTime() - drawStartedNanos);
+      }
     }
   }
 

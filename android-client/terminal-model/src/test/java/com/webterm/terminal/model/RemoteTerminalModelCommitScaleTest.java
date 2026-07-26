@@ -20,7 +20,8 @@ public final class RemoteTerminalModelCommitScaleTest {
       screen.add(line(10_000 + row, 1, 0, "row"));
     }
     assertTrue(model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, rows, 80, TerminalBufferKind.MAIN,
+        "s1", "i1", 1, 1, 1, 1, false, DictionaryEntries.EMPTY,
+        rows, 80, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 1_000_000), Collections.emptyList(), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();
@@ -32,13 +33,15 @@ public final class RemoteTerminalModelCommitScaleTest {
       RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
       nextHistorySeq++;
       assertTrue(model.applyTerminalCommit(new TerminalCommit(
-          "i1", 1, 1, revision, revision + 1,
+          "i1", 1, revision, revision + 1, 1, 1,
+          DictionaryEntries.EMPTY, null,
           new ScreenMutation(new ScreenScroll(0, rows, 1),
               Collections.singletonList(new ScreenRowWrite(
                   rows - 1, line(nextLineId++, 1, 0, "new")))),
-          new HistoryMutation(new HistoryExtent(1, nextHistorySeq),
-              Collections.singletonList(line(
-                  snapshot.screen[0].id, snapshot.screen[0].version, nextHistorySeq, "row"))),
+          HistoryMutation.fromLineData(new HistoryExtent(1, nextHistorySeq),
+              Collections.emptyList(),
+              Collections.singletonList(new HistoryPromotion(
+                  snapshot.screen[0].id, snapshot.screen[0].version, nextHistorySeq))),
           null, null, null)));
       revision++;
       model.consumeRenderUpdate();

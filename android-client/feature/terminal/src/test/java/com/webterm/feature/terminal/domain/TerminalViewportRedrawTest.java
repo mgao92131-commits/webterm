@@ -93,7 +93,7 @@ public final class TerminalViewportRedrawTest {
     // Controller 只持有 viewport 状态；像素刷新由发起滚动的 RemoteTerminalView 负责。
     assertFalse("Controller must not request duplicate view invalidation",
         view.invalidateCalled);
-    assertEquals(50, viewport.scrollOffsetPixels);
+    assertTrue(viewport.isFollowTail(TerminalBufferKind.MAIN));
   }
 
   @Test
@@ -150,7 +150,7 @@ public final class TerminalViewportRedrawTest {
 
     // 连续滚动不反向请求同一 View 刷新，也不污染 model。
     assertEquals(0, view.invalidateCount);
-    assertEquals(45, viewport.scrollOffsetPixels);
+    assertTrue(viewport.isFollowTail(TerminalBufferKind.MAIN));
     verify(runtime, never()).requestModelRender();
     verify(runtime, never()).requestRender();
   }
@@ -160,7 +160,7 @@ public final class TerminalViewportRedrawTest {
     List<TerminalLine> history = createHistoryLines(1, historySize);
     List<TerminalLine> screen = createScreenLines(screenRows, 1000);
     return new ScreenBaseline(
-        screenId, instanceId, 1, seq, 1, screenRows, 24, TerminalBufferKind.MAIN,
+        screenId, instanceId, 1, seq, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, screenRows, 24, TerminalBufferKind.MAIN,
         new HistoryExtent(1, historySize), history, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }

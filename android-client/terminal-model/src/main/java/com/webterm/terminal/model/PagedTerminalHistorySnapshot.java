@@ -1,10 +1,24 @@
 package com.webterm.terminal.model;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /** Renderer 可无锁读取的分页历史快照。 */
 public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
+  public static final class LoadedEntry {
+    public final long historySeq;
+    public final TerminalLine line;
+
+    LoadedEntry(long historySeq, TerminalLine line) {
+      this.historySeq = historySeq;
+      this.line = line;
+    }
+  }
   public static final class RequestRange {
     public long fromSeq;
     public long toSeq;
@@ -68,6 +82,34 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
 
   public long estimatedByteCount() {
     return estimatedByteCount;
+  }
+
+  /** 当前真正驻留正文的 LineID；不把逻辑 extent 的缺口伪装成已加载。 */
+  public Set<Long> loadedLineIds() {
+    Set<Long> result = new HashSet<>();
+    for (PagedTerminalHistory.HistoryPageChunk page : pages.values()) {
+      for (TerminalLine line : page.slots) {
+        if (line != null) result.add(line.id);
+      }
+    }
+    return result;
+  }
+
+  /** 仅枚举真正驻留的正文，按 HistorySeq 升序；成本与本地缓存量而非远端 extent 成正比。 */
+  public List<LoadedEntry> loadedEntries() {
+    List<LoadedEntry> result = new ArrayList<>();
+    for (Map.Entry<Long, PagedTerminalHistory.HistoryPageChunk> pageEntry : pages.entrySet()) {
+      long pageFirst = PagedTerminalHistory.pageFirstSeq(pageEntry.getKey());
+      TerminalLine[] slots = pageEntry.getValue().slots;
+      for (int offset = 0; offset < slots.length; offset++) {
+        TerminalLine line = slots[offset];
+        if (line == null) continue;
+        long seq = pageFirst + offset;
+        if (extent.contains(seq)) result.add(new LoadedEntry(seq, line));
+      }
+    }
+    result.sort(Comparator.comparingLong(entry -> entry.historySeq));
+    return result;
   }
 
   /** 最旧的已加载 HistorySeq；当前只有占位槽时返回 -1。 */
@@ -140,7 +182,7 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   public SlotState slotStateAt(long logicalIndex) {
     long seq = seqAt(logicalIndex);
     // 本地 resident line 是已经显示过的不可变投影事实；remote available extent 只决定
-    // 缺失槽位能否继续向服务端请求。服务端 trim 不得让 FROZEN 画面中的驻留行消失。
+    // 缺失槽位能否继续向服务端请求。服务端 trim 不得让当前 viewport 的驻留行消失。
     if (loadedLineBySeq(seq) != null) return SlotState.LOADED;
     if (!availableExtent.contains(seq)) return SlotState.UNAVAILABLE;
     return SlotState.UNLOADED;

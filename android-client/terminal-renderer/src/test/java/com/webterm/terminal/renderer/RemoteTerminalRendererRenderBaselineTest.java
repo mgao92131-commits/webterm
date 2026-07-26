@@ -129,7 +129,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
           TerminalViewportState viewport = new TerminalViewportState();
           if (scrolled) {
             int maxScroll = (int) (history * LINE_HEIGHT);
-            viewport.scrollBy(maxScroll, maxScroll);
+            viewport.scrollBy(maxScroll, maxScroll, snapshot, LINE_HEIGHT);
           }
           int chunkCount = (ITERATIONS + FRAMES_PER_BITMAP - 1) / FRAMES_PER_BITMAP;
           Canvas[] canvases = new Canvas[chunkCount];
@@ -155,7 +155,8 @@ public final class RemoteTerminalRendererRenderBaselineTest {
           // 正确性：渲染完成后 snapshot 与视口状态未被修改。
           assertEquals(history, snapshot.history.size());
           assertEquals(scrolled ? (int) (history * LINE_HEIGHT) : 0,
-              viewport.scrollOffsetPixels);
+              viewport.derivedScrollOffsetPixels(
+                  snapshot, LINE_HEIGHT, (int) (history * LINE_HEIGHT)));
 
           report(cols, rows, history, content, scrolled ? "scrolled" : "follow-tail", times,
               allocPerOp);
@@ -185,7 +186,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
     }
     HistoryExtent extent = historyLines == 0
         ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
-    model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, rows, cols,
+    model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
         TerminalBufferKind.MAIN, extent, history, screen,
         new TerminalCursor(rows - 1, 0, true, TerminalCursor.Shape.BLOCK, false),
         TerminalModes.defaults(), TerminalPalette.defaults()));

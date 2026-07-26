@@ -3,6 +3,7 @@ package com.webterm.terminal.model;
 import static org.junit.Assert.*;
 
 import java.util.Arrays;
+import java.util.Collections;
 import org.junit.Test;
 
 public final class PagedTerminalHistoryTest {
@@ -64,6 +65,35 @@ public final class PagedTerminalHistoryTest {
     history.edit().setExtent(3, 4).commit();
     assertEquals(new HistoryExtent(3, 4), history.snapshot().extent());
     assertEquals(2, history.snapshot().logicalSize());
+  }
+
+  @Test
+  public void ordinaryEvictionNeverSelectsPinnedPage() {
+    PagedTerminalHistory history = history(new HistoryBudget(128, 129, 0, 0));
+    PagedTerminalHistory.Editor editor = history.edit().setExtent(1, 130);
+    for (long seq = 1; seq <= 130; seq++) editor.put(seq, line(seq));
+    editor.evictIfNeeded(new EvictionPins(
+        new EvictionPins.LongRange(129, 130),
+        new EvictionPins.LongRange(129, 129),
+        Collections.emptyList(), null, null)).commit();
+
+    assertNull(history.snapshot().lineBySeq(1));
+    assertNotNull(history.snapshot().lineBySeq(129));
+    assertNotNull(history.snapshot().lineBySeq(130));
+    assertTrue(history.criticalEvictionReasons().isEmpty());
+  }
+
+  @Test
+  public void hardLimitRecordsStableReasonWhenVisiblePinMustBeEvicted() {
+    PagedTerminalHistory history = history(new HistoryBudget(1, 1, 0, 0));
+    history.edit().setExtent(1, 2).put(1, line(1)).put(2, line(2))
+        .evictIfNeeded(new EvictionPins(
+            new EvictionPins.LongRange(1, 2), null,
+            Collections.emptyList(), null, null))
+        .commit();
+
+    assertTrue(history.criticalEvictionReasons().contains(
+        EvictionPins.CriticalEvictionReason.VISIBLE_HISTORY_EVICTED));
   }
 
   @Test

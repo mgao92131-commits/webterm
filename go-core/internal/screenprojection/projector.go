@@ -157,7 +157,9 @@ type Projector struct {
 	// every exported state so per-client FrameDerivers can detect a baseline
 	// from a stale dictionary even when the ForceSnapshot frame was coalesced
 	// away by a single-slot mailbox.
-	dictGeneration uint64
+	dictGeneration            uint64
+	historyGeneration         uint64
+	observedHistoryGeneration uint64
 	// changeIndex 记录各状态组件最后一次变化的导出 revision 与持久 snapshot
 	// 屏障（计划 docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 	// §4.2/§4.3），只在 p.mu 持锁期间读写（规则 5）。它不参与在线
@@ -190,41 +192,57 @@ func (p *Projector) SnapshotBarrierRevision() uint64 {
 // without creating a BaseRevision gap.
 //
 // 相对 baseline 无任何可观察变化时（bell、title 设回原值等输出仍会推进
-// canonical revision），FrameForState 返回 Kind 未设置的零值帧表示"不发送"，
+// canonical revision），DeriveForState 返回 Kind 未设置的零值帧表示"不发送"，
 // 且不推进 baseline：下一个真实 patch 的 base 仍等于最后实际写出的 revision。
 type FrameDeriver struct {
-	baseline terminalengine.ScreenFrame
+	baseline                    terminalengine.ScreenFrame
+	maxAppendedScrollbackEntrys int
+	maxAppendedHistoryBytes     int
+}
+
+const (
+	defaultMaxAppendedScrollbackEntrys = 64
+	defaultMaxAppendedHistoryBytes     = 256 << 10
+)
+
+func (d *FrameDeriver) SetHistoryAppendBudget(maxLines, maxBytes int) {
+	d.maxAppendedScrollbackEntrys = maxLines
+	d.maxAppendedHistoryBytes = maxBytes
 }
 
 func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 }
 
-// Seed 在 Baseline 成功写出后提交该客户端的完整权威状态。
-func (d *FrameDeriver) Seed(state terminalengine.ScreenFrame) {
+// SeedAfterSuccessfulWrite 只在物理写成功后提交该客户端的完整权威状态。
+func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame) {
 	d.baseline = state
 }
 
-// FrameForState 返回应写出的帧；返回值的 Kind 为 0 表示该状态相对 baseline
-// 无任何可观察变化，调用方不得编码或发送它。
-func (d *FrameDeriver) FrameForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
-	return frameForBaseline(&d.baseline, state)
-}
-
-// DeriveForState 只派生、不推进 baseline；物理写成功后调用 Seed 提交。
+// DeriveForState 只派生、不推进 baseline；物理写成功后调用
+// SeedAfterSuccessfulWrite 提交。
 func (d *FrameDeriver) DeriveForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	baseline := d.baseline
-	return frameForBaseline(&baseline, state)
+	maxLines, maxBytes := d.maxAppendedScrollbackEntrys, d.maxAppendedHistoryBytes
+	if maxLines <= 0 {
+		maxLines = defaultMaxAppendedScrollbackEntrys
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxAppendedHistoryBytes
+	}
+	return frameForBaseline(&baseline, state, maxLines, maxBytes)
 }
 
 // NewProjector 创建新的 screen projector。
 func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.TrackedScrollback, sessionID, instanceID string) *Projector {
 	return &Projector{
-		engine:     engine,
-		scrollback: scrollback,
-		sessionID:  sessionID,
-		instanceID: instanceID,
-		exporter:   newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG}),
+		engine:            engine,
+		scrollback:        scrollback,
+		sessionID:         sessionID,
+		instanceID:        instanceID,
+		exporter:          newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG}),
+		dictGeneration:    1,
+		historyGeneration: 1,
 	}
 }
 
@@ -239,14 +257,15 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 	)
 	lines := make([]terminalengine.Line, len(result.Lines))
 	for i, line := range result.Lines {
-		lines[i] = exp.exportHistoryLine(line)
+		lines[i] = exp.exportScrollbackEntry(line)
 	}
 	return terminalengine.HistoryRangeData{
-		Status: result.Status,
-		Extent: result.Extent,
-		Lines:  lines,
-		Styles: exp.styleTable.Styles(),
-		Links:  exp.linkTable.Links(),
+		Status:            result.Status,
+		Extent:            result.Extent,
+		Lines:             lines,
+		Styles:            exp.styleTable.Styles(),
+		Links:             exp.linkTable.Links(),
+		HistoryGeneration: p.historyGeneration,
 	}
 }
 
@@ -281,6 +300,18 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		// epoch 客户端的 revision 必然 >= 该值。字典随 epoch 轮转本身也是
 		// §4.2 的 barrier 事件。
 		p.changeIndex.resetForEpoch(seq)
+	}
+	if p.scrollback != nil {
+		generation := p.scrollback.Generation()
+		if generation == 0 {
+			generation = 1
+		}
+		if p.observedHistoryGeneration != 0 && generation != p.observedHistoryGeneration {
+			p.historyChangeIndex = HistoryChangeIndex{}
+			p.changeIndex.advanceBarrier(seq)
+		}
+		p.observedHistoryGeneration = generation
+		p.historyGeneration = generation
 	}
 	// 历史 LineID 体系重置探测：nextSeq 回退只可能来自 TrackedScrollback
 	// Clear/ResetForReflow（当前无生产调用路径，此处是保守的前置 seam）。
@@ -317,6 +348,7 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		frame.ForceSnapshot = true
 	}
 	frame.DictionaryGeneration = p.dictGeneration
+	frame.HistoryGeneration = p.historyGeneration
 	return frame
 }
 
@@ -361,6 +393,11 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	copy(screen, s.screen)
 	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
 	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
+	historyLineage := make([]terminalengine.HistoryPromotion, len(p.historyChangeIndex.Changes))
+	for i, change := range p.historyChangeIndex.Changes {
+		historyLineage[i] = terminalengine.HistoryPromotion{LineID: change.LineID,
+			LineVersion: change.LineVersion, HistorySeq: change.HistorySeq}
+	}
 
 	history := terminalengine.HistoryWindow{}
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
@@ -374,29 +411,32 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	}
 
 	return terminalengine.ScreenFrame{
-		Version:            1,
-		Kind:               terminalengine.FrameSnapshot,
-		SessionID:          p.sessionID,
-		InstanceID:         p.instanceID,
-		Epoch:              epoch,
-		Seq:                seq,
-		Rows:               s.rows,
-		Cols:               s.cols,
-		ActiveBuffer:       s.activeBuffer,
-		ReverseVideo:       s.palette.reverseVideo,
-		DefaultFG:          s.palette.defaultFG,
-		DefaultBG:          s.palette.defaultBG,
-		CursorColor:        s.palette.cursorColor,
-		IndexedPalette:     s.palette.indexed,
-		IndexedPaletteSet:  s.palette.indexedSet,
-		PaletteGeneration:  s.palette.generation,
-		Cursor:             s.cursor,
-		Modes:              s.modes,
-		History:            history,
-		Screen:             screen,
-		Styles:             p.exporter.styleTable.Styles(),
-		Links:              p.exporter.linkTable.Links(),
-		RowChangedRevision: rowChangedRevision,
+		Version:              1,
+		Kind:                 terminalengine.FrameSnapshot,
+		SessionID:            p.sessionID,
+		InstanceID:           p.instanceID,
+		Epoch:                epoch,
+		Seq:                  seq,
+		Rows:                 s.rows,
+		Cols:                 s.cols,
+		ActiveBuffer:         s.activeBuffer,
+		ReverseVideo:         s.palette.reverseVideo,
+		DefaultFG:            s.palette.defaultFG,
+		DefaultBG:            s.palette.defaultBG,
+		CursorColor:          s.palette.cursorColor,
+		IndexedPalette:       s.palette.indexed,
+		IndexedPaletteSet:    s.palette.indexedSet,
+		PaletteGeneration:    s.palette.generation,
+		Cursor:               s.cursor,
+		Modes:                s.modes,
+		History:              history,
+		Screen:               screen,
+		Styles:               p.exporter.styleTable.Styles(),
+		Links:                p.exporter.linkTable.Links(),
+		RowChangedRevision:   rowChangedRevision,
+		DictionaryGeneration: p.dictGeneration,
+		HistoryGeneration:    p.historyGeneration,
+		ScrollbackEntryage:   historyLineage,
 	}
 }
 
@@ -435,7 +475,7 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 		// resize discarded it. A gap only means our cached tail was trimmed, so
 		// rebuild from the authoritative bounded window instead of treating it
 		// as a protocol discontinuity.
-		s.historyLines = exportHistoryLines(p.exporter, delta.Lines)
+		s.historyLines = exportScrollbackEntries(p.exporter, delta.Lines)
 	} else {
 		// 连续：追加新行（新切片，不改动缓存旧切片，历史帧共享不受影响），
 		// 再从旧端裁掉被 scrollback 驱逐的行并裁到窗口上限。
@@ -443,7 +483,7 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 		if len(delta.Lines) > 0 {
 			merged := make([]terminalengine.Line, 0, len(lines)+len(delta.Lines))
 			merged = append(merged, lines...)
-			merged = append(merged, exportHistoryLines(p.exporter, delta.Lines)...)
+			merged = append(merged, exportScrollbackEntries(p.exporter, delta.Lines)...)
 			lines = merged
 		}
 		start := 0
@@ -474,7 +514,7 @@ func (p *Projector) rebuildHistoryWindow() terminalengine.HistoryWindow {
 	return w
 }
 
-func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) terminalengine.ScreenFrame {
 	// 输入始终是完整状态，可直接作为 snapshot 发送；统一打上 Kind，避免
 	// 调用方漏设导致编码失败。diffToPatch 的 snapshot 回退路径也借此得到
 	// 正确的 Kind。
@@ -482,12 +522,12 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
 	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
 	// epoch 或备用屏变化，发送完整 snapshot。
-	if state.ForceSnapshot || baseline.Seq == 0 || baseline.InstanceID != state.InstanceID || baseline.Epoch != state.Epoch || baseline.ActiveBuffer != state.ActiveBuffer || baseline.DictionaryGeneration != state.DictionaryGeneration {
+	if state.ForceSnapshot || baseline.Seq == 0 || baseline.InstanceID != state.InstanceID || baseline.Epoch != state.Epoch || baseline.DictionaryGeneration != state.DictionaryGeneration || baseline.HistoryGeneration != state.HistoryGeneration {
 		*baseline = state
 		return state
 	}
 	// 否则生成 patch（整行替换）。
-	patch := diffToPatch(*baseline, state)
+	patch := diffToPatch(*baseline, state, maxScrollbackEntrys, maxHistoryBytes)
 	if patch.Kind != terminalengine.FramePatch {
 		*baseline = state
 		return patch
@@ -515,12 +555,14 @@ func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 		len(patch.Links) > 0 ||
 		patch.CursorChanged ||
 		patch.ModesChanged ||
-		patch.PaletteChanged
+		patch.PaletteChanged ||
+		patch.ActiveBufferChanged
 }
 
 // hasHistoryChanges 判断 Commit 是否携带任何历史 extent/正文变化。
 func hasHistoryChanges(patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) > 0 ||
+		len(patch.HistoryPromotions) > 0 ||
 		patch.FirstAvailableHistorySeqChanged
 }
 
@@ -541,48 +583,84 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 //
 // 历史窗口是 epoch 内连续 LineID 的尾部窗口，且历史行推出后不可变，因此
 // history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
-func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) terminalengine.ScreenFrame {
 	// Stable screen IDs can leave gaps in scrollback after delete/resize. Select
 	// the newly present IDs instead of relying on historical ID contiguity.
 	oldHistory := make(map[uint64]struct{}, len(old.History.Lines))
 	for _, line := range old.History.Lines {
 		oldHistory[line.HistorySeq] = struct{}{}
 	}
+	promotedIDs := make(map[uint64]struct{})
+	activeNow := make(map[uint64]struct{}, len(new.Screen))
+	for _, line := range new.Screen {
+		activeNow[line.ID] = struct{}{}
+	}
+	lineage := make(map[uint64]terminalengine.HistoryPromotion, len(new.ScrollbackEntryage))
+	for _, entry := range new.ScrollbackEntryage {
+		lineage[entry.LineID] = entry
+	}
+	var promotions []terminalengine.HistoryPromotion
+	for _, line := range old.Screen {
+		if _, active := activeNow[line.ID]; active {
+			continue
+		}
+		entry, archived := lineage[line.ID]
+		if !archived || entry.LineVersion != line.Version ||
+			entry.HistorySeq < new.History.FirstAvailableHistorySeq || entry.HistorySeq > new.History.LastIncludedHistorySeq {
+			continue
+		}
+		promotions = append(promotions, entry)
+		promotedIDs[line.ID] = struct{}{}
+	}
 	var historyAppend []terminalengine.Line
+	historyBytes := 0
 	for _, line := range new.History.Lines {
 		if _, seen := oldHistory[line.HistorySeq]; !seen {
-			// A HistorySeq must be bound to a LineID at the receiver. Even when
-			// the line was visible on the previous screen, include its LineData so
-			// the bounded Android cache can append the correct history entry.
+			if _, promoted := promotedIDs[line.ID]; promoted {
+				continue
+			}
+			estimated := estimateLineWireBytes(line)
+			if len(historyAppend) >= maxScrollbackEntrys || historyBytes+estimated > maxHistoryBytes {
+				continue
+			}
 			historyAppend = append(historyAppend, line)
+			historyBytes += estimated
 		}
 	}
-	scroll := deriveFullScreenScroll(old.Screen, new.Screen)
-	screenRows := commitScreenWrites(old.Screen, new.Screen, scroll)
+	activeBufferChanged := old.ActiveBuffer != new.ActiveBuffer
+	var scroll *terminalengine.ScreenScroll
+	var screenRows []terminalengine.Line
+	if activeBufferChanged {
+		screenRows = append(screenRows, new.Screen...)
+	} else {
+		scroll = deriveFullScreenScroll(old.Screen, new.Screen)
+		screenRows = commitScreenWrites(old.Screen, new.Screen, scroll)
+	}
 
 	return terminalengine.ScreenFrame{
-		Version:           1,
-		Kind:              terminalengine.FramePatch,
-		SessionID:         new.SessionID,
-		InstanceID:        new.InstanceID,
-		Epoch:             new.Epoch,
-		Seq:               new.Seq,
-		BaseRevision:      old.Seq,
-		Rows:              new.Rows,
-		Cols:              new.Cols,
-		ActiveBuffer:      new.ActiveBuffer,
-		ReverseVideo:      new.ReverseVideo,
-		DefaultFG:         new.DefaultFG,
-		DefaultBG:         new.DefaultBG,
-		CursorColor:       new.CursorColor,
-		IndexedPalette:    new.IndexedPalette,
-		IndexedPaletteSet: new.IndexedPaletteSet,
-		PaletteGeneration: new.PaletteGeneration,
-		Cursor:            new.Cursor,
-		Modes:             new.Modes,
-		CursorChanged:     old.Cursor != new.Cursor,
-		ModesChanged:      old.Modes != new.Modes,
-		PaletteChanged: old.ReverseVideo != new.ReverseVideo ||
+		Version:             1,
+		Kind:                terminalengine.FramePatch,
+		SessionID:           new.SessionID,
+		InstanceID:          new.InstanceID,
+		Epoch:               new.Epoch,
+		Seq:                 new.Seq,
+		BaseRevision:        old.Seq,
+		Rows:                new.Rows,
+		Cols:                new.Cols,
+		ActiveBuffer:        new.ActiveBuffer,
+		ReverseVideo:        new.ReverseVideo,
+		DefaultFG:           new.DefaultFG,
+		DefaultBG:           new.DefaultBG,
+		CursorColor:         new.CursorColor,
+		IndexedPalette:      new.IndexedPalette,
+		IndexedPaletteSet:   new.IndexedPaletteSet,
+		PaletteGeneration:   new.PaletteGeneration,
+		Cursor:              new.Cursor,
+		Modes:               new.Modes,
+		CursorChanged:       activeBufferChanged || old.Cursor != new.Cursor,
+		ModesChanged:        activeBufferChanged || old.Modes != new.Modes,
+		ActiveBufferChanged: activeBufferChanged,
+		PaletteChanged: activeBufferChanged || old.ReverseVideo != new.ReverseVideo ||
 			old.DefaultFG != new.DefaultFG || old.DefaultBG != new.DefaultBG ||
 			old.CursorColor != new.CursorColor || old.IndexedPalette != new.IndexedPalette ||
 			old.IndexedPaletteSet != new.IndexedPaletteSet ||
@@ -594,17 +672,32 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 			HasMoreBefore:            new.History.HasMoreBefore,
 			Lines:                    historyAppend,
 		},
-		Screen:       screenRows,
-		ScreenScroll: scroll,
+		Screen:               screenRows,
+		ScreenScroll:         scroll,
+		HistoryPromotions:    promotions,
+		DictionaryGeneration: new.DictionaryGeneration,
+		HistoryGeneration:    new.HistoryGeneration,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
 		// appeared after the recipient's baseline; repeatedly sending the whole
 		// table was pure wire and allocation overhead.
 		Styles: newlyAddedStyles(old.Styles, new.Styles),
 		Links:  newlyAddedLinks(old.Links, new.Links),
 		// Commit 用该 presence 位表达 extent 水位变化（包括只 trim、没有新增正文）。
-		FirstAvailableHistorySeqChanged: old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
+		FirstAvailableHistorySeqChanged: activeBufferChanged || len(promotions) > 0 || len(historyAppend) > 0 ||
+			old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
 	}
+}
+
+func estimateLineWireBytes(line terminalengine.Line) int {
+	bytes := 32
+	for _, run := range line.Runs {
+		bytes += 4
+		for _, cell := range run.Cells {
+			bytes += len(cell.Text) + 12
+		}
+	}
+	return bytes
 }
 
 // deriveFullScreenScroll 只用稳定 LineID 唯一确认全屏连续位移。

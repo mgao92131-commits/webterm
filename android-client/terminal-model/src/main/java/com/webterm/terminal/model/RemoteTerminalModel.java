@@ -33,10 +33,14 @@ public final class RemoteTerminalModel {
   public int columns;
   public TerminalBufferKind activeBuffer;
 
-  private final PagedTerminalHistory pagedHistory;
+  private TerminalSurface mainSurface;
+  private TerminalSurface alternateSurface;
+  private final HistoryBudget historyBudget;
   private boolean v2Projection;
-  private long streamGeneration;
-  private long remoteScreenRevision;
+  private long dictionaryGeneration;
+  private long historyGeneration;
+  private Map<Integer, TerminalStyle> canonicalStyles = Collections.emptyMap();
+  private Map<Integer, Hyperlink> canonicalLinks = Collections.emptyMap();
   private HistoryExtent displayExtent = HistoryExtent.INITIAL_EMPTY;
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private boolean staleProjection;
@@ -126,14 +130,24 @@ public final class RemoteTerminalModel {
 
   RemoteTerminalModel(HistoryBudget budget, LongConsumer baselineHistoryValidationProbe) {
     this.activeBuffer = TerminalBufferKind.MAIN;
-    this.pagedHistory = new PagedTerminalHistory(budget, RemoteTerminalModel::estimateHistoryLineBytes);
+    this.historyBudget = budget;
+    this.mainSurface = new TerminalSurface(budget);
+    this.alternateSurface = new TerminalSurface(budget);
     this.baselineHistoryValidationProbe = baselineHistoryValidationProbe;
+  }
+
+  private TerminalSurface surface(TerminalBufferKind kind) {
+    return kind == TerminalBufferKind.ALTERNATE ? alternateSurface : mainSurface;
+  }
+
+  private TerminalSurface activeSurface() {
+    return surface(activeBuffer);
   }
 
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
     if (baseline == null || baseline.instanceId == null || baseline.instanceId.isEmpty()
         || baseline.layoutEpoch < 1 || baseline.screenRevision < 1
-        || baseline.streamGeneration < 1 || baseline.streamGeneration < streamGeneration
+        || baseline.dictionaryGeneration < 1 || baseline.historyGeneration < 1
         || baseline.rows <= 0 || baseline.cols <= 0
         || baseline.historyExtent == null || baseline.historyTail == null
         || baseline.historyTail.size() > PagedTerminalHistory.PAGE_SIZE
@@ -165,12 +179,29 @@ public final class RemoteTerminalModel {
     }
     boolean sameProjection = v2Projection
         && baseline.instanceId.equals(instanceId)
-        && baseline.layoutEpoch == layoutEpoch;
+        && baseline.layoutEpoch == layoutEpoch
+        && baseline.historyGeneration == historyGeneration;
     boolean geometryChanged = !sameProjection || rows != baseline.rows || columns != baseline.cols;
+    boolean preserveHistory = sameProjection && baseline.preserveCompatibleHistory;
+    TerminalSurface baselineSurface = preserveHistory
+        ? surface(baseline.activeBuffer) : new TerminalSurface(historyBudget);
 
-    PagedTerminalHistory.Editor historyEditor = pagedHistory.edit();
+    Map<Integer, TerminalStyle> baselineStyles;
+    Map<Integer, Hyperlink> baselineLinks;
     try {
-      if (!sameProjection) {
+      baselineStyles = dictionaryMapStyles(baseline.dictionary.styles);
+      baselineLinks = dictionaryMapLinks(baseline.dictionary.links);
+    } catch (IllegalArgumentException invalidDictionary) {
+      return false;
+    }
+
+    PagedTerminalHistory.Editor historyEditor = baselineSurface.history.edit();
+    LineStore.Editor lineEditor = baselineSurface.lineStore.edit();
+    HistoryIndex.Editor historyIndexEditor =
+        baselineSurface.historyIndex.edit().setExtent(baseline.historyExtent);
+    long[] activeLineIds = new long[baseline.rows];
+    try {
+      if (!preserveHistory) {
         historyEditor.setExtent(1, 0);
       }
       historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
@@ -178,27 +209,51 @@ public final class RemoteTerminalModel {
           baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
       for (TerminalLine normalized : normalizedHistoryTail) {
         if (baseline.historyExtent.contains(normalized.historySeq)) {
-          historyEditor.put(normalized.historySeq, normalized);
+          long historySeq = normalized.historySeq;
+          TerminalLine canonical = lineEditor.put(normalized);
+          historyIndexEditor.bind(historySeq, canonical.id);
+          historyEditor.put(historySeq, canonical);
         }
       }
       historyEditor.evictIfNeeded(
           baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq);
       // 同 projection 的 Baseline 可以保留旧驻留页；提交前用有界索引验证新 screen，
       // 不能让同一 LineID 同时归属于 screen 与 loaded history。
-      for (TerminalLine normalized : normalizedScreen) {
+      for (int row = 0; row < normalizedScreen.size(); row++) {
+        TerminalLine normalized = normalizedScreen.get(row);
         if (historyEditor.historySeqByLineId(normalized.id) != null) return false;
+        normalized = lineEditor.put(normalized);
+        normalizedScreen.set(row, normalized);
+        if (historyIndexEditor.historySeq(normalized.id) != null) return false;
+        activeLineIds[row] = normalized.id;
       }
-    } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
+    } catch (CommitValidationException
+        | IllegalArgumentException | IllegalStateException invalidHistory) {
       return false;
     }
     historyEditor.commit();
+    Set<Long> loadedHistoryIds = baselineSurface.history.snapshot().loadedLineIds();
+    historyIndexEditor.retainLineIds(loadedHistoryIds);
+    Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
+    for (long lineId : activeLineIds) retainedLineIds.add(lineId);
+    lineEditor.retainOnly(retainedLineIds);
+    historyIndexEditor.commit();
+    lineEditor.commit();
+    baselineSurface.activeRows = new ActiveRows(activeLineIds);
+    if (baseline.activeBuffer == TerminalBufferKind.ALTERNATE) {
+      alternateSurface = baselineSurface;
+    } else {
+      mainSurface = baselineSurface;
+    }
     // Baseline 是权威完整投影；不让旧 Patch 的迁移身份跨同步边界存活。
     this.v2Projection = true;
-    this.streamGeneration = baseline.streamGeneration;
+    this.dictionaryGeneration = baseline.dictionaryGeneration;
+    this.historyGeneration = baseline.historyGeneration;
+    this.canonicalStyles = baselineStyles;
+    this.canonicalLinks = baselineLinks;
     this.instanceId = baseline.instanceId;
     this.layoutEpoch = baseline.layoutEpoch;
     this.screenRevision = baseline.screenRevision;
-    this.remoteScreenRevision = baseline.screenRevision;
     this.rows = baseline.rows;
     this.columns = baseline.cols;
     this.activeBuffer = baseline.activeBuffer;
@@ -225,27 +280,72 @@ public final class RemoteTerminalModel {
     return true;
   }
 
-  public synchronized boolean applyTerminalCommit(TerminalCommit commit)
+  public boolean applyTerminalCommit(TerminalCommit commit)
       throws RevisionGapException {
-    if (!v2Projection || commit == null || commit.streamGeneration != streamGeneration
-        || !Objects.equals(instanceId, commit.instanceId) || layoutEpoch != commit.layoutEpoch
-        || screenRevision != commit.baseRevision || commit.revision <= commit.baseRevision) {
-      throw new RevisionGapException("screen.v2 commit identity/revision mismatch");
+    return stageCommit(commit).commit();
+  }
+
+  /**
+   * Validates every model-dependent invariant and prepares a transaction without
+   * mutating any published model state.
+   */
+  public synchronized StagedCommit stageCommit(TerminalCommit commit)
+      throws RevisionGapException {
+    if (!v2Projection || commit == null || !Objects.equals(instanceId, commit.instanceId)) {
+      throw new CommitValidationException(CommitFailure.IDENTITY_MISMATCH);
+    }
+    if (layoutEpoch != commit.layoutEpoch) {
+      throw new CommitValidationException(CommitFailure.LAYOUT_EPOCH_MISMATCH);
+    }
+    long commitDictionaryGeneration = commit.dictionaryGeneration == 0
+        ? dictionaryGeneration : commit.dictionaryGeneration;
+    long commitHistoryGeneration = commit.historyGeneration == 0
+        ? historyGeneration : commit.historyGeneration;
+    if (commitDictionaryGeneration != dictionaryGeneration) {
+      throw new CommitValidationException(CommitFailure.DICTIONARY_GENERATION_MISMATCH);
+    }
+    if (commitHistoryGeneration != historyGeneration) {
+      throw new CommitValidationException(CommitFailure.HISTORY_GENERATION_MISMATCH);
+    }
+    if (screenRevision != commit.baseRevision || commit.revision <= commit.baseRevision) {
+      throw new CommitValidationException(CommitFailure.REVISION_GAP);
     }
 
-    TerminalLine[] stagedScreen = screen;
+    long dictionaryStartedNanos = System.nanoTime();
+    Map<Integer, TerminalStyle> stagedStyles;
+    Map<Integer, Hyperlink> stagedLinks;
+    try {
+      stagedStyles = new java.util.HashMap<>(canonicalStyles);
+      stagedLinks = new java.util.HashMap<>(canonicalLinks);
+      stageDictionaryAdditions(commit.dictionaryAdditions, stagedStyles, stagedLinks);
+    } finally {
+      TerminalRenderMetrics.dictionaryStagingDuration(
+          System.nanoTime() - dictionaryStartedNanos);
+    }
+
+    TerminalBufferKind nextActiveBuffer =
+        commit.activeBuffer != null ? commit.activeBuffer : activeBuffer;
+    boolean activeBufferChanged = nextActiveBuffer != activeBuffer;
+    TerminalSurface targetSurface = surface(nextActiveBuffer);
+    LineStore.Editor lineEditor = targetSurface.lineStore.edit();
+    HistoryIndex.Editor historyIndexEditor = targetSurface.historyIndex.edit();
+    TerminalLine[] stagedScreen = activeBufferChanged ? new TerminalLine[rows] : screen;
     BitSet changedRows = new BitSet(rows);
     BitSet exposedRows = new BitSet(rows);
     int screenScrollRows = 0;
     if (commit.screen != null) {
-      stagedScreen = java.util.Arrays.copyOf(screen, rows);
+      stagedScreen = activeBufferChanged
+          ? new TerminalLine[rows] : java.util.Arrays.copyOf(screen, rows);
       ScreenScroll scroll = commit.screen.scroll;
       if (scroll != null) {
+        if (activeBufferChanged) {
+          throw new CommitValidationException(CommitFailure.INVALID_ACTIVE_BUFFER_TRANSITION);
+        }
         int height = scroll.bottomRowExclusive - scroll.topRow;
         int shift = scroll.deltaRows;
         if (scroll.topRow != 0 || scroll.bottomRowExclusive != rows || height <= 0
             || shift == 0 || Math.abs((long) shift) >= height) {
-          throw new RevisionGapException("screen.v2 commit contains invalid scroll");
+          throw new CommitValidationException(CommitFailure.INVALID_SCROLL);
         }
         screenScrollRows = shift;
         if (shift > 0) {
@@ -262,64 +362,124 @@ public final class RemoteTerminalModel {
       BitSet writtenRows = new BitSet(rows);
       for (ScreenRowWrite write : commit.screen.writes) {
         if (write == null || write.row < 0 || write.row >= rows || writtenRows.get(write.row)) {
-          throw new RevisionGapException("screen.v2 commit repeats or exceeds screen row");
+          throw new CommitValidationException(CommitFailure.DUPLICATE_SCREEN_ROW);
         }
         writtenRows.set(write.row);
-        TerminalLine normalized = normalizeCompleteLine(write.line, columns);
+        TerminalLine decoded =
+            decodeLineData(write.lineData, columns, stagedStyles, stagedLinks);
+        TerminalLine normalized = normalizeCompleteLine(decoded, columns);
         if (normalized == null || normalized.id <= 0 || normalized.historySeq != 0) {
-          throw new RevisionGapException("screen.v2 commit contains invalid screen line");
+          throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
         }
+        normalized = lineEditor.put(normalized);
         TerminalLine previous = stagedScreen[write.row];
         if (previous != null && previous.id == normalized.id) {
           if (normalized.version < previous.version
               || (normalized.version == previous.version && !normalized.sameContent(previous))) {
-            throw new RevisionGapException("screen.v2 commit line version/content mismatch");
+            throw new CommitValidationException(normalized.version < previous.version
+                ? CommitFailure.LINE_VERSION_REGRESSION
+                : CommitFailure.LINE_CONTENT_CONFLICT);
           }
           if (normalized.version == previous.version) normalized = previous;
         }
         stagedScreen[write.row] = normalized;
         changedRows.set(write.row);
       }
+      BitSet missingRows = (BitSet) exposedRows.clone();
+      missingRows.andNot(writtenRows);
+      if (!missingRows.isEmpty()) {
+        throw new CommitValidationException(CommitFailure.EXPOSED_ROW_MISSING);
+      }
+      Set<Long> activeLineIds = new HashSet<>(rows);
       for (TerminalLine line : stagedScreen) {
         if (line == null || line.historySeq != 0) {
-          throw new RevisionGapException("screen.v2 commit leaves incomplete screen");
+          throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
+        }
+        if (!activeLineIds.add(line.id)) {
+          throw new CommitValidationException(CommitFailure.DUPLICATE_ACTIVE_LINE_ID);
+        }
+        if (historyIndexEditor.historySeq(line.id) != null) {
+          throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
         }
       }
+    } else if (activeBufferChanged) {
+      throw new CommitValidationException(CommitFailure.INVALID_ACTIVE_BUFFER_TRANSITION);
     }
 
-    HistoryExtent oldExtent = displayExtent;
+    HistoryExtent oldExtent = targetSurface.historyIndex.extent();
     HistoryExtent nextExtent = oldExtent;
     List<TerminalLine> appendedLines = Collections.emptyList();
     PagedTerminalHistory.Editor historyEditor = null;
     if (commit.history != null) {
       if (commit.history.finalExtent == null || commit.history.appendedLines.size() > 128) {
-        throw new RevisionGapException("screen.v2 commit contains invalid history mutation");
+        throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
       }
       nextExtent = commit.history.finalExtent;
-      if (nextExtent.firstSeq < oldExtent.firstSeq
-          || nextExtent.lastSeq < oldExtent.lastSeq) {
-        throw new RevisionGapException("screen.v2 commit history extent regressed");
+      if (!activeBufferChanged && (nextExtent.firstSeq < oldExtent.firstSeq
+          || nextExtent.lastSeq < oldExtent.lastSeq)) {
+        throw new CommitValidationException(CommitFailure.HISTORY_EXTENT_REGRESSION);
       }
       appendedLines = new ArrayList<>(commit.history.appendedLines.size());
+      List<TerminalLine> suppliedLines = new ArrayList<>(commit.history.appendedLines.size());
+      for (LineData encoded : commit.history.appendedLines) {
+        suppliedLines.add(decodeLineData(encoded, columns, stagedStyles, stagedLinks));
+      }
       long previousSeq = 0;
-      for (TerminalLine line : commit.history.appendedLines) {
+      for (TerminalLine line : suppliedLines) {
         TerminalLine normalized = normalizeCompleteLine(line, columns);
         if (normalized == null || normalized.id <= 0 || normalized.historySeq <= previousSeq
             || normalized.historySeq <= oldExtent.lastSeq
             || !nextExtent.contains(normalized.historySeq)) {
-          throw new RevisionGapException("screen.v2 commit contains invalid history line");
+          throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
         appendedLines.add(normalized);
         previousSeq = normalized.historySeq;
       }
-      historyEditor = pagedHistory.edit()
+      historyEditor = targetSurface.history.edit()
           .setExtent(nextExtent.firstSeq, nextExtent.lastSeq)
           .setAvailableExtent(nextExtent.firstSeq, nextExtent.lastSeq);
+      historyIndexEditor.setExtent(nextExtent);
       try {
-        for (TerminalLine line : appendedLines) historyEditor.put(line.historySeq, line);
+        for (int i = 0; i < appendedLines.size(); i++) {
+          TerminalLine positioned = appendedLines.get(i);
+          TerminalLine canonical = lineEditor.put(positioned);
+          historyIndexEditor.bind(positioned.historySeq, canonical.id);
+          historyEditor.put(positioned.historySeq, canonical);
+        }
+        Set<Long> promotionSeqs = new HashSet<>();
+        Set<Long> promotionIds = new HashSet<>();
+        Map<Long, TerminalLine> oldActive = new java.util.HashMap<>();
+        for (TerminalLine line : screen) oldActive.put(line.id, line);
+        Set<Long> finalActive = new HashSet<>();
+        for (TerminalLine line : stagedScreen) finalActive.add(line.id);
+        for (HistoryPromotion promotion : commit.history.promotions) {
+          if (!promotionSeqs.add(promotion.historySeq)) {
+            throw new CommitValidationException(CommitFailure.DUPLICATE_HISTORY_SEQUENCE);
+          }
+          if (!promotionIds.add(promotion.lineId) || !nextExtent.contains(promotion.historySeq)) {
+            throw new CommitValidationException(CommitFailure.HISTORY_PROMOTION_CONFLICT);
+          }
+          TerminalLine held = oldActive.get(promotion.lineId);
+          if (held == null || held.version != promotion.lineVersion) {
+            throw new CommitValidationException(CommitFailure.HISTORY_PROMOTION_MISSING_LINE);
+          }
+          if (finalActive.contains(promotion.lineId)) {
+            throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
+          }
+          TerminalLine canonical = lineEditor.put(held);
+          historyIndexEditor.bind(promotion.historySeq, canonical.id);
+          historyEditor.put(promotion.historySeq, canonical);
+        }
+        for (TerminalLine line : stagedScreen) {
+          if (historyIndexEditor.historySeq(line.id) != null) {
+            throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
+          }
+        }
         historyEditor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq);
+      } catch (CommitValidationException failure) {
+        throw failure;
       } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
-        throw new RevisionGapException("screen.v2 commit history rejected", invalidHistory);
+        throw new CommitValidationException(CommitFailure.HISTORY_LINE_ID_CONFLICT, invalidHistory);
       }
     }
 
@@ -335,32 +495,90 @@ public final class RemoteTerminalModel {
     int tailAppendedLines = appendedCount > Integer.MAX_VALUE
         ? Integer.MAX_VALUE : (int) appendedCount;
 
-    if (historyEditor != null) historyEditor.commit();
-    screen = stagedScreen;
-    cursor = nextCursor;
-    modes = nextModes;
-    palette = nextPalette;
-    displayExtent = nextExtent;
-    remoteAvailableExtent = nextExtent;
-    firstAvailableHistorySeq = nextExtent.firstSeq;
-    screenRevision = commit.revision;
-    remoteScreenRevision = commit.revision;
-    projectionHealth = ProjectionHealth.complete(
-        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+    final PagedTerminalHistory.Editor stagedHistoryEditor = historyEditor;
+    final TerminalLine[] finalScreen = stagedScreen;
+    final HistoryExtent finalExtent = nextExtent;
+    final List<TerminalLine> finalAppendedLines = appendedLines;
+    final int finalScreenScrollRows = screenScrollRows;
+    final boolean historyChanged =
+        !oldExtent.equals(finalExtent) || !finalAppendedLines.isEmpty()
+            || (commit.history != null && !commit.history.promotions.isEmpty());
+    final boolean renderChanged = !changedRows.isEmpty() || finalScreenScrollRows != 0
+        || historyChanged || cursorChanged || modesChanged || paletteChanged
+        || activeBufferChanged;
+    final long expectedBaseRevision = commit.baseRevision;
+    return new StagedCommit(expectedBaseRevision, () -> {
+      if (stagedHistoryEditor != null) stagedHistoryEditor.commit();
+      Set<Long> loadedHistoryIds = targetSurface.history.snapshot().loadedLineIds();
+      historyIndexEditor.retainLineIds(loadedHistoryIds);
+      Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
+      for (TerminalLine line : finalScreen) retainedLineIds.add(line.id);
+      lineEditor.retainOnly(retainedLineIds);
+      historyIndexEditor.commit();
+      lineEditor.commit();
+      long[] activeLineIds = new long[finalScreen.length];
+      for (int row = 0; row < finalScreen.length; row++) {
+        activeLineIds[row] = finalScreen[row].id;
+      }
+      targetSurface.activeRows = new ActiveRows(activeLineIds);
+      screen = finalScreen;
+      cursor = nextCursor;
+      modes = nextModes;
+      palette = nextPalette;
+      activeBuffer = nextActiveBuffer;
+      canonicalStyles = Collections.unmodifiableMap(stagedStyles);
+      canonicalLinks = Collections.unmodifiableMap(stagedLinks);
+      displayExtent = finalExtent;
+      remoteAvailableExtent = finalExtent;
+      firstAvailableHistorySeq = finalExtent.firstSeq;
+      screenRevision = commit.revision;
+      projectionHealth = ProjectionHealth.complete(
+          instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
 
-    boolean historyChanged = !oldExtent.equals(nextExtent) || !appendedLines.isEmpty();
-    markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows,
-        historyChanged, false, cursorChanged,
-        previousCursor != null ? previousCursor.row : -1,
-        nextCursor != null ? nextCursor.row : -1,
-        paletteChanged, false, false, modesChanged, false);
-    if (historyChanged) mergeHistoryDirtyRange(appendedLines, !oldExtent.equals(nextExtent));
-    markTerminalState(false, historyChanged, false, false, tailAppendedLines, 0);
-    boolean renderChanged = !changedRows.isEmpty() || screenScrollRows != 0 || historyChanged
-        || cursorChanged || modesChanged || paletteChanged;
-    if (renderChanged) publishPendingRenderUpdate();
-    else publishProjectionReadView();
-    return renderChanged;
+      markRenderDirty(false, changedRows, finalScreenScrollRows, exposedRows, rows,
+          historyChanged, false, cursorChanged,
+          previousCursor != null ? previousCursor.row : -1,
+          nextCursor != null ? nextCursor.row : -1,
+          paletteChanged, !commit.dictionaryAdditions.styles.isEmpty(),
+          !commit.dictionaryAdditions.links.isEmpty(), modesChanged,
+          activeBufferChanged);
+      if (historyChanged) {
+        mergeHistoryDirtyRange(finalAppendedLines, !oldExtent.equals(finalExtent));
+      }
+      markTerminalState(false, historyChanged, false, false, tailAppendedLines, 0);
+      if (renderChanged) publishPendingRenderUpdate();
+      else publishProjectionReadView();
+      return renderChanged;
+    });
+  }
+
+  @FunctionalInterface
+  private interface CommitAction {
+    boolean run();
+  }
+
+  /** A validated, one-shot transaction. */
+  public final class StagedCommit {
+    private final long expectedBaseRevision;
+    private final CommitAction action;
+    private boolean committed;
+
+    private StagedCommit(long expectedBaseRevision, CommitAction action) {
+      this.expectedBaseRevision = expectedBaseRevision;
+      this.action = action;
+    }
+
+    public boolean commit() throws RevisionGapException {
+      synchronized (RemoteTerminalModel.this) {
+        if (committed) throw new IllegalStateException("StagedCommit already committed");
+        if (screenRevision != expectedBaseRevision) {
+          throw new CommitValidationException(CommitFailure.REVISION_GAP);
+        }
+        boolean changed = action.run();
+        committed = true;
+        return changed;
+      }
+    }
   }
 
   public synchronized boolean applyHistoryRange(HistoryRangeResult range, long anchorSeq) {
@@ -373,16 +591,14 @@ public final class RemoteTerminalModel {
   public synchronized boolean applyHistoryRange(
       HistoryRangeResult range, long anchorSeq, long requestedFromSeq, long requestedToSeq) {
     if (!v2Projection || range == null || !Objects.equals(instanceId, range.instanceId)
-        || layoutEpoch != range.layoutEpoch) {
+        || layoutEpoch != range.layoutEpoch
+        || (range.historyGeneration != 0 && historyGeneration != range.historyGeneration)) {
       return false;
     }
     if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
       if (!range.lines.isEmpty()) {
         throw new IllegalArgumentException("stale HistoryRange must not contain lines");
       }
-      remoteAvailableExtent = range.availableExtent;
-      staleProjection = true;
-      publishProjectionReadView();
       return false;
     }
     if (range.status == HistoryRangeResult.Status.RETRYABLE) {
@@ -421,13 +637,36 @@ public final class RemoteTerminalModel {
     }
 
     HistoryExtent previousAvailableExtent = remoteAvailableExtent;
-    PagedTerminalHistory.Editor editor = pagedHistory.edit();
+    TerminalSurface targetSurface = activeSurface();
+    PagedTerminalHistory.Editor editor = targetSurface.history.edit();
+    LineStore.Editor lineEditor = targetSurface.lineStore.edit();
+    HistoryIndex.Editor historyIndexEditor =
+        targetSurface.historyIndex.edit().setExtent(displayExtent);
     editor.setAvailableExtent(
         range.availableExtent.firstSeq, range.availableExtent.lastSeq);
     for (TerminalLine normalized : normalizedLines) {
-      editor.put(normalized.historySeq, normalized);
+      if (targetSurface.activeRows.contains(normalized.id)) {
+        throw new IllegalArgumentException("history LineID conflicts with ActiveRows");
+      }
+      long historySeq = normalized.historySeq;
+      try {
+        TerminalLine canonical = lineEditor.put(normalized);
+        historyIndexEditor.bind(historySeq, canonical.id);
+        editor.put(historySeq, canonical);
+      } catch (CommitValidationException invalidLineage) {
+        throw new IllegalArgumentException(invalidLineage.failure.name(), invalidLineage);
+      }
     }
     editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
+    Set<Long> loadedHistoryIds = targetSurface.history.snapshot().loadedLineIds();
+    historyIndexEditor.retainLineIds(loadedHistoryIds);
+    Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
+    for (int row = 0; row < targetSurface.activeRows.size(); row++) {
+      retainedLineIds.add(targetSurface.activeRows.lineIdAt(row));
+    }
+    lineEditor.retainOnly(retainedLineIds);
+    historyIndexEditor.commit();
+    lineEditor.commit();
     remoteAvailableExtent = range.availableExtent;
     markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
         false, false, false, false, false);
@@ -438,8 +677,38 @@ public final class RemoteTerminalModel {
     return true;
   }
 
-  public synchronized long streamGeneration() {
-    return streamGeneration;
+  public synchronized long dictionaryGeneration() { return dictionaryGeneration; }
+
+  public synchronized long historyGeneration() { return historyGeneration; }
+
+  /** 当前 Surface 的唯一正文存储；调用方只读。 */
+  public synchronized LineStore lineStore() {
+    return activeSurface().lineStore;
+  }
+
+  /** 当前 Surface 的 rowIndex → LineID 位置索引。 */
+  public synchronized ActiveRows activeRows() {
+    return activeSurface().activeRows;
+  }
+
+  /** 当前 Surface 已加载历史的 historySeq → LineID 位置索引。 */
+  public synchronized HistoryIndex historyIndex() {
+    return activeSurface().historyIndex;
+  }
+
+  public synchronized long contiguousHistoryTailLastSeq() {
+    if (displayExtent.isEmpty()) return 0;
+    return activeSurface().history.snapshot().lineBySeq(displayExtent.lastSeq) == null
+        ? 0 : displayExtent.lastSeq;
+  }
+
+  public synchronized long contiguousHistoryTailFirstSeq() {
+    if (displayExtent.isEmpty()) return 0;
+    PagedTerminalHistorySnapshot history = activeSurface().history.snapshot();
+    if (history.lineBySeq(displayExtent.lastSeq) == null) return 0;
+    long first = displayExtent.lastSeq;
+    while (first > displayExtent.firstSeq && history.lineBySeq(first - 1) != null) first--;
+    return first;
   }
 
   public synchronized boolean isV2Projection() {
@@ -458,31 +727,6 @@ public final class RemoteTerminalModel {
     return staleProjection;
   }
 
-  /** FROZEN 模式只更新远端水位，不改变当前显示 extent 或 screen revision。 */
-  public synchronized boolean observeTailStatus(String instanceId, long layoutEpoch,
-                                                long latestScreenRevision,
-                                                HistoryExtent latestExtent) {
-    if (!v2Projection || latestExtent == null || this.instanceId == null
-        || !this.instanceId.equals(instanceId) || this.layoutEpoch != layoutEpoch
-        || latestScreenRevision < screenRevision
-        || latestScreenRevision < remoteScreenRevision) {
-      return false;
-    }
-    remoteScreenRevision = latestScreenRevision;
-    remoteAvailableExtent = latestExtent;
-    publishProjectionReadView();
-    return true;
-  }
-
-  public synchronized long remoteScreenRevision() {
-    return remoteScreenRevision;
-  }
-
-  public synchronized boolean hasRemoteTailChanges() {
-    return remoteScreenRevision > screenRevision
-        || !remoteAvailableExtent.equals(displayExtent);
-  }
-
   /** 只能在 model executor 的完整事务边界读取，返回不可变快照。 */
   public synchronized ProjectionHealth projectionHealth() {
     return projectionHealth;
@@ -494,6 +738,108 @@ public final class RemoteTerminalModel {
       if (line.at(i) == null) return false;
     }
     return true;
+  }
+
+  private static Map<Integer, TerminalStyle> dictionaryMapStyles(List<TerminalStyle> entries) {
+    Map<Integer, TerminalStyle> result = new java.util.HashMap<>();
+    int expected = 1;
+    for (TerminalStyle entry : entries) {
+      if (entry == null || entry.id != expected++ || result.put(entry.id, entry) != null) {
+        throw new IllegalArgumentException("invalid canonical style dictionary");
+      }
+    }
+    return Collections.unmodifiableMap(result);
+  }
+
+  private static Map<Integer, Hyperlink> dictionaryMapLinks(List<Hyperlink> entries) {
+    Map<Integer, Hyperlink> result = new java.util.HashMap<>();
+    int expected = 1;
+    for (Hyperlink entry : entries) {
+      if (entry == null || entry.id != expected++ || result.put(entry.id, entry) != null) {
+        throw new IllegalArgumentException("invalid canonical link dictionary");
+      }
+    }
+    return Collections.unmodifiableMap(result);
+  }
+
+  private static void stageDictionaryAdditions(DictionaryEntries additions,
+                                                Map<Integer, TerminalStyle> styles,
+                                                Map<Integer, Hyperlink> links)
+      throws CommitValidationException {
+    int expectedStyle = styles.size() + 1;
+    for (TerminalStyle style : additions.styles) {
+      if (style == null || style.id != expectedStyle++ || styles.containsKey(style.id)) {
+        throw new CommitValidationException(CommitFailure.DICTIONARY_ID_REDEFINED);
+      }
+      styles.put(style.id, style);
+    }
+    int expectedLink = links.size() + 1;
+    for (Hyperlink link : additions.links) {
+      if (link == null || link.id != expectedLink++ || links.containsKey(link.id)) {
+        throw new CommitValidationException(CommitFailure.DICTIONARY_ID_REDEFINED);
+      }
+      links.put(link.id, link);
+    }
+  }
+
+  private static TerminalLine decodeLineData(LineData line, int columns,
+                                                Map<Integer, TerminalStyle> styles,
+                                                Map<Integer, Hyperlink> links)
+      throws CommitValidationException {
+    if (line == null || line.lineId <= 0 || line.lineVersion <= 0 || columns <= 0) {
+      throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
+    }
+    TerminalCell[] cells = new TerminalCell[columns];
+    java.util.Arrays.fill(cells, TerminalCell.EMPTY);
+    int textOffset = 0, metaOffset = 0, col = 0, spanIndex = 0;
+    try {
+      while (metaOffset < line.glyphMeta.length) {
+        long value = 0; int shift = 0;
+        while (true) {
+          if (metaOffset >= line.glyphMeta.length || shift >= 64) throw new IllegalArgumentException();
+          int b = line.glyphMeta[metaOffset++] & 0xff;
+          value |= (long) (b & 0x7f) << shift;
+          if ((b & 0x80) == 0) break;
+          shift += 7;
+        }
+        int length = (int) (value >>> 1);
+        int width = (value & 1L) == 0 ? 1 : 2;
+        if (length <= 0 || textOffset + length > line.utf8Text.length || col + width > columns) {
+          throw new IllegalArgumentException();
+        }
+        java.nio.charset.CharsetDecoder decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
+        String text = decoder.decode(java.nio.ByteBuffer.wrap(line.utf8Text, textOffset, length)).toString();
+        textOffset += length;
+        while (spanIndex < line.styleSpans.size()
+            && line.styleSpans.get(spanIndex).endCol <= col) spanIndex++;
+        LineData.Span span = spanIndex < line.styleSpans.size()
+            && line.styleSpans.get(spanIndex).startCol <= col
+            && line.styleSpans.get(spanIndex).endCol >= col + width
+            ? line.styleSpans.get(spanIndex) : null;
+        TerminalStyle style = null;
+        Hyperlink link = null;
+        if (span != null && span.styleId != 0) {
+          style = styles.get(span.styleId);
+          if (style == null) throw new CommitValidationException(CommitFailure.UNKNOWN_STYLE_ID);
+        }
+        if (span != null && span.linkId != 0) {
+          link = links.get(span.linkId);
+          if (link == null) throw new CommitValidationException(CommitFailure.UNKNOWN_LINK_ID);
+        }
+        cells[col] = width == 1 && " ".equals(text) && style == null && link == null
+            ? TerminalCell.EMPTY : new TerminalCell(text, (byte) width, style, link);
+        if (width == 2) cells[col + 1] = TerminalCell.SPACER;
+        col += width;
+      }
+      if (textOffset != line.utf8Text.length) throw new IllegalArgumentException();
+    } catch (CommitValidationException failure) {
+      throw failure;
+    } catch (Exception invalid) {
+      throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA, invalid);
+    }
+    return new TerminalLine(line.lineId, line.lineVersion, line.historySeq, line.wrapped, cells);
   }
 
   public RenderSnapshot renderSnapshot() {
@@ -550,31 +896,31 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized int historySize() {
-    return pagedHistory.snapshot().size();
+    return activeSurface().history.snapshot().size();
   }
 
   public synchronized long firstCachedHistorySeq() {
-    return pagedHistory.snapshot().firstLoadedSeq();
+    return activeSurface().history.snapshot().firstLoadedSeq();
   }
 
   public synchronized long historyBytes() {
-    return pagedHistory.snapshot().estimatedByteCount();
+    return activeSurface().history.snapshot().estimatedByteCount();
   }
 
   synchronized long loadedHistoryLineCountForTest() {
-    return pagedHistory.snapshot().loadedLineCount();
+    return activeSurface().history.snapshot().loadedLineCount();
   }
 
   synchronized int residentHistoryPageCountForTest() {
-    return pagedHistory.residentPageCountForTest();
+    return activeSurface().history.residentPageCountForTest();
   }
 
   synchronized int loadedLineIdentityCountForTest() {
-    return (screen == null ? 0 : screen.length) + pagedHistory.loadedLineIdentityCountForTest();
+    return (screen == null ? 0 : screen.length) + activeSurface().history.loadedLineIdentityCountForTest();
   }
 
   synchronized Long loadedHistorySeqForLineIdForTest(long lineId) {
-    return pagedHistory.historySeqByLineId(lineId);
+    return activeSurface().history.historySeqByLineId(lineId);
   }
 
   boolean renderPublicationPendingForTest() {
@@ -651,7 +997,7 @@ public final class RemoteTerminalModel {
    * 文本密集型行不明显低估；空白填充行高估，可接受。
    * 对象布局与 Go 侧不同，两侧各自校准，不要求数值一致。
    */
-  private static long estimateHistoryLineBytes(TerminalLine line) {
+  static long estimateHistoryLineBytesForStore(TerminalLine line) {
     if (line == null) return 0;
     long bytes = 48 + line.cells.length * 4L;
     for (TerminalCell cell : line.cells) {
@@ -739,6 +1085,8 @@ public final class RemoteTerminalModel {
    */
   private void publishPendingRenderUpdate() {
     if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return;
+    long publicationStartedNanos = System.nanoTime();
+    try {
     RenderDirtyState currentDirty = pendingRenderDirty;
     TerminalStateUpdate currentState = pendingTerminalState;
     pendingRenderDirty = new RenderDirtyState();
@@ -760,6 +1108,10 @@ public final class RemoteTerminalModel {
       return new RenderPublication(version,
           new RenderUpdate(currentSnapshot, mergedDirty, mergedState));
     });
+    } finally {
+      TerminalRenderMetrics.renderPublicationDuration(
+          System.nanoTime() - publicationStartedNanos);
+    }
   }
 
   private void publishRenderSnapshot(RenderDirtyState dirty) {
@@ -771,10 +1123,14 @@ public final class RemoteTerminalModel {
         || dirty.screenScrollRows != 0 || !dirty.exposedScreenRows.isEmpty();
     TerminalLine[] screenCopy = screenChanged && screen != null ? screen.clone() : previous.screen;
     TerminalHistoryView historySnapshot = dirty.historyChanged || dirty.fullInvalidate
-        ? pagedHistory.snapshot()
+        ? activeSurface().history.snapshot()
         : previous.history;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
-        activeBuffer, screenCopy, historySnapshot, cursor, modes, palette,
+        activeBuffer, screenCopy, historySnapshot,
+        UnifiedContentAxis.build(
+            activeSurface().history.snapshot(),
+            activeSurface().activeRows, activeSurface().lineStore),
+        cursor, modes, palette,
         firstAvailableHistorySeq,
         hasMoreHistoryBefore);
     publishProjectionReadView();
@@ -801,6 +1157,8 @@ public final class RemoteTerminalModel {
     public final TerminalLine[] screen;
     /** Segmented immutable history snapshot for indexed rendering. */
     public final TerminalHistoryView history;
+    /** 历史、缺失占位和 ActiveRows 组成的单一纵向坐标空间。 */
+    public final UnifiedContentAxis contentAxis;
     public final TerminalCursor cursor;
     public final TerminalModes modes;
     public final TerminalPalette palette;
@@ -810,6 +1168,7 @@ public final class RemoteTerminalModel {
     private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision, int rows,
                            int columns, TerminalBufferKind activeBuffer,
                            TerminalLine[] screen, TerminalHistoryView history,
+                           UnifiedContentAxis contentAxis,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                            long firstAvailableHistorySeq,
                            boolean hasMoreHistoryBefore) {
@@ -821,6 +1180,7 @@ public final class RemoteTerminalModel {
       this.activeBuffer = activeBuffer;
       this.screen = screen;
       this.history = history;
+      this.contentAxis = contentAxis;
       this.cursor = cursor;
       this.modes = modes;
       this.palette = palette;
@@ -830,12 +1190,12 @@ public final class RemoteTerminalModel {
 
     private static RenderSnapshot empty() {
       return new RenderSnapshot(null, 0, 0, 0, 0, TerminalBufferKind.MAIN, null,
-          TerminalHistorySnapshot.empty(), TerminalCursor.hidden(),
+          TerminalHistorySnapshot.empty(), UnifiedContentAxis.empty(), TerminalCursor.hidden(),
           TerminalModes.defaults(), TerminalPalette.defaults(), 0, false);
     }
   }
 
-  public static final class RevisionGapException extends Exception {
+  public static class RevisionGapException extends Exception {
     public RevisionGapException(String message) {
       super(message);
     }

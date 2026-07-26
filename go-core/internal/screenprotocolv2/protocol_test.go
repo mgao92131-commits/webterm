@@ -11,7 +11,7 @@ import (
 func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T) {
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FrameSnapshot, SessionID: "s1", InstanceID: "i1",
-		Epoch: 3, Seq: 9, Rows: 1, Cols: 2,
+		Epoch: 3, Seq: 9, Rows: 1, Cols: 2, DictionaryGeneration: 5, HistoryGeneration: 7,
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: 4,
 			LastIncludedHistorySeq:   3,
@@ -32,13 +32,13 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 		t.Fatal(err)
 	}
 	baseline := env.GetBaseline()
-	if env.GetProtocolVersion() != 2 || baseline.GetStreamGeneration() != 5 {
-		t.Fatalf("version/generation = %d/%d", env.GetProtocolVersion(), baseline.GetStreamGeneration())
+	if env.GetProtocolVersion() != 2 || baseline.GetDictionaryGeneration() != 5 || baseline.GetHistoryGeneration() != 7 {
+		t.Fatalf("version/dictionary/history generation = %d/%d/%d", env.GetProtocolVersion(), baseline.GetDictionaryGeneration(), baseline.GetHistoryGeneration())
 	}
 	if got := baseline.GetHistoryExtent(); got.GetFirstSeq() != 4 || got.GetLastSeq() != 3 {
 		t.Fatalf("empty extent = %d..%d, want 4..3", got.GetFirstSeq(), got.GetLastSeq())
 	}
-	if baseline.GetScreenLines()[0].GetRuns()[0].GetCells()[0].GetText() != "x" {
+	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x " {
 		t.Fatal("baseline line content was not encoded")
 	}
 }
@@ -53,7 +53,7 @@ func TestHandlerValidatesClosedHistoryRange(t *testing.T) {
 		Payload: &pb.ScreenEnvelope_HistoryRangeRequest{
 			HistoryRangeRequest: &pb.HistoryRangeRequest{
 				RequestId: "r1", InstanceId: "i1", LayoutEpoch: 2,
-				FromSeq: 10, ToSeq: 20,
+				FromSeq: 10, ToSeq: 20, HistoryGeneration: 1,
 			},
 		},
 	}
@@ -71,23 +71,23 @@ func TestHandlerValidatesClosedHistoryRange(t *testing.T) {
 	}
 }
 
-func TestHandlerRequiresExplicitFrozenIdentity(t *testing.T) {
+func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	env := &pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "c1", StreamGeneration: 1,
-			DesiredMode:         pb.ScreenStreamMode_SCREEN_STREAM_MODE_FROZEN,
-			HasFrozenProjection: true,
-			DesiredGeometry:     &pb.Geometry{Rows: 24, Cols: 80},
+			ClientInstanceId: "c1",
+			Resume: &pb.ResumeToken{InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 2,
+				DictionaryGeneration: 1, HistoryGeneration: 1, ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN},
+			DesiredGeometry: &pb.Geometry{Rows: 24, Cols: 80},
 		}},
 	}
 	wire, _ := proto.Marshal(env)
 	if err := NewHandler().HandleMessage(wire); err == nil {
-		t.Fatal("frozen projection without instance/epoch must be rejected")
+		t.Fatal("resume token without active rows must be rejected")
 	}
 }
 
-func TestCommitDictionaryIsMessageLocalAndOnlyContainsReferencedEntries(t *testing.T) {
+func TestCommitCarriesCanonicalDictionaryAdditions(t *testing.T) {
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
 		BaseRevision: 4, Seq: 5, Rows: 1, Cols: 1,
@@ -107,17 +107,18 @@ func TestCommitDictionaryIsMessageLocalAndOnlyContainsReferencedEntries(t *testi
 	if err := proto.Unmarshal(wire, &env); err != nil {
 		t.Fatal(err)
 	}
-	styles := env.GetTerminalCommit().GetDictionary().GetStyles()
-	if len(styles) != 1 || styles[0].GetId() != 5 {
-		t.Fatalf("commit dictionary styles = %+v, want only id 5", styles)
+	styles := env.GetTerminalCommit().GetDictionaryAdditions().GetStyles()
+	if len(styles) != 2 || styles[0].GetId() != 5 || styles[1].GetId() != 6 {
+		t.Fatalf("commit dictionary additions = %+v, want ids 5 and 6", styles)
 	}
 }
 
 func TestEncodeRetryableHistoryRangeCarriesBackoff(t *testing.T) {
 	wire, err := EncodeHistoryRangeResponse("r1", "i1", 2, terminalengine.HistoryRangeData{
-		Status:       terminalengine.HistoryRangeRetryable,
-		Extent:       terminalengine.HistoryExtent{FirstSeq: 10, LastSeq: 20},
-		RetryAfterMS: 375,
+		Status:            terminalengine.HistoryRangeRetryable,
+		Extent:            terminalengine.HistoryExtent{FirstSeq: 10, LastSeq: 20},
+		RetryAfterMS:      375,
+		HistoryGeneration: 9,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +202,7 @@ func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T
 	}
 }
 
-func TestEncodeTerminalCommitBoundsHistoryBodiesButKeepsExtent(t *testing.T) {
+func TestEncodeTerminalCommitDoesNotSilentlyTruncateDerivedHistoryBodies(t *testing.T) {
 	lines := make([]terminalengine.Line, 200)
 	for i := range lines {
 		lines[i] = terminalengine.Line{ID: uint64(i + 1), Version: 1, HistorySeq: uint64(i + 1)}
@@ -223,8 +224,8 @@ func TestEncodeTerminalCommitBoundsHistoryBodiesButKeepsExtent(t *testing.T) {
 		t.Fatal(err)
 	}
 	history := env.GetTerminalCommit().GetHistory()
-	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetAppendedLines()) != 128 {
-		t.Fatalf("bounded history=%d extent=%d, want 128/10000",
+	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetAppendedLines()) != 200 {
+		t.Fatalf("encoded history=%d extent=%d, want 200/10000",
 			len(history.GetAppendedLines()), history.GetFinalExtent().GetLastSeq())
 	}
 }

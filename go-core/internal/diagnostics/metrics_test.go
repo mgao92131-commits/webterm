@@ -18,7 +18,6 @@ func TestAgentMetricsCounters(t *testing.T) {
 		"muxChannelOpenedCount":    3,
 		"screenEncodeFailureCount": 5,
 		"relayDisconnectCount":     0,
-		"snapshotFallbackCount":    0,
 		"writerQueueRejectedCount": 0,
 	}
 	for key, want := range checks {

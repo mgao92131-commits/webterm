@@ -10,15 +10,13 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
-  reserved 4, 5, 18;
+  reserved 4, 5, 8, 9, 18;
 
   oneof payload {
     Hello hello = 2;
     Baseline baseline = 3;
     HistoryRangeRequest history_range_request = 6;
     HistoryRangeResponse history_range_response = 7;
-    SetStreamMode set_stream_mode = 8;
-    TailStatus tail_status = 9;
     AcquireLayout acquire_layout = 10;
     LayoutLease layout_lease = 11;
     ReleaseLayout release_layout = 12;
@@ -31,28 +29,43 @@ message ScreenEnvelope {
     Ping ping = 20;
     Pong pong = 21;
     TerminalCommit terminal_commit = 22;
+    ResumeAccepted resume_accepted = 23;
   }
-}
-
-enum ScreenStreamMode {
-  SCREEN_STREAM_MODE_UNSPECIFIED = 0;
-  SCREEN_STREAM_MODE_LIVE = 1;
-  SCREEN_STREAM_MODE_FROZEN = 2;
 }
 
 message Hello {
   string client_instance_id = 1;
-  ScreenStreamMode desired_mode = 2;
-  uint64 stream_generation = 3; // >=1
-  string instance_id = 4;       // 本地冻结投影身份；冷启动为空
-  uint64 layout_epoch = 5;
-  bool has_frozen_projection = 6;
+  reserved 2, 3, 5, 6;
+  ResumeToken resume = 4;
   Geometry desired_geometry = 7;
+  uint32 cold_history_tail_lines = 8;
 }
 
-message SetStreamMode {
-  ScreenStreamMode mode = 1;
-  uint64 stream_generation = 2;
+message ResumeScreenLine {
+  uint64 line_id = 1;
+  uint64 line_version = 2;
+}
+
+message ResumeToken {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 screen_revision = 3;
+  uint64 dictionary_generation = 4;
+  uint64 history_generation = 5;
+  uint64 contiguous_history_tail_last_seq = 6;
+  BufferKind active_buffer = 7;
+  repeated ResumeScreenLine active_rows = 8;
+  // Inclusive start of the recent, locally contiguous history tail.
+  uint64 contiguous_history_tail_first_seq = 9;
+}
+
+message ResumeAccepted {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 screen_revision = 3;
+  uint64 dictionary_generation = 4;
+  uint64 history_generation = 5;
+  HistoryExtent history_extent = 6;
 }
 
 message Geometry {
@@ -87,7 +100,7 @@ message Baseline {
   string instance_id = 2;
   uint64 layout_epoch = 3;
   uint64 screen_revision = 4;
-  uint64 stream_generation = 5;
+  reserved 5;
   Geometry geometry = 6;
   BufferKind active_buffer = 7;
   HistoryExtent history_extent = 8;
@@ -98,14 +111,21 @@ message Baseline {
   Modes modes = 13;
   TerminalPalette palette = 14;
   Dictionary dictionary = 15;
-  reserved 16, 17;
+  uint64 dictionary_generation = 16;
+  uint64 history_generation = 17;
+  BaselineHistoryPolicy history_policy = 18;
+}
+
+enum BaselineHistoryPolicy {
+  BASELINE_HISTORY_POLICY_RESET = 0;
+  BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE = 1;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。
 message TerminalCommit {
   string instance_id = 1;
   uint64 layout_epoch = 2;
-  uint64 stream_generation = 3;
+  reserved 3;
   uint64 base_revision = 4;
   uint64 revision = 5;
   ScreenMutation screen = 6;
@@ -113,7 +133,10 @@ message TerminalCommit {
   Cursor cursor = 8;
   Modes modes = 9;
   TerminalPalette palette = 10;
-  Dictionary dictionary = 11;
+  Dictionary dictionary_additions = 11;
+  optional BufferKind active_buffer = 12;
+  uint64 dictionary_generation = 13;
+  uint64 history_generation = 14;
 }
 
 message ScreenMutation {
@@ -135,6 +158,13 @@ message ScreenRowWrite {
 message HistoryMutation {
   HistoryExtent final_extent = 1;
   repeated LineData appended_lines = 2;
+  repeated HistoryPromotion promotions = 3;
+}
+
+message HistoryPromotion {
+  uint64 line_id = 1;
+  uint64 line_version = 2;
+  uint64 history_seq = 3;
 }
 
 enum HistoryRangeStatus {
@@ -151,6 +181,7 @@ message HistoryRangeRequest {
   uint64 layout_epoch = 3;
   uint64 from_seq = 4;
   uint64 to_seq = 5; // 闭区间，最多 256 行
+  uint64 history_generation = 6;
 }
 
 message HistoryRangeResponse {
@@ -162,16 +193,7 @@ message HistoryRangeResponse {
   repeated LineData lines = 6;
   Dictionary dictionary = 7;
   uint32 retry_after_ms = 8;
-}
-
-message TailStatus {
-  string instance_id = 1;
-  uint64 layout_epoch = 2;
-  uint64 stream_generation = 3;
-  uint64 latest_screen_revision = 4;
-  HistoryExtent latest_history_extent = 5;
-  bool exited = 6;
-  int32 exit_code = 7;
+  uint64 history_generation = 9;
 }
 
 message ScreenLayout {
@@ -182,28 +204,16 @@ message LineData {
   uint64 line_id = 1;
   uint64 line_version = 2;
   bool wrapped = 3;
-  string text = 4;
+  bytes utf8_text = 4;
   repeated StyleSpan style_spans = 5;
-  repeated CellRun runs = 6;
+  reserved 6;
   uint64 history_seq = 7;
-  bytes cell_meta = 8;
+  bytes glyph_meta = 8;
 }
 
 message StyleSpan {
   int32 start_col = 1;
   int32 end_col = 2;
-  uint32 style_id = 3;
-  uint32 link_id = 4;
-}
-
-message CellRun {
-  int32 col = 1;
-  repeated Cell cells = 2;
-}
-
-message Cell {
-  string text = 1;
-  uint32 width = 2;
   uint32 style_id = 3;
   uint32 link_id = 4;
 }

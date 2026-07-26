@@ -49,8 +49,8 @@ type Limits struct {
 // 防止恶意/异常请求撑爆 Agent 内存或现场包体积。
 const (
 	HardMaxDuration          = 60 * time.Second
-	HardMaxPTYBytes          = 4 << 20  // 4 MiB
-	HardMaxAgentWireBytes    = 8 << 20  // 8 MiB
+	HardMaxPTYBytes          = 4 << 20 // 4 MiB
+	HardMaxAgentWireBytes    = 8 << 20 // 8 MiB
 	HardMaxStructuredFrames  = 512
 	HardMaxCanonicalFrames   = 32
 	HardMaxWireFrames        = 512
@@ -196,7 +196,7 @@ type Sink interface {
 	RecordPTY(terminalInstanceID string, rec PTYRecord)
 	// RecordCanonical 在正常 ExportState 返回后记录完整权威帧（持不可变引用）。
 	RecordCanonical(terminalInstanceID string, rec CanonicalRecord)
-	// RecordDerived 在正常 FrameForState 返回后记录客户端派生帧。
+	// RecordDerived 在正常 DeriveForState 返回后记录客户端派生帧。
 	RecordDerived(terminalInstanceID string, rec DerivedRecord)
 	// RecordWire 在正常编码成功后记录 wire bytes，返回用于补写写状态的 handle。
 	RecordWire(terminalInstanceID string, rec WireRecord) WriteHandle

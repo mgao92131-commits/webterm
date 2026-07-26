@@ -3,19 +3,16 @@ package com.webterm.feature.terminal.domain;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
 
-import com.webterm.terminal.model.HistoryMutation;
-import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
@@ -27,7 +24,6 @@ import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.TerminalViewportState.ContentStreamIntent;
 
 import java.util.Collections;
 
@@ -55,136 +51,24 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void freezesOnlyAtExactLiveScreenExitBoundaryAndOnlyOnce() {
-    controller.onScrollPixels(1, 2_000, 720);
-    assertFalse(viewport.followTail);
-    assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
-    verify(runtime, never()).freezeStream();
-
-    controller.onScrollPixels(647, 2_000, 720);
-    assertEquals(648, viewport.scrollOffsetPixels);
-    assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
-    verify(runtime, never()).freezeStream();
-
-    controller.onScrollPixels(71, 2_000, 720);
-    assertEquals(719, viewport.scrollOffsetPixels);
-    verify(runtime, never()).freezeStream();
-
-    controller.onScrollPixels(1, 2_000, 720);
-    assertTrue(viewport.isPureHistory(720));
-    assertEquals(ContentStreamIntent.FROZEN_HISTORY, viewport.contentStreamIntent);
-    verify(runtime, times(1)).freezeStream();
-
-    controller.onScrollPixels(200, 2_000, 720);
-    verify(runtime, times(1)).freezeStream();
-  }
-
-  @Test
-  public void shortHistoryCanNeverFreeze() {
-    controller.onScrollPixels(600, 600, 720);
-
-    assertFalse(viewport.isPureHistory(720));
-    assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
-    verify(runtime, never()).freezeStream();
-  }
-
-  @Test
-  public void firstDownwardMovementRequestsLiveAndReverseCanFreezeAgain() {
-    controller.onScrollPixels(900, 2_000, 720);
-    assertEquals(ContentStreamIntent.FROZEN_HISTORY, viewport.contentStreamIntent);
-    reset(runtime);
-    when(runtime.model()).thenReturn(new RemoteTerminalModel());
-
-    controller.onScrollPixels(-1, 2_000, 720);
-    assertEquals(ContentStreamIntent.RETURNING_LIVE, viewport.contentStreamIntent);
-    assertEquals(899, viewport.scrollOffsetPixels);
-    verify(runtime, times(1)).resumeLiveStream();
-    verify(runtime, never()).freezeStream();
-
-    // Baseline 到达期间 viewport 仍在纯历史区；RETURNING_LIVE 不会自行回冻。
-    assertTrue(viewport.isPureHistory(720));
-    assertEquals(ContentStreamIntent.RETURNING_LIVE, viewport.contentStreamIntent);
-
-    controller.onScrollPixels(1, 2_000, 720);
-    assertEquals(ContentStreamIntent.FROZEN_HISTORY, viewport.contentStreamIntent);
-    verify(runtime, times(1)).freezeStream();
-  }
-
-  @Test
-  public void returningCrossesIntoVisibleLiveScreenAndBottomIsAutomaticallyLive() {
+  public void scrollCallbackNeverTouchesRuntimeOrOwnsViewportGeometry() {
+    clearInvocations(runtime);
     controller.onScrollPixels(800, 2_000, 720);
-    controller.onScrollPixels(-1, 2_000, 720);
-    controller.onScrollPixels(-80, 2_000, 720);
 
-    assertFalse(viewport.isPureHistory(720));
-    assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
-    assertFalse(viewport.followTail);
-
-    // 向下滚动到底部 (scrollOffsetPixels 归零)
-    controller.onScrollPixels(-719, 2_000, 720);
-    assertEquals(0, viewport.scrollOffsetPixels);
-    assertTrue(viewport.followTail);
-    assertEquals(ContentStreamIntent.LIVE, viewport.contentStreamIntent);
-    verify(runtime, times(2)).resumeLiveStream();
+    assertTrue(viewport.isFollowTail(TerminalBufferKind.MAIN));
+    verifyNoInteractions(runtime);
   }
 
   @Test
-  public void inputResumesContentWithoutForcingViewportToBottom() {
-    controller.onScrollPixels(800, 2_000, 720);
-    reset(runtime);
-    when(runtime.model()).thenReturn(new RemoteTerminalModel());
-
+  public void inputDoesNotMoveViewportOrWaitForReturnToTail() {
+    viewport.anchorLine(TerminalBufferKind.MAIN, 42, -3);
     controller.sendText("x");
 
-    assertEquals(800, viewport.scrollOffsetPixels);
-    assertEquals(ContentStreamIntent.RETURNING_LIVE, viewport.contentStreamIntent);
-    verify(runtime).resumeLiveStream();
+    assertFalse(viewport.isFollowTail(TerminalBufferKind.MAIN));
+    assertEquals(42,
+        ((com.webterm.terminal.model.ViewportPosition.LineAnchor)
+            viewport.position(TerminalBufferKind.MAIN)).lineId);
     verify(runtime).sendTextInput("x");
-  }
-
-  @Test
-  public void restoredAnchorCanAutoFreezeLiveButNeverReturningLive() throws Exception {
-    RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(baseline()));
-    when(runtime.model()).thenReturn(model);
-    LifecycleOwner owner = mock(LifecycleOwner.class);
-    Lifecycle lifecycle = mock(Lifecycle.class);
-    when(owner.getLifecycle()).thenReturn(lifecycle);
-    controller.attach(owner, new TerminalScreenController.View() {
-      @Override public void bindModel(RemoteTerminalModel ignored) {}
-      @Override public void render(RenderUpdate update, TerminalViewportState ignored) {}
-      @Override public void onCursorChanged() {}
-      @Override public void requestInvalidate() {}
-      @Override public void restoreHistoryAnchor(RemoteTerminalModel.RenderSnapshot snapshot, long historySeq, int pixelOffset) {
-        viewport.scrollOffsetPixels = 720;
-        viewport.followTail = false;
-      }
-      @Override public int liveScreenExitOffsetPixels() { return 720; }
-    });
-    controller.onRenderNeeded(); // consume Baseline and its geometry reset
-    reset(runtime);
-    when(runtime.model()).thenReturn(model);
-    when(runtime.consumeRenderUpdate(controller)).thenAnswer(
-        ignored -> runtime.model().consumeRenderUpdate());
-
-    viewport.scrollBy(600, 2_000);
-    viewport.setHistoryAnchor(1, 0);
-    assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 1, 2, null,
-        new HistoryMutation(new HistoryExtent(1, 1), Collections.emptyList()), null, null, null)));
-    controller.onRenderNeeded();
-
-    assertEquals(ContentStreamIntent.FROZEN_HISTORY, viewport.contentStreamIntent);
-    verify(runtime, times(1)).freezeStream();
-
-    viewport.markReturningLive();
-    assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 2, 3, null,
-        new HistoryMutation(new HistoryExtent(1, 2), Collections.emptyList()), null, null, null)));
-    controller.onRenderNeeded();
-
-    assertEquals(ContentStreamIntent.RETURNING_LIVE, viewport.contentStreamIntent);
-    verify(runtime, times(1)).freezeStream();
   }
 
   @Test
@@ -302,7 +186,7 @@ public final class TerminalScreenControllerTest {
     TerminalLine screen = new TerminalLine(
         1000, 1, 0, false, new TerminalCell[] {TerminalCell.EMPTY});
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, 1,
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1,
         TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
         Collections.emptyList(),

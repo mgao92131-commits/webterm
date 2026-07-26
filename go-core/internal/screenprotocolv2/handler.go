@@ -14,7 +14,6 @@ const (
 
 type Handler struct {
 	onHello         func(*pb.Hello)
-	onSetStreamMode func(*pb.SetStreamMode)
 	onHistoryRange  func(*pb.HistoryRangeRequest)
 	onInput         func(*pb.TerminalInput)
 	onResize        func(*pb.Resize)
@@ -28,9 +27,6 @@ type HandlerOption func(*Handler)
 
 func WithHelloCallback(fn func(*pb.Hello)) HandlerOption {
 	return func(h *Handler) { h.onHello = fn }
-}
-func WithSetStreamModeCallback(fn func(*pb.SetStreamMode)) HandlerOption {
-	return func(h *Handler) { h.onSetStreamMode = fn }
 }
 func WithHistoryRangeCallback(fn func(*pb.HistoryRangeRequest)) HandlerOption {
 	return func(h *Handler) { h.onHistoryRange = fn }
@@ -81,14 +77,6 @@ func (h *Handler) HandleMessage(data []byte) error {
 		if h.onHello != nil {
 			h.onHello(payload.Hello)
 		}
-	case *pb.ScreenEnvelope_SetStreamMode:
-		if payload.SetStreamMode.GetStreamGeneration() < 1 ||
-			payload.SetStreamMode.GetMode() == pb.ScreenStreamMode_SCREEN_STREAM_MODE_UNSPECIFIED {
-			return fmt.Errorf("invalid stream mode request")
-		}
-		if h.onSetStreamMode != nil {
-			h.onSetStreamMode(payload.SetStreamMode)
-		}
 	case *pb.ScreenEnvelope_HistoryRangeRequest:
 		if err := validateRange(payload.HistoryRangeRequest); err != nil {
 			return err
@@ -137,14 +125,27 @@ func (h *Handler) HandleMessage(data []byte) error {
 }
 
 func validateHello(hello *pb.Hello) error {
-	if hello == nil || hello.GetClientInstanceId() == "" ||
-		hello.GetStreamGeneration() < 1 ||
-		hello.GetDesiredMode() == pb.ScreenStreamMode_SCREEN_STREAM_MODE_UNSPECIFIED {
+	if hello == nil || hello.GetClientInstanceId() == "" {
 		return fmt.Errorf("invalid screen.v2 hello")
 	}
-	if hello.GetHasFrozenProjection() &&
-		(hello.GetInstanceId() == "" || hello.GetLayoutEpoch() < 1) {
-		return fmt.Errorf("invalid frozen projection identity")
+	if resume := hello.GetResume(); resume != nil {
+		if resume.GetInstanceId() == "" || resume.GetLayoutEpoch() < 1 ||
+			resume.GetScreenRevision() < 1 || resume.GetDictionaryGeneration() < 1 ||
+			resume.GetHistoryGeneration() < 1 ||
+			resume.GetActiveBuffer() == pb.BufferKind_BUFFER_KIND_UNSPECIFIED ||
+			len(resume.GetActiveRows()) == 0 {
+			return fmt.Errorf("invalid resume token")
+		}
+		seen := make(map[uint64]struct{}, len(resume.GetActiveRows()))
+		for _, line := range resume.GetActiveRows() {
+			if line.GetLineId() == 0 || line.GetLineVersion() == 0 {
+				return fmt.Errorf("invalid resume active row")
+			}
+			if _, exists := seen[line.GetLineId()]; exists {
+				return fmt.Errorf("duplicate resume active row")
+			}
+			seen[line.GetLineId()] = struct{}{}
+		}
 	}
 	if geometry := hello.GetDesiredGeometry(); geometry != nil &&
 		(geometry.GetCols() < 10 || geometry.GetCols() > 500 ||
@@ -156,7 +157,7 @@ func validateHello(hello *pb.Hello) error {
 
 func validateRange(request *pb.HistoryRangeRequest) error {
 	if request == nil || request.GetRequestId() == "" || request.GetInstanceId() == "" ||
-		request.GetLayoutEpoch() < 1 || request.GetFromSeq() < 1 ||
+		request.GetLayoutEpoch() < 1 || request.GetHistoryGeneration() < 1 || request.GetFromSeq() < 1 ||
 		request.GetToSeq() < request.GetFromSeq() {
 		return fmt.Errorf("invalid history range")
 	}

@@ -146,12 +146,13 @@ type HistoryWindow struct {
 }
 
 type HistoryRangeData struct {
-	Status       HistoryRangeStatus
-	Extent       HistoryExtent
-	Lines        []Line
-	Styles       []TerminalStyle
-	Links        []Hyperlink
-	RetryAfterMS uint32
+	Status            HistoryRangeStatus
+	Extent            HistoryExtent
+	Lines             []Line
+	Styles            []TerminalStyle
+	Links             []Hyperlink
+	RetryAfterMS      uint32
+	HistoryGeneration uint64
 }
 
 // ScreenScroll 是 Commit 内可选的全屏连续滚动压缩描述。
@@ -191,11 +192,12 @@ type ScreenFrame struct {
 	Modes             Modes
 	// CursorChanged/ModesChanged/PaletteChanged are patch-only presence flags.
 	// Snapshots always carry all three components so they remain independently usable.
-	CursorChanged  bool
-	ModesChanged   bool
-	PaletteChanged bool
-	History        HistoryWindow
-	Screen         []Line
+	CursorChanged       bool
+	ModesChanged        bool
+	PaletteChanged      bool
+	ActiveBufferChanged bool
+	History             HistoryWindow
+	Screen              []Line
 	// ScreenScroll 是 patch/commit 的可选全屏滚动描述；Screen 中的行按 Row 写入。
 	ScreenScroll *ScreenScroll
 	// Layout is patch-only presence data. Snapshot layout is always derived from
@@ -220,6 +222,20 @@ type ScreenFrame struct {
 	// snapshot instead of a patch referencing dictionary IDs the client never
 	// received.
 	DictionaryGeneration uint64
+	// HistoryGeneration 标识 historySeq -> LineID lineage；同一 generation 内只追加/trim。
+	HistoryGeneration uint64
+	// HistoryPromotions 把客户端旧 ActiveRows 中已持有的正文绑定到正式 historySeq。
+	HistoryPromotions []HistoryPromotion
+	// ScrollbackEntryage 是仅供派生器证明 promotion 的无正文索引，不编码到 wire。
+	ScrollbackEntryage []HistoryPromotion
+	// PreserveCompatibleHistory 仅用于 Baseline：屏幕重建时保留兼容的本地历史页。
+	PreserveCompatibleHistory bool
+}
+
+type HistoryPromotion struct {
+	LineID      uint64
+	LineVersion uint64
+	HistorySeq  uint64
 }
 
 type EffectKind uint8

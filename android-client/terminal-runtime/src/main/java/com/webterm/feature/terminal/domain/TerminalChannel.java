@@ -112,20 +112,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public boolean beginSync(long streamGeneration,
-                           @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
-                           @Nullable String instanceId, long layoutEpoch,
-                           boolean hasFrozenProjection) {
-    return sendHello(streamGeneration, desiredMode, instanceId, layoutEpoch,
-        hasFrozenProjection);
-  }
-
-  @Override
-  public boolean setStreamMode(long streamGeneration,
-                               @NonNull TerminalScreenV2Proto.ScreenStreamMode mode) {
-    if (deviceConnection == null || channelId == null) return false;
-    return deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.setStreamMode(mode, streamGeneration), true);
+  public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+    return sendHello(resume);
   }
 
   @Override
@@ -218,16 +206,17 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
   @Override
   public boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
-                                     long layoutEpoch, long fromSeq, long toSeq) {
+                                     long layoutEpoch, long historyGeneration,
+                                     long fromSeq, long toSeq) {
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(channelId,
         ScreenMessageV2Builder.historyRange(
-            requestId, instanceId, layoutEpoch, fromSeq, toSeq), true);
+            requestId, instanceId, layoutEpoch, historyGeneration, fromSeq, toSeq), true);
   }
 
   @Override
   public void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {
-    // v2 没有独立 ResyncRequest；Runtime 通过新 stream generation 切回 LIVE 获取 Baseline。
+    requestReconnect(reason);
   }
 
   @Override
@@ -323,15 +312,11 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     });
   }
 
-  private boolean sendHello(long streamGeneration,
-                            @NonNull TerminalScreenV2Proto.ScreenStreamMode desiredMode,
-                            @Nullable String instanceId, long layoutEpoch,
-                            boolean hasFrozenProjection) {
+  private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(
         channelId, ScreenMessageV2Builder.hello(
-            columns, rows, reliableInputTracker.clientInstanceId(), streamGeneration,
-            desiredMode, instanceId, layoutEpoch, hasFrozenProjection), true);
+            columns, rows, reliableInputTracker.clientInstanceId(), resume, 128), true);
   }
 
   @Override

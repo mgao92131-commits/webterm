@@ -771,8 +771,16 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     private static long estimateCommitBytes(TerminalCommit p) {
         long n = 64;
-        if (p.screen != null) for (com.webterm.terminal.model.ScreenRowWrite w : p.screen.writes) n += lineBytes(w.line);
-        if (p.history != null) for (com.webterm.terminal.model.TerminalLine l : p.history.appendedLines) n += lineBytes(l);
+        if (p.screen != null) {
+            for (com.webterm.terminal.model.ScreenRowWrite w : p.screen.writes) {
+                n += lineDataBytes(w.lineData);
+            }
+        }
+        if (p.history != null) {
+            for (com.webterm.terminal.model.LineData line : p.history.appendedLines) {
+                n += lineDataBytes(line);
+            }
+        }
         return n;
     }
 
@@ -788,6 +796,12 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     private static long lineBytes(com.webterm.terminal.model.TerminalLine line) {
         if (line == null) return 32;
         return Math.max(32, line.estimatedBytes);
+    }
+
+    private static long lineDataBytes(com.webterm.terminal.model.LineData line) {
+        if (line == null) return 32;
+        return 48L + line.utf8Text.length + line.glyphMeta.length
+                + line.styleSpans.size() * 16L;
     }
 
     // ---- 内部数据类型 ----

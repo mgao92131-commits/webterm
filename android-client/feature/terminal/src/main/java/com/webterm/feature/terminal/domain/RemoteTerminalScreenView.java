@@ -68,19 +68,6 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onHistoryAppended(int lineCount) {
-    view.preserveViewportForAppendedLines(lineCount);
-  }
-
-  @Override
-  public void restoreHistoryAnchor(
-      @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
-      long historySeq,
-      int pixelOffset) {
-    view.restoreHistoryAnchor(snapshot, historySeq, pixelOffset);
-  }
-
-  @Override
   public void onConnectionStateChanged(@NonNull TerminalSessionRuntime.State state) {
     if (connectionStateListener != null) connectionStateListener.onConnectionStateChanged(state);
   }
