@@ -19,6 +19,6 @@ final class V2ModelTestData {
         "s1", "i1", 1, revision, generation, 1, 1,
         TerminalBufferKind.MAIN, new HistoryExtent(1, 300), tail,
         Collections.singletonList(line(1000, 1, 0, "a")),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 }

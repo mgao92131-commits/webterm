@@ -40,8 +40,8 @@ func TestCaptureWireFailureHasNoRawErrorText(t *testing.T) {
 	client.clientInstanceID = "cl"
 
 	payload := []byte("wire-payload")
-	handle := client.recordWireFrame("patch", 5, 4, payload)
-	ok := client.writeScreenMessage(context.Background(), outboundMessage{binary: payload, kind: "patch"}, handle)
+	handle := client.recordWireFrame("commit", 5, 4, payload)
+	ok := client.writeScreenMessage(context.Background(), outboundMessage{binary: payload, kind: "commit"}, handle)
 	if ok {
 		t.Fatal("writeScreenMessage should fail with failingSink")
 	}
@@ -78,7 +78,7 @@ func TestCaptureWireFailureHasNoRawErrorText(t *testing.T) {
 }
 
 // 要求 6：捕获派生帧（旁路存储）不推进 FrameDeriver baseline——
-// 对同一状态再次派生仍返回空 patch（Kind=0），证明 baseline 只被真实写出推进一次。
+// 对同一状态再次派生仍返回空 commit（Kind=0），证明 baseline 只被真实写出推进一次。
 func TestCaptureDoesNotAdvanceDeriverBaseline(t *testing.T) {
 	coord := terminalcapture.NewCoordinator()
 	_ = coord.StartCapture(terminalcapture.Identity{
@@ -171,7 +171,7 @@ func TestCaptureChannelProtocolEndToEnd(t *testing.T) {
 
 	// 记录若干旁路数据（模拟热路径捕获）。
 	coord.RecordPTY("inst", terminalcapture.PTYRecord{EventSeq: 1, Data: []byte("pty-body-中文")})
-	coord.RecordWire("inst", terminalcapture.WireRecord{Kind: "patch", ScreenRevision: 3, BaseRevision: 2, Payload: []byte{1, 2, 3, 4, 5}})
+	coord.RecordWire("inst", terminalcapture.WireRecord{Kind: "commit", ScreenRevision: 3, BaseRevision: 2, Payload: []byte{1, 2, 3, 4, 5}})
 
 	// finish
 	handler.HandleFrame(mustJSON(captureRequest{

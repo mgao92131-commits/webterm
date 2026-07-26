@@ -98,7 +98,6 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       RenderUpdate update = runtime.consumeRenderUpdate(owner);
       assertNotNull(update);
       assertEquals(2, update.snapshot.screenRevision);
-      assertEquals("", update.snapshot.title);
       assertTrue(update.dirty.fullInvalidate);
       assertFalse(update.state.titleChanged);
     } finally {
@@ -175,7 +174,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
-  public void frozenRuntimeDropsLiveDeltasBeforeProtobufParseButAcceptsTailStatus() {
+  public void frozenRuntimeDropsLiveCommitsBeforeProtobufParseButAcceptsTailStatus() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -186,13 +185,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
 
     TerminalRenderMetrics.Snapshot before = TerminalRenderMetrics.snapshot();
-    connection.listener.onScreenMessage(screenPatch(2).toByteArray());
-    connection.listener.onScreenMessage(historyDelta(2).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(2).toByteArray());
+    connection.listener.onScreenMessage(terminalCommitWithHistory(2).toByteArray());
     connection.listener.onScreenMessage(tailStatus(2, 5, 1, 340).toByteArray());
     TerminalRenderMetrics.Snapshot after = TerminalRenderMetrics.snapshot();
 
     assertEquals(1L, after.protobufParseCount - before.protobufParseCount);
-    assertEquals(2L, after.backgroundPatchDroppedCount - before.backgroundPatchDroppedCount);
+    assertEquals(2L, after.backgroundCommitDroppedCount - before.backgroundCommitDroppedCount);
     assertEquals(1, runtime.model().screenRevision);
     assertEquals(5, runtime.model().remoteScreenRevision());
     assertEquals(340, runtime.model().remoteAvailableExtent().lastSeq);
@@ -375,13 +374,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertEquals(1, connection.textInputs.size());
     assertEquals("queued", connection.textInputs.get(0));
     assertEquals(1, connection.resizeRequests);
-    connection.listener.onScreenMessage(screenPatch(5).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(5).toByteArray());
     assertEquals(2, runtime.model().screenRevision);
     assertEquals(0, connection.reconnectRequests);
   }
 
   @Test
-  public void appBackgroundRecoveryBaselineRemainsFrozenAndDropsFollowingPatch() {
+  public void appBackgroundRecoveryBaselineRemainsFrozenAndDropsFollowingCommit() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -398,12 +397,12 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.listener.onScreenMessage(baseline(3).toByteArray());
 
     assertEquals(TerminalSessionRuntime.StreamState.FROZEN, runtime.streamState());
-    connection.listener.onScreenMessage(screenPatch(4).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(4).toByteArray());
     assertEquals(1, runtime.model().screenRevision);
 
     runtime.setFreezeReason(TerminalSessionRuntime.FREEZE_APP_BACKGROUND, false);
     connection.listener.onScreenMessage(baseline(5).toByteArray());
-    connection.listener.onScreenMessage(screenPatch(5).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(5).toByteArray());
     assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
     assertEquals(2, runtime.model().screenRevision);
   }
@@ -652,7 +651,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
-  public void sameVersionDifferentScreenContentRequestsResyncWithoutCommittingPatch() {
+  public void sameVersionDifferentScreenContentRequestsResyncWithoutCommittingCommit() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -660,7 +659,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.listener.onConnected();
     connection.listener.onScreenMessage(baseline(1).toByteArray());
 
-    connection.listener.onScreenMessage(screenPatchWithLine(
+    connection.listener.onScreenMessage(terminalCommitWithLine(
         1, 1, "changed-without-version").toByteArray());
 
     assertEquals(1, runtime.model().screenRevision);
@@ -687,13 +686,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertEquals(1, listener.renderNeeded);
     assertNotNull(runtime.consumeRenderUpdate(renderOwner));
 
-    connection.listener.onScreenMessage(screenPatchWithLine(1, 1, "x").toByteArray());
+    connection.listener.onScreenMessage(terminalCommitWithLine(1, 1, "x").toByteArray());
     assertEquals(2, runtime.model().screenRevision);
     assertEquals(2, listener.renderNeeded);
     assertNotNull(runtime.consumeRenderUpdate(renderOwner));
     assertEquals(0, connection.reconnectRequests);
 
-    connection.listener.onScreenMessage(metadataPatch(1, 2, 3, "updated").toByteArray());
+    connection.listener.onScreenMessage(metadataCommit(1, 2, 3, "updated").toByteArray());
     assertEquals(3, listener.renderNeeded);
     assertNotNull(runtime.consumeRenderUpdate(renderOwner));
     assertTrue(runtime.model().cursor().visible);
@@ -711,35 +710,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     long loadedBefore = ((PagedTerminalHistorySnapshot)
         runtime.model().renderSnapshot().history).loadedLineCount();
 
-    connection.listener.onScreenMessage(historyDeltaWithLine(1, 301, 1000).toByteArray());
+    connection.listener.onScreenMessage(terminalCommitWithHistoryLine(1, 301, 1000).toByteArray());
 
     assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
     assertTrue(((PagedTerminalHistorySnapshot)
         runtime.model().renderSnapshot().history).loadedLineCount() > loadedBefore);
-    assertEquals(0, connection.reconnectRequests);
-  }
-
-  @org.junit.Ignore("跨消息迁移状态机已由原子 TerminalCommit 删除")
-  @Test
-  public void invalidCrossMessageHistoryMigrationStartsResyncWithoutPartialCommit() {
-    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
-        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
-    FakeV2Connection connection = new FakeV2Connection();
-    runtime.attachConnection(connection);
-    connection.listener.onConnected();
-    connection.listener.onScreenMessage(baseline(1).toByteArray());
-    long loadedBefore = ((PagedTerminalHistorySnapshot)
-        runtime.model().renderSnapshot().history).loadedLineCount();
-
-    connection.listener.onScreenMessage(screenPatchReplacingOnlyLine(1, 2000, "next").toByteArray());
-    connection.listener.onScreenMessage(historyDeltaWithText(1, 301, 1000, "B").toByteArray());
-
-    assertEquals(2, runtime.model().screenRevision);
-    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
-    assertEquals(1, connection.modeChanges);
-    assertEquals(2, connection.lastModeGeneration);
-    assertEquals(loadedBefore, ((PagedTerminalHistorySnapshot)
-        runtime.model().renderSnapshot().history).loadedLineCount());
     assertEquals(0, connection.reconnectRequests);
   }
 
@@ -830,8 +805,8 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.listener.onScreenMessage(baseline(1).toByteArray());
     long revision = runtime.model().screenRevision;
 
-    connection.listener.onScreenMessage(screenPatch(0).toByteArray());
-    connection.listener.onScreenMessage(historyDelta(0).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(0).toByteArray());
+    connection.listener.onScreenMessage(terminalCommitWithHistory(0).toByteArray());
     connection.listener.onScreenMessage(tailStatus(0, 9, 1, 400).toByteArray());
 
     assertEquals(revision, runtime.model().screenRevision);
@@ -868,7 +843,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.listener.onConnected();
     connection.listener.onScreenMessage(baseline(1).toByteArray());
 
-    connection.listener.onScreenMessage(screenPatch(2).toByteArray());
+    connection.listener.onScreenMessage(terminalCommit(2).toByteArray());
 
     assertEquals(1, connection.reconnectRequests);
     assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
@@ -920,8 +895,8 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       runtime.attachConnection(connection);
       connection.listener.onConnected();
       connection.listener.onScreenMessage(baseline(1).toByteArray());
-      connection.listener.onScreenMessage(screenPatch(0).toByteArray());
-      connection.listener.onScreenMessage(screenPatch(2).toByteArray());
+      connection.listener.onScreenMessage(terminalCommit(0).toByteArray());
+      connection.listener.onScreenMessage(terminalCommit(2).toByteArray());
 
       assertEquals(2, events.size());
       assertEquals("STALE_GENERATION", events.get(0).get("failureReason"));
@@ -976,11 +951,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         1, 300, 0, true);
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope screenPatch(long generation) {
-    return metadataPatch(generation, 1, 2, "ignored");
+  private static TerminalScreenV2Proto.ScreenEnvelope terminalCommit(long generation) {
+    return metadataCommit(generation, 1, 2, "ignored");
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope screenPatchWithLine(
+  private static TerminalScreenV2Proto.ScreenEnvelope terminalCommitWithLine(
       long generation, long lineVersion, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
@@ -1004,24 +979,8 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         .build();
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope screenPatchReplacingOnlyLine(
-      long generation, long replacementId, String text) {
-    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
-        .setProtocolVersion(2)
-        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setStreamGeneration(generation)
-            .setBaseRevision(1)
-            .setRevision(2)
-            .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
-                .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
-                    .setRow(0).setLine(line(replacementId, 0, text)))))
-        .build();
-  }
-
-  private static TerminalScreenV2Proto.ScreenEnvelope metadataPatch(
-      long generation, long baseRevision, long revision, String title) {
+  private static TerminalScreenV2Proto.ScreenEnvelope metadataCommit(
+      long generation, long baseRevision, long revision, String ignored) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
         .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
@@ -1034,7 +993,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         .build();
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope historyDelta(long generation) {
+  private static TerminalScreenV2Proto.ScreenEnvelope terminalCommitWithHistory(long generation) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
         .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
@@ -1046,12 +1005,12 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         .build();
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope historyDeltaWithLine(
+  private static TerminalScreenV2Proto.ScreenEnvelope terminalCommitWithHistoryLine(
       long generation, long historySeq, long lineId) {
-    return historyDeltaWithText(generation, historySeq, lineId, "x");
+    return terminalCommitWithHistoryText(generation, historySeq, lineId, "x");
   }
 
-  private static TerminalScreenV2Proto.ScreenEnvelope historyDeltaWithText(
+  private static TerminalScreenV2Proto.ScreenEnvelope terminalCommitWithHistoryText(
       long generation, long historySeq, long lineId, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)

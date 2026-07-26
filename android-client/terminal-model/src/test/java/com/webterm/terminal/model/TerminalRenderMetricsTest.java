@@ -40,7 +40,7 @@ public class TerminalRenderMetricsTest {
         2_000_000L, 4_000_000L, 8_000_000L, 16_000_000L
     };
     for (long sample : samples) {
-      TerminalRenderMetrics.screenPatchApplyDuration(sample);
+      TerminalRenderMetrics.terminalCommitApplyDuration(sample);
       TerminalRenderMetrics.protobufParseDuration(sample);
       TerminalRenderMetrics.mapperDuration(sample);
       TerminalRenderMetrics.renderNodeRecordDuration(sample);
@@ -49,7 +49,7 @@ public class TerminalRenderMetricsTest {
 
     long[] expected = {1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L};
     TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
-    assertArrayEquals(expected, snapshot.screenPatchApplyLatencyBuckets);
+    assertArrayEquals(expected, snapshot.terminalCommitApplyLatencyBuckets);
     assertArrayEquals(expected, snapshot.protobufParseLatencyBuckets);
     assertArrayEquals(expected, snapshot.mapperLatencyBuckets);
     assertArrayEquals(expected, snapshot.renderNodeRecordLatencyBuckets);
@@ -60,16 +60,13 @@ public class TerminalRenderMetricsTest {
   public void boundedCountersNeverCaptureContent() {
     TerminalRenderMetrics.historyCacheHit();
     TerminalRenderMetrics.historyCacheMiss();
-    TerminalRenderMetrics.backgroundPatchDropped();
-    TerminalRenderMetrics.screenLineStoreSize(40);
-    TerminalRenderMetrics.screenLineStoreSize(10);
+    TerminalRenderMetrics.backgroundCommitDropped();
     TerminalRenderMetrics.visibleHistoryRowsDrawn(12);
 
     TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
     assertEquals(1L, snapshot.historyCacheHitCount);
     assertEquals(1L, snapshot.historyCacheMissCount);
-    assertEquals(1L, snapshot.backgroundPatchDroppedCount);
-    assertEquals(40L, snapshot.screenLineStoreMaxSize);
+    assertEquals(1L, snapshot.backgroundCommitDroppedCount);
     assertEquals(12L, snapshot.visibleHistoryRowsDrawn);
   }
 
@@ -79,18 +76,17 @@ public class TerminalRenderMetricsTest {
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.baselineFrameCount);
     assertEquals(100L, s.baselineFrameBytes);
-    assertEquals(0L, s.patchFrameCount);
+    assertEquals(0L, s.commitFrameCount);
     assertEquals(0L, s.historyRangeFrameCount);
-    assertEquals(0L, s.historyDeltaFrameCount);
     assertEquals(0L, s.otherFrameCount);
   }
 
   @Test
-  public void classifyPatch() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.PATCH, 42);
+  public void classifyCommit() {
+    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.COMMIT, 42);
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.patchFrameCount);
-    assertEquals(42L, s.patchFrameBytes);
+    assertEquals(1L, s.commitFrameCount);
+    assertEquals(42L, s.commitFrameBytes);
     assertEquals(0L, s.baselineFrameCount);
   }
 
@@ -100,14 +96,6 @@ public class TerminalRenderMetricsTest {
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(1L, s.historyRangeFrameCount);
     assertEquals(2048L, s.historyRangeFrameBytes);
-  }
-
-  @Test
-  public void classifyHistoryDelta() {
-    TerminalRenderMetrics.inboundScreenFrame(TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA, 16);
-    TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
-    assertEquals(1L, s.historyDeltaFrameCount);
-    assertEquals(16L, s.historyDeltaFrameBytes);
   }
 
   @Test
@@ -135,9 +123,9 @@ public class TerminalRenderMetricsTest {
 
     TerminalRenderMetrics.ScreenTrafficKind[] kinds = {
         TerminalRenderMetrics.ScreenTrafficKind.BASELINE,
-        TerminalRenderMetrics.ScreenTrafficKind.PATCH,
+        TerminalRenderMetrics.ScreenTrafficKind.COMMIT,
         TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE,
-        TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA
+        TerminalRenderMetrics.ScreenTrafficKind.OTHER
     };
     for (int i = 0; i < threads; i++) {
       final TerminalRenderMetrics.ScreenTrafficKind kind = kinds[i % kinds.length];
@@ -157,11 +145,11 @@ public class TerminalRenderMetricsTest {
 
     TerminalRenderMetrics.Snapshot s = TerminalRenderMetrics.snapshot();
     assertEquals(threads * iterations / 4L, s.baselineFrameCount);
-    assertEquals(threads * iterations / 4L, s.patchFrameCount);
+    assertEquals(threads * iterations / 4L, s.commitFrameCount);
     assertEquals(threads * iterations / 4L, s.historyRangeFrameCount);
-    assertEquals(threads * iterations / 4L, s.historyDeltaFrameCount);
+    assertEquals(threads * iterations / 4L, s.otherFrameCount);
     assertEquals(threads * iterations * 10L,
-        s.baselineFrameBytes + s.patchFrameBytes
-            + s.historyRangeFrameBytes + s.historyDeltaFrameBytes);
+        s.baselineFrameBytes + s.commitFrameBytes
+            + s.historyRangeFrameBytes + s.otherFrameBytes);
   }
 }

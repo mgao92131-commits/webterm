@@ -69,7 +69,7 @@ public final class RemoteTerminalViewFlingTest {
     model.applyBaseline(new ScreenBaseline(
         "s1", "i1", 1, 1, 1, 1, 1, buffer, HistoryExtent.INITIAL_EMPTY,
         Collections.emptyList(), Collections.singletonList(line), TerminalCursor.hidden(),
-        modes, TerminalPalette.defaults(), "", ""));
+        modes, TerminalPalette.defaults()));
     view.setModel(model, new TerminalViewportState());
     RecordingHost host = new RecordingHost();
     view.setHost(host);

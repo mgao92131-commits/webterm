@@ -737,19 +737,25 @@ func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 }
 
 func (r *Runtime) handleEffect(effect terminalengine.Effect) {
+	forwardToScreen := true
 	switch effect.Kind {
 	case terminalengine.EffectBell:
 		if r.onBell != nil {
 			r.onBell()
 		}
 	case terminalengine.EffectTitle:
+		forwardToScreen = false
 		if r.onTitle != nil {
 			r.onTitle(effect.Text)
 		}
 	case terminalengine.EffectWorkingDirectory:
+		forwardToScreen = false
 		if r.onEffect != nil {
 			r.onEffect(terminalEffect{workingDirectory: effect.Text})
 		}
+	}
+	if !forwardToScreen {
+		return
 	}
 	for _, client := range r.clients {
 		if client.SendEffect != nil {

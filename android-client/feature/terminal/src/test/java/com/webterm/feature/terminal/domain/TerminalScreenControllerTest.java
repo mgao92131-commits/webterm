@@ -154,7 +154,6 @@ public final class TerminalScreenControllerTest {
       @Override public void bindModel(RemoteTerminalModel ignored) {}
       @Override public void render(RenderUpdate update, TerminalViewportState ignored) {}
       @Override public void onCursorChanged() {}
-      @Override public void onTitleChanged(String title) {}
       @Override public void requestInvalidate() {}
       @Override public void restoreHistoryAnchor(RemoteTerminalModel.RenderSnapshot snapshot, long historySeq, int pixelOffset) {
         viewport.scrollOffsetPixels = 720;
@@ -253,7 +252,6 @@ public final class TerminalScreenControllerTest {
       @Override public void bindModel(RemoteTerminalModel ignored) {}
       @Override public void render(RenderUpdate update, TerminalViewportState ignored) {}
       @Override public void onCursorChanged() {}
-      @Override public void onTitleChanged(String title) {}
       @Override public void requestInvalidate() {}
     };
   }
@@ -265,7 +263,6 @@ public final class TerminalScreenControllerTest {
       renderCount++;
     }
     @Override public void onCursorChanged() {}
-    @Override public void onTitleChanged(String title) {}
     @Override public void requestInvalidate() {}
   }
 
@@ -312,9 +309,7 @@ public final class TerminalScreenControllerTest {
         Collections.singletonList(screen),
         TerminalCursor.hidden(),
         TerminalModes.defaults(),
-        TerminalPalette.defaults(),
-        "",
-        "");
+        TerminalPalette.defaults());
   }
 
   private static final class ImmediateFrameScheduler implements FrameScheduler {

@@ -162,7 +162,7 @@ public final class TerminalViewportRedrawTest {
     return new ScreenBaseline(
         screenId, instanceId, 1, seq, 1, screenRows, 24, TerminalBufferKind.MAIN,
         new HistoryExtent(1, historySize), history, screen,
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
   private static List<TerminalLine> createHistoryLines(int startSeq, int endSeq) {
@@ -190,7 +190,6 @@ public final class TerminalViewportRedrawTest {
     @Override public void bindModel(@NonNull RemoteTerminalModel model) {}
     @Override public void render(@NonNull RenderUpdate update, @NonNull TerminalViewportState viewport) {}
     @Override public void onCursorChanged() {}
-    @Override public void onTitleChanged(String title) {}
     @Override public void requestInvalidate() {
       invalidateCalled = true;
       invalidateCount++;

@@ -188,7 +188,7 @@ public final class RemoteTerminalRendererRenderBaselineTest {
     model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, rows, cols,
         TerminalBufferKind.MAIN, extent, history, screen,
         new TerminalCursor(rows - 1, 0, true, TerminalCursor.Shape.BLOCK, false),
-        TerminalModes.defaults(), TerminalPalette.defaults(), "", ""));
+        TerminalModes.defaults(), TerminalPalette.defaults()));
     return model;
   }
 

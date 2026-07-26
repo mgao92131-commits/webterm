@@ -53,7 +53,6 @@ public interface HomeHost extends RelayNavigator {
     void removeCachedTerminal(String baseUrl, String sessionId);
 
     /** Sync the currently opened terminal cwd when a manager update reports it. */
-    void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd);
 
     /** Prune stale cached sessions after a live session refresh. */
     void removeMissingCachedSessionsForServer(ServerConfig server, Set<String> liveSessionIdentities);

@@ -140,7 +140,7 @@ public final class RemoteTerminalRendererTest {
         "s1", "i1", 1, 1, 1, 1, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 300), Collections.singletonList(historyTail),
         Collections.singletonList(screen), TerminalCursor.hidden(), TerminalModes.defaults(),
-        TerminalPalette.defaults(), "", ""));
+        TerminalPalette.defaults()));
     model.consumeRenderUpdate();
 
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
@@ -195,8 +195,7 @@ public final class RemoteTerminalRendererTest {
         "s1", "i1", 1, 1, 1, 1, cols, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 5), history,
         Collections.singletonList(TerminalLine.empty(2000, cols)),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        "", ""));
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     model.consumeRenderUpdate();
 
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();

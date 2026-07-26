@@ -57,7 +57,7 @@ type terminalChannelRuntime struct {
 	screenFrameCount      atomic.Uint64
 	screenWireBytes       atomic.Uint64
 	baselineWireBytes     atomic.Uint64
-	patchWireBytes        atomic.Uint64
+	commitWireBytes       atomic.Uint64
 	historyRangeWireBytes atomic.Uint64
 	otherWireBytes        atomic.Uint64
 
@@ -90,7 +90,7 @@ type ScreenWireSnapshot struct {
 	FrameCount        uint64 `json:"frameCount"`
 	WireBytes         uint64 `json:"wireBytes"`
 	BaselineBytes     uint64 `json:"baselineBytes"`
-	PatchBytes        uint64 `json:"patchBytes"`
+	CommitBytes       uint64 `json:"commitBytes"`
 	HistoryRangeBytes uint64 `json:"historyRangeBytes"`
 	OtherBytes        uint64 `json:"otherBytes"`
 }
@@ -231,35 +231,6 @@ func (client *terminalChannelRuntime) run(ctx context.Context) {
 	}
 }
 
-func (client *terminalChannelRuntime) SendInfo() {
-	info := client.session.Info()
-	payload, err := encodeTerminalInfoV2(info)
-	if err == nil {
-		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
-	}
-}
-
-func encodeTerminalInfoV2(info Info) ([]byte, error) {
-	envelope := &pb.ScreenEnvelope{
-		ProtocolVersion: screenprotocolv2.ProtocolVersion,
-		Payload: &pb.ScreenEnvelope_Info{
-			Info: &pb.TerminalInfo{
-				SessionId:      info.ID,
-				InstanceId:     info.InstanceID,
-				Title:          info.TermTitle,
-				Cwd:            info.CWD,
-				Command:        info.Command,
-				Status:         info.Status,
-				Cols:           int32(info.Cols),
-				Rows:           int32(info.Rows),
-				CreatedAtMs:    info.CreatedAt.UnixMilli(),
-				LastActiveAtMs: info.LastActiveAt.UnixMilli(),
-			},
-		},
-	}
-	return proto.Marshal(envelope)
-}
-
 func (client *terminalChannelRuntime) SendExit(code int) {
 	envelope := &pb.ScreenEnvelope{
 		ProtocolVersion: screenprotocolv2.ProtocolVersion,
@@ -283,16 +254,15 @@ func (client *terminalChannelRuntime) Close() {
 //
 // All outbound envelopes are produced by the single terminal actor goroutine,
 // but the writer consumes them through three entries: the buffered send channel
-// (control messages: effect/history trim/history page/info/exit/pong), the
+// (control messages: effect/history range/exit/pong), the
 // single-slot screen mailbox woken by screenWake, and the capacity-one,
 // non-overwritable initial-sync slot. The relative write order between control
 // and screen state is therefore NOT the production order, and that is
 // intentional: every ordinary message is protocol-independent because it carries the
 // anchors a client needs to judge applicability on its own —
-//   - baseline/patch: instance id + layout epoch + baseRevision chain
-//     (a gap triggers client resync, see Android RemoteTerminalModel.applyPatch);
+//   - baseline/commit: instance id + layout epoch + baseRevision chain
+//     (a gap triggers client resync, see Android RemoteTerminalModel.applyTerminalCommit);
 //   - history range:  request id + layout epoch (late ranges are dropped);
-//   - history delta:  layout epoch + authoritative extent;
 //   - effect:         instance id; fire-and-forget UI signal;
 //   - exit:           terminal state; clients drop anything after it.
 //
@@ -300,7 +270,7 @@ func (client *terminalChannelRuntime) Close() {
 //  1. control messages keep channel FIFO and are never dropped by screen load
 //     (mailbox coalescing applies to screen states only);
 //  2. screen frames form a self-consistent chain: the FrameDeriver diffs
-//     against the last state actually written, so every patch baseRevision
+//     against the last state actually written, so every commit baseRevision
 //     equals the previously written screen revision.
 //  3. Baseline 走不可覆盖的 initial-sync slot；只有
 //     socket 写成功后才 Seed 完整 baseline 并通知 actor 开放实时 mailbox。
@@ -386,7 +356,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	client.screenMu.Unlock()
 
 	if frame.Kind == 0 {
-		// 空 patch 被抑制：无可观察变化，不写出；deriver baseline 未推进。
+		// 空 commit 被抑制：无可观察变化，不写出；deriver baseline 未推进。
 		return true
 	}
 	// 捕获点 C：正常 FrameForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
@@ -403,8 +373,6 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		snapshot := state
 		snapshot.Kind = terminalengine.FrameSnapshot
 		snapshot.BaseRevision = 0
-		snapshot.TitleChanged = false
-		snapshot.WorkingDirChanged = false
 		snapshot.FirstAvailableHistorySeqChanged = false
 		payload, err = client.encodeFrame(snapshot)
 		if err != nil {
@@ -422,7 +390,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 		client.screenMu.Unlock()
 		return true
 	}
-	kind := "patch"
+	kind := "commit"
 	if frame.Kind == terminalengine.FrameSnapshot {
 		kind = "baseline"
 	}
@@ -567,8 +535,8 @@ func (client *terminalChannelRuntime) recordWireBytes(kind string, n int) {
 	switch kind {
 	case "baseline":
 		client.baselineWireBytes.Add(uint64(n))
-	case "patch":
-		client.patchWireBytes.Add(uint64(n))
+	case "commit":
+		client.commitWireBytes.Add(uint64(n))
 	case "historyRange":
 		client.historyRangeWireBytes.Add(uint64(n))
 	default:
@@ -582,7 +550,7 @@ func (client *terminalChannelRuntime) ScreenWireSnapshot() ScreenWireSnapshot {
 		FrameCount:        client.screenFrameCount.Load(),
 		WireBytes:         client.screenWireBytes.Load(),
 		BaselineBytes:     client.baselineWireBytes.Load(),
-		PatchBytes:        client.patchWireBytes.Load(),
+		CommitBytes:       client.commitWireBytes.Load(),
 		HistoryRangeBytes: client.historyRangeWireBytes.Load(),
 		OtherBytes:        client.otherWireBytes.Load(),
 	}
@@ -657,7 +625,6 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 	// metadata preserves Go-authoritative widths even for wide/combined glyphs.
 	client.compactLineEncoding.Store(true)
 	client.attachScreenClient(hello)
-	client.SendInfo()
 	client.ready.Store(true)
 }
 
@@ -846,12 +813,12 @@ func (client *terminalChannelRuntime) clearPendingTailStatus() {
 
 // sendScreenState accepts a complete shared projection from the terminal actor.
 // In production it only replaces one mailbox slot; the socket writer derives a
-// patch relative to the last state it actually scheduled for writing. Tests
+// commit relative to the last state it actually scheduled for writing. Tests
 // that intentionally use terminalChannelRuntime without Run retain the old immediate path.
 func (client *terminalChannelRuntime) sendScreenState(state terminalengine.ScreenFrame) {
 	if !client.writerStarted.Load() {
 		frame := client.screenDeriver.DeriveForState(state)
-		if frame.Kind != 0 { // Kind==0：空 patch 被抑制，不发送
+		if frame.Kind != 0 { // Kind==0：空 commit 被抑制，不发送
 			client.sendScreenFrameNow(frame, state)
 		}
 		return
@@ -883,7 +850,7 @@ func (client *terminalChannelRuntime) sendScreenFrameNow(frame, state terminalen
 		client.enqueueBinary(payload, "baseline")
 		return
 	}
-	kind := "patch"
+	kind := "commit"
 	if frame.Kind == terminalengine.FrameSnapshot {
 		kind = "baseline"
 	}

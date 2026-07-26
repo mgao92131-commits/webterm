@@ -53,6 +53,8 @@ import com.webterm.feature.terminal.TerminalViewModel;
 import com.webterm.ui.common.WindowInsetsController;
 
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.Observer;
 import androidx.navigation.NavController;
 
 
@@ -97,6 +99,9 @@ public final class AppFlowCoordinator implements
     private PendingTerminalOpen pendingTerminalOpen;
     private String currentTerminalConnectionKey = "";
     private String currentTerminalSessionId = "";
+    private LiveData<SessionRepository.SessionListResult> terminalSessionInfoSource;
+    private final Observer<SessionRepository.SessionListResult> terminalSessionInfoObserver =
+        this::applyTerminalSessionInfo;
 
     public enum ScreenMode {
         DEVICES,
@@ -445,25 +450,16 @@ public final class AppFlowCoordinator implements
         terminalAuthRecoveryGeneration++;
         terminalAuthRecoveryInFlight = false;
         remoteTerminalIntegration.setAuthenticationListener(this::recoverTerminalAuthentication);
-        remoteTerminalIntegration.setTitleListener(new RemoteTerminalIntegration.TitleListener() {
-            @Override public void onTitleChanged(String title) {
-                // 顶栏由 RemoteTerminalIntegration 直接更新；这里保留应用层通知入口。
-            }
-            @Override public void onWorkingDirectoryChanged(String cwd) {
-                ServerConfig server = findServerForRemoteTerminal();
-                if (server != null && remoteTerminalIntegration.sessionId() != null) {
-                    updateCurrentSessionCwd(server, remoteTerminalIntegration.sessionId(), cwd);
-                }
-            }
-        });
         // 现场捕获菜单入口：debug/diag 返回 4 项（按记录状态动态显示），release 返回空列表。
         remoteTerminalIntegration.setDebugMenuItems(
             com.webterm.mobile.diagnostics.TerminalCaptureMenu.items(activity));
         remoteTerminalIntegration.start(activity, fragment, args,
             configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
+        bindTerminalSessionInfo(findServerForRemoteTerminal());
     }
 
     public void detachTerminalFragment(TerminalFragment fragment) {
+        unbindTerminalSessionInfo();
         remoteTerminalIntegration.detach(fragment);
     }
 
@@ -532,12 +528,32 @@ public final class AppFlowCoordinator implements
         }
     }
 
-    private void updateCurrentSessionCwd(ServerConfig server, String sessionId, String cwd) {
-        if (server == null || sessionId == null || sessionId.isEmpty()) return;
-        if (!isRemoteTerminalActive()) return;
-        if (!WebTermUrls.normalizeBaseUrl(server.getUrl()).equals(WebTermUrls.normalizeBaseUrl(remoteTerminalIntegration.baseUrl()))) return;
-        if (!sameTerminalSessionId(sessionId, remoteTerminalIntegration.sessionId(), server.getDeviceId())) return;
-        sessionRepository.updateSessionCwd(server, sessionId, cwd);
+    private void bindTerminalSessionInfo(ServerConfig server) {
+        unbindTerminalSessionInfo();
+        if (server == null || mActivity == null) return;
+        terminalSessionInfoSource = sessionRepository.observeSessions(server);
+        terminalSessionInfoSource.observe(mActivity, terminalSessionInfoObserver);
+    }
+
+    private void unbindTerminalSessionInfo() {
+        if (terminalSessionInfoSource == null) return;
+        terminalSessionInfoSource.removeObserver(terminalSessionInfoObserver);
+        terminalSessionInfoSource = null;
+    }
+
+    private void applyTerminalSessionInfo(SessionRepository.SessionListResult result) {
+        if (result == null || result.sessions == null || !isRemoteTerminalActive()) return;
+        ServerConfig server = findServerForRemoteTerminal();
+        String sessionId = remoteTerminalIntegration.sessionId();
+        if (server == null || sessionId == null) return;
+        for (int i = 0; i < result.sessions.length(); i++) {
+            JSONObject session = result.sessions.optJSONObject(i);
+            if (session == null || !sameTerminalSessionId(
+                    session.optString("id"), sessionId, server.getDeviceId())) continue;
+            remoteTerminalIntegration.updateSessionInfo(
+                session.optString("termTitle", "Terminal"), session.optString("cwd", ""));
+            return;
+        }
     }
 
     private void requestTerminalFreshReconnect() {
@@ -626,10 +642,6 @@ public final class AppFlowCoordinator implements
             onlyUrlMatch = server;
         }
         return onlyUrlMatch;
-    }
-
-    public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) {
-        updateCurrentSessionCwd(server, sessionId, cwd);
     }
 
     private static boolean sameTerminalSessionId(String a, String b, String deviceId) {

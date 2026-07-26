@@ -236,18 +236,16 @@ public final class DiagnosticLogExporter {
         render.put("mainThreadCallbackDelayNanos", screen.mainThreadCallbackDelayNanos);
         render.put("baselineFrameCount", screen.baselineFrameCount);
         render.put("baselineFrameBytes", screen.baselineFrameBytes);
-        render.put("patchFrameCount", screen.patchFrameCount);
-        render.put("patchFrameBytes", screen.patchFrameBytes);
+        render.put("commitFrameCount", screen.commitFrameCount);
+        render.put("commitFrameBytes", screen.commitFrameBytes);
         render.put("historyRangeFrameCount", screen.historyRangeFrameCount);
         render.put("historyRangeFrameBytes", screen.historyRangeFrameBytes);
-        render.put("historyDeltaFrameCount", screen.historyDeltaFrameCount);
-        render.put("historyDeltaFrameBytes", screen.historyDeltaFrameBytes);
         render.put("otherFrameCount", screen.otherFrameCount);
         render.put("otherFrameBytes", screen.otherFrameBytes);
         render.put("mailboxResidenceNanos", screen.mailboxResidenceNanos);
         render.put("mailboxResidenceMaxNanos", screen.mailboxResidenceMaxNanos);
-        render.put("screenPatchApplyLatencyBuckets",
-            latencyBucketsJson(screen.screenPatchApplyLatencyBuckets));
+        render.put("terminalCommitApplyLatencyBuckets",
+            latencyBucketsJson(screen.terminalCommitApplyLatencyBuckets));
         render.put("protobufParseLatencyBuckets",
             latencyBucketsJson(screen.protobufParseLatencyBuckets));
         render.put("mapperLatencyBuckets",
@@ -258,8 +256,7 @@ public final class DiagnosticLogExporter {
             latencyBucketsJson(screen.mailboxResidenceLatencyBuckets));
         render.put("historyCacheHitCount", screen.historyCacheHitCount);
         render.put("historyCacheMissCount", screen.historyCacheMissCount);
-        render.put("backgroundPatchDroppedCount", screen.backgroundPatchDroppedCount);
-        render.put("screenLineStoreMaxSize", screen.screenLineStoreMaxSize);
+        render.put("backgroundCommitDroppedCount", screen.backgroundCommitDroppedCount);
         render.put("visibleHistoryRowsDrawn", screen.visibleHistoryRowsDrawn);
         json.put("render", render);
 
@@ -355,12 +352,10 @@ public final class DiagnosticLogExporter {
         sb.append('\n');
         sb.append("screenBaselineCount=").append(screen.baselineFrameCount).append('\n');
         sb.append("screenBaselineBytes=").append(screen.baselineFrameBytes).append('\n');
-        sb.append("screenPatchCount=").append(screen.patchFrameCount).append('\n');
-        sb.append("screenPatchBytes=").append(screen.patchFrameBytes).append('\n');
+        sb.append("screenPatchCount=").append(screen.commitFrameCount).append('\n');
+        sb.append("screenPatchBytes=").append(screen.commitFrameBytes).append('\n');
         sb.append("screenHistoryRangeCount=").append(screen.historyRangeFrameCount).append('\n');
         sb.append("screenHistoryRangeBytes=").append(screen.historyRangeFrameBytes).append('\n');
-        sb.append("screenHistoryDeltaCount=").append(screen.historyDeltaFrameCount).append('\n');
-        sb.append("screenHistoryDeltaBytes=").append(screen.historyDeltaFrameBytes).append('\n');
         sb.append("screenOtherCount=").append(screen.otherFrameCount).append('\n');
         sb.append("screenOtherBytes=").append(screen.otherFrameBytes).append('\n');
         return sb.toString();

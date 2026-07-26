@@ -132,7 +132,6 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
     @Override public void closeSession(ServerConfig server, String sessionId, Runnable onClosed) { coordinator.closeSession(server, sessionId, onClosed); }
     @Override public void saveServers() { coordinator.saveServers(); }
     @Override public void removeCachedTerminal(String baseUrl, String sessionId) { coordinator.removeCachedTerminal(baseUrl, sessionId); }
-    @Override public void onSessionCwdChanged(ServerConfig server, String sessionId, String cwd) { coordinator.onSessionCwdChanged(server, sessionId, cwd); }
     @Override public void removeMissingCachedSessionsForServer(ServerConfig server, java.util.Set<String> liveSessionIdentities) { coordinator.removeMissingCachedSessionsForServer(server, liveSessionIdentities); }
     @Override public void navigateToRelay() { coordinator.navigateToRelay(); }
 

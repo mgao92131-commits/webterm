@@ -27,14 +27,12 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, generation uint64) ([]byte
 			Extent: encodeHistoryWindowExtent(frame.History),
 			Lines:  history,
 		},
-		ScreenLayout:     &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
-		ScreenLines:      screen,
-		Cursor:           encodeCursor(frame.Cursor),
-		Modes:            encodeModes(frame.Modes),
-		Palette:          encodePalette(frame),
-		Dictionary:       encodeDictionary(frame.Styles, frame.Links),
-		Title:            proto.String(frame.Title),
-		WorkingDirectory: proto.String(frame.WorkingDir),
+		ScreenLayout: &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
+		ScreenLines:  screen,
+		Cursor:       encodeCursor(frame.Cursor),
+		Modes:        encodeModes(frame.Modes),
+		Palette:      encodePalette(frame),
+		Dictionary:   encodeDictionary(frame.Styles, frame.Links),
 	}
 	return marshalPayload(&pb.ScreenEnvelope_Baseline{Baseline: baseline})
 }
@@ -191,10 +189,6 @@ func EncodeEffect(instanceID string, revision uint64, effect terminalengine.Effe
 	switch effect.Kind {
 	case terminalengine.EffectBell:
 		wire.Effect = &pb.TerminalEffect_Bell{Bell: &pb.Bell{}}
-	case terminalengine.EffectTitle:
-		wire.Effect = &pb.TerminalEffect_Title{Title: &pb.TitleChanged{Title: effect.Text}}
-	case terminalengine.EffectWorkingDirectory:
-		wire.Effect = &pb.TerminalEffect_Cwd{Cwd: &pb.WorkingDirectoryChanged{Path: effect.Text}}
 	case terminalengine.EffectClipboardRead:
 		wire.Effect = &pb.TerminalEffect_ClipboardRead{ClipboardRead: &pb.ClipboardReadRequest{
 			RequestId: effect.RequestID, Clipboard: effect.Clipboard,

@@ -77,7 +77,7 @@ public final class RemoteTerminalMouseMoveTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, rows, cols,
         TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
-        TerminalCursor.hidden(), modes, TerminalPalette.defaults(), "", ""));
+        TerminalCursor.hidden(), modes, TerminalPalette.defaults()));
     return model;
   }
 

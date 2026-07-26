@@ -932,7 +932,7 @@ public final class TerminalSessionRuntime {
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           if (message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
               && freezeReasons.get() != 0) {
-            TerminalRenderMetrics.backgroundPatchDropped();
+            TerminalRenderMetrics.backgroundCommitDropped();
             continue;
           }
           // A recovery fence only accepts the authority frame that can release it. Dropping
@@ -974,7 +974,7 @@ public final class TerminalSessionRuntime {
       case BASELINE:
         return TerminalRenderMetrics.ScreenTrafficKind.BASELINE;
       case TERMINAL_COMMIT:
-        return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
+        return TerminalRenderMetrics.ScreenTrafficKind.COMMIT;
       case HISTORY_RANGE:
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
       case TAIL_STATUS:
@@ -1000,7 +1000,6 @@ public final class TerminalSessionRuntime {
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
         if (field == 15) return ScreenMailbox.MessageKind.INPUT_ACK;
         if (field == 16) return ScreenMailbox.MessageKind.EFFECT;
-        if (field == 18) return ScreenMailbox.MessageKind.INFO;
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
         if (field == 21) return ScreenMailbox.MessageKind.PONG;
         if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
@@ -1094,7 +1093,7 @@ public final class TerminalSessionRuntime {
     }
     streamState = StreamState.FROZEN;
     int dropped = screenMailbox.dropLiveProjectionDeltas();
-    for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundPatchDropped();
+    for (int i = 0; i < dropped; i++) TerminalRenderMetrics.backgroundCommitDropped();
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
@@ -1122,9 +1121,6 @@ public final class TerminalSessionRuntime {
         case INPUT_ACK:
           if (tracker != null) tracker.handleInputAck(envelope.getInputAck());
           return;
-        case INFO:
-          if (tracker != null) tracker.observeTerminalInstance(envelope.getInfo().getInstanceId());
-          break;
         case BASELINE:
           if (tracker != null) {
             tracker.observeTerminalInstance(envelope.getBaseline().getInstanceId());
@@ -1431,12 +1427,6 @@ public final class TerminalSessionRuntime {
     switch (effect.getEffectCase()) {
       case BELL:
         screenEffect = TerminalScreenEffect.bell();
-        break;
-      case TITLE:
-        screenEffect = TerminalScreenEffect.title(effect.getTitle().getTitle());
-        break;
-      case CWD:
-        screenEffect = TerminalScreenEffect.workingDirectory(effect.getCwd().getPath());
         break;
       case CLIPBOARD_READ:
         screenEffect = TerminalScreenEffect.clipboardRead(

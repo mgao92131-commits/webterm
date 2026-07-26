@@ -193,24 +193,16 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 		t.Fatal("unchanged title/cwd must not set change flags")
 	}
 
-	// title/cwd 变化：patch 上显式置标志并携带新值。
+	// title/cwd 变化只走 SessionInfo，不产生屏幕 Commit。
 	if err := engine.Write([]byte("\x1b]0;new-title\x07")); err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.Write([]byte("\x1b]7;file://localhost/tmp/work\x07")); err != nil {
 		t.Fatal(err)
 	}
-	metaPatch := deriver.FrameForState(p.ExportState(0, 3))
-	if metaPatch.Kind != terminalengine.FramePatch {
-		t.Fatalf("metadata patch kind=%d, want FramePatch", metaPatch.Kind)
-	}
-	if !metaPatch.TitleChanged || metaPatch.Title != "new-title" {
-		t.Fatalf("title change not flagged: changed=%v title=%q",
-			metaPatch.TitleChanged, metaPatch.Title)
-	}
-	if !metaPatch.WorkingDirChanged || metaPatch.WorkingDir != "/tmp/work" {
-		t.Fatalf("cwd change not flagged: changed=%v cwd=%q",
-			metaPatch.WorkingDirChanged, metaPatch.WorkingDir)
+	metaCommit := deriver.FrameForState(p.ExportState(0, 3))
+	if metaCommit.Kind != 0 {
+		t.Fatalf("title/cwd produced screen commit kind=%d", metaCommit.Kind)
 	}
 
 	// 在线 baseline 连续时，即使超过 60% 行变化，也必须保留 Patch，避免
@@ -222,8 +214,8 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	if full.Kind != terminalengine.FramePatch {
 		t.Fatalf("full-screen delta kind=%d, want FramePatch", full.Kind)
 	}
-	if full.BaseRevision != 3 {
-		t.Fatalf("full-screen delta base=%d, want 3", full.BaseRevision)
+	if full.BaseRevision != 2 {
+		t.Fatalf("full-screen delta base=%d, want 2", full.BaseRevision)
 	}
 }
 

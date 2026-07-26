@@ -26,7 +26,7 @@ public final class RemoteTerminalModelBaselineTest {
         new HistoryExtent(1, 1),
         Collections.singletonList(V2ModelTestData.line(2, 1, 2, "bad")),
         Collections.singletonList(V2ModelTestData.line(2000, 1, 0, "b")),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
     try {
       model.applyBaseline(invalid);
     } catch (RuntimeException expected) {

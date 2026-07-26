@@ -15,7 +15,6 @@ public final class ScreenMailbox {
     TAIL_STATUS,
     INPUT_ACK,
     LAYOUT_LEASE,
-    INFO,
     EFFECT,
     EXIT,
     PONG,

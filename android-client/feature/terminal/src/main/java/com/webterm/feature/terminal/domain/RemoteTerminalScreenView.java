@@ -63,11 +63,6 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onTitleChanged(@Nullable String title) {
-    // 标题变更由外部 Activity/Fragment 监听并处理。
-  }
-
-  @Override
   public void requestInvalidate() {
     view.postInvalidateOnAnimation();
   }

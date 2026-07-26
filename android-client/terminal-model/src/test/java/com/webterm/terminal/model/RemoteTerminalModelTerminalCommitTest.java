@@ -72,6 +72,53 @@ public final class RemoteTerminalModelTerminalCommitTest {
     assertEquals(10000, model.consumeRenderUpdate().state.tailAppendedLines);
   }
 
+  @Test
+  public void invalidScreenWriteDoesNotCommitPreparedHistory() throws Exception {
+    RemoteTerminalModel model = baselineModel();
+    model.consumeRenderUpdate();
+    TerminalCommit commit = new TerminalCommit(
+        "instance", 1, 1, 1, 2,
+        new ScreenMutation(null,
+            Collections.singletonList(new ScreenRowWrite(3, line(30, 1, 0, "bad-row")))),
+        new HistoryMutation(new HistoryExtent(1, 1),
+            Collections.singletonList(line(40, 1, 1, "history"))),
+        null, null, null);
+    try {
+      model.applyTerminalCommit(commit);
+      fail("invalid screen row accepted");
+    } catch (RemoteTerminalModel.RevisionGapException expected) {
+      // expected
+    }
+    assertEquals(0, model.historySize());
+    assertEquals(1, model.screenRevision);
+    assertNull(model.consumeRenderUpdate());
+  }
+
+  @Test
+  public void conflictingLoadedHistoryBodyIsRejectedAtomically() throws Exception {
+    RemoteTerminalModel model = baselineModel();
+    model.consumeRenderUpdate();
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "instance", 1, 1, 1, 2, null,
+        new HistoryMutation(new HistoryExtent(1, 1),
+            Collections.singletonList(line(40, 1, 1, "first"))),
+        null, null, null)));
+    model.consumeRenderUpdate();
+    try {
+      model.applyTerminalCommit(new TerminalCommit(
+          "instance", 1, 1, 2, 3, null,
+          new HistoryMutation(new HistoryExtent(1, 1),
+              Collections.singletonList(line(41, 1, 1, "different"))),
+          null, null, null));
+      fail("conflicting history body accepted");
+    } catch (RemoteTerminalModel.RevisionGapException expected) {
+      // expected
+    }
+    assertEquals(2, model.screenRevision);
+    assertEquals(1, model.historySize());
+    assertNull(model.consumeRenderUpdate());
+  }
+
   @Test(expected = RemoteTerminalModel.RevisionGapException.class)
   public void revisionGapIsRejected() throws Exception {
     RemoteTerminalModel model = baselineModel();
@@ -87,7 +134,7 @@ public final class RemoteTerminalModelTerminalCommitTest {
         "session", "instance", 1, 1, 1, 3, 1, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY, Collections.emptyList(),
         Arrays.asList(line(10, 1, 0, "a"), line(11, 1, 0, "b"), line(12, 1, 0, "c")),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "")));
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     return model;
   }
 

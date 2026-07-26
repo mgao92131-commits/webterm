@@ -4,14 +4,12 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 /**
- * 终端副作用事件（bell/title/cwd/clipboard/notification 等）。
+ * 终端一次性副作用事件（bell/clipboard/notification）。
  */
 public final class TerminalScreenEffect {
 
   public enum Type {
     BELL,
-    TITLE,
-    WORKING_DIRECTORY,
     CLIPBOARD_READ,
     CLIPBOARD_WRITE,
     NOTIFICATION
@@ -33,16 +31,6 @@ public final class TerminalScreenEffect {
   }
 
   @NonNull
-  public static TerminalScreenEffect title(@Nullable String title) {
-    return new TerminalScreenEffect(Type.TITLE, title, null);
-  }
-
-  @NonNull
-  public static TerminalScreenEffect workingDirectory(@Nullable String cwd) {
-    return new TerminalScreenEffect(Type.WORKING_DIRECTORY, cwd, null);
-  }
-
-  @NonNull
   public static TerminalScreenEffect clipboardRead(@NonNull String requestId, @Nullable String clipboard) {
     return new TerminalScreenEffect(Type.CLIPBOARD_READ, requestId + "\n" + (clipboard == null ? "c" : clipboard), null);
   }
@@ -61,16 +49,6 @@ public final class TerminalScreenEffect {
   @NonNull
   public Type type() {
     return type;
-  }
-
-  @Nullable
-  public String asTitle() {
-    return type == Type.TITLE ? stringValue : null;
-  }
-
-  @Nullable
-  public String asWorkingDirectory() {
-    return type == Type.WORKING_DIRECTORY ? stringValue : null;
   }
 
   @NonNull

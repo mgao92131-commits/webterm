@@ -375,7 +375,7 @@ public final class TerminalLineRenderNodeCacheTest {
     return new ScreenBaseline(
         "session-1", "instance-1", 1L, 1L, 1L, rows, columns,
         TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
   private static TerminalCommit patch(long baseRevision, long revision, TerminalLine line) {
@@ -401,7 +401,7 @@ public final class TerminalLineRenderNodeCacheTest {
     model.applyBaseline(new ScreenBaseline(
         "session-1", instanceId, layoutEpoch, 1L, 1L, rows, columns,
         TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", ""));
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     return model.renderSnapshot();
   }
 

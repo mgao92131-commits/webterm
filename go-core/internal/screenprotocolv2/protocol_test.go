@@ -167,6 +167,42 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 	}
 }
 
+func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T) {
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
+		BaseRevision: 1, Seq: 2, Rows: 1, Cols: 1,
+		Title: "secret-title", WorkingDir: "/secret/path",
+		TitleChanged: true, WorkingDirChanged: true,
+		CursorChanged: true,
+	}
+	wire, err := EncodeTerminalCommit(frame, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	commitFields := env.GetTerminalCommit().ProtoReflect().Descriptor().Fields()
+	if commitFields.ByName("title") != nil || commitFields.ByName("working_directory") != nil {
+		t.Fatal("TerminalCommit schema unexpectedly carries title/cwd")
+	}
+
+	frame.Kind = terminalengine.FrameSnapshot
+	frame.BaseRevision = 0
+	wire, err = EncodeBaseline(frame, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	baselineFields := env.GetBaseline().ProtoReflect().Descriptor().Fields()
+	if baselineFields.ByName("title") != nil || baselineFields.ByName("working_directory") != nil {
+		t.Fatal("Baseline schema unexpectedly carries title/cwd")
+	}
+}
+
 func TestEncodeTerminalCommitBoundsHistoryBodiesButKeepsExtent(t *testing.T) {
 	lines := make([]terminalengine.Line, 200)
 	for i := range lines {

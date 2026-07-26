@@ -38,7 +38,7 @@ public final class RemoteTerminalViewVisibleHistoryTest {
     model.applyBaseline(new ScreenBaseline(
         "s1", "i1", 1, 1, 1, 1, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 300), tail, Collections.singletonList(line(1000, 0)),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", ""));
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     model.consumeRenderUpdate();
 
     TerminalViewportState viewport = new TerminalViewportState();

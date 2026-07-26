@@ -356,7 +356,7 @@ func mergeScreenWireSnapshot(a, b ScreenWireSnapshot) ScreenWireSnapshot {
 		FrameCount:        a.FrameCount + b.FrameCount,
 		WireBytes:         a.WireBytes + b.WireBytes,
 		BaselineBytes:     a.BaselineBytes + b.BaselineBytes,
-		PatchBytes:        a.PatchBytes + b.PatchBytes,
+		CommitBytes:       a.CommitBytes + b.CommitBytes,
 		HistoryRangeBytes: a.HistoryRangeBytes + b.HistoryRangeBytes,
 		OtherBytes:        a.OtherBytes + b.OtherBytes,
 	}
@@ -527,7 +527,6 @@ func (terminal *TerminalSession) ApplyNotification(importance, message, source s
 	if onInfoChanged != nil {
 		onInfoChanged()
 	}
-	terminal.broadcastInfo()
 }
 
 // ApplySessionUpdate changes only terminal metadata and never triggers a
@@ -564,16 +563,6 @@ func (terminal *TerminalSession) ApplySessionUpdate(shellState, cwd, lastInput, 
 	}
 	if onInfoChanged != nil {
 		onInfoChanged()
-	}
-	terminal.broadcastInfo()
-}
-
-func (terminal *TerminalSession) broadcastInfo() {
-	terminal.mu.RLock()
-	clients := terminal.clientSnapshotLocked()
-	terminal.mu.RUnlock()
-	for _, client := range clients {
-		client.SendInfo()
 	}
 }
 

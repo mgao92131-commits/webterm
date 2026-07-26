@@ -154,7 +154,7 @@ public final class RemoteTerminalCursorOverlayTest {
     model.applyBaseline(new ScreenBaseline(
         "session-1", "term-1", 1L, 1L, 1L, rows, columns, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY, Arrays.<TerminalLine>asList(), Arrays.asList(screen),
-        cursor, TerminalModes.defaults(), palette, "", ""));
+        cursor, TerminalModes.defaults(), palette));
 
     model.requestFullRender();
     RenderUpdate update = model.consumeRenderUpdate();

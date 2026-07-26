@@ -521,8 +521,6 @@ func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 		patch.ScreenScroll != nil ||
 		len(patch.Styles) > 0 ||
 		len(patch.Links) > 0 ||
-		patch.TitleChanged ||
-		patch.WorkingDirChanged ||
 		patch.CursorChanged ||
 		patch.ModesChanged ||
 		patch.PaletteChanged

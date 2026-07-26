@@ -40,11 +40,6 @@ public final class RemoteTerminalIntegration {
     return title.trim();
   }
 
-  public interface TitleListener {
-    void onTitleChanged(@Nullable String title);
-    void onWorkingDirectoryChanged(@Nullable String cwd);
-  }
-
   public interface AuthenticationListener {
     void onAuthenticationRequired(@Nullable String reason);
   }
@@ -71,7 +66,6 @@ public final class RemoteTerminalIntegration {
   private TextView subtitleView;
   private String latestTitle = "Terminal";
   private String latestCwd = "";
-  private TitleListener titleListener;
   private AuthenticationListener authenticationListener;
   private int imeOverlap;
   // 由上层（app diagnostics source set）注入的“更多”菜单调试项；release 为空列表（无 UI 入口）。
@@ -176,12 +170,6 @@ public final class RemoteTerminalIntegration {
     controllerOwner = fragment.getViewLifecycleOwner();
     controller.setEffectListener(effect -> {
       switch (effect.type()) {
-        case TITLE:
-          updateTitle(effect.asTitle());
-          break;
-        case WORKING_DIRECTORY:
-          updateWorkingDirectory(effect.asWorkingDirectory());
-          break;
         case CLIPBOARD_READ:
           handleClipboardRead(effect.asClipboardRead());
           break;
@@ -243,22 +231,19 @@ public final class RemoteTerminalIntegration {
     clearViewBindings(true);
   }
 
-  /** 实时 Effect 与恢复快照都经过这里，按规范化后的值去重。 */
+  /** SessionInfo 是 title/cwd 的唯一实时状态源。 */
   private void updateTitle(@Nullable String title) {
     String nextTitle = displayTermTitle(title);
     if (nextTitle.equals(latestTitle)) return;
     latestTitle = nextTitle;
     if (titleView != null) titleView.setText(latestTitle);
-    if (titleListener != null) titleListener.onTitleChanged(latestTitle);
   }
 
-  /** 实时 Effect 与恢复快照都经过这里，按规范化后的值去重。 */
   private void updateWorkingDirectory(@Nullable String cwd) {
     String nextCwd = displayCwd(cwd);
     if (nextCwd.equals(latestCwd)) return;
     latestCwd = nextCwd;
     if (subtitleView != null) subtitleView.setText(latestCwd);
-    if (titleListener != null) titleListener.onWorkingDirectoryChanged(latestCwd);
   }
 
   private void clearViewBindings(boolean releaseRuntime) {
@@ -396,8 +381,9 @@ public final class RemoteTerminalIntegration {
     }
   }
 
-  public void setTitleListener(@Nullable TitleListener listener) {
-    this.titleListener = listener;
+  public void updateSessionInfo(@Nullable String title, @Nullable String cwd) {
+    updateTitle(title);
+    updateWorkingDirectory(cwd);
   }
 
   public static String displayCwd(@Nullable String cwd) {

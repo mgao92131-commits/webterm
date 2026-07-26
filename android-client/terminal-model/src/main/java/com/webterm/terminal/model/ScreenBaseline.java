@@ -17,15 +17,12 @@ public final class ScreenBaseline {
   public final TerminalCursor cursor;
   public final TerminalModes modes;
   public final TerminalPalette palette;
-  public final String title;
-  public final String workingDirectory;
 
   public ScreenBaseline(
       String sessionId, String instanceId, long layoutEpoch, long screenRevision,
       long streamGeneration, int rows, int cols, TerminalBufferKind activeBuffer,
       HistoryExtent historyExtent, List<TerminalLine> historyTail, List<TerminalLine> screen,
-      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
-      String title, String workingDirectory) {
+      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette) {
     this.sessionId = sessionId;
     this.instanceId = instanceId;
     this.layoutEpoch = layoutEpoch;
@@ -40,7 +37,5 @@ public final class ScreenBaseline {
     this.cursor = cursor;
     this.modes = modes;
     this.palette = palette;
-    this.title = title;
-    this.workingDirectory = workingDirectory;
   }
 }

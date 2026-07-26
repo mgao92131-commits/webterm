@@ -29,9 +29,7 @@ public final class ScreenMessageV2Mapper {
         pb.getScreenRevision(), pb.getStreamGeneration(),
         pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
         extent(pb.getHistoryExtent()), history, screen,
-        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()),
-        pb.hasTitle() ? pb.getTitle() : "",
-        pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : "");
+        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
   }
 
   public static TerminalCommit mapTerminalCommit(

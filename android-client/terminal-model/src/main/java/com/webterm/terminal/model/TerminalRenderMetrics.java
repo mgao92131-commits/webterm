@@ -40,19 +40,17 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong MAIN_CALLBACK_DELAY_NANOS = new AtomicLong();
   private static final AtomicLong BASELINE_FRAME_COUNT = new AtomicLong();
   private static final AtomicLong BASELINE_FRAME_BYTES = new AtomicLong();
-  private static final AtomicLong PATCH_FRAME_COUNT = new AtomicLong();
-  private static final AtomicLong PATCH_FRAME_BYTES = new AtomicLong();
+  private static final AtomicLong COMMIT_FRAME_COUNT = new AtomicLong();
+  private static final AtomicLong COMMIT_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong HISTORY_RANGE_FRAME_COUNT = new AtomicLong();
   private static final AtomicLong HISTORY_RANGE_FRAME_BYTES = new AtomicLong();
-  private static final AtomicLong HISTORY_DELTA_FRAME_COUNT = new AtomicLong();
-  private static final AtomicLong HISTORY_DELTA_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong OTHER_FRAME_COUNT = new AtomicLong();
   private static final AtomicLong OTHER_FRAME_BYTES = new AtomicLong();
   private static final AtomicLong MAILBOX_RESIDENCE_NANOS = new AtomicLong();
   private static final AtomicLong MAILBOX_RESIDENCE_MAX_NANOS = new AtomicLong();
   private static final AtomicLong VIEWPORT_REDRAW_REQUEST_COUNT = new AtomicLong();
   private static final AtomicLong VIEWPORT_FULL_REDRAW_COUNT = new AtomicLong();
-  private static final AtomicLongArray SCREEN_PATCH_APPLY_LATENCY_BUCKETS =
+  private static final AtomicLongArray TERMINAL_COMMIT_APPLY_LATENCY_BUCKETS =
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLongArray PROTOBUF_PARSE_LATENCY_BUCKETS =
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
@@ -64,8 +62,7 @@ public final class TerminalRenderMetrics {
       new AtomicLongArray(LATENCY_BUCKET_COUNT);
   private static final AtomicLong HISTORY_CACHE_HIT_COUNT = new AtomicLong();
   private static final AtomicLong HISTORY_CACHE_MISS_COUNT = new AtomicLong();
-  private static final AtomicLong BACKGROUND_PATCH_DROPPED_COUNT = new AtomicLong();
-  private static final AtomicLong SCREEN_LINE_STORE_MAX_SIZE = new AtomicLong();
+  private static final AtomicLong BACKGROUND_COMMIT_DROPPED_COUNT = new AtomicLong();
   private static final AtomicLong VISIBLE_HISTORY_ROWS_DRAWN = new AtomicLong();
   private static final AtomicLong RENDER_NODE_VICTIM_SCAN_COUNT = new AtomicLong();
   private static final AtomicLong RENDER_NODE_VICTIM_SCANNED_ENTRIES = new AtomicLong();
@@ -118,8 +115,8 @@ public final class TerminalRenderMetrics {
     PROTOBUF_PARSE_NANOS.addAndGet(safe);
     recordLatency(PROTOBUF_PARSE_LATENCY_BUCKETS, safe);
   }
-  public static void screenPatchApplyDuration(long nanos) {
-    recordLatency(SCREEN_PATCH_APPLY_LATENCY_BUCKETS, Math.max(0L, nanos));
+  public static void terminalCommitApplyDuration(long nanos) {
+    recordLatency(TERMINAL_COMMIT_APPLY_LATENCY_BUCKETS, Math.max(0L, nanos));
   }
   public static void mapperDuration(long nanos) {
     recordLatency(MAPPER_LATENCY_BUCKETS, Math.max(0L, nanos));
@@ -149,10 +146,7 @@ public final class TerminalRenderMetrics {
     RENDER_NODE_VICTIM_SCANNED_ENTRIES.addAndGet(Math.max(0, scannedEntries));
     if (allPinned) RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.incrementAndGet();
   }
-  public static void backgroundPatchDropped() { BACKGROUND_PATCH_DROPPED_COUNT.incrementAndGet(); }
-  public static void screenLineStoreSize(long size) {
-    updateMax(SCREEN_LINE_STORE_MAX_SIZE, Math.max(0L, size));
-  }
+  public static void backgroundCommitDropped() { BACKGROUND_COMMIT_DROPPED_COUNT.incrementAndGet(); }
   public static void visibleHistoryRowsDrawn(int rows) {
     VISIBLE_HISTORY_ROWS_DRAWN.addAndGet(Math.max(0, rows));
   }
@@ -164,7 +158,7 @@ public final class TerminalRenderMetrics {
   }
   /** 屏幕协议消息的分类标记；不依赖其他模块枚举的 ordinal。 */
   public enum ScreenTrafficKind {
-    BASELINE, PATCH, HISTORY_RANGE, HISTORY_DELTA, OTHER
+    BASELINE, COMMIT, HISTORY_RANGE, OTHER
   }
 
   /** Records only wire class and length; terminal contents never enter diagnostics. */
@@ -174,15 +168,12 @@ public final class TerminalRenderMetrics {
     if (kind == ScreenTrafficKind.BASELINE) {
       count = BASELINE_FRAME_COUNT;
       totalBytes = BASELINE_FRAME_BYTES;
-    } else if (kind == ScreenTrafficKind.PATCH) {
-      count = PATCH_FRAME_COUNT;
-      totalBytes = PATCH_FRAME_BYTES;
+    } else if (kind == ScreenTrafficKind.COMMIT) {
+      count = COMMIT_FRAME_COUNT;
+      totalBytes = COMMIT_FRAME_BYTES;
     } else if (kind == ScreenTrafficKind.HISTORY_RANGE) {
       count = HISTORY_RANGE_FRAME_COUNT;
       totalBytes = HISTORY_RANGE_FRAME_BYTES;
-    } else if (kind == ScreenTrafficKind.HISTORY_DELTA) {
-      count = HISTORY_DELTA_FRAME_COUNT;
-      totalBytes = HISTORY_DELTA_FRAME_BYTES;
     } else {
       count = OTHER_FRAME_COUNT;
       totalBytes = OTHER_FRAME_BYTES;
@@ -209,18 +200,18 @@ public final class TerminalRenderMetrics {
         HISTORY_ONLY_NO_DRAW_COUNT.get(),
         RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
         PROTOBUF_PARSE_COUNT.get(), MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get(),
-        BASELINE_FRAME_COUNT.get(), BASELINE_FRAME_BYTES.get(), PATCH_FRAME_COUNT.get(),
-        PATCH_FRAME_BYTES.get(), HISTORY_RANGE_FRAME_COUNT.get(), HISTORY_RANGE_FRAME_BYTES.get(),
-        HISTORY_DELTA_FRAME_COUNT.get(), HISTORY_DELTA_FRAME_BYTES.get(), OTHER_FRAME_COUNT.get(),
+        BASELINE_FRAME_COUNT.get(), BASELINE_FRAME_BYTES.get(), COMMIT_FRAME_COUNT.get(),
+        COMMIT_FRAME_BYTES.get(), HISTORY_RANGE_FRAME_COUNT.get(), HISTORY_RANGE_FRAME_BYTES.get(),
+        OTHER_FRAME_COUNT.get(),
         OTHER_FRAME_BYTES.get(), MAILBOX_RESIDENCE_NANOS.get(), MAILBOX_RESIDENCE_MAX_NANOS.get(),
         VIEWPORT_REDRAW_REQUEST_COUNT.get(), VIEWPORT_FULL_REDRAW_COUNT.get(),
-        copyBuckets(SCREEN_PATCH_APPLY_LATENCY_BUCKETS),
+        copyBuckets(TERMINAL_COMMIT_APPLY_LATENCY_BUCKETS),
         copyBuckets(PROTOBUF_PARSE_LATENCY_BUCKETS),
         copyBuckets(MAPPER_LATENCY_BUCKETS),
         copyBuckets(RENDER_NODE_RECORD_LATENCY_BUCKETS),
         copyBuckets(MAILBOX_RESIDENCE_LATENCY_BUCKETS),
         HISTORY_CACHE_HIT_COUNT.get(), HISTORY_CACHE_MISS_COUNT.get(),
-        BACKGROUND_PATCH_DROPPED_COUNT.get(), SCREEN_LINE_STORE_MAX_SIZE.get(),
+        BACKGROUND_COMMIT_DROPPED_COUNT.get(),
         VISIBLE_HISTORY_ROWS_DRAWN.get(), RENDER_NODE_VICTIM_SCAN_COUNT.get(),
         RENDER_NODE_VICTIM_SCANNED_ENTRIES.get(),
         RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.get());
@@ -276,27 +267,24 @@ public final class TerminalRenderMetrics {
     public final long mainThreadCallbackDelayNanos;
     public final long baselineFrameCount;
     public final long baselineFrameBytes;
-    public final long patchFrameCount;
-    public final long patchFrameBytes;
+    public final long commitFrameCount;
+    public final long commitFrameBytes;
     public final long historyRangeFrameCount;
     public final long historyRangeFrameBytes;
-    public final long historyDeltaFrameCount;
-    public final long historyDeltaFrameBytes;
     public final long otherFrameCount;
     public final long otherFrameBytes;
     public final long mailboxResidenceNanos;
     public final long mailboxResidenceMaxNanos;
     public final long viewportRedrawRequestCount;
     public final long viewportFullRedrawCount;
-    public final long[] screenPatchApplyLatencyBuckets;
+    public final long[] terminalCommitApplyLatencyBuckets;
     public final long[] protobufParseLatencyBuckets;
     public final long[] mapperLatencyBuckets;
     public final long[] renderNodeRecordLatencyBuckets;
     public final long[] mailboxResidenceLatencyBuckets;
     public final long historyCacheHitCount;
     public final long historyCacheMissCount;
-    public final long backgroundPatchDroppedCount;
-    public final long screenLineStoreMaxSize;
+    public final long backgroundCommitDroppedCount;
     public final long visibleHistoryRowsDrawn;
     public final long renderNodeVictimScanCount;
     public final long renderNodeVictimScannedEntries;
@@ -311,17 +299,16 @@ public final class TerminalRenderMetrics {
              long rowNodeRecordCount, long rowNodeReuseCount, long historyOnlyNoDrawCount, long renderDurationNanos,
              long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
              long modelApplyNanos, long mainThreadCallbackDelayNanos, long baselineFrameCount,
-             long baselineFrameBytes, long patchFrameCount, long patchFrameBytes,
+             long baselineFrameBytes, long commitFrameCount, long commitFrameBytes,
              long historyRangeFrameCount, long historyRangeFrameBytes,
-             long historyDeltaFrameCount, long historyDeltaFrameBytes,
              long otherFrameCount, long otherFrameBytes, long mailboxResidenceNanos,
              long mailboxResidenceMaxNanos, long viewportRedrawRequestCount,
-             long viewportFullRedrawCount, long[] screenPatchApplyLatencyBuckets,
+             long viewportFullRedrawCount, long[] terminalCommitApplyLatencyBuckets,
              long[] protobufParseLatencyBuckets, long[] mapperLatencyBuckets,
              long[] renderNodeRecordLatencyBuckets,
              long[] mailboxResidenceLatencyBuckets, long historyCacheHitCount,
-             long historyCacheMissCount, long backgroundPatchDroppedCount,
-             long screenLineStoreMaxSize, long visibleHistoryRowsDrawn,
+             long historyCacheMissCount, long backgroundCommitDroppedCount,
+             long visibleHistoryRowsDrawn,
              long renderNodeVictimScanCount, long renderNodeVictimScannedEntries,
              long renderNodeAllPinnedFallbackCount) {
       this.modelChangeCount = modelChangeCount;
@@ -351,27 +338,24 @@ public final class TerminalRenderMetrics {
       this.mainThreadCallbackDelayNanos = mainThreadCallbackDelayNanos;
       this.baselineFrameCount = baselineFrameCount;
       this.baselineFrameBytes = baselineFrameBytes;
-      this.patchFrameCount = patchFrameCount;
-      this.patchFrameBytes = patchFrameBytes;
+      this.commitFrameCount = commitFrameCount;
+      this.commitFrameBytes = commitFrameBytes;
       this.historyRangeFrameCount = historyRangeFrameCount;
       this.historyRangeFrameBytes = historyRangeFrameBytes;
-      this.historyDeltaFrameCount = historyDeltaFrameCount;
-      this.historyDeltaFrameBytes = historyDeltaFrameBytes;
       this.otherFrameCount = otherFrameCount;
       this.otherFrameBytes = otherFrameBytes;
       this.mailboxResidenceNanos = mailboxResidenceNanos;
       this.mailboxResidenceMaxNanos = mailboxResidenceMaxNanos;
       this.viewportRedrawRequestCount = viewportRedrawRequestCount;
       this.viewportFullRedrawCount = viewportFullRedrawCount;
-      this.screenPatchApplyLatencyBuckets = screenPatchApplyLatencyBuckets;
+      this.terminalCommitApplyLatencyBuckets = terminalCommitApplyLatencyBuckets;
       this.protobufParseLatencyBuckets = protobufParseLatencyBuckets;
       this.mapperLatencyBuckets = mapperLatencyBuckets;
       this.renderNodeRecordLatencyBuckets = renderNodeRecordLatencyBuckets;
       this.mailboxResidenceLatencyBuckets = mailboxResidenceLatencyBuckets;
       this.historyCacheHitCount = historyCacheHitCount;
       this.historyCacheMissCount = historyCacheMissCount;
-      this.backgroundPatchDroppedCount = backgroundPatchDroppedCount;
-      this.screenLineStoreMaxSize = screenLineStoreMaxSize;
+      this.backgroundCommitDroppedCount = backgroundCommitDroppedCount;
       this.visibleHistoryRowsDrawn = visibleHistoryRowsDrawn;
       this.renderNodeVictimScanCount = renderNodeVictimScanCount;
       this.renderNodeVictimScannedEntries = renderNodeVictimScannedEntries;

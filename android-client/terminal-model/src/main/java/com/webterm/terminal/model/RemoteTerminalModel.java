@@ -49,8 +49,6 @@ public final class RemoteTerminalModel {
   private TerminalCursor cursor = TerminalCursor.hidden();
   private TerminalModes modes = TerminalModes.defaults();
   private TerminalPalette palette = TerminalPalette.defaults();
-  private String title = "";
-  private String workingDirectory = "";
 
   /**
    * Published only after a complete model mutation. Canvas runs on the main
@@ -212,8 +210,6 @@ public final class RemoteTerminalModel {
     this.cursor = baseline.cursor != null ? baseline.cursor : TerminalCursor.hidden();
     this.modes = baseline.modes != null ? baseline.modes : TerminalModes.defaults();
     this.palette = baseline.palette != null ? baseline.palette : TerminalPalette.defaults();
-    this.title = baseline.title != null ? baseline.title : "";
-    this.workingDirectory = baseline.workingDirectory != null ? baseline.workingDirectory : "";
     this.firstAvailableHistorySeq = baseline.historyExtent.firstSeq;
     this.hasMoreHistoryBefore = false;
 
@@ -224,7 +220,7 @@ public final class RemoteTerminalModel {
     }
     markRenderDirty(true, null, 0, null, rows, true, geometryChanged, true, -1, cursor.row,
         true, true, true, true, true);
-    markTerminalState(geometryChanged, true, true, true, 0, 0);
+    markTerminalState(geometryChanged, true, false, false, 0, 0);
     projectionHealth = ProjectionHealth.complete(
         instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
     publishPendingRenderUpdate();
@@ -595,14 +591,6 @@ public final class RemoteTerminalModel {
     return palette;
   }
 
-  public synchronized String title() {
-    return title;
-  }
-
-  public synchronized String workingDirectory() {
-    return workingDirectory;
-  }
-
   public synchronized long firstAvailableHistorySeq() {
     return firstAvailableHistorySeq;
   }
@@ -785,7 +773,7 @@ public final class RemoteTerminalModel {
         : previous.history;
     renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
         activeBuffer, screenCopy, historySnapshot, cursor, modes, palette,
-        title, workingDirectory, firstAvailableHistorySeq,
+        firstAvailableHistorySeq,
         hasMoreHistoryBefore);
     publishProjectionReadView();
   }
@@ -814,8 +802,6 @@ public final class RemoteTerminalModel {
     public final TerminalCursor cursor;
     public final TerminalModes modes;
     public final TerminalPalette palette;
-    public final String title;
-    public final String workingDirectory;
     public final long firstAvailableHistorySeq;
     public final boolean hasMoreHistoryBefore;
 
@@ -823,7 +809,7 @@ public final class RemoteTerminalModel {
                            int columns, TerminalBufferKind activeBuffer,
                            TerminalLine[] screen, TerminalHistoryView history,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
-                           String title, String workingDirectory, long firstAvailableHistorySeq,
+                           long firstAvailableHistorySeq,
                            boolean hasMoreHistoryBefore) {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
@@ -836,8 +822,6 @@ public final class RemoteTerminalModel {
       this.cursor = cursor;
       this.modes = modes;
       this.palette = palette;
-      this.title = title;
-      this.workingDirectory = workingDirectory;
       this.firstAvailableHistorySeq = firstAvailableHistorySeq;
       this.hasMoreHistoryBefore = hasMoreHistoryBefore;
     }
@@ -845,8 +829,7 @@ public final class RemoteTerminalModel {
     private static RenderSnapshot empty() {
       return new RenderSnapshot(null, 0, 0, 0, 0, TerminalBufferKind.MAIN, null,
           TerminalHistorySnapshot.empty(), TerminalCursor.hidden(),
-          TerminalModes.defaults(), TerminalPalette.defaults(),
-          "", "", 0, false);
+          TerminalModes.defaults(), TerminalPalette.defaults(), 0, false);
     }
   }
 

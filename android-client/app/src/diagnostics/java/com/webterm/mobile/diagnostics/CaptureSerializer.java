@@ -120,8 +120,6 @@ final class CaptureSerializer {
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
         o.put("screen", lines(s.screen));
-        o.put("title", s.title);
-        o.put("workingDirectory", s.workingDirectory);
         o.put("firstAvailableHistorySeq", s.firstAvailableHistorySeq);
         o.put("hasMoreHistoryBefore", s.hasMoreHistoryBefore);
         o.put("history", historyWindow(s, includeHistory));
@@ -176,8 +174,6 @@ final class CaptureSerializer {
         o.put("historyExtentFirst", s.historyExtent.firstSeq);
         o.put("historyExtentLast", s.historyExtent.lastSeq);
         o.put("historyTail", lineList(s.historyTail));
-        o.put("title", s.title);
-        o.put("workingDirectory", s.workingDirectory);
         return o;
     }
 

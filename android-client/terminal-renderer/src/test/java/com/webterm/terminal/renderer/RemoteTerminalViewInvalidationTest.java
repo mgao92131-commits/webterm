@@ -62,8 +62,7 @@ public final class RemoteTerminalViewInvalidationTest {
     ScreenBaseline baseline = new ScreenBaseline(
         "session-1", "term-1", 1L, 1L, 1L, rows, cols, TerminalBufferKind.MAIN,
         extent, Arrays.asList(history), Arrays.asList(screen),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        "", "");
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
     model.applyBaseline(baseline);
     model.consumeRenderUpdate();
     return model;
@@ -283,7 +282,7 @@ public final class RemoteTerminalViewInvalidationTest {
     assertEquals(true, model.applyBaseline(new ScreenBaseline(
         "session-large", "term-large", 1L, 1L, 1L, rows, cols,
         TerminalBufferKind.MAIN, new HistoryExtent(firstSeq, lastSeq), historyTail, screen,
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "")));
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();
     return model;
   }

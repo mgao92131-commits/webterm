@@ -10,7 +10,7 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
-  reserved 4, 5;
+  reserved 4, 5, 18;
 
   oneof payload {
     Hello hello = 2;
@@ -27,7 +27,6 @@ message ScreenEnvelope {
     InputAck input_ack = 15;
     TerminalEffect effect = 16;
     ClipboardResponse clipboard_response = 17;
-    TerminalInfo info = 18;
     Exit exit = 19;
     Ping ping = 20;
     Pong pong = 21;
@@ -99,8 +98,7 @@ message Baseline {
   Modes modes = 13;
   TerminalPalette palette = 14;
   Dictionary dictionary = 15;
-  optional string title = 16;
-  optional string working_directory = 17;
+  reserved 16, 17;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。
@@ -405,21 +403,16 @@ message ModifierSet {
 message TerminalEffect {
   string instance_id = 1;
   uint64 screen_revision = 2;
+  reserved 11, 12, 16, 17;
   oneof effect {
     Bell bell = 10;
-    TitleChanged title = 11;
-    WorkingDirectoryChanged cwd = 12;
     ClipboardReadRequest clipboard_read = 13;
     ClipboardWriteRequest clipboard_write = 14;
     DesktopNotification notification = 15;
-    PaletteChanged palette = 16;
-    ShellIntegrationMark shell_mark = 17;
   }
 }
 
 message Bell {}
-message TitleChanged { string title = 1; }
-message WorkingDirectoryChanged { string path = 1; }
 message ClipboardReadRequest {
   string request_id = 1;
   string clipboard = 2;
@@ -433,30 +426,12 @@ message DesktopNotification {
   string title = 1;
   string body = 2;
 }
-message PaletteChanged { TerminalPalette palette = 1; }
-message ShellIntegrationMark {
-  string type = 1;
-  string data = 2;
-}
 
 message ClipboardResponse {
   string request_id = 1;
   bool allowed = 2;
   bool timeout = 3;
   bytes data = 4;
-}
-
-message TerminalInfo {
-  string session_id = 1;
-  string instance_id = 2;
-  string title = 3;
-  string cwd = 4;
-  string command = 5;
-  string status = 6;
-  int32 cols = 7;
-  int32 rows = 8;
-  int64 created_at_ms = 9;
-  int64 last_active_at_ms = 10;
 }
 
 message Exit { int32 code = 1; }

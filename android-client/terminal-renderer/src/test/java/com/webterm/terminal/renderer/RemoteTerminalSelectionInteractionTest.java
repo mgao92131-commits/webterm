@@ -160,7 +160,7 @@ public final class RemoteTerminalSelectionInteractionTest {
         ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
     model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, rows, cols, bufferKind,
         extent, history, screen, TerminalCursor.hidden(), TerminalModes.defaults(),
-        TerminalPalette.defaults(), "", ""));
+        TerminalPalette.defaults()));
     return model;
   }
 
