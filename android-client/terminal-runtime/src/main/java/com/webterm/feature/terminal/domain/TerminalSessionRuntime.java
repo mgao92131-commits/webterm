@@ -583,12 +583,15 @@ public final class TerminalSessionRuntime {
     if (boundedFrom <= 0 || boundedTo < boundedFrom || boundedTo - boundedFrom >= 256) {
       return false;
     }
-    if (historyRequests.isRangePending(boundedFrom, boundedTo)) return true;
     String requestId = historyRequests.nextRequestId();
-    historyRequests.reserve(requestId, boundedFrom, boundedTo, anchorSeq,
+    HistoryRequestCoordinator.Submission submission = historyRequests.submit(
+        requestId, boundedFrom, boundedTo, anchorSeq,
         projection.instanceId, projection.layoutEpoch, projection.historyGeneration, retryAttempt);
-    if (!c.requestHistoryRange(
-        requestId, projection.instanceId, projection.layoutEpoch,
+    if (submission == HistoryRequestCoordinator.Submission.DUPLICATE
+        || submission == HistoryRequestCoordinator.Submission.QUEUED) {
+      return true;
+    }
+    if (!sendHistoryRangeRequest(c, requestId, projection.instanceId, projection.layoutEpoch,
         projection.historyGeneration, boundedFrom, boundedTo)) {
       historyRequests.cancel(requestId);
       return false;
@@ -598,11 +601,43 @@ public final class TerminalSessionRuntime {
     return true;
   }
 
+  /** 仅发送已经进入 in-flight 账本的请求；响应资格不会因后续滚动而被覆盖。 */
+  private boolean sendHistoryRangeRequest(@NonNull ScreenConnection target,
+                                          @NonNull String requestId,
+                                          @NonNull String instanceId,
+                                          long layoutEpoch, long historyGeneration,
+                                          long fromSeq, long toSeq) {
+    return target.requestHistoryRange(
+        requestId, instanceId, layoutEpoch, historyGeneration, fromSeq, toSeq);
+  }
+
+  /** 一个历史请求释放 in-flight 槽位后自动补发最新待发页，不能等待下一次手势。 */
+  private void dispatchNextHistoryRangeRequest() {
+    if (state != State.LIVE) return;
+    HistoryRequestCoordinator.Pending next = historyRequests.promoteNext();
+    if (next == null) return;
+    ScreenConnection current = connection;
+    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
+    if (current == null || !next.instanceId.equals(projection.instanceId)
+        || next.layoutEpoch != projection.layoutEpoch
+        || next.historyGeneration != projection.historyGeneration
+        || !sendHistoryRangeRequest(current, next.requestId, next.instanceId,
+            next.layoutEpoch, next.historyGeneration, next.fromSeq, next.toSeq)) {
+      historyRequests.cancel(next.requestId);
+      return;
+    }
+    // 同步 loopback 响应会先 complete()；只有仍在途时才登记 timeout。
+    if (historyRequests.accept(next.requestId)) scheduleHistoryRequestTimeout(next.requestId);
+  }
+
   private void scheduleHistoryRequestTimeout(@NonNull String requestId) {
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
           HistoryRequestCoordinator.Pending expired = historyRequests.expire(requestId);
-          if (expired != null) scheduleHistoryRetry(expired, 0);
+          if (expired != null) {
+            dispatchNextHistoryRangeRequest();
+            scheduleHistoryRetry(expired, 0);
+          }
         }),
         HISTORY_REQUEST_TIMEOUT_MS);
   }
@@ -1035,6 +1070,9 @@ public final class TerminalSessionRuntime {
           HistoryRequestCoordinator.Pending pending =
               historyRequests.complete(wire.getRequestId());
           if (pending == null) return;
+          // 已发送请求的响应无论当前视口是否仍停在该页，都应入缓存；先释放槽位，
+          // 让快速滚动积压的最新页立即发送，而不是等待下一次手势。
+          dispatchNextHistoryRangeRequest();
           RemoteTerminalModel.ProjectionReadView currentProjection = model.projectionReadView();
           if (!pending.instanceId.equals(currentProjection.instanceId)
               || pending.layoutEpoch != currentProjection.layoutEpoch

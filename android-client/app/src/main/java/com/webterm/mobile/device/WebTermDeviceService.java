@@ -49,6 +49,7 @@ import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.core.session.traffic.UidTrafficTracker;
+import com.webterm.feature.home.repository.SessionRepository;
 
 import org.json.JSONObject;
 
@@ -103,6 +104,7 @@ public final class WebTermDeviceService extends Service {
     @Inject ServerConfigStore configStore;
     @Inject RelayService relayService;
     @Inject TerminalFocusStore terminalFocus;
+    @Inject SessionRepository sessionRepository;
 
     private final ConcurrentHashMap<String, DeviceConnection> managers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ServerConfig> configs = new ConcurrentHashMap<>();
@@ -382,7 +384,8 @@ public final class WebTermDeviceService extends Service {
         for (String key : new HashSet<>(directConnectionKeys)) {
             if (nextDirectKeys.contains(key)) continue;
             DeviceConnection manager = managers.remove(key);
-            configs.remove(key);
+            ServerConfig removedConfig = configs.remove(key);
+            if (removedConfig != null) sessionRepository.detachDevice(removedConfig);
             if (manager != null) {
                 manager.setControlListener(null);
                 NetworkTrafficStats.unregisterConnection(manager.baseUrl(), manager.deviceId());
@@ -416,6 +419,7 @@ public final class WebTermDeviceService extends Service {
         configs.put(key, config);
         manager.setControlListener(msg -> routeControl(key, msg));
         manager.start();
+        sessionRepository.attachDevice(config);
         return key;
     }
 
@@ -430,7 +434,8 @@ public final class WebTermDeviceService extends Service {
         for (String key : new HashSet<>(relayConnectionKeys)) {
             if (nextKeys.contains(key)) continue;
             DeviceConnection manager = managers.remove(key);
-            configs.remove(key);
+            ServerConfig removedConfig = configs.remove(key);
+            if (removedConfig != null) sessionRepository.detachDevice(removedConfig);
             if (manager != null) {
                 manager.setControlListener(null);
                 // 设备从配置中彻底移除时清理其流量累计器；重连/Transport 重建不会走到这里。
@@ -461,6 +466,7 @@ public final class WebTermDeviceService extends Service {
         configs.put(key, config);
         manager.setControlListener(msg -> routeControl(key, msg));
         manager.start();
+        sessionRepository.attachDevice(config);
         if (relayDevice) relayConnectionKeys.add(key);
         return key;
     }
@@ -474,6 +480,9 @@ public final class WebTermDeviceService extends Service {
      * 清空路由并退出前台。这是一次显式用户动作，与 onDestroy 不强行 stop 共享连接不同。 */
     private void stopAllDevices() {
         preferences(this).edit().putBoolean(KEY_CONNECTIONS_ENABLED, false).apply();
+        for (ServerConfig config : configs.values()) {
+            sessionRepository.detachDevice(config);
+        }
         for (DeviceConnection manager : managers.values()) {
             manager.setControlListener(null);
             // 「全部停止」是显式终止：清理每个连接的流量累计器，避免历史连接常驻统计；

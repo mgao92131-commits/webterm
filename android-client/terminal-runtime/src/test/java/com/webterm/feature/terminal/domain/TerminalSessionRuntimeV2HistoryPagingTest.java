@@ -104,6 +104,33 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
+  public void rapidFivePageRequestsQueueFifthUntilAnInFlightResponseCompletes() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "queued-pages", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2).toByteArray());
+
+    assertTrue(runtime.requestHistoryRange(1, 10, 1));
+    assertTrue(runtime.requestHistoryRange(20, 30, 20));
+    assertTrue(runtime.requestHistoryRange(40, 50, 40));
+    assertTrue(runtime.requestHistoryRange(60, 70, 60));
+    assertTrue(runtime.requestHistoryRange(80, 90, 80));
+
+    // 第五页不能挤掉第一个已发请求；它应等待槽位，而不是让 r0 的响应失效。
+    assertEquals(4, connection.rangeRequests);
+    String firstRequestId = connection.rangeRequestIds.get(0);
+    connection.listener.onScreenMessage(historyRange(
+        firstRequestId,
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE,
+        false).toByteArray());
+
+    assertEquals(5, connection.rangeRequests);
+    assertEquals(80, connection.fromSeq);
+    assertEquals(90, connection.toSeq);
+  }
+
+  @Test
   public void responseFromPreviousHistoryGenerationIsDroppedWithoutResync() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "late-range", new RemoteTerminalModel(), Runnable::run, Runnable::run,
@@ -463,6 +490,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     long fromSeq;
     long toSeq;
     int rangeRequests;
+    final List<String> rangeRequestIds = new ArrayList<>();
     int reconnectRequests;
     int clipboardResponses;
     String clipboardRequestId = "";
@@ -488,6 +516,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       this.fromSeq = fromSeq;
       this.toSeq = toSeq;
       rangeRequests++;
+      rangeRequestIds.add(requestId);
       if (onRangeRequest != null) onRangeRequest.run();
       if (respondSynchronously) {
         listener.onScreenMessage(historyRange(

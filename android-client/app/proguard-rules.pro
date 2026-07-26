@@ -17,15 +17,10 @@
     public <init>();
 }
 
-# OkHttp / Okio: keep rules required for certificate pinning, reflection on
-# platform internals, and Kotlin metadata used by Okio.
+# OkHttp 自带 consumer R8 规则；不要整包 keep OkHttp/Okio，否则会把未使用的
+# HTTP、缓存、HTTP/2 和平台适配实现全部打进 Release。
 -dontwarn okhttp3.**
 -dontwarn okio.**
--keep class okhttp3.** { *; }
--keep class okio.** { *; }
--keepclasseswithmembers class * {
-    @okhttp3.* <methods>;
-}
 
 # org.json: keep public constructors/methods used to parse and build payloads.
 -keep class org.json.** { public protected *; }
@@ -49,8 +44,7 @@
     public static ** valueOf(java.lang.String);
 }
 
-# Keep Parcelable / Serializable implementations if any are added later.
+# Parcelable 由 Android 框架按 CREATOR 字段访问。
 -keepclassmembers class * implements android.os.Parcelable {
     public static final ** CREATOR;
 }
--keep class * implements java.io.Serializable { *; }

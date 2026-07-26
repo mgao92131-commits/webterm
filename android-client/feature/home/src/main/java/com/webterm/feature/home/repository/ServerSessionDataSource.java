@@ -82,11 +82,13 @@ public final class ServerSessionDataSource {
     }
 
     private DeviceConnection connectionFor(ServerConfig server) {
-        return deviceConnectionRegistry.forDevice(
-            server.getUrl(),
-            server.getCookie() != null ? server.getCookie() : "",
-            server.getDeviceId()
-        );
+        String cookie = server.getCookie() != null ? server.getCookie() : "";
+        if (server.isDirectDevice()) {
+            return deviceConnectionRegistry.forDirectDevice(
+                server.getId(), server.getUrl(), cookie);
+        }
+        return deviceConnectionRegistry.forRelayDevice(
+            server.getUrl(), cookie, server.getDeviceId());
     }
 
     void dispatch(String text, Listener listener, String relayDeviceId) {

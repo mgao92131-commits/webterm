@@ -325,6 +325,7 @@ public final class AppFlowCoordinator implements
         // terminal page is popped; reopening must start from a fresh snapshot.
         terminalAuthRecoveryGeneration++;
         terminalAuthRecoveryInFlight = false;
+        unbindTerminalSessionInfo();
         remoteTerminalIntegration.stop();
         terminalFocus.clear();
         currentTerminalConnectionKey = "";
@@ -459,8 +460,9 @@ public final class AppFlowCoordinator implements
     }
 
     public void detachTerminalFragment(TerminalFragment fragment) {
-        unbindTerminalSessionInfo();
-        remoteTerminalIntegration.detach(fragment);
+        if (remoteTerminalIntegration.detach(fragment)) {
+            unbindTerminalSessionInfo();
+        }
     }
 
     // ── HomeHost ─────────────────────────────────────────────────────

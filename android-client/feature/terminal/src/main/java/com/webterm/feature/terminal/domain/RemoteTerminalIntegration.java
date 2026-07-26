@@ -280,10 +280,12 @@ public final class RemoteTerminalIntegration {
    * Fragment 销毁只应释放它自己拥有的远程终端。导航快速切换时，旧
    * Fragment 的 onDestroyView 不能关闭已经绑定到新 Fragment 的会话。
    */
-  public void detach(@NonNull TerminalFragment fragment) {
+  public boolean detach(@NonNull TerminalFragment fragment) {
     if (fragment == activeFragment) {
       stop();
+      return true;
     }
+    return false;
   }
 
   public void closeSession() {

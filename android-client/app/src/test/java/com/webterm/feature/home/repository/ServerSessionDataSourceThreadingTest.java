@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,7 +13,9 @@ import android.os.Handler;
 import android.os.Looper;
 
 import com.webterm.core.session.ChannelFailure;
+import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
+import com.webterm.core.config.ServerConfig;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,6 +26,26 @@ import org.mockito.MockedStatic;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class ServerSessionDataSourceThreadingTest {
+
+    @Test
+    public void relayManagerUsesSharedRelayDeviceConnection() {
+        Handler mainHandler = mock(Handler.class);
+        DeviceConnectionRegistry registry = mock(DeviceConnectionRegistry.class);
+        DeviceConnection connection = mock(DeviceConnection.class);
+        ServerConfig relayDevice = new ServerConfig(
+            "relay_dev_d1", "PC", "https://relay.test", "cookie", "", "",
+            false, true, "d1");
+        when(registry.forRelayDevice("https://relay.test", "cookie", "d1"))
+            .thenReturn(connection);
+
+        ServerSessionDataSource source = new ServerSessionDataSource(registry, mainHandler);
+        source.start(relayDevice, listenerWithClosedSession(new AtomicReference<>()));
+
+        verify(registry).forRelayDevice("https://relay.test", "cookie", "d1");
+        verify(registry, never()).forDirectDevice(
+            any(String.class), any(String.class), any(String.class));
+        verify(connection).start();
+    }
 
     @Test
     public void sessionClosedFromDeviceThreadIsDeliveredOnMainHandler() {

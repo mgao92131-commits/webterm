@@ -61,4 +61,24 @@ public class HistoryRequestCoordinatorTest {
     assertEquals(reserved, coordinator.cancel("r1"));
     assertFalse(coordinator.accept("r1"));
   }
+
+  @Test
+  public void fifthPageQueuesWithoutForgettingFirstInFlightResponse() {
+    HistoryRequestCoordinator coordinator = new HistoryRequestCoordinator();
+    for (int page = 0; page < 4; page++) {
+      assertEquals(HistoryRequestCoordinator.Submission.SEND_NOW, coordinator.submit(
+          "r" + page, page * 128L + 1L, page * 128L + 128L, page * 128L + 1L,
+          "instance", 1, 1, 0));
+    }
+    assertEquals(HistoryRequestCoordinator.Submission.QUEUED, coordinator.submit(
+        "r4", 513, 640, 513, "instance", 1, 1, 0));
+
+    // 容量满时旧实现会删除 r0，导致它的真实网络响应被静默丢弃。
+    assertTrue(coordinator.accept("r0"));
+    assertEquals("r0", coordinator.complete("r0").requestId);
+
+    HistoryRequestCoordinator.Pending promoted = coordinator.promoteNext();
+    assertEquals("r4", promoted.requestId);
+    assertTrue(coordinator.accept("r4"));
+  }
 }

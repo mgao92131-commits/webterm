@@ -39,8 +39,6 @@ public final class SessionRepository {
 
     private static final long FALLBACK_INITIAL_DELAY_MS = 3000L;
     private static final long FALLBACK_MAX_DELAY_MS = 60000L;
-    private static final long WS_GRACE_PERIOD_MS = 30000L;
-
     private final Api api;
     private final Cache cache;
     private final Executor executor;
@@ -102,11 +100,31 @@ public final class SessionRepository {
     /**
      * Observe the session list for a server. The returned LiveData emits the
      * latest cached value immediately, then keeps the value up to date via WS.
-     * When the last observer goes inactive the WS channel is closed after a
-     * short grace period.
+     * The manager channel is device-scoped and remains attached while UI
+     * observers are inactive.
      */
     public LiveData<SessionListResult> observeSessions(ServerConfig server) {
-        return subscriptionFor(server).liveData;
+        ServerSubscription subscription = subscriptionFor(server);
+        subscription.attach();
+        return subscription.liveData;
+    }
+
+    /** Attach the device-scoped manager channel. Repeated calls are idempotent. */
+    public void attachDevice(ServerConfig server) {
+        if (server == null) return;
+        subscriptionFor(server).attach();
+    }
+
+    /**
+     * Release the manager channel only when a device is removed, logged out, or
+     * explicitly stopped. Fragment/LiveData lifecycle must not call this.
+     */
+    public void detachDevice(ServerConfig server) {
+        if (server == null) return;
+        ServerSubscription subscription = subscriptions.get(key(server));
+        if (subscription != null) {
+            subscription.detach();
+        }
     }
 
     /**
@@ -147,6 +165,8 @@ public final class SessionRepository {
         if (sub == null) {
             sub = new ServerSubscription(server);
             subscriptions.put(key, sub);
+        } else {
+            sub.updateCredentials(server);
         }
         return sub;
     }
@@ -155,7 +175,7 @@ public final class SessionRepository {
         final ServerConfig server;
         final ServerSessionsLiveData liveData = new ServerSessionsLiveData(this);
         final AtomicLong hydrateGeneration = new AtomicLong(0);
-        int observerCount = 0;
+        boolean attached = false;
         boolean wsStarted = false;
         /** AUTH_REQUIRED 恢复中：HTTP 链上的网络错误按临时错误退避重试。 */
         boolean authRecovery = false;
@@ -166,22 +186,27 @@ public final class SessionRepository {
             this.server = server;
         }
 
+        void updateCredentials(ServerConfig latest) {
+            if (latest == null || latest == server) return;
+            if (latest.getCookie() != null && !latest.getCookie().isEmpty()) {
+                server.setCookie(latest.getCookie());
+            }
+            if (latest.getUsername() != null && !latest.getUsername().isEmpty()) {
+                server.setUsername(latest.getUsername());
+            }
+            if (latest.getPassword() != null && !latest.getPassword().isEmpty()) {
+                server.setPassword(latest.getPassword());
+            }
+        }
+
         void onObserverActive() {
-            observerCount++;
-            cancelGracefulStop();
-            if (observerCount == 1) {
-                startObserving();
-            }
+            attach();
+            restoreRecoveryForCurrentState();
         }
 
-        void onObserverInactive() {
-            observerCount--;
-            if (observerCount == 0) {
-                scheduleGracefulStop();
-            }
-        }
-
-        void startObserving() {
+        void attach() {
+            if (attached) return;
+            attached = true;
             SessionListCache.Snapshot snapshot = sessionCache.get(server);
             if (snapshot != null) {
                 liveData.setValueIfNeeded(toResult(snapshot));
@@ -194,14 +219,14 @@ public final class SessionRepository {
                 ));
             }
             if (!wsStarted) {
-                // channel 不存在：重建 manager channel；取消旧 fallback，由连接回调接管。
                 cancelFallback();
                 wsStarted = true;
                 wsSource.start(server, this);
-                return;
             }
-            // channel 仍标记为已启动（例如 mux 自愈重连中）。重新获得活跃观察者时，
-            // 绝不能 cancelFallback 后留下 DISCONNECTED/ERROR 且无恢复任务的死状态。
+        }
+
+        private void restoreRecoveryForCurrentState() {
+            if (!attached) return;
             SessionListResult current = liveData.getValue();
             if (current == null) return;
             switch (current.state) {
@@ -221,32 +246,17 @@ public final class SessionRepository {
             }
         }
 
-        void stopObserving() {
+        void detach() {
+            attached = false;
             cancelFallback();
             if (wsStarted) {
                 wsStarted = false;
                 wsSource.stop(server);
             }
             hydrateGeneration.incrementAndGet();
-        }
-
-        private void scheduleGracefulStop() {
-            cancelGracefulStop();
-            mainHandler.postDelayed(gracefulStopRunnable, WS_GRACE_PERIOD_MS);
-        }
-
-        private void cancelGracefulStop() {
-            mainHandler.removeCallbacks(gracefulStopRunnable);
-        }
-
-        private final Runnable gracefulStopRunnable = () -> {
-            if (observerCount > 0) return;
-            stopObserving();
-            removeFromRegistry();
-        };
-
-        private void removeFromRegistry() {
-            subscriptions.remove(key(server));
+            if (liveData.getValue() != null) {
+                updateState(SessionListResult.State.DISCONNECTED);
+            }
         }
 
         void setLoading(boolean loading) {
@@ -392,7 +402,7 @@ public final class SessionRepository {
             // 只移除待发任务，不重置 fallbackDelayMs：
             // runFallbackRefresh 翻倍后的退避必须保留到下一次调度。
             mainHandler.removeCallbacks(fallbackRunnable);
-            if (observerCount <= 0) return;
+            if (!attached) return;
             mainHandler.postDelayed(fallbackRunnable, fallbackDelayMs);
         }
 
@@ -402,7 +412,7 @@ public final class SessionRepository {
         }
 
         private void runFallbackRefresh() {
-            if (observerCount <= 0) return;
+            if (!attached) return;
             loadHttp(server);
             fallbackDelayMs = Math.min(FALLBACK_MAX_DELAY_MS, Math.max(FALLBACK_INITIAL_DELAY_MS, fallbackDelayMs * 2));
             scheduleFallback();
@@ -445,12 +455,6 @@ public final class SessionRepository {
             subscription.onObserverActive();
         }
 
-        @Override
-        protected void onInactive() {
-            super.onInactive();
-            subscription.onObserverInactive();
-        }
-
         void setValueIfNeeded(SessionListResult value) {
             if (getValue() == null) {
                 setValue(value);
@@ -490,8 +494,9 @@ public final class SessionRepository {
                 if (sub != null) {
                     sub.authRecovery = false;
                     sub.hydrateAndEmit(onlineSessions, state, null);
-                    if (sub.observerCount > 0 && !sub.wsStarted) {
-                        sub.startObserving();
+                    if (sub.attached && !sub.wsStarted) {
+                        sub.wsStarted = true;
+                        wsSource.start(server, sub);
                     }
                 } else {
                     sessionCache.put(server, new SessionListCache.Snapshot(
@@ -536,7 +541,7 @@ public final class SessionRepository {
         ));
         if (sub != null) {
             sub.liveData.setValue(new SessionListResult(sessions, state, errorMessage, false));
-            if (sub.authRecovery && sub.observerCount > 0) {
+            if (sub.authRecovery && sub.attached) {
                 // AUTH_REQUIRED 恢复期间的网络错误：按临时错误处理，
                 // 使用现有 3s~60s 退避重试，不形成热循环。
                 sub.scheduleFallback();

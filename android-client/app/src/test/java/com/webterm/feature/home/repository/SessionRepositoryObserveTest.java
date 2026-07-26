@@ -319,7 +319,7 @@ public class SessionRepositoryObserveTest {
     }
 
     @Test
-    public void observeSessions_secondObserverKeepsManagerChannelAlive() {
+    public void observeSessions_zeroObserversKeepsDeviceManagerChannelAlive() {
         ServerConfig server = server();
         LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
         RecordingObserver listObserver = new RecordingObserver();
@@ -330,32 +330,60 @@ public class SessionRepositoryObserveTest {
         liveData.removeObserver(listObserver);
 
         verify(wsSource, never()).stop(server);
-        assertTrue("仍有活跃观察者时不应留下 grace stop", findGraceStopTask() == null);
 
         liveData.removeObserver(terminalObserver);
-        assertNotNull("最后一个观察者失活后应安排 grace stop", findGraceStopTask());
+        verify(wsSource, never()).stop(server);
+        assertTrue("页面全部失活也不应安排 manager 延迟关闭", findGraceStopTask() == null);
+        verify(wsSource, times(1)).start(
+            any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
     }
 
     @Test
-    public void observeSessions_briefZeroObserverWithinGrace_doesNotDropSubscription() {
+    public void observeSessions_reactivateDoesNotReopenDeviceManagerChannel() {
         ServerConfig server = server();
         LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
         RecordingObserver terminal = new RecordingObserver();
         liveData.observeForever(terminal);
         wsListener.get().onConnected();
 
-        // 终端 observer 移除与列表 observer 激活之间短暂 observerCount==0
+        // 终端 observer 移除与列表 observer 激活之间允许长期 observerCount==0。
         liveData.removeObserver(terminal);
-        DelayedTask grace = findGraceStopTask();
-        assertNotNull(grace);
+        assertTrue(findGraceStopTask() == null);
 
         RecordingObserver list = new RecordingObserver();
         liveData.observeForever(list);
 
-        // 推进原 grace 任务：活跃后应被取消，即使手动跑也不停 WS
-        grace.runnable.run();
         verify(wsSource, never()).stop(server);
         verify(wsSource, times(1)).start(any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+    }
+
+    @Test
+    public void observeSessions_updatesCacheWhileAllPagesAreInactive() throws JSONException {
+        ServerConfig server = server();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver firstPage = new RecordingObserver();
+        liveData.observeForever(firstPage);
+        wsListener.get().onConnected();
+        wsListener.get().onSessions(sessions(
+            "[{\"id\":\"s1\",\"termTitle\":\"old\",\"cwd\":\"/old\"}]"));
+
+        liveData.removeObserver(firstPage);
+        wsListener.get().onSession(session(
+            "{\"id\":\"s1\",\"termTitle\":\"updated\",\"cwd\":\"/new\"}"));
+        wsListener.get().onSession(session(
+            "{\"id\":\"s2\",\"termTitle\":\"new-session\",\"cwd\":\"/new\"}"));
+
+        RecordingObserver returnedPage = new RecordingObserver();
+        liveData.observeForever(returnedPage);
+
+        assertEquals(2, returnedPage.latest().sessions.length());
+        assertEquals("updated",
+            returnedPage.latest().sessions.optJSONObject(0).optString("termTitle"));
+        assertEquals("new-session",
+            returnedPage.latest().sessions.optJSONObject(1).optString("termTitle"));
+        verify(wsSource, never()).stop(server);
+        verify(wsSource, times(1)).start(
+            any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
     }
 
     @Test
@@ -401,7 +429,7 @@ public class SessionRepositoryObserveTest {
     }
 
     @Test
-    public void observeSessions_disconnectWhileZeroObservers_thenReactivate_restoresFallback()
+    public void observeSessions_disconnectWhileZeroObservers_keepsRecoveringDeviceState()
             throws JSONException {
         ServerConfig server = server("cookie");
         stubFetchReadyWith("[{\"id\":\"s1\",\"termTitle\":\"calibrated\"}]");
@@ -413,18 +441,41 @@ public class SessionRepositoryObserveTest {
 
         liveData.removeObserver(observer);
         clearDelayedTasks();
-        // observerCount==0 时 scheduleFallback 直接退出
         wsListener.get().onDisconnected(ChannelFailure.muxTemporary(0, "temporary"));
-        assertTrue(findFallbackTask() == null);
+        DelayedTask fallback = findFallbackTask();
+        assertNotNull("没有页面观察者时设备级订阅仍必须恢复", fallback);
+        fallback.runnable.run();
 
         RecordingObserver resumed = new RecordingObserver();
         liveData.observeForever(resumed);
-        assertEquals(SessionRepository.SessionListResult.State.DISCONNECTED, resumed.latest().state);
-        DelayedTask fallback = findFallbackTask();
-        assertNotNull("零观察者期间断线后重新激活必须安排 fallback", fallback);
-
-        fallback.runnable.run();
         assertEquals("calibrated", resumed.latest().sessions.optJSONObject(0).optString("termTitle"));
+        assertEquals(SessionRepository.SessionListResult.State.CONNECTED, resumed.latest().state);
+    }
+
+    @Test
+    public void detachThenReattachDevice_reusesSameSubscriptionIdentity() throws JSONException {
+        ServerConfig server = server();
+        LiveData<SessionRepository.SessionListResult> liveData = repository.observeSessions(server);
+        RecordingObserver observer = new RecordingObserver();
+        liveData.observeForever(observer);
+        repository.attachDevice(server);
+
+        verify(wsSource, times(1)).start(
+            any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+
+        repository.detachDevice(server);
+
+        verify(wsSource, times(1)).stop(server);
+
+        repository.attachDevice(server);
+        assertTrue(liveData == repository.observeSessions(server));
+        verify(wsSource, times(2)).start(
+            any(ServerConfig.class), any(ServerSessionDataSource.Listener.class));
+
+        wsListener.get().onSession(session(
+            "{\"id\":\"s2\",\"termTitle\":\"reconnected\",\"cwd\":\"/new\"}"));
+        assertEquals("reconnected",
+            observer.latest().sessions.optJSONObject(0).optString("termTitle"));
     }
 
     @Test
