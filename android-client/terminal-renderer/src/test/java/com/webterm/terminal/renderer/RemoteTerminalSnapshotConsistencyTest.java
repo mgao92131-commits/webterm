@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -95,8 +96,9 @@ public final class RemoteTerminalSnapshotConsistencyTest {
         new TerminalSelection.Anchor(0, 0, 1));
     ViewportPosition position = viewport.position(TerminalBufferKind.MAIN);
     TerminalSelection selection = viewport.selection;
+    RemoteTerminalModel.RenderSnapshot beforeSnapshot = model.renderSnapshot();
     int beforeOffset =
-        viewport.derivedScrollOffsetPixels(model.renderSnapshot(), 20f, 10_000);
+        viewport.derivedScrollOffsetPixels(beforeSnapshot, 20f, 10_000);
 
     assertTrue(model.applyTerminalCommit(new TerminalCommit(
         "instance", 1, 1, 2, 1, 1,
@@ -120,6 +122,22 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertFalse(model.activeRows().contains(10));
     assertEquals(Long.valueOf(10), model.historyIndex().lineId(1));
     assertEquals(Long.valueOf(0), model.renderSnapshot().contentAxis.rowOfLineId(10));
+
+    TerminalSelection.Anchor promotedStart = RemoteTerminalView.reconcileSelectionAnchor(
+        selection.start, beforeSnapshot, model.renderSnapshot());
+    TerminalSelection.Anchor promotedEnd = RemoteTerminalView.reconcileSelectionAnchor(
+        selection.end, beforeSnapshot, model.renderSnapshot());
+    assertNotNull(promotedStart);
+    assertNotNull(promotedEnd);
+    assertEquals(1, promotedStart.historySeq);
+    assertEquals(-1, promotedStart.screenRow);
+    assertEquals(0, promotedStart.col);
+    assertEquals(1, promotedEnd.historySeq);
+    assertEquals(-1, promotedEnd.screenRow);
+    assertEquals(1, promotedEnd.col);
+    int promotedIndex = model.renderSnapshot().history.findSeqIndex(promotedStart.historySeq);
+    assertTrue(promotedIndex >= 0);
+    assertEquals(10, model.renderSnapshot().history.lineAt(promotedIndex).id);
   }
 
   private static RemoteTerminalModel modelWithHistory(int count) {

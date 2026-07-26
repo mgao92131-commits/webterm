@@ -41,6 +41,7 @@ import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalModes;
+import com.webterm.terminal.model.UnifiedContentAxis;
 import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
 import java.util.Map;
@@ -232,7 +233,24 @@ public final class RemoteTerminalView extends View {
    */
   public void applyRenderUpdate(@NonNull RenderUpdate update,
                                 @NonNull TerminalViewportState viewport) {
+    RemoteTerminalModel.RenderSnapshot previousSnapshot = renderedSnapshot;
     this.viewport = viewport;
+    if ((selectionStart == null || selectionEnd == null) && viewport.selection != null) {
+      selectionStart = viewport.selection.start;
+      selectionEnd = viewport.selection.end;
+    }
+    if (previousSnapshot != null && selectionStart != null && selectionEnd != null) {
+      captureSelectionDamage(oldSelectionDamage, oldHandleDamage);
+      selectionStart = reconcileSelectionAnchor(
+          selectionStart, previousSnapshot, update.snapshot);
+      selectionEnd = reconcileSelectionAnchor(
+          selectionEnd, previousSnapshot, update.snapshot);
+      if (selectionStart == null || selectionEnd == null) {
+        selectionStart = null;
+        selectionEnd = null;
+      }
+      updateViewportSelection();
+    }
     updateRenderedSnapshot(update.snapshot);
     this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
     boolean geometryChanged = requestLayoutIfSizeChanged();
@@ -261,6 +279,53 @@ public final class RemoteTerminalView extends View {
         break;
     }
     requestVisibleHistoryPage();
+  }
+
+  /**
+   * Selection still exposes history/screen coordinates to text extraction, but publication
+   * transitions must preserve its semantic identity. Resolve the old coordinate to a LineID,
+   * then locate that same line on the new unified axis (including ActiveRows -> HistoryIndex
+   * promotion) before publishing the new coordinate.
+   */
+  @Nullable
+  @androidx.annotation.VisibleForTesting
+  static TerminalSelection.Anchor reconcileSelectionAnchor(
+      @NonNull TerminalSelection.Anchor anchor,
+      @NonNull RemoteTerminalModel.RenderSnapshot previousSnapshot,
+      @NonNull RemoteTerminalModel.RenderSnapshot nextSnapshot) {
+    if (!java.util.Objects.equals(previousSnapshot.instanceId, nextSnapshot.instanceId)
+        || previousSnapshot.layoutEpoch != nextSnapshot.layoutEpoch
+        || previousSnapshot.historyGeneration != nextSnapshot.historyGeneration
+        || previousSnapshot.activeBuffer != nextSnapshot.activeBuffer) {
+      return null;
+    }
+    TerminalLine previousLine;
+    if (anchor.historySeq != 0) {
+      int index = previousSnapshot.history.findSeqIndex(anchor.historySeq);
+      previousLine = index >= 0 ? previousSnapshot.history.lineAt(index) : null;
+    } else {
+      TerminalLine[] screen = previousSnapshot.screen;
+      previousLine = screen != null
+          && anchor.screenRow >= 0
+          && anchor.screenRow < screen.length
+          ? screen[anchor.screenRow]
+          : null;
+    }
+    if (previousLine == null) return null;
+
+    UnifiedContentAxis axis = nextSnapshot.contentAxis;
+    Long axisRow = axis.rowOfLineId(previousLine.id);
+    if (axisRow == null) return null;
+    UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
+    if (item.kind == UnifiedContentAxis.Kind.LOADED_LINE) {
+      return new TerminalSelection.Anchor(item.fromHistorySeq, -1, anchor.col);
+    }
+    if (item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE) {
+      long activeRow = axisRow - axis.historyRowCount();
+      if (activeRow < 0 || activeRow > Integer.MAX_VALUE) return null;
+      return new TerminalSelection.Anchor(0, (int) activeRow, anchor.col);
+    }
+    return null;
   }
 
   @androidx.annotation.VisibleForTesting

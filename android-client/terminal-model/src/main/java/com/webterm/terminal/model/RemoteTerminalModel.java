@@ -1128,7 +1128,8 @@ public final class RemoteTerminalModel {
     TerminalHistoryView historySnapshot = dirty.historyChanged || dirty.fullInvalidate
         ? activeSurface().history.snapshot()
         : previous.history;
-    renderSnapshot = new RenderSnapshot(instanceId, layoutEpoch, screenRevision, rows, columns,
+    renderSnapshot = new RenderSnapshot(
+        instanceId, layoutEpoch, screenRevision, historyGeneration, rows, columns,
         activeBuffer, screenCopy, historySnapshot,
         UnifiedContentAxis.build(
             activeSurface().history.snapshot(),
@@ -1155,6 +1156,7 @@ public final class RemoteTerminalModel {
     public final String instanceId;
     public final long layoutEpoch;
     public final long screenRevision;
+    public final long historyGeneration;
     public final int rows;
     public final int columns;
     public final TerminalBufferKind activeBuffer;
@@ -1169,8 +1171,9 @@ public final class RemoteTerminalModel {
     public final long firstAvailableHistorySeq;
     public final boolean hasMoreHistoryBefore;
 
-    private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision, int rows,
-                           int columns, TerminalBufferKind activeBuffer,
+    private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision,
+                           long historyGeneration, int rows, int columns,
+                           TerminalBufferKind activeBuffer,
                            TerminalLine[] screen, TerminalHistoryView history,
                            UnifiedContentAxis contentAxis,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
@@ -1179,6 +1182,7 @@ public final class RemoteTerminalModel {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
       this.screenRevision = screenRevision;
+      this.historyGeneration = historyGeneration;
       this.rows = rows;
       this.columns = columns;
       this.activeBuffer = activeBuffer;
@@ -1193,7 +1197,7 @@ public final class RemoteTerminalModel {
     }
 
     private static RenderSnapshot empty() {
-      return new RenderSnapshot(null, 0, 0, 0, 0, TerminalBufferKind.MAIN, null,
+      return new RenderSnapshot(null, 0, 0, 0, 0, 0, TerminalBufferKind.MAIN, null,
           TerminalHistorySnapshot.empty(), UnifiedContentAxis.empty(), TerminalCursor.hidden(),
           TerminalModes.defaults(), TerminalPalette.defaults(), 0, false);
     }
