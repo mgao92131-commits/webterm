@@ -13,16 +13,18 @@ public final class HistoryRequestCoordinator {
     public final long anchorSeq;
     public final String instanceId;
     public final long layoutEpoch;
+    public final long historyGeneration;
     public final int retryAttempt;
 
     Pending(String requestId, long fromSeq, long toSeq, long anchorSeq,
-            String instanceId, long layoutEpoch, int retryAttempt) {
+            String instanceId, long layoutEpoch, long historyGeneration, int retryAttempt) {
       this.requestId = requestId;
       this.fromSeq = fromSeq;
       this.toSeq = toSeq;
       this.anchorSeq = anchorSeq;
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
+      this.historyGeneration = historyGeneration;
       this.retryAttempt = retryAttempt;
     }
   }
@@ -35,24 +37,24 @@ public final class HistoryRequestCoordinator {
   }
 
   public synchronized void markPending(String requestId) {
-    markPending(requestId, 0, 0, 0, "", 0, 0);
+    markPending(requestId, 0, 0, 0, "", 0, 0, 0);
   }
 
   public synchronized void markPending(String requestId, long fromSeq, long toSeq,
                                        long anchorSeq) {
-    markPending(requestId, fromSeq, toSeq, anchorSeq, "", 0, 0);
+    markPending(requestId, fromSeq, toSeq, anchorSeq, "", 0, 0, 0);
   }
 
   public synchronized void markPending(String requestId, long fromSeq, long toSeq,
                                        long anchorSeq, String instanceId, long layoutEpoch,
-                                       int retryAttempt) {
+                                       long historyGeneration, int retryAttempt) {
     if (pending.size() >= MAX_PENDING) {
       String oldest = pending.entrySet().iterator().next().getKey();
       pending.remove(oldest);
     }
     pending.put(requestId, new Pending(
         requestId, fromSeq, toSeq, anchorSeq,
-        instanceId == null ? "" : instanceId, layoutEpoch, retryAttempt));
+        instanceId == null ? "" : instanceId, layoutEpoch, historyGeneration, retryAttempt));
   }
 
   public synchronized boolean isRangePending(long fromSeq, long toSeq) {
@@ -75,12 +77,14 @@ public final class HistoryRequestCoordinator {
   }
 
   /** Baseline 替换投影时只丢弃身份/epoch 不兼容请求，保留同投影在途 Range。 */
-  public synchronized void retainCompatible(String instanceId, long layoutEpoch) {
+  public synchronized void retainCompatible(
+      String instanceId, long layoutEpoch, long historyGeneration) {
     pending.entrySet().removeIf(entry -> {
       Pending request = entry.getValue();
       return request.instanceId.isEmpty()
           || !request.instanceId.equals(instanceId)
-          || request.layoutEpoch != layoutEpoch;
+          || request.layoutEpoch != layoutEpoch
+          || request.historyGeneration != historyGeneration;
     });
   }
 

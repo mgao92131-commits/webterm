@@ -8,6 +8,9 @@ import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 /** 构造 webterm.screen.v2 出站消息；所有消息都显式携带协议版本 2。 */
 public final class ScreenMessageV2Builder {
+  /** 0 delegates cold/reset baseline tail sizing to the server policy. */
+  public static final int COLD_HISTORY_TAIL_SERVER_DEFAULT = 0;
+
   private ScreenMessageV2Builder() {}
 
   @NonNull

@@ -611,7 +611,7 @@ public final class TerminalSessionRuntime {
       return false;
     }
     historyRequests.markPending(requestId, boundedFrom, boundedTo, anchorSeq,
-        projection.instanceId, projection.layoutEpoch, retryAttempt);
+        projection.instanceId, projection.layoutEpoch, projection.historyGeneration, retryAttempt);
     scheduleHistoryRequestTimeout(requestId);
     return true;
   }
@@ -636,7 +636,8 @@ public final class TerminalSessionRuntime {
           RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
           if (state != State.LIVE
               || !pending.instanceId.equals(projection.instanceId)
-              || pending.layoutEpoch != projection.layoutEpoch) return;
+              || pending.layoutEpoch != projection.layoutEpoch
+              || pending.historyGeneration != projection.historyGeneration) return;
           requestHistoryRange(
               pending.fromSeq, pending.toSeq, pending.anchorSeq, nextAttempt);
         }),
@@ -748,6 +749,13 @@ public final class TerminalSessionRuntime {
     ScreenMailbox.Offer offer = screenMailbox.offer(
         messageEpoch, sourceConnection, payload, frameSizeValid, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
+    if (offer.droppedBackgroundMessages > 0) {
+      Diagnostics.info("screen_protocol", "screen_mailbox_background_dropped", diagnosticFields(
+          "droppedMessages", offer.droppedBackgroundMessages,
+          "droppedBytes", offer.droppedBackgroundBytes,
+          "pendingMessages", screenMailbox.pendingMessages(),
+          "pendingBytes", screenMailbox.pendingBytes()));
+    }
     if (offer.scheduleDrain) modelExecutor.execute(this::drainScreenMailbox);
   }
 
@@ -877,7 +885,8 @@ public final class TerminalSessionRuntime {
       TerminalResumeMetrics.screenMailboxRecovered("snapshot");
     }
     resyncCoordinator.onAuthoritativeSnapshot();
-    historyRequests.retainCompatible(model.instanceId, model.layoutEpoch);
+    historyRequests.retainCompatible(
+        model.instanceId, model.layoutEpoch, model.historyGeneration());
   }
 
   private void resetResyncRecovery() {
@@ -1023,6 +1032,18 @@ public final class TerminalSessionRuntime {
           HistoryRequestCoordinator.Pending pending =
               historyRequests.complete(wire.getRequestId());
           if (pending == null) return;
+          RemoteTerminalModel.ProjectionReadView currentProjection = model.projectionReadView();
+          if (!pending.instanceId.equals(currentProjection.instanceId)
+              || pending.layoutEpoch != currentProjection.layoutEpoch
+              || pending.historyGeneration != currentProjection.historyGeneration
+              || !wire.getInstanceId().equals(currentProjection.instanceId)
+              || wire.getLayoutEpoch() != currentProjection.layoutEpoch
+              || wire.getHistoryGeneration() != currentProjection.historyGeneration) {
+            Diagnostics.info("screen_protocol", "history_range_response_stale", diagnosticFields(
+                "layoutEpoch", wire.getLayoutEpoch(),
+                "historyGeneration", wire.getHistoryGeneration()));
+            return;
+          }
           long mapStartedNanos = System.nanoTime();
           HistoryRangeResult range;
           try {

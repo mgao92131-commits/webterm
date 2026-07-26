@@ -26,18 +26,22 @@ public class HistoryRequestCoordinatorTest {
   @Test
   public void rangeDedupeTimeoutAndCompatibleBaselineRetention() {
     HistoryRequestCoordinator coordinator = new HistoryRequestCoordinator();
-    coordinator.markPending("r1", 129, 256, 180, "i1", 7, 2);
+    coordinator.markPending("r1", 129, 256, 180, "i1", 7, 3, 2);
     assertTrue(coordinator.isRangePending(129, 256));
 
-    coordinator.retainCompatible("i1", 7);
+    coordinator.retainCompatible("i1", 7, 3);
     assertTrue(coordinator.accept("r1"));
     HistoryRequestCoordinator.Pending expired = coordinator.expire("r1");
     assertEquals(2, expired.retryAttempt);
     assertFalse(coordinator.isRangePending(129, 256));
     assertNull(coordinator.complete("r1"));
 
-    coordinator.markPending("r2", 1, 128, 1, "i1", 7, 0);
-    coordinator.retainCompatible("i1", 8);
+    coordinator.markPending("r2", 1, 128, 1, "i1", 7, 3, 0);
+    coordinator.retainCompatible("i1", 8, 3);
     assertFalse(coordinator.accept("r2"));
+
+    coordinator.markPending("r3", 1, 128, 1, "i1", 7, 3, 0);
+    coordinator.retainCompatible("i1", 7, 4);
+    assertFalse(coordinator.accept("r3"));
   }
 }

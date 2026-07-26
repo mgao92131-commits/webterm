@@ -37,6 +37,10 @@ public final class ScreenMessageV2ValidatorTest {
         TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE);
     ScreenMessageV2Validator.validateHistoryRange(historyRange(
         TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_TRIMMED, true));
+    ScreenMessageV2Validator.validateHistoryRange(historyRange(
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION, false));
+    ScreenMessageV2Validator.validateHistoryRange(historyRange(
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE, false));
   }
 
   @Test

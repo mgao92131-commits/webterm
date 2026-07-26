@@ -316,7 +316,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(
         channelId, ScreenMessageV2Builder.hello(
-            columns, rows, reliableInputTracker.clientInstanceId(), resume, 128), true);
+            columns, rows, reliableInputTracker.clientInstanceId(), resume,
+            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT), true);
   }
 
   @Override

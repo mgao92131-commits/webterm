@@ -79,6 +79,56 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
+  public void retryableHistoryRangeDoesNotResyncProjection() {
+    List<Runnable> scheduled = new ArrayList<>();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "retry-range", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> scheduled.add(task));
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2).toByteArray());
+    assertTrue(runtime.requestHistoryRange(1, 64, 1));
+
+    TerminalScreenV2Proto.ScreenEnvelope retryable =
+        historyRange(connection.requestId,
+            TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE,
+            false);
+    retryable = retryable.toBuilder().setHistoryRangeResponse(
+        retryable.getHistoryRangeResponse().toBuilder().setRetryAfterMs(375)).build();
+    connection.listener.onScreenMessage(retryable.toByteArray());
+
+    assertEquals(TerminalSessionRuntime.State.LIVE, runtime.state());
+    assertEquals(TerminalSessionRuntime.ProjectionContinuityState.CONTINUOUS,
+        runtime.projectionContinuityState());
+    assertEquals(0, connection.reconnectRequests);
+    assertFalse(scheduled.isEmpty());
+  }
+
+  @Test
+  public void responseFromPreviousHistoryGenerationIsDroppedWithoutResync() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "late-range", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2, 1).toByteArray());
+    assertTrue(runtime.requestHistoryRange(1, 64, 1));
+    String oldRequestId = connection.requestId;
+
+    connection.listener.onScreenMessage(baseline(2, 2, 2).toByteArray());
+    connection.listener.onScreenMessage(historyRange(
+        oldRequestId,
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
+        true, 1).toByteArray());
+
+    PagedTerminalHistorySnapshot history =
+        (PagedTerminalHistorySnapshot) runtime.model().renderSnapshot().history;
+    assertNull(history.lineBySeq(1));
+    assertEquals(2, runtime.model().historyGeneration());
+    assertEquals(0, connection.reconnectRequests);
+    assertEquals(TerminalSessionRuntime.ProjectionContinuityState.CONTINUOUS,
+        runtime.projectionContinuityState());
+  }
+
+  @Test
   public void historyRangeLoadsOnlyRequestedPageWithoutAdvancingRevision() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "range", new RemoteTerminalModel(), Runnable::run, Runnable::run,
@@ -162,6 +212,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope baseline(long revision, int rows) {
+    return baseline(revision, rows, 1);
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope baseline(
+      long revision, int rows, long historyGeneration) {
     TerminalScreenV2Proto.Baseline.Builder baseline =
         TerminalScreenV2Proto.Baseline.newBuilder()
             .setSessionId("s1")
@@ -174,7 +229,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
             .setHistoryTail(TerminalScreenV2Proto.HistoryTail.newBuilder()
                 .setExtent(extent(1, 128)))
             .setDictionaryGeneration(1)
-            .setHistoryGeneration(1)
+            .setHistoryGeneration(historyGeneration)
             .setHistoryPolicy(TerminalScreenV2Proto.BaselineHistoryPolicy
                 .BASELINE_HISTORY_POLICY_RESET);
     for (int row = 0; row < rows; row++) {
@@ -205,12 +260,18 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   private static TerminalScreenV2Proto.ScreenEnvelope historyRange(
       String requestId, TerminalScreenV2Proto.HistoryRangeStatus status,
       boolean includeLines) {
+    return historyRange(requestId, status, includeLines, 1);
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope historyRange(
+      String requestId, TerminalScreenV2Proto.HistoryRangeStatus status,
+      boolean includeLines, long historyGeneration) {
     TerminalScreenV2Proto.HistoryRangeResponse.Builder response =
         TerminalScreenV2Proto.HistoryRangeResponse.newBuilder()
             .setRequestId(requestId)
             .setInstanceId("i1")
             .setLayoutEpoch(1)
-            .setHistoryGeneration(1)
+            .setHistoryGeneration(historyGeneration)
             .setStatus(status)
             .setAvailableExtent(extent(1, 128));
     if (includeLines) {
