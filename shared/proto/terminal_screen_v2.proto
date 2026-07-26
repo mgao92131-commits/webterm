@@ -10,7 +10,7 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
-  reserved 4, 5, 8, 9, 18;
+  reserved 4, 5, 8, 9, 15, 18;
 
   oneof payload {
     Hello hello = 2;
@@ -22,7 +22,6 @@ message ScreenEnvelope {
     ReleaseLayout release_layout = 12;
     Resize resize = 13;
     TerminalInput input = 14;
-    InputAck input_ack = 15;
     TerminalEffect effect = 16;
     ClipboardResponse clipboard_response = 17;
     Exit exit = 19;
@@ -34,8 +33,7 @@ message ScreenEnvelope {
 }
 
 message Hello {
-  string client_instance_id = 1;
-  reserved 2, 3, 5, 6;
+  reserved 1, 2, 3, 5, 6;
   ResumeToken resume = 4;
   Geometry desired_geometry = 7;
   uint32 cold_history_tail_lines = 8;
@@ -347,8 +345,7 @@ message Resize {
 
 message TerminalInput {
   string lease_id = 1;
-  string client_instance_id = 2;
-  uint64 input_seq = 3;
+  reserved 2, 3;
   oneof input {
     TextInput text = 10;
     KeyInput key = 11;
@@ -356,21 +353,6 @@ message TerminalInput {
     MouseInput mouse = 13;
     FocusInput focus = 14;
   }
-}
-
-message InputAck {
-  string client_instance_id = 1;
-  uint64 input_seq = 2;
-  string terminal_instance_id = 3;
-  InputAckStatus status = 4;
-}
-
-enum InputAckStatus {
-  INPUT_ACK_STATUS_UNSPECIFIED = 0;
-  INPUT_ACK_STATUS_WRITTEN = 1;
-  INPUT_ACK_STATUS_IGNORED = 2;
-  INPUT_ACK_STATUS_REJECTED = 3;
-  INPUT_ACK_STATUS_UNCERTAIN = 4;
 }
 
 message TextInput { string data = 1; }

@@ -1016,150 +1016,6 @@ public final class TerminalScreenV2Proto {
   }
 
   /**
-   * Protobuf enum {@code webterm.terminal.screen.v2.InputAckStatus}
-   */
-  public enum InputAckStatus
-      implements com.google.protobuf.ProtocolMessageEnum {
-    /**
-     * <code>INPUT_ACK_STATUS_UNSPECIFIED = 0;</code>
-     */
-    INPUT_ACK_STATUS_UNSPECIFIED(0),
-    /**
-     * <code>INPUT_ACK_STATUS_WRITTEN = 1;</code>
-     */
-    INPUT_ACK_STATUS_WRITTEN(1),
-    /**
-     * <code>INPUT_ACK_STATUS_IGNORED = 2;</code>
-     */
-    INPUT_ACK_STATUS_IGNORED(2),
-    /**
-     * <code>INPUT_ACK_STATUS_REJECTED = 3;</code>
-     */
-    INPUT_ACK_STATUS_REJECTED(3),
-    /**
-     * <code>INPUT_ACK_STATUS_UNCERTAIN = 4;</code>
-     */
-    INPUT_ACK_STATUS_UNCERTAIN(4),
-    UNRECOGNIZED(-1),
-    ;
-
-    static {
-      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
-        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
-        /* major= */ 4,
-        /* minor= */ 29,
-        /* patch= */ 2,
-        /* suffix= */ "",
-        InputAckStatus.class.getName());
-    }
-    /**
-     * <code>INPUT_ACK_STATUS_UNSPECIFIED = 0;</code>
-     */
-    public static final int INPUT_ACK_STATUS_UNSPECIFIED_VALUE = 0;
-    /**
-     * <code>INPUT_ACK_STATUS_WRITTEN = 1;</code>
-     */
-    public static final int INPUT_ACK_STATUS_WRITTEN_VALUE = 1;
-    /**
-     * <code>INPUT_ACK_STATUS_IGNORED = 2;</code>
-     */
-    public static final int INPUT_ACK_STATUS_IGNORED_VALUE = 2;
-    /**
-     * <code>INPUT_ACK_STATUS_REJECTED = 3;</code>
-     */
-    public static final int INPUT_ACK_STATUS_REJECTED_VALUE = 3;
-    /**
-     * <code>INPUT_ACK_STATUS_UNCERTAIN = 4;</code>
-     */
-    public static final int INPUT_ACK_STATUS_UNCERTAIN_VALUE = 4;
-
-
-    public final int getNumber() {
-      if (this == UNRECOGNIZED) {
-        throw new java.lang.IllegalArgumentException(
-            "Can't get the number of an unknown enum value.");
-      }
-      return value;
-    }
-
-    /**
-     * @param value The numeric wire value of the corresponding enum entry.
-     * @return The enum associated with the given numeric wire value.
-     * @deprecated Use {@link #forNumber(int)} instead.
-     */
-    @java.lang.Deprecated
-    public static InputAckStatus valueOf(int value) {
-      return forNumber(value);
-    }
-
-    /**
-     * @param value The numeric wire value of the corresponding enum entry.
-     * @return The enum associated with the given numeric wire value.
-     */
-    public static InputAckStatus forNumber(int value) {
-      switch (value) {
-        case 0: return INPUT_ACK_STATUS_UNSPECIFIED;
-        case 1: return INPUT_ACK_STATUS_WRITTEN;
-        case 2: return INPUT_ACK_STATUS_IGNORED;
-        case 3: return INPUT_ACK_STATUS_REJECTED;
-        case 4: return INPUT_ACK_STATUS_UNCERTAIN;
-        default: return null;
-      }
-    }
-
-    public static com.google.protobuf.Internal.EnumLiteMap<InputAckStatus>
-        internalGetValueMap() {
-      return internalValueMap;
-    }
-    private static final com.google.protobuf.Internal.EnumLiteMap<
-        InputAckStatus> internalValueMap =
-          new com.google.protobuf.Internal.EnumLiteMap<InputAckStatus>() {
-            public InputAckStatus findValueByNumber(int number) {
-              return InputAckStatus.forNumber(number);
-            }
-          };
-
-    public final com.google.protobuf.Descriptors.EnumValueDescriptor
-        getValueDescriptor() {
-      if (this == UNRECOGNIZED) {
-        throw new java.lang.IllegalStateException(
-            "Can't get the descriptor of an unrecognized enum value.");
-      }
-      return getDescriptor().getValues().get(ordinal());
-    }
-    public final com.google.protobuf.Descriptors.EnumDescriptor
-        getDescriptorForType() {
-      return getDescriptor();
-    }
-    public static final com.google.protobuf.Descriptors.EnumDescriptor
-        getDescriptor() {
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.getDescriptor().getEnumTypes().get(7);
-    }
-
-    private static final InputAckStatus[] VALUES = values();
-
-    public static InputAckStatus valueOf(
-        com.google.protobuf.Descriptors.EnumValueDescriptor desc) {
-      if (desc.getType() != getDescriptor()) {
-        throw new java.lang.IllegalArgumentException(
-          "EnumValueDescriptor is not for this type.");
-      }
-      if (desc.getIndex() == -1) {
-        return UNRECOGNIZED;
-      }
-      return VALUES[desc.getIndex()];
-    }
-
-    private final int value;
-
-    private InputAckStatus(int value) {
-      this.value = value;
-    }
-
-    // @@protoc_insertion_point(enum_scope:webterm.terminal.screen.v2.InputAckStatus)
-  }
-
-  /**
    * Protobuf enum {@code webterm.terminal.screen.v2.MouseButton}
    */
   public enum MouseButton
@@ -1286,7 +1142,7 @@ public final class TerminalScreenV2Proto {
     }
     public static final com.google.protobuf.Descriptors.EnumDescriptor
         getDescriptor() {
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.getDescriptor().getEnumTypes().get(8);
+      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.getDescriptor().getEnumTypes().get(7);
     }
 
     private static final MouseButton[] VALUES = values();
@@ -1462,21 +1318,6 @@ public final class TerminalScreenV2Proto {
     com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInputOrBuilder getInputOrBuilder();
 
     /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     * @return Whether the inputAck field is set.
-     */
-    boolean hasInputAck();
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     * @return The inputAck.
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getInputAck();
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder getInputAckOrBuilder();
-
-    /**
      * <code>.webterm.terminal.screen.v2.TerminalEffect effect = 16;</code>
      * @return Whether the effect field is set.
      */
@@ -1640,7 +1481,6 @@ public final class TerminalScreenV2Proto {
       RELEASE_LAYOUT(12),
       RESIZE(13),
       INPUT(14),
-      INPUT_ACK(15),
       EFFECT(16),
       CLIPBOARD_RESPONSE(17),
       EXIT(19),
@@ -1674,7 +1514,6 @@ public final class TerminalScreenV2Proto {
           case 12: return RELEASE_LAYOUT;
           case 13: return RESIZE;
           case 14: return INPUT;
-          case 15: return INPUT_ACK;
           case 16: return EFFECT;
           case 17: return CLIPBOARD_RESPONSE;
           case 19: return EXIT;
@@ -1991,37 +1830,6 @@ public final class TerminalScreenV2Proto {
       return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInput.getDefaultInstance();
     }
 
-    public static final int INPUT_ACK_FIELD_NUMBER = 15;
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     * @return Whether the inputAck field is set.
-     */
-    @java.lang.Override
-    public boolean hasInputAck() {
-      return payloadCase_ == 15;
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     * @return The inputAck.
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getInputAck() {
-      if (payloadCase_ == 15) {
-         return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_;
-      }
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder getInputAckOrBuilder() {
-      if (payloadCase_ == 15) {
-         return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_;
-      }
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-    }
-
     public static final int EFFECT_FIELD_NUMBER = 16;
     /**
      * <code>.webterm.terminal.screen.v2.TerminalEffect effect = 16;</code>
@@ -2283,9 +2091,6 @@ public final class TerminalScreenV2Proto {
       if (payloadCase_ == 14) {
         output.writeMessage(14, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInput) payload_);
       }
-      if (payloadCase_ == 15) {
-        output.writeMessage(15, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_);
-      }
       if (payloadCase_ == 16) {
         output.writeMessage(16, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalEffect) payload_);
       }
@@ -2355,10 +2160,6 @@ public final class TerminalScreenV2Proto {
       if (payloadCase_ == 14) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(14, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInput) payload_);
-      }
-      if (payloadCase_ == 15) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(15, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_);
       }
       if (payloadCase_ == 16) {
         size += com.google.protobuf.CodedOutputStream
@@ -2443,10 +2244,6 @@ public final class TerminalScreenV2Proto {
           if (!getInput()
               .equals(other.getInput())) return false;
           break;
-        case 15:
-          if (!getInputAck()
-              .equals(other.getInputAck())) return false;
-          break;
         case 16:
           if (!getEffect()
               .equals(other.getEffect())) return false;
@@ -2527,10 +2324,6 @@ public final class TerminalScreenV2Proto {
         case 14:
           hash = (37 * hash) + INPUT_FIELD_NUMBER;
           hash = (53 * hash) + getInput().hashCode();
-          break;
-        case 15:
-          hash = (37 * hash) + INPUT_ACK_FIELD_NUMBER;
-          hash = (53 * hash) + getInputAck().hashCode();
           break;
         case 16:
           hash = (37 * hash) + EFFECT_FIELD_NUMBER;
@@ -2727,9 +2520,6 @@ public final class TerminalScreenV2Proto {
         if (inputBuilder_ != null) {
           inputBuilder_.clear();
         }
-        if (inputAckBuilder_ != null) {
-          inputAckBuilder_.clear();
-        }
         if (effectBuilder_ != null) {
           effectBuilder_.clear();
         }
@@ -2831,10 +2621,6 @@ public final class TerminalScreenV2Proto {
             inputBuilder_ != null) {
           result.payload_ = inputBuilder_.build();
         }
-        if (payloadCase_ == 15 &&
-            inputAckBuilder_ != null) {
-          result.payload_ = inputAckBuilder_.build();
-        }
         if (payloadCase_ == 16 &&
             effectBuilder_ != null) {
           result.payload_ = effectBuilder_.build();
@@ -2915,10 +2701,6 @@ public final class TerminalScreenV2Proto {
           }
           case INPUT: {
             mergeInput(other.getInput());
-            break;
-          }
-          case INPUT_ACK: {
-            mergeInputAck(other.getInputAck());
             break;
           }
           case EFFECT: {
@@ -3047,13 +2829,6 @@ public final class TerminalScreenV2Proto {
                 payloadCase_ = 14;
                 break;
               } // case 114
-              case 122: {
-                input.readMessage(
-                    getInputAckFieldBuilder().getBuilder(),
-                    extensionRegistry);
-                payloadCase_ = 15;
-                break;
-              } // case 122
               case 130: {
                 input.readMessage(
                     getEffectFieldBuilder().getBuilder(),
@@ -4458,148 +4233,6 @@ public final class TerminalScreenV2Proto {
       }
 
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder> inputAckBuilder_;
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       * @return Whether the inputAck field is set.
-       */
-      @java.lang.Override
-      public boolean hasInputAck() {
-        return payloadCase_ == 15;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       * @return The inputAck.
-       */
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getInputAck() {
-        if (inputAckBuilder_ == null) {
-          if (payloadCase_ == 15) {
-            return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_;
-          }
-          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-        } else {
-          if (payloadCase_ == 15) {
-            return inputAckBuilder_.getMessage();
-          }
-          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      public Builder setInputAck(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck value) {
-        if (inputAckBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          payload_ = value;
-          onChanged();
-        } else {
-          inputAckBuilder_.setMessage(value);
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      public Builder setInputAck(
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder builderForValue) {
-        if (inputAckBuilder_ == null) {
-          payload_ = builderForValue.build();
-          onChanged();
-        } else {
-          inputAckBuilder_.setMessage(builderForValue.build());
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      public Builder mergeInputAck(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck value) {
-        if (inputAckBuilder_ == null) {
-          if (payloadCase_ == 15 &&
-              payload_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance()) {
-            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.newBuilder((com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_)
-                .mergeFrom(value).buildPartial();
-          } else {
-            payload_ = value;
-          }
-          onChanged();
-        } else {
-          if (payloadCase_ == 15) {
-            inputAckBuilder_.mergeFrom(value);
-          } else {
-            inputAckBuilder_.setMessage(value);
-          }
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      public Builder clearInputAck() {
-        if (inputAckBuilder_ == null) {
-          if (payloadCase_ == 15) {
-            payloadCase_ = 0;
-            payload_ = null;
-            onChanged();
-          }
-        } else {
-          if (payloadCase_ == 15) {
-            payloadCase_ = 0;
-            payload_ = null;
-          }
-          inputAckBuilder_.clear();
-        }
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder getInputAckBuilder() {
-        return getInputAckFieldBuilder().getBuilder();
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder getInputAckOrBuilder() {
-        if ((payloadCase_ == 15) && (inputAckBuilder_ != null)) {
-          return inputAckBuilder_.getMessageOrBuilder();
-        } else {
-          if (payloadCase_ == 15) {
-            return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_;
-          }
-          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAck input_ack = 15;</code>
-       */
-      private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder>
-          getInputAckFieldBuilder() {
-        if (inputAckBuilder_ == null) {
-          if (!(payloadCase_ == 15)) {
-            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-          }
-          inputAckBuilder_ = new com.google.protobuf.SingleFieldBuilder<
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder>(
-                  (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) payload_,
-                  getParentForChildren(),
-                  isClean());
-          payload_ = null;
-        }
-        payloadCase_ = 15;
-        onChanged();
-        return inputAckBuilder_;
-      }
-
-      private com.google.protobuf.SingleFieldBuilder<
           com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalEffect, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalEffect.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalEffectOrBuilder> effectBuilder_;
       /**
        * <code>.webterm.terminal.screen.v2.TerminalEffect effect = 16;</code>
@@ -5649,18 +5282,6 @@ public final class TerminalScreenV2Proto {
       com.google.protobuf.MessageOrBuilder {
 
     /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The clientInstanceId.
-     */
-    java.lang.String getClientInstanceId();
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    com.google.protobuf.ByteString
-        getClientInstanceIdBytes();
-
-    /**
      * <code>.webterm.terminal.screen.v2.ResumeToken resume = 4;</code>
      * @return Whether the resume field is set.
      */
@@ -5718,7 +5339,6 @@ public final class TerminalScreenV2Proto {
       super(builder);
     }
     private Hello() {
-      clientInstanceId_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -5735,45 +5355,6 @@ public final class TerminalScreenV2Proto {
     }
 
     private int bitField0_;
-    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 1;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object clientInstanceId_ = "";
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The clientInstanceId.
-     */
-    @java.lang.Override
-    public java.lang.String getClientInstanceId() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        clientInstanceId_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getClientInstanceIdBytes() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b =
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        clientInstanceId_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
     public static final int RESUME_FIELD_NUMBER = 4;
     private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken resume_;
     /**
@@ -5851,9 +5432,6 @@ public final class TerminalScreenV2Proto {
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 1, clientInstanceId_);
-      }
       if (((bitField0_ & 0x00000001) != 0)) {
         output.writeMessage(4, getResume());
       }
@@ -5872,9 +5450,6 @@ public final class TerminalScreenV2Proto {
       if (size != -1) return size;
 
       size = 0;
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, clientInstanceId_);
-      }
       if (((bitField0_ & 0x00000001) != 0)) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(4, getResume());
@@ -5902,8 +5477,6 @@ public final class TerminalScreenV2Proto {
       }
       com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello other = (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello) obj;
 
-      if (!getClientInstanceId()
-          .equals(other.getClientInstanceId())) return false;
       if (hasResume() != other.hasResume()) return false;
       if (hasResume()) {
         if (!getResume()
@@ -5927,8 +5500,6 @@ public final class TerminalScreenV2Proto {
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
-      hash = (53 * hash) + getClientInstanceId().hashCode();
       if (hasResume()) {
         hash = (37 * hash) + RESUME_FIELD_NUMBER;
         hash = (53 * hash) + getResume().hashCode();
@@ -6077,7 +5648,6 @@ public final class TerminalScreenV2Proto {
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
-        clientInstanceId_ = "";
         resume_ = null;
         if (resumeBuilder_ != null) {
           resumeBuilder_.dispose();
@@ -6122,23 +5692,20 @@ public final class TerminalScreenV2Proto {
 
       private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello result) {
         int from_bitField0_ = bitField0_;
-        if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.clientInstanceId_ = clientInstanceId_;
-        }
         int to_bitField0_ = 0;
-        if (((from_bitField0_ & 0x00000002) != 0)) {
+        if (((from_bitField0_ & 0x00000001) != 0)) {
           result.resume_ = resumeBuilder_ == null
               ? resume_
               : resumeBuilder_.build();
           to_bitField0_ |= 0x00000001;
         }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
+        if (((from_bitField0_ & 0x00000002) != 0)) {
           result.desiredGeometry_ = desiredGeometryBuilder_ == null
               ? desiredGeometry_
               : desiredGeometryBuilder_.build();
           to_bitField0_ |= 0x00000002;
         }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
+        if (((from_bitField0_ & 0x00000004) != 0)) {
           result.coldHistoryTailLines_ = coldHistoryTailLines_;
         }
         result.bitField0_ |= to_bitField0_;
@@ -6156,11 +5723,6 @@ public final class TerminalScreenV2Proto {
 
       public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello other) {
         if (other == com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello.getDefaultInstance()) return this;
-        if (!other.getClientInstanceId().isEmpty()) {
-          clientInstanceId_ = other.clientInstanceId_;
-          bitField0_ |= 0x00000001;
-          onChanged();
-        }
         if (other.hasResume()) {
           mergeResume(other.getResume());
         }
@@ -6196,28 +5758,23 @@ public final class TerminalScreenV2Proto {
               case 0:
                 done = true;
                 break;
-              case 10: {
-                clientInstanceId_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000001;
-                break;
-              } // case 10
               case 34: {
                 input.readMessage(
                     getResumeFieldBuilder().getBuilder(),
                     extensionRegistry);
-                bitField0_ |= 0x00000002;
+                bitField0_ |= 0x00000001;
                 break;
               } // case 34
               case 58: {
                 input.readMessage(
                     getDesiredGeometryFieldBuilder().getBuilder(),
                     extensionRegistry);
-                bitField0_ |= 0x00000004;
+                bitField0_ |= 0x00000002;
                 break;
               } // case 58
               case 64: {
                 coldHistoryTailLines_ = input.readUInt32();
-                bitField0_ |= 0x00000008;
+                bitField0_ |= 0x00000004;
                 break;
               } // case 64
               default: {
@@ -6237,78 +5794,6 @@ public final class TerminalScreenV2Proto {
       }
       private int bitField0_;
 
-      private java.lang.Object clientInstanceId_ = "";
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return The clientInstanceId.
-       */
-      public java.lang.String getClientInstanceId() {
-        java.lang.Object ref = clientInstanceId_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          clientInstanceId_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return The bytes for clientInstanceId.
-       */
-      public com.google.protobuf.ByteString
-          getClientInstanceIdBytes() {
-        java.lang.Object ref = clientInstanceId_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b =
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          clientInstanceId_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @param value The clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceId(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearClientInstanceId() {
-        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
-        bitField0_ = (bitField0_ & ~0x00000001);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @param value The bytes for clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceIdBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-
       private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken resume_;
       private com.google.protobuf.SingleFieldBuilder<
           com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeTokenOrBuilder> resumeBuilder_;
@@ -6317,7 +5802,7 @@ public final class TerminalScreenV2Proto {
        * @return Whether the resume field is set.
        */
       public boolean hasResume() {
-        return ((bitField0_ & 0x00000002) != 0);
+        return ((bitField0_ & 0x00000001) != 0);
       }
       /**
        * <code>.webterm.terminal.screen.v2.ResumeToken resume = 4;</code>
@@ -6342,7 +5827,7 @@ public final class TerminalScreenV2Proto {
         } else {
           resumeBuilder_.setMessage(value);
         }
-        bitField0_ |= 0x00000002;
+        bitField0_ |= 0x00000001;
         onChanged();
         return this;
       }
@@ -6356,7 +5841,7 @@ public final class TerminalScreenV2Proto {
         } else {
           resumeBuilder_.setMessage(builderForValue.build());
         }
-        bitField0_ |= 0x00000002;
+        bitField0_ |= 0x00000001;
         onChanged();
         return this;
       }
@@ -6365,7 +5850,7 @@ public final class TerminalScreenV2Proto {
        */
       public Builder mergeResume(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken value) {
         if (resumeBuilder_ == null) {
-          if (((bitField0_ & 0x00000002) != 0) &&
+          if (((bitField0_ & 0x00000001) != 0) &&
             resume_ != null &&
             resume_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken.getDefaultInstance()) {
             getResumeBuilder().mergeFrom(value);
@@ -6376,7 +5861,7 @@ public final class TerminalScreenV2Proto {
           resumeBuilder_.mergeFrom(value);
         }
         if (resume_ != null) {
-          bitField0_ |= 0x00000002;
+          bitField0_ |= 0x00000001;
           onChanged();
         }
         return this;
@@ -6385,7 +5870,7 @@ public final class TerminalScreenV2Proto {
        * <code>.webterm.terminal.screen.v2.ResumeToken resume = 4;</code>
        */
       public Builder clearResume() {
-        bitField0_ = (bitField0_ & ~0x00000002);
+        bitField0_ = (bitField0_ & ~0x00000001);
         resume_ = null;
         if (resumeBuilder_ != null) {
           resumeBuilder_.dispose();
@@ -6398,7 +5883,7 @@ public final class TerminalScreenV2Proto {
        * <code>.webterm.terminal.screen.v2.ResumeToken resume = 4;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeToken.Builder getResumeBuilder() {
-        bitField0_ |= 0x00000002;
+        bitField0_ |= 0x00000001;
         onChanged();
         return getResumeFieldBuilder().getBuilder();
       }
@@ -6438,7 +5923,7 @@ public final class TerminalScreenV2Proto {
        * @return Whether the desiredGeometry field is set.
        */
       public boolean hasDesiredGeometry() {
-        return ((bitField0_ & 0x00000004) != 0);
+        return ((bitField0_ & 0x00000002) != 0);
       }
       /**
        * <code>.webterm.terminal.screen.v2.Geometry desired_geometry = 7;</code>
@@ -6463,7 +5948,7 @@ public final class TerminalScreenV2Proto {
         } else {
           desiredGeometryBuilder_.setMessage(value);
         }
-        bitField0_ |= 0x00000004;
+        bitField0_ |= 0x00000002;
         onChanged();
         return this;
       }
@@ -6477,7 +5962,7 @@ public final class TerminalScreenV2Proto {
         } else {
           desiredGeometryBuilder_.setMessage(builderForValue.build());
         }
-        bitField0_ |= 0x00000004;
+        bitField0_ |= 0x00000002;
         onChanged();
         return this;
       }
@@ -6486,7 +5971,7 @@ public final class TerminalScreenV2Proto {
        */
       public Builder mergeDesiredGeometry(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Geometry value) {
         if (desiredGeometryBuilder_ == null) {
-          if (((bitField0_ & 0x00000004) != 0) &&
+          if (((bitField0_ & 0x00000002) != 0) &&
             desiredGeometry_ != null &&
             desiredGeometry_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Geometry.getDefaultInstance()) {
             getDesiredGeometryBuilder().mergeFrom(value);
@@ -6497,7 +5982,7 @@ public final class TerminalScreenV2Proto {
           desiredGeometryBuilder_.mergeFrom(value);
         }
         if (desiredGeometry_ != null) {
-          bitField0_ |= 0x00000004;
+          bitField0_ |= 0x00000002;
           onChanged();
         }
         return this;
@@ -6506,7 +5991,7 @@ public final class TerminalScreenV2Proto {
        * <code>.webterm.terminal.screen.v2.Geometry desired_geometry = 7;</code>
        */
       public Builder clearDesiredGeometry() {
-        bitField0_ = (bitField0_ & ~0x00000004);
+        bitField0_ = (bitField0_ & ~0x00000002);
         desiredGeometry_ = null;
         if (desiredGeometryBuilder_ != null) {
           desiredGeometryBuilder_.dispose();
@@ -6519,7 +6004,7 @@ public final class TerminalScreenV2Proto {
        * <code>.webterm.terminal.screen.v2.Geometry desired_geometry = 7;</code>
        */
       public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Geometry.Builder getDesiredGeometryBuilder() {
-        bitField0_ |= 0x00000004;
+        bitField0_ |= 0x00000002;
         onChanged();
         return getDesiredGeometryFieldBuilder().getBuilder();
       }
@@ -6568,7 +6053,7 @@ public final class TerminalScreenV2Proto {
       public Builder setColdHistoryTailLines(int value) {
 
         coldHistoryTailLines_ = value;
-        bitField0_ |= 0x00000008;
+        bitField0_ |= 0x00000004;
         onChanged();
         return this;
       }
@@ -6577,7 +6062,7 @@ public final class TerminalScreenV2Proto {
        * @return This builder for chaining.
        */
       public Builder clearColdHistoryTailLines() {
-        bitField0_ = (bitField0_ & ~0x00000008);
+        bitField0_ = (bitField0_ & ~0x00000004);
         coldHistoryTailLines_ = 0;
         onChanged();
         return this;
@@ -37875,24 +37360,6 @@ public final class TerminalScreenV2Proto {
         getLeaseIdBytes();
 
     /**
-     * <code>string client_instance_id = 2;</code>
-     * @return The clientInstanceId.
-     */
-    java.lang.String getClientInstanceId();
-    /**
-     * <code>string client_instance_id = 2;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    com.google.protobuf.ByteString
-        getClientInstanceIdBytes();
-
-    /**
-     * <code>uint64 input_seq = 3;</code>
-     * @return The inputSeq.
-     */
-    long getInputSeq();
-
-    /**
      * <code>.webterm.terminal.screen.v2.TextInput text = 10;</code>
      * @return Whether the text field is set.
      */
@@ -37992,7 +37459,6 @@ public final class TerminalScreenV2Proto {
     }
     private TerminalInput() {
       leaseId_ = "";
-      clientInstanceId_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -38093,56 +37559,6 @@ public final class TerminalScreenV2Proto {
       } else {
         return (com.google.protobuf.ByteString) ref;
       }
-    }
-
-    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 2;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object clientInstanceId_ = "";
-    /**
-     * <code>string client_instance_id = 2;</code>
-     * @return The clientInstanceId.
-     */
-    @java.lang.Override
-    public java.lang.String getClientInstanceId() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        clientInstanceId_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string client_instance_id = 2;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getClientInstanceIdBytes() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b =
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        clientInstanceId_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
-    public static final int INPUT_SEQ_FIELD_NUMBER = 3;
-    private long inputSeq_ = 0L;
-    /**
-     * <code>uint64 input_seq = 3;</code>
-     * @return The inputSeq.
-     */
-    @java.lang.Override
-    public long getInputSeq() {
-      return inputSeq_;
     }
 
     public static final int TEXT_FIELD_NUMBER = 10;
@@ -38317,12 +37733,6 @@ public final class TerminalScreenV2Proto {
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(leaseId_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 1, leaseId_);
       }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 2, clientInstanceId_);
-      }
-      if (inputSeq_ != 0L) {
-        output.writeUInt64(3, inputSeq_);
-      }
       if (inputCase_ == 10) {
         output.writeMessage(10, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TextInput) input_);
       }
@@ -38349,13 +37759,6 @@ public final class TerminalScreenV2Proto {
       size = 0;
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(leaseId_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(1, leaseId_);
-      }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, clientInstanceId_);
-      }
-      if (inputSeq_ != 0L) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(3, inputSeq_);
       }
       if (inputCase_ == 10) {
         size += com.google.protobuf.CodedOutputStream
@@ -38394,10 +37797,6 @@ public final class TerminalScreenV2Proto {
 
       if (!getLeaseId()
           .equals(other.getLeaseId())) return false;
-      if (!getClientInstanceId()
-          .equals(other.getClientInstanceId())) return false;
-      if (getInputSeq()
-          != other.getInputSeq()) return false;
       if (!getInputCase().equals(other.getInputCase())) return false;
       switch (inputCase_) {
         case 10:
@@ -38436,11 +37835,6 @@ public final class TerminalScreenV2Proto {
       hash = (19 * hash) + getDescriptor().hashCode();
       hash = (37 * hash) + LEASE_ID_FIELD_NUMBER;
       hash = (53 * hash) + getLeaseId().hashCode();
-      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
-      hash = (53 * hash) + getClientInstanceId().hashCode();
-      hash = (37 * hash) + INPUT_SEQ_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getInputSeq());
       switch (inputCase_) {
         case 10:
           hash = (37 * hash) + TEXT_FIELD_NUMBER;
@@ -38597,8 +37991,6 @@ public final class TerminalScreenV2Proto {
         super.clear();
         bitField0_ = 0;
         leaseId_ = "";
-        clientInstanceId_ = "";
-        inputSeq_ = 0L;
         if (textBuilder_ != null) {
           textBuilder_.clear();
         }
@@ -38653,12 +38045,6 @@ public final class TerminalScreenV2Proto {
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.leaseId_ = leaseId_;
         }
-        if (((from_bitField0_ & 0x00000002) != 0)) {
-          result.clientInstanceId_ = clientInstanceId_;
-        }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.inputSeq_ = inputSeq_;
-        }
       }
 
       private void buildPartialOneofs(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInput result) {
@@ -38702,14 +38088,6 @@ public final class TerminalScreenV2Proto {
           leaseId_ = other.leaseId_;
           bitField0_ |= 0x00000001;
           onChanged();
-        }
-        if (!other.getClientInstanceId().isEmpty()) {
-          clientInstanceId_ = other.clientInstanceId_;
-          bitField0_ |= 0x00000002;
-          onChanged();
-        }
-        if (other.getInputSeq() != 0L) {
-          setInputSeq(other.getInputSeq());
         }
         switch (other.getInputCase()) {
           case TEXT: {
@@ -38767,16 +38145,6 @@ public final class TerminalScreenV2Proto {
                 bitField0_ |= 0x00000001;
                 break;
               } // case 10
-              case 18: {
-                clientInstanceId_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000002;
-                break;
-              } // case 18
-              case 24: {
-                inputSeq_ = input.readUInt64();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 24
               case 82: {
                 input.readMessage(
                     getTextFieldBuilder().getBuilder(),
@@ -38912,110 +38280,6 @@ public final class TerminalScreenV2Proto {
         checkByteStringIsUtf8(value);
         leaseId_ = value;
         bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-
-      private java.lang.Object clientInstanceId_ = "";
-      /**
-       * <code>string client_instance_id = 2;</code>
-       * @return The clientInstanceId.
-       */
-      public java.lang.String getClientInstanceId() {
-        java.lang.Object ref = clientInstanceId_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          clientInstanceId_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 2;</code>
-       * @return The bytes for clientInstanceId.
-       */
-      public com.google.protobuf.ByteString
-          getClientInstanceIdBytes() {
-        java.lang.Object ref = clientInstanceId_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b =
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          clientInstanceId_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 2;</code>
-       * @param value The clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceId(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000002;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 2;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearClientInstanceId() {
-        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
-        bitField0_ = (bitField0_ & ~0x00000002);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 2;</code>
-       * @param value The bytes for clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceIdBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000002;
-        onChanged();
-        return this;
-      }
-
-      private long inputSeq_ ;
-      /**
-       * <code>uint64 input_seq = 3;</code>
-       * @return The inputSeq.
-       */
-      @java.lang.Override
-      public long getInputSeq() {
-        return inputSeq_;
-      }
-      /**
-       * <code>uint64 input_seq = 3;</code>
-       * @param value The inputSeq to set.
-       * @return This builder for chaining.
-       */
-      public Builder setInputSeq(long value) {
-
-        inputSeq_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>uint64 input_seq = 3;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearInputSeq() {
-        bitField0_ = (bitField0_ & ~0x00000004);
-        inputSeq_ = 0L;
         onChanged();
         return this;
       }
@@ -39776,842 +39040,6 @@ public final class TerminalScreenV2Proto {
 
     @java.lang.Override
     public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.TerminalInput getDefaultInstanceForType() {
-      return DEFAULT_INSTANCE;
-    }
-
-  }
-
-  public interface InputAckOrBuilder extends
-      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v2.InputAck)
-      com.google.protobuf.MessageOrBuilder {
-
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The clientInstanceId.
-     */
-    java.lang.String getClientInstanceId();
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    com.google.protobuf.ByteString
-        getClientInstanceIdBytes();
-
-    /**
-     * <code>uint64 input_seq = 2;</code>
-     * @return The inputSeq.
-     */
-    long getInputSeq();
-
-    /**
-     * <code>string terminal_instance_id = 3;</code>
-     * @return The terminalInstanceId.
-     */
-    java.lang.String getTerminalInstanceId();
-    /**
-     * <code>string terminal_instance_id = 3;</code>
-     * @return The bytes for terminalInstanceId.
-     */
-    com.google.protobuf.ByteString
-        getTerminalInstanceIdBytes();
-
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-     * @return The enum numeric value on the wire for status.
-     */
-    int getStatusValue();
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-     * @return The status.
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus getStatus();
-  }
-  /**
-   * Protobuf type {@code webterm.terminal.screen.v2.InputAck}
-   */
-  public static final class InputAck extends
-      com.google.protobuf.GeneratedMessage implements
-      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v2.InputAck)
-      InputAckOrBuilder {
-  private static final long serialVersionUID = 0L;
-    static {
-      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
-        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
-        /* major= */ 4,
-        /* minor= */ 29,
-        /* patch= */ 2,
-        /* suffix= */ "",
-        InputAck.class.getName());
-    }
-    // Use InputAck.newBuilder() to construct.
-    private InputAck(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
-      super(builder);
-    }
-    private InputAck() {
-      clientInstanceId_ = "";
-      terminalInstanceId_ = "";
-      status_ = 0;
-    }
-
-    public static final com.google.protobuf.Descriptors.Descriptor
-        getDescriptor() {
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_InputAck_descriptor;
-    }
-
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-        internalGetFieldAccessorTable() {
-      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_InputAck_fieldAccessorTable
-          .ensureFieldAccessorsInitialized(
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.class, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder.class);
-    }
-
-    public static final int CLIENT_INSTANCE_ID_FIELD_NUMBER = 1;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object clientInstanceId_ = "";
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The clientInstanceId.
-     */
-    @java.lang.Override
-    public java.lang.String getClientInstanceId() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        clientInstanceId_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string client_instance_id = 1;</code>
-     * @return The bytes for clientInstanceId.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getClientInstanceIdBytes() {
-      java.lang.Object ref = clientInstanceId_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b =
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        clientInstanceId_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
-    public static final int INPUT_SEQ_FIELD_NUMBER = 2;
-    private long inputSeq_ = 0L;
-    /**
-     * <code>uint64 input_seq = 2;</code>
-     * @return The inputSeq.
-     */
-    @java.lang.Override
-    public long getInputSeq() {
-      return inputSeq_;
-    }
-
-    public static final int TERMINAL_INSTANCE_ID_FIELD_NUMBER = 3;
-    @SuppressWarnings("serial")
-    private volatile java.lang.Object terminalInstanceId_ = "";
-    /**
-     * <code>string terminal_instance_id = 3;</code>
-     * @return The terminalInstanceId.
-     */
-    @java.lang.Override
-    public java.lang.String getTerminalInstanceId() {
-      java.lang.Object ref = terminalInstanceId_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
-      } else {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        terminalInstanceId_ = s;
-        return s;
-      }
-    }
-    /**
-     * <code>string terminal_instance_id = 3;</code>
-     * @return The bytes for terminalInstanceId.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString
-        getTerminalInstanceIdBytes() {
-      java.lang.Object ref = terminalInstanceId_;
-      if (ref instanceof java.lang.String) {
-        com.google.protobuf.ByteString b =
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        terminalInstanceId_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-
-    public static final int STATUS_FIELD_NUMBER = 4;
-    private int status_ = 0;
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-     * @return The enum numeric value on the wire for status.
-     */
-    @java.lang.Override public int getStatusValue() {
-      return status_;
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-     * @return The status.
-     */
-    @java.lang.Override public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus getStatus() {
-      com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus result = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.forNumber(status_);
-      return result == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.UNRECOGNIZED : result;
-    }
-
-    private byte memoizedIsInitialized = -1;
-    @java.lang.Override
-    public final boolean isInitialized() {
-      byte isInitialized = memoizedIsInitialized;
-      if (isInitialized == 1) return true;
-      if (isInitialized == 0) return false;
-
-      memoizedIsInitialized = 1;
-      return true;
-    }
-
-    @java.lang.Override
-    public void writeTo(com.google.protobuf.CodedOutputStream output)
-                        throws java.io.IOException {
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 1, clientInstanceId_);
-      }
-      if (inputSeq_ != 0L) {
-        output.writeUInt64(2, inputSeq_);
-      }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(terminalInstanceId_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 3, terminalInstanceId_);
-      }
-      if (status_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.INPUT_ACK_STATUS_UNSPECIFIED.getNumber()) {
-        output.writeEnum(4, status_);
-      }
-      getUnknownFields().writeTo(output);
-    }
-
-    @java.lang.Override
-    public int getSerializedSize() {
-      int size = memoizedSize;
-      if (size != -1) return size;
-
-      size = 0;
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(clientInstanceId_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, clientInstanceId_);
-      }
-      if (inputSeq_ != 0L) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(2, inputSeq_);
-      }
-      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(terminalInstanceId_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(3, terminalInstanceId_);
-      }
-      if (status_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.INPUT_ACK_STATUS_UNSPECIFIED.getNumber()) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeEnumSize(4, status_);
-      }
-      size += getUnknownFields().getSerializedSize();
-      memoizedSize = size;
-      return size;
-    }
-
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
-      if (obj == this) {
-       return true;
-      }
-      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck)) {
-        return super.equals(obj);
-      }
-      com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck other = (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) obj;
-
-      if (!getClientInstanceId()
-          .equals(other.getClientInstanceId())) return false;
-      if (getInputSeq()
-          != other.getInputSeq()) return false;
-      if (!getTerminalInstanceId()
-          .equals(other.getTerminalInstanceId())) return false;
-      if (status_ != other.status_) return false;
-      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
-      return true;
-    }
-
-    @java.lang.Override
-    public int hashCode() {
-      if (memoizedHashCode != 0) {
-        return memoizedHashCode;
-      }
-      int hash = 41;
-      hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + CLIENT_INSTANCE_ID_FIELD_NUMBER;
-      hash = (53 * hash) + getClientInstanceId().hashCode();
-      hash = (37 * hash) + INPUT_SEQ_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getInputSeq());
-      hash = (37 * hash) + TERMINAL_INSTANCE_ID_FIELD_NUMBER;
-      hash = (53 * hash) + getTerminalInstanceId().hashCode();
-      hash = (37 * hash) + STATUS_FIELD_NUMBER;
-      hash = (53 * hash) + status_;
-      hash = (29 * hash) + getUnknownFields().hashCode();
-      memoizedHashCode = hash;
-      return hash;
-    }
-
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        java.nio.ByteBuffer data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        java.nio.ByteBuffer data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        com.google.protobuf.ByteString data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        com.google.protobuf.ByteString data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(byte[] data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        byte[] data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseDelimitedFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input);
-    }
-
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseDelimitedFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        com.google.protobuf.CodedInputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
-    }
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck parseFrom(
-        com.google.protobuf.CodedInputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    @java.lang.Override
-    public Builder newBuilderForType() { return newBuilder(); }
-    public static Builder newBuilder() {
-      return DEFAULT_INSTANCE.toBuilder();
-    }
-    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck prototype) {
-      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
-    }
-    @java.lang.Override
-    public Builder toBuilder() {
-      return this == DEFAULT_INSTANCE
-          ? new Builder() : new Builder().mergeFrom(this);
-    }
-
-    @java.lang.Override
-    protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-      Builder builder = new Builder(parent);
-      return builder;
-    }
-    /**
-     * Protobuf type {@code webterm.terminal.screen.v2.InputAck}
-     */
-    public static final class Builder extends
-        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
-        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v2.InputAck)
-        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckOrBuilder {
-      public static final com.google.protobuf.Descriptors.Descriptor
-          getDescriptor() {
-        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_InputAck_descriptor;
-      }
-
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-          internalGetFieldAccessorTable() {
-        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_InputAck_fieldAccessorTable
-            .ensureFieldAccessorsInitialized(
-                com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.class, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.Builder.class);
-      }
-
-      // Construct using com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.newBuilder()
-      private Builder() {
-
-      }
-
-      private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-        super(parent);
-
-      }
-      @java.lang.Override
-      public Builder clear() {
-        super.clear();
-        bitField0_ = 0;
-        clientInstanceId_ = "";
-        inputSeq_ = 0L;
-        terminalInstanceId_ = "";
-        status_ = 0;
-        return this;
-      }
-
-      @java.lang.Override
-      public com.google.protobuf.Descriptors.Descriptor
-          getDescriptorForType() {
-        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_InputAck_descriptor;
-      }
-
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getDefaultInstanceForType() {
-        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance();
-      }
-
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck build() {
-        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck result = buildPartial();
-        if (!result.isInitialized()) {
-          throw newUninitializedMessageException(result);
-        }
-        return result;
-      }
-
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck buildPartial() {
-        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck result = new com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck(this);
-        if (bitField0_ != 0) { buildPartial0(result); }
-        onBuilt();
-        return result;
-      }
-
-      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck result) {
-        int from_bitField0_ = bitField0_;
-        if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.clientInstanceId_ = clientInstanceId_;
-        }
-        if (((from_bitField0_ & 0x00000002) != 0)) {
-          result.inputSeq_ = inputSeq_;
-        }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.terminalInstanceId_ = terminalInstanceId_;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.status_ = status_;
-        }
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck) {
-          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck)other);
-        } else {
-          super.mergeFrom(other);
-          return this;
-        }
-      }
-
-      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck other) {
-        if (other == com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck.getDefaultInstance()) return this;
-        if (!other.getClientInstanceId().isEmpty()) {
-          clientInstanceId_ = other.clientInstanceId_;
-          bitField0_ |= 0x00000001;
-          onChanged();
-        }
-        if (other.getInputSeq() != 0L) {
-          setInputSeq(other.getInputSeq());
-        }
-        if (!other.getTerminalInstanceId().isEmpty()) {
-          terminalInstanceId_ = other.terminalInstanceId_;
-          bitField0_ |= 0x00000004;
-          onChanged();
-        }
-        if (other.status_ != 0) {
-          setStatusValue(other.getStatusValue());
-        }
-        this.mergeUnknownFields(other.getUnknownFields());
-        onChanged();
-        return this;
-      }
-
-      @java.lang.Override
-      public final boolean isInitialized() {
-        return true;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws java.io.IOException {
-        if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
-        }
-        try {
-          boolean done = false;
-          while (!done) {
-            int tag = input.readTag();
-            switch (tag) {
-              case 0:
-                done = true;
-                break;
-              case 10: {
-                clientInstanceId_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000001;
-                break;
-              } // case 10
-              case 16: {
-                inputSeq_ = input.readUInt64();
-                bitField0_ |= 0x00000002;
-                break;
-              } // case 16
-              case 26: {
-                terminalInstanceId_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 26
-              case 32: {
-                status_ = input.readEnum();
-                bitField0_ |= 0x00000008;
-                break;
-              } // case 32
-              default: {
-                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
-                  done = true; // was an endgroup tag
-                }
-                break;
-              } // default:
-            } // switch (tag)
-          } // while (!done)
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.unwrapIOException();
-        } finally {
-          onChanged();
-        } // finally
-        return this;
-      }
-      private int bitField0_;
-
-      private java.lang.Object clientInstanceId_ = "";
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return The clientInstanceId.
-       */
-      public java.lang.String getClientInstanceId() {
-        java.lang.Object ref = clientInstanceId_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          clientInstanceId_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return The bytes for clientInstanceId.
-       */
-      public com.google.protobuf.ByteString
-          getClientInstanceIdBytes() {
-        java.lang.Object ref = clientInstanceId_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b =
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          clientInstanceId_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @param value The clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceId(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearClientInstanceId() {
-        clientInstanceId_ = getDefaultInstance().getClientInstanceId();
-        bitField0_ = (bitField0_ & ~0x00000001);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string client_instance_id = 1;</code>
-       * @param value The bytes for clientInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setClientInstanceIdBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        clientInstanceId_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-
-      private long inputSeq_ ;
-      /**
-       * <code>uint64 input_seq = 2;</code>
-       * @return The inputSeq.
-       */
-      @java.lang.Override
-      public long getInputSeq() {
-        return inputSeq_;
-      }
-      /**
-       * <code>uint64 input_seq = 2;</code>
-       * @param value The inputSeq to set.
-       * @return This builder for chaining.
-       */
-      public Builder setInputSeq(long value) {
-
-        inputSeq_ = value;
-        bitField0_ |= 0x00000002;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>uint64 input_seq = 2;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearInputSeq() {
-        bitField0_ = (bitField0_ & ~0x00000002);
-        inputSeq_ = 0L;
-        onChanged();
-        return this;
-      }
-
-      private java.lang.Object terminalInstanceId_ = "";
-      /**
-       * <code>string terminal_instance_id = 3;</code>
-       * @return The terminalInstanceId.
-       */
-      public java.lang.String getTerminalInstanceId() {
-        java.lang.Object ref = terminalInstanceId_;
-        if (!(ref instanceof java.lang.String)) {
-          com.google.protobuf.ByteString bs =
-              (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
-          terminalInstanceId_ = s;
-          return s;
-        } else {
-          return (java.lang.String) ref;
-        }
-      }
-      /**
-       * <code>string terminal_instance_id = 3;</code>
-       * @return The bytes for terminalInstanceId.
-       */
-      public com.google.protobuf.ByteString
-          getTerminalInstanceIdBytes() {
-        java.lang.Object ref = terminalInstanceId_;
-        if (ref instanceof String) {
-          com.google.protobuf.ByteString b =
-              com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
-          terminalInstanceId_ = b;
-          return b;
-        } else {
-          return (com.google.protobuf.ByteString) ref;
-        }
-      }
-      /**
-       * <code>string terminal_instance_id = 3;</code>
-       * @param value The terminalInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setTerminalInstanceId(
-          java.lang.String value) {
-        if (value == null) { throw new NullPointerException(); }
-        terminalInstanceId_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string terminal_instance_id = 3;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearTerminalInstanceId() {
-        terminalInstanceId_ = getDefaultInstance().getTerminalInstanceId();
-        bitField0_ = (bitField0_ & ~0x00000004);
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>string terminal_instance_id = 3;</code>
-       * @param value The bytes for terminalInstanceId to set.
-       * @return This builder for chaining.
-       */
-      public Builder setTerminalInstanceIdBytes(
-          com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checkByteStringIsUtf8(value);
-        terminalInstanceId_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-
-      private int status_ = 0;
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-       * @return The enum numeric value on the wire for status.
-       */
-      @java.lang.Override public int getStatusValue() {
-        return status_;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-       * @param value The enum numeric value on the wire for status to set.
-       * @return This builder for chaining.
-       */
-      public Builder setStatusValue(int value) {
-        status_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-       * @return The status.
-       */
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus getStatus() {
-        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus result = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.forNumber(status_);
-        return result == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus.UNRECOGNIZED : result;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-       * @param value The status to set.
-       * @return This builder for chaining.
-       */
-      public Builder setStatus(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAckStatus value) {
-        if (value == null) {
-          throw new NullPointerException();
-        }
-        bitField0_ |= 0x00000008;
-        status_ = value.getNumber();
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.InputAckStatus status = 4;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearStatus() {
-        bitField0_ = (bitField0_ & ~0x00000008);
-        status_ = 0;
-        onChanged();
-        return this;
-      }
-
-      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.InputAck)
-    }
-
-    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v2.InputAck)
-    private static final com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck DEFAULT_INSTANCE;
-    static {
-      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck();
-    }
-
-    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getDefaultInstance() {
-      return DEFAULT_INSTANCE;
-    }
-
-    private static final com.google.protobuf.Parser<InputAck>
-        PARSER = new com.google.protobuf.AbstractParser<InputAck>() {
-      @java.lang.Override
-      public InputAck parsePartialFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws com.google.protobuf.InvalidProtocolBufferException {
-        Builder builder = newBuilder();
-        try {
-          builder.mergeFrom(input, extensionRegistry);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.setUnfinishedMessage(builder.buildPartial());
-        } catch (com.google.protobuf.UninitializedMessageException e) {
-          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
-        } catch (java.io.IOException e) {
-          throw new com.google.protobuf.InvalidProtocolBufferException(e)
-              .setUnfinishedMessage(builder.buildPartial());
-        }
-        return builder.buildPartial();
-      }
-    };
-
-    public static com.google.protobuf.Parser<InputAck> parser() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public com.google.protobuf.Parser<InputAck> getParserForType() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.InputAck getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -50639,11 +49067,6 @@ public final class TerminalScreenV2Proto {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v2_TerminalInput_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_webterm_terminal_screen_v2_InputAck_descriptor;
-  private static final
-    com.google.protobuf.GeneratedMessage.FieldAccessorTable
-      internal_static_webterm_terminal_screen_v2_InputAck_fieldAccessorTable;
-  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v2_TextInput_descriptor;
   private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -50728,7 +49151,7 @@ public final class TerminalScreenV2Proto {
   static {
     java.lang.String[] descriptorData = {
       "\n%shared/proto/terminal_screen_v2.proto\022" +
-      "\032webterm.terminal.screen.v2\"\216\t\n\016ScreenEn" +
+      "\032webterm.terminal.screen.v2\"\331\010\n\016ScreenEn" +
       "velope\022\030\n\020protocol_version\030\001 \001(\r\0222\n\005hell" +
       "o\030\002 \001(\0132!.webterm.terminal.screen.v2.Hel" +
       "loH\000\0228\n\010baseline\030\003 \001(\0132$.webterm.termina" +
@@ -50744,248 +49167,237 @@ public final class TerminalScreenV2Proto {
       "minal.screen.v2.ReleaseLayoutH\000\0224\n\006resiz" +
       "e\030\r \001(\0132\".webterm.terminal.screen.v2.Res" +
       "izeH\000\022:\n\005input\030\016 \001(\0132).webterm.terminal." +
-      "screen.v2.TerminalInputH\000\0229\n\tinput_ack\030\017" +
-      " \001(\0132$.webterm.terminal.screen.v2.InputA" +
-      "ckH\000\022<\n\006effect\030\020 \001(\0132*.webterm.terminal." +
-      "screen.v2.TerminalEffectH\000\022K\n\022clipboard_" +
-      "response\030\021 \001(\0132-.webterm.terminal.screen" +
-      ".v2.ClipboardResponseH\000\0220\n\004exit\030\023 \001(\0132 ." +
-      "webterm.terminal.screen.v2.ExitH\000\0220\n\004pin" +
-      "g\030\024 \001(\0132 .webterm.terminal.screen.v2.Pin" +
-      "gH\000\0220\n\004pong\030\025 \001(\0132 .webterm.terminal.scr" +
-      "een.v2.PongH\000\022E\n\017terminal_commit\030\026 \001(\0132*" +
-      ".webterm.terminal.screen.v2.TerminalComm" +
-      "itH\000\022E\n\017resume_accepted\030\027 \001(\0132*.webterm." +
-      "terminal.screen.v2.ResumeAcceptedH\000B\t\n\007p" +
-      "ayloadJ\004\010\004\020\005J\004\010\005\020\006J\004\010\010\020\tJ\004\010\t\020\nJ\004\010\022\020\023\"\325\001\n" +
-      "\005Hello\022\032\n\022client_instance_id\030\001 \001(\t\0227\n\006re" +
-      "sume\030\004 \001(\0132\'.webterm.terminal.screen.v2." +
-      "ResumeToken\022>\n\020desired_geometry\030\007 \001(\0132$." +
-      "webterm.terminal.screen.v2.Geometry\022\037\n\027c" +
-      "old_history_tail_lines\030\010 \001(\rJ\004\010\002\020\003J\004\010\003\020\004" +
-      "J\004\010\005\020\006J\004\010\006\020\007\"9\n\020ResumeScreenLine\022\017\n\007line" +
-      "_id\030\001 \001(\004\022\024\n\014line_version\030\002 \001(\004\"\343\002\n\013Resu" +
-      "meToken\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_e" +
-      "poch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\022\035\n\025d" +
-      "ictionary_generation\030\004 \001(\004\022\032\n\022history_ge" +
-      "neration\030\005 \001(\004\022(\n contiguous_history_tai" +
-      "l_last_seq\030\006 \001(\004\022=\n\ractive_buffer\030\007 \001(\0162" +
-      "&.webterm.terminal.screen.v2.BufferKind\022" +
-      "A\n\013active_rows\030\010 \003(\0132,.webterm.terminal." +
-      "screen.v2.ResumeScreenLine\022)\n!contiguous" +
-      "_history_tail_first_seq\030\t \001(\004\"\322\001\n\016Resume" +
-      "Accepted\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_" +
-      "epoch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004\022\035\n\025" +
-      "dictionary_generation\030\004 \001(\004\022\032\n\022history_g" +
-      "eneration\030\005 \001(\004\022A\n\016history_extent\030\006 \001(\0132" +
+      "screen.v2.TerminalInputH\000\022<\n\006effect\030\020 \001(" +
+      "\0132*.webterm.terminal.screen.v2.TerminalE" +
+      "ffectH\000\022K\n\022clipboard_response\030\021 \001(\0132-.we" +
+      "bterm.terminal.screen.v2.ClipboardRespon" +
+      "seH\000\0220\n\004exit\030\023 \001(\0132 .webterm.terminal.sc" +
+      "reen.v2.ExitH\000\0220\n\004ping\030\024 \001(\0132 .webterm.t" +
+      "erminal.screen.v2.PingH\000\0220\n\004pong\030\025 \001(\0132 " +
+      ".webterm.terminal.screen.v2.PongH\000\022E\n\017te" +
+      "rminal_commit\030\026 \001(\0132*.webterm.terminal.s" +
+      "creen.v2.TerminalCommitH\000\022E\n\017resume_acce" +
+      "pted\030\027 \001(\0132*.webterm.terminal.screen.v2." +
+      "ResumeAcceptedH\000B\t\n\007payloadJ\004\010\004\020\005J\004\010\005\020\006J" +
+      "\004\010\010\020\tJ\004\010\t\020\nJ\004\010\017\020\020J\004\010\022\020\023\"\277\001\n\005Hello\0227\n\006res" +
+      "ume\030\004 \001(\0132\'.webterm.terminal.screen.v2.R" +
+      "esumeToken\022>\n\020desired_geometry\030\007 \001(\0132$.w" +
+      "ebterm.terminal.screen.v2.Geometry\022\037\n\027co" +
+      "ld_history_tail_lines\030\010 \001(\rJ\004\010\001\020\002J\004\010\002\020\003J" +
+      "\004\010\003\020\004J\004\010\005\020\006J\004\010\006\020\007\"9\n\020ResumeScreenLine\022\017\n" +
+      "\007line_id\030\001 \001(\004\022\024\n\014line_version\030\002 \001(\004\"\343\002\n" +
+      "\013ResumeToken\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014lay" +
+      "out_epoch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(\004" +
+      "\022\035\n\025dictionary_generation\030\004 \001(\004\022\032\n\022histo" +
+      "ry_generation\030\005 \001(\004\022(\n contiguous_histor" +
+      "y_tail_last_seq\030\006 \001(\004\022=\n\ractive_buffer\030\007" +
+      " \001(\0162&.webterm.terminal.screen.v2.Buffer" +
+      "Kind\022A\n\013active_rows\030\010 \003(\0132,.webterm.term" +
+      "inal.screen.v2.ResumeScreenLine\022)\n!conti" +
+      "guous_history_tail_first_seq\030\t \001(\004\"\322\001\n\016R" +
+      "esumeAccepted\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014la" +
+      "yout_epoch\030\002 \001(\004\022\027\n\017screen_revision\030\003 \001(" +
+      "\004\022\035\n\025dictionary_generation\030\004 \001(\004\022\032\n\022hist" +
+      "ory_generation\030\005 \001(\004\022A\n\016history_extent\030\006" +
+      " \001(\0132).webterm.terminal.screen.v2.Histor" +
+      "yExtent\"&\n\010Geometry\022\014\n\004rows\030\001 \001(\005\022\014\n\004col" +
+      "s\030\002 \001(\005\"4\n\rHistoryExtent\022\021\n\tfirst_seq\030\001 " +
+      "\001(\004\022\020\n\010last_seq\030\002 \001(\004\"}\n\nDictionary\0229\n\006s" +
+      "tyles\030\001 \003(\0132).webterm.terminal.screen.v2" +
+      ".TerminalStyle\0224\n\005links\030\002 \003(\0132%.webterm." +
+      "terminal.screen.v2.Hyperlink\"}\n\013HistoryT" +
+      "ail\0229\n\006extent\030\001 \001(\0132).webterm.terminal.s" +
+      "creen.v2.HistoryExtent\0223\n\005lines\030\002 \003(\0132$." +
+      "webterm.terminal.screen.v2.LineData\"\304\006\n\010" +
+      "Baseline\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance" +
+      "_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022\027\n\017scree" +
+      "n_revision\030\004 \001(\004\0226\n\010geometry\030\006 \001(\0132$.web" +
+      "term.terminal.screen.v2.Geometry\022=\n\racti" +
+      "ve_buffer\030\007 \001(\0162&.webterm.terminal.scree" +
+      "n.v2.BufferKind\022A\n\016history_extent\030\010 \001(\0132" +
       ").webterm.terminal.screen.v2.HistoryExte" +
-      "nt\"&\n\010Geometry\022\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001" +
-      "(\005\"4\n\rHistoryExtent\022\021\n\tfirst_seq\030\001 \001(\004\022\020" +
-      "\n\010last_seq\030\002 \001(\004\"}\n\nDictionary\0229\n\006styles" +
-      "\030\001 \003(\0132).webterm.terminal.screen.v2.Term" +
-      "inalStyle\0224\n\005links\030\002 \003(\0132%.webterm.termi" +
-      "nal.screen.v2.Hyperlink\"}\n\013HistoryTail\0229" +
-      "\n\006extent\030\001 \001(\0132).webterm.terminal.screen" +
-      ".v2.HistoryExtent\0223\n\005lines\030\002 \003(\0132$.webte" +
-      "rm.terminal.screen.v2.LineData\"\304\006\n\010Basel" +
-      "ine\022\022\n\nsession_id\030\001 \001(\t\022\023\n\013instance_id\030\002" +
-      " \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022\027\n\017screen_rev" +
-      "ision\030\004 \001(\004\0226\n\010geometry\030\006 \001(\0132$.webterm." +
-      "terminal.screen.v2.Geometry\022=\n\ractive_bu" +
-      "ffer\030\007 \001(\0162&.webterm.terminal.screen.v2." +
-      "BufferKind\022A\n\016history_extent\030\010 \001(\0132).web" +
-      "term.terminal.screen.v2.HistoryExtent\022=\n" +
-      "\014history_tail\030\t \001(\0132\'.webterm.terminal.s" +
-      "creen.v2.HistoryTail\022?\n\rscreen_layout\030\n " +
-      "\001(\0132(.webterm.terminal.screen.v2.ScreenL" +
-      "ayout\022:\n\014screen_lines\030\013 \003(\0132$.webterm.te" +
-      "rminal.screen.v2.LineData\0222\n\006cursor\030\014 \001(" +
-      "\0132\".webterm.terminal.screen.v2.Cursor\0220\n" +
-      "\005modes\030\r \001(\0132!.webterm.terminal.screen.v" +
-      "2.Modes\022<\n\007palette\030\016 \001(\0132+.webterm.termi" +
-      "nal.screen.v2.TerminalPalette\022:\n\ndiction" +
-      "ary\030\017 \001(\0132&.webterm.terminal.screen.v2.D" +
-      "ictionary\022\035\n\025dictionary_generation\030\020 \001(\004" +
-      "\022\032\n\022history_generation\030\021 \001(\004\022I\n\016history_" +
-      "policy\030\022 \001(\01621.webterm.terminal.screen.v" +
-      "2.BaselineHistoryPolicyJ\004\010\005\020\006\"\337\004\n\016Termin" +
-      "alCommit\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_" +
-      "epoch\030\002 \001(\004\022\025\n\rbase_revision\030\004 \001(\004\022\020\n\010re" +
-      "vision\030\005 \001(\004\022:\n\006screen\030\006 \001(\0132*.webterm.t" +
-      "erminal.screen.v2.ScreenMutation\022<\n\007hist" +
-      "ory\030\007 \001(\0132+.webterm.terminal.screen.v2.H" +
-      "istoryMutation\0222\n\006cursor\030\010 \001(\0132\".webterm" +
-      ".terminal.screen.v2.Cursor\0220\n\005modes\030\t \001(" +
-      "\0132!.webterm.terminal.screen.v2.Modes\022<\n\007" +
-      "palette\030\n \001(\0132+.webterm.terminal.screen." +
-      "v2.TerminalPalette\022D\n\024dictionary_additio" +
-      "ns\030\013 \001(\0132&.webterm.terminal.screen.v2.Di" +
-      "ctionary\022B\n\ractive_buffer\030\014 \001(\0162&.webter" +
-      "m.terminal.screen.v2.BufferKindH\000\210\001\001\022\035\n\025" +
-      "dictionary_generation\030\r \001(\004\022\032\n\022history_g" +
-      "eneration\030\016 \001(\004B\020\n\016_active_bufferJ\004\010\003\020\004\"" +
-      "\206\001\n\016ScreenMutation\0228\n\006scroll\030\001 \001(\0132(.web" +
-      "term.terminal.screen.v2.ScreenScroll\022:\n\006" +
-      "writes\030\002 \003(\0132*.webterm.terminal.screen.v" +
-      "2.ScreenRowWrite\"Q\n\014ScreenScroll\022\017\n\007top_" +
-      "row\030\001 \001(\005\022\034\n\024bottom_row_exclusive\030\002 \001(\005\022" +
-      "\022\n\ndelta_rows\030\003 \001(\005\"Q\n\016ScreenRowWrite\022\013\n" +
-      "\003row\030\001 \001(\005\0222\n\004line\030\002 \001(\0132$.webterm.termi" +
-      "nal.screen.v2.LineData\"\322\001\n\017HistoryMutati" +
-      "on\022?\n\014final_extent\030\001 \001(\0132).webterm.termi" +
-      "nal.screen.v2.HistoryExtent\022<\n\016appended_" +
-      "lines\030\002 \003(\0132$.webterm.terminal.screen.v2" +
-      ".LineData\022@\n\npromotions\030\003 \003(\0132,.webterm." +
-      "terminal.screen.v2.HistoryPromotion\"N\n\020H" +
-      "istoryPromotion\022\017\n\007line_id\030\001 \001(\004\022\024\n\014line" +
-      "_version\030\002 \001(\004\022\023\n\013history_seq\030\003 \001(\004\"\222\001\n\023" +
-      "HistoryRangeRequest\022\022\n\nrequest_id\030\001 \001(\t\022" +
-      "\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001" +
-      "(\004\022\020\n\010from_seq\030\004 \001(\004\022\016\n\006to_seq\030\005 \001(\004\022\032\n\022" +
-      "history_generation\030\006 \001(\004\"\377\002\n\024HistoryRang" +
-      "eResponse\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013instanc" +
-      "e_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022>\n\006stat" +
-      "us\030\004 \001(\0162..webterm.terminal.screen.v2.Hi" +
-      "storyRangeStatus\022C\n\020available_extent\030\005 \001" +
-      "(\0132).webterm.terminal.screen.v2.HistoryE" +
-      "xtent\0223\n\005lines\030\006 \003(\0132$.webterm.terminal." +
-      "screen.v2.LineData\022:\n\ndictionary\030\007 \001(\0132&" +
-      ".webterm.terminal.screen.v2.Dictionary\022\026" +
-      "\n\016retry_after_ms\030\010 \001(\r\022\032\n\022history_genera" +
-      "tion\030\t \001(\004\" \n\014ScreenLayout\022\020\n\010line_ids\030\001" +
-      " \003(\004\"\300\001\n\010LineData\022\017\n\007line_id\030\001 \001(\004\022\024\n\014li" +
-      "ne_version\030\002 \001(\004\022\017\n\007wrapped\030\003 \001(\010\022\021\n\tutf" +
-      "8_text\030\004 \001(\014\022:\n\013style_spans\030\005 \003(\0132%.webt" +
-      "erm.terminal.screen.v2.StyleSpan\022\023\n\013hist" +
-      "ory_seq\030\007 \001(\004\022\022\n\nglyph_meta\030\010 \001(\014J\004\010\006\020\007\"" +
-      "R\n\tStyleSpan\022\021\n\tstart_col\030\001 \001(\005\022\017\n\007end_c" +
-      "ol\030\002 \001(\005\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link_id\030\004 " +
-      "\001(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webterm.ter" +
-      "minal.screen.v2.ColorKind\022\r\n\005index\030\002 \001(\005" +
-      "\022\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002id\030\001 " +
-      "\001(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal.scree" +
-      "n.v2.Color\022-\n\002bg\030\003 \001(\0132!.webterm.termina" +
-      "l.screen.v2.Color\022:\n\017underline_color\030\004 \001" +
-      "(\0132!.webterm.terminal.screen.v2.Color\0224\n" +
-      "\005attrs\030\005 \001(\0132%.webterm.terminal.screen.v" +
-      "2.CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001 \001(\010\022" +
-      "\013\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tunderlin" +
-      "e\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022\027\n\017cur" +
-      "ly_underline\030\006 \001(\010\022\030\n\020dotted_underline\030\007" +
-      " \001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\nblink_" +
-      "slow\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007revers" +
-      "e\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"" +
-      "4\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n" +
-      "\006params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003" +
-      "col\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shape\030\004 \001(" +
-      "\0162\'.webterm.terminal.screen.v2.CursorSha" +
-      "pe\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022applicati" +
-      "on_cursor\030\001 \001(\010\022\032\n\022application_keypad\030\002 " +
-      "\001(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mouse_tr" +
-      "acking\030\004 \001(\0162).webterm.terminal.screen.v" +
-      "2.MouseTracking\022A\n\016mouse_encoding\030\005 \001(\0162" +
-      ").webterm.terminal.screen.v2.MouseEncodi" +
-      "ng\022\027\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017Terminal" +
-      "Palette\0225\n\ndefault_fg\030\001 \001(\0132!.webterm.te" +
-      "rminal.screen.v2.Color\0225\n\ndefault_bg\030\002 \001" +
-      "(\0132!.webterm.terminal.screen.v2.Color\0227\n" +
-      "\014cursor_color\030\003 \001(\0132!.webterm.terminal.s" +
-      "creen.v2.Color\022\025\n\rreverse_video\030\004 \001(\010\022G\n" +
-      "\016indexed_colors\030\005 \003(\0132/.webterm.terminal" +
-      ".screen.v2.IndexedPaletteColor\022\022\n\ngenera" +
-      "tion\030\006 \001(\004\"1\n\023IndexedPaletteColor\022\r\n\005ind" +
-      "ex\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"8\n\rAcquireLayout\022\022" +
-      "\n\nrequest_id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"" +
-      "\250\001\n\013LayoutLease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010l" +
-      "ease_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013intera" +
-      "ctive\030\004 \001(\010\0226\n\010geometry\030\005 \001(\0132$.webterm." +
-      "terminal.screen.v2.Geometry\022\025\n\rexpires_a" +
-      "t_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n\010lease_id\030" +
-      "\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 " +
-      "\001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(" +
-      "\t\"\360\002\n\rTerminalInput\022\020\n\010lease_id\030\001 \001(\t\022\032\n" +
-      "\022client_instance_id\030\002 \001(\t\022\021\n\tinput_seq\030\003" +
-      " \001(\004\0225\n\004text\030\n \001(\0132%.webterm.terminal.sc" +
-      "reen.v2.TextInputH\000\0223\n\003key\030\013 \001(\0132$.webte" +
-      "rm.terminal.screen.v2.KeyInputH\000\0227\n\005past" +
-      "e\030\014 \001(\0132&.webterm.terminal.screen.v2.Pas" +
-      "teInputH\000\0227\n\005mouse\030\r \001(\0132&.webterm.termi" +
-      "nal.screen.v2.MouseInputH\000\0227\n\005focus\030\016 \001(" +
-      "\0132&.webterm.terminal.screen.v2.FocusInpu" +
-      "tH\000B\007\n\005input\"\223\001\n\010InputAck\022\032\n\022client_inst" +
-      "ance_id\030\001 \001(\t\022\021\n\tinput_seq\030\002 \001(\004\022\034\n\024term" +
-      "inal_instance_id\030\003 \001(\t\022:\n\006status\030\004 \001(\0162*" +
-      ".webterm.terminal.screen.v2.InputAckStat" +
-      "us\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInpu" +
-      "t\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'.webt" +
-      "erm.terminal.screen.v2.ModifierSet\022\017\n\007pr" +
-      "essed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 \001(\t\"" +
-      "\301\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005" +
-      "\0227\n\006button\030\003 \001(\0162\'.webterm.terminal.scre" +
-      "en.v2.MouseButton\022\023\n\013wheel_delta\030\004 \001(\005\022:" +
-      "\n\tmodifiers\030\005 \001(\0132\'.webterm.terminal.scr" +
-      "een.v2.ModifierSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nF" +
-      "ocusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013ModifierSe" +
-      "t\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 " +
-      "\001(\010\022\014\n\004meta\030\004 \001(\010\"\365\002\n\016TerminalEffect\022\023\n\013" +
-      "instance_id\030\001 \001(\t\022\027\n\017screen_revision\030\002 \001" +
-      "(\004\0220\n\004bell\030\n \001(\0132 .webterm.terminal.scre" +
-      "en.v2.BellH\000\022J\n\016clipboard_read\030\r \001(\01320.w" +
-      "ebterm.terminal.screen.v2.ClipboardReadR" +
-      "equestH\000\022L\n\017clipboard_write\030\016 \001(\01321.webt" +
-      "erm.terminal.screen.v2.ClipboardWriteReq" +
-      "uestH\000\022G\n\014notification\030\017 \001(\0132/.webterm.t" +
-      "erminal.screen.v2.DesktopNotificationH\000B" +
-      "\010\n\006effectJ\004\010\013\020\014J\004\010\014\020\rJ\004\010\020\020\021J\004\010\021\020\022\"\006\n\004Bel" +
-      "l\"=\n\024ClipboardReadRequest\022\022\n\nrequest_id\030" +
-      "\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWri" +
-      "teRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboa" +
-      "rd\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotific" +
-      "ation\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"W\n\021Cl" +
-      "ipboardResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007a" +
-      "llowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 " +
-      "\001(\014\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005\"\037\n\004Ping\022\027\n\017scr" +
-      "een_revision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017screen_rev" +
-      "ision\030\001 \001(\004*Z\n\nBufferKind\022\033\n\027BUFFER_KIND" +
-      "_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001\022\031\n\025" +
-      "BUFFER_KIND_ALTERNATE\020\002*k\n\025BaselineHisto" +
-      "ryPolicy\022!\n\035BASELINE_HISTORY_POLICY_RESE" +
-      "T\020\000\022/\n+BASELINE_HISTORY_POLICY_PRESERVE_" +
-      "COMPATIBLE\020\001*\310\001\n\022HistoryRangeStatus\022$\n H" +
-      "ISTORY_RANGE_STATUS_UNSPECIFIED\020\000\022\033\n\027HIS" +
-      "TORY_RANGE_STATUS_OK\020\001\022)\n%HISTORY_RANGE_" +
-      "STATUS_STALE_PROJECTION\020\002\022 \n\034HISTORY_RAN" +
-      "GE_STATUS_TRIMMED\020\003\022\"\n\036HISTORY_RANGE_STA" +
-      "TUS_RETRYABLE\020\004*\240\001\n\tColorKind\022\032\n\026COLOR_K" +
-      "IND_UNSPECIFIED\020\000\022\031\n\025COLOR_KIND_DEFAULT_" +
-      "FG\020\001\022\031\n\025COLOR_KIND_DEFAULT_BG\020\002\022\025\n\021COLOR" +
-      "_KIND_CURSOR\020\003\022\026\n\022COLOR_KIND_INDEXED\020\004\022\022" +
-      "\n\016COLOR_KIND_RGB\020\005*u\n\013CursorShape\022\034\n\030CUR" +
-      "SOR_SHAPE_UNSPECIFIED\020\000\022\026\n\022CURSOR_SHAPE_" +
-      "BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020\002\022\032\n\026CURSOR_" +
-      "SHAPE_UNDERLINE\020\003*\374\001\n\rMouseTracking\022\036\n\032M" +
-      "OUSE_TRACKING_UNSPECIFIED\020\000\022\027\n\023MOUSE_TRA" +
-      "CKING_NONE\020\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022\030\n\024" +
-      "MOUSE_TRACKING_VT200\020\003\022\"\n\036MOUSE_TRACKING" +
-      "_VT200_HIGHLIGHT\020\004\022\037\n\033MOUSE_TRACKING_BUT" +
-      "TON_EVENT\020\005\022\034\n\030MOUSE_TRACKING_ANY_EVENT\020" +
-      "\006\022\035\n\031MOUSE_TRACKING_SGR_PIXELS\020\007*\222\001\n\rMou" +
-      "seEncoding\022\036\n\032MOUSE_ENCODING_UNSPECIFIED" +
-      "\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001\022\027\n\023MOUSE_ENCO" +
-      "DING_UTF8\020\002\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030\n\024M" +
-      "OUSE_ENCODING_URXVT\020\004*\255\001\n\016InputAckStatus" +
-      "\022 \n\034INPUT_ACK_STATUS_UNSPECIFIED\020\000\022\034\n\030IN" +
-      "PUT_ACK_STATUS_WRITTEN\020\001\022\034\n\030INPUT_ACK_ST" +
-      "ATUS_IGNORED\020\002\022\035\n\031INPUT_ACK_STATUS_REJEC" +
-      "TED\020\003\022\036\n\032INPUT_ACK_STATUS_UNCERTAIN\020\004*\242\001" +
-      "\n\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIE" +
-      "D\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTT" +
-      "ON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022M" +
-      "OUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE" +
-      "\020\005Bu\n\'com.webterm.terminal.protocol.gene" +
-      "ratedB\025TerminalScreenV2ProtoZ3webterm/go" +
-      "-core/internal/screenprotocol/generatedv" +
-      "2b\006proto3"
+      "nt\022=\n\014history_tail\030\t \001(\0132\'.webterm.termi" +
+      "nal.screen.v2.HistoryTail\022?\n\rscreen_layo" +
+      "ut\030\n \001(\0132(.webterm.terminal.screen.v2.Sc" +
+      "reenLayout\022:\n\014screen_lines\030\013 \003(\0132$.webte" +
+      "rm.terminal.screen.v2.LineData\0222\n\006cursor" +
+      "\030\014 \001(\0132\".webterm.terminal.screen.v2.Curs" +
+      "or\0220\n\005modes\030\r \001(\0132!.webterm.terminal.scr" +
+      "een.v2.Modes\022<\n\007palette\030\016 \001(\0132+.webterm." +
+      "terminal.screen.v2.TerminalPalette\022:\n\ndi" +
+      "ctionary\030\017 \001(\0132&.webterm.terminal.screen" +
+      ".v2.Dictionary\022\035\n\025dictionary_generation\030" +
+      "\020 \001(\004\022\032\n\022history_generation\030\021 \001(\004\022I\n\016his" +
+      "tory_policy\030\022 \001(\01621.webterm.terminal.scr" +
+      "een.v2.BaselineHistoryPolicyJ\004\010\005\020\006\"\337\004\n\016T" +
+      "erminalCommit\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014la" +
+      "yout_epoch\030\002 \001(\004\022\025\n\rbase_revision\030\004 \001(\004\022" +
+      "\020\n\010revision\030\005 \001(\004\022:\n\006screen\030\006 \001(\0132*.webt" +
+      "erm.terminal.screen.v2.ScreenMutation\022<\n" +
+      "\007history\030\007 \001(\0132+.webterm.terminal.screen" +
+      ".v2.HistoryMutation\0222\n\006cursor\030\010 \001(\0132\".we" +
+      "bterm.terminal.screen.v2.Cursor\0220\n\005modes" +
+      "\030\t \001(\0132!.webterm.terminal.screen.v2.Mode" +
+      "s\022<\n\007palette\030\n \001(\0132+.webterm.terminal.sc" +
+      "reen.v2.TerminalPalette\022D\n\024dictionary_ad" +
+      "ditions\030\013 \001(\0132&.webterm.terminal.screen." +
+      "v2.Dictionary\022B\n\ractive_buffer\030\014 \001(\0162&.w" +
+      "ebterm.terminal.screen.v2.BufferKindH\000\210\001" +
+      "\001\022\035\n\025dictionary_generation\030\r \001(\004\022\032\n\022hist" +
+      "ory_generation\030\016 \001(\004B\020\n\016_active_bufferJ\004" +
+      "\010\003\020\004\"\206\001\n\016ScreenMutation\0228\n\006scroll\030\001 \001(\0132" +
+      "(.webterm.terminal.screen.v2.ScreenScrol" +
+      "l\022:\n\006writes\030\002 \003(\0132*.webterm.terminal.scr" +
+      "een.v2.ScreenRowWrite\"Q\n\014ScreenScroll\022\017\n" +
+      "\007top_row\030\001 \001(\005\022\034\n\024bottom_row_exclusive\030\002" +
+      " \001(\005\022\022\n\ndelta_rows\030\003 \001(\005\"Q\n\016ScreenRowWri" +
+      "te\022\013\n\003row\030\001 \001(\005\0222\n\004line\030\002 \001(\0132$.webterm." +
+      "terminal.screen.v2.LineData\"\322\001\n\017HistoryM" +
+      "utation\022?\n\014final_extent\030\001 \001(\0132).webterm." +
+      "terminal.screen.v2.HistoryExtent\022<\n\016appe" +
+      "nded_lines\030\002 \003(\0132$.webterm.terminal.scre" +
+      "en.v2.LineData\022@\n\npromotions\030\003 \003(\0132,.web" +
+      "term.terminal.screen.v2.HistoryPromotion" +
+      "\"N\n\020HistoryPromotion\022\017\n\007line_id\030\001 \001(\004\022\024\n" +
+      "\014line_version\030\002 \001(\004\022\023\n\013history_seq\030\003 \001(\004" +
+      "\"\222\001\n\023HistoryRangeRequest\022\022\n\nrequest_id\030\001" +
+      " \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoc" +
+      "h\030\003 \001(\004\022\020\n\010from_seq\030\004 \001(\004\022\016\n\006to_seq\030\005 \001(" +
+      "\004\022\032\n\022history_generation\030\006 \001(\004\"\377\002\n\024Histor" +
+      "yRangeResponse\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013in" +
+      "stance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022>\n" +
+      "\006status\030\004 \001(\0162..webterm.terminal.screen." +
+      "v2.HistoryRangeStatus\022C\n\020available_exten" +
+      "t\030\005 \001(\0132).webterm.terminal.screen.v2.His" +
+      "toryExtent\0223\n\005lines\030\006 \003(\0132$.webterm.term" +
+      "inal.screen.v2.LineData\022:\n\ndictionary\030\007 " +
+      "\001(\0132&.webterm.terminal.screen.v2.Diction" +
+      "ary\022\026\n\016retry_after_ms\030\010 \001(\r\022\032\n\022history_g" +
+      "eneration\030\t \001(\004\" \n\014ScreenLayout\022\020\n\010line_" +
+      "ids\030\001 \003(\004\"\300\001\n\010LineData\022\017\n\007line_id\030\001 \001(\004\022" +
+      "\024\n\014line_version\030\002 \001(\004\022\017\n\007wrapped\030\003 \001(\010\022\021" +
+      "\n\tutf8_text\030\004 \001(\014\022:\n\013style_spans\030\005 \003(\0132%" +
+      ".webterm.terminal.screen.v2.StyleSpan\022\023\n" +
+      "\013history_seq\030\007 \001(\004\022\022\n\nglyph_meta\030\010 \001(\014J\004" +
+      "\010\006\020\007\"R\n\tStyleSpan\022\021\n\tstart_col\030\001 \001(\005\022\017\n\007" +
+      "end_col\030\002 \001(\005\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link_" +
+      "id\030\004 \001(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webter" +
+      "m.terminal.screen.v2.ColorKind\022\r\n\005index\030" +
+      "\002 \001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002" +
+      "id\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal." +
+      "screen.v2.Color\022-\n\002bg\030\003 \001(\0132!.webterm.te" +
+      "rminal.screen.v2.Color\022:\n\017underline_colo" +
+      "r\030\004 \001(\0132!.webterm.terminal.screen.v2.Col" +
+      "or\0224\n\005attrs\030\005 \001(\0132%.webterm.terminal.scr" +
+      "een.v2.CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001" +
+      " \001(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tund" +
+      "erline\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022\027" +
+      "\n\017curly_underline\030\006 \001(\010\022\030\n\020dotted_underl" +
+      "ine\030\007 \001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\nb" +
+      "link_slow\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007r" +
+      "everse\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r" +
+      " \001(\010\"4\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001" +
+      "(\t\022\016\n\006params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(" +
+      "\005\022\013\n\003col\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shape" +
+      "\030\004 \001(\0162\'.webterm.terminal.screen.v2.Curs" +
+      "orShape\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022appl" +
+      "ication_cursor\030\001 \001(\010\022\032\n\022application_keyp" +
+      "ad\030\002 \001(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mou" +
+      "se_tracking\030\004 \001(\0162).webterm.terminal.scr" +
+      "een.v2.MouseTracking\022A\n\016mouse_encoding\030\005" +
+      " \001(\0162).webterm.terminal.screen.v2.MouseE" +
+      "ncoding\022\027\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017Ter" +
+      "minalPalette\0225\n\ndefault_fg\030\001 \001(\0132!.webte" +
+      "rm.terminal.screen.v2.Color\0225\n\ndefault_b" +
+      "g\030\002 \001(\0132!.webterm.terminal.screen.v2.Col" +
+      "or\0227\n\014cursor_color\030\003 \001(\0132!.webterm.termi" +
+      "nal.screen.v2.Color\022\025\n\rreverse_video\030\004 \001" +
+      "(\010\022G\n\016indexed_colors\030\005 \003(\0132/.webterm.ter" +
+      "minal.screen.v2.IndexedPaletteColor\022\022\n\ng" +
+      "eneration\030\006 \001(\004\"1\n\023IndexedPaletteColor\022\r" +
+      "\n\005index\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"8\n\rAcquireLay" +
+      "out\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013interactive\030\002" +
+      " \001(\010\"\250\001\n\013LayoutLease\022\022\n\nrequest_id\030\001 \001(\t" +
+      "\022\020\n\010lease_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013i" +
+      "nteractive\030\004 \001(\010\0226\n\010geometry\030\005 \001(\0132$.web" +
+      "term.terminal.screen.v2.Geometry\022\025\n\rexpi" +
+      "res_at_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n\010leas" +
+      "e_id\030\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004ro" +
+      "ws\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nrequest_id" +
+      "\030\004 \001(\t\"\315\002\n\rTerminalInput\022\020\n\010lease_id\030\001 \001" +
+      "(\t\0225\n\004text\030\n \001(\0132%.webterm.terminal.scre" +
+      "en.v2.TextInputH\000\0223\n\003key\030\013 \001(\0132$.webterm" +
+      ".terminal.screen.v2.KeyInputH\000\0227\n\005paste\030" +
+      "\014 \001(\0132&.webterm.terminal.screen.v2.Paste" +
+      "InputH\000\0227\n\005mouse\030\r \001(\0132&.webterm.termina" +
+      "l.screen.v2.MouseInputH\000\0227\n\005focus\030\016 \001(\0132" +
+      "&.webterm.terminal.screen.v2.FocusInputH" +
+      "\000B\007\n\005inputJ\004\010\002\020\003J\004\010\003\020\004\"\031\n\tTextInput\022\014\n\004d" +
+      "ata\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key\030\001 \001(\t\022:\n\tmo" +
+      "difiers\030\002 \001(\0132\'.webterm.terminal.screen." +
+      "v2.ModifierSet\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPaste" +
+      "Input\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003ro" +
+      "w\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'.w" +
+      "ebterm.terminal.screen.v2.MouseButton\022\023\n" +
+      "\013wheel_delta\030\004 \001(\005\022:\n\tmodifiers\030\005 \001(\0132\'." +
+      "webterm.terminal.screen.v2.ModifierSet\022\017" +
+      "\n\007pressed\030\006 \001(\010\"\035\n\nFocusInput\022\017\n\007focused" +
+      "\030\001 \001(\010\"E\n\013ModifierSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003" +
+      "alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\365\002" +
+      "\n\016TerminalEffect\022\023\n\013instance_id\030\001 \001(\t\022\027\n" +
+      "\017screen_revision\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .w" +
+      "ebterm.terminal.screen.v2.BellH\000\022J\n\016clip" +
+      "board_read\030\r \001(\01320.webterm.terminal.scre" +
+      "en.v2.ClipboardReadRequestH\000\022L\n\017clipboar" +
+      "d_write\030\016 \001(\01321.webterm.terminal.screen." +
+      "v2.ClipboardWriteRequestH\000\022G\n\014notificati" +
+      "on\030\017 \001(\0132/.webterm.terminal.screen.v2.De" +
+      "sktopNotificationH\000B\010\n\006effectJ\004\010\013\020\014J\004\010\014\020" +
+      "\rJ\004\010\020\020\021J\004\010\021\020\022\"\006\n\004Bell\"=\n\024ClipboardReadRe" +
+      "quest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002" +
+      " \001(\t\"L\n\025ClipboardWriteRequest\022\022\n\nrequest" +
+      "_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003 \001" +
+      "(\014\"2\n\023DesktopNotification\022\r\n\005title\030\001 \001(\t" +
+      "\022\014\n\004body\030\002 \001(\t\"W\n\021ClipboardResponse\022\022\n\nr" +
+      "equest_id\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007time" +
+      "out\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\024\n\004Exit\022\014\n\004code\030" +
+      "\001 \001(\005\"\037\n\004Ping\022\027\n\017screen_revision\030\001 \001(\004\"\037" +
+      "\n\004Pong\022\027\n\017screen_revision\030\001 \001(\004*Z\n\nBuffe" +
+      "rKind\022\033\n\027BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BU" +
+      "FFER_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNAT" +
+      "E\020\002*k\n\025BaselineHistoryPolicy\022!\n\035BASELINE" +
+      "_HISTORY_POLICY_RESET\020\000\022/\n+BASELINE_HIST" +
+      "ORY_POLICY_PRESERVE_COMPATIBLE\020\001*\310\001\n\022His" +
+      "toryRangeStatus\022$\n HISTORY_RANGE_STATUS_" +
+      "UNSPECIFIED\020\000\022\033\n\027HISTORY_RANGE_STATUS_OK" +
+      "\020\001\022)\n%HISTORY_RANGE_STATUS_STALE_PROJECT" +
+      "ION\020\002\022 \n\034HISTORY_RANGE_STATUS_TRIMMED\020\003\022" +
+      "\"\n\036HISTORY_RANGE_STATUS_RETRYABLE\020\004*\240\001\n\t" +
+      "ColorKind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n" +
+      "\025COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_D" +
+      "EFAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022CO" +
+      "LOR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u" +
+      "\n\013CursorShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIE" +
+      "D\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SH" +
+      "APE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001" +
+      "\n\rMouseTracking\022\036\n\032MOUSE_TRACKING_UNSPEC" +
+      "IFIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUS" +
+      "E_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200" +
+      "\020\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037" +
+      "\n\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE" +
+      "_TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_" +
+      "SGR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_" +
+      "ENCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING" +
+      "_X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE" +
+      "_ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020" +
+      "\004*\242\001\n\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPEC" +
+      "IFIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_" +
+      "BUTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022" +
+      "\026\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_" +
+      "MOVE\020\005Bu\n\'com.webterm.terminal.protocol." +
+      "generatedB\025TerminalScreenV2ProtoZ3webter" +
+      "m/go-core/internal/screenprotocol/genera" +
+      "tedv2b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -50996,13 +49408,13 @@ public final class TerminalScreenV2Proto {
     internal_static_webterm_terminal_screen_v2_ScreenEnvelope_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenEnvelope_descriptor,
-        new java.lang.String[] { "ProtocolVersion", "Hello", "Baseline", "HistoryRangeRequest", "HistoryRangeResponse", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "InputAck", "Effect", "ClipboardResponse", "Exit", "Ping", "Pong", "TerminalCommit", "ResumeAccepted", "Payload", });
+        new java.lang.String[] { "ProtocolVersion", "Hello", "Baseline", "HistoryRangeRequest", "HistoryRangeResponse", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "Effect", "ClipboardResponse", "Exit", "Ping", "Pong", "TerminalCommit", "ResumeAccepted", "Payload", });
     internal_static_webterm_terminal_screen_v2_Hello_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_webterm_terminal_screen_v2_Hello_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Hello_descriptor,
-        new java.lang.String[] { "ClientInstanceId", "Resume", "DesiredGeometry", "ColdHistoryTailLines", });
+        new java.lang.String[] { "Resume", "DesiredGeometry", "ColdHistoryTailLines", });
     internal_static_webterm_terminal_screen_v2_ResumeScreenLine_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_webterm_terminal_screen_v2_ResumeScreenLine_fieldAccessorTable = new
@@ -51194,99 +49606,93 @@ public final class TerminalScreenV2Proto {
     internal_static_webterm_terminal_screen_v2_TerminalInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalInput_descriptor,
-        new java.lang.String[] { "LeaseId", "ClientInstanceId", "InputSeq", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
-    internal_static_webterm_terminal_screen_v2_InputAck_descriptor =
-      getDescriptor().getMessageTypes().get(34);
-    internal_static_webterm_terminal_screen_v2_InputAck_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
-        internal_static_webterm_terminal_screen_v2_InputAck_descriptor,
-        new java.lang.String[] { "ClientInstanceId", "InputSeq", "TerminalInstanceId", "Status", });
+        new java.lang.String[] { "LeaseId", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
     internal_static_webterm_terminal_screen_v2_TextInput_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_webterm_terminal_screen_v2_TextInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TextInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v2_KeyInput_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_webterm_terminal_screen_v2_KeyInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_KeyInput_descriptor,
         new java.lang.String[] { "Key", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v2_PasteInput_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_webterm_terminal_screen_v2_PasteInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_PasteInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v2_MouseInput_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_webterm_terminal_screen_v2_MouseInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_MouseInput_descriptor,
         new java.lang.String[] { "Row", "Col", "Button", "WheelDelta", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v2_FocusInput_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_webterm_terminal_screen_v2_FocusInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_FocusInput_descriptor,
         new java.lang.String[] { "Focused", });
     internal_static_webterm_terminal_screen_v2_ModifierSet_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_webterm_terminal_screen_v2_ModifierSet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ModifierSet_descriptor,
         new java.lang.String[] { "Shift", "Alt", "Ctrl", "Meta", });
     internal_static_webterm_terminal_screen_v2_TerminalEffect_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_webterm_terminal_screen_v2_TerminalEffect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalEffect_descriptor,
         new java.lang.String[] { "InstanceId", "ScreenRevision", "Bell", "ClipboardRead", "ClipboardWrite", "Notification", "Effect", });
     internal_static_webterm_terminal_screen_v2_Bell_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_webterm_terminal_screen_v2_Bell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Bell_descriptor,
         new java.lang.String[] { });
     internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", });
     internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", "Data", });
     internal_static_webterm_terminal_screen_v2_DesktopNotification_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_webterm_terminal_screen_v2_DesktopNotification_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_DesktopNotification_descriptor,
         new java.lang.String[] { "Title", "Body", });
     internal_static_webterm_terminal_screen_v2_ClipboardResponse_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_webterm_terminal_screen_v2_ClipboardResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardResponse_descriptor,
         new java.lang.String[] { "RequestId", "Allowed", "Timeout", "Data", });
     internal_static_webterm_terminal_screen_v2_Exit_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_webterm_terminal_screen_v2_Exit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Exit_descriptor,
         new java.lang.String[] { "Code", });
     internal_static_webterm_terminal_screen_v2_Ping_descriptor =
-      getDescriptor().getMessageTypes().get(48);
+      getDescriptor().getMessageTypes().get(47);
     internal_static_webterm_terminal_screen_v2_Ping_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Ping_descriptor,
         new java.lang.String[] { "ScreenRevision", });
     internal_static_webterm_terminal_screen_v2_Pong_descriptor =
-      getDescriptor().getMessageTypes().get(49);
+      getDescriptor().getMessageTypes().get(48);
     internal_static_webterm_terminal_screen_v2_Pong_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Pong_descriptor,

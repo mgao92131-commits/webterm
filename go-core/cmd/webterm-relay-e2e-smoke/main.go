@@ -490,8 +490,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		hello, err := proto.Marshal(&pb.ScreenEnvelope{
 			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-				ClientInstanceId: "relay-e2e-smoke",
-				DesiredGeometry:  &pb.Geometry{Cols: 80, Rows: 24},
+				DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
 			}},
 		})
 		if err != nil {
@@ -539,10 +538,8 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		input, err := proto.Marshal(&pb.ScreenEnvelope{
 			ProtocolVersion: 2,
 			Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
-				LeaseId:          leaseIDs[terminalID],
-				ClientInstanceId: "relay-e2e-smoke",
-				InputSeq:         1,
-				Input:            &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
+				LeaseId: leaseIDs[terminalID],
+				Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
 			}},
 		})
 		if err != nil {

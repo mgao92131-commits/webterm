@@ -37,7 +37,6 @@ func TestCaptureWireFailureHasNoRawErrorText(t *testing.T) {
 	client.captureSink = coord
 	client.terminalInstanceID = "inst"
 	client.screenClientID = "sc"
-	client.clientInstanceID = "cl"
 
 	payload := []byte("wire-payload")
 	handle := client.recordWireFrame("commit", 5, 4, payload)

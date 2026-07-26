@@ -36,11 +36,6 @@ public final class TerminalCaptureSessionSource implements CaptureSessionSource 
     @Override
     public CaptureIdentity currentIdentity() {
         RemoteTerminalModel model = runtime.model();
-        String clientInstanceId = "";
-        TerminalSessionRuntime.ScreenConnection conn = runtime.connection();
-        if (conn != null && conn.reliableInputTracker() != null) {
-            clientInstanceId = conn.reliableInputTracker().clientInstanceId();
-        }
         // peekRenderSnapshot 在模型锁内返回不可变快照，字段组合一致。
         RemoteTerminalModel.RenderSnapshot peek = model.peekRenderSnapshot();
         String instanceId;
@@ -63,7 +58,7 @@ public final class TerminalCaptureSessionSource implements CaptureSessionSource 
         return new CaptureIdentity(
                 "", // captureId 由控制器在 startCapture 时生成并回填
                 runtime.sessionId(),
-                clientInstanceId,
+                "",
                 instanceId,
                 layoutEpoch,
                 modelRevision,

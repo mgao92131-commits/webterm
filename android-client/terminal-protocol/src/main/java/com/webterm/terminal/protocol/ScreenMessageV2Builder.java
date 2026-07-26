@@ -14,11 +14,9 @@ public final class ScreenMessageV2Builder {
   private ScreenMessageV2Builder() {}
 
   @NonNull
-  public static byte[] hello(int cols, int rows, @NonNull String clientInstanceId,
-                             @Nullable TerminalScreenV2Proto.ResumeToken resume,
+  public static byte[] hello(int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume,
                              int coldHistoryTailLines) {
     TerminalScreenV2Proto.Hello.Builder builder = TerminalScreenV2Proto.Hello.newBuilder()
-        .setClientInstanceId(clientInstanceId)
         .setColdHistoryTailLines(coldHistoryTailLines)
         .setDesiredGeometry(TerminalScreenV2Proto.Geometry.newBuilder()
             .setCols(cols).setRows(rows));
@@ -39,53 +37,48 @@ public final class ScreenMessageV2Builder {
   }
 
   @NonNull
-  public static byte[] textInput(@NonNull String leaseId, @NonNull String clientInstanceId,
-                                 long inputSeq, @NonNull String text) {
+  public static byte[] textInput(@NonNull String leaseId, @NonNull String text) {
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
-        .setLeaseId(leaseId).setClientInstanceId(clientInstanceId).setInputSeq(inputSeq)
+        .setLeaseId(leaseId)
         .setText(TerminalScreenV2Proto.TextInput.newBuilder().setData(text)));
   }
 
   @NonNull
-  public static byte[] pasteInput(@NonNull String leaseId, @NonNull String clientInstanceId,
-                                  long inputSeq, @NonNull String text) {
+  public static byte[] pasteInput(@NonNull String leaseId, @NonNull String text) {
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
-        .setLeaseId(leaseId).setClientInstanceId(clientInstanceId).setInputSeq(inputSeq)
+        .setLeaseId(leaseId)
         .setPaste(TerminalScreenV2Proto.PasteInput.newBuilder().setData(text)));
   }
 
   @NonNull
-  public static byte[] keyInput(@NonNull String leaseId, @NonNull String clientInstanceId,
-                                long inputSeq, @NonNull String key, boolean shift, boolean alt,
+  public static byte[] keyInput(@NonNull String leaseId, @NonNull String key, boolean shift, boolean alt,
                                 boolean ctrl, boolean meta, boolean pressed) {
     TerminalScreenV2Proto.ModifierSet modifiers = TerminalScreenV2Proto.ModifierSet.newBuilder()
         .setShift(shift).setAlt(alt).setCtrl(ctrl).setMeta(meta).build();
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
-        .setLeaseId(leaseId).setClientInstanceId(clientInstanceId).setInputSeq(inputSeq)
+        .setLeaseId(leaseId)
         .setKey(TerminalScreenV2Proto.KeyInput.newBuilder()
             .setKey(key).setModifiers(modifiers).setPressed(pressed)));
   }
 
   @NonNull
-  public static byte[] mouseInput(@NonNull String leaseId, @NonNull String clientInstanceId,
-                                  long inputSeq, int row, int col,
+  public static byte[] mouseInput(@NonNull String leaseId, int row, int col,
                                   TerminalScreenV2Proto.MouseButton button, int wheelDelta,
                                   boolean shift, boolean alt, boolean ctrl, boolean meta,
                                   boolean pressed) {
     TerminalScreenV2Proto.ModifierSet modifiers = TerminalScreenV2Proto.ModifierSet.newBuilder()
         .setShift(shift).setAlt(alt).setCtrl(ctrl).setMeta(meta).build();
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
-        .setLeaseId(leaseId).setClientInstanceId(clientInstanceId).setInputSeq(inputSeq)
+        .setLeaseId(leaseId)
         .setMouse(TerminalScreenV2Proto.MouseInput.newBuilder()
             .setRow(row).setCol(col).setButton(button).setWheelDelta(wheelDelta)
             .setModifiers(modifiers).setPressed(pressed)));
   }
 
   @NonNull
-  public static byte[] focusInput(@NonNull String leaseId, @NonNull String clientInstanceId,
-                                  long inputSeq, boolean focused) {
+  public static byte[] focusInput(@NonNull String leaseId, boolean focused) {
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
-        .setLeaseId(leaseId).setClientInstanceId(clientInstanceId).setInputSeq(inputSeq)
+        .setLeaseId(leaseId)
         .setFocus(TerminalScreenV2Proto.FocusInput.newBuilder().setFocused(focused)));
   }
 

@@ -20,7 +20,7 @@ const (
 )
 
 // PrioritizedChannelFrameSink 是物理 Mux writer 的可选能力。协议层在知道
-// InputAck/LayoutLease 语义时标注优先级，Mux 本身无需反向解析 protobuf。
+// LayoutLease 等控制帧可标注优先级，Mux 本身无需反向解析 protobuf。
 type PrioritizedChannelFrameSink interface {
 	WriteFramePriority(ctx context.Context, payload []byte, binary bool, priority FramePriority) error
 }

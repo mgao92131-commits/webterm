@@ -85,9 +85,6 @@ func (h *Handler) HandleMessage(data []byte) error {
 			h.onHistoryRange(payload.HistoryRangeRequest)
 		}
 	case *pb.ScreenEnvelope_Input:
-		if payload.Input.GetClientInstanceId() == "" || payload.Input.GetInputSeq() < 1 {
-			return fmt.Errorf("invalid terminal input identity")
-		}
 		if h.onInput != nil {
 			h.onInput(payload.Input)
 		}
@@ -125,7 +122,7 @@ func (h *Handler) HandleMessage(data []byte) error {
 }
 
 func validateHello(hello *pb.Hello) error {
-	if hello == nil || hello.GetClientInstanceId() == "" {
+	if hello == nil {
 		return fmt.Errorf("invalid screen.v2 hello")
 	}
 	if resume := hello.GetResume(); resume != nil {

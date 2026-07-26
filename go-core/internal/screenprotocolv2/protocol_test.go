@@ -258,7 +258,6 @@ func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	env := &pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "c1",
 			Resume: &pb.ResumeToken{InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 2,
 				DictionaryGeneration: 1, HistoryGeneration: 1, ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN},
 			DesiredGeometry: &pb.Geometry{Rows: 24, Cols: 80},
@@ -267,6 +266,29 @@ func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	wire, _ := proto.Marshal(env)
 	if err := NewHandler().HandleMessage(wire); err == nil {
 		t.Fatal("resume token without active rows must be rejected")
+	}
+}
+
+func TestHandlerAcceptsBestEffortInputWithoutDeliveryIdentity(t *testing.T) {
+	called := false
+	handler := NewHandler(WithInputCallback(func(input *pb.TerminalInput) {
+		called = input.GetLeaseId() == "lease-1" && input.GetText().GetData() == "echo now\n"
+	}))
+	wire, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: ProtocolVersion,
+		Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
+			LeaseId: "lease-1",
+			Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: "echo now\n"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.HandleMessage(wire); err != nil {
+		t.Fatalf("best-effort input rejected: %v", err)
+	}
+	if !called {
+		t.Fatal("best-effort input was not delivered to handler")
 	}
 }
 

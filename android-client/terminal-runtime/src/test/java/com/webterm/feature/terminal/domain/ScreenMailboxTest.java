@@ -73,9 +73,9 @@ public final class ScreenMailboxTest {
         mock(TerminalSessionRuntime.ScreenConnection.class);
     mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.HISTORY_RANGE);
     mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.PONG);
-    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.INPUT_ACK);
+    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.EXIT);
 
-    assertEquals(ScreenMailbox.MessageKind.INPUT_ACK, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
     assertEquals(ScreenMailbox.MessageKind.HISTORY_RANGE, mailbox.poll().message.kind);
     assertEquals(ScreenMailbox.MessageKind.PONG, mailbox.poll().message.kind);
     assertNull(mailbox.poll());
@@ -90,20 +90,16 @@ public final class ScreenMailboxTest {
       mailbox.offer(1L, source, new byte[] {(byte) i}, true,
           ScreenMailbox.MessageKind.TERMINAL_COMMIT);
     }
-    mailbox.offer(1L, source, new byte[] {99}, true, ScreenMailbox.MessageKind.INPUT_ACK);
     mailbox.offer(1L, source, new byte[] {98}, true, ScreenMailbox.MessageKind.LAYOUT_LEASE);
     mailbox.offer(1L, source, new byte[] {97}, true, ScreenMailbox.MessageKind.EXIT);
 
-    boolean sawAck = false;
     boolean sawLease = false;
     boolean sawExit = false;
-    for (int i = 0; i < ScreenMailbox.SCHEDULE_LENGTH && !(sawAck && sawLease && sawExit); i++) {
+    for (int i = 0; i < ScreenMailbox.SCHEDULE_LENGTH && !(sawLease && sawExit); i++) {
       ScreenMailbox.MessageKind kind = mailbox.poll().message.kind;
-      sawAck |= kind == ScreenMailbox.MessageKind.INPUT_ACK;
       sawLease |= kind == ScreenMailbox.MessageKind.LAYOUT_LEASE;
       sawExit |= kind == ScreenMailbox.MessageKind.EXIT;
     }
-    assertTrue(sawAck);
     assertTrue(sawLease);
     assertTrue(sawExit);
   }
@@ -140,7 +136,7 @@ public final class ScreenMailboxTest {
         128, 4096L, 128, 4096L, 128, 4096L, 128, 4096L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    offer(mailbox, source, ScreenMailbox.MessageKind.INPUT_ACK, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.EXIT, 1);
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 0);
     offer(mailbox, source, ScreenMailbox.MessageKind.PONG, 1);
 
@@ -151,7 +147,7 @@ public final class ScreenMailboxTest {
       int background = 0;
       for (int i = 0; i < ScreenMailbox.SCHEDULE_LENGTH; i++) {
         ScreenMailbox.Message message = mailbox.poll().message;
-        if (message.kind == ScreenMailbox.MessageKind.INPUT_ACK) {
+        if (message.kind == ScreenMailbox.MessageKind.EXIT) {
           urgent++;
           offer(mailbox, source, message.kind, 1);
         } else if (message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT) {
@@ -202,7 +198,7 @@ public final class ScreenMailboxTest {
         4, 16L, 2, 2L, 2, 2L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.INPUT_ACK);
+    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.EXIT);
     mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.LAYOUT_LEASE);
     mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.EXIT);
 
@@ -275,23 +271,23 @@ public final class ScreenMailboxTest {
         1, 2L, 4, 16L, 4, 16L, 4, 16L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    offer(mailbox, source, ScreenMailbox.MessageKind.INPUT_ACK, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.EXIT, 1);
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 1);
-    assertEquals(ScreenMailbox.MessageKind.INPUT_ACK, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
     mailbox.reset();
 
-    offer(mailbox, source, ScreenMailbox.MessageKind.INPUT_ACK, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.EXIT, 1);
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 2);
-    assertEquals(ScreenMailbox.MessageKind.INPUT_ACK, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
     assertEquals(ScreenMailbox.MessageKind.TERMINAL_COMMIT, mailbox.poll().message.kind);
     assertEquals(0, mailbox.pendingBytes());
 
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 3);
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 4);
     assertNotNull(mailbox.poll().fence);
-    offer(mailbox, source, ScreenMailbox.MessageKind.INPUT_ACK, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.EXIT, 1);
     offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 5);
-    assertEquals(ScreenMailbox.MessageKind.INPUT_ACK, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
     assertEquals(ScreenMailbox.MessageKind.TERMINAL_COMMIT, mailbox.poll().message.kind);
     assertEquals(0, mailbox.pendingMessages());
     assertEquals(0, mailbox.pendingBytes());
@@ -371,12 +367,12 @@ public final class ScreenMailboxTest {
   }
 
   @Test
-  public void inputAckOrderingIsPreserved() {
+  public void urgentControlOrderingIsPreserved() {
     ScreenMailbox mailbox = new ScreenMailbox(1, 1L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.INPUT_ACK);
-    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.INPUT_ACK);
+    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.EXIT);
+    mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.EXIT);
     mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.EXIT);
 
     assertEquals(1, mailbox.poll().message.payload[0]);

@@ -37,7 +37,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   private volatile String layoutLeaseId = "";
   private int columns;
   private int rows;
-  private final ReliableInputTracker reliableInputTracker;
 
   @AssistedInject
   public TerminalChannel(
@@ -57,36 +56,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     this.serverConfigId = serverConfigId == null ? "" : serverConfigId;
     this.directDevice = directDevice;
     this.relayDeviceId = relayDeviceId == null ? "" : relayDeviceId;
-    this.reliableInputTracker = new ReliableInputTracker(
-        mainHandler,
-        (payload, callback) -> {
-          DeviceConnection connection = deviceConnection;
-          String id = channelId;
-          if (connection == null || id == null) {
-            callback.onResult(ReliableInputTracker.SendResult.CHANNEL_NOT_OPEN);
-            return false;
-          }
-          return connection.tryEnqueueTunnelFrame(id, payload, true,
-              result -> callback.onResult(mapSendResult(result)));
-        },
-        event -> {
-          Listener current = listener;
-          if (current == null) return;
-          current.onInputDeliveryEvent(event);
-          switch (event.type) {
-            case INPUT_REJECTED:
-            case INPUT_UNCERTAIN:
-            case INPUT_QUEUE_FULL:
-            case INPUT_ACK_TIMEOUT:
-            case TERMINAL_INSTANCE_CHANGED:
-            case CHANNEL_UNAVAILABLE:
-            case TRANSPORT_REJECTED:
-              current.onInputDeliveryUncertain(event.message);
-              break;
-            default:
-              break;
-          }
-        });
   }
 
   @AssistedFactory
@@ -121,29 +90,28 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     // 只记录租约；拿到租约后的首次 resize 由 TerminalSessionRuntime 用最新尺寸驱动，
     // 这里不再回发 connect() 时的占位尺寸，避免先把无头终端改成 80x24 再改回来的抖动。
     this.layoutLeaseId = leaseId == null ? "" : leaseId;
-    if (!this.layoutLeaseId.isEmpty()) reliableInputTracker.resendPending(this.layoutLeaseId);
   }
 
   @Override
   public void sendTextInput(@NonNull String text) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageV2Builder.textInput(layoutLeaseId, clientId, seq, text));
+    deviceConnection.sendTunnelFrame(
+        channelId, ScreenMessageV2Builder.textInput(layoutLeaseId, text), true);
   }
 
   @Override
   public void sendPasteInput(@NonNull String text) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageV2Builder.pasteInput(layoutLeaseId, clientId, seq, text));
+    deviceConnection.sendTunnelFrame(
+        channelId, ScreenMessageV2Builder.pasteInput(layoutLeaseId, text), true);
   }
 
   @Override
   public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    reliableInputTracker.send((clientId, seq) -> ScreenMessageV2Builder.keyInput(
-        layoutLeaseId, clientId, seq, key, shift, alt, ctrl, meta, pressed));
+    deviceConnection.sendTunnelFrame(channelId, ScreenMessageV2Builder.keyInput(
+        layoutLeaseId, key, shift, alt, ctrl, meta, pressed), true);
   }
 
   @Override
@@ -152,16 +120,15 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
                              boolean pressed) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
     TerminalScreenV2Proto.MouseButton protoButton = mouseButtonFromString(button);
-    reliableInputTracker.send((clientId, seq) -> ScreenMessageV2Builder.mouseInput(
-        layoutLeaseId, clientId, seq, row, col, protoButton, wheelDelta,
-        shift, alt, ctrl, meta, pressed));
+    deviceConnection.sendTunnelFrame(channelId, ScreenMessageV2Builder.mouseInput(
+        layoutLeaseId, row, col, protoButton, wheelDelta, shift, alt, ctrl, meta, pressed), true);
   }
 
   @Override
   public void sendFocusInput(boolean focused) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    reliableInputTracker.send((clientId, seq) ->
-        ScreenMessageV2Builder.focusInput(layoutLeaseId, clientId, seq, focused));
+    deviceConnection.sendTunnelFrame(
+        channelId, ScreenMessageV2Builder.focusInput(layoutLeaseId, focused), true);
   }
 
   @Override
@@ -227,7 +194,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     // 排队任务自然失效，不会把已离开的终端重新打开。
     mainHandler.post(() -> {
       if (deviceConnection == null) return;
-      reliableInputTracker.markConnectionUnconfirmed();
       if (channelId != null) {
         deviceConnection.closeChannel(channelId);
       }
@@ -244,7 +210,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     }
     deviceConnection = null;
     channelId = null;
-    reliableInputTracker.clear();
   }
 
   private void connectNow() {
@@ -262,8 +227,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     }
     String localSessionId = DeviceConnection.localSessionId(sessionId, relayDeviceId);
     // 每次显式重建都使用新的 logical tunnel owner。ws-connected 不携带本地代际，
-    // 若复用旧 tunnel id，旧握手的迟到 ACK 可能被误认成新连接；稳定的
-    // clientInstanceId 仍单独用于输入去重，不受通道代际轮换影响。
+    // 若复用旧 tunnel id，旧握手的迟到控制帧可能被误认成新连接。
     String logicalChannelOwnerId = UUID.randomUUID().toString();
     channelId = deviceConnection.openScreenChannel(
         localSessionId, logicalChannelOwnerId, new DeviceConnection.ChannelListener() {
@@ -279,7 +243,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
       @Override
       public void onFailure(String channelId, ChannelFailure failure) {
-        reliableInputTracker.markConnectionUnconfirmed();
         switch (failure.kind) {
           case CHANNEL_NOT_FOUND:
           case REMOTE_CLOSED:
@@ -316,14 +279,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     if (deviceConnection == null || channelId == null) return false;
     return deviceConnection.sendTunnelFrame(
         channelId, ScreenMessageV2Builder.hello(
-            columns, rows, reliableInputTracker.clientInstanceId(), resume,
+            columns, rows, resume,
             ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT), true);
-  }
-
-  @Override
-  @NonNull
-  public ReliableInputTracker reliableInputTracker() {
-    return reliableInputTracker;
   }
 
   /**
@@ -339,23 +296,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   @NonNull
   public String captureLocalSessionId() {
     return DeviceConnection.localSessionId(sessionId, relayDeviceId);
-  }
-
-  private static ReliableInputTracker.SendResult mapSendResult(
-      DeviceConnection.TunnelSendResult result) {
-    switch (result) {
-      case WEBSOCKET_ENQUEUED:
-        return ReliableInputTracker.SendResult.WEBSOCKET_ENQUEUED;
-      case LOCAL_QUEUE_FULL:
-        return ReliableInputTracker.SendResult.QUEUE_FULL;
-      case CHANNEL_NOT_OPEN:
-        return ReliableInputTracker.SendResult.CHANNEL_NOT_OPEN;
-      case TRANSPORT_REJECTED:
-        return ReliableInputTracker.SendResult.TRANSPORT_REJECTED;
-      case CONNECTION_STOPPED:
-      default:
-        return ReliableInputTracker.SendResult.CONNECTION_STOPPED;
-    }
   }
 
   private static TerminalScreenV2Proto.MouseButton mouseButtonFromString(@NonNull String button) {

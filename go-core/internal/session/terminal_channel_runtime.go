@@ -29,7 +29,6 @@ type terminalChannelRuntime struct {
 	logger               *logs.Logger
 	screenClientID       string
 	ownerKey             string
-	clientInstanceID     string
 	coldHistoryTailLines uint32
 	screenAttached       atomic.Bool
 	writerStarted        atomic.Bool
@@ -132,18 +131,7 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 		}),
 		screenprotocolv2.WithInputCallback(func(input *pb.TerminalInput) {
 			if rt != nil {
-				clientInstanceID := input.GetClientInstanceId()
-				if client.clientInstanceID != "" && clientInstanceID != client.clientInstanceID {
-					client.sendInputAck(terminalsession.InputDeliveryResult{
-						ClientInstanceID:   clientInstanceID,
-						InputSeq:           input.GetInputSeq(),
-						TerminalInstanceID: rt.Info().InstanceID,
-						Status:             terminalsession.InputDeliveryRejected,
-					})
-					return
-				}
-				rt.WriteReliableSemanticInput(client.screenClientID, input.LeaseId,
-					clientInstanceID, input.GetInputSeq(), semanticInput(input), client.sendInputAck)
+				rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
 			}
 		}),
 		screenprotocolv2.WithResizeCallback(func(resize *pb.Resize) {
@@ -362,7 +350,7 @@ func (client *terminalChannelRuntime) recordDerivedFrame(frame terminalengine.Sc
 	}
 	client.captureSink.RecordDerived(client.terminalInstanceID, terminalcapture.DerivedRecord{
 		ScreenClientID:   client.screenClientID,
-		ClientInstanceID: client.clientInstanceID,
+		ClientInstanceID: "",
 		Frame:            frame,
 	})
 }
@@ -375,7 +363,7 @@ func (client *terminalChannelRuntime) recordWireFrame(kind string,
 	}
 	return client.captureSink.RecordWire(client.terminalInstanceID, terminalcapture.WireRecord{
 		ScreenClientID:   client.screenClientID,
-		ClientInstanceID: client.clientInstanceID,
+		ClientInstanceID: "",
 		Kind:             kind,
 		BaseRevision:     baseRevision,
 		ScreenRevision:   screenRevision,
@@ -541,36 +529,9 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		client.Close()
 		return
 	}
-	client.clientInstanceID = hello.GetClientInstanceId()
 	client.coldHistoryTailLines = hello.GetColdHistoryTailLines()
 	client.attachScreenClient(hello)
 	client.ready.Store(true)
-}
-
-func (client *terminalChannelRuntime) sendInputAck(result terminalsession.InputDeliveryResult) {
-	status := pb.InputAckStatus_INPUT_ACK_STATUS_UNSPECIFIED
-	switch result.Status {
-	case terminalsession.InputDeliveryWritten:
-		status = pb.InputAckStatus_INPUT_ACK_STATUS_WRITTEN
-	case terminalsession.InputDeliveryIgnored:
-		status = pb.InputAckStatus_INPUT_ACK_STATUS_IGNORED
-	case terminalsession.InputDeliveryRejected:
-		status = pb.InputAckStatus_INPUT_ACK_STATUS_REJECTED
-	case terminalsession.InputDeliveryUncertain:
-		status = pb.InputAckStatus_INPUT_ACK_STATUS_UNCERTAIN
-	}
-	payload, err := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: screenprotocolv2.ProtocolVersion,
-		Payload: &pb.ScreenEnvelope_InputAck{InputAck: &pb.InputAck{
-			ClientInstanceId:   result.ClientInstanceID,
-			InputSeq:           result.InputSeq,
-			TerminalInstanceId: result.TerminalInstanceID,
-			Status:             status,
-		}},
-	})
-	if err == nil {
-		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
-	}
 }
 
 func semanticInput(input *pb.TerminalInput) terminalengine.SemanticInput {

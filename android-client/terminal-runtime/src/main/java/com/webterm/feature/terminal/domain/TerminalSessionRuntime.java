@@ -138,16 +138,12 @@ public final class TerminalSessionRuntime {
     void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data);
     void close();
 
-    /** 可靠输入账本由 dispatcher 直接消费；transport adapter 不接收 typed envelope。 */
-    @Nullable default ReliableInputTracker reliableInputTracker() { return null; }
-
     interface Listener {
       void onScreenMessage(@NonNull byte[] payload);
       void onConnected();
       void onDisconnected(@Nullable String reason);
       default void onAuthenticationRequired(@Nullable String reason) {}
       default void onInputDeliveryUncertain(@NonNull String message) {}
-      default void onInputDeliveryEvent(@NonNull ReliableInputTracker.Event event) {}
       void onClosed();
     }
   }
@@ -166,7 +162,6 @@ public final class TerminalSessionRuntime {
   private final Object renderPublicationAuthority = new Object();
   /** UI full-render 请求的有界 mailbox；至多排队一个 modelExecutor 任务。 */
   private final AtomicBoolean fullRenderRequestScheduled = new AtomicBoolean();
-  private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
   private final ScreenMailbox screenMailbox =
       new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
 
@@ -359,21 +354,6 @@ public final class TerminalSessionRuntime {
           notifyListeners("input_delivery_uncertain",
               listener -> listener.onInputDeliveryUncertain(message));
         });
-      }
-
-      @Override
-      public void onInputDeliveryEvent(@NonNull ReliableInputTracker.Event event) {
-        if (TerminalSessionRuntime.this.connection != connection) return;
-        if (connectionPolicy.onInputDelivery(event)
-            == TerminalConnectionPolicy.Decision.REBUILD_SCREEN_CHANNEL) {
-          modelExecutor.execute(() -> {
-            if (TerminalSessionRuntime.this.connection != connection) return;
-            connectionEpoch.incrementAndGet();
-            layoutLeaseCoordinator.invalidate();
-            updateState(State.RECONNECTING);
-            connection.requestReconnect("input delivery: " + event.type.name());
-          });
-        }
       }
 
       @Override
@@ -841,7 +821,6 @@ public final class TerminalSessionRuntime {
         if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
         if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
-        if (field == 15) return ScreenMailbox.MessageKind.INPUT_ACK;
         if (field == 16) return classifyEffectMessage(input, tag);
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
         if (field == 21) return ScreenMailbox.MessageKind.PONG;
@@ -968,32 +947,6 @@ public final class TerminalSessionRuntime {
     }
     if (message.connectionEpoch != connectionEpoch.get()
         || message.sourceConnection != connection) return;
-
-    ReliableInputTracker tracker = message.sourceConnection.reliableInputTracker();
-    try {
-      switch (envelope.getPayloadCase()) {
-        case INPUT_ACK:
-          if (tracker != null) tracker.handleInputAck(envelope.getInputAck());
-          return;
-        case BASELINE:
-          if (tracker != null) {
-            tracker.observeTerminalInstance(envelope.getBaseline().getInstanceId());
-          }
-          break;
-        case TERMINAL_COMMIT:
-          if (tracker != null) {
-            tracker.observeTerminalInstance(envelope.getTerminalCommit().getInstanceId());
-          }
-          break;
-        default:
-          break;
-      }
-    } catch (RuntimeException e) {
-      if (tracker != null) tracker.clear();
-      Diagnostics.warn("screen_protocol", "input_ack_processing_failed", diagnosticFields(
-          "failureKind", e.getClass().getSimpleName()));
-      return;
-    }
 
     long applyStartedNanos = System.nanoTime();
     boolean renderChanged = false;
@@ -1190,19 +1143,11 @@ public final class TerminalSessionRuntime {
   }
 
 
-  /**
-   * 构造当前事件流身份（sessionId/terminalInstanceId/clientInstanceId），供捕获做会话级隔离。
-   * 仅在 isRecording() 为真时调用，避免热路径在无捕获时的对象分配。
-   */
+  /** 构造当前事件流身份，供捕获做会话级隔离。仅在录制时调用。 */
   com.webterm.terminal.model.capture.CaptureStreamIdentity captureStreamIdentity() {
     String terminalInstanceId = model.projectionReadView().instanceId;
-    String clientInstanceId = "";
-    ScreenConnection c = connection;
-    if (c != null && c.reliableInputTracker() != null) {
-      clientInstanceId = c.reliableInputTracker().clientInstanceId();
-    }
     return new com.webterm.terminal.model.capture.CaptureStreamIdentity(
-        sessionId, terminalInstanceId, clientInstanceId);
+        sessionId, terminalInstanceId, "");
   }
 
   private void recordCapturedModelState(boolean afterBaseline) {

@@ -24,8 +24,7 @@ func TestScreenV2HelloGetsBaselineFromWriter(t *testing.T) {
 	hello, _ := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "android-1",
-			DesiredGeometry:  &pb.Geometry{Rows: 10, Cols: 20},
+			DesiredGeometry: &pb.Geometry{Rows: 10, Cols: 20},
 		}},
 	})
 	client.handleBinary(hello)

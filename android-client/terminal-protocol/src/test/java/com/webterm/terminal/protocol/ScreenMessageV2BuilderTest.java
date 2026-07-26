@@ -18,10 +18,9 @@ public final class ScreenMessageV2BuilderTest {
         .build();
     TerminalScreenV2Proto.ScreenEnvelope envelope =
         TerminalScreenV2Proto.ScreenEnvelope.parseFrom(ScreenMessageV2Builder.hello(
-            80, 24, "client-1", resume, 64));
+            80, 24, resume, 64));
 
     assertEquals(2, envelope.getProtocolVersion());
-    assertEquals("client-1", envelope.getHello().getClientInstanceId());
     assertEquals(7, envelope.getHello().getResume().getScreenRevision());
     assertEquals("instance-1", envelope.getHello().getResume().getInstanceId());
     assertEquals(3, envelope.getHello().getResume().getLayoutEpoch());

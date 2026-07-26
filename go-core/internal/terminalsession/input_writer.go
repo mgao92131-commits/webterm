@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// ErrInputWriterClosedBeforeWrite 表示任务已进入队列，但 InputWriter 在开始
-// 写入前关闭。Runtime 据此把这类可靠输入映射为 Rejected，使客户端无需等待
-// InputAck 超时即可得到确定结果。
+// ErrInputWriterClosedBeforeWrite 表示任务已进入队列，但 InputWriter 在开始写入前关闭。
 var ErrInputWriterClosedBeforeWrite = errors.New("input writer closed before write")
 
 const (
@@ -18,8 +16,7 @@ const (
 	// line discipline 或前台程序。这里按字节切分；PTY 是字节流，写边界不会
 	// 改变 UTF-8 或 bracketed-paste 的协议语义。
 	defaultInputChunkSize = 64
-	// 64 B / 500 us 的名义上限约 128 KiB/s。即使粘贴接近 Android 当前
-	// 4 MiB 未确认输入预算，也能为 60 秒 InputAck 超时保留足够余量。
+	// 64 B / 500 us 的名义上限约 128 KiB/s，避免大粘贴瞬间灌满前台程序。
 	defaultInputChunkDelay = 500 * time.Microsecond
 	defaultInputMaxJobs    = 256
 	defaultInputMaxBytes   = 8 << 20
@@ -129,10 +126,8 @@ func (w *InputWriter) Close() {
 	})
 }
 
-// Shutdown 停止接收新任务并等待 worker 结算完所有排队任务（对未开始任务回调
-// Rejected）后返回。正常终端退出路径应使用它，确保可靠输入在 drain barrier 之前
-// 全部拿到最终回调，从而都能发出 InputAck。ctx 超时后返回错误，但 worker 仍会
-// 在后台完成结算，回调不会重复执行；调用方不应在超时后再依赖同步语义。
+// Shutdown 停止接收新任务并等待 worker 结算完所有排队任务后返回。ctx 超时后返回
+// 错误，但 worker 仍会在后台完成结算；调用方不应在超时后再依赖同步语义。
 func (w *InputWriter) Shutdown(ctx context.Context) error {
 	w.Close()
 	select {

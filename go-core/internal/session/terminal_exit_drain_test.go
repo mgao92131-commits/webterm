@@ -63,8 +63,7 @@ func TestTerminalExitDeliversFinalOutputBeforeExit(t *testing.T) {
 	helloBytes, err := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "exit-drain-client",
-			DesiredGeometry:  &pb.Geometry{Cols: 100, Rows: 30},
+			DesiredGeometry: &pb.Geometry{Cols: 100, Rows: 30},
 		}},
 	})
 	if err != nil {

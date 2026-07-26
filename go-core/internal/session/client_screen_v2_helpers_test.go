@@ -73,8 +73,7 @@ func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) 
 	wire, _ := proto.Marshal(&pb.ScreenEnvelope{
 		ProtocolVersion: 2,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
-			ClientInstanceId: "handler-test-client",
-			Resume:           resume,
+			Resume: resume,
 		}},
 	})
 	return wire

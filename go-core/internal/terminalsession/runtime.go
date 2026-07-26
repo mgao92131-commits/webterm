@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -84,9 +83,6 @@ type Runtime struct {
 	leaseManager     *LeaseManager
 	pendingClipboard map[string]pendingClipboardRequest
 	engineSignals    engineSignals
-	inputDedupe      map[string]*inputDedupeWindow
-	inputDedupeOrder []string
-	inputInflight    map[inputDeliveryKey][]func(InputDeliveryResult)
 
 	onTitle         func(string)
 	onBell          func()
@@ -135,32 +131,6 @@ type LayoutLeaseEvent struct {
 	ExpiresAt   time.Time
 }
 
-type InputDeliveryStatus int
-
-const (
-	InputDeliveryWritten InputDeliveryStatus = iota + 1
-	InputDeliveryIgnored
-	InputDeliveryRejected
-	InputDeliveryUncertain
-)
-
-type InputDeliveryResult struct {
-	ClientInstanceID   string
-	InputSeq           uint64
-	TerminalInstanceID string
-	Status             InputDeliveryStatus
-}
-
-type inputDedupeWindow struct {
-	results map[uint64]InputDeliveryResult
-	order   []uint64
-}
-
-type inputDeliveryKey struct {
-	clientInstanceID string
-	inputSeq         uint64
-}
-
 // InitialSync 是 initial-sync slot 的不可覆盖 Baseline。
 type InitialSync struct {
 	State          terminalengine.ScreenFrame
@@ -206,8 +176,6 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
 		pendingClipboard: make(map[string]pendingClipboardRequest),
-		inputDedupe:      make(map[string]*inputDedupeWindow),
-		inputInflight:    make(map[inputDeliveryKey][]func(InputDeliveryResult)),
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
 		// §3.4）：layoutEpoch/screenRevision 从 1 开始，0 保留给“客户端无投影”。
 		layoutEpoch:     1,
@@ -313,27 +281,6 @@ func (r *Runtime) WriteSemanticInput(clientID, leaseID string, input terminaleng
 		return
 	}
 	r.postEvent(semanticInputEvent{clientID: clientID, leaseID: leaseID, input: input})
-}
-
-// WriteReliableSemanticInput 在 actor 内完成校验和去重，再交给终端独占的
-// InputWriter。done 只在完整 PTY 写入结束后调用；重复 seq 不会重复写入。
-func (r *Runtime) WriteReliableSemanticInput(clientID, leaseID, clientInstanceID string,
-	inputSeq uint64, input terminalengine.SemanticInput, done func(InputDeliveryResult)) {
-	if r.draining.Load() {
-		if done != nil {
-			done(InputDeliveryResult{
-				ClientInstanceID:   clientInstanceID,
-				InputSeq:           inputSeq,
-				TerminalInstanceID: r.instanceID,
-				Status:             InputDeliveryRejected,
-			})
-		}
-		return
-	}
-	r.postEvent(semanticInputEvent{
-		clientID: clientID, leaseID: leaseID, clientInstanceID: clientInstanceID,
-		inputSeq: inputSeq, input: input, done: done,
-	})
 }
 
 // Resize 处理 resize 请求。
@@ -540,10 +487,7 @@ func (r *Runtime) MarkDrainEOFUncertain() { r.drainEOFUncertain.Store(true) }
 func (r *Runtime) drain(ctx context.Context) bool {
 	r.draining.Store(true)
 	if r.inputWriter != nil {
-		// Shutdown 等待 worker 结算所有排队输入（对未开始任务回调 Rejected）。
-		// 必须在下面的 drain barrier 入队之前完成，这样这些输入完成事件都排在
-		// barrier 之前，actor 会在 barrier 前处理完并逐一发出 InputAck，客户端
-		// 无需等待 60s 超时。ctx 超时则退化为后台结算（与既有尽力排空语义一致）。
+		// Shutdown 停止接收后续输入，并等待已经进入 PTY 串行器的 best-effort 写入结束。
 		_ = r.inputWriter.Shutdown(ctx)
 	}
 
@@ -678,8 +622,6 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleInput(e)
 	case semanticInputEvent:
 		r.handleSemanticInput(e)
-	case semanticInputWriteCompletedEvent:
-		r.handleSemanticInputWriteCompleted(e)
 	case resizeEvent:
 		r.handleResize(e)
 	case clientAttachEvent:
@@ -800,123 +742,20 @@ func (r *Runtime) handleEffect(effect terminalengine.Effect) {
 }
 
 func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
-	if e.clientInstanceID != "" && e.inputSeq != 0 {
-		if previous, ok := r.previousInputResult(e.clientInstanceID, e.inputSeq); ok {
-			if e.done != nil {
-				e.done(previous)
-			}
-			return
-		}
-		key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
-		if callbacks, ok := r.inputInflight[key]; ok {
-			if e.done != nil {
-				r.inputInflight[key] = append(callbacks, e.done)
-			}
-			return
-		}
-	}
-	result := InputDeliveryResult{
-		ClientInstanceID:   e.clientInstanceID,
-		InputSeq:           e.inputSeq,
-		TerminalInstanceID: r.instanceID,
-		Status:             InputDeliveryRejected,
-	}
 	client := r.clients[e.clientID]
 	if client == nil || e.leaseID == "" || client.LayoutLeaseID != e.leaseID {
-		r.completeReliableInput(e, result)
 		return
 	}
 	if !r.leaseManager.Validate(e.clientID, e.leaseID) {
 		r.revokeInvalidLayoutLease(client)
-		r.completeReliableInput(e, result)
 		return
 	}
 	data := r.engine.EncodeInput(e.input)
 	if len(data) == 0 {
-		result.Status = InputDeliveryIgnored
-		r.completeReliableInput(e, result)
 		return
 	}
-	accepted := r.inputWriter.Submit(data, func(writeResult inputWriteResult) {
-		r.postEvent(semanticInputWriteCompletedEvent{input: e, result: writeResult})
-	})
-	if !accepted {
-		r.completeReliableInput(e, result)
-		return
-	}
-	if e.clientInstanceID != "" && e.inputSeq != 0 {
-		key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
-		callbacks := []func(InputDeliveryResult){}
-		if e.done != nil {
-			callbacks = append(callbacks, e.done)
-		}
-		r.inputInflight[key] = callbacks
-	}
-}
-
-func (r *Runtime) handleSemanticInputWriteCompleted(e semanticInputWriteCompletedEvent) {
-	result := InputDeliveryResult{
-		ClientInstanceID:   e.input.clientInstanceID,
-		InputSeq:           e.input.inputSeq,
-		TerminalInstanceID: r.instanceID,
-		Status:             InputDeliveryUncertain,
-	}
-	switch {
-	case e.result.err == nil:
-		result.Status = InputDeliveryWritten
-	case errors.Is(e.result.err, ErrInputWriterClosedBeforeWrite):
-		// 已入队但关闭前未开始写入：给出确定的 Rejected，而非让客户端等超时。
-		result.Status = InputDeliveryRejected
-	default:
-		result.Status = InputDeliveryUncertain
-	}
-	r.completeReliableInput(e.input, result)
-}
-
-func (r *Runtime) previousInputResult(clientInstanceID string, inputSeq uint64) (InputDeliveryResult, bool) {
-	window := r.inputDedupe[clientInstanceID]
-	if window == nil {
-		return InputDeliveryResult{}, false
-	}
-	result, ok := window.results[inputSeq]
-	return result, ok
-}
-
-func (r *Runtime) completeReliableInput(e semanticInputEvent, result InputDeliveryResult) {
-	if e.clientInstanceID == "" || e.inputSeq == 0 {
-		return
-	}
-	window := r.inputDedupe[e.clientInstanceID]
-	if window == nil {
-		window = &inputDedupeWindow{results: make(map[uint64]InputDeliveryResult)}
-		r.inputDedupe[e.clientInstanceID] = window
-		r.inputDedupeOrder = append(r.inputDedupeOrder, e.clientInstanceID)
-		const maxClientInstances = 64
-		if len(r.inputDedupeOrder) > maxClientInstances {
-			oldestClient := r.inputDedupeOrder[0]
-			r.inputDedupeOrder = r.inputDedupeOrder[1:]
-			delete(r.inputDedupe, oldestClient)
-		}
-	}
-	const maxRememberedInputs = 256
-	window.results[e.inputSeq] = result
-	window.order = append(window.order, e.inputSeq)
-	if len(window.order) > maxRememberedInputs {
-		oldest := window.order[0]
-		window.order = window.order[1:]
-		delete(window.results, oldest)
-	}
-	key := inputDeliveryKey{clientInstanceID: e.clientInstanceID, inputSeq: e.inputSeq}
-	if callbacks, ok := r.inputInflight[key]; ok {
-		delete(r.inputInflight, key)
-		for _, callback := range callbacks {
-			callback(result)
-		}
-		return
-	}
-	if e.done != nil {
-		e.done(result)
-	}
+	// 输入在当前物理通道有空位时直接进入 PTY 串行器；不确认、不去重、不重放。
+	_ = r.inputWriter.Submit(data, nil)
 }
 
 func (r *Runtime) handlePTYOutput(data []byte) {
@@ -1318,17 +1157,9 @@ type inputEvent struct {
 }
 
 type semanticInputEvent struct {
-	clientID         string
-	leaseID          string
-	clientInstanceID string
-	inputSeq         uint64
-	input            terminalengine.SemanticInput
-	done             func(InputDeliveryResult)
-}
-
-type semanticInputWriteCompletedEvent struct {
-	input  semanticInputEvent
-	result inputWriteResult
+	clientID string
+	leaseID  string
+	input    terminalengine.SemanticInput
 }
 
 type resizeEvent struct {

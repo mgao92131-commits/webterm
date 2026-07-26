@@ -31,7 +31,6 @@ public final class ScreenMailbox {
     RESUME_ACCEPTED,
     TERMINAL_COMMIT,
     HISTORY_RANGE,
-    INPUT_ACK,
     LAYOUT_LEASE,
     CLIPBOARD_EFFECT,
     EFFECT,
@@ -50,7 +49,6 @@ public final class ScreenMailbox {
 
   static boolean isUrgentControl(@NonNull MessageKind kind) {
     return kind == MessageKind.EXIT
-        || kind == MessageKind.INPUT_ACK
         || kind == MessageKind.LAYOUT_LEASE;
   }
 
@@ -136,7 +134,7 @@ public final class ScreenMailbox {
   private final long backgroundMaxBytes;
   /** Revision-bearing lane. Encoded projection messages are never merged or reordered. */
   private final ArrayDeque<Message> projectionMessages = new ArrayDeque<>();
-  /** Exit/InputAck/LayoutLease. These are bounded and never silently dropped. */
+  /** Exit/LayoutLease. These are bounded and never silently dropped. */
   private final ArrayDeque<Message> urgentMessages = new ArrayDeque<>();
   /** Clipboard read/write effects. Bounded, reliable, and never silently dropped. */
   private final ArrayDeque<Message> reliableMessages = new ArrayDeque<>();
