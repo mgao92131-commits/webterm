@@ -171,8 +171,6 @@ func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
 		BaseRevision: 1, Seq: 2, Rows: 1, Cols: 1,
-		Title: "secret-title", WorkingDir: "/secret/path",
-		TitleChanged: true, WorkingDirChanged: true,
 		CursorChanged: true,
 	}
 	wire, err := EncodeTerminalCommit(frame, 1)

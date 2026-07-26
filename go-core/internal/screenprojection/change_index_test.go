@@ -41,8 +41,7 @@ func TestChangeIndex_FirstExportMarksAllComponents(t *testing.T) {
 		}
 	}
 	if idx.CursorChangedRevision != 1 || idx.ModesChangedRevision != 1 ||
-		idx.PaletteChangedRevision != 1 || idx.TitleChangedRevision != 1 ||
-		idx.CWDChangedRevision != 1 {
+		idx.PaletteChangedRevision != 1 {
 		t.Fatalf("first export must create all component revisions at 1: %+v", idx)
 	}
 }
@@ -76,46 +75,6 @@ func TestChangeIndex_RowMergeBumpsOnlyDirtyRows(t *testing.T) {
 		if idx.RowChangedRevision[r] != 1 {
 			t.Fatalf("untouched row %d revision=%d, want 1", r, idx.RowChangedRevision[r])
 		}
-	}
-}
-
-// 规则 2/6/7：元数据仅值变化时推进；无变化的导出不推进；同一窗口内变回
-// 原值不留痕（只与上一权威投影比一次）。
-func TestChangeIndex_MetadataChangeNoChangeAndChangeBack(t *testing.T) {
-	engine, _, p := newChangeIndexFixture(5, 10)
-	mustEngineWrite(t, engine, "hello")
-	p.ExportState(0, 1)
-
-	mustEngineWrite(t, engine, "\x1b]0;title-a\x07")
-	p.ExportState(0, 2)
-	if p.changeIndex.TitleChangedRevision != 2 {
-		t.Fatalf("title revision=%d, want 2", p.changeIndex.TitleChangedRevision)
-	}
-	if p.changeIndex.CursorChangedRevision != 1 || p.changeIndex.CWDChangedRevision != 1 {
-		t.Fatal("unrelated metadata must not advance on title change")
-	}
-
-	// 无变化的导出：任何组件 revision 都不得推进。
-	p.ExportState(0, 3)
-	if p.changeIndex.TitleChangedRevision != 2 || p.changeIndex.CursorChangedRevision != 1 {
-		t.Fatalf("no-op export advanced revisions: %+v", p.changeIndex)
-	}
-
-	// 同一导出窗口内 title 设为 title-b 又改回 title-a：最终值与上一权威
-	// 投影相同，不留中间痕。
-	mustEngineWrite(t, engine, "\x1b]0;title-b\x07")
-	mustEngineWrite(t, engine, "\x1b]0;title-a\x07")
-	p.ExportState(0, 4)
-	if p.changeIndex.TitleChangedRevision != 2 {
-		t.Fatalf("change-back within one window advanced title revision to %d, want 2",
-			p.changeIndex.TitleChangedRevision)
-	}
-
-	// 真正变成 title-b：推进。
-	mustEngineWrite(t, engine, "\x1b]0;title-b\x07")
-	p.ExportState(0, 5)
-	if p.changeIndex.TitleChangedRevision != 5 {
-		t.Fatalf("title revision=%d, want 5", p.changeIndex.TitleChangedRevision)
 	}
 }
 
@@ -172,10 +131,6 @@ func TestChangeIndex_BufferSwitchAdvancesBarrierAndResetsRows(t *testing.T) {
 			t.Fatalf("row %d revision=%d after buffer switch, want 3", r, rev)
 		}
 	}
-	if p.changeIndex.TitleChangedRevision != 1 {
-		t.Fatalf("unchanged title advanced to %d on buffer switch", p.changeIndex.TitleChangedRevision)
-	}
-
 	// 备用屏上的后续变化正常推进，barrier 不动（1049h 保留光标位置，
 	// 先回首页确保写在第 0 行）。
 	mustEngineWrite(t, engine, "\x1b[Halt")
@@ -223,9 +178,8 @@ func TestChangeIndex_EpochChangeResetsIndex(t *testing.T) {
 			t.Fatalf("row %d revision=%d after epoch change, want 3", r, rev)
 		}
 	}
-	if idx.CursorChangedRevision != 3 || idx.TitleChangedRevision != 3 ||
-		idx.ModesChangedRevision != 3 || idx.PaletteChangedRevision != 3 ||
-		idx.CWDChangedRevision != 3 {
+	if idx.CursorChangedRevision != 3 || idx.ModesChangedRevision != 3 ||
+		idx.PaletteChangedRevision != 3 {
 		t.Fatalf("component revisions not recreated at epoch export: %+v", idx)
 	}
 	if len(idx.StyleCreatedRevision) != len(frame.Styles) {

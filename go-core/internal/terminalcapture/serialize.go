@@ -30,10 +30,6 @@ type JSONScreenFrame struct {
 	History              JSONHistory `json:"history"`
 	Styles               []JSONStyle `json:"styles,omitempty"`
 	Links                []JSONLink  `json:"links,omitempty"`
-	Title                string      `json:"title,omitempty"`
-	WorkingDirectory     string      `json:"workingDirectory,omitempty"`
-	TitleChanged         bool        `json:"titleChanged,omitempty"`
-	WorkingDirChanged    bool        `json:"workingDirectoryChanged,omitempty"`
 	CursorChanged        bool        `json:"cursorChanged,omitempty"`
 	ModesChanged         bool        `json:"modesChanged,omitempty"`
 	PaletteChanged       bool        `json:"paletteChanged,omitempty"`
@@ -168,10 +164,6 @@ func FrameToJSON(frame terminalengine.ScreenFrame) JSONScreenFrame {
 		History:              historyToJSON(frame.History),
 		Styles:               stylesToJSON(frame.Styles),
 		Links:                linksToJSON(frame.Links),
-		Title:                frame.Title,
-		WorkingDirectory:     frame.WorkingDir,
-		TitleChanged:         frame.TitleChanged,
-		WorkingDirChanged:    frame.WorkingDirChanged,
 		CursorChanged:        frame.CursorChanged,
 		ModesChanged:         frame.ModesChanged,
 		PaletteChanged:       frame.PaletteChanged,
@@ -356,7 +348,6 @@ func estimateFrameBytes(f terminalengine.ScreenFrame) int64 {
 	for _, l := range f.Links {
 		n += int64(len(l.URI)) + 32
 	}
-	n += int64(len(f.Title)) + int64(len(f.WorkingDir))
 	return n
 }
 

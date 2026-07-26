@@ -77,13 +77,11 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 			Shape:   exportCursorShape(cursorStyle),
 			Blink:   cursorStyle == headlessterm.CursorStyleBlinkingBlock || cursorStyle == headlessterm.CursorStyleBlinkingBar || cursorStyle == headlessterm.CursorStyleBlinkingUnderline,
 		},
-		Modes:      exportModes(engine),
-		History:    history,
-		Screen:     screen,
-		Styles:     exp.styleTable.Styles(),
-		Links:      exp.linkTable.Links(),
-		Title:      engine.Title(),
-		WorkingDir: engine.WorkingDirectory(),
+		Modes:   exportModes(engine),
+		History: history,
+		Screen:  screen,
+		Styles:  exp.styleTable.Styles(),
+		Links:   exp.linkTable.Links(),
 	}
 }
 

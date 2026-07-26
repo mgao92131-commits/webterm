@@ -32,8 +32,6 @@ type projectedState struct {
 	cursor       terminalengine.Cursor
 	modes        terminalengine.Modes
 	palette      paletteState
-	title        string
-	workingDir   string
 	// 历史窗口缓存（阶段 2c）：已导出的尾部窗口行（Line 不可变，跨帧零拷贝
 	// 复用）与缓存窗口最后一行的 ID。historyValid=false 表示缓存不反映当前
 	// scrollback（首次导出、epoch/字典轮转、备用屏期间），下次主屏导出经
@@ -61,8 +59,8 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 }
 
 // merge 只把 dirty 行重新转换为 Line 并替换缓存中对应下标；未变化行复用
-// 旧 Line 对象。元数据总是采用投影中的当前值，因此纯元数据变化（标题、
-// cwd、模式、光标移动）在无 dirty 行时也能反映到导出状态。
+// 旧 Line 对象。渲染元数据总是采用投影中的当前值，因此纯模式、光标变化
+// 在无 dirty 行时也能反映到导出状态。
 func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(s.screen) {
@@ -142,8 +140,6 @@ func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
 		}
 	}
 	s.palette = nextPalette
-	s.title = proj.Title
-	s.workingDir = proj.WorkingDir
 }
 
 // Projector 为每个 screen client 维护发送基线并生成 snapshot/patch。
@@ -336,8 +332,6 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 		cursor:       s.cursor,
 		modes:        s.modes,
 		palette:      s.palette,
-		title:        s.title,
-		workingDir:   s.workingDir,
 		layout:       screenLayout(s.screen),
 	}
 	proj := p.engine.ReadProjection()
@@ -402,8 +396,6 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 		Screen:             screen,
 		Styles:             p.exporter.styleTable.Styles(),
 		Links:              p.exporter.linkTable.Links(),
-		Title:              s.title,
-		WorkingDir:         s.workingDir,
 		RowChangedRevision: rowChangedRevision,
 	}
 }
@@ -609,11 +601,6 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		// table was pure wire and allocation overhead.
 		Styles: newlyAddedStyles(old.Styles, new.Styles),
 		Links:  newlyAddedLinks(old.Links, new.Links),
-		// title/cwd 以显式 presence 标志表达三态：未变化 / 变为空串 / 新值。
-		Title:             new.Title,
-		WorkingDir:        new.WorkingDir,
-		TitleChanged:      old.Title != new.Title,
-		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
 		// Commit 用该 presence 位表达 extent 水位变化（包括只 trim、没有新增正文）。
 		FirstAvailableHistorySeqChanged: old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,

@@ -69,7 +69,7 @@ func TestTerminalSessionCwdFallsBackWhenNoOSC7(t *testing.T) {
 	}
 }
 
-func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
+func TestTerminalSessionHookCwdUpdatesInfo(t *testing.T) {
 	command, args := testShellCommand()
 	terminal, err := NewTerminalSession(TerminalOptions{
 		ID:      "s1",
@@ -85,9 +85,6 @@ func TestTerminalSessionHookCwdUpdatesInfoAndScreenProjection(t *testing.T) {
 	terminal.ApplySessionUpdate("", "/tmp/project with spaces", "", "", 0)
 	if got := terminal.Info().CWD; got != "/tmp/project with spaces" {
 		t.Fatalf("session cwd=%q", got)
-	}
-	if got := terminal.runtime.ProjectedSnapshot().WorkingDir; got != "/tmp/project with spaces" {
-		t.Fatalf("projected cwd=%q", got)
 	}
 }
 

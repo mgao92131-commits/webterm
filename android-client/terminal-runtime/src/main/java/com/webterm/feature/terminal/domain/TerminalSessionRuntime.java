@@ -1281,10 +1281,10 @@ public final class TerminalSessionRuntime {
     } catch (RemoteTerminalModel.RevisionGapException e) {
       Diagnostics.warn("screen_protocol", "revision_gap", diagnosticFields(
           "payloadCase", payloadCase,
-          "failureReason", "INVALID_PATCH",
+          "failureReason", "INVALID_TERMINAL_COMMIT",
           "localRevision", model.screenRevision,
           "streamGeneration", streamGeneration));
-      startResyncRecovery("screen.v2 revision gap");
+      startResyncRecovery("TerminalCommit revision gap");
       return;
     } catch (Exception e) {
       Diagnostics.warn("screen_protocol", "screen_v2_apply_failed", diagnosticFields(

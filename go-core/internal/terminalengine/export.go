@@ -166,33 +166,6 @@ type ScreenRowWrite struct {
 	Line Line
 }
 
-type ScreenMutation struct {
-	Scroll *ScreenScroll
-	Writes []ScreenRowWrite
-}
-
-type HistoryMutation struct {
-	FinalExtent   HistoryExtent
-	AppendedLines []Line
-}
-
-// TerminalCommit 是一个投影窗口的原子传输领域对象。
-type TerminalCommit struct {
-	InstanceID       string
-	Epoch            uint64
-	StreamGeneration uint64
-	BaseRevision     uint64
-	Revision         uint64
-	Screen           *ScreenMutation
-	History          *HistoryMutation
-	Cursor           *Cursor
-	Modes            *Modes
-	PaletteChanged   bool
-	Palette          ScreenFrame
-	Styles           []TerminalStyle
-	Links            []Hyperlink
-}
-
 // ScreenFrame 是传输无关的权威屏幕帧，也可作为 patch 的载体。
 // Kind 显式区分 snapshot 与 patch；BaseRevision 只表达 patch 基线，
 // snapshot 的 base 不参与语义。
@@ -227,16 +200,9 @@ type ScreenFrame struct {
 	ScreenScroll *ScreenScroll
 	// Layout is patch-only presence data. Snapshot layout is always derived from
 	// Screen, while a patch omits it when line positions did not change.
-	Layout     []uint64
-	Styles     []TerminalStyle
-	Links      []Hyperlink
-	Title      string
-	WorkingDir string
-	// TitleChanged/WorkingDirChanged 只在 patch 帧上有意义：标记 title/cwd 相对
-	// 基线是否变化（变为空串也必须显式标记，与“未变化”区分）。snapshot 必须
-	// 可独立显示，总是携带 title/cwd，不需要标志。
-	TitleChanged      bool
-	WorkingDirChanged bool
+	Layout []uint64
+	Styles []TerminalStyle
+	Links  []Hyperlink
 	// FirstAvailableHistorySeqChanged 表示 Commit 必须携带最终历史 extent。
 	FirstAvailableHistorySeqChanged bool
 	// RowChangedRevision is process-local projection metadata. It stamps each screen row with

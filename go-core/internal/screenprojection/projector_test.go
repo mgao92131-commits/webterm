@@ -181,7 +181,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 		t.Fatalf("first frame kind=%d, want FrameSnapshot", first.Kind)
 	}
 
-	// 小变化：patch；title/cwd 未变化，标志必须为 false。
+	// 小变化：正常产生 patch。
 	if err := engine.Write([]byte("!")); err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +189,6 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("patch kind=%d, want FramePatch", patch.Kind)
 	}
-	if patch.TitleChanged || patch.WorkingDirChanged {
-		t.Fatal("unchanged title/cwd must not set change flags")
-	}
-
 	// title/cwd 变化只走 SessionInfo，不产生屏幕 Commit。
 	if err := engine.Write([]byte("\x1b]0;new-title\x07")); err != nil {
 		t.Fatal(err)

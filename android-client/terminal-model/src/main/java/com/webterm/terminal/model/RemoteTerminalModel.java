@@ -22,8 +22,6 @@ public final class RemoteTerminalModel {
   private static final int META_PALETTE = 1 << 1;
   private static final int META_MODES = 1 << 2;
   private static final int META_BUFFER = 1 << 3;
-  private static final int META_TITLE = 1 << 4;
-  private static final int META_CWD = 1 << 5;
   // 历史容量是双上限：行数是安全上限，字节是近似内存预算（estimateHistoryLineBytes），
   // 先达到者触发驱逐。保留行数随列宽和内容变化（80 列文本行约 5–6KB 估算），
   // 产品和注释都不承诺固定保留行数。默认值可由 HistoryBudget 按设备内存分档覆盖。

@@ -29,8 +29,6 @@ type ChangeIndex struct {
 	CursorChangedRevision  uint64
 	ModesChangedRevision   uint64
 	PaletteChangedRevision uint64
-	TitleChangedRevision   uint64
-	CWDChangedRevision     uint64
 	StyleCreatedRevision   []uint64
 	LinkCreatedRevision    []uint64
 }
@@ -63,8 +61,6 @@ type projectedMeta struct {
 	cursor       terminalengine.Cursor
 	modes        terminalengine.Modes
 	palette      paletteState
-	title        string
-	workingDir   string
 	layout       []uint64
 }
 
@@ -106,8 +102,6 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 		idx.CursorChangedRevision = seq
 		idx.ModesChangedRevision = seq
 		idx.PaletteChangedRevision = seq
-		idx.TitleChangedRevision = seq
-		idx.CWDChangedRevision = seq
 	} else {
 		if s.cursor != prev.cursor {
 			idx.CursorChangedRevision = seq
@@ -117,12 +111,6 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 		}
 		if s.palette != prev.palette {
 			idx.PaletteChangedRevision = seq
-		}
-		if s.title != prev.title {
-			idx.TitleChangedRevision = seq
-		}
-		if s.workingDir != prev.workingDir {
-			idx.CWDChangedRevision = seq
 		}
 	}
 

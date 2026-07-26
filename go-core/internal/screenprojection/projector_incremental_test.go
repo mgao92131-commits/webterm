@@ -68,7 +68,7 @@ func assertNewLine(t *testing.T, row int, a, b terminalengine.Line) {
 }
 
 // assertStateEquivalent 深度比较两个完整状态的内容（屏幕逐行逐格、历史、
-// 光标、模式、几何、标题/cwd），忽略 Seq/世代等帧序号字段。两状态须出自
+// 光标、模式、几何），忽略 Seq/世代等帧序号字段。两状态须出自
 // 同一 Projector（同一字典）。
 func assertStateEquivalent(t *testing.T, a, b terminalengine.ScreenFrame) {
 	t.Helper()
@@ -91,10 +91,6 @@ func assertStateEquivalent(t *testing.T, a, b terminalengine.ScreenFrame) {
 	if a.Rows != b.Rows || a.Cols != b.Cols || a.ActiveBuffer != b.ActiveBuffer {
 		t.Fatalf("geometry/buffer mismatch: %dx%d buf=%v vs %dx%d buf=%v",
 			a.Rows, a.Cols, a.ActiveBuffer, b.Rows, b.Cols, b.ActiveBuffer)
-	}
-	if a.Title != b.Title || a.WorkingDir != b.WorkingDir {
-		t.Fatalf("metadata mismatch: title %q/%q cwd %q/%q",
-			a.Title, b.Title, a.WorkingDir, b.WorkingDir)
 	}
 }
 
@@ -416,9 +412,6 @@ func TestProjector_IncrementalMatchesFullExport(t *testing.T) {
 	}
 	if incremental.Modes != legacy.Modes {
 		t.Fatalf("modes mismatch vs legacy: %+v vs %+v", incremental.Modes, legacy.Modes)
-	}
-	if incremental.Title != legacy.Title || incremental.WorkingDir != legacy.WorkingDir {
-		t.Fatal("title/cwd mismatch vs legacy snapshot")
 	}
 
 	// 光标移走后，增量路径上两处 reverse 空格均为 stale，同样被丢弃。
