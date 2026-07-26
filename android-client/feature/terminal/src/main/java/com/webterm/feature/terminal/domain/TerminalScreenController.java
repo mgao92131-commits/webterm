@@ -248,11 +248,13 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // A resize/new-instance snapshot replaces physical screen rows and history
     // anchors. Keep a user's viewport during same-geometry full snapshots, but
     // reset it when the authoritative terminal geometry changes.
+    boolean restoredHistoryAnchor = false;
     if (update.state.geometryChanged) {
       viewport.resetForSnapshot();
     } else if (!viewport.followTail && viewport.anchorHistorySeq != null
         && update.state.historyChanged && view != null) {
       view.restoreHistoryAnchor(update.snapshot, viewport.anchorHistorySeq, viewport.anchorPixelOffset);
+      restoredHistoryAnchor = true;
       freezeIfViewportBecamePureHistory();
     }
     // Only tail appends (live output scrolling into history below the visible
@@ -261,7 +263,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // it shifts historyRows and old row indices together, so old lines keep
     // their screen Y and the offset must stay untouched — otherwise a returned
     // page would undo the user's reverse swipes.
-    if (!viewport.followTail && update.state.tailAppendedLines > 0 && view != null) {
+    if (!restoredHistoryAnchor && !viewport.followTail
+        && update.state.tailAppendedLines > 0 && view != null) {
       view.onHistoryAppended(update.state.tailAppendedLines);
     }
     if (update.state.historyChanged) viewport.loadingOlderHistory = false;
