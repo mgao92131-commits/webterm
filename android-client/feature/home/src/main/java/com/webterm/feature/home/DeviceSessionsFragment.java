@@ -112,7 +112,7 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             () -> {
                 if (mHost != null) mHost.createSession(server);
             },
-			() -> mViewModel.refresh()
+            () -> mViewModel.refresh()
         );
 
         installRootInsets(mScreen.root, 0, 0, 0, dp(16), true, true);
@@ -218,8 +218,15 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
     }
 
     private void setupSwipeToDelete(RecyclerView recyclerView, SessionRecyclerAdapter adapter) {
+        final float triggerDistance = UIUtils.dp(requireContext(), 72);
+        final float maxDistance = UIUtils.dp(requireContext(), 96);
+
         ItemTouchHelper.SimpleCallback swipeCallback = new ItemTouchHelper.SimpleCallback(
             0, ItemTouchHelper.LEFT) {
+            private RecyclerView.ViewHolder trackingHolder;
+            private float farthestDx;
+            private boolean closePending;
+
             @Override
             public boolean onMove(RecyclerView rv, RecyclerView.ViewHolder vh,
                                   RecyclerView.ViewHolder target) {
@@ -227,17 +234,29 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             }
 
             @Override
-            public void onSwiped(RecyclerView.ViewHolder viewHolder, int direction) {
-                int position = viewHolder.getAdapterPosition();
-                if (position == RecyclerView.NO_POSITION) return;
-                String sessionId = adapter.getSessionId(position);
-                if (sessionId != null) closeSession(mViewModel.getServer(), sessionId);
-                adapter.notifyItemChanged(position);
+            public float getSwipeThreshold(@NonNull RecyclerView.ViewHolder viewHolder) {
+                // 滑动只用于触发操作，不能让 ItemTouchHelper 将卡片判定为已删除。
+                return 2f;
             }
 
             @Override
-            public int getSwipeDirs(RecyclerView rv, RecyclerView.ViewHolder viewHolder) {
-                int position = viewHolder.getAdapterPosition();
+            public float getSwipeEscapeVelocity(float defaultValue) {
+                // 快速甩动也必须回弹，避免进入 dismiss 状态。
+                return Float.MAX_VALUE;
+            }
+
+            @Override
+            public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {
+                // 理论上不会到达；保留兜底，确保卡片不会停留在滑出状态。
+                int position = viewHolder.getBindingAdapterPosition();
+                if (position != RecyclerView.NO_POSITION) adapter.notifyItemChanged(position);
+                recyclerView.invalidate();
+            }
+
+            @Override
+            public int getSwipeDirs(@NonNull RecyclerView rv,
+                                    @NonNull RecyclerView.ViewHolder viewHolder) {
+                int position = viewHolder.getBindingAdapterPosition();
                 if (position != RecyclerView.NO_POSITION && adapter.isSessionRow(position)) {
                     return ItemTouchHelper.LEFT;
                 }
@@ -245,33 +264,75 @@ public final class DeviceSessionsFragment extends Fragment implements SessionRow
             }
 
             @Override
-            public void onChildDraw(android.graphics.Canvas c, RecyclerView rv,
-                                    RecyclerView.ViewHolder viewHolder,
-                                    float dX, float dY, int actionState, boolean isCurrentlyActive) {
-                if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE && dX < 0) {
-                    View itemView = viewHolder.itemView;
-                    android.graphics.Paint paint = new android.graphics.Paint();
-                    paint.setColor(DesignTokens.DANGER);
-                    android.graphics.RectF bg = new android.graphics.RectF(
-                        itemView.getRight() + dX, itemView.getTop(),
-                        itemView.getRight(), itemView.getBottom());
-                    c.drawRect(bg, paint);
-                    paint.setColor(android.graphics.Color.WHITE);
-                    paint.setTextSize(UIUtils.dp(requireContext(), 14));
-                    paint.setAntiAlias(true);
-                    paint.setTypeface(DesignTokens.fontGeistSansSemibold(requireContext()));
-                    String text = "关闭会话";
-                    float textWidth = paint.measureText(text);
-                    android.graphics.Paint.FontMetrics fm = paint.getFontMetrics();
-                    float textHeight = fm.bottom - fm.top;
-                    float cardHeight = itemView.getHeight();
-                    float x = itemView.getRight() + dX / 2f - textWidth / 2f;
-                    float y = itemView.getTop() + cardHeight / 2f - textHeight / 2f - fm.top;
-                    if (-dX > textWidth + UIUtils.dp(requireContext(), 24)) {
-                        c.drawText(text, x, y, paint);
+            public void onChildDraw(@NonNull android.graphics.Canvas c,
+                                    @NonNull RecyclerView rv,
+                                    @NonNull RecyclerView.ViewHolder viewHolder,
+                                    float dX, float dY, int actionState,
+                                    boolean isCurrentlyActive) {
+                float limitedDx = Math.max(-maxDistance, Math.min(0f, dX));
+                if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
+                    if (trackingHolder != viewHolder) {
+                        trackingHolder = viewHolder;
+                        farthestDx = 0f;
+                    }
+                    if (isCurrentlyActive) farthestDx = Math.min(farthestDx, limitedDx);
+
+                    if (limitedDx < 0f) {
+                        View itemView = viewHolder.itemView;
+                        android.graphics.Paint paint = new android.graphics.Paint();
+                        paint.setColor(DesignTokens.DANGER);
+                        android.graphics.RectF bg = new android.graphics.RectF(
+                            itemView.getRight() + limitedDx, itemView.getTop(),
+                            itemView.getRight(), itemView.getBottom());
+                        c.drawRect(bg, paint);
+                        paint.setColor(android.graphics.Color.WHITE);
+                        paint.setTextSize(UIUtils.dp(requireContext(), 14));
+                        paint.setAntiAlias(true);
+                        paint.setTypeface(DesignTokens.fontGeistSansSemibold(requireContext()));
+                        String text = "关闭会话";
+                        float textWidth = paint.measureText(text);
+                        android.graphics.Paint.FontMetrics fm = paint.getFontMetrics();
+                        float textHeight = fm.bottom - fm.top;
+                        float cardHeight = itemView.getHeight();
+                        float x = itemView.getRight() + limitedDx / 2f - textWidth / 2f;
+                        float y = itemView.getTop() + cardHeight / 2f - textHeight / 2f - fm.top;
+                        if (-limitedDx > textWidth + UIUtils.dp(requireContext(), 24)) {
+                            c.drawText(text, x, y, paint);
+                        }
                     }
                 }
-                super.onChildDraw(c, rv, viewHolder, dX, dY, actionState, isCurrentlyActive);
+                super.onChildDraw(c, rv, viewHolder, limitedDx, dY,
+                    actionState, isCurrentlyActive);
+            }
+
+            @Override
+            public void clearView(@NonNull RecyclerView rv,
+                                  @NonNull RecyclerView.ViewHolder viewHolder) {
+                boolean shouldClose = trackingHolder == viewHolder
+                    && farthestDx <= -triggerDistance;
+                int position = viewHolder.getBindingAdapterPosition();
+                String sessionId = position == RecyclerView.NO_POSITION
+                    ? null : adapter.getSessionId(position);
+
+                super.clearView(rv, viewHolder);
+                viewHolder.itemView.animate().cancel();
+                viewHolder.itemView.setTranslationX(0f);
+                viewHolder.itemView.setTranslationY(0f);
+                viewHolder.itemView.setAlpha(1f);
+                trackingHolder = null;
+                farthestDx = 0f;
+                rv.invalidate();
+
+                if (!shouldClose || sessionId == null || closePending) return;
+                closePending = true;
+                // clearView 发生在回弹结束后；再等一帧，让红色背景先完成清除。
+                rv.postOnAnimation(() -> {
+                    rv.invalidate();
+                    closePending = false;
+                    if (!isAdded()) return;
+                    ServerConfig server = mViewModel.getServer();
+                    if (server != null) closeSession(server, sessionId);
+                });
             }
         };
         new ItemTouchHelper(swipeCallback).attachToRecyclerView(recyclerView);
