@@ -87,24 +87,27 @@ public final class RemoteTerminalModel {
     public final String instanceId;
     public final long layoutEpoch;
     public final long screenRevision;
+    public final long historyGeneration;
     public final HistoryExtent displayExtent;
     public final HistoryExtent remoteAvailableExtent;
     public final boolean projectionComplete;
 
     private ProjectionReadView(String instanceId, long layoutEpoch, long screenRevision,
+                               long historyGeneration,
                                HistoryExtent displayExtent,
                                HistoryExtent remoteAvailableExtent,
                                boolean projectionComplete) {
       this.instanceId = instanceId == null ? "" : instanceId;
       this.layoutEpoch = layoutEpoch;
       this.screenRevision = screenRevision;
+      this.historyGeneration = historyGeneration;
       this.displayExtent = displayExtent;
       this.remoteAvailableExtent = remoteAvailableExtent;
       this.projectionComplete = projectionComplete;
     }
 
     private static ProjectionReadView empty() {
-      return new ProjectionReadView("", 0, 0, HistoryExtent.INITIAL_EMPTY,
+      return new ProjectionReadView("", 0, 0, 0, HistoryExtent.INITIAL_EMPTY,
           HistoryExtent.INITIAL_EMPTY, false);
     }
   }
@@ -592,7 +595,7 @@ public final class RemoteTerminalModel {
       HistoryRangeResult range, long anchorSeq, long requestedFromSeq, long requestedToSeq) {
     if (!v2Projection || range == null || !Objects.equals(instanceId, range.instanceId)
         || layoutEpoch != range.layoutEpoch
-        || (range.historyGeneration != 0 && historyGeneration != range.historyGeneration)) {
+        || historyGeneration != range.historyGeneration) {
       return false;
     }
     if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
@@ -1138,7 +1141,8 @@ public final class RemoteTerminalModel {
 
   private void publishProjectionReadView() {
     projectionReadView = new ProjectionReadView(
-        instanceId, layoutEpoch, screenRevision, displayExtent, remoteAvailableExtent,
+        instanceId, layoutEpoch, screenRevision, historyGeneration,
+        displayExtent, remoteAvailableExtent,
         projectionHealth.complete);
   }
 

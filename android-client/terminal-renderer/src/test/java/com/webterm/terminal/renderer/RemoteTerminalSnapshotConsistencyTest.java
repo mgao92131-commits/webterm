@@ -8,9 +8,13 @@ import static org.junit.Assert.assertTrue;
 import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryMutation;
+import com.webterm.terminal.model.HistoryPromotion;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenMutation;
+import com.webterm.terminal.model.ScreenRowWrite;
+import com.webterm.terminal.model.ScreenScroll;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCommit;
@@ -18,6 +22,7 @@ import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
+import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.ViewportPosition;
 
@@ -71,6 +76,50 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     assertTrue(viewport.isFollowTail(TerminalBufferKind.ALTERNATE));
     assertEquals(10, ((ViewportPosition.LineAnchor)
         viewport.position(TerminalBufferKind.MAIN)).lineId);
+  }
+
+  @Test
+  public void activeRowAnchorRemainsPixelStableWhenPromotionCreatesFirstHistoryLine()
+      throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(new ScreenBaseline(
+        "session", "instance", 1, 1,
+        1, 1, false, DictionaryEntries.EMPTY,
+        2, 1, TerminalBufferKind.MAIN, new HistoryExtent(1, 0),
+        Collections.emptyList(), lines(10, 11, false), TerminalCursor.hidden(),
+        TerminalModes.defaults(), TerminalPalette.defaults())));
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.anchorLine(TerminalBufferKind.MAIN, 10, 7);
+    viewport.selection = new TerminalSelection(
+        new TerminalSelection.Anchor(0, 0, 0),
+        new TerminalSelection.Anchor(0, 0, 1));
+    ViewportPosition position = viewport.position(TerminalBufferKind.MAIN);
+    TerminalSelection selection = viewport.selection;
+    int beforeOffset =
+        viewport.derivedScrollOffsetPixels(model.renderSnapshot(), 20f, 10_000);
+
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "instance", 1, 1, 2, 1, 1,
+        DictionaryEntries.EMPTY, null,
+        new ScreenMutation(new ScreenScroll(0, 2, 1),
+            Collections.singletonList(new ScreenRowWrite(
+                1, lines(12, 12, false).get(0)))),
+        HistoryMutation.fromLineData(
+            new HistoryExtent(1, 1), Collections.emptyList(),
+            Collections.singletonList(new HistoryPromotion(10, 1, 1))),
+        null, null, null)));
+
+    ViewportPosition.LineAnchor anchor =
+        (ViewportPosition.LineAnchor) viewport.position(TerminalBufferKind.MAIN);
+    assertSame(position, anchor);
+    assertEquals(10, anchor.lineId);
+    assertEquals(7, anchor.pixelOffset);
+    assertEquals(beforeOffset + 20,
+        viewport.derivedScrollOffsetPixels(model.renderSnapshot(), 20f, 10_000));
+    assertSame(selection, viewport.selection);
+    assertFalse(model.activeRows().contains(10));
+    assertEquals(Long.valueOf(10), model.historyIndex().lineId(1));
+    assertEquals(Long.valueOf(0), model.renderSnapshot().contentAxis.rowOfLineId(10));
   }
 
   private static RemoteTerminalModel modelWithHistory(int count) {

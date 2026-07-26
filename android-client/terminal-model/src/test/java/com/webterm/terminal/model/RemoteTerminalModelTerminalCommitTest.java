@@ -86,6 +86,37 @@ public final class RemoteTerminalModelTerminalCommitTest {
   }
 
   @Test
+  public void trimmedCompactPayloadDecodesToCompleteTerminalColumns() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(new ScreenBaseline(
+        "session", "instance", 1, 1, 1, 1, false, DictionaryEntries.EMPTY,
+        1, 80, TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY,
+        Collections.emptyList(), Collections.singletonList(TerminalLine.empty(10, 80)),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
+    TerminalCell[] cells = new TerminalCell[80];
+    java.util.Arrays.fill(cells, TerminalCell.EMPTY);
+    String prompt = "hello world!";
+    for (int i = 0; i < prompt.length(); i++) {
+      cells[i] = new TerminalCell(
+          String.valueOf(prompt.charAt(i)), (byte) 1, null, null);
+    }
+    TerminalLine expected = new TerminalLine(20, 1, 0, false, cells);
+
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "instance", 1, 1, 2, 1, 1,
+        DictionaryEntries.EMPTY, null,
+        new ScreenMutation(null,
+            Collections.singletonList(new ScreenRowWrite(0, expected))),
+        null, null, null, null)));
+
+    TerminalLine decoded = model.renderSnapshot().screen[0];
+    assertEquals(80, decoded.length());
+    assertEquals("!", decoded.at(11).text);
+    assertTrue(decoded.at(79).isDefault());
+    assertTrue(decoded.sameContent(expected));
+  }
+
+  @Test
   public void scrollUpMissingExposedBottomRowIsRejectedAtomically() throws Exception {
     RemoteTerminalModel model = baselineModel();
     assertFailureAtomically(model, new TerminalCommit(

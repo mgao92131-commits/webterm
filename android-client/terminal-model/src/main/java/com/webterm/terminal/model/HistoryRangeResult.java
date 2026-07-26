@@ -20,7 +20,7 @@ public final class HistoryRangeResult {
     this.requestId = requestId;
     this.instanceId = instanceId;
     this.layoutEpoch = layoutEpoch;
-    this.historyGeneration = 0;
+    this.historyGeneration = 1;
     this.status = status;
     this.availableExtent = availableExtent;
     this.lines = lines;
