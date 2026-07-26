@@ -43,6 +43,43 @@ public final class ScreenMessageV2ValidatorTest {
     assertRejectedExtent(1, Long.MAX_VALUE);
   }
 
+  @Test
+  public void nonDataHistoryRangeStatusesRejectLinesButTrimmedAllowsIntersection() {
+    assertHistoryRangeLineRejected(
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION);
+    assertHistoryRangeLineRejected(
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE);
+    ScreenMessageV2Validator.validateHistoryRange(historyRange(
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_TRIMMED, true));
+  }
+
+  private static void assertHistoryRangeLineRejected(
+      TerminalScreenV2Proto.HistoryRangeStatus status) {
+    try {
+      ScreenMessageV2Validator.validateHistoryRange(historyRange(status, true));
+      fail("validator accepted lines for " + status);
+    } catch (IllegalArgumentException expected) {
+      // Expected.
+    }
+  }
+
+  private static TerminalScreenV2Proto.HistoryRangeResponse historyRange(
+      TerminalScreenV2Proto.HistoryRangeStatus status, boolean withLine) {
+    TerminalScreenV2Proto.HistoryRangeResponse.Builder response =
+        TerminalScreenV2Proto.HistoryRangeResponse.newBuilder()
+            .setRequestId("r1")
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStatus(status)
+            .setAvailableExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
+                .setFirstSeq(1).setLastSeq(10));
+    if (withLine) {
+      response.addLines(TerminalScreenV2Proto.LineData.newBuilder()
+          .setLineId(1).setLineVersion(1).setHistorySeq(1));
+    }
+    return response.build();
+  }
+
   private static void assertAcceptedExtent(long first, long last) {
     ScreenMessageV2Validator.validateHistoryDelta(historyDelta(first, last));
     new HistoryExtent(first, last);

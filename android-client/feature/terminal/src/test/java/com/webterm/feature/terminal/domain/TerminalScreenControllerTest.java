@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.LifecycleRegistry;
 
 import com.webterm.terminal.model.HistoryDelta;
 import com.webterm.terminal.model.HistoryExtent;
@@ -48,6 +49,8 @@ public final class TerminalScreenControllerTest {
     when(runtime.model()).thenReturn(new RemoteTerminalModel());
     viewport = new TerminalViewportState();
     controller = new TerminalScreenController(runtime, viewport, new ImmediateFrameScheduler());
+    when(runtime.consumeRenderUpdate(controller)).thenAnswer(
+        ignored -> runtime.model().consumeRenderUpdate());
   }
 
   @Test
@@ -161,6 +164,8 @@ public final class TerminalScreenControllerTest {
     controller.onRenderNeeded(); // consume Baseline and its geometry reset
     reset(runtime);
     when(runtime.model()).thenReturn(model);
+    when(runtime.consumeRenderUpdate(controller)).thenAnswer(
+        ignored -> runtime.model().consumeRenderUpdate());
 
     viewport.scrollBy(600, 2_000);
     viewport.setHistoryAnchor(1, 0);
@@ -181,28 +186,63 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void secondControllerCannotAttachToSameRuntimeUntilFirstDetaches() {
+  public void pausedControllerReleasesOwnerForNextController() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baseline()));
     TerminalSessionRuntime realRuntime = new TerminalSessionRuntime(
-        "single-render-owner", new RemoteTerminalModel(), Runnable::run);
+        "single-render-owner", model, Runnable::run);
     TerminalScreenController first = new TerminalScreenController(
         realRuntime, new TerminalViewportState(), new ImmediateFrameScheduler());
     TerminalScreenController second = new TerminalScreenController(
         realRuntime, new TerminalViewportState(), new ImmediateFrameScheduler());
-    LifecycleOwner owner = mock(LifecycleOwner.class);
-    Lifecycle lifecycle = mock(Lifecycle.class);
-    when(owner.getLifecycle()).thenReturn(lifecycle);
-    TerminalScreenController.View noOpView = noOpView();
+    TestLifecycleOwner firstOwner = new TestLifecycleOwner();
+    TestLifecycleOwner secondOwner = new TestLifecycleOwner();
+    CountingView secondView = new CountingView();
 
-    first.attach(owner, noOpView);
-    try {
-      second.attach(owner, noOpView);
-      org.junit.Assert.fail("second render consumer must be rejected");
-    } catch (IllegalStateException expected) {
-      assertTrue(expected.getMessage().contains("active render consumer"));
-    }
-    first.detach(owner);
-    second.attach(owner, noOpView);
-    second.detach(owner);
+    first.attach(firstOwner, noOpView());
+    second.attach(secondOwner, secondView);
+    firstOwner.resume();
+    firstOwner.pause();
+    secondOwner.resume();
+
+    assertTrue(secondView.renderCount > 0);
+    first.detach(firstOwner);
+    second.detach(secondOwner);
+    Object probe = new Object();
+    realRuntime.registerRenderConsumer(probe);
+    realRuntime.unregisterRenderConsumer(probe);
+  }
+
+  @Test
+  public void staleFrameFromPausedControllerCannotConsumeNewOwnersPublication() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baseline()));
+    TerminalSessionRuntime realRuntime = new TerminalSessionRuntime(
+        "late-frame-owner", model, Runnable::run);
+    QueuedFrameScheduler firstFrames = new QueuedFrameScheduler();
+    QueuedFrameScheduler secondFrames = new QueuedFrameScheduler();
+    TerminalScreenController first = new TerminalScreenController(
+        realRuntime, new TerminalViewportState(), firstFrames);
+    TerminalScreenController second = new TerminalScreenController(
+        realRuntime, new TerminalViewportState(), secondFrames);
+    TestLifecycleOwner firstOwner = new TestLifecycleOwner();
+    TestLifecycleOwner secondOwner = new TestLifecycleOwner();
+    CountingView firstView = new CountingView();
+    CountingView secondView = new CountingView();
+
+    first.attach(firstOwner, firstView);
+    second.attach(secondOwner, secondView);
+    firstOwner.resume();
+    firstOwner.pause();
+    secondOwner.resume();
+
+    firstFrames.runPostedEvenIfCancelled();
+    assertEquals(0, firstView.renderCount);
+    secondFrames.runPostedEvenIfCancelled();
+    assertTrue(secondView.renderCount > 0);
+
+    first.detach(firstOwner);
+    second.detach(secondOwner);
   }
 
   private static TerminalScreenController.View noOpView() {
@@ -213,6 +253,49 @@ public final class TerminalScreenControllerTest {
       @Override public void onTitleChanged(String title) {}
       @Override public void requestInvalidate() {}
     };
+  }
+
+  private static final class CountingView implements TerminalScreenController.View {
+    int renderCount;
+    @Override public void bindModel(RemoteTerminalModel ignored) {}
+    @Override public void render(RenderUpdate update, TerminalViewportState ignored) {
+      renderCount++;
+    }
+    @Override public void onCursorChanged() {}
+    @Override public void onTitleChanged(String title) {}
+    @Override public void requestInvalidate() {}
+  }
+
+  private static final class TestLifecycleOwner implements LifecycleOwner {
+    private final LifecycleRegistry lifecycle = new LifecycleRegistry(this);
+
+    @Override public Lifecycle getLifecycle() {
+      return lifecycle;
+    }
+
+    void resume() {
+      lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_RESUME);
+    }
+
+    void pause() {
+      lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE);
+    }
+  }
+
+  private static final class QueuedFrameScheduler implements FrameScheduler {
+    private Runnable posted;
+
+    @Override public void postFrame(Runnable callback) {
+      posted = callback;
+    }
+
+    @Override public void cancelFrame(Runnable callback) {
+      // 保留 callback，显式模拟底层取消后仍迟到的竞态。
+    }
+
+    void runPostedEvenIfCancelled() {
+      if (posted != null) posted.run();
+    }
   }
 
   private static ScreenBaseline baseline() {

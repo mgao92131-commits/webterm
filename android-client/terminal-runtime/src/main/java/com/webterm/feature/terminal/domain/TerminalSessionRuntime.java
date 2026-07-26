@@ -10,6 +10,7 @@ import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.WireFormat;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.ScreenPatchV2;
 import com.webterm.terminal.model.HistoryDelta;
@@ -27,6 +28,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 import java.util.HashMap;
@@ -162,6 +164,12 @@ public final class TerminalSessionRuntime {
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
   /** Listener 可多个，但破坏性 RenderUpdate consumer 每个 runtime 只允许一个。 */
   private final AtomicReference<Object> renderConsumer = new AtomicReference<>();
+  /** 让 owner 校验与破坏性 consume 成为同一极短临界区。 */
+  private final Object renderConsumerLock = new Object();
+  /** 不暴露给 Controller；只用于证明破坏性 model consume 来自所属 Runtime。 */
+  private final Object renderPublicationAuthority = new Object();
+  /** UI full-render 请求的有界 mailbox；至多排队一个 modelExecutor 任务。 */
+  private final AtomicBoolean fullRenderRequestScheduled = new AtomicBoolean();
   private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
   private final ScreenMailbox screenMailbox =
       new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
@@ -254,6 +262,7 @@ public final class TerminalSessionRuntime {
                          @NonNull TimeoutScheduler leaseScheduler) {
     this.sessionId = sessionId;
     this.model = model;
+    this.model.bindRenderPublicationAuthority(renderPublicationAuthority);
     this.modelExecutor = modelExecutor;
     this.callbackExecutor = callbackExecutor;
     this.renderWakeDispatcher = new RenderWakeDispatcher(callbackExecutor,
@@ -498,15 +507,38 @@ public final class TerminalSessionRuntime {
 
   /** 明确拒绝同一 session 的第二个活跃渲染 owner，避免静默抢走 RenderUpdate。 */
   public void registerRenderConsumer(@NonNull Object consumer) {
-    Object current = renderConsumer.get();
-    if (current == consumer) return;
-    if (!renderConsumer.compareAndSet(null, consumer)) {
-      throw new IllegalStateException("terminal session already has an active render consumer");
+    synchronized (renderConsumerLock) {
+      Object current = renderConsumer.get();
+      if (current == consumer) return;
+      if (current != null) {
+        throw new IllegalStateException("terminal session " + sessionId
+            + " already has active render consumer " + ownerType(current)
+            + "; rejected " + ownerType(consumer));
+      }
+      renderConsumer.set(consumer);
     }
   }
 
   public void unregisterRenderConsumer(@NonNull Object consumer) {
-    renderConsumer.compareAndSet(consumer, null);
+    synchronized (renderConsumerLock) {
+      if (renderConsumer.get() == consumer) renderConsumer.set(null);
+    }
+  }
+
+  /** 破坏性 publication 只能由当前活跃 owner 消费。 */
+  @Nullable
+  public RenderUpdate consumeRenderUpdate(@NonNull Object consumer) {
+    synchronized (renderConsumerLock) {
+      if (renderConsumer.get() != consumer) {
+        throw new IllegalStateException("render consumer is not active for terminal session "
+            + sessionId + ": " + ownerType(consumer));
+      }
+      return model.consumeRenderUpdate(renderPublicationAuthority);
+    }
+  }
+
+  private static String ownerType(@Nullable Object owner) {
+    return owner == null ? "none" : owner.getClass().getName();
   }
 
   public void setAuthenticationListener(@Nullable AuthenticationListener listener) {
@@ -633,8 +665,10 @@ public final class TerminalSessionRuntime {
       long fromSeq, long toSeq, long anchorSeq, int retryAttempt) {
     if (state != State.CONNECTED) return false;
     ScreenConnection c = connection;
-    if (c == null || model.instanceId == null || model.layoutEpoch == 0) return false;
-    HistoryExtent extent = model.displayExtent();
+    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
+    if (c == null || !projection.projectionComplete || projection.instanceId.isEmpty()
+        || projection.layoutEpoch == 0) return false;
+    HistoryExtent extent = projection.displayExtent;
     long boundedFrom = Math.max(extent.firstSeq, fromSeq);
     long boundedTo = Math.min(extent.lastSeq, toSeq);
     if (boundedFrom <= 0 || boundedTo < boundedFrom || boundedTo - boundedFrom >= 256) {
@@ -643,9 +677,11 @@ public final class TerminalSessionRuntime {
     if (historyRequests.isRangePending(boundedFrom, boundedTo)) return true;
     String requestId = historyRequests.nextRequestId();
     if (!c.requestHistoryRange(
-        requestId, model.instanceId, model.layoutEpoch, boundedFrom, boundedTo)) return false;
+        requestId, projection.instanceId, projection.layoutEpoch, boundedFrom, boundedTo)) {
+      return false;
+    }
     historyRequests.markPending(requestId, boundedFrom, boundedTo, anchorSeq,
-        model.instanceId, model.layoutEpoch, retryAttempt);
+        projection.instanceId, projection.layoutEpoch, retryAttempt);
     scheduleHistoryRequestTimeout(requestId);
     return true;
   }
@@ -667,9 +703,10 @@ public final class TerminalSessionRuntime {
     long delay = Math.max(exponential, Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs));
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
+          RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
           if (state != State.CONNECTED
-              || !pending.instanceId.equals(model.instanceId)
-              || pending.layoutEpoch != model.layoutEpoch) return;
+              || !pending.instanceId.equals(projection.instanceId)
+              || pending.layoutEpoch != projection.layoutEpoch) return;
           requestHistoryRange(
               pending.fromSeq, pending.toSeq, pending.anchorSeq, nextAttempt);
         }),
@@ -1200,6 +1237,7 @@ public final class TerminalSessionRuntime {
           break;
         }
         case HISTORY_RANGE_RESPONSE: {
+          failureReason = "INVALID_HISTORY_RANGE";
           TerminalScreenV2Proto.HistoryRangeResponse wire =
               envelope.getHistoryRangeResponse();
           ScreenMessageV2Validator.validateHistoryRange(wire);
@@ -1213,8 +1251,25 @@ public final class TerminalSessionRuntime {
           } finally {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
-          renderChanged = model.applyHistoryRange(
-              range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
+          try {
+            renderChanged = model.applyHistoryRange(
+                range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
+            if (!renderChanged
+                && range.status != HistoryRangeResult.Status.STALE_PROJECTION
+                && range.status != HistoryRangeResult.Status.RETRYABLE) {
+              throw new IllegalArgumentException("model rejected HistoryRange identity or data");
+            }
+          } catch (RuntimeException invalidRange) {
+            Diagnostics.warn("screen_protocol", "invalid_history_range", diagnosticFields(
+                "failureKind", invalidRange.getClass().getSimpleName(),
+                "requestFromSeq", pending.fromSeq,
+                "requestToSeq", pending.toSeq,
+                "lineCount", wire.getLinesCount(),
+                "instanceId", wire.getInstanceId(),
+                "layoutEpoch", wire.getLayoutEpoch(),
+                "localRevision", model.screenRevision));
+            throw invalidRange;
+          }
           if (renderChanged) recordCapturedModelState(false);
           if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
             Diagnostics.info("screen_protocol", "frozen_projection_stale", diagnosticFields(
@@ -1352,7 +1407,7 @@ public final class TerminalSessionRuntime {
    * 仅在 isRecording() 为真时调用，避免热路径在无捕获时的对象分配。
    */
   com.webterm.terminal.model.capture.CaptureStreamIdentity captureStreamIdentity() {
-    String terminalInstanceId = model.instanceId == null ? "" : model.instanceId;
+    String terminalInstanceId = model.projectionReadView().instanceId;
     String clientInstanceId = "";
     ScreenConnection c = connection;
     if (c != null && c.reliableInputTracker() != null) {
@@ -1456,8 +1511,12 @@ public final class TerminalSessionRuntime {
 
   /** 请求一次最新模型绘制，供页面 attach、恢复和重新绑定使用。 */
   public void requestModelRender() {
-    model.requestFullRender();
-    dispatchRenderNeeded();
+    if (!fullRenderRequestScheduled.compareAndSet(false, true)) return;
+    modelExecutor.execute(() -> {
+      fullRenderRequestScheduled.set(false);
+      model.requestFullRender();
+      dispatchRenderNeeded();
+    });
   }
 
   public void requestRender() {

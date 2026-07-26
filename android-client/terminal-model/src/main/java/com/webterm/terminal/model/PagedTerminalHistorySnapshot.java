@@ -79,7 +79,7 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
       for (int offset = 0; offset < PagedTerminalHistory.PAGE_SIZE; offset++) {
         if (page.slots[offset] == null) continue;
         long seq = pageFirst > Long.MAX_VALUE - offset ? Long.MAX_VALUE : pageFirst + offset;
-        if (extent.contains(seq) && availableExtent.contains(seq) && seq < first) first = seq;
+        if (extent.contains(seq) && seq < first) first = seq;
       }
     }
     return first == Long.MAX_VALUE ? -1 : first;
@@ -118,9 +118,7 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
 
   public TerminalLine lineAt(long logicalIndex) {
     long seq = seqAt(logicalIndex);
-    if (!availableExtent.contains(seq)) return null;
-    PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
-    return page == null ? null : page.slots[PagedTerminalHistory.pageOffset(seq)];
+    return loadedLineBySeq(seq);
   }
 
   @Override
@@ -136,19 +134,21 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   }
 
   public TerminalLine lineBySeq(long seq) {
-    if (!extent.contains(seq) || !availableExtent.contains(seq)) return null;
-    PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
-    return page == null ? null : page.slots[PagedTerminalHistory.pageOffset(seq)];
+    return extent.contains(seq) ? loadedLineBySeq(seq) : null;
   }
 
   public SlotState slotStateAt(long logicalIndex) {
     long seq = seqAt(logicalIndex);
+    // 本地 resident line 是已经显示过的不可变投影事实；remote available extent 只决定
+    // 缺失槽位能否继续向服务端请求。服务端 trim 不得让 FROZEN 画面中的驻留行消失。
+    if (loadedLineBySeq(seq) != null) return SlotState.LOADED;
     if (!availableExtent.contains(seq)) return SlotState.UNAVAILABLE;
-    PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
-    if (page == null) return SlotState.UNLOADED;
-    int offset = PagedTerminalHistory.pageOffset(seq);
-    if (page.slots[offset] != null) return SlotState.LOADED;
     return SlotState.UNLOADED;
+  }
+
+  private TerminalLine loadedLineBySeq(long seq) {
+    PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
+    return page == null ? null : page.slots[PagedTerminalHistory.pageOffset(seq)];
   }
 
   private long seqAt(long logicalIndex) {

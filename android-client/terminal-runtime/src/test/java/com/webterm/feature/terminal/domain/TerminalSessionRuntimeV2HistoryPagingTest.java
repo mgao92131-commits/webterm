@@ -10,21 +10,169 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.RenderUpdate;
+import com.webterm.terminal.model.ScreenPatchV2;
 import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.core.contract.diagnostics.DiagnosticSink;
 
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /** v2 冻结投影必须能在 Baseline 尾页之前继续按需加载历史。 */
 public final class TerminalSessionRuntimeV2HistoryPagingTest {
+  @Test
+  public void renderConsumerRegistrationAndDestructiveConsumeAreTokenChecked() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(ScreenMessageV2Mapper.mapBaseline(baseline(1).getBaseline())));
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("owner", model, Runnable::run);
+    Object owner = new Object();
+    Object stranger = new Object();
+
+    runtime.registerRenderConsumer(owner);
+    runtime.registerRenderConsumer(owner);
+    runtime.unregisterRenderConsumer(stranger);
+    try {
+      model.consumeRenderUpdate();
+      org.junit.Assert.fail("runtime-bound model must reject direct destructive consume");
+    } catch (IllegalStateException expected) {
+      assertTrue(expected.getMessage().contains("TerminalSessionRuntime"));
+    }
+    try {
+      runtime.registerRenderConsumer(stranger);
+      org.junit.Assert.fail("second active consumer must be rejected");
+    } catch (IllegalStateException expected) {
+      assertTrue(expected.getMessage().contains("terminal session owner"));
+    }
+    try {
+      runtime.consumeRenderUpdate(stranger);
+      org.junit.Assert.fail("unregistered consumer must be rejected");
+    } catch (IllegalStateException expected) {
+      assertTrue(expected.getMessage().contains("not active"));
+    }
+    assertNotNull(runtime.consumeRenderUpdate(owner));
+
+    runtime.unregisterRenderConsumer(owner);
+    runtime.registerRenderConsumer(stranger);
+    runtime.unregisterRenderConsumer(stranger);
+  }
+
+  @Test
+  public void requestModelRenderDoesNotWaitForModelMonitorAndMergesPublication() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(ScreenMessageV2Mapper.mapBaseline(baseline(1).getBaseline())));
+    model.consumeRenderUpdate();
+    assertTrue(model.applyScreenPatch(new ScreenPatchV2(
+        "i1", 1, 1, 1, 2, null, Collections.emptyList(),
+        null, null, null, null, "updated", null)));
+    QueuedExecutor modelExecutor = new QueuedExecutor();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("render-lock", model, modelExecutor);
+    Object owner = new Object();
+    runtime.registerRenderConsumer(owner);
+    CountDownLatch monitorHeld = new CountDownLatch(1);
+    CountDownLatch releaseMonitor = new CountDownLatch(1);
+    Thread holder = holdModelMonitor(model, monitorHeld, releaseMonitor);
+    ExecutorService ui = Executors.newSingleThreadExecutor();
+    try {
+      Future<?> request = ui.submit(runtime::requestModelRender);
+      request.get(500, TimeUnit.MILLISECONDS);
+      assertEquals(1, modelExecutor.tasks.size());
+
+      releaseMonitor.countDown();
+      holder.join(1_000);
+      modelExecutor.runAll();
+      RenderUpdate update = runtime.consumeRenderUpdate(owner);
+      assertNotNull(update);
+      assertEquals(2, update.snapshot.screenRevision);
+      assertEquals("updated", update.snapshot.title);
+      assertTrue(update.dirty.fullInvalidate);
+      assertTrue(update.state.titleChanged);
+    } finally {
+      releaseMonitor.countDown();
+      ui.shutdownNow();
+      runtime.unregisterRenderConsumer(owner);
+    }
+  }
+
+  @Test
+  public void historyRequestUsesPublishedProjectionWithoutWaitingForModelMonitor()
+      throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "history-lock", model, Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    CountDownLatch monitorHeld = new CountDownLatch(1);
+    CountDownLatch releaseMonitor = new CountDownLatch(1);
+    Thread holder = holdModelMonitor(model, monitorHeld, releaseMonitor);
+    ExecutorService ui = Executors.newSingleThreadExecutor();
+    try {
+      Future<Boolean> request = ui.submit(() -> runtime.requestHistoryRange(100, 127, 100));
+      assertTrue(request.get(500, TimeUnit.MILLISECONDS));
+      assertEquals(100, connection.fromSeq);
+      assertEquals(127, connection.toSeq);
+    } finally {
+      releaseMonitor.countDown();
+      holder.join(1_000);
+      ui.shutdownNow();
+    }
+  }
+
+  @Test
+  public void outOfRequestHistoryRangeStartsResyncWithoutPartialCommit() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "invalid-range", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    assertTrue(runtime.requestHistoryRange(100, 127, 100));
+
+    connection.listener.onScreenMessage(historyRangeWithSeqs(
+        connection.requestId, 1, 300, 100, 101, 128).toByteArray());
+
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    PagedTerminalHistorySnapshot history =
+        (PagedTerminalHistorySnapshot) runtime.model().renderSnapshot().history;
+    assertNull(history.lineBySeq(100));
+    assertNull(history.lineBySeq(101));
+    assertEquals(128, history.loadedLineCount());
+  }
+
+  private static Thread holdModelMonitor(RemoteTerminalModel model,
+                                         CountDownLatch held,
+                                         CountDownLatch release) throws Exception {
+    Thread holder = new Thread(() -> {
+      synchronized (model) {
+        held.countDown();
+        try {
+          release.await();
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+        }
+      }
+    });
+    holder.start();
+    assertTrue(held.await(1, TimeUnit.SECONDS));
+    return holder;
+  }
+
   @Test
   public void frozenRuntimeDropsLiveDeltasBeforeProtobufParseButAcceptsTailStatus() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
@@ -528,24 +676,27 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     CountingListener listener = new CountingListener();
+    Object renderOwner = new Object();
+    runtime.registerRenderConsumer(renderOwner);
     runtime.addListener(listener);
     FakeV2Connection connection = new FakeV2Connection();
     runtime.attachConnection(connection);
     connection.listener.onConnected();
     connection.listener.onScreenMessage(baseline(1).toByteArray());
     assertEquals(1, listener.renderNeeded);
-    assertNotNull(runtime.model().consumeRenderUpdate());
+    assertNotNull(runtime.consumeRenderUpdate(renderOwner));
 
     connection.listener.onScreenMessage(screenPatchWithLine(1, 1, "x").toByteArray());
     assertEquals(2, runtime.model().screenRevision);
     assertEquals(1, listener.renderNeeded);
-    assertNull(runtime.model().consumeRenderUpdate());
+    assertNull(runtime.consumeRenderUpdate(renderOwner));
     assertEquals(0, connection.reconnectRequests);
 
     connection.listener.onScreenMessage(metadataPatch(1, 2, 3, "updated").toByteArray());
     assertEquals(2, listener.renderNeeded);
-    assertNotNull(runtime.model().consumeRenderUpdate());
+    assertNotNull(runtime.consumeRenderUpdate(renderOwner));
     assertEquals("updated", runtime.model().title());
+    runtime.unregisterRenderConsumer(renderOwner);
   }
 
   @Test
@@ -939,6 +1090,22 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     if (includeLines) {
       for (long seq = lineFromSeq; seq <= lineToSeq; seq++) response.addLines(line(seq, seq));
     }
+    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setHistoryRangeResponse(response)
+        .build();
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope historyRangeWithSeqs(
+      String requestId, long extentFirst, long extentLast, long... historySeqs) {
+    TerminalScreenV2Proto.HistoryRangeResponse.Builder response =
+        TerminalScreenV2Proto.HistoryRangeResponse.newBuilder()
+            .setRequestId(requestId)
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStatus(TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK)
+            .setAvailableExtent(extent(extentFirst, extentLast));
+    for (long seq : historySeqs) response.addLines(line(10_000 + seq, seq));
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
         .setHistoryRangeResponse(response)

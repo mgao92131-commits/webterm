@@ -185,16 +185,37 @@ public final class PagedTerminalHistoryTest {
   }
 
   @Test
-  public void trimmedAvailableExtentHidesPreviouslyResidentContent() {
+  public void trimmedAvailableExtentPreservesPreviouslyResidentContent() {
     PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
     history.edit().setExtent(1, 200).put(10, line(10)).put(150, line(150)).commit();
     history.edit().setAvailableExtent(100, 200).commit();
 
     PagedTerminalHistorySnapshot snapshot = history.snapshot();
+    assertEquals(10, snapshot.lineBySeq(10).historySeq);
+    assertEquals(SlotState.LOADED, snapshot.slotStateAt(9));
+    assertNull(snapshot.lineBySeq(50));
+    assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(49));
+    assertNull(snapshot.firstRequestablePage(1, 99));
+    assertEquals(150, snapshot.lineBySeq(150).historySeq);
+    assertEquals(10, snapshot.firstLoadedSeq());
+  }
+
+  @Test
+  public void evictedResidentLineOutsideAvailableExtentBecomesUnavailable() {
+    PagedTerminalHistory history = history(new HistoryBudget(2, 2, 0, 0));
+    history.edit().setExtent(1, 200).put(10, line(10)).put(150, line(150)).commit();
+    history.edit()
+        .setAvailableExtent(100, 200)
+        .put(151, line(151))
+        .evictIfNeeded(150)
+        .commit();
+
+    PagedTerminalHistorySnapshot snapshot = history.snapshot();
     assertNull(snapshot.lineBySeq(10));
     assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(9));
-    assertEquals(150, snapshot.lineBySeq(150).historySeq);
-    assertEquals(150, snapshot.firstLoadedSeq());
+    assertNull(snapshot.firstRequestablePage(1, 99));
+    assertEquals(2, snapshot.loadedLineCount());
+    assertEquals(20, snapshot.estimatedByteCount());
   }
 
   private static Class<?> lineClass() {

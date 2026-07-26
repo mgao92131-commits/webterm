@@ -71,9 +71,13 @@ public final class RemoteTerminalModel {
   private TerminalStateUpdate pendingTerminalState = new TerminalStateUpdate();
   /** 模型线程发布、UI VSync getAndSet 消费；UI 不获取模型 monitor。 */
   private final AtomicReference<RenderPublication> pendingPublication = new AtomicReference<>();
+  /** Runtime 绑定后，禁止任何无 capability 的旁路破坏性消费。 */
+  private final AtomicReference<Object> renderPublicationAuthority = new AtomicReference<>();
   private final AtomicLong publicationVersion = new AtomicLong();
   private volatile ProjectionHealth projectionHealth =
       ProjectionHealth.incomplete(SCHEMA_GENERATION);
+  /** Runtime/UI 只读的轻量投影视图；完整模型事务结束后一次 volatile 发布。 */
+  private volatile ProjectionReadView projectionReadView = ProjectionReadView.empty();
   /** 仅由单元测试注入；生产实例为 null，不在 Patch 热路径执行。 */
   private final LongConsumer baselineHistoryValidationProbe;
   private long patchScreenCloneCount;
@@ -97,6 +101,32 @@ public final class RemoteTerminalModel {
     RenderPublication(long version, RenderUpdate update) {
       this.version = version;
       this.update = update;
+    }
+  }
+
+  public static final class ProjectionReadView {
+    public final String instanceId;
+    public final long layoutEpoch;
+    public final long screenRevision;
+    public final HistoryExtent displayExtent;
+    public final HistoryExtent remoteAvailableExtent;
+    public final boolean projectionComplete;
+
+    private ProjectionReadView(String instanceId, long layoutEpoch, long screenRevision,
+                               HistoryExtent displayExtent,
+                               HistoryExtent remoteAvailableExtent,
+                               boolean projectionComplete) {
+      this.instanceId = instanceId == null ? "" : instanceId;
+      this.layoutEpoch = layoutEpoch;
+      this.screenRevision = screenRevision;
+      this.displayExtent = displayExtent;
+      this.remoteAvailableExtent = remoteAvailableExtent;
+      this.projectionComplete = projectionComplete;
+    }
+
+    private static ProjectionReadView empty() {
+      return new ProjectionReadView("", 0, 0, HistoryExtent.INITIAL_EMPTY,
+          HistoryExtent.INITIAL_EMPTY, false);
     }
   }
 
@@ -248,6 +278,8 @@ public final class RemoteTerminalModel {
       boolean publicationChanged = metadata != 0;
       screenRevision = patch.screenRevision;
       remoteScreenRevision = patch.screenRevision;
+      projectionHealth = ProjectionHealth.complete(
+          instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
       if (publicationChanged) {
         markRenderDirty(false, null, 0, null, rows, false, false, cursorChanged,
             previousCursor != null ? previousCursor.row : -1, cursor.row,
@@ -256,9 +288,9 @@ public final class RemoteTerminalModel {
         markTerminalState(false, false, (metadata & META_TITLE) != 0,
             (metadata & META_CWD) != 0, 0, 0);
         publishPendingRenderUpdate();
+      } else {
+        publishProjectionReadView();
       }
-      projectionHealth = ProjectionHealth.complete(
-          instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
       return publicationChanged;
     }
 
@@ -380,7 +412,11 @@ public final class RemoteTerminalModel {
     // 历史归 PagedTerminalHistory 独立所有，不能在高频 Patch 热路径重新扫描逻辑 extent。
     projectionHealth = ProjectionHealth.complete(
         instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
-    if (publicationChanged) publishPendingRenderUpdate();
+    if (publicationChanged) {
+      publishPendingRenderUpdate();
+    } else {
+      publishProjectionReadView();
+    }
     return publicationChanged;
   }
 
@@ -459,29 +495,64 @@ public final class RemoteTerminalModel {
       return false;
     }
     if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
+      if (!range.lines.isEmpty()) {
+        throw new IllegalArgumentException("stale HistoryRange must not contain lines");
+      }
       remoteAvailableExtent = range.availableExtent;
       staleProjection = true;
+      publishProjectionReadView();
       return false;
     }
-    if (range.status == HistoryRangeResult.Status.RETRYABLE) return false;
+    if (range.status == HistoryRangeResult.Status.RETRYABLE) {
+      if (!range.lines.isEmpty()) {
+        throw new IllegalArgumentException("retryable HistoryRange must not contain lines");
+      }
+      return false;
+    }
+    if (requestedFromSeq < 1 || requestedToSeq < requestedFromSeq
+        || requestedToSeq - requestedFromSeq >= 256
+        || range.lines.size() > requestedToSeq - requestedFromSeq + 1) {
+      throw new IllegalArgumentException("invalid HistoryRange request bounds");
+    }
+
+    // 先规范化并验证整批响应，再创建 Editor。任一异常行都不能写入页面 overlay、
+    // 清理 migration、更新 available extent 或发布 RenderPublication。
+    List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
+    Set<Long> responseLineIds = new HashSet<>();
+    List<Long> completedMigrations = new ArrayList<>();
+    long previousSeq = 0;
+    for (TerminalLine line : range.lines) {
+      TerminalLine normalized = normalizeHistoryLine(line);
+      long seq = normalized.historySeq;
+      if (seq < requestedFromSeq || seq > requestedToSeq
+          || !range.availableExtent.contains(seq)
+          || !displayExtent.contains(seq)) {
+        throw new IllegalArgumentException("HistoryRange line outside negotiated bounds");
+      }
+      if (previousSeq != 0 && seq <= previousSeq) {
+        throw new IllegalArgumentException("HistoryRange lines are not strictly increasing");
+      }
+      if (!responseLineIds.add(normalized.id)) {
+        throw new IllegalArgumentException("HistoryRange contains duplicate LineID");
+      }
+      validatePendingHistoryMigration(normalized, completedMigrations);
+      normalizedLines.add(normalized);
+      previousSeq = seq;
+    }
+
     HistoryExtent previousAvailableExtent = remoteAvailableExtent;
     PagedTerminalHistory.Editor editor = pagedHistory.edit();
     editor.setAvailableExtent(
         range.availableExtent.firstSeq, range.availableExtent.lastSeq);
-    List<Long> completedMigrations = new ArrayList<>();
-    for (TerminalLine line : range.lines) {
-      TerminalLine normalized = normalizeHistoryLine(line);
-      if (displayExtent.contains(normalized.historySeq)) {
-        validatePendingHistoryMigration(normalized, completedMigrations);
-        editor.put(normalized.historySeq, normalized);
-      }
+    for (TerminalLine normalized : normalizedLines) {
+      editor.put(normalized.historySeq, normalized);
     }
     editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
     clearCompletedMigrations(completedMigrations);
     remoteAvailableExtent = range.availableExtent;
     markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
         false, false, false, false, false);
-    mergeHistoryDirtyRange(range.lines, false);
+    mergeHistoryDirtyRange(normalizedLines, false);
     mergeAvailableExtentDirty(previousAvailableExtent, range.availableExtent);
     markTerminalState(false, true, false, false, 0, 0);
     publishPendingRenderUpdate();
@@ -520,6 +591,7 @@ public final class RemoteTerminalModel {
     }
     remoteScreenRevision = latestScreenRevision;
     remoteAvailableExtent = latestExtent;
+    publishProjectionReadView();
     return true;
   }
 
@@ -553,8 +625,41 @@ public final class RemoteTerminalModel {
     return renderSnapshot;
   }
 
-  /** 单渲染 owner 在 VSync 破坏性消费；全程只执行一次原子交换。 */
+  /** UI/Runtime 轻量读取；不获取模型 monitor。 */
+  public ProjectionReadView projectionReadView() {
+    return projectionReadView;
+  }
+
+  /** Runtime 初始化时幂等绑定私有 capability；同一模型不得归属两个 Runtime。 */
+  public void bindRenderPublicationAuthority(Object authority) {
+    if (authority == null) throw new NullPointerException("authority");
+    Object current = renderPublicationAuthority.get();
+    if (current == authority) return;
+    if (!renderPublicationAuthority.compareAndSet(null, authority)) {
+      throw new IllegalStateException("render publication authority already bound");
+    }
+  }
+
+  /** Runtime capability 消费；owner 身份由 Runtime 在进入这里之前验证。 */
+  public RenderUpdate consumeRenderUpdate(Object authority) {
+    if (authority == null || renderPublicationAuthority.get() != authority) {
+      throw new IllegalStateException("invalid render publication authority");
+    }
+    return consumeRenderPublication();
+  }
+
+  /**
+   * 未绑定 Runtime 的独立模型测试/工具入口。生产 Runtime 一旦绑定 capability，旁路调用
+   * 会被明确拒绝，避免取得 model 引用的代码抢走 publication。
+   */
   public RenderUpdate consumeRenderUpdate() {
+    if (renderPublicationAuthority.get() != null) {
+      throw new IllegalStateException("RenderUpdate must be consumed through TerminalSessionRuntime");
+    }
+    return consumeRenderPublication();
+  }
+
+  private RenderUpdate consumeRenderPublication() {
     RenderPublication publication = pendingPublication.getAndSet(null);
     return publication == null ? null : publication.update;
   }
@@ -584,6 +689,10 @@ public final class RemoteTerminalModel {
 
   synchronized long loadedHistoryLineCountForTest() {
     return pagedHistory.snapshot().loadedLineCount();
+  }
+
+  synchronized int residentHistoryPageCountForTest() {
+    return pagedHistory.residentPageCountForTest();
   }
 
   synchronized int loadedLineIdentityCountForTest() {
@@ -927,6 +1036,13 @@ public final class RemoteTerminalModel {
         activeBuffer, screenCopy, historySnapshot, cursor, modes, palette,
         title, workingDirectory, firstAvailableHistorySeq,
         hasMoreHistoryBefore);
+    publishProjectionReadView();
+  }
+
+  private void publishProjectionReadView() {
+    projectionReadView = new ProjectionReadView(
+        instanceId, layoutEpoch, screenRevision, displayExtent, remoteAvailableExtent,
+        projectionHealth.complete);
   }
 
   /**

@@ -31,7 +31,7 @@ public final class RemoteTerminalModelPublicationTest {
       });
       assertTrue(monitorHeld.await(1, TimeUnit.SECONDS));
 
-      Future<RenderUpdate> consume = executor.submit(model::consumeRenderUpdate);
+      Future<RenderUpdate> consume = executor.submit(() -> model.consumeRenderUpdate());
       assertNotNull(consume.get(500, TimeUnit.MILLISECONDS));
       releaseMonitor.countDown();
       blocker.get(1, TimeUnit.SECONDS);

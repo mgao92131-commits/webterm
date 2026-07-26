@@ -67,6 +67,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private EffectListener effectListener;
   private View view;
   private boolean renderScheduled;
+  private boolean renderConsumerActive;
   @Nullable private Runnable scheduledRenderCallback;
   private long renderGeneration;
   /** 上一次成功排队的历史分页边界；用于保证 beforeSeq 严格向旧方向推进。 */
@@ -89,32 +90,42 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     this.frameScheduler = frameScheduler;
     this.lifecycleObserver = (source, event) -> {
       if (event == Lifecycle.Event.ON_RESUME) {
-        runtime.addListener(this);
-        runtime.requestRender();
+        activateRenderConsumer();
       } else if (event == Lifecycle.Event.ON_PAUSE) {
-        runtime.removeListener(this);
-        // 与 detach 一致地取消排队中的渲染：暂停期间不再需要绘制，
-        // resume 时由 requestRender 统一请求一次最新快照。不置 view=null、
-        // 不移除 observer，attach/detach 才负责完整解绑。
-        cancelPendingRender();
+        deactivateRenderConsumer();
       }
     };
   }
 
   public void attach(@NonNull LifecycleOwner owner, @NonNull View view) {
-    runtime.registerRenderConsumer(this);
     this.view = view;
     view.bindModel(runtime.model());
     owner.getLifecycle().addObserver(lifecycleObserver);
+    // addObserver 通常会同步补发当前状态；测试/fake Lifecycle 未补发时显式覆盖
+    // 已经 RESUMED 的 attach，且 activate 自身幂等。
+    Lifecycle.State state = owner.getLifecycle().getCurrentState();
+    if (state != null && state.isAtLeast(Lifecycle.State.RESUMED)) activateRenderConsumer();
+  }
+
+  public void detach(@NonNull LifecycleOwner owner) {
+    deactivateRenderConsumer();
+    owner.getLifecycle().removeObserver(lifecycleObserver);
+    view = null;
+  }
+
+  private void activateRenderConsumer() {
+    if (renderConsumerActive) return;
+    runtime.registerRenderConsumer(this);
+    renderConsumerActive = true;
     runtime.addListener(this);
     runtime.requestRender();
   }
 
-  public void detach(@NonNull LifecycleOwner owner) {
-    runtime.removeListener(this);
-    owner.getLifecycle().removeObserver(lifecycleObserver);
-    view = null;
+  private void deactivateRenderConsumer() {
     cancelPendingRender();
+    runtime.removeListener(this);
+    if (!renderConsumerActive) return;
+    renderConsumerActive = false;
     runtime.unregisterRenderConsumer(this);
   }
 
@@ -347,7 +358,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     renderScheduled = false;
     scheduledRenderCallback = null;
     View v = view;
-    RenderUpdate update = runtime.model().consumeRenderUpdate();
+    RenderUpdate update = runtime.consumeRenderUpdate(this);
     // 捕获点 D：旁路记录 controller 正常 consumeRenderUpdate() 取得的不可变 RenderUpdate
     // （RenderSnapshot + RenderDirtyState + TerminalStateUpdate）。绝不额外调用 consumeRenderUpdate()。
     // 先做廉价 isRecording() 判断；记录时携带流身份供会话级隔离。

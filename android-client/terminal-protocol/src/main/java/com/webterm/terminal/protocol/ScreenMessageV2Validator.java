@@ -62,6 +62,20 @@ public final class ScreenMessageV2Validator {
     }
     validateExtent(response.getAvailableExtent());
     validateDictionary(response.getDictionary());
+    switch (response.getStatus()) {
+      case HISTORY_RANGE_STATUS_STALE_PROJECTION:
+      case HISTORY_RANGE_STATUS_RETRYABLE:
+        if (response.getLinesCount() != 0) {
+          throw new IllegalArgumentException(
+              "non-data HistoryRange status must not contain lines");
+        }
+        break;
+      case HISTORY_RANGE_STATUS_OK:
+      case HISTORY_RANGE_STATUS_TRIMMED:
+        break;
+      default:
+        throw new IllegalArgumentException("invalid HistoryRangeResponse status");
+    }
   }
 
   private static void requireIdentity(String instanceId, long layoutEpoch) {
