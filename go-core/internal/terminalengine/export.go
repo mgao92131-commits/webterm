@@ -154,6 +154,45 @@ type HistoryRangeData struct {
 	RetryAfterMS uint32
 }
 
+// ScreenScroll 是 Commit 内可选的全屏连续滚动压缩描述。
+type ScreenScroll struct {
+	TopRow             int
+	BottomRowExclusive int
+	DeltaRows          int
+}
+
+type ScreenRowWrite struct {
+	Row  int
+	Line Line
+}
+
+type ScreenMutation struct {
+	Scroll *ScreenScroll
+	Writes []ScreenRowWrite
+}
+
+type HistoryMutation struct {
+	FinalExtent   HistoryExtent
+	AppendedLines []Line
+}
+
+// TerminalCommit 是一个投影窗口的原子传输领域对象。
+type TerminalCommit struct {
+	InstanceID       string
+	Epoch            uint64
+	StreamGeneration uint64
+	BaseRevision     uint64
+	Revision         uint64
+	Screen           *ScreenMutation
+	History          *HistoryMutation
+	Cursor            *Cursor
+	Modes             *Modes
+	PaletteChanged    bool
+	Palette           ScreenFrame
+	Styles            []TerminalStyle
+	Links             []Hyperlink
+}
+
 // ScreenFrame 是传输无关的权威屏幕帧，也可作为 patch 的载体。
 // Kind 显式区分 snapshot 与 patch；BaseRevision 只表达 patch 基线，
 // snapshot 的 base 不参与语义。

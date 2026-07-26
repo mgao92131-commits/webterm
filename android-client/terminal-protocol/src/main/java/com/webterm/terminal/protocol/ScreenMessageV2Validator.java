@@ -51,6 +51,59 @@ public final class ScreenMessageV2Validator {
     validateDictionary(delta.getDictionary());
   }
 
+  public static void validateTerminalCommit(
+      TerminalScreenV2Proto.TerminalCommit commit, int rows) {
+    requireIdentity(commit.getInstanceId(), commit.getLayoutEpoch());
+    if (rows < 1 || rows > 200 || commit.getStreamGeneration() < 1
+        || commit.getBaseRevision() < 1 || commit.getRevision() <= commit.getBaseRevision()) {
+      throw new IllegalArgumentException("invalid TerminalCommit identity/revision");
+    }
+    boolean observable = commit.hasScreen() || commit.hasHistory() || commit.hasCursor()
+        || commit.hasModes() || commit.hasPalette();
+    if (!observable) throw new IllegalArgumentException("empty TerminalCommit");
+    if (commit.hasScreen()) {
+      if (commit.getScreen().getWritesCount() > rows) {
+        throw new IllegalArgumentException("too many screen writes");
+      }
+      boolean[] seen = new boolean[rows];
+      for (TerminalScreenV2Proto.ScreenRowWrite write : commit.getScreen().getWritesList()) {
+        int row = write.getRow();
+        if (!write.hasLine() || row < 0 || row >= rows || seen[row]
+            || write.getLine().getHistorySeq() != 0) {
+          throw new IllegalArgumentException("invalid screen row write");
+        }
+        seen[row] = true;
+      }
+      if (commit.getScreen().hasScroll()) {
+        TerminalScreenV2Proto.ScreenScroll scroll = commit.getScreen().getScroll();
+        int height = scroll.getBottomRowExclusive() - scroll.getTopRow();
+        long magnitude = Math.abs((long) scroll.getDeltaRows());
+        if (scroll.getTopRow() < 0 || scroll.getBottomRowExclusive() > rows
+            || height <= 0 || magnitude == 0 || magnitude >= height) {
+          throw new IllegalArgumentException("invalid screen scroll");
+        }
+      }
+    }
+    if (commit.hasHistory()) {
+      if (!commit.getHistory().hasFinalExtent()
+          || commit.getHistory().getAppendedLinesCount() > 128) {
+        throw new IllegalArgumentException("invalid history mutation bounds");
+      }
+      validateExtent(commit.getHistory().getFinalExtent());
+      long previous = 0;
+      long first = commit.getHistory().getFinalExtent().getFirstSeq();
+      long last = commit.getHistory().getFinalExtent().getLastSeq();
+      for (TerminalScreenV2Proto.LineData line : commit.getHistory().getAppendedLinesList()) {
+        long seq = line.getHistorySeq();
+        if (seq == 0 || seq <= previous || seq < first || seq > last) {
+          throw new IllegalArgumentException("invalid appended history line");
+        }
+        previous = seq;
+      }
+    }
+    validateDictionary(commit.getDictionary());
+  }
+
   public static void validateHistoryRange(
       TerminalScreenV2Proto.HistoryRangeResponse response) {
     requireIdentity(response.getInstanceId(), response.getLayoutEpoch());

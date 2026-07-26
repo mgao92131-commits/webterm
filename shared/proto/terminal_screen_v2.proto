@@ -32,6 +32,7 @@ message ScreenEnvelope {
     Exit exit = 19;
     Ping ping = 20;
     Pong pong = 21;
+    TerminalCommit terminal_commit = 22;
   }
 }
 
@@ -127,6 +128,42 @@ message HistoryDelta {
   HistoryExtent available_extent = 4;
   repeated LineData lines = 5;
   Dictionary dictionary = 6;
+}
+
+// TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。
+message TerminalCommit {
+  string instance_id = 1;
+  uint64 layout_epoch = 2;
+  uint64 stream_generation = 3;
+  uint64 base_revision = 4;
+  uint64 revision = 5;
+  ScreenMutation screen = 6;
+  HistoryMutation history = 7;
+  Cursor cursor = 8;
+  Modes modes = 9;
+  TerminalPalette palette = 10;
+  Dictionary dictionary = 11;
+}
+
+message ScreenMutation {
+  ScreenScroll scroll = 1;
+  repeated ScreenRowWrite writes = 2;
+}
+
+message ScreenScroll {
+  int32 top_row = 1;
+  int32 bottom_row_exclusive = 2;
+  int32 delta_rows = 3;
+}
+
+message ScreenRowWrite {
+  int32 row = 1;
+  LineData line = 2;
+}
+
+message HistoryMutation {
+  HistoryExtent final_extent = 1;
+  repeated LineData appended_lines = 2;
 }
 
 enum HistoryRangeStatus {

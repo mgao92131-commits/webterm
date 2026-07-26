@@ -65,6 +65,52 @@ public final class ScreenMessageV2Mapper {
         mapLineList(pb.getLinesList(), columns, dictionary));
   }
 
+  public static TerminalCommit mapTerminalCommit(
+      TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns) {
+    Dictionary dictionary = dictionary(pb.getDictionary());
+    ScreenMutation screen = null;
+    if (pb.hasScreen()) {
+      ScreenScroll scroll = pb.getScreen().hasScroll()
+          ? new ScreenScroll(pb.getScreen().getScroll().getTopRow(),
+              pb.getScreen().getScroll().getBottomRowExclusive(),
+              pb.getScreen().getScroll().getDeltaRows()) : null;
+      List<ScreenRowWrite> writes = new ArrayList<>(pb.getScreen().getWritesCount());
+      boolean[] seenRows = new boolean[Math.max(0, rows)];
+      for (TerminalScreenV2Proto.ScreenRowWrite write : pb.getScreen().getWritesList()) {
+        if (write.getRow() < 0 || write.getRow() >= rows || seenRows[write.getRow()]) {
+          throw new IllegalArgumentException("invalid or duplicate screen row write");
+        }
+        seenRows[write.getRow()] = true;
+        TerminalLine mapped = line(write.getLine(), columns, dictionary);
+        if (mapped.historySeq != 0) {
+          throw new IllegalArgumentException("screen line has history sequence");
+        }
+        writes.add(new ScreenRowWrite(write.getRow(), mapped));
+      }
+      screen = new ScreenMutation(scroll, writes);
+    }
+    HistoryMutation history = null;
+    if (pb.hasHistory()) {
+      HistoryExtent finalExtent = extent(pb.getHistory().getFinalExtent());
+      List<TerminalLine> lines = mapLineList(
+          pb.getHistory().getAppendedLinesList(), columns, dictionary);
+      long previous = 0;
+      for (TerminalLine line : lines) {
+        if (line.historySeq <= previous || !finalExtent.contains(line.historySeq)) {
+          throw new IllegalArgumentException("invalid appended history sequence");
+        }
+        previous = line.historySeq;
+      }
+      history = new HistoryMutation(finalExtent, lines);
+    }
+    return new TerminalCommit(
+        pb.getInstanceId(), pb.getLayoutEpoch(), pb.getStreamGeneration(),
+        pb.getBaseRevision(), pb.getRevision(), screen, history,
+        pb.hasCursor() ? cursor(pb.getCursor()) : null,
+        pb.hasModes() ? modes(pb.getModes()) : null,
+        pb.hasPalette() ? palette(pb.getPalette()) : null);
+  }
+
   public static HistoryRangeResult mapHistoryRange(
       TerminalScreenV2Proto.HistoryRangeResponse pb, int columns) {
     Dictionary dictionary = dictionary(pb.getDictionary());
