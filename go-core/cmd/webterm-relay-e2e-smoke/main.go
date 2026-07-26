@@ -594,8 +594,15 @@ func screenEnvelopeContains(data []byte, text string) bool {
 	switch payload := envelope.Payload.(type) {
 	case *pb.ScreenEnvelope_Baseline:
 		lines = payload.Baseline.ScreenLines
-	case *pb.ScreenEnvelope_ScreenPatch:
-		lines = payload.ScreenPatch.ScreenLineUpdates
+	case *pb.ScreenEnvelope_TerminalCommit:
+		if payload.TerminalCommit.GetScreen() != nil {
+			for _, write := range payload.TerminalCommit.GetScreen().GetWrites() {
+				lines = append(lines, write.GetLine())
+			}
+		}
+		if payload.TerminalCommit.GetHistory() != nil {
+			lines = append(lines, payload.TerminalCommit.GetHistory().GetAppendedLines()...)
+		}
 	default:
 		return false
 	}

@@ -16,7 +16,7 @@ import androidx.core.content.FileProvider;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.capture.AgentCaptureData;
 import com.webterm.terminal.model.capture.AgentCaptureLink;
@@ -312,12 +312,12 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     }
 
     @Override
-    public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch) {
-        if (!recording || patch == null || !matches(identity)) return;
+    public void recordMappedCommit(CaptureStreamIdentity identity, TerminalCommit commit) {
+        if (!recording || commit == null || !matches(identity)) return;
         synchronized (lock) {
             if (!recording || !matches(identity)) return;
-            if (mappedRing.add(new MappedFrame(null, patch, System.currentTimeMillis()),
-                    estimatePatchBytes(patch))) {
+            if (mappedRing.add(new MappedFrame(null, commit, System.currentTimeMillis()),
+                    estimateCommitBytes(commit))) {
                 mappedTruncated = true;
             }
         }
@@ -405,7 +405,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             for (MappedFrame mf : mapped) {
                 JSONObject one = mf.snapshot != null
                         ? CaptureSerializer.mappedSnapshot(mf.snapshot)
-                        : CaptureSerializer.mappedPatch(mf.patch);
+                        : CaptureSerializer.mappedCommit(mf.commit);
                 one.put("capturedAtMillis", mf.capturedAtMillis);
                 mappedBuf.append(one).append('\n');
             }
@@ -769,9 +769,10 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
         return n;
     }
 
-    private static long estimatePatchBytes(ScreenPatchV2 p) {
+    private static long estimateCommitBytes(TerminalCommit p) {
         long n = 64;
-        if (p.lineUpdates != null) for (com.webterm.terminal.model.TerminalLine l : p.lineUpdates) n += lineBytes(l);
+        if (p.screen != null) for (com.webterm.terminal.model.ScreenRowWrite w : p.screen.writes) n += lineBytes(w.line);
+        if (p.history != null) for (com.webterm.terminal.model.TerminalLine l : p.history.appendedLines) n += lineBytes(l);
         return n;
     }
 
@@ -807,12 +808,12 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
 
     static final class MappedFrame {
         final ScreenBaseline snapshot;
-        final ScreenPatchV2 patch;
+        final TerminalCommit commit;
         final long capturedAtMillis;
 
-        MappedFrame(ScreenBaseline snapshot, ScreenPatchV2 patch, long capturedAtMillis) {
+        MappedFrame(ScreenBaseline snapshot, TerminalCommit commit, long capturedAtMillis) {
             this.snapshot = snapshot;
-            this.patch = patch;
+            this.commit = commit;
             this.capturedAtMillis = capturedAtMillis;
         }
     }

@@ -21,7 +21,7 @@ public class CaptureContractTest {
         // record* 不抛异常、无副作用。
         noop.recordWireFrame(id, 1, 1L, "SNAPSHOT", new byte[]{1, 2, 3});
         noop.recordMappedSnapshot(id, null);
-        noop.recordMappedPatch(id, null);
+        noop.recordMappedCommit(id, null);
         noop.recordModelState(id, null);
         noop.recordRenderUpdate(id, null);
         assertNotNull(noop.bindSession(null));

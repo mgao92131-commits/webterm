@@ -28,7 +28,6 @@ type JSONScreenFrame struct {
 	Layout               []uint64    `json:"layout,omitempty"`
 	Screen               []JSONLine  `json:"screen"`
 	History              JSONHistory `json:"history"`
-	HistoryAppendSeqs    []uint64    `json:"historyAppendSeqs,omitempty"`
 	Styles               []JSONStyle `json:"styles,omitempty"`
 	Links                []JSONLink  `json:"links,omitempty"`
 	Title                string      `json:"title,omitempty"`
@@ -167,7 +166,6 @@ func FrameToJSON(frame terminalengine.ScreenFrame) JSONScreenFrame {
 		Layout:               layout,
 		Screen:               linesToJSON(frame.Screen),
 		History:              historyToJSON(frame.History),
-		HistoryAppendSeqs:    frame.HistoryAppendSeqs,
 		Styles:               stylesToJSON(frame.Styles),
 		Links:                linksToJSON(frame.Links),
 		Title:                frame.Title,

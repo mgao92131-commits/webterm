@@ -11,8 +11,6 @@ public final class ScreenMailbox {
   public enum MessageKind {
     BASELINE,
     TERMINAL_COMMIT,
-    SCREEN_PATCH,
-    HISTORY_DELTA,
     HISTORY_RANGE,
     TAIL_STATUS,
     INPUT_ACK,
@@ -23,7 +21,7 @@ public final class ScreenMailbox {
     PONG,
     /** @deprecated 仅供旧单元测试构造 mailbox；产品通道已使用 BASELINE。 */
     @Deprecated SNAPSHOT,
-    /** @deprecated 产品通道已使用 SCREEN_PATCH。 */
+    /** @deprecated 产品通道已使用 TERMINAL_COMMIT。 */
     @Deprecated PATCH,
     /** @deprecated 产品通道已使用 HISTORY_RANGE。 */
     @Deprecated HISTORY_PAGE,
@@ -36,8 +34,6 @@ public final class ScreenMailbox {
   static boolean isProjectionMessage(@NonNull MessageKind kind) {
     return kind == MessageKind.BASELINE
         || kind == MessageKind.TERMINAL_COMMIT
-        || kind == MessageKind.SCREEN_PATCH
-        || kind == MessageKind.HISTORY_DELTA
         || kind == MessageKind.HISTORY_RANGE
         || kind == MessageKind.TAIL_STATUS
         || kind == MessageKind.SNAPSHOT
@@ -251,9 +247,7 @@ public final class ScreenMailbox {
     Iterator<Message> iterator = messages.iterator();
     while (iterator.hasNext()) {
       Message message = iterator.next();
-      if (message.kind != MessageKind.SCREEN_PATCH
-          && message.kind != MessageKind.TERMINAL_COMMIT
-          && message.kind != MessageKind.HISTORY_DELTA
+      if (message.kind != MessageKind.TERMINAL_COMMIT
           && message.kind != MessageKind.PATCH) continue;
       iterator.remove();
       dropped++;

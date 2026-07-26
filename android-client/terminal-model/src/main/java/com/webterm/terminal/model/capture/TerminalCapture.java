@@ -1,7 +1,7 @@
 package com.webterm.terminal.model.capture;
 
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 
 /**
@@ -55,9 +55,9 @@ public final class TerminalCapture {
         }
     }
 
-    public static void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch) {
+    public static void recordMappedCommit(CaptureStreamIdentity identity, TerminalCommit commit) {
         try {
-            controller.recordMappedPatch(identity, patch);
+            controller.recordMappedCommit(identity, commit);
         } catch (Throwable ignored) {
         }
     }

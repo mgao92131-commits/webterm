@@ -87,19 +87,19 @@ func TestHandlerRequiresExplicitFrozenIdentity(t *testing.T) {
 	}
 }
 
-func TestPatchDictionaryIsMessageLocalAndOnlyContainsReferencedEntries(t *testing.T) {
+func TestCommitDictionaryIsMessageLocalAndOnlyContainsReferencedEntries(t *testing.T) {
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
 		BaseRevision: 4, Seq: 5, Rows: 1, Cols: 1,
 		Screen: []terminalengine.Line{{
-			ID: 2, Version: 2,
+			ID: 2, Version: 2, Row: 0,
 			Runs: []terminalengine.CellRun{{Cells: []terminalengine.Cell{{
 				Text: "x", Width: 1, StyleID: 5,
 			}}}},
 		}},
 		Styles: []terminalengine.TerminalStyle{{ID: 5}, {ID: 6}},
 	}
-	wire, err := EncodeScreenPatch(frame, 3)
+	wire, err := EncodeTerminalCommit(frame, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +107,9 @@ func TestPatchDictionaryIsMessageLocalAndOnlyContainsReferencedEntries(t *testin
 	if err := proto.Unmarshal(wire, &env); err != nil {
 		t.Fatal(err)
 	}
-	styles := env.GetScreenPatch().GetDictionary().GetStyles()
+	styles := env.GetTerminalCommit().GetDictionary().GetStyles()
 	if len(styles) != 1 || styles[0].GetId() != 5 {
-		t.Fatalf("patch dictionary styles = %+v, want only id 5", styles)
+		t.Fatalf("commit dictionary styles = %+v, want only id 5", styles)
 	}
 }
 

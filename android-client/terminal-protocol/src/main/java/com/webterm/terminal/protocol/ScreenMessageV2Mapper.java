@@ -34,37 +34,6 @@ public final class ScreenMessageV2Mapper {
         pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : "");
   }
 
-  public static ScreenPatchV2 mapPatch(
-      TerminalScreenV2Proto.ScreenPatch pb, int columns) {
-    Dictionary dictionary = dictionary(pb.getDictionary());
-    long[] layout = null;
-    if (pb.hasScreenLayout()) {
-      layout = new long[pb.getScreenLayout().getLineIdsCount()];
-      for (int i = 0; i < layout.length; i++) {
-        layout[i] = pb.getScreenLayout().getLineIds(i);
-      }
-    }
-    return new ScreenPatchV2(
-        pb.getInstanceId(), pb.getLayoutEpoch(), pb.getStreamGeneration(),
-        pb.getBaseScreenRevision(), pb.getScreenRevision(), layout,
-        mapLineList(pb.getScreenLineUpdatesList(), columns, dictionary),
-        pb.hasCursor() ? cursor(pb.getCursor()) : null,
-        pb.hasModes() ? modes(pb.getModes()) : null,
-        pb.hasPalette() ? palette(pb.getPalette()) : null,
-        pb.hasActiveBuffer() ? buffer(pb.getActiveBuffer()) : null,
-        pb.hasTitle() ? pb.getTitle() : null,
-        pb.hasWorkingDirectory() ? pb.getWorkingDirectory() : null);
-  }
-
-  public static HistoryDelta mapHistoryDelta(
-      TerminalScreenV2Proto.HistoryDelta pb, int columns) {
-    Dictionary dictionary = dictionary(pb.getDictionary());
-    return new HistoryDelta(
-        pb.getInstanceId(), pb.getLayoutEpoch(), pb.getStreamGeneration(),
-        extent(pb.getAvailableExtent()),
-        mapLineList(pb.getLinesList(), columns, dictionary));
-  }
-
   public static TerminalCommit mapTerminalCommit(
       TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns) {
     Dictionary dictionary = dictionary(pb.getDictionary());

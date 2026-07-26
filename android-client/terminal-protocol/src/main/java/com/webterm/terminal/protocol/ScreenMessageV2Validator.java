@@ -23,34 +23,6 @@ public final class ScreenMessageV2Validator {
     validateDictionary(baseline.getDictionary());
   }
 
-  public static void validatePatch(TerminalScreenV2Proto.ScreenPatch patch) {
-    requireIdentity(patch.getInstanceId(), patch.getLayoutEpoch());
-    if (patch.getStreamGeneration() < 1
-        || patch.getBaseScreenRevision() < 1
-        || patch.getScreenRevision() <= patch.getBaseScreenRevision()) {
-      throw new IllegalArgumentException("invalid ScreenPatch revision");
-    }
-    boolean observable = patch.hasScreenLayout()
-        || patch.getScreenLineUpdatesCount() > 0
-        || patch.hasCursor()
-        || patch.hasModes()
-        || patch.hasPalette()
-        || patch.hasActiveBuffer()
-        || patch.hasTitle()
-        || patch.hasWorkingDirectory();
-    if (!observable) throw new IllegalArgumentException("empty ScreenPatch");
-    validateDictionary(patch.getDictionary());
-  }
-
-  public static void validateHistoryDelta(TerminalScreenV2Proto.HistoryDelta delta) {
-    requireIdentity(delta.getInstanceId(), delta.getLayoutEpoch());
-    if (delta.getStreamGeneration() < 1 || delta.getLinesCount() > 256) {
-      throw new IllegalArgumentException("invalid HistoryDelta bounds");
-    }
-    validateExtent(delta.getAvailableExtent());
-    validateDictionary(delta.getDictionary());
-  }
-
   public static void validateTerminalCommit(
       TerminalScreenV2Proto.TerminalCommit commit, int rows) {
     requireIdentity(commit.getInstanceId(), commit.getLayoutEpoch());

@@ -14,7 +14,8 @@ import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
 
-import com.webterm.terminal.model.HistoryDelta;
+import com.webterm.terminal.model.HistoryMutation;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
@@ -142,7 +143,7 @@ public final class TerminalScreenControllerTest {
   }
 
   @Test
-  public void restoredAnchorCanAutoFreezeLiveButNeverReturningLive() {
+  public void restoredAnchorCanAutoFreezeLiveButNeverReturningLive() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
     when(runtime.model()).thenReturn(model);
@@ -169,16 +170,18 @@ public final class TerminalScreenControllerTest {
 
     viewport.scrollBy(600, 2_000);
     viewport.setHistoryAnchor(1, 0);
-    assertTrue(model.applyHistoryDelta(new HistoryDelta(
-        "i1", 1, 1, new HistoryExtent(1, 1), Collections.emptyList())));
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 1, 2, null,
+        new HistoryMutation(new HistoryExtent(1, 1), Collections.emptyList()), null, null, null)));
     controller.onRenderNeeded();
 
     assertEquals(ContentStreamIntent.FROZEN_HISTORY, viewport.contentStreamIntent);
     verify(runtime, times(1)).freezeStream();
 
     viewport.markReturningLive();
-    assertTrue(model.applyHistoryDelta(new HistoryDelta(
-        "i1", 1, 1, new HistoryExtent(1, 2), Collections.emptyList())));
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 3, null,
+        new HistoryMutation(new HistoryExtent(1, 2), Collections.emptyList()), null, null, null)));
     controller.onRenderNeeded();
 
     assertEquals(ContentStreamIntent.RETURNING_LIVE, viewport.contentStreamIntent);

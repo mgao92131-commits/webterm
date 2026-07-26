@@ -75,8 +75,7 @@ func TestTerminalExitDeliversFinalOutputBeforeExit(t *testing.T) {
 	client.handleBinary(helloBytes)
 
 	// 等待 Exit 到达，然后校验顺序：Exit 之前必须已有包含 __END_MARKER__ 的
-	// 投影帧（Baseline、ScreenPatch 或 HistoryDelta，原始 protobuf 字节中正文为
-	// UTF-8 文本）。大量输出会把结束标记滚入历史，因此 V2 下通常位于 HistoryDelta。
+	// 投影帧（Baseline 或 TerminalCommit，原始 protobuf 字节中正文为 UTF-8 文本）。
 	deadline := time.Now().Add(60 * time.Second)
 	for {
 		frames := socket.snapshot()
@@ -126,12 +125,6 @@ func envelopeContainsText(envelope *pb.ScreenEnvelope, needle string) bool {
 	if baseline := envelope.GetBaseline(); baseline != nil {
 		lines = append(lines, baseline.GetScreenLines()...)
 		lines = append(lines, baseline.GetHistoryTail().GetLines()...)
-	}
-	if patch := envelope.GetScreenPatch(); patch != nil {
-		lines = append(lines, patch.GetScreenLineUpdates()...)
-	}
-	if delta := envelope.GetHistoryDelta(); delta != nil {
-		lines = append(lines, delta.GetLines()...)
 	}
 	if commit := envelope.GetTerminalCommit(); commit != nil {
 		if commit.GetScreen() != nil {

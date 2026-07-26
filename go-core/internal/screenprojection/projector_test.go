@@ -67,7 +67,7 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if len(patch.Screen) != 1 || patch.Screen[0].ID != promptID || !strings.Contains(exportLineText(patch.Screen[0]), "user@host:~$") {
 		t.Fatalf("prompt LineData missing or wrong: %+v", patch.Screen)
 	}
-	encoded, err := screenprotocolv2.EncodeScreenPatch(patch, 1)
+	encoded, err := screenprotocolv2.EncodeTerminalCommit(patch, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if err := proto.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.GetScreenPatch() == nil || len(envelope.GetScreenPatch().GetScreenLineUpdates()) != 1 {
-		t.Fatalf("protobuf patch omitted prompt line: %+v", envelope.GetScreenPatch())
+	if envelope.GetTerminalCommit() == nil || len(envelope.GetTerminalCommit().GetScreen().GetWrites()) != 1 {
+		t.Fatalf("protobuf commit omitted prompt line: %+v", envelope.GetTerminalCommit())
 	}
 }
 
@@ -227,7 +227,7 @@ func TestFrameDeriver_FrameKindAndTitleCwdFlags(t *testing.T) {
 	}
 }
 
-func TestFrameDeriver_FullScreenPatchOnlyCarriesHistoryDelta(t *testing.T) {
+func TestFrameDeriver_FullScreenCommitCarriesBoundedHistory(t *testing.T) {
 	const rows = 52
 	const historySize = 300
 

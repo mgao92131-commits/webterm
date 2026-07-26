@@ -222,11 +222,7 @@ type ScreenFrame struct {
 	ModesChanged   bool
 	PaletteChanged bool
 	History        HistoryWindow
-	// HistoryAppendSeqs is patch-only. It separates history index movement from
-	// LineData: a promoted line already known from the prior screen layout does
-	// not need its content serialized again.
-	HistoryAppendSeqs []uint64
-	Screen            []Line
+	Screen         []Line
 	// ScreenScroll 是 patch/commit 的可选全屏滚动描述；Screen 中的行按 Row 写入。
 	ScreenScroll *ScreenScroll
 	// Layout is patch-only presence data. Snapshot layout is always derived from
@@ -241,9 +237,7 @@ type ScreenFrame struct {
 	// 可独立显示，总是携带 title/cwd，不需要标志。
 	TitleChanged      bool
 	WorkingDirChanged bool
-	// FirstAvailableHistorySeqChanged 只用于恢复 Patch：与 History 中的
-	// FirstAvailableHistorySeq 配合表达 optional history watermark presence。
-	// 在线 ScreenPatch 不携带历史水位；历史变化由独立 HistoryDelta 表达。
+	// FirstAvailableHistorySeqChanged 表示 Commit 必须携带最终历史 extent。
 	FirstAvailableHistorySeqChanged bool
 	// RowChangedRevision is process-local projection metadata. It stamps each screen row with
 	// the last authoritative export revision that touched it, allowing per-client derivation to
@@ -260,15 +254,6 @@ type ScreenFrame struct {
 	// snapshot instead of a patch referencing dictionary IDs the client never
 	// received.
 	DictionaryGeneration uint64
-	// HistoryOnlyPatch is process-local derivation metadata. It is never encoded.
-	// It marks a patch frame whose only observable change is history (extent
-	// watermark movement and/or new history lines) with NO screen change. The
-	// per-client writer must emit only a HistoryDelta for such a frame and must
-	// NOT emit a ScreenPatch — otherwise an empty ScreenPatch would advance the
-	// screen revision chain on a non-screen change (violates I3: revision
-	// advances iff observable SCREEN change). The deriver still advances the
-	// history portion of its baseline so the lines are not re-emitted.
-	HistoryOnlyPatch bool
 }
 
 type EffectKind uint8

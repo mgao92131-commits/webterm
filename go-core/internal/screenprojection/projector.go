@@ -528,8 +528,7 @@ func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 		patch.PaletteChanged
 }
 
-// hasHistoryChanges 判断 patch 是否携带任何历史（extent/行）变化。历史与屏幕
-// revision 链正交（I2），其变化单独经 HistoryDelta 表达。
+// hasHistoryChanges 判断 Commit 是否携带任何历史 extent/正文变化。
 func hasHistoryChanges(patch terminalengine.ScreenFrame) bool {
 	return len(patch.History.Lines) > 0 ||
 		patch.FirstAvailableHistorySeqChanged
@@ -560,10 +559,8 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		oldHistory[line.HistorySeq] = struct{}{}
 	}
 	var historyAppend []terminalengine.Line
-	var historyAppendSeqs []uint64
 	for _, line := range new.History.Lines {
 		if _, seen := oldHistory[line.HistorySeq]; !seen {
-			historyAppendSeqs = append(historyAppendSeqs, line.HistorySeq)
 			// A HistorySeq must be bound to a LineID at the receiver. Even when
 			// the line was visible on the previous screen, include its LineData so
 			// the bounded Android cache can append the correct history entry.
@@ -607,9 +604,8 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 			HasMoreBefore:            new.History.HasMoreBefore,
 			Lines:                    historyAppend,
 		},
-		HistoryAppendSeqs: historyAppendSeqs,
-		Screen:            screenRows,
-		ScreenScroll:      scroll,
+		Screen:       screenRows,
+		ScreenScroll: scroll,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
 		// appeared after the recipient's baseline; repeatedly sending the whole
 		// table was pure wire and allocation overhead.
@@ -620,8 +616,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 		WorkingDir:        new.WorkingDir,
 		TitleChanged:      old.Title != new.Title,
 		WorkingDirChanged: old.WorkingDir != new.WorkingDir,
-		// v2 的 HistoryDelta 用该 presence 位表达 extent 水位变化（包括只 trim、
-		// 没有新增行的情况）；它与 screen revision 链保持正交。
+		// Commit 用该 presence 位表达 extent 水位变化（包括只 trim、没有新增正文）。
 		FirstAvailableHistorySeqChanged: old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
 	}

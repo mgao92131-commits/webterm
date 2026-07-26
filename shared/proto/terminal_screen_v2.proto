@@ -10,12 +10,11 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
+  reserved 4, 5;
 
   oneof payload {
     Hello hello = 2;
     Baseline baseline = 3;
-    ScreenPatch screen_patch = 4;
-    HistoryDelta history_delta = 5;
     HistoryRangeRequest history_range_request = 6;
     HistoryRangeResponse history_range_response = 7;
     SetStreamMode set_stream_mode = 8;
@@ -102,32 +101,6 @@ message Baseline {
   Dictionary dictionary = 15;
   optional string title = 16;
   optional string working_directory = 17;
-}
-
-message ScreenPatch {
-  string instance_id = 1;
-  uint64 layout_epoch = 2;
-  uint64 stream_generation = 3;
-  uint64 base_screen_revision = 4;
-  uint64 screen_revision = 5;
-  optional ScreenLayout screen_layout = 6;
-  repeated LineData screen_line_updates = 7;
-  optional Cursor cursor = 8;
-  optional Modes modes = 9;
-  optional TerminalPalette palette = 10;
-  optional BufferKind active_buffer = 11;
-  Dictionary dictionary = 12;
-  optional string title = 13;
-  optional string working_directory = 14;
-}
-
-message HistoryDelta {
-  string instance_id = 1;
-  uint64 layout_epoch = 2;
-  uint64 stream_generation = 3;
-  HistoryExtent available_extent = 4;
-  repeated LineData lines = 5;
-  Dictionary dictionary = 6;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。

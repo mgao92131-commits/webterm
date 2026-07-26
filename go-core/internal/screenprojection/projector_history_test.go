@@ -224,14 +224,11 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 		t.Fatalf("expected patch base=1, got %d (snapshot fallback?)", patch.BaseRevision)
 	}
 
-	// 滚入历史的 k 行都以 HistorySeq 追加，并携带其 LineID 的绑定数据。
-	if len(patch.HistoryAppendSeqs) != k {
-		t.Fatalf("history append ids=%d, want %d", len(patch.HistoryAppendSeqs), k)
-	}
+	// 滚入历史的 k 行都携带 HistorySeq 与完整行正文。
 	wantIDs := state.History.Lines[len(state.History.Lines)-k:]
-	for i, id := range patch.HistoryAppendSeqs {
-		if id != wantIDs[i].HistorySeq {
-			t.Fatalf("append sequence[%d]=%d, want %d", i, id, wantIDs[i].HistorySeq)
+	for i, line := range patch.History.Lines {
+		if line.HistorySeq != wantIDs[i].HistorySeq {
+			t.Fatalf("append sequence[%d]=%d, want %d", i, line.HistorySeq, wantIDs[i].HistorySeq)
 		}
 	}
 	if len(patch.History.Lines) != k {

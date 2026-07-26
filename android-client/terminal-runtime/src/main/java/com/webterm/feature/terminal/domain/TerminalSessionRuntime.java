@@ -12,8 +12,6 @@ import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.ScreenPatchV2;
-import com.webterm.terminal.model.HistoryDelta;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.TerminalBufferKind;
@@ -932,18 +930,14 @@ public final class TerminalSessionRuntime {
                   && message.mailboxGeneration != screenMailbox.generation())
               || message.sourceConnection != connection) continue;
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
-          if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
-              || message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
-              || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA)
+          if (message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
               && freezeReasons.get() != 0) {
             TerminalRenderMetrics.backgroundPatchDropped();
             continue;
           }
           // A recovery fence only accepts the authority frame that can release it. Dropping
           // patches here avoids protobuf parsing and allocation while a snapshot is in flight.
-          if ((message.kind == ScreenMailbox.MessageKind.SCREEN_PATCH
-              || message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
-              || message.kind == ScreenMailbox.MessageKind.HISTORY_DELTA
+          if ((message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT
               || message.kind == ScreenMailbox.MessageKind.TAIL_STATUS)
               && streamState == StreamState.RESYNCING) {
             continue;
@@ -979,14 +973,10 @@ public final class TerminalSessionRuntime {
     switch (kind) {
       case BASELINE:
         return TerminalRenderMetrics.ScreenTrafficKind.BASELINE;
-      case SCREEN_PATCH:
-        return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
       case TERMINAL_COMMIT:
         return TerminalRenderMetrics.ScreenTrafficKind.PATCH;
       case HISTORY_RANGE:
         return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
-      case HISTORY_DELTA:
-        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_DELTA;
       case TAIL_STATUS:
         return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
       default:
@@ -1005,8 +995,6 @@ public final class TerminalSessionRuntime {
         int field = WireFormat.getTagFieldNumber(tag);
         // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
         if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
-        if (field == 4) return ScreenMailbox.MessageKind.SCREEN_PATCH;
-        if (field == 5) return ScreenMailbox.MessageKind.HISTORY_DELTA;
         if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
         if (field == 9) return ScreenMailbox.MessageKind.TAIL_STATUS;
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
@@ -1142,11 +1130,6 @@ public final class TerminalSessionRuntime {
             tracker.observeTerminalInstance(envelope.getBaseline().getInstanceId());
           }
           break;
-        case SCREEN_PATCH:
-          if (tracker != null) {
-            tracker.observeTerminalInstance(envelope.getScreenPatch().getInstanceId());
-          }
-          break;
         case TERMINAL_COMMIT:
           if (tracker != null) {
             tracker.observeTerminalInstance(envelope.getTerminalCommit().getInstanceId());
@@ -1199,36 +1182,6 @@ public final class TerminalSessionRuntime {
           renderChanged = true;
           break;
         }
-        case SCREEN_PATCH: {
-          if (streamState != StreamState.LIVE) return;
-          TerminalScreenV2Proto.ScreenPatch wire = envelope.getScreenPatch();
-          if (!acceptStreamGeneration(
-              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
-          failureReason = "INVALID_PATCH";
-          ScreenMessageV2Validator.validatePatch(wire);
-          if (wire.getScreenLineUpdatesCount() > model.rows) {
-            throw new IllegalArgumentException("screen patch exceeds row limit");
-          }
-          long mapStartedNanos = System.nanoTime();
-          ScreenPatchV2 patch;
-          try {
-            patch = ScreenMessageV2Mapper.mapPatch(wire, model.columns);
-          } finally {
-            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
-          }
-          long patchApplyStartedNanos = System.nanoTime();
-          try {
-            renderChanged = model.applyScreenPatch(patch);
-          } finally {
-            TerminalRenderMetrics.screenPatchApplyDuration(
-                System.nanoTime() - patchApplyStartedNanos);
-          }
-          com.webterm.terminal.model.capture.TerminalCapture.recordMappedPatch(
-              captureStreamIdentity(), patch);
-          recordCapturedModelState(false);
-          completeSynchronization();
-          break;
-        }
         case TERMINAL_COMMIT: {
           if (streamState != StreamState.LIVE) return;
           TerminalScreenV2Proto.TerminalCommit wire = envelope.getTerminalCommit();
@@ -1244,26 +1197,10 @@ public final class TerminalSessionRuntime {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
           renderChanged = model.applyTerminalCommit(commit);
+          com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
+              captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);
           completeSynchronization();
-          break;
-        }
-        case HISTORY_DELTA: {
-          if (streamState != StreamState.LIVE) return;
-          TerminalScreenV2Proto.HistoryDelta wire = envelope.getHistoryDelta();
-          if (!acceptStreamGeneration(
-              payloadCase, wire.getStreamGeneration(), message.mailboxGeneration)) return;
-          failureReason = "INVALID_HISTORY_DELTA";
-          ScreenMessageV2Validator.validateHistoryDelta(wire);
-          long mapStartedNanos = System.nanoTime();
-          HistoryDelta delta;
-          try {
-            delta = ScreenMessageV2Mapper.mapHistoryDelta(wire, model.columns);
-          } finally {
-            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
-          }
-          renderChanged = model.applyHistoryDelta(delta);
-          if (renderChanged) recordCapturedModelState(false);
           break;
         }
         case HISTORY_RANGE_RESPONSE: {
@@ -1416,12 +1353,8 @@ public final class TerminalSessionRuntime {
     switch (envelope.getPayloadCase()) {
       case BASELINE:
         return envelope.getBaseline().getStreamGeneration();
-      case SCREEN_PATCH:
-        return envelope.getScreenPatch().getStreamGeneration();
       case TERMINAL_COMMIT:
         return envelope.getTerminalCommit().getStreamGeneration();
-      case HISTORY_DELTA:
-        return envelope.getHistoryDelta().getStreamGeneration();
       case TAIL_STATUS:
         return envelope.getTailStatus().getStreamGeneration();
       default:

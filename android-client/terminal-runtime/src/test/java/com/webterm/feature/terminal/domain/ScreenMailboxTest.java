@@ -68,13 +68,13 @@ public final class ScreenMailboxTest {
         mock(TerminalSessionRuntime.ScreenConnection.class);
     mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.TAIL_STATUS);
     mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.TAIL_STATUS);
-    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.SCREEN_PATCH);
+    mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.TERMINAL_COMMIT);
 
     ScreenMailbox.Drain tail = mailbox.poll();
     assertNotNull(tail.message);
     assertEquals(ScreenMailbox.MessageKind.TAIL_STATUS, tail.message.kind);
     assertEquals(2, tail.message.payload[0]);
-    assertEquals(ScreenMailbox.MessageKind.SCREEN_PATCH, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.TERMINAL_COMMIT, mailbox.poll().message.kind);
     assertNull(mailbox.poll());
   }
 

@@ -3,7 +3,7 @@ package com.webterm.mobile.diagnostics;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
@@ -182,22 +182,20 @@ final class CaptureSerializer {
     }
 
     /** android/mapped-frames.jsonl 中的 patch 条目。 */
-    static JSONObject mappedPatch(ScreenPatchV2 p) throws JSONException {
+    static JSONObject mappedCommit(TerminalCommit p) throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("kind", "patch");
+        o.put("kind", "commit");
         o.put("instanceId", p.instanceId);
         o.put("layoutEpoch", p.layoutEpoch);
         o.put("baseRevision", p.baseRevision);
-        o.put("screenRevision", p.screenRevision);
+        o.put("screenRevision", p.revision);
         o.put("streamGeneration", p.streamGeneration);
-        JSONArray layout = new JSONArray();
-        if (p.layout != null) for (long id : p.layout) layout.put(id);
-        o.put("layout", layout);
-        o.put("lineUpdates", lineList(p.lineUpdates));
+        JSONArray writes = new JSONArray();
+        if (p.screen != null) for (com.webterm.terminal.model.ScreenRowWrite write : p.screen.writes) {
+            writes.put(write.row);
+        }
+        o.put("screenWriteRows", writes);
         o.put("cursor", cursor(p.cursor));
-        o.put("activeBuffer", String.valueOf(p.activeBuffer));
-        o.put("title", p.title);
-        o.put("workingDirectory", p.workingDirectory);
         return o;
     }
 

@@ -1,7 +1,7 @@
 package com.webterm.terminal.model.capture;
 
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 
 /**
@@ -31,7 +31,7 @@ public interface TerminalCaptureSink {
     void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenBaseline snapshot);
 
     /** 捕获点 B：Mapper 输出的不可变 Patch 领域对象（mapPatch 返回后）。 */
-    void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch);
+    void recordMappedCommit(CaptureStreamIdentity identity, TerminalCommit commit);
 
     /** 捕获点 C：model.applySnapshot/applyPatch 成功后的模型摘要。 */
     void recordModelState(CaptureStreamIdentity identity, CapturedModelState state);

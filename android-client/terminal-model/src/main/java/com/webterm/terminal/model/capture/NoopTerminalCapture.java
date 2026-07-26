@@ -1,7 +1,7 @@
 package com.webterm.terminal.model.capture;
 
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 
 /**
@@ -36,7 +36,7 @@ public final class NoopTerminalCapture implements TerminalCaptureController {
 
     @Override public void recordWireFrame(CaptureStreamIdentity identity, long connectionEpoch, long receivedAtMillis, String messageKind, byte[] payload) {}
     @Override public void recordMappedSnapshot(CaptureStreamIdentity identity, ScreenBaseline snapshot) {}
-    @Override public void recordMappedPatch(CaptureStreamIdentity identity, ScreenPatchV2 patch) {}
+    @Override public void recordMappedCommit(CaptureStreamIdentity identity, TerminalCommit commit) {}
     @Override public void recordModelState(CaptureStreamIdentity identity, CapturedModelState state) {}
     @Override public void recordRenderUpdate(CaptureStreamIdentity identity, RenderUpdate update) {}
 }

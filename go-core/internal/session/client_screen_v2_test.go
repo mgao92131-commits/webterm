@@ -87,7 +87,7 @@ collect:
 			if proto.Unmarshal(message.binary, &env) != nil {
 				continue
 			}
-			if env.GetTerminalCommit() != nil || env.GetScreenPatch() != nil || env.GetBaseline() != nil {
+			if env.GetTerminalCommit() != nil || env.GetBaseline() != nil {
 				t.Fatal("FROZEN client received a projection frame")
 			}
 			if env.GetTailStatus() != nil && env.GetTailStatus().GetStreamGeneration() == 2 {

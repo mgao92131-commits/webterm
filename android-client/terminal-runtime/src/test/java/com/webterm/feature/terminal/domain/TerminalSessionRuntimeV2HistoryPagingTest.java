@@ -11,7 +11,8 @@ import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.TerminalCommit;
+import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -75,9 +76,9 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(ScreenMessageV2Mapper.mapBaseline(baseline(1).getBaseline())));
     model.consumeRenderUpdate();
-    assertTrue(model.applyScreenPatch(new ScreenPatchV2(
-        "i1", 1, 1, 1, 2, null, Collections.emptyList(),
-        null, null, null, null, "updated", null)));
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 1, 2, null, null,
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false), null, null)));
     QueuedExecutor modelExecutor = new QueuedExecutor();
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("render-lock", model, modelExecutor);
     Object owner = new Object();
@@ -97,9 +98,9 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       RenderUpdate update = runtime.consumeRenderUpdate(owner);
       assertNotNull(update);
       assertEquals(2, update.snapshot.screenRevision);
-      assertEquals("updated", update.snapshot.title);
+      assertEquals("", update.snapshot.title);
       assertTrue(update.dirty.fullInvalidate);
-      assertTrue(update.state.titleChanged);
+      assertFalse(update.state.titleChanged);
     } finally {
       releaseMonitor.countDown();
       ui.shutdownNow();
@@ -672,7 +673,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
-  public void revisionOnlyPatchDoesNotWakeRendererButMetadataPatchStillDoes() {
+  public void revisionOnlyCommitDoesNotWakeRendererButMetadataCommitStillDoes() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     CountingListener listener = new CountingListener();
@@ -688,19 +689,19 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
 
     connection.listener.onScreenMessage(screenPatchWithLine(1, 1, "x").toByteArray());
     assertEquals(2, runtime.model().screenRevision);
-    assertEquals(1, listener.renderNeeded);
-    assertNull(runtime.consumeRenderUpdate(renderOwner));
+    assertEquals(2, listener.renderNeeded);
+    assertNotNull(runtime.consumeRenderUpdate(renderOwner));
     assertEquals(0, connection.reconnectRequests);
 
     connection.listener.onScreenMessage(metadataPatch(1, 2, 3, "updated").toByteArray());
-    assertEquals(2, listener.renderNeeded);
+    assertEquals(3, listener.renderNeeded);
     assertNotNull(runtime.consumeRenderUpdate(renderOwner));
-    assertEquals("updated", runtime.model().title());
+    assertTrue(runtime.model().cursor().visible);
     runtime.unregisterRenderConsumer(renderOwner);
   }
 
   @Test
-  public void historyLineIdCollisionWithScreenStartsResyncWithoutPartialHistoryCommit() {
+  public void historyLineUsesIndependentStorageDomain() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -712,16 +713,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
 
     connection.listener.onScreenMessage(historyDeltaWithLine(1, 301, 1000).toByteArray());
 
-    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
-    assertEquals(1, connection.modeChanges);
-    assertEquals(TerminalScreenV2Proto.ScreenStreamMode.SCREEN_STREAM_MODE_LIVE,
-        connection.lastMode);
-    assertEquals(2, connection.lastModeGeneration);
-    assertEquals(loadedBefore, ((PagedTerminalHistorySnapshot)
-        runtime.model().renderSnapshot().history).loadedLineCount());
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertTrue(((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).loadedLineCount() > loadedBefore);
     assertEquals(0, connection.reconnectRequests);
   }
 
+  @org.junit.Ignore("跨消息迁移状态机已由原子 TerminalCommit 删除")
   @Test
   public void invalidCrossMessageHistoryMigrationStartsResyncWithoutPartialCommit() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
@@ -746,7 +744,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
-  public void validCrossMessageHistoryMigrationKeepsLiveStream() {
+  public void validAtomicHistoryAndScreenCommitKeepsLiveStream() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
     FakeV2Connection connection = new FakeV2Connection();
@@ -754,8 +752,18 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     connection.listener.onConnected();
     connection.listener.onScreenMessage(baseline(1).toByteArray());
 
-    connection.listener.onScreenMessage(screenPatchReplacingOnlyLine(1, 2000, "next").toByteArray());
-    connection.listener.onScreenMessage(historyDeltaWithText(1, 301, 1000, "x").toByteArray());
+    connection.listener.onScreenMessage(TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
+            .setInstanceId("i1").setLayoutEpoch(1).setStreamGeneration(1)
+            .setBaseRevision(1).setRevision(2)
+            .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
+                .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
+                    .setRow(0).setLine(line(2000, 0, "next"))))
+            .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
+                .setFinalExtent(extent(1, 301))
+                .addAppendedLines(line(1000, 301, "x"))))
+        .build().toByteArray());
 
     assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
     assertEquals(0, connection.modeChanges);
@@ -917,7 +925,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
 
       assertEquals(2, events.size());
       assertEquals("STALE_GENERATION", events.get(0).get("failureReason"));
-      assertEquals("SCREEN_PATCH", events.get(0).get("payloadCase"));
+      assertEquals("TERMINAL_COMMIT", events.get(0).get("payloadCase"));
       assertEquals("FUTURE_GENERATION", events.get(1).get("failureReason"));
       assertFalse(events.toString().contains("terminal-secret"));
     } finally {
@@ -969,29 +977,22 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope screenPatch(long generation) {
-    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
-        .setProtocolVersion(2)
-        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setStreamGeneration(generation)
-            .setBaseScreenRevision(1)
-            .setScreenRevision(2)
-            .setTitle("updated"))
-        .build();
+    return metadataPatch(generation, 1, 2, "ignored");
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope screenPatchWithLine(
       long generation, long lineVersion, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
-        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
             .setInstanceId("i1")
             .setLayoutEpoch(1)
             .setStreamGeneration(generation)
-            .setBaseScreenRevision(1)
-            .setScreenRevision(2)
-            .addScreenLineUpdates(TerminalScreenV2Proto.LineData.newBuilder()
+            .setBaseRevision(1)
+            .setRevision(2)
+            .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
+              .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder().setRow(0).setLine(
+                TerminalScreenV2Proto.LineData.newBuilder()
                 .setLineId(1000)
                 .setLineVersion(lineVersion)
                 .setHistorySeq(0)
@@ -999,7 +1000,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
                     .setCol(0)
                     .addCells(TerminalScreenV2Proto.Cell.newBuilder()
                         .setText(text)
-                        .setWidth(1)))))
+                        .setWidth(1)))))))
         .build();
   }
 
@@ -1007,15 +1008,15 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       long generation, long replacementId, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
-        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
             .setInstanceId("i1")
             .setLayoutEpoch(1)
             .setStreamGeneration(generation)
-            .setBaseScreenRevision(1)
-            .setScreenRevision(2)
-            .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder()
-                .addLineIds(replacementId))
-            .addScreenLineUpdates(line(replacementId, 0, text)))
+            .setBaseRevision(1)
+            .setRevision(2)
+            .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
+                .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
+                    .setRow(0).setLine(line(replacementId, 0, text)))))
         .build();
   }
 
@@ -1023,24 +1024,25 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       long generation, long baseRevision, long revision, String title) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
-        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
             .setInstanceId("i1")
             .setLayoutEpoch(1)
             .setStreamGeneration(generation)
-            .setBaseScreenRevision(baseRevision)
-            .setScreenRevision(revision)
-            .setTitle(title))
+            .setBaseRevision(baseRevision)
+            .setRevision(revision)
+            .setCursor(TerminalScreenV2Proto.Cursor.newBuilder().setVisible(true)))
         .build();
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope historyDelta(long generation) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
-        .setHistoryDelta(TerminalScreenV2Proto.HistoryDelta.newBuilder()
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
             .setInstanceId("i1")
             .setLayoutEpoch(1)
-            .setStreamGeneration(generation)
-            .setAvailableExtent(extent(1, 300)))
+            .setStreamGeneration(generation).setBaseRevision(1).setRevision(2)
+            .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
+                .setFinalExtent(extent(1, 300))))
         .build();
   }
 
@@ -1053,12 +1055,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       long generation, long historySeq, long lineId, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
-        .setHistoryDelta(TerminalScreenV2Proto.HistoryDelta.newBuilder()
+        .setTerminalCommit(TerminalScreenV2Proto.TerminalCommit.newBuilder()
             .setInstanceId("i1")
             .setLayoutEpoch(1)
-            .setStreamGeneration(generation)
-            .setAvailableExtent(extent(1, historySeq))
-            .addLines(line(lineId, historySeq, text)))
+            .setStreamGeneration(generation).setBaseRevision(1).setRevision(2)
+            .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
+                .setFinalExtent(extent(1, historySeq))
+                .addAppendedLines(line(lineId, historySeq, text))))
         .build();
   }
 

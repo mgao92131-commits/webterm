@@ -39,59 +39,6 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, generation uint64) ([]byte
 	return marshalPayload(&pb.ScreenEnvelope_Baseline{Baseline: baseline})
 }
 
-func EncodeScreenPatch(frame terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
-	if frame.Kind != terminalengine.FramePatch {
-		return nil, fmt.Errorf("screen patch requires patch frame")
-	}
-	updates := make([]terminalengine.Line, 0, len(frame.Screen))
-	for _, line := range frame.Screen {
-		if line.HistorySeq == 0 {
-			updates = append(updates, line)
-		}
-	}
-	patch := &pb.ScreenPatch{
-		InstanceId:         frame.InstanceID,
-		LayoutEpoch:        frame.Epoch,
-		StreamGeneration:   generation,
-		BaseScreenRevision: frame.BaseRevision,
-		ScreenRevision:     frame.Seq,
-		ScreenLineUpdates:  encodeLines(updates),
-		Dictionary:         encodeDictionaryForLines(updates, frame.Styles, frame.Links),
-	}
-	if frame.Layout != nil {
-		patch.ScreenLayout = &pb.ScreenLayout{LineIds: append([]uint64(nil), frame.Layout...)}
-	}
-	if frame.CursorChanged {
-		patch.Cursor = encodeCursor(frame.Cursor)
-	}
-	if frame.ModesChanged {
-		patch.Modes = encodeModes(frame.Modes)
-	}
-	if frame.PaletteChanged {
-		patch.Palette = encodePalette(frame)
-	}
-	if frame.TitleChanged {
-		patch.Title = proto.String(frame.Title)
-	}
-	if frame.WorkingDirChanged {
-		patch.WorkingDirectory = proto.String(frame.WorkingDir)
-	}
-	return marshalPayload(&pb.ScreenEnvelope_ScreenPatch{ScreenPatch: patch})
-}
-
-func EncodeHistoryDelta(state terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
-	delta := &pb.HistoryDelta{
-		InstanceId:       state.InstanceID,
-		LayoutEpoch:      state.Epoch,
-		StreamGeneration: generation,
-		AvailableExtent:  encodeHistoryWindowExtent(state.History),
-		Lines:            encodeLines(historyLines(state.History.Lines)),
-		Dictionary: encodeDictionaryForLines(
-			historyLines(state.History.Lines), state.Styles, state.Links),
-	}
-	return marshalPayload(&pb.ScreenEnvelope_HistoryDelta{HistoryDelta: delta})
-}
-
 func EncodeTerminalCommit(frame terminalengine.ScreenFrame, generation uint64) ([]byte, error) {
 	if frame.Kind != terminalengine.FramePatch {
 		return nil, fmt.Errorf("terminal commit requires patch frame")
@@ -222,10 +169,6 @@ func marshalPayload(payload any) ([]byte, error) {
 	env := &pb.ScreenEnvelope{ProtocolVersion: ProtocolVersion}
 	switch p := payload.(type) {
 	case *pb.ScreenEnvelope_Baseline:
-		env.Payload = p
-	case *pb.ScreenEnvelope_ScreenPatch:
-		env.Payload = p
-	case *pb.ScreenEnvelope_HistoryDelta:
 		env.Payload = p
 	case *pb.ScreenEnvelope_TerminalCommit:
 		env.Payload = p

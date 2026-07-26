@@ -3,9 +3,7 @@ package com.webterm.terminal.model;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,7 +18,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class RemoteTerminalModel {
 
   public static final long SCHEMA_GENERATION = 2L;
-  private static final int MIGRATION_REVISION_WINDOW = 8;
   private static final int META_CURSOR = 1;
   private static final int META_PALETTE = 1 << 1;
   private static final int META_MODES = 1 << 2;
@@ -46,11 +43,6 @@ public final class RemoteTerminalModel {
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private boolean staleProjection;
   private TerminalLine[] screen;
-  /** 只保存当前实时 screen 可引用的行；历史行完全由 PagedTerminalHistory 所有。 */
-  private final Map<Long, TerminalLine> screenLineStore = new HashMap<>();
-  /** 仅保留刚离开 screen、等待 HistoryDelta 绑定的行身份；绝不随会话无限增长。 */
-  private final LinkedHashMap<Long, PendingHistoryMigration> pendingHistoryMigrations =
-      new LinkedHashMap<>();
 
   private long firstAvailableHistorySeq;
   private boolean hasMoreHistoryBefore;
@@ -80,19 +72,6 @@ public final class RemoteTerminalModel {
   private volatile ProjectionReadView projectionReadView = ProjectionReadView.empty();
   /** 仅由单元测试注入；生产实例为 null，不在 Patch 热路径执行。 */
   private final LongConsumer baselineHistoryValidationProbe;
-  private long patchScreenCloneCount;
-  private long patchScreenStoreRebuildCount;
-  private long patchMigrationScanCount;
-
-  private static final class PendingHistoryMigration {
-    final TerminalLine screenLine;
-    final long removedAtScreenRevision;
-
-    PendingHistoryMigration(TerminalLine screenLine, long removedAtScreenRevision) {
-      this.screenLine = screenLine;
-      this.removedAtScreenRevision = removedAtScreenRevision;
-    }
-  }
 
   private static final class RenderPublication {
     final long version;
@@ -218,7 +197,6 @@ public final class RemoteTerminalModel {
     }
     historyEditor.commit();
     // Baseline 是权威完整投影；不让旧 Patch 的迁移身份跨同步边界存活。
-    pendingHistoryMigrations.clear();
     this.v2Projection = true;
     this.streamGeneration = baseline.streamGeneration;
     this.instanceId = baseline.instanceId;
@@ -240,13 +218,10 @@ public final class RemoteTerminalModel {
     this.hasMoreHistoryBefore = false;
 
     this.screen = new TerminalLine[rows];
-    screenLineStore.clear();
     for (int row = 0; row < rows; row++) {
       TerminalLine line = normalizedScreen.get(row);
       this.screen[row] = line;
-      screenLineStore.put(line.id, line);
     }
-    TerminalRenderMetrics.screenLineStoreSize(screenLineStore.size());
     markRenderDirty(true, null, 0, null, rows, true, geometryChanged, true, -1, cursor.row,
         true, true, true, true, true);
     markTerminalState(geometryChanged, true, true, true, 0, 0);
@@ -256,171 +231,6 @@ public final class RemoteTerminalModel {
     return true;
   }
 
-  public synchronized boolean applyScreenPatch(ScreenPatchV2 patch) throws RevisionGapException {
-    if (!v2Projection || patch == null || patch.streamGeneration != streamGeneration
-        || instanceId == null || !instanceId.equals(patch.instanceId)
-        || layoutEpoch != patch.layoutEpoch || screenRevision != patch.baseRevision
-        || patch.screenRevision <= patch.baseRevision) {
-      throw new RevisionGapException("screen.v2 patch identity/revision mismatch");
-    }
-    if (patch.layout != null && patch.layout.length != rows) {
-      throw new RevisionGapException("screen.v2 layout length mismatch");
-    }
-    boolean hasLayout = patch.layout != null;
-    boolean hasLineUpdates = patch.lineUpdates != null && !patch.lineUpdates.isEmpty();
-    TerminalCursor previousCursor = cursor;
-
-    // revision-only / metadata-only：不分配 staged Map/BitSet，不复制 screen，
-    // 不重建 owner store，也不扫描 migration。
-    if (!hasLayout && !hasLineUpdates) {
-      int metadata = applyPatchMetadata(patch);
-      boolean cursorChanged = (metadata & META_CURSOR) != 0;
-      boolean publicationChanged = metadata != 0;
-      screenRevision = patch.screenRevision;
-      remoteScreenRevision = patch.screenRevision;
-      projectionHealth = ProjectionHealth.complete(
-          instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
-      if (publicationChanged) {
-        markRenderDirty(false, null, 0, null, rows, false, false, cursorChanged,
-            previousCursor != null ? previousCursor.row : -1, cursor.row,
-            (metadata & META_PALETTE) != 0, false, false,
-            (metadata & META_MODES) != 0, (metadata & META_BUFFER) != 0);
-        markTerminalState(false, false, (metadata & META_TITLE) != 0,
-            (metadata & META_CWD) != 0, 0, 0);
-        publishPendingRenderUpdate();
-      } else {
-        publishProjectionReadView();
-      }
-      return publicationChanged;
-    }
-
-    Map<Long, TerminalLine> stagedLines = new HashMap<>();
-    for (TerminalLine line : patch.lineUpdates != null
-        ? patch.lineUpdates : Collections.<TerminalLine>emptyList()) {
-      TerminalLine normalized = padOrCopyLine(line, columns);
-      if (normalized.id <= 0 || normalized.historySeq != 0) {
-        throw new RevisionGapException("screen.v2 patch contains invalid screen line");
-      }
-      if (pagedHistory.historySeqByLineId(normalized.id) != null) {
-        throw new RevisionGapException("screen.v2 LineID is owned by loaded history");
-      }
-      TerminalLine previous = screenLineStore.get(normalized.id);
-      if (!hasLayout && previous == null) {
-        throw new RevisionGapException("screen.v2 line update is not owned by screen");
-      }
-      if (previous != null) {
-        if (normalized.version < previous.version) {
-          throw new RevisionGapException("screen.v2 line version regressed");
-        }
-        if (normalized.version == previous.version) {
-          if (!normalized.sameContent(previous)) {
-            throw new RevisionGapException(
-                "screen.v2 line content changed without version increment");
-          }
-          normalized = previous;
-        }
-      }
-      if (stagedLines.put(normalized.id, normalized) != null) {
-        throw new RevisionGapException("screen.v2 patch repeats line id");
-      }
-    }
-    if (hasLayout) {
-      Set<Long> layoutIds = new HashSet<>();
-      for (long id : patch.layout) {
-        if (id <= 0 || !layoutIds.add(id)
-            || (!stagedLines.containsKey(id) && !screenLineStore.containsKey(id))) {
-          throw new RevisionGapException("screen.v2 layout line missing or repeated");
-        }
-      }
-    }
-    int screenScrollRows = 0;
-    BitSet exposedRows = new BitSet(rows);
-    BitSet changedRows = new BitSet(rows);
-    TerminalLine[] previousScreen = hasLayout ? screen : null;
-    if (hasLayout) {
-      screenScrollRows = detectScreenScroll(screen, patch.layout);
-      if (screenScrollRows != 0) {
-        int exposedCount = Math.abs(screenScrollRows);
-        if (screenScrollRows > 0) {
-          // 向上滚动：底部暴露出新行。
-          for (int i = 0; i < exposedCount; i++) exposedRows.set(rows - 1 - i);
-        } else {
-          // 向下滚动：顶部暴露出新行。
-          for (int i = 0; i < exposedCount; i++) exposedRows.set(i);
-        }
-        // 滚动前先保存旧 screen：滚动分支中 screen[row] 的旧值是被移走的另一行，
-        // 不能直接比较。对非暴露的保留行，与旧数组中位移来源位置的行比较 version：
-        // 向上滚动（screenScrollRows > 0）时新 row 来自旧 row + screenScrollRows；
-        // 向下滚动（screenScrollRows 为负）时同样来自旧 row + screenScrollRows。
-        // id 已由 detectScreenScroll 保证匹配，version 升高即同 Patch 内 lineUpdates
-        // 更新的保留行，必须标脏，否则渲染层行缓存会复用旧录制显示陈旧内容。
-        // （同 version 重发的行内容不变，按 version 比较避免无谓整屏重录。）
-        changedRows.or(exposedRows);
-      }
-      TerminalLine[] nextScreen = new TerminalLine[rows];
-      for (int row = 0; row < rows; row++) {
-        TerminalLine next = stagedLines.get(patch.layout[row]);
-        if (next == null) next = screenLineStore.get(patch.layout[row]);
-        if (next == null) throw new RevisionGapException("screen.v2 layout line missing");
-        nextScreen[row] = next;
-        if (screenScrollRows != 0) {
-          int sourceRow = row + screenScrollRows;
-          if (!exposedRows.get(row) && sourceRow >= 0 && sourceRow < rows
-              && previousScreen[sourceRow].version != next.version) {
-            changedRows.set(row);
-          }
-        } else if (previousScreen[row] != next) {
-          changedRows.set(row);
-        }
-      }
-      screen = nextScreen;
-      rebuildScreenLineStore();
-      recordPendingHistoryMigrations(previousScreen, patch.screenRevision);
-    } else {
-      // 无 layout 的更新不会改变 ownership；只扫描每个更新对应的小屏幕数组，
-      // 不重建全 store、不运行 migration 扫描。
-      for (TerminalLine next : stagedLines.values()) {
-        TerminalLine previous = screenLineStore.get(next.id);
-        if (next == previous) continue;
-        for (int row = 0; row < rows; row++) {
-          if (screen[row].id != next.id) continue;
-          screen[row] = next;
-          screenLineStore.put(next.id, next);
-          changedRows.set(row);
-          break;
-        }
-      }
-    }
-    int metadata = applyPatchMetadata(patch);
-    boolean cursorChanged = (metadata & META_CURSOR) != 0;
-    boolean paletteChanged = (metadata & META_PALETTE) != 0;
-    boolean modesChanged = (metadata & META_MODES) != 0;
-    boolean activeBufferChanged = (metadata & META_BUFFER) != 0;
-    boolean titleChanged = (metadata & META_TITLE) != 0;
-    boolean workingDirectoryChanged = (metadata & META_CWD) != 0;
-    boolean publicationChanged = !changedRows.isEmpty() || screenScrollRows != 0
-        || !exposedRows.isEmpty() || cursorChanged || paletteChanged || modesChanged
-        || activeBufferChanged || titleChanged || workingDirectoryChanged;
-    screenRevision = patch.screenRevision;
-    remoteScreenRevision = patch.screenRevision;
-    markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows, false, false,
-        cursorChanged,
-        previousCursor != null ? previousCursor.row : -1, cursor.row,
-        paletteChanged, false, false, modesChanged, activeBufferChanged);
-    markTerminalState(false, false, titleChanged, workingDirectoryChanged, 0, 0);
-    // Patch 的身份、revision、layout、更新行和最终 screen 已在本事务内完成验证。
-    // 历史归 PagedTerminalHistory 独立所有，不能在高频 Patch 热路径重新扫描逻辑 extent。
-    projectionHealth = ProjectionHealth.complete(
-        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
-    if (publicationChanged) {
-      publishPendingRenderUpdate();
-    } else {
-      publishProjectionReadView();
-    }
-    return publicationChanged;
-  }
-
-  /** 原子应用一个实时投影 Commit；任一阶段失败都不会修改模型或发布渲染。 */
   public synchronized boolean applyTerminalCommit(TerminalCommit commit)
       throws RevisionGapException {
     if (!v2Projection || commit == null || commit.streamGeneration != streamGeneration
@@ -555,67 +365,6 @@ public final class RemoteTerminalModel {
     return renderChanged;
   }
 
-  private int applyPatchMetadata(ScreenPatchV2 patch) {
-    int changes = 0;
-    if (patch.cursor != null && !Objects.equals(cursor, patch.cursor)) {
-      cursor = patch.cursor;
-      changes |= META_CURSOR;
-    }
-    if (patch.palette != null && !Objects.equals(palette, patch.palette)) {
-      palette = patch.palette;
-      changes |= META_PALETTE;
-    }
-    if (patch.modes != null && !Objects.equals(modes, patch.modes)) {
-      modes = patch.modes;
-      changes |= META_MODES;
-    }
-    if (patch.activeBuffer != null && activeBuffer != patch.activeBuffer) {
-      activeBuffer = patch.activeBuffer;
-      changes |= META_BUFFER;
-    }
-    if (patch.title != null && !Objects.equals(title, patch.title)) {
-      title = patch.title;
-      changes |= META_TITLE;
-    }
-    if (patch.workingDirectory != null
-        && !Objects.equals(workingDirectory, patch.workingDirectory)) {
-      workingDirectory = patch.workingDirectory;
-      changes |= META_CWD;
-    }
-    return changes;
-  }
-
-  public synchronized boolean applyHistoryDelta(HistoryDelta delta) {
-    if (!v2Projection || delta == null || delta.streamGeneration != streamGeneration
-        || !Objects.equals(instanceId, delta.instanceId) || layoutEpoch != delta.layoutEpoch) {
-      return false;
-    }
-    HistoryExtent previousExtent = displayExtent;
-    HistoryExtent nextExtent = delta.availableExtent;
-    PagedTerminalHistory.Editor editor = pagedHistory.edit()
-        .setExtent(nextExtent.firstSeq, nextExtent.lastSeq)
-        .setAvailableExtent(nextExtent.firstSeq, nextExtent.lastSeq);
-    List<Long> completedMigrations = new ArrayList<>();
-    for (TerminalLine line : delta.lines) {
-      TerminalLine normalized = normalizeHistoryLine(line);
-      if (nextExtent.contains(normalized.historySeq)) {
-        validatePendingHistoryMigration(normalized, completedMigrations);
-        editor.put(normalized.historySeq, normalized);
-      }
-    }
-    editor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq).commit();
-    clearCompletedMigrations(completedMigrations);
-    remoteAvailableExtent = nextExtent;
-    displayExtent = nextExtent;
-    firstAvailableHistorySeq = displayExtent.firstSeq;
-    markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
-        false, false, false, false, false);
-    mergeHistoryDirtyRange(delta.lines, !previousExtent.equals(nextExtent));
-    markTerminalState(false, true, false, false, 0, 0);
-    publishPendingRenderUpdate();
-    return true;
-  }
-
   public synchronized boolean applyHistoryRange(HistoryRangeResult range, long anchorSeq) {
     return applyHistoryRange(range, anchorSeq,
         range != null && !range.lines.isEmpty() ? range.lines.get(0).historySeq : 1,
@@ -654,7 +403,6 @@ public final class RemoteTerminalModel {
     // 清理 migration、更新 available extent 或发布 RenderPublication。
     List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
     Set<Long> responseLineIds = new HashSet<>();
-    List<Long> completedMigrations = new ArrayList<>();
     long previousSeq = 0;
     for (TerminalLine line : range.lines) {
       TerminalLine normalized = normalizeHistoryLine(line);
@@ -670,7 +418,6 @@ public final class RemoteTerminalModel {
       if (!responseLineIds.add(normalized.id)) {
         throw new IllegalArgumentException("HistoryRange contains duplicate LineID");
       }
-      validatePendingHistoryMigration(normalized, completedMigrations);
       normalizedLines.add(normalized);
       previousSeq = seq;
     }
@@ -683,7 +430,6 @@ public final class RemoteTerminalModel {
       editor.put(normalized.historySeq, normalized);
     }
     editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
-    clearCompletedMigrations(completedMigrations);
     remoteAvailableExtent = range.availableExtent;
     markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
         false, false, false, false, false);
@@ -817,11 +563,6 @@ public final class RemoteTerminalModel {
     return pagedHistory.snapshot().estimatedByteCount();
   }
 
-  /** 供规模回归测试与无正文诊断确认 screen store 始终有界。 */
-  synchronized int screenLineStoreSize() {
-    return screenLineStore.size();
-  }
-
   synchronized long loadedHistoryLineCountForTest() {
     return pagedHistory.snapshot().loadedLineCount();
   }
@@ -831,7 +572,7 @@ public final class RemoteTerminalModel {
   }
 
   synchronized int loadedLineIdentityCountForTest() {
-    return screenLineStore.size() + pagedHistory.loadedLineIdentityCountForTest();
+    return (screen == null ? 0 : screen.length) + pagedHistory.loadedLineIdentityCountForTest();
   }
 
   synchronized Long loadedHistorySeqForLineIdForTest(long lineId) {
@@ -840,22 +581,6 @@ public final class RemoteTerminalModel {
 
   boolean renderPublicationPendingForTest() {
     return pendingPublication.get() != null;
-  }
-
-  synchronized int pendingHistoryMigrationCountForTest() {
-    return pendingHistoryMigrations.size();
-  }
-
-  synchronized long patchScreenCloneCountForTest() {
-    return patchScreenCloneCount;
-  }
-
-  synchronized long patchScreenStoreRebuildCountForTest() {
-    return patchScreenStoreRebuildCount;
-  }
-
-  synchronized long patchMigrationScanCountForTest() {
-    return patchMigrationScanCount;
   }
 
   public synchronized TerminalCursor cursor() {
@@ -921,116 +646,7 @@ public final class RemoteTerminalModel {
     if (normalized == null || normalized.id <= 0 || normalized.historySeq <= 0) {
       throw new IllegalStateException("screen.v2 contains invalid history line");
     }
-    // Go writer 的生产顺序是先用 ScreenPatch 移出 screen，再发送 HistoryDelta；
-    // 因此这里仍有 screen owner 不是合法迁移窗口，而是乱序或身份冲突。
-    if (screenLineStore.containsKey(normalized.id)) {
-      throw new IllegalStateException("screen.v2 history LineID is owned by screen");
-    }
     return normalized;
-  }
-
-  /** 成功 Patch 后才调用：只记录真正离开 screen 的行，并清理重新进入 screen 的 ID。 */
-  private void recordPendingHistoryMigrations(
-      TerminalLine[] previousScreen, long removedAtScreenRevision) {
-    patchMigrationScanCount++;
-    if (previousScreen != null) {
-      for (TerminalLine previous : previousScreen) {
-        if (previous != null && !screenLineStore.containsKey(previous.id)) {
-          pendingHistoryMigrations.put(previous.id,
-              new PendingHistoryMigration(previous, removedAtScreenRevision));
-        }
-      }
-    }
-    for (TerminalLine current : screenLineStore.values()) {
-      pendingHistoryMigrations.remove(current.id);
-    }
-    prunePendingHistoryMigrations(removedAtScreenRevision);
-  }
-
-  private void validatePendingHistoryMigration(
-      TerminalLine historyLine, List<Long> completedMigrations) {
-    PendingHistoryMigration migration = pendingHistoryMigrations.get(historyLine.id);
-    if (migration == null) return;
-    // Go writer 将屏幕行原样 Push 到不可变 scrollback，HistorySeq 是唯一允许变化的位置。
-    if (migration.screenLine.version != historyLine.version
-        || !migration.screenLine.sameContent(historyLine)) {
-      throw new IllegalStateException("screen.v2 history migration changed LineID content");
-    }
-    completedMigrations.add(historyLine.id);
-  }
-
-  private void clearCompletedMigrations(List<Long> completedMigrations) {
-    for (long lineId : completedMigrations) pendingHistoryMigrations.remove(lineId);
-  }
-
-  private void prunePendingHistoryMigrations(long currentRevision) {
-    long oldestAllowed = currentRevision > MIGRATION_REVISION_WINDOW
-        ? currentRevision - MIGRATION_REVISION_WINDOW : 0;
-    java.util.Iterator<Map.Entry<Long, PendingHistoryMigration>> iterator =
-        pendingHistoryMigrations.entrySet().iterator();
-    while (iterator.hasNext()) {
-      if (iterator.next().getValue().removedAtScreenRevision < oldestAllowed) iterator.remove();
-    }
-    int capacity = Math.max(32, rows * 4);
-    while (pendingHistoryMigrations.size() > capacity) {
-      java.util.Iterator<Long> oldest = pendingHistoryMigrations.keySet().iterator();
-      oldest.next();
-      oldest.remove();
-    }
-  }
-
-  /** Patch 提交后仅按当前 screen 重建，成本严格受 rows 上限约束。 */
-  private void rebuildScreenLineStore() {
-    patchScreenStoreRebuildCount++;
-    screenLineStore.clear();
-    if (screen != null) {
-      for (TerminalLine line : screen) {
-        if (line != null) screenLineStore.put(line.id, line);
-      }
-    }
-    TerminalRenderMetrics.screenLineStoreSize(screenLineStore.size());
-  }
-
-  /**
-   * 检测实时屏幕 layout 是否只是整体位移。返回正数表示向上滚动对应行数，
-   * 负数表示向下滚动，0 表示无法识别为连续滚动。
-   *
-   * <p>只检查常见的 1～8 行滚动，避免高复杂度搜索；不计算整行 Cell 哈希；
-   * 任何异常都安全回退到 0。</p>
-   */
-  private static int detectScreenScroll(TerminalLine[] previousScreen, long[] nextLayout) {
-    if (previousScreen == null || nextLayout == null) return 0;
-    int rowCount = previousScreen.length;
-    if (nextLayout.length != rowCount || rowCount <= 1) return 0;
-    int maxShift = Math.min(8, rowCount - 1);
-
-    // 向上滚动：new[row] == old[row + shift]
-    for (int shift = 1; shift <= maxShift; shift++) {
-      boolean matched = true;
-      for (int row = 0; row < rowCount - shift; row++) {
-        TerminalLine previousLine = previousScreen[row + shift];
-        if (previousLine == null || previousLine.id != nextLayout[row]) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) return shift;
-    }
-
-    // 向下滚动：new[row] == old[row - shift]
-    for (int shift = 1; shift <= maxShift; shift++) {
-      boolean matched = true;
-      for (int row = shift; row < rowCount; row++) {
-        TerminalLine previousLine = previousScreen[row - shift];
-        if (previousLine == null || previousLine.id != nextLayout[row]) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) return -shift;
-    }
-
-    return 0;
   }
 
   /**

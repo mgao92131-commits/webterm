@@ -13,7 +13,9 @@ import android.graphics.Canvas;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.ScreenPatchV2;
+import com.webterm.terminal.model.ScreenMutation;
+import com.webterm.terminal.model.ScreenRowWrite;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -222,8 +224,8 @@ public final class TerminalLineRenderNodeCacheTest {
     TerminalLine replay = new TerminalLine(
         original.id, original.version, 0, original.wrapped,
         Arrays.copyOf(original.cells, original.cells.length));
-    model.applyScreenPatch(patch(1, 2, replay));
-    assertNull(model.consumeRenderUpdate());
+    model.applyTerminalCommit(patch(1, 2, replay));
+    assertNotNull(model.consumeRenderUpdate());
     RemoteTerminalModel.RenderSnapshot replaySnapshot = model.renderSnapshot();
     assertSame(original, replaySnapshot.screen[0]);
     begin(cache, replaySnapshot, 1, 1, 1);
@@ -233,7 +235,7 @@ public final class TerminalLineRenderNodeCacheTest {
     cache.endFrame();
 
     try {
-      model.applyScreenPatch(patch(2, 3,
+      model.applyTerminalCommit(patch(2, 3,
           textLine(original.id, original.version, 10, "changed-without-version")));
       throw new AssertionError("same-version content change must be rejected");
     } catch (RemoteTerminalModel.RevisionGapException expected) {
@@ -241,7 +243,7 @@ public final class TerminalLineRenderNodeCacheTest {
       assertSame(original, model.renderSnapshot().screen[0]);
     }
 
-    model.applyScreenPatch(patch(2, 3,
+    model.applyTerminalCommit(patch(2, 3,
         textLine(original.id, original.version + 1, 10, "changed")));
     assertTrue(model.consumeRenderUpdate().dirty.changedScreenRows.get(0));
     RemoteTerminalModel.RenderSnapshot changedSnapshot = model.renderSnapshot();
@@ -376,10 +378,11 @@ public final class TerminalLineRenderNodeCacheTest {
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "");
   }
 
-  private static ScreenPatchV2 patch(long baseRevision, long revision, TerminalLine line) {
-    return new ScreenPatchV2(
-        "instance-1", 1L, 1L, baseRevision, revision, null,
-        Collections.singletonList(line), null, null, null, null, null, null);
+  private static TerminalCommit patch(long baseRevision, long revision, TerminalLine line) {
+    return new TerminalCommit(
+        "instance-1", 1L, 1L, baseRevision, revision,
+        new ScreenMutation(null, Collections.singletonList(new ScreenRowWrite(0, line))),
+        null, null, null, null);
   }
 
   private static TerminalLine textLine(

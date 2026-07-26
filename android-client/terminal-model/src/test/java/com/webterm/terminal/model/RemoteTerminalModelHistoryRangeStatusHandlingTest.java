@@ -46,16 +46,10 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void lineOutsideRequestedRangeRejectsWholeTransactionAndKeepsMigration() throws Exception {
+  public void lineOutsideRequestedRangeRejectsWholeTransaction() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
     model.consumeRenderUpdate();
-    assertTrue(model.applyScreenPatch(new ScreenPatchV2(
-        "i1", 1, 1, 1, 2, new long[] {2000},
-        Collections.singletonList(V2ModelTestData.line(2000, 1, 0, "b")),
-        null, null, null, null, null, null)));
-    model.consumeRenderUpdate();
-    assertEquals(1, model.pendingHistoryMigrationCountForTest());
     long loadedBefore = model.loadedHistoryLineCountForTest();
     int identitiesBefore = model.loadedLineIdentityCountForTest();
     int pagesBefore = model.residentHistoryPageCountForTest();
@@ -68,7 +62,6 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
     assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
     assertEquals(identitiesBefore, model.loadedLineIdentityCountForTest());
     assertEquals(pagesBefore, model.residentHistoryPageCountForTest());
-    assertEquals(1, model.pendingHistoryMigrationCountForTest());
     assertNull(model.loadedHistorySeqForLineIdForTest(1000));
     assertFalse(model.renderPublicationPendingForTest());
   }
