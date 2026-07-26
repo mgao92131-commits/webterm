@@ -121,7 +121,7 @@ public final class TerminalLineRenderNodeCacheTest {
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, snapshot, 1, 1, 1);
     TerminalLine original = textLine(500, 1, 10, "A");
-    TerminalLine changed = textLine(500, 2, 10, "B");
+    TerminalLine changed = textLine(500, 1, 10, "B");
     TerminalRenderMetrics.Snapshot metricsBefore = TerminalRenderMetrics.snapshot();
 
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
@@ -131,6 +131,7 @@ public final class TerminalLineRenderNodeCacheTest {
         cache.drawOrRecord(canvas, changed, 20f, true));
 
     assertSame(node, cache.nodeForLineForTest(500));
+    assertSame(original, cache.recordedLineForTest(500));
     assertEquals(1, node.beginRecordingCount);
     assertEquals(1, node.drawCount);
     assertEquals(metricsBefore.rowCachePinnedConflictCount + 1,
@@ -141,9 +142,66 @@ public final class TerminalLineRenderNodeCacheTest {
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, changed, 0f, true));
     assertEquals(2, node.beginRecordingCount);
+    assertSame(changed, cache.recordedLineForTest(500));
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
         cache.drawOrRecord(canvas, changed, 20f, false));
     assertEquals(2, node.beginRecordingCount);
+  }
+
+  @Test
+  public void sameIdAndVersionWithDifferentContentRerecordsInNextFrame() {
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
+    TerminalLineRenderNodeCache cache = newCache();
+    TerminalLine first = textLine(500, 1, 10, "A");
+    TerminalLine changed = textLine(500, 1, 10, "B");
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, first, 0f, false));
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(500);
+    cache.endFrame();
+
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, changed, 0f, true));
+    assertEquals(2, node.beginRecordingCount);
+    assertSame(changed, cache.recordedLineForTest(500));
+  }
+
+  @Test
+  public void sameImmutableObjectUsesFastHitAcrossFrames() {
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
+    TerminalLineRenderNodeCache cache = newCache();
+    TerminalLine line = textLine(500, 1, 10, "A");
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, line, 0f, false));
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(500);
+    cache.endFrame();
+
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
+        cache.drawOrRecord(canvas, line, 0f, false));
+    assertEquals(1, node.beginRecordingCount);
+  }
+
+  @Test
+  public void equivalentReconstructedLineHitsWithoutRerecording() {
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
+    TerminalLineRenderNodeCache cache = newCache();
+    TerminalLine first = textLine(500, 1, 10, "A");
+    TerminalLine reconstructed = textLine(500, 1, 10, "A");
+    assertNotSame(first, reconstructed);
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, first, 0f, false));
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(500);
+    cache.endFrame();
+
+    begin(cache, snapshot, 1, 1, 1);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
+        cache.drawOrRecord(canvas, reconstructed, 0f, true));
+    assertEquals(1, node.beginRecordingCount);
+    assertSame(first, cache.recordedLineForTest(500));
   }
 
   @Test

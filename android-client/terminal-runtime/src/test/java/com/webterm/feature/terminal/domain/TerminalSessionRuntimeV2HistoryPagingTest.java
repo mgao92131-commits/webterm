@@ -572,6 +572,48 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
+  public void invalidCrossMessageHistoryMigrationStartsResyncWithoutPartialCommit() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+    long loadedBefore = ((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).loadedLineCount();
+
+    connection.listener.onScreenMessage(screenPatchReplacingOnlyLine(1, 2000, "next").toByteArray());
+    connection.listener.onScreenMessage(historyDeltaWithText(1, 301, 1000, "B").toByteArray());
+
+    assertEquals(2, runtime.model().screenRevision);
+    assertEquals(TerminalSessionRuntime.StreamState.RESYNCING, runtime.streamState());
+    assertEquals(1, connection.modeChanges);
+    assertEquals(2, connection.lastModeGeneration);
+    assertEquals(loadedBefore, ((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).loadedLineCount());
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void validCrossMessageHistoryMigrationKeepsLiveStream() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    connection.listener.onScreenMessage(baseline(1).toByteArray());
+
+    connection.listener.onScreenMessage(screenPatchReplacingOnlyLine(1, 2000, "next").toByteArray());
+    connection.listener.onScreenMessage(historyDeltaWithText(1, 301, 1000, "x").toByteArray());
+
+    assertEquals(TerminalSessionRuntime.StreamState.LIVE, runtime.streamState());
+    assertEquals(0, connection.modeChanges);
+    assertEquals(0, connection.reconnectRequests);
+    assertEquals(1000, ((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).lineBySeq(301).id);
+  }
+
+  @Test
   public void failedFrozenModeSendImmediatelyRebuildsAndReconnectHelloStaysFrozen() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "s1", new RemoteTerminalModel(), Runnable::run, Runnable::run, (task, delayMs) -> {});
@@ -810,6 +852,22 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
         .build();
   }
 
+  private static TerminalScreenV2Proto.ScreenEnvelope screenPatchReplacingOnlyLine(
+      long generation, long replacementId, String text) {
+    return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+        .setProtocolVersion(2)
+        .setScreenPatch(TerminalScreenV2Proto.ScreenPatch.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setStreamGeneration(generation)
+            .setBaseScreenRevision(1)
+            .setScreenRevision(2)
+            .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder()
+                .addLineIds(replacementId))
+            .addScreenLineUpdates(line(replacementId, 0, text)))
+        .build();
+  }
+
   private static TerminalScreenV2Proto.ScreenEnvelope metadataPatch(
       long generation, long baseRevision, long revision, String title) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
@@ -837,6 +895,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
 
   private static TerminalScreenV2Proto.ScreenEnvelope historyDeltaWithLine(
       long generation, long historySeq, long lineId) {
+    return historyDeltaWithText(generation, historySeq, lineId, "x");
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope historyDeltaWithText(
+      long generation, long historySeq, long lineId, String text) {
     return TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
         .setProtocolVersion(2)
         .setHistoryDelta(TerminalScreenV2Proto.HistoryDelta.newBuilder()
@@ -844,7 +907,7 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
             .setLayoutEpoch(1)
             .setStreamGeneration(generation)
             .setAvailableExtent(extent(1, historySeq))
-            .addLines(line(lineId, historySeq)))
+            .addLines(line(lineId, historySeq, text)))
         .build();
   }
 
@@ -888,13 +951,17 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   private static TerminalScreenV2Proto.LineData line(long id, long historySeq) {
+    return line(id, historySeq, "x");
+  }
+
+  private static TerminalScreenV2Proto.LineData line(long id, long historySeq, String text) {
     return TerminalScreenV2Proto.LineData.newBuilder()
         .setLineId(id)
         .setLineVersion(1)
         .setHistorySeq(historySeq)
         .addRuns(TerminalScreenV2Proto.CellRun.newBuilder()
             .setCol(0)
-            .addCells(TerminalScreenV2Proto.Cell.newBuilder().setText("x").setWidth(1)))
+            .addCells(TerminalScreenV2Proto.Cell.newBuilder().setText(text).setWidth(1)))
         .build();
   }
 

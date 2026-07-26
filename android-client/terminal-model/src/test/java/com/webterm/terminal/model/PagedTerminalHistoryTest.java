@@ -87,6 +87,24 @@ public final class PagedTerminalHistoryTest {
         history.snapshot().loadedLineIdentityCount());
   }
 
+  @Test
+  public void highHistorySeqExtentAndPageBoundariesDoNotOverflow() {
+    long first = Long.MAX_VALUE - 128;
+    long last = Long.MAX_VALUE - 1;
+    HistoryExtent extent = new HistoryExtent(first, last);
+    assertEquals(128, extent.logicalSize());
+
+    PagedTerminalHistory history = history(new HistoryBudget(100, 100, 0, 0));
+    history.edit().setExtent(first, last).put(last, line(last)).commit();
+    PagedTerminalHistorySnapshot snapshot = history.snapshot();
+    assertEquals(last, snapshot.firstLoadedSeq());
+    long[] page = snapshot.firstRequestablePage(first, last);
+    assertNotNull(page);
+    assertTrue(page[0] >= 1);
+    assertTrue(page[1] >= page[0]);
+    assertTrue(page[1] <= last);
+  }
+
   @Test(expected = IllegalStateException.class)
   public void sameSeqCannotBeRewritten() {
     PagedTerminalHistory history = history(new HistoryBudget(100, 100, 0, 0));

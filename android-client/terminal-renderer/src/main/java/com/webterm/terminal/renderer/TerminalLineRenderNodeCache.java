@@ -94,7 +94,7 @@ public final class TerminalLineRenderNodeCache {
     }
 
     CachedLine cached = lines.get(line.id);
-    if (cached != null && cached.lineVersion == line.version && cached.node.hasDisplayList()) {
+    if (cached != null && cached.node.hasDisplayList() && matchesRecordedLine(cached, line)) {
       cached.lastUsedFrame = frameNumber;
       cached.pinnedThisFrame = true;
       TerminalRenderMetrics.rowCacheHit();
@@ -145,6 +145,7 @@ public final class TerminalLineRenderNodeCache {
     }
     cached.lineId = lineId;
     cached.lineVersion = Long.MIN_VALUE;
+    cached.recordedLine = null;
     cached.pinnedThisFrame = false;
     lines.put(lineId, cached);
     return cached;
@@ -178,6 +179,7 @@ public final class TerminalLineRenderNodeCache {
     if (!cached.node.hasDisplayList()) return false;
     cached.lineId = line.id;
     cached.lineVersion = line.version;
+    cached.recordedLine = line;
     TerminalRenderMetrics.rowCacheMiss();
     return true;
   }
@@ -198,15 +200,32 @@ public final class TerminalLineRenderNodeCache {
   int capacityForTest() { return capacity; }
 
   @Nullable
+  TerminalLine recordedLineForTest(long lineId) {
+    CachedLine cached = lines.get(lineId);
+    return cached != null ? cached.recordedLine : null;
+  }
+
+  @Nullable
   TerminalRowNode nodeForLineForTest(long lineId) {
     CachedLine cached = lines.get(lineId);
     return cached != null ? cached.node : null;
+  }
+
+  /** 同一不可变行对象是热路径；只有恢复/分页等重建对象时才比较 cells。 */
+  private static boolean matchesRecordedLine(
+      @NonNull CachedLine cached, @NonNull TerminalLine incoming) {
+    TerminalLine recorded = cached.recordedLine;
+    return recorded != null
+        && cached.lineId == incoming.id
+        && cached.lineVersion == incoming.version
+        && (recorded == incoming || recorded.sameContent(incoming));
   }
 
   private static final class CachedLine {
     final TerminalRowNode node;
     long lineId;
     long lineVersion;
+    @Nullable TerminalLine recordedLine;
     long lastUsedFrame;
     boolean pinnedThisFrame;
 

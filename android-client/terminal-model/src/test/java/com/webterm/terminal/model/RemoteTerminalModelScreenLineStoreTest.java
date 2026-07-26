@@ -24,14 +24,15 @@ public final class RemoteTerminalModelScreenLineStoreTest {
   }
 
   @Test
-  public void historyLineWithOldScreenIdDoesNotPolluteScreenStore() throws Exception {
+  public void screenToHistoryMigrationPreservesLineIdentityAndContent() throws Exception {
     RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
     model.applyScreenPatch(patch(1, 2, new long[] {10_002, 10_003, 20_000},
         Collections.singletonList(line(20_000, 1, 0, "new"))));
+    assertEquals(1, model.pendingHistoryMigrationCountForTest());
 
     assertTrue(model.applyHistoryDelta(new HistoryDelta(
         "i1", 1, 1, new HistoryExtent(1, 1_000_001L),
-        Collections.singletonList(line(10_001, 99, 1_000_001L, "history")))));
+        Collections.singletonList(line(10_001, 1, 1_000_001L, "s0")))));
     model.applyScreenPatch(patch(2, 3, null,
         Collections.singletonList(line(10_002, 2, 0, "screen"))));
 
@@ -40,6 +41,99 @@ public final class RemoteTerminalModelScreenLineStoreTest {
     assertEquals(Long.valueOf(1_000_001L), model.loadedHistorySeqForLineIdForTest(10_001));
     assertEquals(model.screenLineStoreSize() + model.loadedHistoryLineCountForTest(),
         model.loadedLineIdentityCountForTest());
+    assertEquals(0, model.pendingHistoryMigrationCountForTest());
+  }
+
+  @Test
+  public void migrationWithSameIdVersionButDifferentContentIsRejectedTransactionally() throws Exception {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    long loadedBefore = model.loadedHistoryLineCountForTest();
+    model.applyScreenPatch(patch(1, 2, new long[] {10_002, 10_003, 20_000},
+        Collections.singletonList(line(20_000, 1, 0, "new"))));
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_001L),
+          Collections.singletonList(line(10_001, 1, 1_000_001L, "B"))));
+    } catch (IllegalStateException expected) {
+      assertEquals(2, model.screenRevision);
+      assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
+      assertEquals(new HistoryExtent(1, 1_000_000L), model.displayExtent());
+      assertEquals(1, model.pendingHistoryMigrationCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(10_001));
+      return;
+    }
+    throw new AssertionError("migration must preserve LineID/version content identity");
+  }
+
+  @Test
+  public void migrationVersionChangeIsRejectedByImmutableScrollbackContract() throws Exception {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    model.applyScreenPatch(patch(1, 2, new long[] {10_002, 10_003, 20_000},
+        Collections.singletonList(line(20_000, 1, 0, "new"))));
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_001L),
+          Collections.singletonList(line(10_001, 2, 1_000_001L, "s0"))));
+    } catch (IllegalStateException expected) {
+      assertEquals(1, model.pendingHistoryMigrationCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(10_001));
+      return;
+    }
+    throw new AssertionError("Go scrollback Push preserves LineVersion during migration");
+  }
+
+  @Test
+  public void failedMigrationBatchDoesNotConsumeAnyPendingIdentity() throws Exception {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    long loadedBefore = model.loadedHistoryLineCountForTest();
+    model.applyScreenPatch(patch(1, 2, new long[] {20_000, 20_001, 10_003},
+        java.util.Arrays.asList(line(20_000, 1, 0, "new0"), line(20_001, 1, 0, "new1"))));
+    assertEquals(2, model.pendingHistoryMigrationCountForTest());
+
+    try {
+      model.applyHistoryDelta(new HistoryDelta(
+          "i1", 1, 1, new HistoryExtent(1, 1_000_002L),
+          java.util.Arrays.asList(
+              line(10_001, 1, 1_000_001L, "s0"),
+              line(10_002, 1, 1_000_002L, "bad"))));
+    } catch (IllegalStateException expected) {
+      assertEquals(loadedBefore, model.loadedHistoryLineCountForTest());
+      assertNull(model.loadedHistorySeqForLineIdForTest(10_001));
+      assertNull(model.loadedHistorySeqForLineIdForTest(10_002));
+      assertEquals(2, model.pendingHistoryMigrationCountForTest());
+      return;
+    }
+    throw new AssertionError("failed batch must not partly consume migrations");
+  }
+
+  @Test
+  public void pendingMigrationsAreBoundedByRevisionWindowAndCapacity() throws Exception {
+    RemoteTerminalModel model = modelWithRows(1, 1_000_000L);
+    long currentId = 10_001;
+    for (int revision = 2; revision <= 48; revision++) {
+      long nextId = 20_000L + revision;
+      model.applyScreenPatch(patch(revision - 1, revision, new long[] {nextId},
+          Collections.singletonList(line(nextId, 1, 0, "n" + revision))));
+      currentId = nextId;
+    }
+
+    assertEquals(currentId, model.renderSnapshot().screen[0].id);
+    assertEquals(1, model.screenLineStoreSize());
+    assertTrue(model.pendingHistoryMigrationCountForTest() <= 9);
+    assertTrue(model.pendingHistoryMigrationCountForTest() <= 32);
+  }
+
+  @Test
+  public void successfulBaselineClearsPendingMigrationState() throws Exception {
+    RemoteTerminalModel model = modelWithRows(3, 1_000_000L);
+    model.applyScreenPatch(patch(1, 2, new long[] {10_002, 10_003, 20_000},
+        Collections.singletonList(line(20_000, 1, 0, "new"))));
+    assertEquals(1, model.pendingHistoryMigrationCountForTest());
+
+    assertTrue(model.applyBaseline(baseline(3, 3, 1, 1_000_000L)));
+    assertEquals(0, model.pendingHistoryMigrationCountForTest());
   }
 
   @Test
@@ -136,7 +230,7 @@ public final class RemoteTerminalModelScreenLineStoreTest {
         Collections.singletonList(line(20_000, 1, 0, "new"))));
     assertTrue(model.applyHistoryDelta(new HistoryDelta(
         "i1", 1, 1, new HistoryExtent(1, 1_000_001L),
-        Collections.singletonList(line(10_001, 99, 1_000_001L, "history")))));
+        Collections.singletonList(line(10_001, 1, 1_000_001L, "s0")))));
 
     try {
       model.applyScreenPatch(patch(2, 3, new long[] {10_001, 10_003, 20_000},

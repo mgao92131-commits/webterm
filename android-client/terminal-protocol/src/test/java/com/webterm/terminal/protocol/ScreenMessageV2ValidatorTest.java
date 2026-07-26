@@ -38,6 +38,7 @@ public final class ScreenMessageV2ValidatorTest {
     assertAcceptedExtent(1, 0);
     assertAcceptedExtent(1, 1);
     assertAcceptedExtent(10, 9);
+    assertAcceptedExtent(Long.MAX_VALUE - 128, Long.MAX_VALUE - 1);
     assertRejectedExtent(10, 8);
     assertRejectedExtent(1, Long.MAX_VALUE);
   }

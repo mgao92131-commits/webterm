@@ -66,11 +66,11 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   public long firstLoadedSeq() {
     long first = Long.MAX_VALUE;
     for (Map.Entry<Long, PagedTerminalHistory.HistoryPageChunk> entry : pages.entrySet()) {
-      long pageFirst = entry.getKey() * PagedTerminalHistory.PAGE_SIZE + 1;
+      long pageFirst = PagedTerminalHistory.pageFirstSeq(entry.getKey());
       PagedTerminalHistory.HistoryPageChunk page = entry.getValue();
       for (int offset = 0; offset < PagedTerminalHistory.PAGE_SIZE; offset++) {
         if (page.slots[offset] == null) continue;
-        long seq = pageFirst + offset;
+        long seq = pageFirst > Long.MAX_VALUE - offset ? Long.MAX_VALUE : pageFirst + offset;
         if (extent.contains(seq) && seq < first) first = seq;
       }
     }
@@ -89,11 +89,11 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
     for (long seq = from; seq <= to; seq++) {
       long index = seq - extent.firstSeq;
       if (slotStateAt(index) == SlotState.UNLOADED) {
-        long pageFirst = PagedTerminalHistory.pageNumber(seq)
-            * PagedTerminalHistory.PAGE_SIZE + 1;
+        long pageFirst = PagedTerminalHistory.pageFirstSeq(PagedTerminalHistory.pageNumber(seq));
         return new long[] {
             Math.max(extent.firstSeq, pageFirst),
-            Math.min(extent.lastSeq, pageFirst + PagedTerminalHistory.PAGE_SIZE - 1)
+            Math.min(extent.lastSeq,
+                PagedTerminalHistory.pageLastSeq(PagedTerminalHistory.pageNumber(seq)))
         };
       }
       if (seq == Long.MAX_VALUE) break;

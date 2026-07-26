@@ -54,6 +54,19 @@ public final class PagedTerminalHistory {
     return (seq - 1) / PAGE_SIZE;
   }
 
+  static long pageFirstSeq(long pageNumber) {
+    if (pageNumber < 0 || pageNumber > (Long.MAX_VALUE - 1) / PAGE_SIZE) {
+      throw new IllegalArgumentException("history page number overflow");
+    }
+    return pageNumber * PAGE_SIZE + 1;
+  }
+
+  static long pageLastSeq(long pageNumber) {
+    long pageFirst = pageFirstSeq(pageNumber);
+    long add = PAGE_SIZE - 1L;
+    return pageFirst > Long.MAX_VALUE - add ? Long.MAX_VALUE : pageFirst + add;
+  }
+
   public static int pageOffset(long seq) {
     if (seq < 1) throw new IllegalArgumentException("seq must be >=1");
     return (int) ((seq - 1) % PAGE_SIZE);
@@ -104,8 +117,8 @@ public final class PagedTerminalHistory {
       workingExtent = next;
       List<Long> outside = new ArrayList<>();
       for (Map.Entry<Long, HistoryPageChunk> entry : workingPages.entrySet()) {
-        long pageFirst = entry.getKey() * PAGE_SIZE + 1;
-        long pageLast = pageFirst + PAGE_SIZE - 1;
+        long pageFirst = pageFirstSeq(entry.getKey());
+        long pageLast = pageLastSeq(entry.getKey());
         if (pageLast < next.firstSeq || pageFirst > next.lastSeq || next.isEmpty()) {
           outside.add(entry.getKey());
         }

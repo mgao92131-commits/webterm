@@ -188,7 +188,8 @@ public final class RemoteTerminalViewScrollBlankReproTest {
     }
     for (int i = 0; i < scrollRows; i++) {
       TerminalLine off = current.screen[i];
-      scrolledOff.add(textLine(off.id, off.version, HISTORY + nextRevision, "hist-tail"));
+      // 生产端 Push 会保留刚移出 screen 的内容/version，只增加 HistorySeq。
+      scrolledOff.add(off.withHistorySeq(HISTORY + nextRevision));
     }
     ScreenPatchV2 patch = new ScreenPatchV2(
         INSTANCE, LAYOUT_EPOCH, STREAM_GENERATION, nextRevision, nextRevision + 1,

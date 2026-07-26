@@ -5,6 +5,7 @@ import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,6 +18,7 @@ import java.util.function.LongConsumer;
 public final class RemoteTerminalModel {
 
   public static final long SCHEMA_GENERATION = 2L;
+  private static final int MIGRATION_REVISION_WINDOW = 8;
   // 历史容量是双上限：行数是安全上限，字节是近似内存预算（estimateHistoryLineBytes），
   // 先达到者触发驱逐。保留行数随列宽和内容变化（80 列文本行约 5–6KB 估算），
   // 产品和注释都不承诺固定保留行数。默认值可由 HistoryBudget 按设备内存分档覆盖。
@@ -38,6 +40,9 @@ public final class RemoteTerminalModel {
   private TerminalLine[] screen;
   /** 只保存当前实时 screen 可引用的行；历史行完全由 PagedTerminalHistory 所有。 */
   private final Map<Long, TerminalLine> screenLineStore = new HashMap<>();
+  /** 仅保留刚离开 screen、等待 HistoryDelta 绑定的行身份；绝不随会话无限增长。 */
+  private final LinkedHashMap<Long, PendingHistoryMigration> pendingHistoryMigrations =
+      new LinkedHashMap<>();
 
   private long firstAvailableHistorySeq;
   private boolean hasMoreHistoryBefore;
@@ -61,6 +66,16 @@ public final class RemoteTerminalModel {
       ProjectionHealth.incomplete(SCHEMA_GENERATION);
   /** 仅由单元测试注入；生产实例为 null，不在 Patch 热路径执行。 */
   private final LongConsumer baselineHistoryValidationProbe;
+
+  private static final class PendingHistoryMigration {
+    final TerminalLine screenLine;
+    final long removedAtScreenRevision;
+
+    PendingHistoryMigration(TerminalLine screenLine, long removedAtScreenRevision) {
+      this.screenLine = screenLine;
+      this.removedAtScreenRevision = removedAtScreenRevision;
+    }
+  }
 
   public RemoteTerminalModel() {
     this(HistoryBudget.defaults());
@@ -147,6 +162,8 @@ public final class RemoteTerminalModel {
       return false;
     }
     historyEditor.commit();
+    // Baseline 是权威完整投影；不让旧 Patch 的迁移身份跨同步边界存活。
+    pendingHistoryMigrations.clear();
     this.v2Projection = true;
     this.streamGeneration = baseline.streamGeneration;
     this.instanceId = baseline.instanceId;
@@ -194,6 +211,7 @@ public final class RemoteTerminalModel {
       throw new RevisionGapException("screen.v2 layout length mismatch");
     }
     Map<Long, TerminalLine> stagedLines = new HashMap<>();
+    TerminalLine[] previousScreen = screen != null ? screen.clone() : null;
     PagedTerminalHistorySnapshot historySnapshot = pagedHistory.snapshot();
     for (TerminalLine line : patch.lineUpdates) {
       TerminalLine normalized = padOrCopyLine(line, columns);
@@ -250,7 +268,7 @@ public final class RemoteTerminalModel {
         // id 已由 detectScreenScroll 保证匹配，version 升高即同 Patch 内 lineUpdates
         // 更新的保留行，必须标脏，否则渲染层行缓存会复用旧录制显示陈旧内容。
         // （同 version 重发的行内容不变，按 version 比较避免无谓整屏重录。）
-        TerminalLine[] previousScreen = screen;
+        TerminalLine[] preScrollScreen = screen;
         TerminalLine[] nextScreen = new TerminalLine[rows];
         for (int row = 0; row < rows; row++) {
           TerminalLine next = stagedLines.get(patch.layout[row]);
@@ -259,7 +277,7 @@ public final class RemoteTerminalModel {
           nextScreen[row] = next;
           int sourceRow = row + screenScrollRows;
           if (!exposedRows.get(row) && sourceRow >= 0 && sourceRow < rows
-              && previousScreen[sourceRow].version != next.version) {
+              && preScrollScreen[sourceRow].version != next.version) {
             changedRows.set(row);
           }
         }
@@ -307,6 +325,7 @@ public final class RemoteTerminalModel {
     screenRevision = patch.screenRevision;
     remoteScreenRevision = patch.screenRevision;
     rebuildScreenLineStore();
+    recordPendingHistoryMigrations(previousScreen, patch.screenRevision);
     markRenderDirty(false, changedRows, screenScrollRows, exposedRows, rows, false, false,
         cursorChanged,
         previousCursor != null ? previousCursor.row : -1, cursor.row,
@@ -327,13 +346,16 @@ public final class RemoteTerminalModel {
     HistoryExtent nextExtent = delta.availableExtent;
     PagedTerminalHistory.Editor editor = pagedHistory.edit()
         .setExtent(nextExtent.firstSeq, nextExtent.lastSeq);
+    List<Long> completedMigrations = new ArrayList<>();
     for (TerminalLine line : delta.lines) {
       TerminalLine normalized = normalizeHistoryLine(line);
       if (nextExtent.contains(normalized.historySeq)) {
+        validatePendingHistoryMigration(normalized, completedMigrations);
         editor.put(normalized.historySeq, normalized);
       }
     }
     editor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq).commit();
+    clearCompletedMigrations(completedMigrations);
     remoteAvailableExtent = nextExtent;
     displayExtent = nextExtent;
     firstAvailableHistorySeq = displayExtent.firstSeq;
@@ -363,6 +385,7 @@ public final class RemoteTerminalModel {
     }
     if (range.status == HistoryRangeResult.Status.RETRYABLE) return false;
     PagedTerminalHistory.Editor editor = pagedHistory.edit();
+    List<Long> completedMigrations = new ArrayList<>();
     // 对请求区间中已经超出服务端权威 extent 的槽位作永久不可用标记。可见页驱动
     // 只请求 UNLOADED，因此 OK/TRIMMED 空交集都不会形成重复热循环。
     if (requestedFromSeq <= requestedToSeq && !displayExtent.isEmpty()) {
@@ -382,10 +405,12 @@ public final class RemoteTerminalModel {
     for (TerminalLine line : range.lines) {
       TerminalLine normalized = normalizeHistoryLine(line);
       if (displayExtent.contains(normalized.historySeq)) {
+        validatePendingHistoryMigration(normalized, completedMigrations);
         editor.put(normalized.historySeq, normalized);
       }
     }
     editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
+    clearCompletedMigrations(completedMigrations);
     remoteAvailableExtent = range.availableExtent;
     markRenderDirty(false, null, 0, null, rows, true, false, false, -1, -1,
         false, false, false, false, false);
@@ -512,6 +537,10 @@ public final class RemoteTerminalModel {
     return renderPublicationPending;
   }
 
+  synchronized int pendingHistoryMigrationCountForTest() {
+    return pendingHistoryMigrations.size();
+  }
+
   public synchronized TerminalCursor cursor() {
     return cursor;
   }
@@ -581,6 +610,55 @@ public final class RemoteTerminalModel {
       throw new IllegalStateException("screen.v2 history LineID is owned by screen");
     }
     return normalized;
+  }
+
+  /** 成功 Patch 后才调用：只记录真正离开 screen 的行，并清理重新进入 screen 的 ID。 */
+  private void recordPendingHistoryMigrations(
+      TerminalLine[] previousScreen, long removedAtScreenRevision) {
+    if (previousScreen != null) {
+      for (TerminalLine previous : previousScreen) {
+        if (previous != null && !screenLineStore.containsKey(previous.id)) {
+          pendingHistoryMigrations.put(previous.id,
+              new PendingHistoryMigration(previous, removedAtScreenRevision));
+        }
+      }
+    }
+    for (TerminalLine current : screenLineStore.values()) {
+      pendingHistoryMigrations.remove(current.id);
+    }
+    prunePendingHistoryMigrations(removedAtScreenRevision);
+  }
+
+  private void validatePendingHistoryMigration(
+      TerminalLine historyLine, List<Long> completedMigrations) {
+    PendingHistoryMigration migration = pendingHistoryMigrations.get(historyLine.id);
+    if (migration == null) return;
+    // Go writer 将屏幕行原样 Push 到不可变 scrollback，HistorySeq 是唯一允许变化的位置。
+    if (migration.screenLine.version != historyLine.version
+        || !migration.screenLine.sameContent(historyLine)) {
+      throw new IllegalStateException("screen.v2 history migration changed LineID content");
+    }
+    completedMigrations.add(historyLine.id);
+  }
+
+  private void clearCompletedMigrations(List<Long> completedMigrations) {
+    for (long lineId : completedMigrations) pendingHistoryMigrations.remove(lineId);
+  }
+
+  private void prunePendingHistoryMigrations(long currentRevision) {
+    long oldestAllowed = currentRevision > MIGRATION_REVISION_WINDOW
+        ? currentRevision - MIGRATION_REVISION_WINDOW : 0;
+    java.util.Iterator<Map.Entry<Long, PendingHistoryMigration>> iterator =
+        pendingHistoryMigrations.entrySet().iterator();
+    while (iterator.hasNext()) {
+      if (iterator.next().getValue().removedAtScreenRevision < oldestAllowed) iterator.remove();
+    }
+    int capacity = Math.max(32, rows * 4);
+    while (pendingHistoryMigrations.size() > capacity) {
+      java.util.Iterator<Long> oldest = pendingHistoryMigrations.keySet().iterator();
+      oldest.next();
+      oldest.remove();
+    }
   }
 
   /** Patch 提交后仅按当前 screen 重建，成本严格受 rows 上限约束。 */
