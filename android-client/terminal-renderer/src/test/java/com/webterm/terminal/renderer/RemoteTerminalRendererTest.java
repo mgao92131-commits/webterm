@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Paint;
 
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
@@ -16,6 +17,7 @@ import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalStyle;
 import com.webterm.terminal.model.TerminalViewportState;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
@@ -71,6 +73,114 @@ public final class RemoteTerminalRendererTest {
     // at the canvas edge or an arbitrary bottom-aligned offset.
     assertEquals(4f, RemoteTerminalRenderer.screenTopY(600, 0, 35, 17f, 4f, 0f), 0.001f);
     assertEquals(4f, RemoteTerminalRenderer.contentTopY(600, 0, 35, 17f, 4f, 0f), 0.001f);
+  }
+
+  @Test public void topInsetQuantizesFractionalAscentToWholePixels() {
+    // lineHeight 已是 ceil 后的整数；baselineOffset 来自 -Paint.ascent()，常为小数。
+    // 若不量化 topInset，整列行顶会落在亚像素 Y，硬件加速行级 RenderNode 会透出暗缝。
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 42f, 33.75f);
+    assertEquals(8.25f, 42f - 33.75f, 0f); // 量化前的原始留白
+    assertEquals(8f, renderer.getTopInset(), 0f);
+
+    renderer.setFontMetrics(10f, 42f, 33.4f);
+    assertEquals(8.6f, 42f - 33.4f, 0.0001f);
+    assertEquals(9f, renderer.getTopInset(), 0f);
+  }
+
+  @Test public void pixelAlignedGridKeepsIntegerRowBoundaries() {
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    float lineHeight = 42f;
+    renderer.setFontMetrics(10f, lineHeight, 33.75f); // raw inset 8.25 → aligned 8
+    float topInset = renderer.getTopInset();
+    float screenTop = RemoteTerminalRenderer.screenTopY(800, 0, 20, lineHeight, topInset, 0f);
+    assertEquals(8f, screenTop, 0f);
+    for (int row = 0; row < 20; row++) {
+      float rowTop = screenTop + row * lineHeight;
+      float rowBottom = rowTop + lineHeight;
+      assertEquals("row " + row + " top must be whole pixels",
+          (float) Math.round(rowTop), rowTop, 0f);
+      assertEquals("row " + row + " bottom must be whole pixels",
+          (float) Math.round(rowBottom), rowBottom, 0f);
+    }
+    // 带历史滚动时，整数 scrollOffset 仍保持整像素网格。
+    float scrolledTop = RemoteTerminalRenderer.contentTopY(
+        800, 50, 20, lineHeight, topInset, 300f);
+    for (int row = 0; row < 70; row++) {
+      float y = scrolledTop + row * lineHeight;
+      assertEquals("scrolled row " + row + " must stay pixel-aligned",
+          (float) Math.round(y), y, 0f);
+    }
+  }
+
+  @Test public void coloredBackgroundRectsAbutOnPixelAlignedGrid() {
+    // 连续彩色背景是行间暗缝最易暴露的场景。Robolectric 不一定光栅化 drawRect，
+    // 因此记录矩形几何：相邻行背景必须在整像素边界无缝衔接。
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    int cols = 4;
+    int rows = 6;
+    TerminalColor green = TerminalColor.rgb(0x00AA00);
+    TerminalCell greenCell = new TerminalCell("G", (byte) 1,
+        new TerminalStyle(1, TerminalColor.DEFAULT_FG, green, null, 0), null);
+    List<TerminalLine> screen = new ArrayList<>();
+    for (int i = 0; i < rows; i++) {
+      TerminalCell[] cells = new TerminalCell[cols];
+      Arrays.fill(cells, greenCell);
+      screen.add(new TerminalLine(1000L + i, 1, 0, false, cells));
+    }
+    model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY,
+        rows, cols, TerminalBufferKind.MAIN,
+        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
+    model.consumeRenderUpdate();
+
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    float lineHeight = 42f;
+    float cellWidth = 10f;
+    renderer.setFontMetrics(cellWidth, lineHeight, 33.75f); // topInset → 8
+    int width = (int) (cols * cellWidth);
+    int height = (int) (rows * lineHeight + renderer.getTopInset() + 2);
+    BgRectRecordingCanvas canvas = new BgRectRecordingCanvas(width, height);
+    renderer.render(canvas, model.renderSnapshot(), new TerminalViewportState(), true);
+
+    int expectedGreen = RemoteTerminalRenderer.resolveColor(TerminalPalette.defaults(), green);
+    float topInset = renderer.getTopInset();
+    assertEquals(8f, topInset, 0f);
+    assertTrue("expected background rects for green rows", canvas.bgTops.size() >= rows);
+    for (int row = 0; row < rows; row++) {
+      float expectedTop = topInset + row * lineHeight;
+      float expectedBottom = expectedTop + lineHeight;
+      assertTrue("missing bg rect for row " + row + " tops=" + canvas.bgTops,
+          canvas.bgTops.contains(expectedTop));
+      assertTrue("missing bg bottom for row " + row,
+          canvas.bgBottoms.contains(expectedBottom));
+      assertEquals((float) Math.round(expectedTop), expectedTop, 0f);
+      assertEquals((float) Math.round(expectedBottom), expectedBottom, 0f);
+    }
+    assertTrue(canvas.bgColors.contains(expectedGreen));
+  }
+
+  /** 记录背景矩形几何，用于验证行间无亚像素缝隙。 */
+  private static final class BgRectRecordingCanvas extends Canvas {
+    final List<Float> bgTops = new ArrayList<>();
+    final List<Float> bgBottoms = new ArrayList<>();
+    final List<Integer> bgColors = new ArrayList<>();
+
+    BgRectRecordingCanvas(int width, int height) {
+      super(Bitmap.createBitmap(Math.max(1, width), Math.max(1, height), Bitmap.Config.ARGB_8888));
+    }
+
+    @Override
+    public void drawRect(float left, float top, float right, float bottom, Paint paint) {
+      bgTops.add(top);
+      bgBottoms.add(bottom);
+      bgColors.add(paint.getColor());
+    }
+
+    @Override
+    public void drawColor(int color) {
+    }
   }
 
   @Test public void liveScreenExitBoundaryUsesExactUsableViewportPixels() {
