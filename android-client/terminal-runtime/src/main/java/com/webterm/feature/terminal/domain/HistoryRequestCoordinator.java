@@ -48,13 +48,26 @@ public final class HistoryRequestCoordinator {
   public synchronized void markPending(String requestId, long fromSeq, long toSeq,
                                        long anchorSeq, String instanceId, long layoutEpoch,
                                        long historyGeneration, int retryAttempt) {
+    reserve(requestId, fromSeq, toSeq, anchorSeq,
+        instanceId, layoutEpoch, historyGeneration, retryAttempt);
+  }
+
+  public synchronized Pending reserve(String requestId, long fromSeq, long toSeq,
+                                      long anchorSeq, String instanceId, long layoutEpoch,
+                                      long historyGeneration, int retryAttempt) {
     if (pending.size() >= MAX_PENDING) {
       String oldest = pending.entrySet().iterator().next().getKey();
       pending.remove(oldest);
     }
-    pending.put(requestId, new Pending(
+    Pending reservation = new Pending(
         requestId, fromSeq, toSeq, anchorSeq,
-        instanceId == null ? "" : instanceId, layoutEpoch, historyGeneration, retryAttempt));
+        instanceId == null ? "" : instanceId, layoutEpoch, historyGeneration, retryAttempt);
+    pending.put(requestId, reservation);
+    return reservation;
+  }
+
+  public synchronized Pending cancel(String requestId) {
+    return complete(requestId);
   }
 
   public synchronized boolean isRangePending(long fromSeq, long toSeq) {

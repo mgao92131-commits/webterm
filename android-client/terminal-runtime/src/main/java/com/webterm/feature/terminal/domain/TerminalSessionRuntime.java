@@ -597,7 +597,7 @@ public final class TerminalSessionRuntime {
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (c == null || !projection.projectionComplete || projection.instanceId.isEmpty()
         || projection.layoutEpoch == 0) return false;
-    HistoryExtent extent = projection.displayExtent;
+    HistoryExtent extent = projection.mainHistoryExtent;
     long boundedFrom = Math.max(extent.firstSeq, fromSeq);
     long boundedTo = Math.min(extent.lastSeq, toSeq);
     if (boundedFrom <= 0 || boundedTo < boundedFrom || boundedTo - boundedFrom >= 256) {
@@ -605,14 +605,16 @@ public final class TerminalSessionRuntime {
     }
     if (historyRequests.isRangePending(boundedFrom, boundedTo)) return true;
     String requestId = historyRequests.nextRequestId();
+    historyRequests.reserve(requestId, boundedFrom, boundedTo, anchorSeq,
+        projection.instanceId, projection.layoutEpoch, projection.historyGeneration, retryAttempt);
     if (!c.requestHistoryRange(
         requestId, projection.instanceId, projection.layoutEpoch,
-        model.historyGeneration(), boundedFrom, boundedTo)) {
+        projection.historyGeneration, boundedFrom, boundedTo)) {
+      historyRequests.cancel(requestId);
       return false;
     }
-    historyRequests.markPending(requestId, boundedFrom, boundedTo, anchorSeq,
-        projection.instanceId, projection.layoutEpoch, projection.historyGeneration, retryAttempt);
-    scheduleHistoryRequestTimeout(requestId);
+    // Loopback/fake connections may deliver a response synchronously from requestHistoryRange().
+    if (historyRequests.accept(requestId)) scheduleHistoryRequestTimeout(requestId);
     return true;
   }
 
@@ -769,8 +771,14 @@ public final class TerminalSessionRuntime {
         processed++;
         try {
           if (drain.fence != null) {
-            onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
-                drain.fence.discardedMessages, drain.fence.overflowCount);
+            if (drain.fence.rebuildChannel) {
+              onMailboxFatalControlOverflow(
+                  drain.fence.reason, drain.fence.discardedBytes,
+                  drain.fence.discardedMessages, drain.fence.overflowCount);
+            } else {
+              onMailboxOverflow(drain.fence.reason, drain.fence.discardedBytes,
+                  drain.fence.discardedMessages, drain.fence.overflowCount);
+            }
             continue;
           }
           ScreenMailbox.Message message = drain.message;
@@ -834,7 +842,7 @@ public final class TerminalSessionRuntime {
         if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
         if (field == 15) return ScreenMailbox.MessageKind.INPUT_ACK;
-        if (field == 16) return ScreenMailbox.MessageKind.EFFECT;
+        if (field == 16) return classifyEffectMessage(input, tag);
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
         if (field == 21) return ScreenMailbox.MessageKind.PONG;
         if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
@@ -845,6 +853,32 @@ public final class TerminalSessionRuntime {
       // Full parse and validation retain responsibility for reporting malformed envelopes.
     }
     return ScreenMailbox.MessageKind.UNKNOWN;
+  }
+
+  @NonNull
+  private static ScreenMailbox.MessageKind classifyEffectMessage(
+      @NonNull CodedInputStream input, int envelopeTag) throws IOException {
+    if (WireFormat.getTagWireType(envelopeTag) != WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+      return ScreenMailbox.MessageKind.UNKNOWN;
+    }
+    int length = input.readRawVarint32();
+    if (length < 0) return ScreenMailbox.MessageKind.UNKNOWN;
+    int oldLimit = input.pushLimit(length);
+    try {
+      while (!input.isAtEnd()) {
+        int tag = input.readTag();
+        if (tag == 0) break;
+        int field = WireFormat.getTagFieldNumber(tag);
+        // TerminalEffect oneof: clipboard_read=13, clipboard_write=14.
+        if (field == 13 || field == 14) {
+          return ScreenMailbox.MessageKind.CLIPBOARD_EFFECT;
+        }
+        if (!input.skipField(tag)) break;
+      }
+      return ScreenMailbox.MessageKind.EFFECT;
+    } finally {
+      input.popLimit(oldLimit);
+    }
   }
 
   // ---- resync 恢复状态机（以下方法只能在 modelExecutor 上调用） ----
@@ -872,6 +906,22 @@ public final class TerminalSessionRuntime {
         "recoveringState", resyncCoordinator.stateName(),
         "suppressedOverflowCount", resyncCoordinator.suppressedOverflowCount()));
     if (!wasRecovering) TerminalResumeMetrics.resync(reason);
+  }
+
+  private void onMailboxFatalControlOverflow(@NonNull String reason,
+                                             long discardedBytes,
+                                             long discardedMessages,
+                                             long overflowCount) {
+    TerminalResumeMetrics.screenMailboxOverflow(reason, discardedBytes, overflowCount);
+    projectionContinuity = ProjectionContinuityState.LOST;
+    Diagnostics.warn("screen_protocol", "screen_mailbox_channel_rebuild", diagnosticFields(
+        "reason", reason,
+        "discardedBytes", discardedBytes,
+        "discardedMessages", discardedMessages,
+        "overflowCount", overflowCount,
+        "pendingMessages", screenMailbox.pendingMessages(),
+        "pendingBytes", screenMailbox.pendingBytes()));
+    rebuildScreenChannel(reason);
   }
 
   private void onInvalidSnapshot(@NonNull String reason) {

@@ -3,6 +3,7 @@ package terminalsession
 import (
 	"bytes"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,90 @@ func TestScreenClientHistoryRangeTokenBucket(t *testing.T) {
 	}
 	if ok, _ := client.allowHistoryRange(now.Add(125 * time.Millisecond)); !ok {
 		t.Fatal("one token must refill after 125ms at 8 requests/second")
+	}
+}
+
+func TestPendingClipboardRequestsAreBoundedAndExpire(t *testing.T) {
+	r := &Runtime{pendingClipboard: make(map[string]pendingClipboardRequest)}
+	now := time.Unix(1_000, 0)
+	for i := 0; i < maxPendingClipboardRequests+10; i++ {
+		r.trackPendingClipboard(
+			strconv.Itoa(i), 'c', now.Add(time.Duration(i)*time.Millisecond))
+	}
+	if got := len(r.pendingClipboard); got != maxPendingClipboardRequests {
+		t.Fatalf("pending clipboard requests=%d, want %d", got, maxPendingClipboardRequests)
+	}
+	if _, ok := r.pendingClipboard["0"]; ok {
+		t.Fatal("oldest clipboard request was not evicted at the hard bound")
+	}
+
+	r.prunePendingClipboard(now.Add(pendingClipboardTTL + time.Minute))
+	if got := len(r.pendingClipboard); got != 0 {
+		t.Fatalf("expired clipboard requests=%d, want 0", got)
+	}
+}
+
+func TestClipboardReadResponseCompletesAndLastClientDisconnectClearsPending(t *testing.T) {
+	var terminal bytes.Buffer
+	effects := make(chan terminalengine.Effect, 2)
+	r := &Runtime{
+		terminalIO:       &terminal,
+		clients:          make(map[string]*ScreenClient),
+		leaseManager:     NewLeaseManager(),
+		pendingClipboard: make(map[string]pendingClipboardRequest),
+	}
+	client := &ScreenClient{
+		ID:   "clipboard",
+		Send: func(terminalengine.ScreenFrame) {},
+		SendEffect: func(_ string, _ uint64, effect terminalengine.Effect) {
+			effects <- effect
+		},
+	}
+	lease := r.leaseManager.Acquire("clipboard", true)
+	if !lease.Granted {
+		t.Fatal("clipboard client did not acquire layout lease")
+	}
+	client.LayoutLeaseID = lease.LeaseID
+	r.clients[client.ID] = client
+
+	firstRequestID := "clipboard-read-1"
+	r.trackPendingClipboard(firstRequestID, 'c', time.Now())
+	r.handleEffect(terminalengine.Effect{
+		Kind: terminalengine.EffectClipboardRead, RequestID: firstRequestID, Clipboard: "c",
+	})
+	var effect terminalengine.Effect
+	select {
+	case effect = <-effects:
+	case <-time.After(2 * time.Second):
+		t.Fatal("clipboard read effect was not delivered")
+	}
+	if effect.Kind != terminalengine.EffectClipboardRead || effect.RequestID == "" {
+		t.Fatalf("clipboard effect=%+v", effect)
+	}
+
+	r.handleClipboardResponse(clipboardResponseEvent{
+		clientID: "clipboard", requestID: effect.RequestID, allowed: true, data: []byte("answer"),
+	})
+	if _, ok := r.pendingClipboard[effect.RequestID]; ok {
+		t.Fatal("completed clipboard request remained pending")
+	}
+	if got := terminal.String(); !strings.Contains(got, "YW5zd2Vy") {
+		t.Fatalf("clipboard response did not reach PTY: %q", got)
+	}
+
+	secondRequestID := "clipboard-read-2"
+	r.trackPendingClipboard(secondRequestID, 'c', time.Now())
+	r.handleEffect(terminalengine.Effect{
+		Kind: terminalengine.EffectClipboardRead, RequestID: secondRequestID, Clipboard: "c",
+	})
+	select {
+	case effect = <-effects:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second clipboard read effect was not delivered")
+	}
+	r.handleClientDetach("clipboard")
+	if got := len(r.pendingClipboard); got != 0 {
+		t.Fatalf("pending clipboard requests after disconnect=%d, want 0", got)
 	}
 }
 

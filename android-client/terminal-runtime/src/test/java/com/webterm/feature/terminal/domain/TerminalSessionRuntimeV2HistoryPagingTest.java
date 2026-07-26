@@ -151,6 +151,86 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
   }
 
   @Test
+  public void historyRangeCompletesIntoMainWhileAlternateIsActive() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-buffer", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2).toByteArray());
+    assertTrue(runtime.requestHistoryRange(1, 64, 1));
+    String requestId = connection.requestId;
+
+    connection.listener.onScreenMessage(
+        bufferSwitchCommit(1, 2,
+            TerminalScreenV2Proto.BufferKind.BUFFER_KIND_ALTERNATE).toByteArray());
+    long alternateFirstLineId = runtime.model().renderSnapshot().screen[0].id;
+    assertEquals(com.webterm.terminal.model.TerminalBufferKind.ALTERNATE,
+        runtime.model().activeBuffer);
+
+    connection.listener.onScreenMessage(historyRange(
+        requestId, TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
+        true).toByteArray());
+
+    assertEquals(alternateFirstLineId, runtime.model().renderSnapshot().screen[0].id);
+    assertEquals(0, runtime.model().historyIndex().loadedLineIds().size());
+    assertNull(((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).lineBySeq(1));
+    assertEquals(0, connection.reconnectRequests);
+
+    connection.listener.onScreenMessage(
+        bufferSwitchCommit(2, 3,
+            TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN).toByteArray());
+    assertNotNull(((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).lineBySeq(1));
+    assertEquals(10_001,
+        ((PagedTerminalHistorySnapshot) runtime.model().renderSnapshot().history)
+            .lineBySeq(1).id);
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void synchronousHistoryResponseCannotBeatPendingReservation() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-sync", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2).toByteArray());
+    connection.respondSynchronously = true;
+
+    assertTrue(runtime.requestHistoryRange(1, 64, 1));
+
+    assertEquals(1, connection.rangeRequests);
+    assertNotNull(((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).lineBySeq(1));
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
+  public void requestWireUsesSingleProjectionIdentityEvenIfModelChangesDuringSend() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-identity", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2, 1).toByteArray());
+    connection.onRangeRequest = () ->
+        runtime.model().applyBaseline(
+            com.webterm.terminal.protocol.ScreenMessageV2Mapper.mapBaseline(
+                baseline(2, 2, 2).getBaseline()));
+
+    assertTrue(runtime.requestHistoryRange(1, 64, 1));
+
+    assertEquals(1, connection.historyGeneration);
+    assertEquals(2, runtime.model().historyGeneration());
+    connection.listener.onScreenMessage(historyRange(
+        connection.requestId,
+        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
+        true, connection.historyGeneration).toByteArray());
+    assertNull(((PagedTerminalHistorySnapshot)
+        runtime.model().renderSnapshot().history).lineBySeq(1));
+    assertEquals(0, connection.reconnectRequests);
+  }
+
+  @Test
   public void revisionJumpCommitIsAppliedWhileViewportIsIrrelevant() {
     TerminalSessionRuntime runtime = new TerminalSessionRuntime(
         "jump", new RemoteTerminalModel(), Runnable::run, Runnable::run,
@@ -204,6 +284,37 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     assertTrue(connection.textInputs.isEmpty());
   }
 
+  @Test
+  public void clipboardReadReliableEffectCompletesResponseRoundTrip() {
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "clipboard", new RemoteTerminalModel(), Runnable::run, Runnable::run,
+        (task, delayMs) -> {});
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baseline(1, 2).toByteArray());
+    runtime.setEffectSink((source, effect, hasPageListener) -> {
+      if (effect.type() == TerminalScreenEffect.Type.CLIPBOARD_READ) {
+        source.sendClipboardResponse(
+            effect.asClipboardRead().requestId, true, false, "value".getBytes(StandardCharsets.UTF_8));
+      }
+    });
+    TerminalScreenV2Proto.ScreenEnvelope clipboard =
+        TerminalScreenV2Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
+            .setEffect(TerminalScreenV2Proto.TerminalEffect.newBuilder()
+                .setInstanceId("i1").setScreenRevision(1)
+                .setClipboardRead(TerminalScreenV2Proto.ClipboardReadRequest.newBuilder()
+                    .setRequestId("clip-1").setClipboard("c")))
+            .build();
+
+    connection.listener.onScreenMessage(clipboard.toByteArray());
+
+    assertEquals(1, connection.clipboardResponses);
+    assertEquals("clip-1", connection.clipboardRequestId);
+    assertEquals("value", new String(connection.clipboardData, StandardCharsets.UTF_8));
+    assertEquals(TerminalSessionRuntime.ProjectionContinuityState.CONTINUOUS,
+        runtime.projectionContinuityState());
+    assertEquals(0, connection.reconnectRequests);
+  }
+
   private static FakeV2Connection connect(TerminalSessionRuntime runtime) {
     FakeV2Connection connection = new FakeV2Connection();
     runtime.attachConnection(connection);
@@ -255,6 +366,32 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
                     .setRow(0).setLine(line(1000, 2, 0, text))))
             .build();
     return envelope(commit);
+  }
+
+  private static TerminalScreenV2Proto.ScreenEnvelope bufferSwitchCommit(
+      long baseRevision, long revision, TerminalScreenV2Proto.BufferKind buffer) {
+    TerminalScreenV2Proto.TerminalCommit.Builder commit =
+        TerminalScreenV2Proto.TerminalCommit.newBuilder()
+            .setInstanceId("i1")
+            .setLayoutEpoch(1)
+            .setBaseRevision(baseRevision)
+            .setRevision(revision)
+            .setDictionaryGeneration(1)
+            .setHistoryGeneration(1)
+            .setActiveBuffer(buffer)
+            .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
+                .setFinalExtent(buffer == TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN
+                    ? extent(1, 128) : extent(1, 0)));
+    for (int row = 0; row < 2; row++) {
+      long lineId = buffer == TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN
+          ? 1000 + row : 2000 + row;
+      commit.getScreenBuilder().addWrites(
+          TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
+              .setRow(row).setLine(line(
+                  lineId, 1, 0,
+                  buffer == TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN ? "x" : "b")));
+    }
+    return envelope(commit.build());
   }
 
   private static TerminalScreenV2Proto.ScreenEnvelope historyRange(
@@ -327,6 +464,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     long toSeq;
     int rangeRequests;
     int reconnectRequests;
+    int clipboardResponses;
+    String clipboardRequestId = "";
+    byte[] clipboardData = new byte[0];
+    boolean respondSynchronously;
+    Runnable onRangeRequest;
     final List<String> textInputs = new ArrayList<>();
 
     @Override public void setListener(@NonNull Listener listener) {
@@ -346,6 +488,13 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
       this.fromSeq = fromSeq;
       this.toSeq = toSeq;
       rangeRequests++;
+      if (onRangeRequest != null) onRangeRequest.run();
+      if (respondSynchronously) {
+        listener.onScreenMessage(historyRange(
+            requestId,
+            TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK,
+            true, historyGeneration).toByteArray());
+      }
       return true;
     }
 
@@ -366,7 +515,11 @@ public final class TerminalSessionRuntimeV2HistoryPagingTest {
     @Override public void acquireLayout(boolean interactive) {}
     @Override public void releaseLayout() {}
     @Override public void sendClipboardResponse(
-        @NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {}
+        @NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
+      clipboardResponses++;
+      clipboardRequestId = requestId;
+      clipboardData = data == null ? new byte[0] : data.clone();
+    }
     @Override public void close() {}
   }
 }

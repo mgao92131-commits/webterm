@@ -9,10 +9,22 @@ import java.util.ArrayDeque;
 public final class ScreenMailbox {
   static final int DEFAULT_URGENT_MAX_MESSAGES = 64;
   static final long DEFAULT_URGENT_MAX_BYTES = 512L * 1024L;
+  static final int DEFAULT_RELIABLE_MAX_MESSAGES = 32;
+  static final long DEFAULT_RELIABLE_MAX_BYTES = 4L * 1024L * 1024L;
   static final int DEFAULT_BACKGROUND_MAX_MESSAGES = 32;
   static final long DEFAULT_BACKGROUND_MAX_BYTES = 4L * 1024L * 1024L;
-  static final int MAX_CONSECUTIVE_URGENT = 4;
-  static final int MAX_CONSECUTIVE_PROJECTION = 8;
+  // Weighted round-robin slots. Keeping the order explicit makes the maximum wait bounded and
+  // testable while preserving FIFO inside every lane.
+  private static final int LANE_URGENT = 1;
+  private static final int LANE_PROJECTION = 2;
+  private static final int LANE_RELIABLE = 3;
+  private static final int LANE_BACKGROUND = 4;
+  private static final int[] SCHEDULE = {
+      LANE_URGENT, LANE_PROJECTION, LANE_URGENT, LANE_RELIABLE,
+      LANE_URGENT, LANE_PROJECTION, LANE_BACKGROUND,
+      LANE_URGENT, LANE_PROJECTION, LANE_RELIABLE, LANE_PROJECTION
+  };
+  static final int SCHEDULE_LENGTH = SCHEDULE.length;
 
   public enum MessageKind {
     BASELINE,
@@ -21,6 +33,7 @@ public final class ScreenMailbox {
     HISTORY_RANGE,
     INPUT_ACK,
     LAYOUT_LEASE,
+    CLIPBOARD_EFFECT,
     EFFECT,
     EXIT,
     PONG,
@@ -39,6 +52,10 @@ public final class ScreenMailbox {
     return kind == MessageKind.EXIT
         || kind == MessageKind.INPUT_ACK
         || kind == MessageKind.LAYOUT_LEASE;
+  }
+
+  static boolean isReliableControl(@NonNull MessageKind kind) {
+    return kind == MessageKind.CLIPBOARD_EFFECT;
   }
 
   public static final class Message {
@@ -72,12 +89,15 @@ public final class ScreenMailbox {
     public final long discardedBytes;
     public final long discardedMessages;
     public final long overflowCount;
+    public final boolean rebuildChannel;
 
-    Fence(String reason, long discardedBytes, long discardedMessages, long overflowCount) {
+    Fence(String reason, long discardedBytes, long discardedMessages, long overflowCount,
+          boolean rebuildChannel) {
       this.reason = reason;
       this.discardedBytes = discardedBytes;
       this.discardedMessages = discardedMessages;
       this.overflowCount = overflowCount;
+      this.rebuildChannel = rebuildChannel;
     }
   }
 
@@ -110,12 +130,16 @@ public final class ScreenMailbox {
   private final long projectionMaxBytes;
   private final int urgentMaxMessages;
   private final long urgentMaxBytes;
+  private final int reliableMaxMessages;
+  private final long reliableMaxBytes;
   private final int backgroundMaxMessages;
   private final long backgroundMaxBytes;
   /** Revision-bearing lane. Encoded projection messages are never merged or reordered. */
   private final ArrayDeque<Message> projectionMessages = new ArrayDeque<>();
   /** Exit/InputAck/LayoutLease. These are bounded and never silently dropped. */
   private final ArrayDeque<Message> urgentMessages = new ArrayDeque<>();
+  /** Clipboard read/write effects. Bounded, reliable, and never silently dropped. */
+  private final ArrayDeque<Message> reliableMessages = new ArrayDeque<>();
   /** Revision-independent pageable history, Pong and ordinary effects. */
   private final ArrayDeque<Message> backgroundMessages = new ArrayDeque<>();
   private boolean drainScheduled;
@@ -123,27 +147,40 @@ public final class ScreenMailbox {
   private int pendingProjectionMessages;
   private long pendingProjectionBytes;
   private long pendingUrgentBytes;
+  private long pendingReliableBytes;
   private long pendingBackgroundBytes;
-  private int consecutiveUrgent;
-  private int consecutiveProjection;
+  private int scheduleIndex;
   private volatile long generation;
   private boolean fencePending;
   private String fenceReason = "";
   private long fenceBytes;
   private long fenceMessages;
   private long fenceOverflows;
+  private boolean fenceRebuildChannel;
 
   public ScreenMailbox(int maxMessages, long maxBytes) {
     this(maxMessages, maxBytes,
         DEFAULT_URGENT_MAX_MESSAGES, DEFAULT_URGENT_MAX_BYTES,
+        DEFAULT_RELIABLE_MAX_MESSAGES, DEFAULT_RELIABLE_MAX_BYTES,
         DEFAULT_BACKGROUND_MAX_MESSAGES, DEFAULT_BACKGROUND_MAX_BYTES);
   }
 
   ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
                 int urgentMaxMessages, long urgentMaxBytes,
                 int backgroundMaxMessages, long backgroundMaxBytes) {
+    this(projectionMaxMessages, projectionMaxBytes,
+        urgentMaxMessages, urgentMaxBytes,
+        DEFAULT_RELIABLE_MAX_MESSAGES, DEFAULT_RELIABLE_MAX_BYTES,
+        backgroundMaxMessages, backgroundMaxBytes);
+  }
+
+  ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
+                int urgentMaxMessages, long urgentMaxBytes,
+                int reliableMaxMessages, long reliableMaxBytes,
+                int backgroundMaxMessages, long backgroundMaxBytes) {
     if (projectionMaxMessages < 1 || projectionMaxBytes < 1
         || urgentMaxMessages < 1 || urgentMaxBytes < 1
+        || reliableMaxMessages < 1 || reliableMaxBytes < 1
         || backgroundMaxMessages < 1 || backgroundMaxBytes < 1) {
       throw new IllegalArgumentException("mailbox budgets must be positive");
     }
@@ -151,6 +188,8 @@ public final class ScreenMailbox {
     this.projectionMaxBytes = projectionMaxBytes;
     this.urgentMaxMessages = urgentMaxMessages;
     this.urgentMaxBytes = urgentMaxBytes;
+    this.reliableMaxMessages = reliableMaxMessages;
+    this.reliableMaxBytes = reliableMaxBytes;
     this.backgroundMaxMessages = backgroundMaxMessages;
     this.backgroundMaxBytes = backgroundMaxBytes;
   }
@@ -162,42 +201,68 @@ public final class ScreenMailbox {
                                   @NonNull MessageKind kind) {
     boolean projection = isProjectionMessage(kind);
     boolean urgent = isUrgentControl(kind);
+    boolean reliable = isReliableControl(kind);
     long nextProjectionBytes = pendingProjectionBytes + (projection ? payload.length : 0L);
     long nextUrgentBytes = pendingUrgentBytes + (urgent ? payload.length : 0L);
+    long nextReliableBytes = pendingReliableBytes + (reliable ? payload.length : 0L);
     long droppedBackgroundMessages = 0L;
     long droppedBackgroundBytes = 0L;
-    if (!validFrameSize || (projection && (pendingProjectionMessages >= projectionMaxMessages
-        || nextProjectionBytes > projectionMaxBytes))) {
-      long discarded = pendingProjectionBytes + payload.length;
-      long discardedMessages = pendingProjectionMessages + 1L;
-      projectionMessages.clear();
-      pendingBytes -= pendingProjectionBytes;
-      pendingProjectionMessages = 0;
-      pendingProjectionBytes = 0L;
-      generation++;
-      fencePending = true;
-      fenceOverflows++;
-      fenceBytes = Math.max(fenceBytes, discarded);
-      fenceMessages += discardedMessages;
-      fenceReason = !validFrameSize
-          ? "screen mailbox rejected oversized frame"
-          : (nextProjectionBytes > projectionMaxBytes
-              ? "screen mailbox exceeded byte budget"
-              : "screen mailbox exceeded frame budget");
-    } else if (urgent && (urgentMessages.size() >= urgentMaxMessages
-        || nextUrgentBytes > urgentMaxBytes)) {
+    if (!validFrameSize) {
       long discarded = pendingBytes + payload.length;
-      long discardedMessages =
-          projectionMessages.size() + urgentMessages.size() + backgroundMessages.size() + 1L;
+      long discardedMessages = pendingMessages() + 1L;
       clearQueues();
       generation++;
       fencePending = true;
       fenceOverflows++;
       fenceBytes = Math.max(fenceBytes, discarded);
       fenceMessages += discardedMessages;
+      fenceRebuildChannel = true;
+      fenceReason = "screen mailbox rejected oversized frame";
+    } else if (projection && (pendingProjectionMessages >= projectionMaxMessages
+        || nextProjectionBytes > projectionMaxBytes)) {
+      long discarded = pendingProjectionBytes + payload.length;
+      long discardedMessages = pendingProjectionMessages + 1L;
+      projectionMessages.clear();
+      pendingBytes -= pendingProjectionBytes;
+      pendingProjectionMessages = 0;
+      pendingProjectionBytes = 0L;
+      scheduleIndex = 0;
+      generation++;
+      fencePending = true;
+      fenceOverflows++;
+      fenceBytes = Math.max(fenceBytes, discarded);
+      fenceMessages += discardedMessages;
+      fenceReason = nextProjectionBytes > projectionMaxBytes
+          ? "screen mailbox exceeded byte budget"
+          : "screen mailbox exceeded frame budget";
+    } else if (urgent && (urgentMessages.size() >= urgentMaxMessages
+        || nextUrgentBytes > urgentMaxBytes)) {
+      long discarded = pendingBytes + payload.length;
+      long discardedMessages = pendingMessages() + 1L;
+      clearQueues();
+      generation++;
+      fencePending = true;
+      fenceOverflows++;
+      fenceBytes = Math.max(fenceBytes, discarded);
+      fenceMessages += discardedMessages;
+      fenceRebuildChannel = true;
       fenceReason = nextUrgentBytes > urgentMaxBytes
           ? "screen mailbox urgent control exceeded byte budget"
           : "screen mailbox urgent control exceeded frame budget";
+    } else if (reliable && (reliableMessages.size() >= reliableMaxMessages
+        || nextReliableBytes > reliableMaxBytes)) {
+      long discarded = pendingBytes + payload.length;
+      long discardedMessages = pendingMessages() + 1L;
+      clearQueues();
+      generation++;
+      fencePending = true;
+      fenceOverflows++;
+      fenceBytes = Math.max(fenceBytes, discarded);
+      fenceMessages += discardedMessages;
+      fenceRebuildChannel = true;
+      fenceReason = nextReliableBytes > reliableMaxBytes
+          ? "screen mailbox reliable control exceeded byte budget"
+          : "screen mailbox reliable control exceeded frame budget";
     } else {
       Message message = new Message(connectionEpoch, generation, source, payload, kind);
       if (projection) {
@@ -209,6 +274,10 @@ public final class ScreenMailbox {
         urgentMessages.addLast(message);
         pendingBytes += payload.length;
         pendingUrgentBytes = nextUrgentBytes;
+      } else if (reliable) {
+        reliableMessages.addLast(message);
+        pendingBytes += payload.length;
+        pendingReliableBytes = nextReliableBytes;
       } else {
         while (!backgroundMessages.isEmpty()
             && (backgroundMessages.size() >= backgroundMaxMessages
@@ -237,12 +306,14 @@ public final class ScreenMailbox {
 
   public synchronized Drain poll() {
     if (fencePending) {
-      Fence fence = new Fence(fenceReason, fenceBytes, fenceMessages, fenceOverflows);
+      Fence fence = new Fence(
+          fenceReason, fenceBytes, fenceMessages, fenceOverflows, fenceRebuildChannel);
       fencePending = false;
       fenceReason = "";
       fenceBytes = 0L;
       fenceMessages = 0L;
       fenceOverflows = 0L;
+      fenceRebuildChannel = false;
       return new Drain(null, fence);
     }
     Message message = nextMessage();
@@ -253,6 +324,8 @@ public final class ScreenMailbox {
         pendingProjectionBytes -= message.payload.length;
       } else if (isUrgentControl(message.kind)) {
         pendingUrgentBytes -= message.payload.length;
+      } else if (isReliableControl(message.kind)) {
+        pendingReliableBytes -= message.payload.length;
       } else {
         pendingBackgroundBytes -= message.payload.length;
       }
@@ -264,7 +337,8 @@ public final class ScreenMailbox {
   /** Atomically releases the current drain or reserves the next time slice. */
   public synchronized boolean finishDrain() {
     if (fencePending || !projectionMessages.isEmpty()
-        || !urgentMessages.isEmpty() || !backgroundMessages.isEmpty()) return true;
+        || !urgentMessages.isEmpty() || !reliableMessages.isEmpty()
+        || !backgroundMessages.isEmpty()) return true;
     drainScheduled = false;
     return false;
   }
@@ -276,7 +350,8 @@ public final class ScreenMailbox {
 
   public synchronized boolean hasPending() {
     return fencePending || !projectionMessages.isEmpty()
-        || !urgentMessages.isEmpty() || !backgroundMessages.isEmpty();
+        || !urgentMessages.isEmpty() || !reliableMessages.isEmpty()
+        || !backgroundMessages.isEmpty();
   }
 
   public synchronized void reset() {
@@ -288,6 +363,7 @@ public final class ScreenMailbox {
     fenceBytes = 0L;
     fenceMessages = 0L;
     fenceOverflows = 0L;
+    fenceRebuildChannel = false;
   }
 
   public long generation() {
@@ -295,7 +371,8 @@ public final class ScreenMailbox {
   }
 
   synchronized int pendingMessages() {
-    return projectionMessages.size() + urgentMessages.size() + backgroundMessages.size();
+    return projectionMessages.size() + urgentMessages.size()
+        + reliableMessages.size() + backgroundMessages.size();
   }
 
   synchronized long pendingBytes() {
@@ -303,31 +380,27 @@ public final class ScreenMailbox {
   }
 
   private Message nextMessage() {
-    if (!urgentMessages.isEmpty() && consecutiveUrgent < MAX_CONSECUTIVE_URGENT) {
-      consecutiveUrgent++;
-      return urgentMessages.pollFirst();
-    }
-    if (!backgroundMessages.isEmpty()
-        && (consecutiveProjection >= MAX_CONSECUTIVE_PROJECTION
-            || consecutiveUrgent >= MAX_CONSECUTIVE_URGENT
-            || projectionMessages.isEmpty())) {
-      consecutiveProjection = 0;
-      consecutiveUrgent = 0;
-      return backgroundMessages.pollFirst();
-    }
-    if (!projectionMessages.isEmpty()) {
-      consecutiveProjection++;
-      consecutiveUrgent = 0;
-      return projectionMessages.pollFirst();
-    }
-    if (!urgentMessages.isEmpty()) {
-      consecutiveUrgent = 1;
-      return urgentMessages.pollFirst();
-    }
-    if (!backgroundMessages.isEmpty()) {
-      consecutiveProjection = 0;
-      consecutiveUrgent = 0;
-      return backgroundMessages.pollFirst();
+    for (int attempts = 0; attempts < SCHEDULE.length; attempts++) {
+      int lane = SCHEDULE[scheduleIndex];
+      scheduleIndex = (scheduleIndex + 1) % SCHEDULE.length;
+      Message message;
+      switch (lane) {
+        case LANE_URGENT:
+          message = urgentMessages.pollFirst();
+          break;
+        case LANE_PROJECTION:
+          message = projectionMessages.pollFirst();
+          break;
+        case LANE_RELIABLE:
+          message = reliableMessages.pollFirst();
+          break;
+        case LANE_BACKGROUND:
+          message = backgroundMessages.pollFirst();
+          break;
+        default:
+          throw new IllegalStateException("unknown mailbox lane");
+      }
+      if (message != null) return message;
     }
     return null;
   }
@@ -335,14 +408,15 @@ public final class ScreenMailbox {
   private void clearQueues() {
     projectionMessages.clear();
     urgentMessages.clear();
+    reliableMessages.clear();
     backgroundMessages.clear();
     pendingBytes = 0L;
     pendingProjectionMessages = 0;
     pendingProjectionBytes = 0L;
     pendingUrgentBytes = 0L;
+    pendingReliableBytes = 0L;
     pendingBackgroundBytes = 0L;
-    consecutiveUrgent = 0;
-    consecutiveProjection = 0;
+    scheduleIndex = 0;
   }
 
 }

@@ -19,6 +19,17 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
+const (
+	maxPendingClipboardRequests = 64
+	pendingClipboardTTL         = 30 * time.Second
+	clipboardCleanupInterval    = 5 * time.Second
+)
+
+type pendingClipboardRequest struct {
+	clipboard byte
+	createdAt time.Time
+}
+
 // Runtime 是单个 PTY 的终端会话 actor。
 type Runtime struct {
 	mu sync.RWMutex
@@ -71,7 +82,7 @@ type Runtime struct {
 	clients map[string]*ScreenClient
 
 	leaseManager     *LeaseManager
-	pendingClipboard map[string]byte
+	pendingClipboard map[string]pendingClipboardRequest
 	engineSignals    engineSignals
 	inputDedupe      map[string]*inputDedupeWindow
 	inputDedupeOrder []string
@@ -194,7 +205,7 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 		ptyReadCredits:   make(chan struct{}, ptyPendingByteLimit/ptyReadBufferSize),
 		clients:          make(map[string]*ScreenClient),
 		leaseManager:     NewLeaseManager(),
-		pendingClipboard: make(map[string]byte),
+		pendingClipboard: make(map[string]pendingClipboardRequest),
 		inputDedupe:      make(map[string]*inputDedupeWindow),
 		inputInflight:    make(map[inputDeliveryKey][]func(InputDeliveryResult)),
 		// 版本契约（docs/superpowers/plans/2026-07-14-screen-state-delta-resume.md
@@ -232,7 +243,7 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 		}),
 		terminalengine.WithClipboardReadHandler(func(clipboard byte) {
 			requestID := randomID()
-			r.pendingClipboard[requestID] = clipboard
+			r.trackPendingClipboard(requestID, clipboard, time.Now())
 			r.engineSignals.recordEffect(terminalengine.Effect{Kind: terminalengine.EffectClipboardRead, RequestID: requestID, Clipboard: string(clipboard)})
 		}),
 		terminalengine.WithClipboardWriteHandler(func(clipboard byte, data []byte) {
@@ -637,12 +648,19 @@ func (r *Runtime) postPTYOutput(data []byte) bool {
 }
 
 func (r *Runtime) actorLoop() {
-	defer r.Close()
+	clipboardTicker := time.NewTicker(clipboardCleanupInterval)
+	defer func() {
+		clipboardTicker.Stop()
+		clear(r.pendingClipboard)
+		_ = r.Close()
+	}()
 
 	for {
 		select {
 		case <-r.stopCh:
 			return
+		case now := <-clipboardTicker.C:
+			r.prunePendingClipboard(now)
 		case ev := <-r.events:
 			r.handleEvent(ev)
 		}
@@ -708,7 +726,8 @@ func (r *Runtime) handleEvent(ev event) {
 
 func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 	client := r.clients[e.clientID]
-	clipboard, ok := r.pendingClipboard[e.requestID]
+	r.prunePendingClipboard(time.Now())
+	pending, ok := r.pendingClipboard[e.requestID]
 	if !ok || client == nil || client.LayoutLeaseID == "" {
 		return
 	}
@@ -720,8 +739,36 @@ func (r *Runtime) handleClipboardResponse(e clipboardResponseEvent) {
 	if !e.allowed || len(e.data) == 0 || len(e.data) > 1024*1024 {
 		return
 	}
-	response := "\x1b]52;" + string(clipboard) + ";" + base64.StdEncoding.EncodeToString(e.data) + "\x1b\\"
+	response := "\x1b]52;" + string(pending.clipboard) + ";" + base64.StdEncoding.EncodeToString(e.data) + "\x1b\\"
 	_, _ = r.terminalIO.Write([]byte(response))
+}
+
+func (r *Runtime) trackPendingClipboard(requestID string, clipboard byte, now time.Time) {
+	r.prunePendingClipboard(now)
+	if len(r.pendingClipboard) >= maxPendingClipboardRequests {
+		var oldestID string
+		var oldestTime time.Time
+		for id, pending := range r.pendingClipboard {
+			if oldestID == "" || pending.createdAt.Before(oldestTime) {
+				oldestID = id
+				oldestTime = pending.createdAt
+			}
+		}
+		delete(r.pendingClipboard, oldestID)
+	}
+	r.pendingClipboard[requestID] = pendingClipboardRequest{
+		clipboard: clipboard,
+		createdAt: now,
+	}
+}
+
+func (r *Runtime) prunePendingClipboard(now time.Time) {
+	cutoff := now.Add(-pendingClipboardTTL)
+	for requestID, pending := range r.pendingClipboard {
+		if !pending.createdAt.After(cutoff) {
+			delete(r.pendingClipboard, requestID)
+		}
+	}
 }
 
 func (r *Runtime) handleEffect(effect terminalengine.Effect) {
@@ -991,6 +1038,9 @@ func (r *Runtime) handleClientDetach(clientID string) {
 		r.leaseManager.Release(client.LayoutLeaseID)
 	}
 	delete(r.clients, clientID)
+	if len(r.clients) == 0 {
+		clear(r.pendingClipboard)
+	}
 }
 
 func (r *Runtime) handleAcquireLayout(e acquireLayoutEvent) {

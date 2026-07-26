@@ -88,12 +88,14 @@ public final class RemoteTerminalModel {
     public final long layoutEpoch;
     public final long screenRevision;
     public final long historyGeneration;
+    public final HistoryExtent mainHistoryExtent;
     public final HistoryExtent displayExtent;
     public final HistoryExtent remoteAvailableExtent;
     public final boolean projectionComplete;
 
     private ProjectionReadView(String instanceId, long layoutEpoch, long screenRevision,
                                long historyGeneration,
+                               HistoryExtent mainHistoryExtent,
                                HistoryExtent displayExtent,
                                HistoryExtent remoteAvailableExtent,
                                boolean projectionComplete) {
@@ -101,13 +103,15 @@ public final class RemoteTerminalModel {
       this.layoutEpoch = layoutEpoch;
       this.screenRevision = screenRevision;
       this.historyGeneration = historyGeneration;
+      this.mainHistoryExtent = mainHistoryExtent;
       this.displayExtent = displayExtent;
       this.remoteAvailableExtent = remoteAvailableExtent;
       this.projectionComplete = projectionComplete;
     }
 
     private static ProjectionReadView empty() {
-      return new ProjectionReadView("", 0, 0, 0, HistoryExtent.INITIAL_EMPTY,
+      return new ProjectionReadView("", 0, 0, 0,
+          HistoryExtent.INITIAL_EMPTY, HistoryExtent.INITIAL_EMPTY,
           HistoryExtent.INITIAL_EMPTY, false);
     }
   }
@@ -616,6 +620,9 @@ public final class RemoteTerminalModel {
       throw new IllegalArgumentException("invalid HistoryRange request bounds");
     }
 
+    TerminalSurface targetSurface = mainSurface;
+    HistoryExtent mainExtent = targetSurface.historyIndex.extent();
+
     // 先规范化并验证整批响应，再创建 Editor。任一异常行都不能写入页面 overlay、
     // 清理 migration、更新 available extent 或发布 RenderPublication。
     List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
@@ -626,7 +633,7 @@ public final class RemoteTerminalModel {
       long seq = normalized.historySeq;
       if (seq < requestedFromSeq || seq > requestedToSeq
           || !range.availableExtent.contains(seq)
-          || !displayExtent.contains(seq)) {
+          || !mainExtent.contains(seq)) {
         throw new IllegalArgumentException("HistoryRange line outside negotiated bounds");
       }
       if (previousSeq != 0 && seq <= previousSeq) {
@@ -639,12 +646,11 @@ public final class RemoteTerminalModel {
       previousSeq = seq;
     }
 
-    HistoryExtent previousAvailableExtent = remoteAvailableExtent;
-    TerminalSurface targetSurface = activeSurface();
+    HistoryExtent previousAvailableExtent = targetSurface.history.snapshot().availableExtent();
     PagedTerminalHistory.Editor editor = targetSurface.history.edit();
     LineStore.Editor lineEditor = targetSurface.lineStore.edit();
     HistoryIndex.Editor historyIndexEditor =
-        targetSurface.historyIndex.edit().setExtent(displayExtent);
+        targetSurface.historyIndex.edit().setExtent(mainExtent);
     editor.setAvailableExtent(
         range.availableExtent.firstSeq, range.availableExtent.lastSeq);
     for (TerminalLine normalized : normalizedLines) {
@@ -660,7 +666,7 @@ public final class RemoteTerminalModel {
         throw new IllegalArgumentException(invalidLineage.failure.name(), invalidLineage);
       }
     }
-    editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : displayExtent.lastSeq).commit();
+    editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : mainExtent.lastSeq).commit();
     Set<Long> loadedHistoryIds = targetSurface.history.snapshot().loadedLineIds();
     historyIndexEditor.retainLineIds(loadedHistoryIds);
     Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
@@ -670,13 +676,15 @@ public final class RemoteTerminalModel {
     lineEditor.retainOnly(retainedLineIds);
     historyIndexEditor.commit();
     lineEditor.commit();
-    remoteAvailableExtent = range.availableExtent;
-    markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
-        false, false, false, false, false);
-    mergeHistoryDirtyRange(normalizedLines, false);
-    mergeAvailableExtentDirty(previousAvailableExtent, range.availableExtent);
-    markTerminalState(false, true, false, false, 0, 0);
-    publishPendingRenderUpdate();
+    if (activeBuffer == TerminalBufferKind.MAIN) {
+      remoteAvailableExtent = range.availableExtent;
+      markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
+          false, false, false, false, false);
+      mergeHistoryDirtyRange(normalizedLines, false);
+      mergeAvailableExtentDirty(previousAvailableExtent, range.availableExtent);
+      markTerminalState(false, true, false, false, 0, 0);
+      publishPendingRenderUpdate();
+    }
     return true;
   }
 
@@ -1143,6 +1151,7 @@ public final class RemoteTerminalModel {
   private void publishProjectionReadView() {
     projectionReadView = new ProjectionReadView(
         instanceId, layoutEpoch, screenRevision, historyGeneration,
+        mainSurface.historyIndex.extent(),
         displayExtent, remoteAvailableExtent,
         projectionHealth.complete);
   }

@@ -44,4 +44,21 @@ public class HistoryRequestCoordinatorTest {
     coordinator.retainCompatible("i1", 7, 4);
     assertFalse(coordinator.accept("r3"));
   }
+
+  @Test
+  public void reservePublishesOneImmutableWireIdentityAndCancelRollsItBack() {
+    HistoryRequestCoordinator coordinator = new HistoryRequestCoordinator();
+    HistoryRequestCoordinator.Pending reserved = coordinator.reserve(
+        "r1", 129, 256, 180, "instance", 9, 4, 3);
+
+    assertTrue(coordinator.accept("r1"));
+    assertEquals("instance", reserved.instanceId);
+    assertEquals(9, reserved.layoutEpoch);
+    assertEquals(4, reserved.historyGeneration);
+    assertEquals(129, reserved.fromSeq);
+    assertEquals(256, reserved.toSeq);
+    assertEquals(3, reserved.retryAttempt);
+    assertEquals(reserved, coordinator.cancel("r1"));
+    assertFalse(coordinator.accept("r1"));
+  }
 }
