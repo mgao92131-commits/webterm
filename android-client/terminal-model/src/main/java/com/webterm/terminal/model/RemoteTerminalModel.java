@@ -245,7 +245,7 @@ public final class RemoteTerminalModel {
       if (scroll != null) {
         int height = scroll.bottomRowExclusive - scroll.topRow;
         int shift = scroll.deltaRows;
-        if (scroll.topRow < 0 || scroll.bottomRowExclusive > rows || height <= 0
+        if (scroll.topRow != 0 || scroll.bottomRowExclusive != rows || height <= 0
             || shift == 0 || Math.abs((long) shift) >= height) {
           throw new RevisionGapException("screen.v2 commit contains invalid scroll");
         }
@@ -260,7 +260,6 @@ public final class RemoteTerminalModel {
               scroll.topRow + amount, height - amount);
           exposedRows.set(scroll.topRow, scroll.topRow + amount);
         }
-        changedRows.set(scroll.topRow, scroll.bottomRowExclusive);
       }
       BitSet writtenRows = new BitSet(rows);
       for (ScreenRowWrite write : commit.screen.writes) {

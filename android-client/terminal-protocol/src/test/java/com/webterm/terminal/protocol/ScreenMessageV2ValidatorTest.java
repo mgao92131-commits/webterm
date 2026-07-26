@@ -9,6 +9,15 @@ import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 import org.junit.Test;
 
 public final class ScreenMessageV2ValidatorTest {
+  @Test(expected = IllegalArgumentException.class)
+  public void terminalCommitRejectsPartialScrollRegion() {
+    ScreenMessageV2Validator.validateTerminalCommit(commitBuilder()
+        .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
+            .setScroll(TerminalScreenV2Proto.ScreenScroll.newBuilder()
+                .setTopRow(1).setBottomRowExclusive(3).setDeltaRows(1)))
+        .build(), 3);
+  }
+
   @Test
   public void historyExtentBoundaryMatchesDomainModel() {
     assertAcceptedExtent(1, 0);

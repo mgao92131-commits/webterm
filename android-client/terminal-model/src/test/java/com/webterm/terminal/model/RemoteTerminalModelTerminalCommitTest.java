@@ -8,6 +8,43 @@ import org.junit.Test;
 
 public final class RemoteTerminalModelTerminalCommitTest {
   @Test
+  public void oneLineScrollMarksOnlyWrittenRowsDirty() throws Exception {
+    RemoteTerminalModel model = baselineModel();
+    model.consumeRenderUpdate();
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "instance", 1, 1, 1, 2,
+        new ScreenMutation(new ScreenScroll(0, 3, 1),
+            Collections.singletonList(new ScreenRowWrite(2, line(20, 1, 0, "new")))),
+        null, null, null, null)));
+
+    RenderUpdate update = model.consumeRenderUpdate();
+    assertNotNull(update);
+    assertFalse(update.dirty.fullInvalidate);
+    assertEquals(1, update.dirty.screenScrollRows);
+    assertEquals(bitSetOf(2), update.dirty.exposedScreenRows);
+    assertEquals(bitSetOf(2), update.dirty.changedScreenRows);
+  }
+
+  @Test
+  public void twoForwardScrollCommitsMergeWithoutFullInvalidate() throws Exception {
+    RemoteTerminalModel model = baselineModel();
+    model.consumeRenderUpdate();
+    assertTrue(model.applyTerminalCommit(scrollCommit(1, 2, 20, 1)));
+    assertTrue(model.applyTerminalCommit(scrollCommit(2, 3, 21, 1)));
+
+    RenderUpdate merged = model.consumeRenderUpdate();
+    assertNotNull(merged);
+    assertFalse(merged.dirty.fullInvalidate);
+    assertEquals(2, merged.dirty.screenScrollRows);
+    assertEquals(bitSetOf(1, 2), merged.dirty.exposedScreenRows);
+    assertEquals(bitSetOf(1, 2), merged.dirty.changedScreenRows);
+
+    assertTrue(model.applyTerminalCommit(scrollCommit(3, 4, 22, -1)));
+    assertTrue(model.applyTerminalCommit(scrollCommit(4, 5, 23, 1)));
+    assertTrue(model.consumeRenderUpdate().dirty.fullInvalidate);
+  }
+
+  @Test
   public void scrollWriteAndHistoryAppendPublishOnce() throws Exception {
     RemoteTerminalModel model = baselineModel();
     model.consumeRenderUpdate();
@@ -140,5 +177,22 @@ public final class RemoteTerminalModelTerminalCommitTest {
 
   private static TerminalLine line(long id, long version, long historySeq, String text) {
     return V2ModelTestData.line(id, version, historySeq, text);
+  }
+
+  private static TerminalCommit scrollCommit(
+      long baseRevision, long revision, long lineId, int deltaRows) {
+    int exposedRow = deltaRows > 0 ? 2 : 0;
+    return new TerminalCommit(
+        "instance", 1, 1, baseRevision, revision,
+        new ScreenMutation(new ScreenScroll(0, 3, deltaRows),
+            Collections.singletonList(new ScreenRowWrite(
+                exposedRow, line(lineId, 1, 0, "scroll-" + revision)))),
+        null, null, null, null);
+  }
+
+  private static java.util.BitSet bitSetOf(int... rows) {
+    java.util.BitSet result = new java.util.BitSet();
+    for (int row : rows) result.set(row);
+    return result;
   }
 }

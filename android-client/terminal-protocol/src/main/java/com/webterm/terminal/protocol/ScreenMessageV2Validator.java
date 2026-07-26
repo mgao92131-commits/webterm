@@ -50,7 +50,7 @@ public final class ScreenMessageV2Validator {
         TerminalScreenV2Proto.ScreenScroll scroll = commit.getScreen().getScroll();
         int height = scroll.getBottomRowExclusive() - scroll.getTopRow();
         long magnitude = Math.abs((long) scroll.getDeltaRows());
-        if (scroll.getTopRow() < 0 || scroll.getBottomRowExclusive() > rows
+        if (scroll.getTopRow() != 0 || scroll.getBottomRowExclusive() != rows
             || height <= 0 || magnitude == 0 || magnitude >= height) {
           throw new IllegalArgumentException("invalid screen scroll");
         }
