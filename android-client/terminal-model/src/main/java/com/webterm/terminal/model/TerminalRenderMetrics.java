@@ -67,6 +67,9 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong BACKGROUND_PATCH_DROPPED_COUNT = new AtomicLong();
   private static final AtomicLong SCREEN_LINE_STORE_MAX_SIZE = new AtomicLong();
   private static final AtomicLong VISIBLE_HISTORY_ROWS_DRAWN = new AtomicLong();
+  private static final AtomicLong RENDER_NODE_VICTIM_SCAN_COUNT = new AtomicLong();
+  private static final AtomicLong RENDER_NODE_VICTIM_SCANNED_ENTRIES = new AtomicLong();
+  private static final AtomicLong RENDER_NODE_ALL_PINNED_FALLBACK_COUNT = new AtomicLong();
 
   private TerminalRenderMetrics() {}
 
@@ -126,6 +129,26 @@ public final class TerminalRenderMetrics {
   }
   public static void historyCacheHit() { HISTORY_CACHE_HIT_COUNT.incrementAndGet(); }
   public static void historyCacheMiss() { HISTORY_CACHE_MISS_COUNT.incrementAndGet(); }
+  /** 每帧结束批量提交行级热路径指标，每个非零项最多一次原子 add。 */
+  public static void addRowCacheStats(long rowHits, long rowMisses,
+                                      long historyHits, long historyMisses,
+                                      long staleFallbacks, long pinnedConflicts) {
+    if (rowHits > 0) ROW_CACHE_HIT_COUNT.addAndGet(rowHits);
+    if (rowMisses > 0) {
+      ROW_CACHE_MISS_COUNT.addAndGet(rowMisses);
+      ROW_NODE_RECORD_COUNT.addAndGet(rowMisses);
+    }
+    if (historyHits > 0) HISTORY_CACHE_HIT_COUNT.addAndGet(historyHits);
+    if (historyMisses > 0) HISTORY_CACHE_MISS_COUNT.addAndGet(historyMisses);
+    if (staleFallbacks > 0) ROW_CACHE_STALE_FALLBACK_COUNT.addAndGet(staleFallbacks);
+    if (pinnedConflicts > 0) ROW_CACHE_PINNED_CONFLICT_COUNT.addAndGet(pinnedConflicts);
+  }
+  /** 淘汰只发生在 miss/容量收缩，允许低频直接提交。 */
+  public static void renderNodeVictimScan(int scannedEntries, boolean allPinned) {
+    RENDER_NODE_VICTIM_SCAN_COUNT.incrementAndGet();
+    RENDER_NODE_VICTIM_SCANNED_ENTRIES.addAndGet(Math.max(0, scannedEntries));
+    if (allPinned) RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.incrementAndGet();
+  }
   public static void backgroundPatchDropped() { BACKGROUND_PATCH_DROPPED_COUNT.incrementAndGet(); }
   public static void screenLineStoreSize(long size) {
     updateMax(SCREEN_LINE_STORE_MAX_SIZE, Math.max(0L, size));
@@ -198,7 +221,9 @@ public final class TerminalRenderMetrics {
         copyBuckets(MAILBOX_RESIDENCE_LATENCY_BUCKETS),
         HISTORY_CACHE_HIT_COUNT.get(), HISTORY_CACHE_MISS_COUNT.get(),
         BACKGROUND_PATCH_DROPPED_COUNT.get(), SCREEN_LINE_STORE_MAX_SIZE.get(),
-        VISIBLE_HISTORY_ROWS_DRAWN.get());
+        VISIBLE_HISTORY_ROWS_DRAWN.get(), RENDER_NODE_VICTIM_SCAN_COUNT.get(),
+        RENDER_NODE_VICTIM_SCANNED_ENTRIES.get(),
+        RENDER_NODE_ALL_PINNED_FALLBACK_COUNT.get());
   }
 
   private static void recordLatency(AtomicLongArray buckets, long nanos) {
@@ -273,6 +298,9 @@ public final class TerminalRenderMetrics {
     public final long backgroundPatchDroppedCount;
     public final long screenLineStoreMaxSize;
     public final long visibleHistoryRowsDrawn;
+    public final long renderNodeVictimScanCount;
+    public final long renderNodeVictimScannedEntries;
+    public final long renderNodeAllPinnedFallbackCount;
 
     Snapshot(long modelChangeCount, long uiCallbackScheduleCount, long uiCallbackCoalescedCount,
              long renderRequestCount, long vsyncRenderCount, long fullInvalidateCount,
@@ -293,7 +321,9 @@ public final class TerminalRenderMetrics {
              long[] renderNodeRecordLatencyBuckets,
              long[] mailboxResidenceLatencyBuckets, long historyCacheHitCount,
              long historyCacheMissCount, long backgroundPatchDroppedCount,
-             long screenLineStoreMaxSize, long visibleHistoryRowsDrawn) {
+             long screenLineStoreMaxSize, long visibleHistoryRowsDrawn,
+             long renderNodeVictimScanCount, long renderNodeVictimScannedEntries,
+             long renderNodeAllPinnedFallbackCount) {
       this.modelChangeCount = modelChangeCount;
       this.uiCallbackScheduleCount = uiCallbackScheduleCount;
       this.uiCallbackCoalescedCount = uiCallbackCoalescedCount;
@@ -343,6 +373,9 @@ public final class TerminalRenderMetrics {
       this.backgroundPatchDroppedCount = backgroundPatchDroppedCount;
       this.screenLineStoreMaxSize = screenLineStoreMaxSize;
       this.visibleHistoryRowsDrawn = visibleHistoryRowsDrawn;
+      this.renderNodeVictimScanCount = renderNodeVictimScanCount;
+      this.renderNodeVictimScannedEntries = renderNodeVictimScannedEntries;
+      this.renderNodeAllPinnedFallbackCount = renderNodeAllPinnedFallbackCount;
     }
   }
 }

@@ -25,6 +25,8 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -141,6 +143,43 @@ public final class RemoteTerminalViewInvalidationTest {
   }
 
   @Test
+  public void historyPageInvalidatesOnlyVisibleSeqIntersection() {
+    RemoteTerminalModel model = modelWithLargeHistory(1, 10, 1, 1100);
+    RemoteTerminalView view = view(100, 720);
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+    viewport.scrollOffsetPixels = 2020;
+    RenderDirtyState dirty = new RenderDirtyState();
+    dirty.historyChanged = true;
+    dirty.changedHistoryFromSeq = 896;
+    dirty.changedHistoryToSeq = 1023;
+
+    assertEquals(InvalidationResult.PARTIAL,
+        view.resolveInvalidation(dirty, model.renderSnapshot(), viewport, false));
+    assertArrayEquals(new int[] {0, 4, 100, 486},
+        view.invalidationRectForTest(dirty, model.renderSnapshot(), viewport));
+  }
+
+  @Test
+  public void invisibleHistoryPageDoesNotInvalidateAndExtentChangeIsFull() {
+    RemoteTerminalModel model = modelWithLargeHistory(1, 10, 1, 1100);
+    RemoteTerminalView view = view(100, 720);
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.followTail = false;
+    viewport.scrollOffsetPixels = 2020;
+    RenderDirtyState invisible = new RenderDirtyState();
+    invisible.historyChanged = true;
+    invisible.changedHistoryFromSeq = 896;
+    invisible.changedHistoryToSeq = 999;
+    assertEquals(InvalidationResult.NONE,
+        view.resolveInvalidation(invisible, model.renderSnapshot(), viewport, false));
+
+    invisible.historyStructureChanged = true;
+    assertEquals(InvalidationResult.FULL,
+        view.resolveInvalidation(invisible, model.renderSnapshot(), viewport, false));
+  }
+
+  @Test
   public void singleRowChangeIsPartial() {
     RemoteTerminalModel model = modelWithScreen(5, 10);
     RemoteTerminalView view = view(100, 200);
@@ -229,5 +268,23 @@ public final class RemoteTerminalViewInvalidationTest {
 
     assertArrayEquals(new int[] {initial[0] + 1, initial[1] + 1, initial[2] + 1},
         view.visualGenerationsForTest());
+  }
+
+  private static RemoteTerminalModel modelWithLargeHistory(
+      int rows, int cols, long firstSeq, long lastSeq) {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    List<TerminalLine> historyTail = new ArrayList<>();
+    long tailFirst = Math.max(firstSeq, lastSeq - 127);
+    for (long seq = tailFirst; seq <= lastSeq; seq++) {
+      historyTail.add(historyLine(10_000L + seq, seq, cols));
+    }
+    List<TerminalLine> screen = new ArrayList<>();
+    for (int row = 0; row < rows; row++) screen.add(line(1_000_000L + row, cols));
+    assertEquals(true, model.applyBaseline(new ScreenBaseline(
+        "session-large", "term-large", 1L, 1L, 1L, rows, cols,
+        TerminalBufferKind.MAIN, new HistoryExtent(firstSeq, lastSeq), historyTail, screen,
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(), "", "")));
+    model.consumeRenderUpdate();
+    return model;
   }
 }

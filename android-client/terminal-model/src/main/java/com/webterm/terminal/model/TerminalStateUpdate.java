@@ -30,6 +30,12 @@ public final class TerminalStateUpdate {
     this.historyPrependedLines = saturatingAdd(this.historyPrependedLines, historyPrependedLines);
   }
 
+  void mergeFrom(TerminalStateUpdate other) {
+    if (other == null) return;
+    merge(other.geometryChanged, other.historyChanged, other.titleChanged,
+        other.workingDirectoryChanged, other.tailAppendedLines, other.historyPrependedLines);
+  }
+
   private static int saturatingAdd(int first, int second) {
     long result = (long) first + Math.max(0, second);
     return result > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) result;

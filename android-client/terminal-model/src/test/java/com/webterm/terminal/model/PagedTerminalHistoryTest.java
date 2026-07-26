@@ -33,18 +33,18 @@ public final class PagedTerminalHistoryTest {
   }
 
   @Test
-  public void unavailableDoesNotMoveOtherRowsAndLoadedContentWins() {
+  public void remoteAvailableExtentDoesNotMoveLoadedRows() {
     PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
     history.edit()
         .setExtent(10, 20)
-        .markUnavailable(10, 15)
-        .put(12, line(12))
+        .setAvailableExtent(16, 20)
+        .put(17, line(17))
         .commit();
 
     PagedTerminalHistorySnapshot snapshot = history.snapshot();
     assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(0));
-    assertEquals(SlotState.LOADED, snapshot.slotStateAt(2));
-    assertEquals(12, snapshot.lineAt(2).historySeq);
+    assertEquals(SlotState.LOADED, snapshot.slotStateAt(7));
+    assertEquals(17, snapshot.lineAt(7).historySeq);
     assertEquals(11, snapshot.logicalSize());
   }
 
@@ -72,19 +72,19 @@ public final class PagedTerminalHistoryTest {
     TerminalLine firstOwner = new TerminalLine(
         500, 1, 1, false, new TerminalCell[] {TerminalCell.EMPTY});
     history.edit().setExtent(1, 2).put(1, firstOwner).commit();
-    assertEquals(Long.valueOf(1), history.snapshot().historySeqByLineId(500));
-    assertEquals(1, history.snapshot().loadedLineIdentityCount());
+    assertEquals(Long.valueOf(1), history.historySeqByLineId(500));
+    assertEquals(1, history.loadedLineIdentityCountForTest());
 
     history.edit().setExtent(2, 2).commit();
-    assertNull(history.snapshot().historySeqByLineId(500));
-    assertEquals(0, history.snapshot().loadedLineIdentityCount());
+    assertNull(history.historySeqByLineId(500));
+    assertEquals(0, history.loadedLineIdentityCountForTest());
 
     TerminalLine secondOwner = new TerminalLine(
         500, 2, 3, false, new TerminalCell[] {TerminalCell.EMPTY});
     history.edit().setExtent(2, 3).put(3, secondOwner).commit();
-    assertEquals(Long.valueOf(3), history.snapshot().historySeqByLineId(500));
+    assertEquals(Long.valueOf(3), history.historySeqByLineId(500));
     assertEquals(history.snapshot().loadedLineCount(),
-        history.snapshot().loadedLineIdentityCount());
+        history.loadedLineIdentityCountForTest());
   }
 
   @Test
@@ -131,7 +131,7 @@ public final class PagedTerminalHistoryTest {
     PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
     history.edit()
         .setExtent(10, 400)
-        .markUnavailable(10, 128)
+        .setAvailableExtent(129, 400)
         .put(300, line(300))
         .commit();
 
@@ -140,6 +140,61 @@ public final class PagedTerminalHistoryTest {
         history.snapshot().firstRequestablePage(140, 180));
     assertArrayEquals(new long[] {257, 384},
         history.snapshot().firstRequestablePage(300, 320));
+  }
+
+  @Test
+  public void editorIdentityOverlayDoesNotCopyLoadedIndexAtAnyScale() {
+    for (int loaded : new int[] {1_000, 5_000, 10_000}) {
+      PagedTerminalHistory history = history(
+          new HistoryBudget(20_000, 20_000, 0, 0));
+      PagedTerminalHistory.Editor initial = history.edit().setExtent(1, loaded + 1_000L);
+      for (int seq = 1; seq <= loaded; seq++) initial.put(seq, line(seq));
+      initial.commit();
+
+      for (int offset = 1; offset <= 1_000; offset++) {
+        long seq = loaded + offset;
+        PagedTerminalHistory.Editor editor = history.edit();
+        assertEquals(0, editor.identityEntriesCopiedForTest());
+        editor.put(seq, line(seq)).commit();
+      }
+      assertEquals(loaded + 1_000, history.loadedLineIdentityCountForTest());
+      assertEquals(Long.valueOf(loaded + 1_000L),
+          history.historySeqByLineId(loaded + 1_000L));
+    }
+  }
+
+  @Test
+  public void unavailableOutsideRemoteExtentDoesNotCreateResidentPages() {
+    PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
+    history.edit()
+        .setExtent(1, 1_000_000)
+        .setAvailableExtent(999_001, 1_000_000)
+        .commit();
+
+    PagedTerminalHistorySnapshot snapshot = history.snapshot();
+    for (long seq = 1; seq < 900_000; seq += PagedTerminalHistory.PAGE_SIZE) {
+      long index = seq - snapshot.firstSeq();
+      assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(index));
+      assertNull(snapshot.firstRequestablePage(seq,
+          Math.min(seq + PagedTerminalHistory.PAGE_SIZE - 1, 900_000)));
+    }
+    assertEquals(0, history.residentPageCountForTest());
+    assertEquals(0, history.unavailableRangeCountForTest());
+    assertEquals(0, snapshot.loadedLineCount());
+    assertEquals(0, snapshot.estimatedByteCount());
+  }
+
+  @Test
+  public void trimmedAvailableExtentHidesPreviouslyResidentContent() {
+    PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
+    history.edit().setExtent(1, 200).put(10, line(10)).put(150, line(150)).commit();
+    history.edit().setAvailableExtent(100, 200).commit();
+
+    PagedTerminalHistorySnapshot snapshot = history.snapshot();
+    assertNull(snapshot.lineBySeq(10));
+    assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(9));
+    assertEquals(150, snapshot.lineBySeq(150).historySeq);
+    assertEquals(150, snapshot.firstLoadedSeq());
   }
 
   private static Class<?> lineClass() {

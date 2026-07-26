@@ -49,6 +49,8 @@ import java.util.Map;
  * 远程终端自定义 View。负责 Android View 生命周期、IME、触摸滚动、选择和触发渲染。
  */
 public final class RemoteTerminalView extends View {
+  private final PagedTerminalHistorySnapshot.RequestRange historyRequestRange =
+      new PagedTerminalHistorySnapshot.RequestRange();
   private static final class InvalidationPlan {
     InvalidationResult result = InvalidationResult.NONE;
     final Rect[] rects = new Rect[MAX_PARTIAL_DIRTY_RECTS];
@@ -689,13 +691,17 @@ public final class RemoteTerminalView extends View {
     float screenTop = RemoteTerminalRenderer.screenTopY(
         getHeight(), historyRows, screenRows, lineHeight(), renderer.getTopInset(), scrollOffset);
     float historyTop = screenTop - historyRows * lineHeight();
-    int[] visible = RemoteTerminalRenderer.rowRangeIntersecting(
+    long visible = RemoteTerminalRenderer.rowRangeIntersectingPacked(
         Math.round(renderer.getTopInset()), getHeight(), historyTop, lineHeight(), historyRows);
-    if (visible[0] >= visible[1]) return;
-    long visibleFrom = history.firstSeq() + visible[0];
-    long visibleTo = history.firstSeq() + visible[1] - 1L;
-    long[] page = history.firstRequestablePage(visibleFrom, visibleTo);
-    if (page != null) host.onRequestHistoryRange(page[0], page[1], visibleFrom);
+    int visibleFirst = (int) (visible >> 32);
+    int visibleLast = (int) visible;
+    if (visibleFirst >= visibleLast) return;
+    long visibleFrom = history.firstSeq() + visibleFirst;
+    long visibleTo = history.firstSeq() + visibleLast - 1L;
+    if (history.firstRequestablePage(visibleFrom, visibleTo, historyRequestRange)) {
+      host.onRequestHistoryRange(
+          historyRequestRange.fromSeq, historyRequestRange.toSeq, visibleFrom);
+    }
   }
 
   /** 记录当前视口顶端逻辑历史行及其亚行像素偏移，供 Baseline/extent 变化后恢复。 */
@@ -924,6 +930,17 @@ public final class RemoteTerminalView extends View {
         new InvalidationPlan()).result;
   }
 
+  @androidx.annotation.VisibleForTesting
+  int[] invalidationRectForTest(@NonNull RenderDirtyState dirty,
+                                @NonNull RemoteTerminalModel.RenderSnapshot snapshot,
+                                @NonNull TerminalViewportState viewport) {
+    InvalidationPlan plan = buildInvalidationPlan(
+        dirty, snapshot, viewport, false, new InvalidationPlan());
+    if (plan.rectCount == 0) return null;
+    Rect rect = plan.rects[0];
+    return new int[] {rect.left, rect.top, rect.right, rect.bottom};
+  }
+
   @NonNull
   private InvalidationPlan buildInvalidationPlan(
       @NonNull RenderDirtyState dirty,
@@ -966,10 +983,21 @@ public final class RemoteTerminalView extends View {
       plan.result = InvalidationResult.FULL;
       return plan;
     }
-    // 分页 history 和 screen Patch 可以在同一 VSync 合帧；可见 history 页
-    // 变化必须覆盖 screen 局部计划，否则新加载的历史行不会出现。
+    // extent/geometry 变化，或旧调用方没有提供精确范围时，保留安全 FULL 退化。
     if (visibleHistoryChanged) {
-      plan.result = InvalidationResult.FULL;
+      boolean hasRange = dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
+      if (dirty.historyStructureChanged || !hasRange
+          || !(history instanceof PagedTerminalHistorySnapshot)) {
+        plan.result = InvalidationResult.FULL;
+        return plan;
+      }
+      if (screenChanged || dirty.cursorChanged) {
+        // 两套坐标损伤在同一帧合并时优先保证正确性；history-only 才走精确矩形。
+        plan.result = InvalidationResult.FULL;
+        return plan;
+      }
+      buildHistoryRange(plan, (PagedTerminalHistorySnapshot) history, dirty,
+          screenTop, lineHeight);
       return plan;
     }
 
@@ -997,6 +1025,31 @@ public final class RemoteTerminalView extends View {
 
     plan.result = InvalidationResult.FULL;
     return plan;
+  }
+
+  private void buildHistoryRange(@NonNull InvalidationPlan plan,
+                                 @NonNull PagedTerminalHistorySnapshot history,
+                                 @NonNull RenderDirtyState dirty,
+                                 float screenTop, float lineHeight) {
+    long from = Math.max(dirty.changedHistoryFromSeq, history.firstSeq());
+    long to = Math.min(dirty.changedHistoryToSeq, history.lastSeq());
+    if (from > to || lineHeight <= 0f) return;
+    long firstIndex = from - history.firstSeq();
+    long lastIndex = to - history.firstSeq();
+    // 与 Renderer 一致使用 int-capped history.size()，避免超大逻辑 extent 下坐标分歧。
+    float historyTop = screenTop - history.size() * lineHeight;
+    float rawTop = historyTop + firstIndex * lineHeight;
+    float rawBottom = historyTop + (lastIndex + 1L) * lineHeight;
+    float visibleTop = Math.max(renderer.getTopInset(), rawTop);
+    float visibleBottom = Math.min(Math.min(screenTop, getHeight()), rawBottom);
+    if (visibleBottom <= visibleTop) return;
+    Rect rect = plan.rects[0];
+    rect.set(0, Math.max(0, (int) Math.floor(visibleTop) - 1), getWidth(),
+        Math.min(getHeight(), (int) Math.ceil(visibleBottom) + 1));
+    plan.rectCount = 1;
+    long rows = lastIndex - firstIndex + 1L;
+    plan.dirtyRowCount = (int) Math.min(Integer.MAX_VALUE, rows);
+    plan.result = InvalidationResult.PARTIAL;
   }
 
   private void buildPartialRows(@NonNull InvalidationPlan plan,

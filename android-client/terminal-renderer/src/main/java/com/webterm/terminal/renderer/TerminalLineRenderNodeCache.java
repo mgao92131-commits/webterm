@@ -40,6 +40,15 @@ public final class TerminalLineRenderNodeCache {
   @Nullable private RemoteTerminalRenderer frameRenderer;
   @Nullable private TerminalPalette framePalette;
   private int frameCanvasBackground;
+  private long frameRowHits;
+  private long frameRowMisses;
+  private long frameHistoryHits;
+  private long frameHistoryMisses;
+  private long frameStaleFallbacks;
+  private long framePinnedConflicts;
+  private long victimScanCount;
+  private long victimScannedEntries;
+  private long allPinnedFallbackCount;
 
   TerminalLineRenderNodeCache() {
     this(name -> new RenderNodeTerminalRowNode(name));
@@ -83,6 +92,12 @@ public final class TerminalLineRenderNodeCache {
     framePalette = palette;
     frameCanvasBackground = canvasBackground;
     frameNumber++;
+    frameRowHits = 0;
+    frameRowMisses = 0;
+    frameHistoryHits = 0;
+    frameHistoryMisses = 0;
+    frameStaleFallbacks = 0;
+    framePinnedConflicts = 0;
     trimToCapacity();
   }
 
@@ -96,19 +111,19 @@ public final class TerminalLineRenderNodeCache {
     CachedLine cached = lines.get(line.id);
     if (cached != null && cached.node.hasDisplayList() && matchesRecordedLine(cached, line)) {
       cached.lastUsedFrame = frameNumber;
-      cached.pinnedThisFrame = true;
-      TerminalRenderMetrics.rowCacheHit();
-      if (historyLine) TerminalRenderMetrics.historyCacheHit();
+      cached.lastDrawnFrame = frameNumber;
+      frameRowHits++;
+      if (historyLine) frameHistoryHits++;
       cached.node.draw(canvas, rowTop);
       return LineDrawResult.HIT;
     }
 
     if (cached != null) {
-      TerminalRenderMetrics.rowCacheStaleFallback();
-      if (cached.pinnedThisFrame) {
+      frameStaleFallbacks++;
+      if (cached.lastDrawnFrame == frameNumber) {
         // draw() 已把该 display list 提交给本帧 Canvas。此时重录同一节点会让前面
         // 已绘制的逻辑行看到新 version；安全回退由调用方直接 Canvas 绘制。
-        TerminalRenderMetrics.rowCachePinnedConflict();
+        framePinnedConflicts++;
         return LineDrawResult.UNAVAILABLE;
       }
     } else {
@@ -117,14 +132,19 @@ public final class TerminalLineRenderNodeCache {
     }
     if (!record(cached, line)) return LineDrawResult.UNAVAILABLE;
     cached.lastUsedFrame = frameNumber;
-    cached.pinnedThisFrame = true;
-    if (historyLine) TerminalRenderMetrics.historyCacheMiss();
+    cached.lastDrawnFrame = frameNumber;
+    if (historyLine) frameHistoryMisses++;
     cached.node.draw(canvas, rowTop);
     return LineDrawResult.RECORDED;
   }
 
   void endFrame() {
-    for (int i = 0; i < lines.size(); i++) lines.valueAt(i).pinnedThisFrame = false;
+    TerminalRenderMetrics.addRowCacheStats(
+        frameRowHits, frameRowMisses, frameHistoryHits, frameHistoryMisses,
+        frameStaleFallbacks, framePinnedConflicts);
+    frameRowHits = frameRowMisses = 0;
+    frameHistoryHits = frameHistoryMisses = 0;
+    frameStaleFallbacks = framePinnedConflicts = 0;
     frameRenderer = null;
     framePalette = null;
   }
@@ -146,7 +166,7 @@ public final class TerminalLineRenderNodeCache {
     cached.lineId = lineId;
     cached.lineVersion = Long.MIN_VALUE;
     cached.recordedLine = null;
-    cached.pinnedThisFrame = false;
+    cached.lastDrawnFrame = Long.MIN_VALUE;
     lines.put(lineId, cached);
     return cached;
   }
@@ -154,14 +174,21 @@ public final class TerminalLineRenderNodeCache {
   private int findVictim(boolean includePinned) {
     int victim = -1;
     long oldestFrame = Long.MAX_VALUE;
+    int scanned = 0;
     for (int i = 0; i < lines.size(); i++) {
       CachedLine candidate = lines.valueAt(i);
-      if (!includePinned && candidate.pinnedThisFrame) continue;
+      scanned++;
+      if (!includePinned && candidate.lastDrawnFrame == frameNumber) continue;
       if (candidate.lastUsedFrame < oldestFrame) {
         oldestFrame = candidate.lastUsedFrame;
         victim = i;
       }
     }
+    boolean allPinned = !includePinned && victim < 0;
+    victimScanCount++;
+    victimScannedEntries += scanned;
+    if (allPinned) allPinnedFallbackCount++;
+    TerminalRenderMetrics.renderNodeVictimScan(scanned, allPinned);
     return victim;
   }
 
@@ -180,7 +207,7 @@ public final class TerminalLineRenderNodeCache {
     cached.lineId = line.id;
     cached.lineVersion = line.version;
     cached.recordedLine = line;
-    TerminalRenderMetrics.rowCacheMiss();
+    frameRowMisses++;
     return true;
   }
 
@@ -198,6 +225,9 @@ public final class TerminalLineRenderNodeCache {
 
   int sizeForTest() { return lines.size(); }
   int capacityForTest() { return capacity; }
+  long victimScanCountForTest() { return victimScanCount; }
+  long victimScannedEntriesForTest() { return victimScannedEntries; }
+  long allPinnedFallbackCountForTest() { return allPinnedFallbackCount; }
 
   @Nullable
   TerminalLine recordedLineForTest(long lineId) {
@@ -227,7 +257,7 @@ public final class TerminalLineRenderNodeCache {
     long lineVersion;
     @Nullable TerminalLine recordedLine;
     long lastUsedFrame;
-    boolean pinnedThisFrame;
+    long lastDrawnFrame = Long.MIN_VALUE;
 
     CachedLine(@NonNull TerminalRowNode node) {
       this.node = node;

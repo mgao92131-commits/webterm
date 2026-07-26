@@ -22,6 +22,11 @@ public final class RenderDirtyState {
   /** 滚动后新暴露、需要重新录制的实时屏幕行（逻辑行号）。 */
   public final BitSet exposedScreenRows = new BitSet();
   public boolean historyChanged;
+  /** 空范围使用 from=1,to=0；historyChanged 但无范围时 View 必须安全退化 FULL。 */
+  public long changedHistoryFromSeq = 1;
+  public long changedHistoryToSeq = 0;
+  /** extent/geometry 改变了历史逻辑位置，不能按单一 seq 范围局部失效。 */
+  public boolean historyStructureChanged;
   public boolean geometryChanged;
   public boolean cursorChanged;
   public int previousCursorRow = -1;
@@ -92,6 +97,32 @@ public final class RenderDirtyState {
     this.linksChanged |= linksChanged;
     this.modesChanged |= modesChanged;
     this.activeBufferChanged |= activeBufferChanged;
+  }
+
+  void mergeHistoryRange(long fromSeq, long toSeq, boolean structureChanged) {
+    historyChanged = true;
+    historyStructureChanged |= structureChanged;
+    if (fromSeq > toSeq) return;
+    if (changedHistoryFromSeq > changedHistoryToSeq) {
+      changedHistoryFromSeq = fromSeq;
+      changedHistoryToSeq = toSeq;
+    } else {
+      changedHistoryFromSeq = Math.min(changedHistoryFromSeq, fromSeq);
+      changedHistoryToSeq = Math.max(changedHistoryToSeq, toSeq);
+    }
+  }
+
+  void mergeFrom(RenderDirtyState other, int rowCount) {
+    if (other == null) return;
+    merge(other.fullInvalidate, other.changedScreenRows, other.screenScrollRows,
+        other.exposedScreenRows, rowCount, other.historyChanged, other.geometryChanged,
+        other.cursorChanged, other.previousCursorRow, other.currentCursorRow,
+        other.paletteChanged, other.stylesChanged, other.linksChanged, other.modesChanged,
+        other.activeBufferChanged);
+    if (other.historyChanged) {
+      mergeHistoryRange(other.changedHistoryFromSeq, other.changedHistoryToSeq,
+          other.historyStructureChanged);
+    }
   }
 
   /**

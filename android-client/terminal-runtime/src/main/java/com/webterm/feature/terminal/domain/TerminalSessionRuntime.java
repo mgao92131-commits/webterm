@@ -27,6 +27,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayDeque;
@@ -159,6 +160,8 @@ public final class TerminalSessionRuntime {
   private final Executor callbackExecutor;
   private final RenderWakeDispatcher renderWakeDispatcher;
   private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
+  /** Listener 可多个，但破坏性 RenderUpdate consumer 每个 runtime 只允许一个。 */
+  private final AtomicReference<Object> renderConsumer = new AtomicReference<>();
   private final TerminalConnectionPolicy connectionPolicy = new TerminalConnectionPolicy();
   private final ScreenMailbox screenMailbox =
       new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
@@ -491,6 +494,19 @@ public final class TerminalSessionRuntime {
 
   public void removeListener(@NonNull Listener listener) {
     listeners.remove(listener);
+  }
+
+  /** 明确拒绝同一 session 的第二个活跃渲染 owner，避免静默抢走 RenderUpdate。 */
+  public void registerRenderConsumer(@NonNull Object consumer) {
+    Object current = renderConsumer.get();
+    if (current == consumer) return;
+    if (!renderConsumer.compareAndSet(null, consumer)) {
+      throw new IllegalStateException("terminal session already has an active render consumer");
+    }
+  }
+
+  public void unregisterRenderConsumer(@NonNull Object consumer) {
+    renderConsumer.compareAndSet(consumer, null);
   }
 
   public void setAuthenticationListener(@Nullable AuthenticationListener listener) {

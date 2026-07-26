@@ -5,21 +5,34 @@ import java.util.Map;
 
 /** Renderer 可无锁读取的分页历史快照。 */
 public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
+  public static final class RequestRange {
+    public long fromSeq;
+    public long toSeq;
+
+    public void clear() {
+      fromSeq = 1;
+      toSeq = 0;
+    }
+
+    public boolean isEmpty() {
+      return fromSeq > toSeq;
+    }
+  }
   private final HistoryExtent extent;
+  private final HistoryExtent availableExtent;
   private final Map<Long, PagedTerminalHistory.HistoryPageChunk> pages;
-  private final Map<Long, Long> loadedLineIdToSeq;
   private final long loadedLineCount;
   private final long estimatedByteCount;
 
   PagedTerminalHistorySnapshot(
       HistoryExtent extent,
+      HistoryExtent availableExtent,
       Map<Long, PagedTerminalHistory.HistoryPageChunk> pages,
-      Map<Long, Long> loadedLineIdToSeq,
       long loadedLineCount,
       long estimatedByteCount) {
     this.extent = extent;
+    this.availableExtent = availableExtent;
     this.pages = Collections.unmodifiableMap(pages);
-    this.loadedLineIdToSeq = Collections.unmodifiableMap(loadedLineIdToSeq);
     this.loadedLineCount = loadedLineCount;
     this.estimatedByteCount = estimatedByteCount;
   }
@@ -49,13 +62,8 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
     return loadedLineCount;
   }
 
-  /** 当前驻留历史中 LineID 的唯一逻辑位置；未加载或已驱逐时返回 null。 */
-  public Long historySeqByLineId(long lineId) {
-    return loadedLineIdToSeq.get(lineId);
-  }
-
-  int loadedLineIdentityCount() {
-    return loadedLineIdToSeq.size();
+  public HistoryExtent availableExtent() {
+    return availableExtent;
   }
 
   public long estimatedByteCount() {
@@ -71,7 +79,7 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
       for (int offset = 0; offset < PagedTerminalHistory.PAGE_SIZE; offset++) {
         if (page.slots[offset] == null) continue;
         long seq = pageFirst > Long.MAX_VALUE - offset ? Long.MAX_VALUE : pageFirst + offset;
-        if (extent.contains(seq) && seq < first) first = seq;
+        if (extent.contains(seq) && availableExtent.contains(seq) && seq < first) first = seq;
       }
     }
     return first == Long.MAX_VALUE ? -1 : first;
@@ -82,27 +90,35 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
    * UNAVAILABLE 槽位不会再次请求，避免服务端已裁剪区间形成热循环。
    */
   public long[] firstRequestablePage(long visibleFromSeq, long visibleToSeq) {
-    if (extent.isEmpty()) return null;
-    long from = Math.max(extent.firstSeq, visibleFromSeq);
-    long to = Math.min(extent.lastSeq, visibleToSeq);
-    if (from > to) return null;
+    RequestRange reusable = new RequestRange();
+    return firstRequestablePage(visibleFromSeq, visibleToSeq, reusable)
+        ? new long[] {reusable.fromSeq, reusable.toSeq} : null;
+  }
+
+  public boolean firstRequestablePage(long visibleFromSeq, long visibleToSeq,
+                                      RequestRange result) {
+    result.clear();
+    if (extent.isEmpty() || availableExtent.isEmpty()) return false;
+    long from = Math.max(Math.max(extent.firstSeq, availableExtent.firstSeq), visibleFromSeq);
+    long to = Math.min(Math.min(extent.lastSeq, availableExtent.lastSeq), visibleToSeq);
+    if (from > to) return false;
     for (long seq = from; seq <= to; seq++) {
       long index = seq - extent.firstSeq;
       if (slotStateAt(index) == SlotState.UNLOADED) {
         long pageFirst = PagedTerminalHistory.pageFirstSeq(PagedTerminalHistory.pageNumber(seq));
-        return new long[] {
-            Math.max(extent.firstSeq, pageFirst),
-            Math.min(extent.lastSeq,
-                PagedTerminalHistory.pageLastSeq(PagedTerminalHistory.pageNumber(seq)))
-        };
+        result.fromSeq = Math.max(Math.max(extent.firstSeq, availableExtent.firstSeq), pageFirst);
+        result.toSeq = Math.min(Math.min(extent.lastSeq, availableExtent.lastSeq),
+            PagedTerminalHistory.pageLastSeq(PagedTerminalHistory.pageNumber(seq)));
+        return true;
       }
       if (seq == Long.MAX_VALUE) break;
     }
-    return null;
+    return false;
   }
 
   public TerminalLine lineAt(long logicalIndex) {
     long seq = seqAt(logicalIndex);
+    if (!availableExtent.contains(seq)) return null;
     PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
     return page == null ? null : page.slots[PagedTerminalHistory.pageOffset(seq)];
   }
@@ -120,18 +136,19 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   }
 
   public TerminalLine lineBySeq(long seq) {
-    if (!extent.contains(seq)) return null;
+    if (!extent.contains(seq) || !availableExtent.contains(seq)) return null;
     PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
     return page == null ? null : page.slots[PagedTerminalHistory.pageOffset(seq)];
   }
 
   public SlotState slotStateAt(long logicalIndex) {
     long seq = seqAt(logicalIndex);
+    if (!availableExtent.contains(seq)) return SlotState.UNAVAILABLE;
     PagedTerminalHistory.HistoryPageChunk page = pages.get(PagedTerminalHistory.pageNumber(seq));
     if (page == null) return SlotState.UNLOADED;
     int offset = PagedTerminalHistory.pageOffset(seq);
     if (page.slots[offset] != null) return SlotState.LOADED;
-    return page.unavailable[offset] ? SlotState.UNAVAILABLE : SlotState.UNLOADED;
+    return SlotState.UNLOADED;
   }
 
   private long seqAt(long logicalIndex) {

@@ -38,6 +38,7 @@ public final class RemoteTerminalRenderer {
   private final Paint bgPaint = new Paint();
   private final Paint selectionPaint = new Paint();
   private final Paint placeholderPaint = new Paint();
+  private final Rect clipBounds = new Rect();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
 
@@ -141,14 +142,16 @@ public final class RemoteTerminalRenderer {
     TerminalCursor cursor = model.cursor;
     boolean cursorVisible = shouldDrawCursor(viewport, cursor, cursorBlinkOn);
 
-    Rect clip = new Rect();
+    Rect clip = clipBounds;
     if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
 
     // 实时 screen 行：优先使用 RenderNode 缓存；无缓存时直接绘制。
-    int[] screenRange = rowRangeIntersecting(clip.top, clip.bottom, screenTopY, lineHeight,
-        screenRows);
+    long screenRange = rowRangeIntersectingPacked(
+        clip.top, clip.bottom, screenTopY, lineHeight, screenRows);
+    int screenRangeFirst = (int) (screenRange >> 32);
+    int screenRangeLast = (int) screenRange;
     boolean useCache = canvas.isHardwareAccelerated() && lineCache != null;
-    for (int row = screenRange[0]; row < screenRange[1]; row++) {
+    for (int row = screenRangeFirst; row < screenRangeLast; row++) {
       float y = screenTopY + row * lineHeight;
       // 缓存命中（含 lineId/lineVersion 兑底校验）则走缓存；否则回退直接绘制静态正文，
       // 光标和选择仍由下方覆盖层统一绘制，不会重复。
@@ -171,12 +174,14 @@ public final class RemoteTerminalRenderer {
     // 该区间为空，因此不会把上一条历史行的残片画进第一行终端文字上方的字体留白。
     float topInset = getTopInset();
     float historyTopY = screenTopY - historyRows * lineHeight;
-    int[] historyRange = rowRangeIntersecting(clip.top, clip.bottom, historyTopY, lineHeight,
-        historyRows);
+    long historyRange = rowRangeIntersectingPacked(
+        clip.top, clip.bottom, historyTopY, lineHeight, historyRows);
+    int historyRangeFirst = (int) (historyRange >> 32);
+    int historyRangeLast = (int) historyRange;
     canvas.save();
     canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
     int visibleHistoryRows = 0;
-    for (int historyIndex = historyRange[0]; historyIndex < historyRange[1]; historyIndex++) {
+    for (int historyIndex = historyRangeFirst; historyIndex < historyRangeLast; historyIndex++) {
       TerminalLine line = history.lineAt(historyIndex);
       float y = historyTopY + historyIndex * lineHeight;
       // 整行都在 topInset 上方的历史行不可见；在 followTail 时所有历史行都被跳过。
@@ -204,14 +209,14 @@ public final class RemoteTerminalRenderer {
 
     // 使用缓存时，光标和选择作为覆盖层在静态正文之后绘制。
     if (useCache) {
-      for (int row = screenRange[0]; row < screenRange[1]; row++) {
+      for (int row = screenRangeFirst; row < screenRangeLast; row++) {
         float y = screenTopY + row * lineHeight;
         drawSelectionOverlayForRow(canvas, model.columns, palette, screen[row], y, 0, row,
             normalizedSelection, canvasBackground);
       }
       if (cursorVisible) {
         int cursorRow = cursor.row;
-        if (cursorRow >= screenRange[0] && cursorRow < screenRange[1]) {
+        if (cursorRow >= screenRangeFirst && cursorRow < screenRangeLast) {
           float y = screenTopY + cursorRow * lineHeight;
           drawCursorOverlayForRow(canvas, model.columns, palette, screen[cursorRow], y,
               cursorRow, cursor, canvasBackground);
@@ -243,14 +248,24 @@ public final class RemoteTerminalRenderer {
   /** Half-open row range whose cells can affect a Canvas clip, including one anti-aliasing guard. */
   static int[] rowRangeIntersecting(int clipTop, int clipBottom, float rowsTop,
                                     float rowHeight, int rowCount) {
-    if (rowCount <= 0 || rowHeight <= 0f || clipBottom <= clipTop) return new int[] {0, 0};
+    long packed = rowRangeIntersectingPacked(
+        clipTop, clipBottom, rowsTop, rowHeight, rowCount);
+    return new int[] {(int) (packed >> 32), (int) packed};
+  }
+
+  /** 热路径用一个 long 携带两个非负 int，避免每帧创建范围数组。 */
+  static long rowRangeIntersectingPacked(int clipTop, int clipBottom, float rowsTop,
+                                         float rowHeight, int rowCount) {
+    if (rowCount <= 0 || rowHeight <= 0f || clipBottom <= clipTop) return 0L;
     double firstRaw = Math.floor((clipTop - rowsTop) / rowHeight);
     double lastRaw = Math.ceil((clipBottom - rowsTop) / rowHeight);
     int first = clampRow(firstRaw, rowCount);
     int last = clampRow(lastRaw, rowCount);
     first = Math.max(0, first - 1);
     last = Math.min(rowCount, last + 1);
-    return new int[] {Math.min(first, last), Math.max(first, last)};
+    int rangeFirst = Math.min(first, last);
+    int rangeLast = Math.max(first, last);
+    return ((long) rangeFirst << 32) | (rangeLast & 0xffffffffL);
   }
 
   private static int clampRow(double value, int rowCount) {

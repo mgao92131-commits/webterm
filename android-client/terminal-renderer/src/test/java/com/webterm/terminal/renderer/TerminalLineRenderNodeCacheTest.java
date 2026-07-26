@@ -134,10 +134,10 @@ public final class TerminalLineRenderNodeCacheTest {
     assertSame(original, cache.recordedLineForTest(500));
     assertEquals(1, node.beginRecordingCount);
     assertEquals(1, node.drawCount);
+    cache.endFrame();
     assertEquals(metricsBefore.rowCachePinnedConflictCount + 1,
         TerminalRenderMetrics.snapshot().rowCachePinnedConflictCount);
 
-    cache.endFrame();
     begin(cache, snapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, changed, 0f, true));
@@ -340,6 +340,9 @@ public final class TerminalLineRenderNodeCacheTest {
         cache.drawOrRecord(canvas, line(10_000L, 1, 10), 0f, true));
     assertEquals(recordingsBefore, totalRecordings());
     assertEquals(cache.capacityForTest(), cache.sizeForTest());
+    assertEquals(1, cache.victimScanCountForTest());
+    assertEquals(cache.capacityForTest(), cache.victimScannedEntriesForTest());
+    assertEquals(1, cache.allPinnedFallbackCountForTest());
   }
 
   @Test

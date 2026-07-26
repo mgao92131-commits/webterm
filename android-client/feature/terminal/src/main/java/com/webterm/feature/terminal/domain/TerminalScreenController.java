@@ -102,6 +102,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   public void attach(@NonNull LifecycleOwner owner, @NonNull View view) {
+    runtime.registerRenderConsumer(this);
     this.view = view;
     view.bindModel(runtime.model());
     owner.getLifecycle().addObserver(lifecycleObserver);
@@ -114,6 +115,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     owner.getLifecycle().removeObserver(lifecycleObserver);
     view = null;
     cancelPendingRender();
+    runtime.unregisterRenderConsumer(this);
   }
 
   public void sendText(@NonNull String text) {

@@ -180,6 +180,41 @@ public final class TerminalScreenControllerTest {
     verify(runtime, times(1)).freezeStream();
   }
 
+  @Test
+  public void secondControllerCannotAttachToSameRuntimeUntilFirstDetaches() {
+    TerminalSessionRuntime realRuntime = new TerminalSessionRuntime(
+        "single-render-owner", new RemoteTerminalModel(), Runnable::run);
+    TerminalScreenController first = new TerminalScreenController(
+        realRuntime, new TerminalViewportState(), new ImmediateFrameScheduler());
+    TerminalScreenController second = new TerminalScreenController(
+        realRuntime, new TerminalViewportState(), new ImmediateFrameScheduler());
+    LifecycleOwner owner = mock(LifecycleOwner.class);
+    Lifecycle lifecycle = mock(Lifecycle.class);
+    when(owner.getLifecycle()).thenReturn(lifecycle);
+    TerminalScreenController.View noOpView = noOpView();
+
+    first.attach(owner, noOpView);
+    try {
+      second.attach(owner, noOpView);
+      org.junit.Assert.fail("second render consumer must be rejected");
+    } catch (IllegalStateException expected) {
+      assertTrue(expected.getMessage().contains("active render consumer"));
+    }
+    first.detach(owner);
+    second.attach(owner, noOpView);
+    second.detach(owner);
+  }
+
+  private static TerminalScreenController.View noOpView() {
+    return new TerminalScreenController.View() {
+      @Override public void bindModel(RemoteTerminalModel ignored) {}
+      @Override public void render(RenderUpdate update, TerminalViewportState ignored) {}
+      @Override public void onCursorChanged() {}
+      @Override public void onTitleChanged(String title) {}
+      @Override public void requestInvalidate() {}
+    };
+  }
+
   private static ScreenBaseline baseline() {
     TerminalLine screen = new TerminalLine(
         1000, 1, 0, false, new TerminalCell[] {TerminalCell.EMPTY});
