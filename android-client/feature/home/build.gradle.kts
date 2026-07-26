@@ -31,4 +31,7 @@ dependencies {
     implementation("androidx.annotation:annotation:1.9.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.mockito:mockito-core:5.12.0")
 }
