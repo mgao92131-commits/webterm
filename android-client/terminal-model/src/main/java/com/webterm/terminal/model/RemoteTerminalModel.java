@@ -298,11 +298,16 @@ public final class RemoteTerminalModel {
         throw new RevisionGapException("screen.v2 commit contains invalid history mutation");
       }
       nextExtent = commit.history.finalExtent;
+      if (nextExtent.firstSeq < oldExtent.firstSeq
+          || nextExtent.lastSeq < oldExtent.lastSeq) {
+        throw new RevisionGapException("screen.v2 commit history extent regressed");
+      }
       appendedLines = new ArrayList<>(commit.history.appendedLines.size());
       long previousSeq = 0;
       for (TerminalLine line : commit.history.appendedLines) {
         TerminalLine normalized = normalizeCompleteLine(line, columns);
         if (normalized == null || normalized.id <= 0 || normalized.historySeq <= previousSeq
+            || normalized.historySeq <= oldExtent.lastSeq
             || !nextExtent.contains(normalized.historySeq)) {
           throw new RevisionGapException("screen.v2 commit contains invalid history line");
         }

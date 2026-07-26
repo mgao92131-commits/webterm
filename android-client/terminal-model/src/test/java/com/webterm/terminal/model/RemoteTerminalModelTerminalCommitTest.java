@@ -110,6 +110,60 @@ public final class RemoteTerminalModelTerminalCommitTest {
   }
 
   @Test
+  public void historyExtentFirstRegressionRejectedAtomically() throws Exception {
+    RemoteTerminalModel model = baselineModel(new HistoryExtent(20, 100));
+    assertCommitRejectedAtomically(model, historyCommit(
+        1, 2, new HistoryExtent(1, 100), Collections.emptyList()));
+  }
+
+  @Test
+  public void historyExtentLastRegressionRejectedAtomically() throws Exception {
+    RemoteTerminalModel model = baselineModel(new HistoryExtent(20, 100));
+    assertCommitRejectedAtomically(model, historyCommit(
+        1, 2, new HistoryExtent(20, 90), Collections.emptyList()));
+  }
+
+  @Test
+  public void trimOnlyHistoryMutationAccepted() throws Exception {
+    RemoteTerminalModel model = baselineModel(new HistoryExtent(1, 100));
+    model.consumeRenderUpdate();
+
+    assertTrue(model.applyTerminalCommit(historyCommit(
+        1, 2, new HistoryExtent(20, 100), Collections.emptyList())));
+
+    assertEquals(new HistoryExtent(20, 100), model.displayExtent());
+    assertEquals(2, model.screenRevision);
+    assertNotNull(model.consumeRenderUpdate());
+    assertNull(model.consumeRenderUpdate());
+  }
+
+  @Test
+  public void boundedTailBodiesMayStartAfterOldLastPlusOne() throws Exception {
+    RemoteTerminalModel model = baselineModel(new HistoryExtent(1, 100));
+    model.consumeRenderUpdate();
+    java.util.List<TerminalLine> tail = new java.util.ArrayList<>();
+    for (long seq = 873; seq <= 1000; seq++) {
+      tail.add(line(10000 + seq, 1, seq, "tail"));
+    }
+
+    assertTrue(model.applyTerminalCommit(historyCommit(
+        1, 2, new HistoryExtent(1, 1000), tail)));
+
+    RenderUpdate update = model.consumeRenderUpdate();
+    assertNotNull(update);
+    assertEquals(900, update.state.tailAppendedLines);
+    assertEquals(new HistoryExtent(1, 1000), model.displayExtent());
+  }
+
+  @Test
+  public void oldHistorySeqInCommitRejectedAtomically() throws Exception {
+    RemoteTerminalModel model = baselineModel(new HistoryExtent(1, 100));
+    assertCommitRejectedAtomically(model, historyCommit(
+        1, 2, new HistoryExtent(1, 105),
+        Arrays.asList(line(1000, 1, 100, "old"), line(1001, 1, 105, "new"))));
+  }
+
+  @Test
   public void invalidScreenWriteDoesNotCommitPreparedHistory() throws Exception {
     RemoteTerminalModel model = baselineModel();
     model.consumeRenderUpdate();
@@ -166,13 +220,58 @@ public final class RemoteTerminalModelTerminalCommitTest {
   }
 
   private static RemoteTerminalModel baselineModel() {
+    return baselineModel(HistoryExtent.INITIAL_EMPTY);
+  }
+
+  private static RemoteTerminalModel baselineModel(HistoryExtent historyExtent) {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
         "session", "instance", 1, 1, 1, 3, 1, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(),
+        historyExtent, Collections.emptyList(),
         Arrays.asList(line(10, 1, 0, "a"), line(11, 1, 0, "b"), line(12, 1, 0, "c")),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     return model;
+  }
+
+  private static TerminalCommit historyCommit(long baseRevision, long revision,
+                                               HistoryExtent extent,
+                                               java.util.List<TerminalLine> lines) {
+    return new TerminalCommit(
+        "instance", 1, 1, baseRevision, revision,
+        new ScreenMutation(null,
+            Collections.singletonList(new ScreenRowWrite(0, line(30, 1, 0, "changed")))),
+        new HistoryMutation(extent, lines),
+        new TerminalCursor(1, 1, true, TerminalCursor.Shape.BAR, false),
+        new TerminalModes(true, true, true, TerminalModes.MouseTracking.ANY_EVENT,
+            TerminalModes.MouseEncoding.SGR, true),
+        new TerminalPalette(TerminalColor.rgb(0x112233), TerminalColor.rgb(0x445566),
+            TerminalColor.rgb(0x778899)));
+  }
+
+  private static void assertCommitRejectedAtomically(
+      RemoteTerminalModel model, TerminalCommit commit) throws Exception {
+    model.consumeRenderUpdate();
+    RemoteTerminalModel.RenderSnapshot before = model.renderSnapshot();
+    HistoryExtent beforeExtent = model.displayExtent();
+    TerminalCursor beforeCursor = model.cursor();
+    TerminalModes beforeModes = model.modes();
+    TerminalPalette beforePalette = model.palette();
+    int beforeHistorySize = model.historySize();
+    long beforeRevision = model.screenRevision;
+    try {
+      model.applyTerminalCommit(commit);
+      fail("invalid history mutation accepted");
+    } catch (RemoteTerminalModel.RevisionGapException expected) {
+      // expected
+    }
+    assertSame(before, model.renderSnapshot());
+    assertEquals(beforeExtent, model.displayExtent());
+    assertSame(beforeCursor, model.cursor());
+    assertSame(beforeModes, model.modes());
+    assertSame(beforePalette, model.palette());
+    assertEquals(beforeHistorySize, model.historySize());
+    assertEquals(beforeRevision, model.screenRevision);
+    assertNull(model.consumeRenderUpdate());
   }
 
   private static TerminalLine line(long id, long version, long historySeq, String text) {
