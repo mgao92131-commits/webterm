@@ -30,7 +30,6 @@ public final class ScreenMailbox {
     BASELINE,
     RESUME_ACCEPTED,
     TERMINAL_COMMIT,
-    HISTORY_RANGE,
     LAYOUT_LEASE,
     CLIPBOARD_EFFECT,
     EFFECT,

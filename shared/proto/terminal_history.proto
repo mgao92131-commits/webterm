@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package webterm.terminal.screen.v2;
+
+option go_package = "webterm/go-core/internal/screenprotocol/generatedv2";
+option java_package = "com.webterm.terminal.protocol.generated";
+option java_outer_classname = "TerminalHistoryProto";
+
+import "shared/proto/terminal_screen_v2.proto";
+
+// HTTP 历史分段协议（不经 ScreenEnvelope）。
+// GET /api/sessions/{id}/history/segments/{generation}/{segmentNumber}
+
+enum HistorySegmentStatus {
+  HISTORY_SEGMENT_STATUS_UNSPECIFIED = 0;
+  HISTORY_SEGMENT_STATUS_OK = 1;
+  HISTORY_SEGMENT_STATUS_STALE_GENERATION = 2;
+  HISTORY_SEGMENT_STATUS_NOT_SEALED = 3;
+  HISTORY_SEGMENT_STATUS_TRIMMED = 4;
+  HISTORY_SEGMENT_STATUS_NOT_FOUND = 5;
+  HISTORY_SEGMENT_STATUS_SESSION_GONE = 6;
+  HISTORY_SEGMENT_STATUS_RETRYABLE = 7;
+}
+
+// HistorySegment 是封存后的不可变历史段正文。
+message HistorySegment {
+  uint64 history_generation = 1;
+  uint64 segment_number = 2;
+  uint64 first_seq = 3;
+  uint64 last_seq = 4;
+  repeated LineData lines = 5;
+  Dictionary dictionary = 6;
+  bytes checksum = 7;
+}
+
+// HistorySegmentResponse 是 HTTP 响应体；不含 historyExtent/availableExtent。
+message HistorySegmentResponse {
+  HistorySegmentStatus status = 1;
+  HistorySegment segment = 2;
+  uint64 history_generation = 3;
+  uint32 retry_after_ms = 4;
+}

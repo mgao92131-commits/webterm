@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
+
+	"webterm/go-core/internal/historysegment"
 )
 
 // ScrollbackEntry 只把权威 LineID 绑定到 HistorySeq；Cells 是 Buffer
@@ -77,6 +79,10 @@ type HistoryRangeResult struct {
 
 // TrackedScrollback 是 headless-term 的唯一 scrollback provider。LineID 来自
 // 屏幕行并永不在这里改写；firstSeq/nextSeq 仅保存严格递增的 HistorySeq。
+//
+// 满 SEGMENT_SIZE 行的完整分段会封存进 SegmentStore；封存后同一
+// (generation, segmentNumber) 正文永不变化。Pop 若回退进已封存区，会删除
+// 对应段并回退 sealedThroughSeq。
 type TrackedScrollback struct {
 	mu       sync.RWMutex
 	capacity int
@@ -89,15 +95,21 @@ type TrackedScrollback struct {
 	nextSeq     uint64
 	lines       []ScrollbackEntry
 
+	// sealedThroughSeq 是已封存的最大 HistorySeq；0 表示尚无封存段。
+	sealedThroughSeq uint64
+	segments         historysegment.Store
+
 	onTrim func(ScrollbackTrimEvent)
 }
 
 // DefaultScrollbackLineLimit 是行数安全上限的缺省值。它是上限而非保留承诺：
 // 字节预算（DefaultScrollbackByteLimit）可能先触发驱逐，实际保留行数可以远低于它。
-const DefaultScrollbackLineLimit = 10000
+// 必须为 historysegment.SEGMENT_SIZE（128）的整数倍，使 trim 边界落在整段边界上，
+// 避免首段与 Catalog.trimBeforeSeq 部分相交。
+const DefaultScrollbackLineLimit = 20096 // 128 * 157
 
 // DefaultScrollbackByteLimit bounds memory independently of line count. Wide
-// terminals and richly styled output can make 10k physical rows much larger
+// terminals and richly styled output can make ~20k physical rows much larger
 // than a line-only capacity suggests.
 const DefaultScrollbackByteLimit = 8 << 20
 
@@ -119,6 +131,14 @@ func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *Track
 	}
 }
 
+// AttachSegmentStore 安装不可变分段存储。应在产生历史输出前调用；可传 nil 卸载。
+func (t *TrackedScrollback) AttachSegmentStore(store historysegment.Store) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.segments = store
+	t.resealAllLocked()
+}
+
 // SetLayoutEpoch records the geometry generation that produced the live grid.
 // Ordinary terminal resize does not invalidate scrollback: history line IDs are
 // stable for the lifetime of a session and remain pageable across geometry
@@ -136,6 +156,7 @@ func (t *TrackedScrollback) SetLayoutEpoch(epoch uint64) {
 func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	oldGeneration := t.generation
 	t.layoutEpoch = epoch
 	t.generation++
 	for i := range t.lines {
@@ -143,6 +164,8 @@ func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 	}
 	t.firstSeq = 1
 	t.nextSeq = uint64(len(t.lines)) + 1
+	t.clearSegmentsLocked(oldGeneration)
+	t.resealAllLocked()
 }
 
 // ResetForReflow discards physical history after a real reflow rebuild. It is
@@ -151,12 +174,14 @@ func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 func (t *TrackedScrollback) ResetForReflow(epoch uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	oldGeneration := t.generation
 	t.layoutEpoch = epoch
 	t.generation++
 	t.firstSeq = 1
 	t.nextSeq = 1
 	t.lines = t.lines[:0]
 	t.bytes = 0
+	t.clearSegmentsLocked(oldGeneration)
 }
 
 // LayoutEpoch 返回当前 layout epoch。
@@ -170,6 +195,32 @@ func (t *TrackedScrollback) Generation() uint64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.generation
+}
+
+// SealedThroughSeq 返回已封存的最大 HistorySeq；尚无封存时为 0。
+func (t *TrackedScrollback) SealedThroughSeq() uint64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.sealedThroughSeq
+}
+
+// HistoryCatalog 返回 WS 目录快照：trim/seal/tail 水位与 generation。
+func (t *TrackedScrollback) HistoryCatalog() historysegment.Catalog {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return historysegment.Catalog{
+		Generation:       t.generation,
+		TrimBeforeSeq:    t.firstSeq,
+		SealedThroughSeq: t.sealedThroughSeq,
+		TailLastSeq:      t.lastSeqLocked(),
+	}
+}
+
+// SegmentStore 返回当前安装的分段存储（可 nil）。
+func (t *TrackedScrollback) SegmentStore() historysegment.Store {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.segments
 }
 
 // Push 追加一行到历史。
@@ -198,13 +249,14 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	t.nextSeq++
 	t.lines = append(t.lines, historyLine)
 	t.bytes += historyLine.bytes
+	t.sealCompletedSegmentsLocked()
 
 	if t.trimToLimitsLocked() {
 		t.fireTrimLocked()
 	}
 }
 
-// Pop 移除并返回最新一行。
+// Pop 移除并返回最新一行。若回退进已封存区，删除对应不可变段并回退水位。
 func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -219,6 +271,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	} else {
 		t.firstSeq = t.nextSeq
 	}
+	t.unsealFromLocked(line.HistorySeq)
 	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID, LineVersion: line.Version}
 }
 
@@ -414,8 +467,10 @@ func (t *TrackedScrollback) NextSeq() uint64 {
 func (t *TrackedScrollback) Clear() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	oldGeneration := t.generation
 	t.generation++
 	if len(t.lines) == 0 {
+		t.clearSegmentsLocked(oldGeneration)
 		return
 	}
 	t.lines = t.lines[:0]
@@ -424,6 +479,7 @@ func (t *TrackedScrollback) Clear() {
 	// 保持 nextSeq 单调递增，使 HistoryExtent 水位可被客户端接受，也避免后续
 	// 输出复用已经被客户端见过的历史行 ID。
 	t.firstSeq = t.nextSeq
+	t.clearSegmentsLocked(oldGeneration)
 	t.fireTrimLocked()
 }
 
@@ -486,6 +542,7 @@ func (t *TrackedScrollback) trimToLimitsLocked() bool {
 	} else {
 		t.firstSeq = t.nextSeq
 	}
+	t.trimSegmentsLocked()
 	return true
 }
 
@@ -521,3 +578,115 @@ func (t *TrackedScrollback) fireTrimLocked() {
 		t.onTrim(ScrollbackTrimEvent{FirstAvailableSeq: t.firstSeq})
 	}
 }
+
+// sealCompletedSegmentsLocked 把 scrollback 中已完整且尚未封存的段写入 Store。
+func (t *TrackedScrollback) sealCompletedSegmentsLocked() {
+	lastSeq := t.lastSeqLocked()
+	if len(t.lines) == 0 || lastSeq < t.firstSeq {
+		return
+	}
+	var nextNumber uint64
+	if t.sealedThroughSeq == 0 {
+		nextNumber = historysegment.NumberForSeq(t.firstSeq)
+		first, _ := historysegment.SeqRange(nextNumber)
+		if t.firstSeq > first {
+			// 首部段不完整（已被裁剪前缀），跳过到下一段。
+			nextNumber++
+		}
+	} else {
+		nextNumber = historysegment.NumberForSeq(t.sealedThroughSeq) + 1
+	}
+	for {
+		first, last := historysegment.SeqRange(nextNumber)
+		if last > lastSeq {
+			return
+		}
+		if first < t.firstSeq {
+			nextNumber++
+			continue
+		}
+		if !t.sealOneLocked(nextNumber, first, last) {
+			return
+		}
+		nextNumber++
+	}
+}
+
+func (t *TrackedScrollback) sealOneLocked(number, first, last uint64) bool {
+	start := sort.Search(len(t.lines), func(i int) bool {
+		return t.lines[i].HistorySeq >= first
+	})
+	end := sort.Search(len(t.lines), func(i int) bool {
+		return t.lines[i].HistorySeq > last
+	})
+	if end-start != historysegment.Size {
+		return false
+	}
+	if t.lines[start].HistorySeq != first || t.lines[end-1].HistorySeq != last {
+		return false
+	}
+	copied := make([]historysegment.Line, historysegment.Size)
+	for i := 0; i < historysegment.Size; i++ {
+		src := t.lines[start+i]
+		copied[i] = historysegment.Line{
+			HistorySeq: src.HistorySeq,
+			LineID:     src.LineID,
+			Version:    src.Version,
+			Wrapped:    src.Wrapped,
+			Cells:      src.Cells,
+		}
+	}
+	seg, ok := historysegment.NewSegment(t.generation, number, copied)
+	if !ok {
+		return false
+	}
+	if t.segments != nil {
+		t.segments.Put(seg)
+	}
+	t.sealedThroughSeq = last
+	return true
+}
+
+// resealAllLocked 在 Attach/Rebase 后按当前 generation 重建封存水位。
+func (t *TrackedScrollback) resealAllLocked() {
+	t.sealedThroughSeq = 0
+	if t.segments != nil {
+		t.segments.DeleteGeneration(t.generation)
+	}
+	t.sealCompletedSegmentsLocked()
+}
+
+func (t *TrackedScrollback) clearSegmentsLocked(oldGeneration uint64) {
+	t.sealedThroughSeq = 0
+	if t.segments == nil {
+		return
+	}
+	t.segments.DeleteGeneration(oldGeneration)
+	if t.generation != oldGeneration {
+		t.segments.DeleteGeneration(t.generation)
+	}
+}
+
+// unsealFromLocked 在 Pop 回退到 seq 时删除该 seq 所在段及之后的封存段。
+func (t *TrackedScrollback) unsealFromLocked(seq uint64) {
+	if t.sealedThroughSeq == 0 || seq > t.sealedThroughSeq {
+		return
+	}
+	number := historysegment.NumberForSeq(seq)
+	first, _ := historysegment.SeqRange(number)
+	if t.segments != nil {
+		t.segments.DeleteFrom(t.generation, number)
+	}
+	if first <= 1 {
+		t.sealedThroughSeq = 0
+	} else {
+		t.sealedThroughSeq = first - 1
+	}
+}
+
+func (t *TrackedScrollback) trimSegmentsLocked() {
+	if t.segments != nil {
+		t.segments.DeleteBefore(t.generation, t.firstSeq)
+	}
+}
+

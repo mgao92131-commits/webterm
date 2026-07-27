@@ -121,12 +121,6 @@ public final class TerminalSessionRuntime {
     void sendFocusInput(boolean focused);
     /** 返回 true 表示 resize 已被本地发送队列接受；false 表示当前无可用通道，调用方不得记录"已发送"。 */
     boolean requestResize(int cols, int rows);
-    /** 返回 true 表示请求已成功排队发送；false 表示当前无可用通道，调用方不得留下 pending 状态。 */
-    default boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
-                                        long layoutEpoch, long historyGeneration,
-                                        long fromSeq, long toSeq) {
-      return false;
-    }
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
@@ -174,7 +168,8 @@ public final class TerminalSessionRuntime {
   private final AtomicLong connectionEpoch = new AtomicLong();
 
   private final ResyncCoordinator resyncCoordinator;
-  private final HistoryRequestCoordinator historyRequests = new HistoryRequestCoordinator();
+  private final HistorySegmentLoader historyLoader = new HistorySegmentLoader();
+  @Nullable private volatile HistorySegmentSource historySegmentSource;
   private volatile ScreenConnection connection;
   private volatile boolean connectionRequiresReplacement;
   @Nullable private volatile AuthenticationListener authenticationListener;
@@ -565,98 +560,127 @@ public final class TerminalSessionRuntime {
     layoutLeaseCoordinator.requestResize(cols, rows);
   }
 
-  /** v2 按可见固定页请求历史；相同闭区间在途时幂等忽略。 */
-  public boolean requestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
-    return requestHistoryRange(fromSeq, toSeq, anchorSeq, 0);
+  /** 注入历史分段 Source（Direct/Relay HTTP）。null 表示暂不可拉取冷历史。 */
+  public void setHistorySegmentSource(@Nullable HistorySegmentSource source) {
+    modelExecutor.execute(() -> {
+      HistorySegmentSource previous = historySegmentSource;
+      historySegmentSource = source;
+      historyLoader.resetLifecycle(null);
+      if (previous != null) previous.close();
+      pumpHistorySegments();
+    });
   }
 
-  private boolean requestHistoryRange(
-      long fromSeq, long toSeq, long anchorSeq, int retryAttempt) {
-    if (state != State.LIVE) return false;
-    ScreenConnection c = connection;
+  /** View/Controller 上报的最新可见历史需求（VSync 合并后调用）。 */
+  public void onVisibleHistoryDemand(long visibleFromSeq, long visibleToSeq, long anchorSeq,
+                                     int direction, int visibleRowCount) {
+    modelExecutor.execute(() -> {
+      if (visibleFromSeq <= 0 || visibleToSeq < visibleFromSeq) {
+        historyLoader.clearDemand();
+        return;
+      }
+      historyLoader.setDemand(new HistorySegmentLoader.Demand(
+          visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount));
+      pumpHistorySegments();
+    });
+  }
+
+  public void onVisibleHistoryDemandCleared() {
+    modelExecutor.execute(() -> {
+      historyLoader.clearDemand();
+    });
+  }
+
+  private void pumpHistorySegments() {
+    if (state != State.LIVE || historyLoader.closed()) return;
+    if (historyLoader.activeRequest() != null) return;
+    HistorySegmentSource source = historySegmentSource;
+    if (source == null) return;
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-    if (c == null || !projection.projectionComplete || projection.instanceId.isEmpty()
-        || projection.layoutEpoch == 0) return false;
-    HistoryExtent extent = projection.mainHistoryExtent;
-    long boundedFrom = Math.max(extent.firstSeq, fromSeq);
-    long boundedTo = Math.min(extent.lastSeq, toSeq);
-    if (boundedFrom <= 0 || boundedTo < boundedFrom || boundedTo - boundedFrom >= 256) {
-      return false;
-    }
-    String requestId = historyRequests.nextRequestId();
-    HistoryRequestCoordinator.Submission submission = historyRequests.submit(
-        requestId, boundedFrom, boundedTo, anchorSeq,
-        projection.instanceId, projection.layoutEpoch, projection.historyGeneration, retryAttempt);
-    if (submission == HistoryRequestCoordinator.Submission.DUPLICATE
-        || submission == HistoryRequestCoordinator.Submission.QUEUED) {
-      return true;
-    }
-    if (!sendHistoryRangeRequest(c, requestId, projection.instanceId, projection.layoutEpoch,
-        projection.historyGeneration, boundedFrom, boundedTo)) {
-      historyRequests.cancel(requestId);
-      return false;
-    }
-    // Loopback/fake connections may deliver a response synchronously from requestHistoryRange().
-    if (historyRequests.accept(requestId)) scheduleHistoryRequestTimeout(requestId);
-    return true;
-  }
-
-  /** 仅发送已经进入 in-flight 账本的请求；响应资格不会因后续滚动而被覆盖。 */
-  private boolean sendHistoryRangeRequest(@NonNull ScreenConnection target,
-                                          @NonNull String requestId,
-                                          @NonNull String instanceId,
-                                          long layoutEpoch, long historyGeneration,
-                                          long fromSeq, long toSeq) {
-    return target.requestHistoryRange(
-        requestId, instanceId, layoutEpoch, historyGeneration, fromSeq, toSeq);
-  }
-
-  /** 一个历史请求释放 in-flight 槽位后自动补发最新待发页，不能等待下一次手势。 */
-  private void dispatchNextHistoryRangeRequest() {
-    if (state != State.LIVE) return;
-    HistoryRequestCoordinator.Pending next = historyRequests.promoteNext();
-    if (next == null) return;
-    ScreenConnection current = connection;
-    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-    if (current == null || !next.instanceId.equals(projection.instanceId)
-        || next.layoutEpoch != projection.layoutEpoch
-        || next.historyGeneration != projection.historyGeneration
-        || !sendHistoryRangeRequest(current, next.requestId, next.instanceId,
-            next.layoutEpoch, next.historyGeneration, next.fromSeq, next.toSeq)) {
-      historyRequests.cancel(next.requestId);
+    if (!projection.projectionComplete || projection.historyGeneration < 1) return;
+    RemoteTerminalModel.RenderSnapshot snap = model.peekRenderSnapshot();
+    if (snap == null || !(snap.history instanceof com.webterm.terminal.model.PagedTerminalHistorySnapshot)) {
       return;
     }
-    // 同步 loopback 响应会先 complete()；只有仍在途时才登记 timeout。
-    if (historyRequests.accept(next.requestId)) scheduleHistoryRequestTimeout(next.requestId);
-  }
-
-  private void scheduleHistoryRequestTimeout(@NonNull String requestId) {
-    timeoutScheduler.schedule(
-        () -> modelExecutor.execute(() -> {
-          HistoryRequestCoordinator.Pending expired = historyRequests.expire(requestId);
-          if (expired != null) {
-            dispatchNextHistoryRangeRequest();
-            scheduleHistoryRetry(expired, 0);
+    com.webterm.terminal.model.PagedTerminalHistorySnapshot history =
+        (com.webterm.terminal.model.PagedTerminalHistorySnapshot) snap.history;
+    com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
+    com.webterm.terminal.model.SegmentKey target =
+        historyLoader.highestPriorityMissing(catalog, history);
+    if (target == null) return;
+    // 先占住 active，再发起 fetch，避免同步回调看到 active==null 后永久卡住。
+    final HistorySegmentSource.RequestHandle[] handleSlot = new HistorySegmentSource.RequestHandle[1];
+    HistorySegmentSource.RequestHandle cancelProxy = () -> {
+      HistorySegmentSource.RequestHandle inner = handleSlot[0];
+      if (inner != null) inner.cancel();
+    };
+    if (!historyLoader.begin(target, cancelProxy)) return;
+    HistorySegmentLoader.ActiveRequest active = historyLoader.activeRequest();
+    HistorySegmentSource.RequestHandle handle = source.fetch(target,
+        new HistorySegmentSource.Callback() {
+          @Override
+          public void onResult(@NonNull HistorySegmentSource.DecodedHistorySegment result) {
+            modelExecutor.execute(() -> {
+              if (active == null || !historyLoader.isActive(active)) return;
+              historyLoader.complete(active);
+              applyDecodedHistorySegment(result);
+              pumpHistorySegments();
+            });
           }
-        }),
-        HISTORY_REQUEST_TIMEOUT_MS);
+
+          @Override
+          public void onFailure(@NonNull HistorySegmentSource.Failure failure) {
+            modelExecutor.execute(() -> {
+              if (active == null || !historyLoader.isActive(active)) return;
+              historyLoader.complete(active);
+              handleSegmentFailure(failure);
+              scheduleSegmentRetry(failure.retryAfterMs);
+            });
+          }
+        });
+    handleSlot[0] = handle;
   }
 
-  private void scheduleHistoryRetry(
-      @NonNull HistoryRequestCoordinator.Pending pending, long serverDelayMs) {
-    int nextAttempt = Math.min(8, pending.retryAttempt + 1);
-    long exponential = Math.min(
-        HISTORY_RETRY_MAX_MS, HISTORY_RETRY_MIN_MS << Math.min(5, pending.retryAttempt));
-    long delay = Math.max(exponential, Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs));
+  private void applyDecodedHistorySegment(
+      @NonNull HistorySegmentSource.DecodedHistorySegment decoded) {
+    com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
+    if (!catalog.acceptsSegment(decoded.key.generation, decoded.firstSeq, decoded.lastSeq)) {
+      return;
+    }
+    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
+    HistoryRangeResult range = new HistoryRangeResult(
+        "seg-" + decoded.key.number,
+        projection.instanceId,
+        projection.layoutEpoch,
+        decoded.key.generation,
+        HistoryRangeResult.Status.OK,
+        projection.remoteAvailableExtent,
+        decoded.lines,
+        0);
+    boolean changed = model.applyHistoryRange(
+        range, decoded.firstSeq, decoded.firstSeq, decoded.lastSeq);
+    if (changed) recordCapturedModelState(false);
+  }
+
+  private void handleSegmentFailure(@NonNull HistorySegmentSource.Failure failure) {
+    if (failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION
+        || failure.kind == HistorySegmentSource.FailureKind.SESSION_GONE) {
+      historyLoader.clearDemand();
+      if (failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION) {
+        sendResync("history_segment_stale");
+      }
+    }
+  }
+
+  private void scheduleSegmentRetry(long serverDelayMs) {
+    long delay = Math.max(HISTORY_RETRY_MIN_MS,
+        Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs > 0 ? serverDelayMs : HISTORY_RETRY_MIN_MS));
+    long epoch = historyLoader.lifecycleEpoch();
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
-          RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-          if (state != State.LIVE
-              || !pending.instanceId.equals(projection.instanceId)
-              || pending.layoutEpoch != projection.layoutEpoch
-              || pending.historyGeneration != projection.historyGeneration) return;
-          requestHistoryRange(
-              pending.fromSeq, pending.toSeq, pending.anchorSeq, nextAttempt);
+          if (historyLoader.closed() || historyLoader.lifecycleEpoch() != epoch) return;
+          if (historyLoader.latestDemand() == null) return;
+          pumpHistorySegments();
         }),
         delay);
   }
@@ -836,8 +860,6 @@ public final class TerminalSessionRuntime {
         return TerminalRenderMetrics.ScreenTrafficKind.BASELINE;
       case TERMINAL_COMMIT:
         return TerminalRenderMetrics.ScreenTrafficKind.COMMIT;
-      case HISTORY_RANGE:
-        return TerminalRenderMetrics.ScreenTrafficKind.HISTORY_RANGE;
       default:
         return TerminalRenderMetrics.ScreenTrafficKind.OTHER;
     }
@@ -853,8 +875,8 @@ public final class TerminalSessionRuntime {
         if (tag == 0) break;
         int field = WireFormat.getTagFieldNumber(tag);
         // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
+        // 字段 6/7 曾为 HistoryRange，已 reserved。
         if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
-        if (field == 7) return ScreenMailbox.MessageKind.HISTORY_RANGE;
         if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
         if (field == 16) return classifyEffectMessage(input, tag);
         if (field == 19) return ScreenMailbox.MessageKind.EXIT;
@@ -949,13 +971,13 @@ public final class TerminalSessionRuntime {
       TerminalResumeMetrics.screenMailboxRecovered("snapshot");
     }
     resyncCoordinator.onAuthoritativeSnapshot();
-    historyRequests.retainCompatible(
-        model.instanceId, model.layoutEpoch, model.historyGeneration());
+    historyLoader.resetLifecycle(null);
+    pumpHistorySegments();
   }
 
   private void resetResyncRecovery() {
     resyncCoordinator.reset();
-    historyRequests.clear();
+    historyLoader.resetLifecycle(null);
     screenMailbox.reset();
   }
 
@@ -1011,6 +1033,7 @@ public final class TerminalSessionRuntime {
           recordCapturedModelState(true);
           onAuthoritativeSnapshot();
           completeSynchronization();
+          pumpHistorySegments();
           renderChanged = true;
           break;
         }
@@ -1060,65 +1083,7 @@ public final class TerminalSessionRuntime {
               captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);
           completeSynchronization();
-          break;
-        }
-        case HISTORY_RANGE_RESPONSE: {
-          failureReason = "INVALID_HISTORY_RANGE";
-          TerminalScreenV2Proto.HistoryRangeResponse wire =
-              envelope.getHistoryRangeResponse();
-          ScreenMessageV2Validator.validateHistoryRange(wire);
-          HistoryRequestCoordinator.Pending pending =
-              historyRequests.complete(wire.getRequestId());
-          if (pending == null) return;
-          // 已发送请求的响应无论当前视口是否仍停在该页，都应入缓存；先释放槽位，
-          // 让快速滚动积压的最新页立即发送，而不是等待下一次手势。
-          dispatchNextHistoryRangeRequest();
-          RemoteTerminalModel.ProjectionReadView currentProjection = model.projectionReadView();
-          if (!pending.instanceId.equals(currentProjection.instanceId)
-              || pending.layoutEpoch != currentProjection.layoutEpoch
-              || pending.historyGeneration != currentProjection.historyGeneration
-              || !wire.getInstanceId().equals(currentProjection.instanceId)
-              || wire.getLayoutEpoch() != currentProjection.layoutEpoch
-              || wire.getHistoryGeneration() != currentProjection.historyGeneration) {
-            Diagnostics.info("screen_protocol", "history_range_response_stale", diagnosticFields(
-                "layoutEpoch", wire.getLayoutEpoch(),
-                "historyGeneration", wire.getHistoryGeneration()));
-            return;
-          }
-          long mapStartedNanos = System.nanoTime();
-          HistoryRangeResult range;
-          try {
-            range = ScreenMessageV2Mapper.mapHistoryRange(wire, model.columns);
-          } finally {
-            TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
-          }
-          try {
-            renderChanged = model.applyHistoryRange(
-                range, pending.anchorSeq, pending.fromSeq, pending.toSeq);
-            if (!renderChanged
-                && range.status != HistoryRangeResult.Status.STALE_PROJECTION
-                && range.status != HistoryRangeResult.Status.RETRYABLE) {
-              throw new IllegalArgumentException("model rejected HistoryRange identity or data");
-            }
-          } catch (RuntimeException invalidRange) {
-            Diagnostics.warn("screen_protocol", "invalid_history_range", diagnosticFields(
-                "failureKind", invalidRange.getClass().getSimpleName(),
-                "requestFromSeq", pending.fromSeq,
-                "requestToSeq", pending.toSeq,
-                "lineCount", wire.getLinesCount(),
-                "instanceId", wire.getInstanceId(),
-                "layoutEpoch", wire.getLayoutEpoch(),
-                "localRevision", model.screenRevision));
-            throw invalidRange;
-          }
-          if (renderChanged) recordCapturedModelState(false);
-          if (range.status == HistoryRangeResult.Status.STALE_PROJECTION) {
-            Diagnostics.info("screen_protocol", "history_generation_stale", diagnosticFields(
-                "instanceId", wire.getInstanceId(),
-                "layoutEpoch", wire.getLayoutEpoch()));
-          } else if (range.status == HistoryRangeResult.Status.RETRYABLE) {
-            scheduleHistoryRetry(pending, range.retryAfterMs);
-          }
+          pumpHistorySegments();
           break;
         }
         case LAYOUT_LEASE:

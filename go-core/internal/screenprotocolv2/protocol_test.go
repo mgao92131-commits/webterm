@@ -15,6 +15,7 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: 4,
 			LastIncludedHistorySeq:   3,
+			SealedThroughSeq:         256,
 		},
 		Screen: []terminalengine.Line{{
 			ID: 7, Version: 1,
@@ -38,46 +39,11 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 	if got := baseline.GetHistoryExtent(); got.GetFirstSeq() != 4 || got.GetLastSeq() != 3 {
 		t.Fatalf("empty extent = %d..%d, want 4..3", got.GetFirstSeq(), got.GetLastSeq())
 	}
+	if baseline.GetSealedThroughSeq() != 256 {
+		t.Fatalf("SealedThroughSeq=%d, want 256", baseline.GetSealedThroughSeq())
+	}
 	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x" {
 		t.Fatal("default trailing blank was not trimmed")
-	}
-}
-
-func TestEncodeHistoryRangeStatusesAlwaysCarryGenerationAndExtent(t *testing.T) {
-	extent := terminalengine.HistoryExtent{FirstSeq: 10, LastSeq: 20}
-	staleWire, err := EncodeStaleHistoryRange("stale", "i1", 2, 7, extent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var staleEnv pb.ScreenEnvelope
-	if err := proto.Unmarshal(staleWire, &staleEnv); err != nil {
-		t.Fatal(err)
-	}
-	stale := staleEnv.GetHistoryRangeResponse()
-	if stale.GetHistoryGeneration() != 7 ||
-		stale.GetAvailableExtent().GetFirstSeq() != 10 ||
-		stale.GetAvailableExtent().GetLastSeq() != 20 {
-		t.Fatalf("stale response lost identity/extent: %+v", stale)
-	}
-
-	retryWire, err := EncodeHistoryRangeResponse("retry", "i1", 2,
-		terminalengine.HistoryRangeData{
-			Status: terminalengine.HistoryRangeRetryable, Extent: extent,
-			RetryAfterMS: 250, HistoryGeneration: 7,
-		})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var retryEnv pb.ScreenEnvelope
-	if err := proto.Unmarshal(retryWire, &retryEnv); err != nil {
-		t.Fatal(err)
-	}
-	retry := retryEnv.GetHistoryRangeResponse()
-	if retry.GetHistoryGeneration() != 7 ||
-		retry.GetAvailableExtent().GetFirstSeq() != 10 ||
-		retry.GetAvailableExtent().GetLastSeq() != 20 ||
-		retry.GetRetryAfterMs() != 250 {
-		t.Fatalf("retry response lost generation/extent/backoff: %+v", retry)
 	}
 }
 
@@ -226,34 +192,6 @@ func TestEncodeLinePreservesWideEmojiCombiningAndColumnHoles(t *testing.T) {
 	}
 }
 
-func TestHandlerValidatesClosedHistoryRange(t *testing.T) {
-	called := false
-	handler := NewHandler(WithHistoryRangeCallback(func(req *pb.HistoryRangeRequest) {
-		called = req.GetFromSeq() == 10 && req.GetToSeq() == 20
-	}))
-	env := &pb.ScreenEnvelope{
-		ProtocolVersion: 2,
-		Payload: &pb.ScreenEnvelope_HistoryRangeRequest{
-			HistoryRangeRequest: &pb.HistoryRangeRequest{
-				RequestId: "r1", InstanceId: "i1", LayoutEpoch: 2,
-				FromSeq: 10, ToSeq: 20, HistoryGeneration: 1,
-			},
-		},
-	}
-	wire, _ := proto.Marshal(env)
-	if err := handler.HandleMessage(wire); err != nil {
-		t.Fatal(err)
-	}
-	if !called {
-		t.Fatal("history range callback was not called")
-	}
-	env.GetHistoryRangeRequest().ToSeq = 300
-	wire, _ = proto.Marshal(env)
-	if err := handler.HandleMessage(wire); err == nil {
-		t.Fatal("range over 256 lines must be rejected")
-	}
-}
-
 func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	env := &pb.ScreenEnvelope{
 		ProtocolVersion: 2,
@@ -318,28 +256,6 @@ func TestCommitCarriesCanonicalDictionaryAdditions(t *testing.T) {
 	}
 }
 
-func TestEncodeRetryableHistoryRangeCarriesBackoff(t *testing.T) {
-	wire, err := EncodeHistoryRangeResponse("r1", "i1", 2, terminalengine.HistoryRangeData{
-		Status:            terminalengine.HistoryRangeRetryable,
-		Extent:            terminalengine.HistoryExtent{FirstSeq: 10, LastSeq: 20},
-		RetryAfterMS:      375,
-		HistoryGeneration: 9,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var env pb.ScreenEnvelope
-	if err := proto.Unmarshal(wire, &env); err != nil {
-		t.Fatal(err)
-	}
-	response := env.GetHistoryRangeResponse()
-	if response.GetStatus() != pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_RETRYABLE ||
-		response.GetRetryAfterMs() != 375 {
-		t.Fatalf("retry response = status:%v delay:%d",
-			response.GetStatus(), response.GetRetryAfterMs())
-	}
-}
-
 func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
@@ -348,7 +264,8 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 		Screen:       []terminalengine.Line{{ID: 9, Version: 1, Row: 2}},
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 1000,
-			Lines: []terminalengine.Line{{ID: 8, Version: 1, HistorySeq: 1000}},
+			SealedThroughSeq: 896,
+			Lines:            []terminalengine.Line{{ID: 8, Version: 1, HistorySeq: 1000}},
 		},
 		FirstAvailableHistorySeqChanged: true,
 	}
@@ -370,6 +287,9 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 	if commit.GetHistory().GetFinalExtent().GetLastSeq() != 1000 ||
 		len(commit.GetHistory().GetAppendedLines()) != 1 {
 		t.Fatalf("history mutation missing: %+v", commit.GetHistory())
+	}
+	if commit.GetHistory().GetSealedThroughSeq() != 896 {
+		t.Fatalf("SealedThroughSeq=%d, want 896", commit.GetHistory().GetSealedThroughSeq())
 	}
 }
 

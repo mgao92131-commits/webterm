@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"webterm/go-core/internal/historysegment"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
@@ -38,6 +39,7 @@ type Runtime struct {
 
 	engine      *terminalengine.Engine
 	scrollback  *terminalengine.TrackedScrollback
+	segments    historysegment.Store
 	projector   *screenprojection.Projector
 	terminalIO  TerminalIO
 	inputWriter *InputWriter
@@ -50,6 +52,11 @@ type Runtime struct {
 
 	scrollbackMaxLines int
 	scrollbackMaxBytes int
+
+	// segmentFetch* 是 HTTP 分段查询的进程内 token bucket（不经 actor）。
+	segmentFetchMu     sync.Mutex
+	segmentFetchTokens float64
+	segmentFetchLast   time.Time
 
 	events   chan event
 	stopOnce sync.Once
@@ -107,18 +114,15 @@ type ScreenClient struct {
 	Send          func(terminalengine.ScreenFrame)
 	// SendInitial 把不可覆盖的 Baseline 交给单一 screen writer；done 只有在
 	// 实际写出成功后才提交 actor baseline。nil 供内部调用和测试使用。
-	SendInitial      func(InitialSync, func(written bool))
-	SendEffect       func(instanceID string, revision uint64, effect terminalengine.Effect)
-	SendLayoutLease  func(LayoutLeaseEvent)
-	SendHistoryRange func(requestID string, instanceID string, epoch uint64, data terminalengine.HistoryRangeData, stale bool)
-	ResumeToken      *screenprojection.ResumeToken
+	SendInitial     func(InitialSync, func(written bool))
+	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
+	SendLayoutLease func(LayoutLeaseEvent)
+	ResumeToken     *screenprojection.ResumeToken
 
 	// 以下字段仅由 Runtime actor 访问。
-	synced             bool
-	initialGeneration  uint64
-	pendingState       terminalengine.ScreenFrame
-	historyRangeTokens float64
-	historyRangeRefill time.Time
+	synced            bool
+	initialGeneration uint64
+	pendingState      terminalengine.ScreenFrame
 }
 
 // LayoutLeaseEvent 是 runtime 发给 screen client 的租约状态。
@@ -198,6 +202,8 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
 	}
+	r.segments = historysegment.NewMemoryStore()
+	r.scrollback.AttachSegmentStore(r.segments)
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
 		terminalengine.WithPTYWriter(terminalIO),
 		terminalengine.WithBellHandler(func() {
@@ -239,6 +245,73 @@ func (r *Runtime) ID() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.id
+}
+
+// SegmentStore 返回封存后的不可变历史段存储（并发只读安全）。
+func (r *Runtime) SegmentStore() historysegment.Store {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.segments
+}
+
+// SegmentFetchStatus 是 HTTP 分段查询的结果状态。
+type SegmentFetchStatus uint8
+
+const (
+	SegmentFetchOK SegmentFetchStatus = iota + 1
+	SegmentFetchStaleGeneration
+	SegmentFetchNotSealed
+	SegmentFetchTrimmed
+	SegmentFetchNotFound
+	SegmentFetchRetryable
+)
+
+// SegmentFetchResult 是不进入 actor 的并发安全分段查询结果。
+type SegmentFetchResult struct {
+	Status       SegmentFetchStatus
+	Segment      *historysegment.Segment
+	Generation   uint64
+	RetryAfterMS uint32
+}
+
+// FetchSealedSegment 校验 Catalog 后从不可变 Store 读取分段。
+// 不进入 actor，不读取可变 scrollback 正文。
+func (r *Runtime) FetchSealedSegment(generation, segmentNumber uint64) SegmentFetchResult {
+	if r == nil || r.scrollback == nil {
+		return SegmentFetchResult{Status: SegmentFetchNotFound}
+	}
+	if !r.allowSegmentFetch() {
+		return SegmentFetchResult{Status: SegmentFetchRetryable, RetryAfterMS: 125, Generation: generation}
+	}
+	catalog := r.scrollback.HistoryCatalog()
+	result := SegmentFetchResult{Generation: catalog.Generation}
+	if generation == 0 || generation != catalog.Generation {
+		result.Status = SegmentFetchStaleGeneration
+		return result
+	}
+	first, last := historysegment.SeqRange(segmentNumber)
+	if catalog.SealedThroughSeq == 0 || last > catalog.SealedThroughSeq {
+		result.Status = SegmentFetchNotSealed
+		return result
+	}
+	if last < catalog.TrimBeforeSeq {
+		result.Status = SegmentFetchTrimmed
+		return result
+	}
+	_ = first
+	store := r.SegmentStore()
+	if store == nil {
+		result.Status = SegmentFetchNotFound
+		return result
+	}
+	seg, ok := store.Get(historysegment.Key{Generation: generation, Number: segmentNumber})
+	if !ok || seg == nil {
+		result.Status = SegmentFetchNotFound
+		return result
+	}
+	result.Status = SegmentFetchOK
+	result.Segment = seg
+	return result
 }
 
 // Info 返回当前版本信息。
@@ -289,16 +362,6 @@ func (r *Runtime) Resize(clientID, leaseID string, cols, rows int) {
 		return
 	}
 	r.postEvent(resizeEvent{clientID: clientID, leaseID: leaseID, cols: cols, rows: rows})
-}
-
-func (r *Runtime) RequestHistoryRange(
-	clientID, requestID, instanceID string,
-	epoch, historyGeneration, fromSeq, toSeq uint64,
-) {
-	r.postEvent(historyRangeRequestEvent{
-		clientID: clientID, requestID: requestID, instanceID: instanceID,
-		epoch: epoch, historyGeneration: historyGeneration, fromSeq: fromSeq, toSeq: toSeq,
-	})
 }
 
 func (r *Runtime) ClipboardResponse(clientID, requestID string, allowed bool, data []byte) {
@@ -628,8 +691,6 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientAttach(e.client)
 	case clientDetachEvent:
 		r.handleClientDetach(e.clientID)
-	case historyRangeRequestEvent:
-		r.handleHistoryRangeRequest(e)
 	case clientInitialSyncResultEvent:
 		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
@@ -920,66 +981,32 @@ func (r *Runtime) handleReleaseLayout(e releaseLayoutEvent) {
 	e.reply <- released
 }
 
-func (r *Runtime) handleHistoryRangeRequest(e historyRangeRequestEvent) {
-	client := r.clients[e.clientID]
-	if client == nil || client.SendHistoryRange == nil {
-		return
-	}
-	currentHistoryGeneration := r.projector.HistoryGeneration()
-	stale := e.instanceID != r.instanceID || e.epoch != r.layoutEpoch ||
-		e.historyGeneration != currentHistoryGeneration
-	if stale {
-		client.SendHistoryRange(
-			e.requestID, r.instanceID, r.layoutEpoch,
-			terminalengine.HistoryRangeData{
-				Extent: r.scrollback.Extent(), HistoryGeneration: currentHistoryGeneration,
-			}, true,
-		)
-		return
-	}
-	if allowed, retryAfter := client.allowHistoryRange(time.Now()); !allowed {
-		client.SendHistoryRange(
-			e.requestID, r.instanceID, r.layoutEpoch,
-			terminalengine.HistoryRangeData{
-				Status:            terminalengine.HistoryRangeRetryable,
-				Extent:            r.scrollback.Extent(),
-				RetryAfterMS:      retryAfter,
-				HistoryGeneration: currentHistoryGeneration,
-			}, false,
-		)
-		return
-	}
-	client.SendHistoryRange(
-		e.requestID, r.instanceID, r.layoutEpoch,
-		r.projector.HistoryRange(e.fromSeq, e.toSeq), false,
-	)
-}
-
 const (
-	historyRangeRequestsPerSecond = 8.0
-	historyRangeBurst             = 8.0
+	segmentFetchRequestsPerSecond = 8.0
+	segmentFetchBurst             = 8.0
 )
 
-// allowHistoryRange 是 actor 内的 per-client token bucket。历史正文范围请求不能
-// 挤占实时屏幕/输入；超额请求显式返回 RETRYABLE，由客户端按 retry_after_ms 退避。
-func (c *ScreenClient) allowHistoryRange(now time.Time) (bool, uint32) {
-	if c.historyRangeRefill.IsZero() {
-		c.historyRangeRefill = now
-		c.historyRangeTokens = historyRangeBurst
+// allowSegmentFetch 限制 HTTP 分段查询，避免冷历史拉取挤占实时屏幕路径。
+func (r *Runtime) allowSegmentFetch() bool {
+	now := time.Now()
+	r.segmentFetchMu.Lock()
+	defer r.segmentFetchMu.Unlock()
+	if r.segmentFetchLast.IsZero() {
+		r.segmentFetchLast = now
+		r.segmentFetchTokens = segmentFetchBurst
 	}
-	elapsed := now.Sub(c.historyRangeRefill).Seconds()
+	elapsed := now.Sub(r.segmentFetchLast).Seconds()
 	if elapsed > 0 {
-		c.historyRangeTokens = min(
-			historyRangeBurst,
-			c.historyRangeTokens+elapsed*historyRangeRequestsPerSecond)
-		c.historyRangeRefill = now
+		r.segmentFetchTokens = min(
+			segmentFetchBurst,
+			r.segmentFetchTokens+elapsed*segmentFetchRequestsPerSecond)
+		r.segmentFetchLast = now
 	}
-	if c.historyRangeTokens >= 1 {
-		c.historyRangeTokens--
-		return true, 0
+	if r.segmentFetchTokens >= 1 {
+		r.segmentFetchTokens--
+		return true
 	}
-	waitMS := uint32(((1-c.historyRangeTokens)/historyRangeRequestsPerSecond)*1000) + 1
-	return false, waitMS
+	return false
 }
 
 func (r *Runtime) startInitialSync(client *ScreenClient) {
@@ -1175,16 +1202,6 @@ type clientAttachEvent struct {
 
 type clientDetachEvent struct {
 	clientID string
-}
-
-type historyRangeRequestEvent struct {
-	clientID          string
-	requestID         string
-	instanceID        string
-	epoch             uint64
-	historyGeneration uint64
-	fromSeq           uint64
-	toSeq             uint64
 }
 
 type clientInitialSyncResultEvent struct {

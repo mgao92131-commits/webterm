@@ -20,6 +20,7 @@ public final class ScreenBaseline {
   public final TerminalCursor cursor;
   public final TerminalModes modes;
   public final TerminalPalette palette;
+  public final long sealedThroughSeq;
 
   public ScreenBaseline(String sessionId, String instanceId, long layoutEpoch, long screenRevision,
                         long dictionaryGeneration, long historyGeneration,
@@ -28,6 +29,18 @@ public final class ScreenBaseline {
                         HistoryExtent historyExtent, List<TerminalLine> historyTail,
                         List<TerminalLine> screen, TerminalCursor cursor, TerminalModes modes,
                         TerminalPalette palette) {
+    this(sessionId, instanceId, layoutEpoch, screenRevision, dictionaryGeneration,
+        historyGeneration, preserveCompatibleHistory, dictionary, rows, cols, activeBuffer,
+        historyExtent, historyTail, screen, cursor, modes, palette, 0);
+  }
+
+  public ScreenBaseline(String sessionId, String instanceId, long layoutEpoch, long screenRevision,
+                        long dictionaryGeneration, long historyGeneration,
+                        boolean preserveCompatibleHistory, DictionaryEntries dictionary,
+                        int rows, int cols, TerminalBufferKind activeBuffer,
+                        HistoryExtent historyExtent, List<TerminalLine> historyTail,
+                        List<TerminalLine> screen, TerminalCursor cursor, TerminalModes modes,
+                        TerminalPalette palette, long sealedThroughSeq) {
     this.sessionId = sessionId; this.instanceId = instanceId; this.layoutEpoch = layoutEpoch;
     this.screenRevision = screenRevision;
     this.dictionaryGeneration = dictionaryGeneration; this.historyGeneration = historyGeneration;
@@ -36,5 +49,6 @@ public final class ScreenBaseline {
     this.rows = rows; this.cols = cols; this.activeBuffer = activeBuffer;
     this.historyExtent = historyExtent; this.historyTail = historyTail; this.screen = screen;
     this.cursor = cursor; this.modes = modes; this.palette = palette;
+    this.sealedThroughSeq = sealedThroughSeq;
   }
 }

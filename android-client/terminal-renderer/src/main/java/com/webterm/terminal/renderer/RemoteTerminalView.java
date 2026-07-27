@@ -50,8 +50,6 @@ import java.util.Map;
  * 远程终端自定义 View。负责 Android View 生命周期、IME、触摸滚动、选择和触发渲染。
  */
 public final class RemoteTerminalView extends View {
-  private final PagedTerminalHistorySnapshot.RequestRange historyRequestRange =
-      new PagedTerminalHistorySnapshot.RequestRange();
   private static final class InvalidationPlan {
     InvalidationResult result = InvalidationResult.NONE;
     final Rect[] rects = new Rect[MAX_PARTIAL_DIRTY_RECTS];
@@ -99,8 +97,11 @@ public final class RemoteTerminalView extends View {
     /** @param maxScrollOffsetPixels inclusive top bound for this rendered content. */
     void onScrollPixels(
         int deltaPixels, int maxScrollOffsetPixels, int liveScreenExitOffsetPixels);
-    /** v2 稀疏历史按当前可见 HistorySeq 页拉取；区间为闭区间。 */
-    default void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {}
+    /** View 上报可见 HistorySeq 闭区间与滚动方向（-1 更旧，+1 更新，0 未知）。 */
+    default void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq) {
+      onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, 0);
+    }
+    default void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq, int direction) {}
     void onFocusChanged(boolean focused);
     void onMouse(int row, int col, @NonNull String button, int wheelDelta,
                  boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
@@ -129,6 +130,8 @@ public final class RemoteTerminalView extends View {
   @Nullable private RenderDirtyState lastAppliedDirty;
   private TerminalViewportState viewport = new TerminalViewportState();
   private Host host;
+  /** -1 向更旧历史，+1 向更新输出，0 未知；供 Segment 方向预取。 */
+  private int historyDemandDirection;
   private float lastFlingY;
   private int flingFramesScheduledForTest;
   private boolean selecting;
@@ -278,7 +281,7 @@ public final class RemoteTerminalView extends View {
         invalidate();
         break;
     }
-    requestVisibleHistoryPage();
+    reportVisibleHistoryDemand();
   }
 
   /**
@@ -513,7 +516,8 @@ public final class RemoteTerminalView extends View {
           deltaPixels, maxScrollOffsetPixels(), renderedSnapshot, lineHeight());
       host.onScrollPixels(
           deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
-      requestVisibleHistoryPage();
+      historyDemandDirection = deltaPixels > 0 ? -1 : 1;
+      reportVisibleHistoryDemand();
       viewportChanged = true;
     }
     updateCursorBlinkSchedule();
@@ -533,7 +537,8 @@ public final class RemoteTerminalView extends View {
         deltaPixels, maxScrollOffsetPixels(), renderedSnapshot, lineHeight());
     host.onScrollPixels(
         deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
-    requestVisibleHistoryPage();
+    historyDemandDirection = deltaPixels > 0 ? -1 : 1;
+    reportVisibleHistoryDemand();
     postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
   }
 
@@ -739,11 +744,11 @@ public final class RemoteTerminalView extends View {
   }
 
   /**
-   * v2 的 display extent 包含尚未驻留的占位行，不能等滚到整个逻辑历史硬顶才加载。
-   * 每次视口移动/分页提交后，从当前可见行中选择首个 UNLOADED 页发起请求。
+   * v2 display extent 含尚未驻留的占位行。View 只上报可见 HistorySeq；
+   * SegmentLoader 负责派生 SegmentKey，不再按 firstRequestablePage 发起 Range。
    */
   @androidx.annotation.VisibleForTesting
-  void requestVisibleHistoryPage() {
+  void reportVisibleHistoryDemand() {
     if (host == null || renderedSnapshot == null || isAlternateBuffer()) return;
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (!(snapshot.history instanceof PagedTerminalHistorySnapshot)) return;
@@ -760,13 +765,13 @@ public final class RemoteTerminalView extends View {
         Math.round(renderer.getTopInset()), getHeight(), historyTop, lineHeight(), historyRows);
     int visibleFirst = (int) (visible >> 32);
     int visibleLast = (int) visible;
-    if (visibleFirst >= visibleLast) return;
+    if (visibleFirst >= visibleLast) {
+      host.onVisibleHistoryDemand(0, 0, 0, 0);
+      return;
+    }
     long visibleFrom = history.firstSeq() + visibleFirst;
     long visibleTo = history.firstSeq() + visibleLast - 1L;
-    if (history.firstRequestablePage(visibleFrom, visibleTo, historyRequestRange)) {
-      host.onRequestHistoryRange(
-          historyRequestRange.fromSeq, historyRequestRange.toSeq, visibleFrom);
-    }
+    host.onVisibleHistoryDemand(visibleFrom, visibleTo, visibleFrom, historyDemandDirection);
   }
 
   static boolean shouldRequestOlderHistory(int deltaPixels, int scrollOffsetPixels,

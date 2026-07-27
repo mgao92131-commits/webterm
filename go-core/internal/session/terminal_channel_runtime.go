@@ -42,12 +42,11 @@ type terminalChannelRuntime struct {
 	screenDeriver screenprojection.FrameDeriver
 	encodeFrame   func(terminalengine.ScreenFrame) ([]byte, error)
 
-	screenFrameCount      atomic.Uint64
-	screenWireBytes       atomic.Uint64
-	baselineWireBytes     atomic.Uint64
-	commitWireBytes       atomic.Uint64
-	historyRangeWireBytes atomic.Uint64
-	otherWireBytes        atomic.Uint64
+	screenFrameCount  atomic.Uint64
+	screenWireBytes   atomic.Uint64
+	baselineWireBytes atomic.Uint64
+	commitWireBytes   atomic.Uint64
+	otherWireBytes    atomic.Uint64
 
 	// captureSink 是现场捕获旁路 Sink（与所属 Runtime 同一实现，生产构建为 NOOP）。
 	// terminalInstanceID 缓存所属终端权威实例 ID，用于把派生/wire 捕获点按实例关联，
@@ -70,12 +69,11 @@ type initialScreenMessage struct {
 
 // ScreenWireSnapshot 是 terminal channel 已编码 screen 协议消息的字节累计。
 type ScreenWireSnapshot struct {
-	FrameCount        uint64 `json:"frameCount"`
-	WireBytes         uint64 `json:"wireBytes"`
-	BaselineBytes     uint64 `json:"baselineBytes"`
-	CommitBytes       uint64 `json:"commitBytes"`
-	HistoryRangeBytes uint64 `json:"historyRangeBytes"`
-	OtherBytes        uint64 `json:"otherBytes"`
+	FrameCount    uint64 `json:"frameCount"`
+	WireBytes     uint64 `json:"wireBytes"`
+	BaselineBytes uint64 `json:"baselineBytes"`
+	CommitBytes   uint64 `json:"commitBytes"`
+	OtherBytes    uint64 `json:"otherBytes"`
 }
 
 func newTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrameSink, logger ...*logs.Logger) *terminalChannelRuntime {
@@ -137,12 +135,6 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 		screenprotocolv2.WithResizeCallback(func(resize *pb.Resize) {
 			if rt != nil {
 				rt.Resize(client.screenClientID, resize.LeaseId, int(resize.Cols), int(resize.Rows))
-			}
-		}),
-		screenprotocolv2.WithHistoryRangeCallback(func(req *pb.HistoryRangeRequest) {
-			if rt != nil {
-				rt.RequestHistoryRange(client.screenClientID, req.RequestId, req.InstanceId,
-					req.LayoutEpoch, req.HistoryGeneration, req.FromSeq, req.ToSeq)
 			}
 		}),
 		screenprotocolv2.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
@@ -208,7 +200,7 @@ func (client *terminalChannelRuntime) Close() {
 //
 // All outbound envelopes are produced by the single terminal actor goroutine,
 // but the writer consumes them through three entries: the buffered send channel
-// (control messages: effect/history range/exit/pong), the
+// (control messages: effect/exit/pong), the
 // single-slot screen mailbox woken by screenWake, and the capacity-one,
 // non-overwritable initial-sync slot. The relative write order between control
 // and screen state is therefore NOT the production order, and that is
@@ -216,7 +208,6 @@ func (client *terminalChannelRuntime) Close() {
 // anchors a client needs to judge applicability on its own —
 //   - baseline/commit: instance id + layout epoch + baseRevision chain
 //     (a gap triggers client resync, see Android RemoteTerminalModel.applyTerminalCommit);
-//   - history range:  request id + layout epoch (late ranges are dropped);
 //   - effect:         instance id; fire-and-forget UI signal;
 //   - exit:           terminal state; clients drop anything after it.
 //
@@ -453,8 +444,6 @@ func (client *terminalChannelRuntime) recordWireBytes(kind string, n int) {
 		client.baselineWireBytes.Add(uint64(n))
 	case "commit":
 		client.commitWireBytes.Add(uint64(n))
-	case "historyRange":
-		client.historyRangeWireBytes.Add(uint64(n))
 	default:
 		client.otherWireBytes.Add(uint64(n))
 	}
@@ -463,12 +452,11 @@ func (client *terminalChannelRuntime) recordWireBytes(kind string, n int) {
 // ScreenWireSnapshot 返回已编码 screen 协议消息的累计发送字节。
 func (client *terminalChannelRuntime) ScreenWireSnapshot() ScreenWireSnapshot {
 	return ScreenWireSnapshot{
-		FrameCount:        client.screenFrameCount.Load(),
-		WireBytes:         client.screenWireBytes.Load(),
-		BaselineBytes:     client.baselineWireBytes.Load(),
-		CommitBytes:       client.commitWireBytes.Load(),
-		HistoryRangeBytes: client.historyRangeWireBytes.Load(),
-		OtherBytes:        client.otherWireBytes.Load(),
+		FrameCount:    client.screenFrameCount.Load(),
+		WireBytes:     client.screenWireBytes.Load(),
+		BaselineBytes: client.baselineWireBytes.Load(),
+		CommitBytes:   client.commitWireBytes.Load(),
+		OtherBytes:    client.otherWireBytes.Load(),
 	}
 }
 
@@ -577,13 +565,12 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 			ActiveBuffer:                  buffer, ActiveRows: rows}
 	}
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
-		ID:               client.screenClientID,
-		ResumeToken:      resume,
-		Send:             client.sendScreenState,
-		SendInitial:      client.sendInitialScreenSync,
-		SendHistoryRange: client.sendScreenHistoryRange,
-		SendEffect:       client.sendScreenEffect,
-		SendLayoutLease:  client.sendLayoutLease,
+		ID:              client.screenClientID,
+		ResumeToken:     resume,
+		Send:            client.sendScreenState,
+		SendInitial:     client.sendInitialScreenSync,
+		SendEffect:      client.sendScreenEffect,
+		SendLayoutLease: client.sendLayoutLease,
 	})
 }
 
@@ -634,24 +621,6 @@ func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revisi
 	payload, err := screenprotocolv2.EncodeEffect(instanceID, revision, effect)
 	if err == nil {
 		client.enqueueBinary(payload, "other")
-	}
-}
-
-func (client *terminalChannelRuntime) sendScreenHistoryRange(
-	requestID, instanceID string, epoch uint64,
-	data terminalengine.HistoryRangeData, stale bool,
-) {
-	var payload []byte
-	var err error
-	if stale {
-		payload, err = screenprotocolv2.EncodeStaleHistoryRange(
-			requestID, instanceID, epoch, data.HistoryGeneration, data.Extent)
-	} else {
-		payload, err = screenprotocolv2.EncodeHistoryRangeResponse(
-			requestID, instanceID, epoch, data)
-	}
-	if err == nil {
-		client.enqueueBinary(payload, "historyRange")
 	}
 }
 

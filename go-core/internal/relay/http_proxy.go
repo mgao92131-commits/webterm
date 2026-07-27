@@ -243,14 +243,20 @@ func isUploadRequest(meta relaycore.HTTPRequestMeta) bool {
 		strings.HasSuffix(meta.Path, "/upload")
 }
 
+func isHistorySegmentRequest(meta relaycore.HTTPRequestMeta) bool {
+	return meta.Method == http.MethodGet &&
+		strings.HasPrefix(meta.Path, "/api/sessions/") &&
+		strings.Contains(meta.Path, "/history/segments/")
+}
+
 func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
 	path := meta.Path
 	if meta.Query != "" {
 		path += "?" + meta.Query
 	}
 
-	// 文件发送等流式接口走 RouteHTTPv2
-	if strings.HasPrefix(meta.Path, "/api/file-send/") {
+	// 文件发送与历史分段等流式/二进制接口走 RouteHTTPv2
+	if strings.HasPrefix(meta.Path, "/api/file-send/") || isHistorySegmentRequest(meta) {
 		p.respondStream(ctx, conn, streamID, meta, bytes.NewReader(body), done)
 		return
 	}

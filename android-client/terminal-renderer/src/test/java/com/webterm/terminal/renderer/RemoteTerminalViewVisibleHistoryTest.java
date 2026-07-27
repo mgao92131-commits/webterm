@@ -31,7 +31,7 @@ import java.util.List;
 @Config(manifest = Config.NONE)
 public final class RemoteTerminalViewVisibleHistoryTest {
   @Test
-  public void scrolledSparseViewportRequestsVisibleUnloadedV2Page() {
+  public void scrolledSparseViewportReportsVisibleHistoryDemand() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     List<TerminalLine> tail = new ArrayList<>();
     for (long seq = 173; seq <= 300; seq++) tail.add(line(seq, seq));
@@ -49,11 +49,10 @@ public final class RemoteTerminalViewVisibleHistoryTest {
     view.setModel(model, viewport);
     view.layout(0, 0, 100, 100);
 
-    view.requestVisibleHistoryPage();
+    view.reportVisibleHistoryDemand();
 
-    assertTrue("visible unloaded page must be requested", host.fromSeq > 0);
-    assertTrue("request must reach before Baseline tail", host.fromSeq < 173);
-    assertTrue(host.toSeq >= host.fromSeq && host.toSeq - host.fromSeq < 128);
+    assertTrue("visible history demand must be reported", host.fromSeq > 0);
+    assertTrue(host.toSeq >= host.fromSeq);
   }
 
   private static TerminalLine line(long id, long historySeq) {
@@ -65,7 +64,8 @@ public final class RemoteTerminalViewVisibleHistoryTest {
     long fromSeq;
     long toSeq;
 
-    @Override public void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
+    @Override public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq,
+                                                 int direction) {
       this.fromSeq = fromSeq;
       this.toSeq = toSeq;
     }

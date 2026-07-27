@@ -246,31 +246,8 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 	}
 }
 
-// HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。
-func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	result := p.scrollback.Range(fromSeq, toSeq)
-	exp := newExporter(
-		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
-		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
-	)
-	lines := make([]terminalengine.Line, len(result.Lines))
-	for i, line := range result.Lines {
-		lines[i] = exp.exportScrollbackEntry(line)
-	}
-	return terminalengine.HistoryRangeData{
-		Status:            result.Status,
-		Extent:            result.Extent,
-		Lines:             lines,
-		Styles:            exp.styleTable.Styles(),
-		Links:             exp.linkTable.Links(),
-		HistoryGeneration: p.historyGeneration,
-	}
-}
-
 // HistoryGeneration returns the identity of the currently published history
-// lineage. HistoryRange responses use it even when no line body is returned.
+// lineage. Baseline and TerminalCommit carry it for client identity checks.
 func (p *Projector) HistoryGeneration() uint64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -508,7 +485,11 @@ func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
 	} else {
 		s.historyLastSeq = delta.LastSeq
 	}
-	return historyWindowFromLines(s.historyLines, delta.FirstSeq)
+	out := historyWindowFromLines(s.historyLines, delta.FirstSeq)
+	if p.scrollback != nil {
+		out.SealedThroughSeq = p.scrollback.SealedThroughSeq()
+	}
+	return out
 }
 
 // rebuildHistoryWindow 全量重建历史窗口缓存（首次导出、epoch/字典轮转、
@@ -683,6 +664,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 			FirstIncludedHistorySeq:  new.History.FirstIncludedHistorySeq,
 			LastIncludedHistorySeq:   new.History.LastIncludedHistorySeq,
 			HasMoreBefore:            new.History.HasMoreBefore,
+			SealedThroughSeq:         new.History.SealedThroughSeq,
 			Lines:                    historyAppend,
 		},
 		Screen:               screenRows,
@@ -695,10 +677,11 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 		// table was pure wire and allocation overhead.
 		Styles: newlyAddedStyles(old.Styles, new.Styles),
 		Links:  newlyAddedLinks(old.Links, new.Links),
-		// Commit 用该 presence 位表达 extent 水位变化（包括只 trim、没有新增正文）。
+		// Commit 用该 presence 位表达 extent/封存水位变化（包括只 trim 或只封存）。
 		FirstAvailableHistorySeqChanged: activeBufferChanged || len(promotions) > 0 || len(historyAppend) > 0 ||
 			old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
-			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
+			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq ||
+			old.History.SealedThroughSeq != new.History.SealedThroughSeq,
 	}
 }
 

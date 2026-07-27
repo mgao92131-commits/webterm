@@ -172,16 +172,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public boolean requestHistoryRange(@NonNull String requestId, @NonNull String instanceId,
-                                     long layoutEpoch, long historyGeneration,
-                                     long fromSeq, long toSeq) {
-    if (deviceConnection == null || channelId == null) return false;
-    return deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageV2Builder.historyRange(
-            requestId, instanceId, layoutEpoch, historyGeneration, fromSeq, toSeq), true);
-  }
-
-  @Override
   public void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {
     requestReconnect(reason);
   }

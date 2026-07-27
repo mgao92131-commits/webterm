@@ -43,6 +43,7 @@ public final class RemoteTerminalModel {
   private Map<Integer, Hyperlink> canonicalLinks = Collections.emptyMap();
   private HistoryExtent displayExtent = HistoryExtent.INITIAL_EMPTY;
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
+  private long sealedThroughSeq;
   private boolean staleProjection;
   private TerminalLine[] screen;
 
@@ -266,6 +267,7 @@ public final class RemoteTerminalModel {
     this.activeBuffer = baseline.activeBuffer;
     this.displayExtent = baseline.historyExtent;
     this.remoteAvailableExtent = baseline.historyExtent;
+    this.sealedThroughSeq = baseline.sealedThroughSeq;
     this.staleProjection = false;
     this.cursor = baseline.cursor != null ? baseline.cursor : TerminalCursor.hidden();
     this.modes = baseline.modes != null ? baseline.modes : TerminalModes.defaults();
@@ -537,6 +539,9 @@ public final class RemoteTerminalModel {
       canonicalLinks = Collections.unmodifiableMap(stagedLinks);
       displayExtent = finalExtent;
       remoteAvailableExtent = finalExtent;
+      if (commit.history != null && commit.history.sealedThroughSeq > 0) {
+        sealedThroughSeq = commit.history.sealedThroughSeq;
+      }
       firstAvailableHistorySeq = finalExtent.firstSeq;
       screenRevision = commit.revision;
       projectionHealth = ProjectionHealth.complete(
@@ -632,7 +637,7 @@ public final class RemoteTerminalModel {
       TerminalLine normalized = normalizeHistoryLine(line);
       long seq = normalized.historySeq;
       if (seq < requestedFromSeq || seq > requestedToSeq
-          || !range.availableExtent.contains(seq)
+          || !remoteAvailableExtent.contains(seq)
           || !mainExtent.contains(seq)) {
         throw new IllegalArgumentException("HistoryRange line outside negotiated bounds");
       }
@@ -646,18 +651,21 @@ public final class RemoteTerminalModel {
       previousSeq = seq;
     }
 
-    HistoryExtent previousAvailableExtent = targetSurface.history.snapshot().availableExtent();
+    PagedTerminalHistorySnapshot beforeWrite = targetSurface.history.snapshot();
     PagedTerminalHistory.Editor editor = targetSurface.history.edit();
     LineStore.Editor lineEditor = targetSurface.lineStore.edit();
     HistoryIndex.Editor historyIndexEditor =
         targetSurface.historyIndex.edit().setExtent(mainExtent);
-    editor.setAvailableExtent(
-        range.availableExtent.firstSeq, range.availableExtent.lastSeq);
+    // HTTP/Segment 只填 UNLOADED，不得覆盖 WS 权威 availableExtent。
     for (TerminalLine normalized : normalizedLines) {
       if (targetSurface.activeRows.contains(normalized.id)) {
         throw new IllegalArgumentException("history LineID conflicts with ActiveRows");
       }
       long historySeq = normalized.historySeq;
+      int logicalIndex = beforeWrite.findSeqIndex(historySeq);
+      if (logicalIndex >= 0 && beforeWrite.slotStateAt(logicalIndex) == SlotState.LOADED) {
+        continue; // 已加载：忽略，不重复写入
+      }
       try {
         TerminalLine canonical = lineEditor.put(normalized);
         historyIndexEditor.bind(historySeq, canonical.id);
@@ -677,11 +685,9 @@ public final class RemoteTerminalModel {
     historyIndexEditor.commit();
     lineEditor.commit();
     if (activeBuffer == TerminalBufferKind.MAIN) {
-      remoteAvailableExtent = range.availableExtent;
       markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
           false, false, false, false, false);
       mergeHistoryDirtyRange(normalizedLines, false);
-      mergeAvailableExtentDirty(previousAvailableExtent, range.availableExtent);
       markTerminalState(false, true, false, false, 0, 0);
       publishPendingRenderUpdate();
     }
@@ -732,6 +738,19 @@ public final class RemoteTerminalModel {
 
   public synchronized HistoryExtent remoteAvailableExtent() {
     return remoteAvailableExtent;
+  }
+
+  public synchronized long sealedThroughSeq() {
+    return sealedThroughSeq;
+  }
+
+  public synchronized HistoryCatalog historyCatalog() {
+    HistoryExtent extent = mainSurface.historyIndex.extent();
+    return new HistoryCatalog(
+        historyGeneration,
+        extent.isEmpty() ? 1 : extent.firstSeq,
+        sealedThroughSeq,
+        extent.isEmpty() ? 0 : extent.lastSeq);
   }
 
   public synchronized boolean staleProjection() {

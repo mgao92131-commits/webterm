@@ -25,18 +25,6 @@ public final class ScreenMessageV2Builder {
   }
 
   @NonNull
-  public static byte[] historyRange(@NonNull String requestId, @NonNull String instanceId,
-                                    long layoutEpoch, long historyGeneration,
-                                    long fromSeq, long toSeq) {
-    return envelope().setHistoryRangeRequest(
-        TerminalScreenV2Proto.HistoryRangeRequest.newBuilder()
-            .setRequestId(requestId).setInstanceId(instanceId)
-            .setLayoutEpoch(layoutEpoch).setHistoryGeneration(historyGeneration)
-            .setFromSeq(fromSeq).setToSeq(toSeq))
-        .build().toByteArray();
-  }
-
-  @NonNull
   public static byte[] textInput(@NonNull String leaseId, @NonNull String text) {
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()
         .setLeaseId(leaseId)

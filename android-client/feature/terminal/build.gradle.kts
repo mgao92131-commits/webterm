@@ -38,6 +38,7 @@ dependencies {
     implementation(libs.lifecycle.livedata)
     implementation("androidx.annotation:annotation:1.9.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")

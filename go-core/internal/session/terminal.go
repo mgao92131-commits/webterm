@@ -353,12 +353,11 @@ func (terminal *TerminalSession) Detach(client *terminalChannelRuntime) {
 
 func mergeScreenWireSnapshot(a, b ScreenWireSnapshot) ScreenWireSnapshot {
 	return ScreenWireSnapshot{
-		FrameCount:        a.FrameCount + b.FrameCount,
-		WireBytes:         a.WireBytes + b.WireBytes,
-		BaselineBytes:     a.BaselineBytes + b.BaselineBytes,
-		CommitBytes:       a.CommitBytes + b.CommitBytes,
-		HistoryRangeBytes: a.HistoryRangeBytes + b.HistoryRangeBytes,
-		OtherBytes:        a.OtherBytes + b.OtherBytes,
+		FrameCount:    a.FrameCount + b.FrameCount,
+		WireBytes:     a.WireBytes + b.WireBytes,
+		BaselineBytes: a.BaselineBytes + b.BaselineBytes,
+		CommitBytes:   a.CommitBytes + b.CommitBytes,
+		OtherBytes:    a.OtherBytes + b.OtherBytes,
 	}
 }
 

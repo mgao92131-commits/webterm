@@ -175,10 +175,18 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // Controller 不保存像素 offset，也不触发任何网络状态变化。
   }
 
-  /** v2 可见页驱动：请求当前视口中首个尚未加载的固定页。 */
-  public void requestVisibleHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
-    if (fromSeq <= 0 || toSeq < fromSeq) return;
-    runtime.requestHistoryRange(fromSeq, toSeq, anchorSeq);
+  /** View 上报可见历史需求；Controller 已做帧合并。 */
+  public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq) {
+    onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, 0);
+  }
+
+  public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq, int direction) {
+    runtime.onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, direction,
+        (int) Math.max(1, toSeq - fromSeq + 1));
+  }
+
+  public void onVisibleHistoryDemandCleared() {
+    runtime.onVisibleHistoryDemandCleared();
   }
 
   private void sendResizeNow() {

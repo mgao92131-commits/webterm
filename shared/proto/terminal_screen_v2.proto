@@ -10,13 +10,12 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
-  reserved 4, 5, 8, 9, 15, 18;
+  // 6/7 曾为 WS HistoryRange request/response；冷历史改走 HTTP Segment。
+  reserved 4, 5, 6, 7, 8, 9, 15, 18;
 
   oneof payload {
     Hello hello = 2;
     Baseline baseline = 3;
-    HistoryRangeRequest history_range_request = 6;
-    HistoryRangeResponse history_range_response = 7;
     AcquireLayout acquire_layout = 10;
     LayoutLease layout_lease = 11;
     ReleaseLayout release_layout = 12;
@@ -112,6 +111,9 @@ message Baseline {
   uint64 dictionary_generation = 16;
   uint64 history_generation = 17;
   BaselineHistoryPolicy history_policy = 18;
+  // sealed_through_seq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
+  // trim/tail 水位仍由 history_extent 表达。
+  uint64 sealed_through_seq = 19;
 }
 
 enum BaselineHistoryPolicy {
@@ -157,41 +159,14 @@ message HistoryMutation {
   HistoryExtent final_extent = 1;
   repeated LineData appended_lines = 2;
   repeated HistoryPromotion promotions = 3;
+  // sealed_through_seq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
+  uint64 sealed_through_seq = 4;
 }
 
 message HistoryPromotion {
   uint64 line_id = 1;
   uint64 line_version = 2;
   uint64 history_seq = 3;
-}
-
-enum HistoryRangeStatus {
-  HISTORY_RANGE_STATUS_UNSPECIFIED = 0;
-  HISTORY_RANGE_STATUS_OK = 1;
-  HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;
-  HISTORY_RANGE_STATUS_TRIMMED = 3;
-  HISTORY_RANGE_STATUS_RETRYABLE = 4;
-}
-
-message HistoryRangeRequest {
-  string request_id = 1;
-  string instance_id = 2;
-  uint64 layout_epoch = 3;
-  uint64 from_seq = 4;
-  uint64 to_seq = 5; // 闭区间，最多 256 行
-  uint64 history_generation = 6;
-}
-
-message HistoryRangeResponse {
-  string request_id = 1;
-  string instance_id = 2;
-  uint64 layout_epoch = 3;
-  HistoryRangeStatus status = 4;
-  HistoryExtent available_extent = 5;
-  repeated LineData lines = 6;
-  Dictionary dictionary = 7;
-  uint32 retry_after_ms = 8;
-  uint64 history_generation = 9;
 }
 
 message ScreenLayout {

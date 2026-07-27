@@ -27,8 +27,13 @@ if ! command -v protoc-gen-go >/dev/null 2>&1; then
   exit 1
 fi
 
-# Go screen.v2
-echo "Generating Go screen.v2 code..."
+PROTO_FILES=(
+  "$PROTOS_DIR/terminal_screen_v2.proto"
+  "$PROTOS_DIR/terminal_history.proto"
+)
+
+# Go screen.v2 + history
+echo "Generating Go screen.v2 / history code..."
 mkdir -p "$GO_V2_OUT_DIR"
 rm -rf "$GO_V2_OUT_DIR"/*
 
@@ -36,28 +41,32 @@ rm -rf "$GO_V2_OUT_DIR"/*
   --proto_path="$ROOT" \
   --go_out="$GO_V2_OUT_DIR" \
   --go_opt=paths=source_relative \
-  "$PROTOS_DIR/terminal_screen_v2.proto"
+  "${PROTO_FILES[@]}"
 
-mv "$GO_V2_OUT_DIR/shared/proto/terminal_screen_v2.pb.go" "$GO_V2_OUT_DIR/terminal_screen_v2.pb.go"
+mv "$GO_V2_OUT_DIR/shared/proto/"*.pb.go "$GO_V2_OUT_DIR/"
 rm -rf "$GO_V2_OUT_DIR/shared"
 
-echo "  -> $GO_V2_OUT_DIR/terminal_screen_v2.pb.go"
+echo "  -> $GO_V2_OUT_DIR/*.pb.go"
 
 # Java (Android)
 echo "Generating Java code..."
 mkdir -p "$JAVA_OUT_DIR"
 # 仅删除当前生成文件，保留手写 mapper/validator。
-rm -f "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
+rm -f \
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java" \
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalHistoryProto.java"
 
 "$PROTOC" \
   --proto_path="$ROOT" \
   --java_out="$JAVA_OUT_DIR" \
-  "$PROTOS_DIR/terminal_screen_v2.proto"
+  "${PROTO_FILES[@]}"
 
 # protoc Java 输出的个别空行/泛型声明会带行尾空格，保持 git diff --check 可重现。
 perl -pi -e 's/[ \t]+$//' \
-  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java" \
+  "$JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalHistoryProto.java"
 
 echo "  -> $JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalScreenV2Proto.java"
+echo "  -> $JAVA_OUT_DIR/com/webterm/terminal/protocol/generated/TerminalHistoryProto.java"
 
 echo "Done."

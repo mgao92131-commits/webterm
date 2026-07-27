@@ -145,8 +145,8 @@ final class RemoteTerminalScreenView implements TerminalScreenController.View,
   }
 
   @Override
-  public void onRequestHistoryRange(long fromSeq, long toSeq, long anchorSeq) {
-    controller.requestVisibleHistoryRange(fromSeq, toSeq, anchorSeq);
+  public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq, int direction) {
+    controller.onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, direction);
   }
 
   @Override

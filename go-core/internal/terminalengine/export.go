@@ -142,17 +142,9 @@ type HistoryWindow struct {
 	FirstIncludedHistorySeq  uint64
 	LastIncludedHistorySeq   uint64
 	HasMoreBefore            bool
-	Lines                    []Line
-}
-
-type HistoryRangeData struct {
-	Status            HistoryRangeStatus
-	Extent            HistoryExtent
-	Lines             []Line
-	Styles            []TerminalStyle
-	Links             []Hyperlink
-	RetryAfterMS      uint32
-	HistoryGeneration uint64
+	// SealedThroughSeq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
+	SealedThroughSeq uint64
+	Lines            []Line
 }
 
 // ScreenScroll 是 Commit 内可选的全屏连续滚动压缩描述。

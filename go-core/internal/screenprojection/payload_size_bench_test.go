@@ -53,10 +53,6 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 	coldTail.History = payloadHistory(873, 1000, "cold")
 	preserve := coldTail
 	preserve.PreserveCompatibleHistory = true
-	historyRange := terminalengine.HistoryRangeData{
-		Status: terminalengine.HistoryRangeOK, Extent: terminalengine.HistoryExtent{FirstSeq: 1, LastSeq: 32},
-		Lines: payloadHistory(1, 32, "page").Lines, HistoryGeneration: 1,
-	}
 	prompt80 := payloadCommit(24, 80,
 		paddedPayloadLine(300, 2, 23, 80, "user@host:~$ ", false))
 	command120 := payloadCommit(24, 120,
@@ -96,9 +92,6 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		{"15b_MailboxOverflow_Baseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(asciiBaseline, 0) }},
 		{"16_ColdBaselineTail", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(coldTail, 0) }},
 		{"17_PreserveCompatibleBaseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(preserve, 0) }},
-		{"18_HistoryRangeLocalDictionary", func() ([]byte, error) {
-			return screenprotocolv2.EncodeHistoryRangeResponse("r", "instance", 1, historyRange)
-		}},
 		{"19a_Prompt80_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(prompt80)
 		}},

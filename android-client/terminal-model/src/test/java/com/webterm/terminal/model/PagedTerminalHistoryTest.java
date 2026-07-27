@@ -128,11 +128,8 @@ public final class PagedTerminalHistoryTest {
     history.edit().setExtent(first, last).put(last, line(last)).commit();
     PagedTerminalHistorySnapshot snapshot = history.snapshot();
     assertEquals(last, snapshot.firstLoadedSeq());
-    long[] page = snapshot.firstRequestablePage(first, last);
-    assertNotNull(page);
-    assertTrue(page[0] >= 1);
-    assertTrue(page[1] >= page[0]);
-    assertTrue(page[1] <= last);
+    assertEquals(SlotState.LOADED, snapshot.slotStateAt(last - first));
+    assertEquals(SlotState.UNLOADED, snapshot.slotStateAt(0));
   }
 
   @Test(expected = IllegalStateException.class)
@@ -157,7 +154,7 @@ public final class PagedTerminalHistoryTest {
   }
 
   @Test
-  public void visibleUnloadedSlotSelectsOneClippedPageAndUnavailableDoesNotRetry() {
+  public void visibleUnloadedSlotsRemainRequestableUntilAvailableExtentExcludesThem() {
     PagedTerminalHistory history = history(new HistoryBudget(1000, 1000, 0, 0));
     history.edit()
         .setExtent(10, 400)
@@ -165,11 +162,11 @@ public final class PagedTerminalHistoryTest {
         .put(300, line(300))
         .commit();
 
-    assertNull(history.snapshot().firstRequestablePage(10, 100));
-    assertArrayEquals(new long[] {129, 256},
-        history.snapshot().firstRequestablePage(140, 180));
-    assertArrayEquals(new long[] {257, 384},
-        history.snapshot().firstRequestablePage(300, 320));
+    PagedTerminalHistorySnapshot snapshot = history.snapshot();
+    assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(10 - 10));
+    assertEquals(SlotState.UNLOADED, snapshot.slotStateAt(140 - 10));
+    assertEquals(SlotState.LOADED, snapshot.slotStateAt(300 - 10));
+    assertEquals(SlotState.UNLOADED, snapshot.slotStateAt(301 - 10));
   }
 
   @Test
@@ -205,8 +202,6 @@ public final class PagedTerminalHistoryTest {
     for (long seq = 1; seq < 900_000; seq += PagedTerminalHistory.PAGE_SIZE) {
       long index = seq - snapshot.firstSeq();
       assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(index));
-      assertNull(snapshot.firstRequestablePage(seq,
-          Math.min(seq + PagedTerminalHistory.PAGE_SIZE - 1, 900_000)));
     }
     assertEquals(0, history.residentPageCountForTest());
     assertEquals(0, history.unavailableRangeCountForTest());
@@ -225,7 +220,6 @@ public final class PagedTerminalHistoryTest {
     assertEquals(SlotState.LOADED, snapshot.slotStateAt(9));
     assertNull(snapshot.lineBySeq(50));
     assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(49));
-    assertNull(snapshot.firstRequestablePage(1, 99));
     assertEquals(150, snapshot.lineBySeq(150).historySeq);
     assertEquals(10, snapshot.firstLoadedSeq());
   }
@@ -243,7 +237,6 @@ public final class PagedTerminalHistoryTest {
     PagedTerminalHistorySnapshot snapshot = history.snapshot();
     assertNull(snapshot.lineBySeq(10));
     assertEquals(SlotState.UNAVAILABLE, snapshot.slotStateAt(9));
-    assertNull(snapshot.firstRequestablePage(1, 99));
     assertEquals(2, snapshot.loadedLineCount());
     assertEquals(20, snapshot.estimatedByteCount());
   }

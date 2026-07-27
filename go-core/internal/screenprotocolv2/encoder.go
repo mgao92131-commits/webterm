@@ -55,6 +55,7 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, requestedColdTailLines uin
 		Dictionary:           encodeDictionary(frame.Styles, frame.Links),
 		DictionaryGeneration: frame.DictionaryGeneration,
 		HistoryGeneration:    frame.HistoryGeneration,
+		SealedThroughSeq:     frame.History.SealedThroughSeq,
 	}
 	if frame.PreserveCompatibleHistory {
 		baseline.HistoryPolicy = pb.BaselineHistoryPolicy_BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE
@@ -102,7 +103,8 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 				FirstSeq: canonicalHistoryFirst(frame.History.FirstAvailableHistorySeq),
 				LastSeq:  frame.History.LastIncludedHistorySeq,
 			},
-			AppendedLines: encodeLines(historyLines),
+			AppendedLines:    encodeLines(historyLines),
+			SealedThroughSeq: frame.History.SealedThroughSeq,
 		}
 		for _, promotion := range frame.HistoryPromotions {
 			commit.History.Promotions = append(commit.History.Promotions, &pb.HistoryPromotion{
@@ -136,49 +138,6 @@ func canonicalHistoryFirst(first uint64) uint64 {
 	return first
 }
 
-func EncodeHistoryRangeResponse(
-	requestID, instanceID string,
-	epoch uint64,
-	data terminalengine.HistoryRangeData,
-) ([]byte, error) {
-	status := pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK
-	switch data.Status {
-	case terminalengine.HistoryRangeTrimmed:
-		status = pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_TRIMMED
-	case terminalengine.HistoryRangeRetryable:
-		status = pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_RETRYABLE
-	}
-	response := &pb.HistoryRangeResponse{
-		RequestId:       requestID,
-		InstanceId:      instanceID,
-		LayoutEpoch:     epoch,
-		Status:          status,
-		AvailableExtent: encodeExtent(data.Extent),
-		Lines:           encodeLines(historyLines(data.Lines)),
-		Dictionary: encodeDictionaryForLines(
-			historyLines(data.Lines), data.Styles, data.Links),
-		RetryAfterMs:      data.RetryAfterMS,
-		HistoryGeneration: data.HistoryGeneration,
-	}
-	return marshalPayload(&pb.ScreenEnvelope_HistoryRangeResponse{HistoryRangeResponse: response})
-}
-
-func EncodeStaleHistoryRange(
-	requestID, instanceID string, epoch, historyGeneration uint64,
-	extent terminalengine.HistoryExtent,
-) ([]byte, error) {
-	return marshalPayload(&pb.ScreenEnvelope_HistoryRangeResponse{
-		HistoryRangeResponse: &pb.HistoryRangeResponse{
-			RequestId:         requestID,
-			InstanceId:        instanceID,
-			LayoutEpoch:       epoch,
-			Status:            pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_PROJECTION,
-			AvailableExtent:   encodeExtent(extent),
-			HistoryGeneration: historyGeneration,
-		},
-	})
-}
-
 func EncodePong(revision uint64) ([]byte, error) {
 	return marshalPayload(&pb.ScreenEnvelope_Pong{Pong: &pb.Pong{ScreenRevision: revision}})
 }
@@ -199,8 +158,6 @@ func marshalPayload(payload any) ([]byte, error) {
 	case *pb.ScreenEnvelope_Baseline:
 		env.Payload = p
 	case *pb.ScreenEnvelope_TerminalCommit:
-		env.Payload = p
-	case *pb.ScreenEnvelope_HistoryRangeResponse:
 		env.Payload = p
 	case *pb.ScreenEnvelope_ResumeAccepted:
 		env.Payload = p
@@ -245,10 +202,6 @@ func encodeHistoryWindowExtent(window terminalengine.HistoryWindow) *pb.HistoryE
 		last = first - 1
 	}
 	return &pb.HistoryExtent{FirstSeq: first, LastSeq: last}
-}
-
-func encodeExtent(extent terminalengine.HistoryExtent) *pb.HistoryExtent {
-	return &pb.HistoryExtent{FirstSeq: extent.FirstSeq, LastSeq: extent.LastSeq}
 }
 
 func screenLines(lines []terminalengine.Line) []terminalengine.Line {

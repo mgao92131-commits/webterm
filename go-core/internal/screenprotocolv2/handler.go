@@ -9,12 +9,10 @@ import (
 
 const (
 	maxEnvelopeBytes = 2 << 20
-	maxRangeLines    = 256
 )
 
 type Handler struct {
 	onHello         func(*pb.Hello)
-	onHistoryRange  func(*pb.HistoryRangeRequest)
 	onInput         func(*pb.TerminalInput)
 	onResize        func(*pb.Resize)
 	onAcquireLayout func(*pb.AcquireLayout)
@@ -27,9 +25,6 @@ type HandlerOption func(*Handler)
 
 func WithHelloCallback(fn func(*pb.Hello)) HandlerOption {
 	return func(h *Handler) { h.onHello = fn }
-}
-func WithHistoryRangeCallback(fn func(*pb.HistoryRangeRequest)) HandlerOption {
-	return func(h *Handler) { h.onHistoryRange = fn }
 }
 func WithInputCallback(fn func(*pb.TerminalInput)) HandlerOption {
 	return func(h *Handler) { h.onInput = fn }
@@ -76,13 +71,6 @@ func (h *Handler) HandleMessage(data []byte) error {
 		}
 		if h.onHello != nil {
 			h.onHello(payload.Hello)
-		}
-	case *pb.ScreenEnvelope_HistoryRangeRequest:
-		if err := validateRange(payload.HistoryRangeRequest); err != nil {
-			return err
-		}
-		if h.onHistoryRange != nil {
-			h.onHistoryRange(payload.HistoryRangeRequest)
 		}
 	case *pb.ScreenEnvelope_Input:
 		if h.onInput != nil {
@@ -148,18 +136,6 @@ func validateHello(hello *pb.Hello) error {
 		(geometry.GetCols() < 10 || geometry.GetCols() > 500 ||
 			geometry.GetRows() < 5 || geometry.GetRows() > 200) {
 		return fmt.Errorf("invalid hello geometry")
-	}
-	return nil
-}
-
-func validateRange(request *pb.HistoryRangeRequest) error {
-	if request == nil || request.GetRequestId() == "" || request.GetInstanceId() == "" ||
-		request.GetLayoutEpoch() < 1 || request.GetHistoryGeneration() < 1 || request.GetFromSeq() < 1 ||
-		request.GetToSeq() < request.GetFromSeq() {
-		return fmt.Errorf("invalid history range")
-	}
-	if request.GetToSeq()-request.GetFromSeq()+1 > maxRangeLines {
-		return fmt.Errorf("history range exceeds %d lines", maxRangeLines)
 	}
 	return nil
 }

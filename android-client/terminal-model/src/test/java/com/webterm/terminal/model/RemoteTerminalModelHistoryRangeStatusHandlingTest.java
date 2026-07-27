@@ -29,19 +29,19 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void okAndTrimmedMarkUnavailableAndLoadReturnedLines() {
+  public void okLoadsReturnedLinesWithoutChangingAvailableExtent() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(V2ModelTestData.baseline(1, 1));
+    HistoryExtent availableBefore = model.remoteAvailableExtent();
     assertTrue(model.applyHistoryRange(new HistoryRangeResult(
-        "r1", "i1", 1, HistoryRangeResult.Status.TRIMMED,
+        "r1", "i1", 1, HistoryRangeResult.Status.OK,
         new HistoryExtent(50, 300),
         Collections.singletonList(V2ModelTestData.line(50, 1, 50, "x")), 0),
         50, 1, 128));
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(SlotState.UNAVAILABLE, history.slotStateAt(0));
-    assertNull(history.firstRequestablePage(1, 49));
+    assertEquals(availableBefore, model.remoteAvailableExtent());
     assertEquals(50, history.lineBySeq(50).id);
   }
 
@@ -67,11 +67,12 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void lineOutsideAvailableExtentRejectsWholeTransaction() {
+  public void lineOutsideWsAvailableExtentRejectsWholeTransaction() {
     RemoteTerminalModel model = baselineModel();
-    assertRejected(model, range(HistoryRangeResult.Status.OK, new HistoryExtent(110, 300),
-        V2ModelTestData.line(10_105, 1, 105, "x")), 100, 127);
-    assertNull(model.loadedHistorySeqForLineIdForTest(10_105));
+    // seq 105 在 WS available 内；使用超出 mainExtent 的序号验证拒绝。
+    assertRejected(model, range(HistoryRangeResult.Status.OK, new HistoryExtent(1, 300),
+        V2ModelTestData.line(10_9999, 1, 9999, "x")), 100, 127);
+    assertNull(model.loadedHistorySeqForLineIdForTest(10_9999));
   }
 
   @Test
@@ -96,8 +97,9 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void partialRangeCommitsAndLeavesOtherSlotsRequestableByExtent() {
+  public void partialRangeCommitsWithoutShrinkingAvailableExtent() {
     RemoteTerminalModel model = baselineModel();
+    HistoryExtent availableBefore = model.remoteAvailableExtent();
     List<TerminalLine> lines = new ArrayList<>();
     for (long seq = 110; seq <= 120; seq++) {
       lines.add(V2ModelTestData.line(20_000 + seq, 1, seq, "x"));
@@ -108,18 +110,18 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(SlotState.UNAVAILABLE, history.slotStateAt(99));
+    assertEquals(availableBefore, model.remoteAvailableExtent());
     assertEquals(SlotState.LOADED, history.slotStateAt(109));
     assertEquals(SlotState.LOADED, history.slotStateAt(119));
     assertEquals(SlotState.UNLOADED, history.slotStateAt(120));
   }
 
   @Test
-  public void trimmedRangePreservesResidentLineOutsideRemoteExtent() {
+  public void alreadyLoadedLinesAreIgnoredOnReapply() {
     RemoteTerminalModel model = baselineModel();
     assertTrue(model.applyHistoryRange(new HistoryRangeResult(
-        "r", "i1", 1, HistoryRangeResult.Status.TRIMMED,
-        new HistoryExtent(200, 300),
+        "r", "i1", 1, HistoryRangeResult.Status.OK,
+        model.remoteAvailableExtent(),
         Collections.singletonList(V2ModelTestData.line(200, 1, 200, "h")), 0),
         200, 100, 256));
 
@@ -127,8 +129,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
     assertEquals(173, history.lineBySeq(173).id);
     assertEquals(SlotState.LOADED, history.slotStateAt(172));
-    assertEquals(SlotState.UNAVAILABLE, history.slotStateAt(99));
-    assertNull(history.firstRequestablePage(100, 199));
+    assertEquals(200, history.lineBySeq(200).id);
   }
 
   private static RemoteTerminalModel baselineModel() {

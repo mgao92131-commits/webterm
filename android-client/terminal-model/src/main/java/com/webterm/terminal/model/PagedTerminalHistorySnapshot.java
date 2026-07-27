@@ -19,19 +19,6 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
       this.line = line;
     }
   }
-  public static final class RequestRange {
-    public long fromSeq;
-    public long toSeq;
-
-    public void clear() {
-      fromSeq = 1;
-      toSeq = 0;
-    }
-
-    public boolean isEmpty() {
-      return fromSeq > toSeq;
-    }
-  }
   private final HistoryExtent extent;
   private final HistoryExtent availableExtent;
   private final Map<Long, PagedTerminalHistory.HistoryPageChunk> pages;
@@ -125,37 +112,6 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
       }
     }
     return first == Long.MAX_VALUE ? -1 : first;
-  }
-
-  /**
-   * 返回与可见区相交的首个 UNLOADED 页闭区间；没有可请求槽位时返回 null。
-   * UNAVAILABLE 槽位不会再次请求，避免服务端已裁剪区间形成热循环。
-   */
-  public long[] firstRequestablePage(long visibleFromSeq, long visibleToSeq) {
-    RequestRange reusable = new RequestRange();
-    return firstRequestablePage(visibleFromSeq, visibleToSeq, reusable)
-        ? new long[] {reusable.fromSeq, reusable.toSeq} : null;
-  }
-
-  public boolean firstRequestablePage(long visibleFromSeq, long visibleToSeq,
-                                      RequestRange result) {
-    result.clear();
-    if (extent.isEmpty() || availableExtent.isEmpty()) return false;
-    long from = Math.max(Math.max(extent.firstSeq, availableExtent.firstSeq), visibleFromSeq);
-    long to = Math.min(Math.min(extent.lastSeq, availableExtent.lastSeq), visibleToSeq);
-    if (from > to) return false;
-    for (long seq = from; seq <= to; seq++) {
-      long index = seq - extent.firstSeq;
-      if (slotStateAt(index) == SlotState.UNLOADED) {
-        long pageFirst = PagedTerminalHistory.pageFirstSeq(PagedTerminalHistory.pageNumber(seq));
-        result.fromSeq = Math.max(Math.max(extent.firstSeq, availableExtent.firstSeq), pageFirst);
-        result.toSeq = Math.min(Math.min(extent.lastSeq, availableExtent.lastSeq),
-            PagedTerminalHistory.pageLastSeq(PagedTerminalHistory.pageNumber(seq)));
-        return true;
-      }
-      if (seq == Long.MAX_VALUE) break;
-    }
-    return false;
   }
 
   public TerminalLine lineAt(long logicalIndex) {

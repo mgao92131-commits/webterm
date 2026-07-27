@@ -67,16 +67,16 @@ public final class ScreenMailboxTest {
   }
 
   @Test
-  public void historyAndControlMessagesRemainFifo() {
+  public void backgroundAndControlMessagesRemainFifo() {
     ScreenMailbox mailbox = new ScreenMailbox(2, 10L);
     TerminalSessionRuntime.ScreenConnection source =
         mock(TerminalSessionRuntime.ScreenConnection.class);
-    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.HISTORY_RANGE);
+    mailbox.offer(1L, source, new byte[] {1}, true, ScreenMailbox.MessageKind.OTHER);
     mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.PONG);
     mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.EXIT);
 
     assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
-    assertEquals(ScreenMailbox.MessageKind.HISTORY_RANGE, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.OTHER, mailbox.poll().message.kind);
     assertEquals(ScreenMailbox.MessageKind.PONG, mailbox.poll().message.kind);
     assertNull(mailbox.poll());
   }

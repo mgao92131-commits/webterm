@@ -30,7 +30,8 @@ public final class ScreenMessageV2Mapper {
         pb.getHistoryPolicy() == TerminalScreenV2Proto.BaselineHistoryPolicy.BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE,
         dictionary.entries(), pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
         extent(pb.getHistoryExtent()), history, screen,
-        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
+        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()),
+        pb.getSealedThroughSeq());
   }
 
   public static TerminalCommit mapTerminalCommit(
@@ -75,7 +76,8 @@ public final class ScreenMessageV2Mapper {
         promotions.add(new HistoryPromotion(promotion.getLineId(), promotion.getLineVersion(),
             promotion.getHistorySeq()));
       }
-      history = HistoryMutation.fromLineData(finalExtent, lines, promotions);
+      history = HistoryMutation.fromLineData(finalExtent, lines, promotions,
+          pb.getHistory().getSealedThroughSeq());
     }
     return new TerminalCommit(
         pb.getInstanceId(), pb.getLayoutEpoch(), pb.getBaseRevision(), pb.getRevision(),
@@ -87,31 +89,11 @@ public final class ScreenMessageV2Mapper {
         pb.hasPalette() ? palette(pb.getPalette()) : null);
   }
 
-  public static HistoryRangeResult mapHistoryRange(
-      TerminalScreenV2Proto.HistoryRangeResponse pb, int columns) {
-    Dictionary dictionary = dictionary(pb.getDictionary());
-    HistoryRangeResult.Status status;
-    switch (pb.getStatus()) {
-      case HISTORY_RANGE_STATUS_STALE_PROJECTION:
-        status = HistoryRangeResult.Status.STALE_PROJECTION;
-        break;
-      case HISTORY_RANGE_STATUS_TRIMMED:
-        status = HistoryRangeResult.Status.TRIMMED;
-        break;
-      case HISTORY_RANGE_STATUS_RETRYABLE:
-        status = HistoryRangeResult.Status.RETRYABLE;
-        break;
-      case HISTORY_RANGE_STATUS_OK:
-        status = HistoryRangeResult.Status.OK;
-        break;
-      default:
-        throw new IllegalArgumentException("unspecified history range status");
-    }
-    return new HistoryRangeResult(
-        pb.getRequestId(), pb.getInstanceId(), pb.getLayoutEpoch(), pb.getHistoryGeneration(), status,
-        extent(pb.getAvailableExtent()),
-        mapLineList(pb.getLinesList(), columns, dictionary),
-        pb.getRetryAfterMs());
+  /** 将 HTTP 分段中的单行映射为 TerminalLine（供 OkHttpHistorySegmentSource 使用）。 */
+  public static TerminalLine mapHistoryLine(
+      TerminalScreenV2Proto.LineData pb, int columns,
+      TerminalScreenV2Proto.Dictionary dictionaryPb) {
+    return line(pb, columns, dictionary(dictionaryPb));
   }
 
   private static Map<Long, TerminalLine> mapLines(

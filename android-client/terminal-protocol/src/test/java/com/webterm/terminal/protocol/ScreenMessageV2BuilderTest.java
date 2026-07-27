@@ -26,16 +26,4 @@ public final class ScreenMessageV2BuilderTest {
     assertEquals(3, envelope.getHello().getResume().getLayoutEpoch());
     assertEquals(11, envelope.getHello().getResume().getActiveRows(0).getLineId());
   }
-
-  @Test
-  public void historyRangeUsesClosedAbsoluteSequenceInterval() throws Exception {
-    TerminalScreenV2Proto.HistoryRangeRequest request =
-        TerminalScreenV2Proto.ScreenEnvelope.parseFrom(
-            ScreenMessageV2Builder.historyRange("r-1", "instance-1", 4, 9, 129, 256))
-            .getHistoryRangeRequest();
-
-    assertEquals(9, request.getHistoryGeneration());
-    assertEquals(129, request.getFromSeq());
-    assertEquals(256, request.getToSeq());
-  }
 }

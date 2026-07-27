@@ -117,6 +117,7 @@ public final class RemoteTerminalIntegration {
           args.baseUrl, args.cookie, args.sessionId,
           args.serverConfigId, args.directDevice, args.relayDeviceId);
       runtime.attachConnection(connection);
+      installHistorySegmentSource(args);
     } else {
       connection = null; // live channel is retained and owned by runtime
     }
@@ -356,8 +357,22 @@ public final class RemoteTerminalIntegration {
           currentArgs.baseUrl, currentArgs.cookie, currentArgs.sessionId,
           currentArgs.serverConfigId, currentArgs.directDevice, currentArgs.relayDeviceId);
       runtime.attachConnection(connection);
+      installHistorySegmentSource(currentArgs);
       connection.connect(80, 24);
     }
+  }
+
+  /** Cookie/会话身份变化后必须换新 Source，避免冷历史仍带旧凭据。 */
+  private void installHistorySegmentSource(
+      @NonNull TerminalViewModel.TerminalSessionArgs args) {
+    if (runtime == null) return;
+    final TerminalSessionRuntime target = runtime;
+    runtime.setHistorySegmentSource(new OkHttpHistorySegmentSource(
+        new okhttp3.OkHttpClient(),
+        command -> new android.os.Handler(android.os.Looper.getMainLooper()).post(command),
+        args.baseUrl, args.cookie, args.sessionId,
+        args.directDevice ? "" : args.relayDeviceId,
+        () -> Math.max(1, target.model().columns)));
   }
 
   public void updateFontSize(int size) {

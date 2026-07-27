@@ -21,11 +21,13 @@ android {
 dependencies {
     implementation(project(":core-contract"))
     implementation(project(":core-session"))
+    implementation(project(":core-api"))
     api(project(":terminal-model"))
     implementation(project(":terminal-protocol"))
     implementation(libs.hilt.android)
     annotationProcessor(libs.hilt.compiler)
     implementation("androidx.annotation:annotation:1.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation(libs.junit)
     testImplementation("org.mockito:mockito-core:5.12.0")

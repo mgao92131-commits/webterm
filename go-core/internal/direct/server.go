@@ -211,7 +211,7 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request) {
 //     而不是把路由错误折叠成 502。
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") {
+	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") || isHistorySegmentRequest(r.Method, path) {
 		result, err := s.router.RouteHTTPv2(r.Method, path, r.Header, r.Body)
 		if err != nil {
 			s.app.Log("warn", "direct", "transfer route failed: "+err.Error())
@@ -250,6 +250,13 @@ func isUploadRequest(method, path string) bool {
 	return method == http.MethodPost &&
 		strings.HasPrefix(path, "/api/sessions/") &&
 		strings.HasSuffix(path, "/upload")
+}
+
+// isHistorySegmentRequest 判断是否为历史分段查询（与 application 解析一致）。
+func isHistorySegmentRequest(method, path string) bool {
+	return method == http.MethodGet &&
+		strings.HasPrefix(path, "/api/sessions/") &&
+		strings.Contains(path, "/history/segments/")
 }
 
 // handleSessionsWS 处理 GET /ws/sessions：验证 Cookie（requireAuth 已完成）后

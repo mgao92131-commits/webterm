@@ -94,7 +94,7 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeRes
 	}
 	if tailLast > 0 {
 		// Resume appends only content newer than the client's contiguous tail.
-		// Any older local gap remains a HistoryRange concern.
+		// Any older local gap remains an HTTP Segment concern.
 		old.History.FirstIncludedHistorySeq = state.History.FirstAvailableHistorySeq
 	}
 	for i, created := range p.changeIndex.StyleCreatedRevision {

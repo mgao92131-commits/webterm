@@ -30,20 +30,6 @@ public final class ScreenMessageV2ValidatorTest {
   }
 
   @Test
-  public void nonDataHistoryRangeStatusesRejectLinesButTrimmedAllowsIntersection() throws Exception {
-    assertHistoryRangeLineRejected(
-        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION);
-    assertHistoryRangeLineRejected(
-        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE);
-    ScreenMessageV2Validator.validateHistoryRange(historyRange(
-        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_TRIMMED, true));
-    ScreenMessageV2Validator.validateHistoryRange(historyRange(
-        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_STALE_PROJECTION, false));
-    ScreenMessageV2Validator.validateHistoryRange(historyRange(
-        TerminalScreenV2Proto.HistoryRangeStatus.HISTORY_RANGE_STATUS_RETRYABLE, false));
-  }
-
-  @Test
   public void terminalCommitAcceptsScrollWritesAndBoundedHistory() throws Exception {
     ScreenMessageV2Validator.validateTerminalCommit(commitBuilder()
         .setScreen(TerminalScreenV2Proto.ScreenMutation.newBuilder()
@@ -90,34 +76,6 @@ public final class ScreenMessageV2ValidatorTest {
   private static TerminalScreenV2Proto.LineData line(long id, long historySeq) {
     return TerminalScreenV2Proto.LineData.newBuilder()
         .setLineId(id).setLineVersion(1).setHistorySeq(historySeq).build();
-  }
-
-  private static void assertHistoryRangeLineRejected(
-      TerminalScreenV2Proto.HistoryRangeStatus status) {
-    try {
-      ScreenMessageV2Validator.validateHistoryRange(historyRange(status, true));
-      fail("validator accepted lines for " + status);
-    } catch (IllegalArgumentException expected) {
-      // Expected.
-    }
-  }
-
-  private static TerminalScreenV2Proto.HistoryRangeResponse historyRange(
-      TerminalScreenV2Proto.HistoryRangeStatus status, boolean withLine) {
-    TerminalScreenV2Proto.HistoryRangeResponse.Builder response =
-        TerminalScreenV2Proto.HistoryRangeResponse.newBuilder()
-            .setRequestId("r1")
-            .setInstanceId("i1")
-            .setLayoutEpoch(1)
-            .setHistoryGeneration(1)
-            .setStatus(status)
-            .setAvailableExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
-                .setFirstSeq(1).setLastSeq(10));
-    if (withLine) {
-      response.addLines(TerminalScreenV2Proto.LineData.newBuilder()
-          .setLineId(1).setLineVersion(1).setHistorySeq(1));
-    }
-    return response.build();
   }
 
   private static void assertAcceptedExtent(long first, long last) throws Exception {
