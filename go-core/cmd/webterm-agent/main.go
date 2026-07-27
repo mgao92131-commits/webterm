@@ -112,15 +112,12 @@ func runAgent(configPath, ipcEndpoint, mode string) error {
 		cfg.IPCEndpoint = ipcEndpoint
 		cfg.SocketPath = ""
 	}
-	application := app.NewWithBuildInfoAndOptions(cfg,
+	application := app.NewWithBuildInfo(cfg,
 		app.BuildInfo{
 			Version: version, GitCommit: gitCommit, GitDirty: gitDirty == "true",
 			SourceTreeHash: sourceTreeHash, BuildTime: buildTime,
 			BuildVariant: buildVariant, ProtocolSchemaHash: protocolSchemaHash,
-		},
-		// 生产入口显式开启日志落盘与导出读盘；LogDir 留空时按 IPC endpoint
-		// 隔离到默认 runtime 日志目录。
-		app.Options{PersistentLogs: true, ReadDiskLogs: true})
+		})
 	defer application.Shutdown()
 	supervisor := agentruntime.New(application)
 	ipc := localipc.NewServer(application.IPCEndpoint(), application)

@@ -10,6 +10,10 @@ public final class DiagnosticLogExporter {
         return false;
     }
 
+    public static void cleanupAfterShareIfNeeded() {
+        // Release intentionally has no diagnostic exports.
+    }
+
     public static void share(Activity activity) {
         // Release intentionally has no diagnostic log files.
     }

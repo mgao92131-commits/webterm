@@ -1,18 +1,20 @@
 package logs
 
 import (
-	"os"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-const DefaultCapacity = 1000
+const (
+	DefaultCapacity = 5000
+	// DefaultMaxBytes 是内存 Ring 的编码后字节预算（与 Android 一致）。
+	DefaultMaxBytes = 5 << 20 // 5 MiB
+)
 
 type Entry struct {
-	// RunID 标识产生该条目的 Agent 运行。每次进程启动 runID 不同，因此不同
-	// 运行即使 Seq 相同也不会被诊断导出误判为重复。旧版本写出的条目没有该
-	// 字段（反序列化为空串），导出器按内容指纹兼容处理。
+	// RunID 标识产生该条目的 Agent 运行；诊断 manifest 与导出包关联本次进程启动。
 	RunID   string         `json:"runId,omitempty"`
 	Seq     uint64         `json:"seq"`
 	Time    time.Time      `json:"time"`
@@ -28,9 +30,10 @@ type Logger struct {
 	runID       string
 	nextSeq     uint64
 	capacity    int
+	maxBytes    int64
 	entries     []Entry
+	entryBytes  []int
 	subscribers map[chan Entry]struct{}
-	sink        *FileSink
 	limiter     *RateLimiter
 	droppedLogs atomic.Uint64
 }
@@ -40,8 +43,7 @@ func New(capacity int) *Logger {
 	return NewWithRunID(capacity, "")
 }
 
-// NewWithRunID 创建携带本次 Agent 运行标识的 Logger；写入的每条 Entry 自动
-// 带上 runID，使诊断导出能区分不同运行、避免重启后 Seq 复位造成的去重冲突。
+// NewWithRunID 创建携带本次 Agent 运行标识的 Logger；写入的每条 Entry 自动带上 runID。
 func NewWithRunID(capacity int, runID string) *Logger {
 	if capacity <= 0 {
 		capacity = DefaultCapacity
@@ -50,16 +52,10 @@ func NewWithRunID(capacity int, runID string) *Logger {
 		runID:       runID,
 		nextSeq:     1,
 		capacity:    capacity,
+		maxBytes:    DefaultMaxBytes,
 		subscribers: make(map[chan Entry]struct{}),
 		limiter:     NewRateLimiter(DefaultRateLimitWindow, nil),
 	}
-}
-
-// SetSink 安装本地 JSONL 落盘；nil 表示只保留内存 Ring。
-func (logger *Logger) SetSink(sink *FileSink) {
-	logger.mu.Lock()
-	logger.sink = sink
-	logger.mu.Unlock()
 }
 
 // SetRateLimiter 替换事件限流器；nil 表示关闭限流（测试用）。
@@ -120,24 +116,16 @@ func (logger *Logger) add(level string, source string, event string,
 		Message: message,
 	}
 	logger.nextSeq++
+	encoded := entryEncodedSize(entry)
 	logger.entries = append(logger.entries, entry)
-	if len(logger.entries) > logger.capacity {
-		copy(logger.entries, logger.entries[len(logger.entries)-logger.capacity:])
-		logger.entries = logger.entries[:logger.capacity]
-	}
+	logger.entryBytes = append(logger.entryBytes, encoded)
+	logger.trimLocked()
 	subscribers := make([]chan Entry, 0, len(logger.subscribers))
 	for subscriber := range logger.subscribers {
 		subscribers = append(subscribers, subscriber)
 	}
-	sink := logger.sink
 	logger.mu.Unlock()
 
-	// 同步落盘：事件频率低，省去异步队列；崩溃前的信息更容易真正写入。
-	if sink != nil {
-		if err := sink.Write(entry); err != nil {
-			_, _ = os.Stderr.WriteString("webterm log sink: " + err.Error() + "\n")
-		}
-	}
 	for _, subscriber := range subscribers {
 		select {
 		case subscriber <- entry:
@@ -146,6 +134,36 @@ func (logger *Logger) add(level string, source string, event string,
 		}
 	}
 	return entry
+}
+
+func (logger *Logger) trimLocked() {
+	for len(logger.entries) > logger.capacity {
+		logger.dropOldestLocked()
+	}
+	for len(logger.entries) > 0 && logger.totalBytesLocked() > logger.maxBytes {
+		logger.dropOldestLocked()
+	}
+}
+
+func (logger *Logger) dropOldestLocked() {
+	logger.entries = logger.entries[1:]
+	logger.entryBytes = logger.entryBytes[1:]
+}
+
+func (logger *Logger) totalBytesLocked() int64 {
+	var total int64
+	for _, n := range logger.entryBytes {
+		total += int64(n)
+	}
+	return total
+}
+
+func entryEncodedSize(entry Entry) int {
+	line, err := json.Marshal(entry)
+	if err != nil {
+		return 64
+	}
+	return len(line) + 1
 }
 
 func (logger *Logger) Recent(limit int) []Entry {

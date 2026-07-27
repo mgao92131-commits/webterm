@@ -1322,10 +1322,11 @@ public final class RemoteTerminalView extends View {
     historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
     TerminalLine line = history.lineAt(historyIndex);
     // 稀疏分页历史下，命中的逻辑行可能尚未加载（UNLOADED）或已被裁剪（UNAVAILABLE），
-    // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出，
-    // 而非对 null 调 historyOrder() 触发 NPE 崩溃。
+    // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出。
     if (line == null) return null;
-    return new TerminalSelection.Anchor(line.historyOrder(), -1, normalizeSelectionColumn(line, col));
+    // HistorySeq 必须取自分页槽位，不能用 LineStore 归零后的 line.historyOrder()/LineID。
+    long historySeq = history.seqAt(historyIndex);
+    return new TerminalSelection.Anchor(historySeq, -1, normalizeSelectionColumn(line, col));
   }
 
   private int normalizeSelectionColumn(@Nullable TerminalLine line, int col) {

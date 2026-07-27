@@ -41,7 +41,8 @@ public final class RemoteTerminalModelCommitScaleTest {
           HistoryMutation.fromLineData(new HistoryExtent(1, nextHistorySeq),
               Collections.emptyList(),
               Collections.singletonList(new HistoryPromotion(
-                  snapshot.screen[0].id, snapshot.screen[0].version, nextHistorySeq))),
+                  snapshot.screen[0].id, snapshot.screen[0].version, nextHistorySeq)),
+              nextHistorySeq),
           null, null, null)));
       revision++;
       model.consumeRenderUpdate();

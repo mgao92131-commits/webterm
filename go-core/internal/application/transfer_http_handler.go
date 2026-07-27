@@ -13,6 +13,7 @@ import (
 
 	"webterm/go-core/internal/filesend"
 	"webterm/go-core/internal/fileupload"
+	"webterm/go-core/internal/logs"
 )
 
 type HTTPResult struct {
@@ -27,10 +28,19 @@ type TransferHTTPHandler struct {
 	sessions   *SessionHTTPHandler
 	fileSend   *filesend.Service
 	fileUpload *fileupload.Service
+	logger     *logs.Logger
 }
 
 func NewTransferHTTPHandler(sessions *SessionHTTPHandler) *TransferHTTPHandler {
 	return &TransferHTTPHandler{sessions: sessions}
+}
+
+func NewTransferHTTPHandlerWithLogger(sessions *SessionHTTPHandler, logger *logs.Logger) *TransferHTTPHandler {
+	return &TransferHTTPHandler{sessions: sessions, logger: logger}
+}
+
+func (handler *TransferHTTPHandler) SetLogger(logger *logs.Logger) {
+	handler.logger = logger
 }
 
 func (handler *TransferHTTPHandler) SetFileSendService(service *filesend.Service) {

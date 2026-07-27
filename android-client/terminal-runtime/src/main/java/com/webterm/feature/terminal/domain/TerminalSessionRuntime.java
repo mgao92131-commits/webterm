@@ -573,22 +573,46 @@ public final class TerminalSessionRuntime {
     });
   }
 
-  /** View/Controller 上报的最新可见历史需求（VSync 合并后调用）。 */
+  /**
+   * View/Controller 上报的最新可见历史需求（VSync 合并后调用）。
+   * <p>定性决策（滚到顶无效果时按序查 Diagnostics area={@code history_segment}）：
+   * <ol>
+   *   <li>无 {@code demand_updated} → View/Controller 未上报可见历史</li>
+   *   <li>{@code pump_idle} reason={@code sealed_zero} → 服务端未封存，HTTP 不可拉</li>
+   *   <li>{@code pump_idle} reason={@code no_source} → Source 未安装</li>
+   *   <li>有 {@code fetch_begin} 无 {@code fetch_result} → 网络挂起/取消</li>
+   *   <li>{@code fetch_result} + Agent {@code NOT_FOUND} → Catalog 与 Store 不一致</li>
+   *   <li>{@code fetch_result} {@code PROTOCOL} → 段行数/边界与客户端校验不符</li>
+   *   <li>{@code segment_skipped} 连续增长后 {@code pump_idle}/{@code no_target}
+   *       → 可见区内已无候选</li>
+   * </ol>
+   */
   public void onVisibleHistoryDemand(long visibleFromSeq, long visibleToSeq, long anchorSeq,
                                      int direction, int visibleRowCount) {
     modelExecutor.execute(() -> {
       if (state != State.LIVE) {
         historyLoader.clearDemand();
         refreshEvictionPins();
+        emitHistorySegmentInfo("demand_cleared", "reason", "not_live");
         return;
       }
       if (visibleFromSeq <= 0 || visibleToSeq < visibleFromSeq) {
-        historyLoader.clearDemand();
+        // 短暂无效可见区（followTail / 空帧）不清除上次有效 demand，
+        // 否则顶部冷历史正在泵入时会被打断并永久停转。
         refreshEvictionPins();
+        if (historyLoader.latestDemand() != null) {
+          emitHistorySegmentInfo("demand_kept_sticky", "reason", "invalid_viewport");
+          pumpHistorySegments();
+        }
         return;
       }
       historyLoader.setDemand(new HistorySegmentLoader.Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount));
+      emitHistorySegmentInfo("demand_updated",
+          "fromSeq", visibleFromSeq,
+          "toSeq", visibleToSeq,
+          "anchorSeq", anchorSeq,
+          "direction", direction);
       refreshEvictionPins();
       pumpHistorySegments();
     });
@@ -598,36 +622,69 @@ public final class TerminalSessionRuntime {
     modelExecutor.execute(() -> {
       historyLoader.clearDemand();
       refreshEvictionPins();
+      emitHistorySegmentInfo("demand_cleared", "reason", "detach");
     });
   }
 
   private void pumpHistorySegments() {
-    if (state != State.LIVE || historyLoader.closed()) return;
-    if (historyLoader.activeRequest() != null) return;
+    if (state != State.LIVE || historyLoader.closed()) {
+      emitPumpIdle("not_live");
+      return;
+    }
+    if (historyLoader.activeRequest() != null) {
+      emitPumpIdle("busy");
+      return;
+    }
     HistorySegmentSource source = historySegmentSource;
-    if (source == null) return;
+    if (source == null) {
+      emitPumpIdle("no_source");
+      return;
+    }
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-    if (!projection.projectionComplete || projection.historyGeneration < 1) return;
+    if (!projection.projectionComplete || projection.historyGeneration < 1) {
+      emitPumpIdle("projection_incomplete");
+      return;
+    }
     RemoteTerminalModel.RenderSnapshot snap = model.peekRenderSnapshot();
     if (snap == null || !(snap.history instanceof com.webterm.terminal.model.PagedTerminalHistorySnapshot)) {
+      emitPumpIdle("projection_incomplete");
       return;
     }
     com.webterm.terminal.model.PagedTerminalHistorySnapshot history =
         (com.webterm.terminal.model.PagedTerminalHistorySnapshot) snap.history;
     com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
     refreshEvictionPins();
+    if (catalog.sealedThroughSeq < 1) {
+      emitPumpIdle("sealed_zero");
+      return;
+    }
+    if (historyLoader.latestDemand() == null) {
+      emitPumpIdle("no_demand");
+      return;
+    }
     com.webterm.terminal.model.SegmentKey target =
         historyLoader.highestPriorityMissing(catalog, history);
-    if (target == null) return;
+    if (target == null) {
+      emitPumpIdle("no_target");
+      return;
+    }
     // 先占住 active，再发起 fetch，避免同步回调看到 active==null 后永久卡住。
     final HistorySegmentSource.RequestHandle[] handleSlot = new HistorySegmentSource.RequestHandle[1];
     HistorySegmentSource.RequestHandle cancelProxy = () -> {
       HistorySegmentSource.RequestHandle inner = handleSlot[0];
       if (inner != null) inner.cancel();
     };
-    if (!historyLoader.begin(target, cancelProxy)) return;
+    if (!historyLoader.begin(target, cancelProxy)) {
+      emitPumpIdle("busy");
+      return;
+    }
     refreshEvictionPins();
     HistorySegmentLoader.ActiveRequest active = historyLoader.activeRequest();
+    Diagnostics.info("history_segment", "fetch_begin", historySegmentFields(
+        "generation", target.generation,
+        "segmentNumber", target.number,
+        "firstSeq", target.firstSeq(),
+        "lastSeq", target.lastSeq()));
     HistorySegmentSource.RequestHandle handle = source.fetch(target,
         new HistorySegmentSource.Callback() {
           @Override
@@ -635,8 +692,8 @@ public final class TerminalSessionRuntime {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
               historyLoader.complete(active);
-              refreshEvictionPins();
               applyDecodedHistorySegment(result);
+              refreshEvictionPins();
               pumpHistorySegments();
             });
           }
@@ -645,9 +702,21 @@ public final class TerminalSessionRuntime {
           public void onFailure(@NonNull HistorySegmentSource.Failure failure) {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
+              SegmentKey failedKey = active.key;
               historyLoader.complete(active);
               refreshEvictionPins();
-              handleSegmentFailure(failure);
+              boolean terminal = handleSegmentFailure(failure);
+              if (terminal) return;
+              if (shouldSkipFailedSegment(failure.kind)) {
+                historyLoader.markSkipped(failedKey);
+                Diagnostics.warn("history_segment", "segment_skipped", historySegmentFields(
+                    "generation", failedKey.generation,
+                    "segmentNumber", failedKey.number,
+                    "failureKind", failure.kind.name()));
+                // 坏段跳过：立刻尝试下一段，避免队头阻塞顶部冷历史。
+                pumpHistorySegments();
+                return;
+              }
               scheduleSegmentRetry(failure.retryAfterMs);
             });
           }
@@ -694,6 +763,17 @@ public final class TerminalSessionRuntime {
       @NonNull HistorySegmentSource.DecodedHistorySegment decoded) {
     com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
     if (!catalog.acceptsSegment(decoded.key.generation, decoded.firstSeq, decoded.lastSeq)) {
+      historyLoader.markSkipped(decoded.key);
+      Diagnostics.warn("history_segment", "segment_skipped", historySegmentFields(
+          "generation", decoded.key.generation,
+          "segmentNumber", decoded.key.number,
+          "failureKind", "ACCEPTS_REJECTED"));
+      Diagnostics.info("history_segment", "apply_result", historySegmentFields(
+          "accepted", false,
+          "changed", false,
+          "skipped", true,
+          "generation", decoded.key.generation,
+          "segmentNumber", decoded.key.number));
       return;
     }
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
@@ -708,24 +788,78 @@ public final class TerminalSessionRuntime {
         0);
     boolean changed = model.applyHistoryRange(
         range, decoded.firstSeq, decoded.firstSeq, decoded.lastSeq);
-    if (changed) recordCapturedModelState(false);
+    if (changed) {
+      recordCapturedModelState(false);
+      dispatchRenderNeeded();
+    }
+    Diagnostics.info("history_segment", "apply_result", historySegmentFields(
+        "accepted", true,
+        "changed", changed,
+        "skipped", false,
+        "generation", decoded.key.generation,
+        "segmentNumber", decoded.key.number));
   }
 
-  private void handleSegmentFailure(@NonNull HistorySegmentSource.Failure failure) {
+  /** @return true 表示终态（已清 demand / 需 resync），调用方不应再泵。 */
+  private boolean handleSegmentFailure(@NonNull HistorySegmentSource.Failure failure) {
     if (failure.kind == HistorySegmentSource.FailureKind.AUTH_REQUIRED) {
       historyLoader.clearDemand();
+      emitHistorySegmentInfo("demand_cleared", "reason", "auth");
       AuthenticationListener listener = authenticationListener;
       if (listener != null) {
         callbackExecutor.execute(() -> listener.onAuthenticationRequired("history_segment_auth"));
       }
-      return;
+      return true;
     }
     if (failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION
         || failure.kind == HistorySegmentSource.FailureKind.SESSION_GONE) {
       historyLoader.clearDemand();
+      emitHistorySegmentInfo("demand_cleared", "reason",
+          failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION
+              ? "stale" : "session_gone");
       if (failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION) {
         sendResync("history_segment_stale");
       }
+      return true;
+    }
+    return false;
+  }
+
+  private void emitPumpIdle(@NonNull String reason) {
+    Diagnostics.info("history_segment", "pump_idle", historySegmentFields("reason", reason));
+  }
+
+  private void emitHistorySegmentInfo(@NonNull String event, Object... pairs) {
+    Diagnostics.info("history_segment", event, historySegmentFields(pairs));
+  }
+
+  private Map<String, Object> historySegmentFields(Object... pairs) {
+    Map<String, Object> fields = diagnosticFields(pairs);
+    com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
+    fields.put("generation", catalog.generation);
+    fields.put("sealedThrough", catalog.sealedThroughSeq);
+    fields.put("trimBefore", catalog.trimBeforeSeq);
+    fields.put("tailLast", catalog.tailLastSeq);
+    return fields;
+  }
+
+  /** 测试用：跳过完整 Snapshot 同步，直接进入 LIVE。 */
+  void enterLiveForTest() {
+    modelExecutor.execute(() -> {
+      if (state == State.CLOSED) return;
+      updateState(State.LIVE);
+      projectionContinuity = ProjectionContinuityState.CONTINUOUS;
+    });
+  }
+
+  private static boolean shouldSkipFailedSegment(@NonNull HistorySegmentSource.FailureKind kind) {
+    switch (kind) {
+      case NOT_FOUND:
+      case TRIMMED:
+      case PROTOCOL:
+        return true;
+      default:
+        return false;
     }
   }
 

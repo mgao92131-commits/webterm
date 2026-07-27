@@ -147,6 +147,16 @@ type HistoryWindow struct {
 	Lines            []Line
 }
 
+type HistoryRangeData struct {
+	Status            HistoryRangeStatus
+	Extent            HistoryExtent
+	Lines             []Line
+	Styles            []TerminalStyle
+	Links             []Hyperlink
+	RetryAfterMS      uint32
+	HistoryGeneration uint64
+}
+
 // ScreenScroll 是 Commit 内可选的全屏连续滚动压缩描述。
 type ScreenScroll struct {
 	TopRow             int

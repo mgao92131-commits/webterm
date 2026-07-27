@@ -6,6 +6,7 @@ import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.HistoryCatalog;
 import com.webterm.terminal.model.PagedTerminalHistory;
 import com.webterm.terminal.model.SegmentKey;
+import com.webterm.terminal.model.TerminalLine;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -72,5 +73,42 @@ public class HistorySegmentLoaderTest {
     AtomicBoolean lateCancelled = new AtomicBoolean();
     assertFalse(loader.begin(new SegmentKey(1, 1), () -> lateCancelled.set(true)));
     assertTrue(lateCancelled.get());
+  }
+
+  @Test
+  public void skippedSegmentIsNotSelectedAgain() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    PagedTerminalHistory history = new PagedTerminalHistory(
+        HistoryBudget.defaults(), line -> 64);
+    history.edit().setExtent(1, 256).setAvailableExtent(1, 256).commit();
+    loader.setDemand(new HistorySegmentLoader.Demand(1, 200, 1, -1, 20));
+    HistoryCatalog catalog = new HistoryCatalog(1, 1, 256, 256);
+    SegmentKey first = loader.highestPriorityMissing(catalog, history.snapshot());
+    assertNotNull(first);
+    assertEquals(0, first.number);
+    loader.markSkipped(first);
+    SegmentKey next = loader.highestPriorityMissing(catalog, history.snapshot());
+    assertNotNull(next);
+    assertEquals(1, next.number);
+  }
+
+  @Test
+  public void expandsSearchWindowAboveVisibleForColdHistory() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    PagedTerminalHistory history = new PagedTerminalHistory(
+        HistoryBudget.defaults(), line -> 64);
+    // 可见段 2 已填满，上方段 1 仍缺 → 应选段 1。
+    PagedTerminalHistory.Editor editor = history.edit().setExtent(1, 400).setAvailableExtent(1, 400);
+    for (long seq = 257; seq <= 384; seq++) {
+      editor.put(seq, new TerminalLine(seq, false,
+          new com.webterm.terminal.model.TerminalCell[] {
+              com.webterm.terminal.model.TerminalCell.EMPTY}));
+    }
+    editor.commit();
+    loader.setDemand(new HistorySegmentLoader.Demand(260, 300, 260, 0, 20));
+    HistoryCatalog catalog = new HistoryCatalog(1, 1, 400, 400);
+    SegmentKey key = loader.highestPriorityMissing(catalog, history.snapshot());
+    assertNotNull(key);
+    assertEquals(1, key.number);
   }
 }

@@ -8,4 +8,6 @@ public interface TerminalHistoryView {
   int findSeqIndex(long seq);
   long firstSeq();
   long lastSeq();
+  /** 逻辑下标对应的 HistorySeq；不得从 TerminalLine 正文推导。 */
+  long seqAt(int index);
 }

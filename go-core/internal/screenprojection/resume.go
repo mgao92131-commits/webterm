@@ -107,7 +107,10 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeRes
 			old.Links = append(old.Links, state.Links[i])
 		}
 	}
-	frame := diffToPatch(old, state, defaultMaxAppendedScrollbackEntrys, defaultMaxAppendedHistoryBytes)
+	frame, hotIncomplete := diffToPatch(old, state, defaultMaxAppendedScrollbackEntrys, defaultMaxAppendedHistoryBytes)
+	if hotIncomplete {
+		return ResumeResult{Kind: ResumeBaseline, State: state, Frame: state}
+	}
 	frame.CursorChanged = true
 	frame.ModesChanged = true
 	frame.PaletteChanged = true

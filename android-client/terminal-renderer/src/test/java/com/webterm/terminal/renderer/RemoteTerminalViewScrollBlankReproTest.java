@@ -194,7 +194,8 @@ public final class RemoteTerminalViewScrollBlankReproTest {
           INSTANCE, LAYOUT_EPOCH, nextRevision, nextRevision + 1,
           1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           new ScreenMutation(new ScreenScroll(0, ROWS, scrollRows), writes),
-          new HistoryMutation(new HistoryExtent(1, HISTORY + nextRevision), scrolledOff),
+          new HistoryMutation(new HistoryExtent(1, HISTORY + nextRevision), scrolledOff,
+              HISTORY + nextRevision),
           null, null, null));
     } catch (RemoteTerminalModel.RevisionGapException e) {
       throw new AssertionError(e);

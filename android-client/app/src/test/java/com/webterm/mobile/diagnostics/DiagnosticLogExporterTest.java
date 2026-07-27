@@ -8,10 +8,6 @@ import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.mobile.BuildConfig;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -21,15 +17,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.After;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 /** DiagnosticLogExporter 的纯逻辑测试：命名并发唯一、历史清理、导出内容脱敏。 */
 public class DiagnosticLogExporterTest {
-
-    @Rule
-    public TemporaryFolder folder = new TemporaryFolder();
 
     @After
     public void tearDown() {
@@ -78,32 +69,6 @@ public class DiagnosticLogExporterTest {
                 + BuildConfig.BUILD_TIME_UTC + BuildConfig.PROTOCOL_SCHEMA_HASH;
         assertFalse(identity.contains("/Users/"));
         assertFalse(identity.matches(".*[A-Za-z]:\\\\.*"));
-    }
-
-    @Test
-    public void pruneKeepsFiveNewestArchivesAndRemovesTempFiles() throws IOException {
-        File dir = folder.newFolder("diagnostics-export");
-        List<File> archives = new ArrayList<>();
-        for (int i = 0; i < 7; i++) {
-            File zip = new File(dir, "webterm-diagnostics-20260101-000000-00" + i + "-abcd" + i + ".zip");
-            assertTrue(zip.createNewFile());
-            assertTrue(zip.setLastModified(1_000_000L + i * 1000L));
-            archives.add(zip);
-        }
-        File leftoverTmp = new File(dir, "webterm-diagnostics-stale.zip.tmp");
-        assertTrue(leftoverTmp.createNewFile());
-
-        DiagnosticLogExporter.pruneOldArchives(dir);
-
-        File[] remaining = dir.listFiles();
-        assertEquals(DiagnosticLogExporter.MAX_ARCHIVES, remaining.length);
-        assertFalse("残留 .tmp 必须被清理", leftoverTmp.exists());
-        // 最旧两个被删，最新 5 个保留。
-        assertFalse(archives.get(0).exists());
-        assertFalse(archives.get(1).exists());
-        for (int i = 2; i < archives.size(); i++) {
-            assertTrue(archives.get(i).exists());
-        }
     }
 
     @Test

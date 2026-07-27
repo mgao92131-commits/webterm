@@ -46,4 +46,12 @@ public final class TerminalHistorySnapshot implements TerminalHistoryView {
   public long lastSeq() {
     return lines.isEmpty() ? 0 : lines.get(lines.size() - 1).historyOrder();
   }
+
+  @Override
+  public long seqAt(int index) {
+    if (index < 0 || index >= lines.size()) {
+      throw new IndexOutOfBoundsException("index=" + index + " size=" + lines.size());
+    }
+    return lines.get(index).historyOrder();
+  }
 }

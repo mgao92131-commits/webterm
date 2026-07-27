@@ -1,13 +1,8 @@
 package logs
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -113,105 +108,34 @@ func TestSubscriberDropIsCounted(t *testing.T) {
 	}
 }
 
-func TestFileSinkWritesValidJsonlAndRotates(t *testing.T) {
-	dir := t.TempDir()
-	sink, err := NewFileSink(dir, 256, 2)
-	if err != nil {
-		t.Fatalf("new sink: %v", err)
-	}
-	defer sink.Close()
-
-	logger := New(1000)
+func TestLoggerRingByteBudgetDropsOldest(t *testing.T) {
+	logger := NewWithRunID(10000, "run-1")
 	logger.SetRateLimiter(nil)
-	logger.SetSink(sink)
-	// 每条约 100 字节，写 30 条必然触发多次轮转。
-	for i := 0; i < 30; i++ {
-		logger.Event("info", "test", "some_event", map[string]any{
-			"index": i, "padding": strings.Repeat("x", 40),
-		})
+	logger.maxBytes = 512
+	for i := 0; i < 50; i++ {
+		logger.Event("info", "test", "evt", map[string]any{"pad": strings.Repeat("x", 40)})
 	}
-	sink.Close()
-
-	// 最多保留当前 + 2 个备份。
-	matches, err := filepath.Glob(filepath.Join(dir, "agent.jsonl*"))
-	if err != nil || len(matches) == 0 || len(matches) > 3 {
-		t.Fatalf("log files=%v err=%v, want 1..3 files", matches, err)
+	recent := logger.Recent(0)
+	if len(recent) >= 50 {
+		t.Fatalf("byte budget should drop oldest entries, got %d", len(recent))
 	}
-	// 每个文件都不超过上限（最后一个除外——写入前检查，单条不超限时成立）。
-	for _, path := range matches {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("stat %s: %v", path, err)
-		}
-		if info.Size() > 256+128 { // 上限 + 单条最大行宽
-			t.Fatalf("%s size=%d exceeds rotation budget", path, info.Size())
-		}
-	}
-	// 每行都是可独立解析的 JSON。
-	for _, path := range matches {
-		file, err := os.Open(path)
-		if err != nil {
-			t.Fatalf("open %s: %v", path, err)
-		}
-		scanner := bufio.NewScanner(file)
-		line := 0
-		for scanner.Scan() {
-			line++
-			var entry Entry
-			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-				t.Fatalf("%s:%d invalid json: %v", path, line, err)
-			}
-			if entry.Seq == 0 || entry.Event == "" {
-				t.Fatalf("%s:%d malformed entry: %+v", path, line, entry)
-			}
-		}
-		file.Close()
+	if recent[len(recent)-1].Fields["pad"] == nil {
+		t.Fatal("newest entry should be kept")
 	}
 }
 
-func TestFileSinkConcurrentWritesProduceIntactLines(t *testing.T) {
-	dir := t.TempDir()
-	sink, err := NewFileSink(dir, 1<<20, 1)
-	if err != nil {
-		t.Fatalf("new sink: %v", err)
-	}
-	logger := New(10000)
+func TestLoggerRingCountBudgetDropsOldest(t *testing.T) {
+	logger := NewWithRunID(5, "run-1")
 	logger.SetRateLimiter(nil)
-	logger.SetSink(sink)
-
-	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
-				logger.Event("info", "test", "concurrent_event", map[string]any{"g": g, "i": i})
-			}
-		}(g)
+	for i := 0; i < 10; i++ {
+		logger.Event("info", "test", "evt", map[string]any{"i": i})
 	}
-	wg.Wait()
-	sink.Close()
-
-	total := 0
-	matches, _ := filepath.Glob(filepath.Join(dir, "agent.jsonl*"))
-	for _, path := range matches {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-			if line == "" {
-				continue
-			}
-			total++
-			var entry Entry
-			if err := json.Unmarshal([]byte(line), &entry); err != nil {
-				t.Fatalf("corrupted line in %s: %v", path, err)
-			}
-		}
+	recent := logger.Recent(0)
+	if len(recent) != 5 {
+		t.Fatalf("count=%d, want 5", len(recent))
 	}
-	if total != 400 {
-		t.Fatalf("lines=%d, want 400（并发写入丢行或坏行）", total)
+	if recent[0].Fields["i"] != 5 && recent[0].Fields["i"] != float64(5) {
+		t.Fatalf("oldest kept i=%v, want 5", recent[0].Fields["i"])
 	}
 }
 

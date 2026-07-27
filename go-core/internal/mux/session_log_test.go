@@ -2,13 +2,10 @@ package mux
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -92,28 +89,9 @@ func TestErrorKindClassifiesErrors(t *testing.T) {
 	}
 }
 
-// readLogLines 读取 sink 目录下 agent.jsonl 的所有行。
-func readLogLines(t *testing.T, dir string) []string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "agent.jsonl"))
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	text := strings.TrimSpace(string(data))
-	if text == "" {
-		return nil
-	}
-	return strings.Split(text, "\n")
-}
-
 // TestMuxWriterFailuresAreRateLimited 同一 writer 错误触发 1000 次：
-// 磁盘日志应远少于 1000 条，且窗口结束后产出一条 event_suppressed 汇总。
+// 内存 Ring 应远少于 1000 条，且窗口结束后产出一条 event_suppressed 汇总。
 func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
-	dir := t.TempDir()
-	sink, err := logs.NewFileSink(dir, 0, -1)
-	if err != nil {
-		t.Fatalf("new sink: %v", err)
-	}
 	logger := logs.New(logs.DefaultCapacity)
 
 	// 注入假时钟，避免测试等待真实 5 秒窗口。
@@ -125,7 +103,6 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 		defer clockMu.Unlock()
 		return current
 	}))
-	logger.SetSink(sink)
 
 	sess := Serve(&fakeSocket{}, &ServeOpts{Logger: logger})
 	writeErr := errors.New("boom-secret-detail")
@@ -139,21 +116,13 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 	clockMu.Unlock()
 	sess.logWriteError(writeErr)
 
-	if err := sink.Close(); err != nil {
-		t.Fatalf("close sink: %v", err)
-	}
-
-	lines := readLogLines(t, dir)
-	if len(lines) >= 100 {
-		t.Fatalf("disk log lines = %d, want far fewer than 1000", len(lines))
+	entries := logger.Recent(0)
+	if len(entries) >= 100 {
+		t.Fatalf("ring entries = %d, want far fewer than 1000", len(entries))
 	}
 	var writerEvents, suppressedSummaries int
 	var suppressedCount float64
-	for _, line := range lines {
-		var entry logs.Entry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			t.Fatalf("invalid log line: %v", err)
-		}
+	for _, entry := range entries {
 		switch entry.Event {
 		case "mux_writer_failed":
 			writerEvents++
@@ -165,7 +134,12 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 			if entry.Fields["originalEvent"] != "mux_writer_failed" {
 				t.Errorf("suppressed originalEvent = %v", entry.Fields["originalEvent"])
 			}
-			suppressedCount, _ = entry.Fields["suppressedCount"].(float64)
+			switch v := entry.Fields["suppressedCount"].(type) {
+			case int:
+				suppressedCount = float64(v)
+			case float64:
+				suppressedCount = v
+			}
 		}
 	}
 	if writerEvents != 2 {
@@ -174,10 +148,9 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 	if suppressedSummaries != 1 || suppressedCount != 999 {
 		t.Errorf("suppressed summaries = %d count=%v, want 1/999", suppressedSummaries, suppressedCount)
 	}
-	// 原始错误文本不得进入磁盘日志。
-	for _, line := range lines {
-		if strings.Contains(line, "boom-secret-detail") {
-			t.Fatalf("raw error text leaked into disk log: %s", line)
+	for _, entry := range entries {
+		if entry.Message != "" && strings.Contains(entry.Message, "boom-secret-detail") {
+			t.Fatalf("raw error text leaked into ring: %+v", entry)
 		}
 	}
 }

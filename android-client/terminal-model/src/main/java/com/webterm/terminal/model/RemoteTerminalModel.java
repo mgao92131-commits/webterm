@@ -487,6 +487,11 @@ public final class RemoteTerminalModel {
         }
         historyEditor.evictIfNeeded(currentEvictionPins(
             nextExtent.isEmpty() ? 1 : nextExtent.lastSeq));
+        long nextSealed = commit.history.sealedThroughSeq > 0
+            ? commit.history.sealedThroughSeq : sealedThroughSeq;
+        if (!historyEditor.hotTailFullyLoaded(nextSealed)) {
+          throw new CommitValidationException(CommitFailure.HOT_TAIL_INCOMPLETE);
+        }
       } catch (CommitValidationException failure) {
         throw failure;
       } catch (IllegalArgumentException | IllegalStateException invalidHistory) {

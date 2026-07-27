@@ -204,6 +204,10 @@ func encodeHistoryWindowExtent(window terminalengine.HistoryWindow) *pb.HistoryE
 	return &pb.HistoryExtent{FirstSeq: first, LastSeq: last}
 }
 
+func encodeExtent(extent terminalengine.HistoryExtent) *pb.HistoryExtent {
+	return &pb.HistoryExtent{FirstSeq: extent.FirstSeq, LastSeq: extent.LastSeq}
+}
+
 func screenLines(lines []terminalengine.Line) []terminalengine.Line {
 	out := make([]terminalengine.Line, 0, len(lines))
 	for _, line := range lines {

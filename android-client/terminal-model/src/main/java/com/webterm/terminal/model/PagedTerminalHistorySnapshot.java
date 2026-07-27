@@ -125,6 +125,11 @@ public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
   }
 
   @Override
+  public long seqAt(int index) {
+    return seqAt((long) index);
+  }
+
+  @Override
   public int findSeqIndex(long seq) {
     if (!extent.contains(seq)) return -1;
     long index = seq - extent.firstSeq;

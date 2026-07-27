@@ -63,7 +63,7 @@ func NewSessionRouterWithMux(manager *session.Manager, muxServe MuxServeFunc, lo
 	sessionHTTP := NewSessionHTTPHandler(manager)
 	return &SessionRouter{
 		manager: manager, muxServe: muxServe, controls: NewControlDispatcher(), logger: log,
-		sessionHTTP: sessionHTTP, transfers: NewTransferHTTPHandler(sessionHTTP),
+		sessionHTTP: sessionHTTP, transfers: NewTransferHTTPHandlerWithLogger(sessionHTTP, log),
 		channels: NewMuxChannelRouter(manager, log),
 	}
 }

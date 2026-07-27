@@ -239,11 +239,24 @@ public final class RemoteTerminalModelTerminalCommitTest {
     model.consumeRenderUpdate();
     java.util.List<TerminalLine> tail = new java.util.ArrayList<>();
     for (long seq = 9937; seq <= 10000; seq++) tail.add(line(10000 + seq, 1, seq, "h"));
+    // 缺口落在已封存区：HTTP Segment 可补；热尾 9937—10000 必须正文齐全。
     TerminalCommit commit = new TerminalCommit(
         "instance", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
-        new HistoryMutation(new HistoryExtent(1, 10000), tail), null, null, null);
+        new HistoryMutation(new HistoryExtent(1, 10000), tail, 9936), null, null, null);
     assertTrue(model.applyTerminalCommit(commit));
     assertEquals(10000, model.consumeRenderUpdate().state.tailAppendedLines);
+  }
+
+  @Test
+  public void unsealedHotTailGapRejected() throws Exception {
+    RemoteTerminalModel model = baselineModel();
+    model.consumeRenderUpdate();
+    java.util.List<TerminalLine> tail = new java.util.ArrayList<>();
+    for (long seq = 9937; seq <= 10000; seq++) tail.add(line(10000 + seq, 1, seq, "h"));
+    TerminalCommit commit = new TerminalCommit(
+        "instance", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 10000), tail, 0), null, null, null);
+    assertFailureAtomically(model, commit, CommitFailure.HOT_TAIL_INCOMPLETE);
   }
 
   @Test
@@ -265,8 +278,9 @@ public final class RemoteTerminalModelTerminalCommitTest {
     RemoteTerminalModel model = baselineModel(new HistoryExtent(1, 100));
     model.consumeRenderUpdate();
 
+    // 裁剪后剩余区间若仍未封存且无正文，会被热尾完整性拒绝；此处声明已全部封存。
     assertTrue(model.applyTerminalCommit(historyCommit(
-        1, 2, new HistoryExtent(20, 100), Collections.emptyList())));
+        1, 2, new HistoryExtent(20, 100), Collections.emptyList(), 100)));
 
     assertEquals(new HistoryExtent(20, 100), model.displayExtent());
     assertEquals(2, model.screenRevision);
@@ -284,7 +298,7 @@ public final class RemoteTerminalModelTerminalCommitTest {
     }
 
     assertTrue(model.applyTerminalCommit(historyCommit(
-        1, 2, new HistoryExtent(1, 1000), tail)));
+        1, 2, new HistoryExtent(1, 1000), tail, 936)));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -407,11 +421,18 @@ public final class RemoteTerminalModelTerminalCommitTest {
   private static TerminalCommit historyCommit(long baseRevision, long revision,
                                                HistoryExtent extent,
                                                java.util.List<TerminalLine> lines) {
+    return historyCommit(baseRevision, revision, extent, lines, 0);
+  }
+
+  private static TerminalCommit historyCommit(long baseRevision, long revision,
+                                               HistoryExtent extent,
+                                               java.util.List<TerminalLine> lines,
+                                               long sealedThroughSeq) {
     return new TerminalCommit(
         "instance", 1, baseRevision, revision, 1, 1, DictionaryEntries.EMPTY, null,
         new ScreenMutation(null,
             Collections.singletonList(new ScreenRowWrite(0, line(30, 1, 0, "changed")))),
-        new HistoryMutation(extent, lines),
+        new HistoryMutation(extent, lines, sealedThroughSeq),
         new TerminalCursor(1, 1, true, TerminalCursor.Shape.BAR, false),
         new TerminalModes(true, true, true, TerminalModes.MouseTracking.ANY_EVENT,
             TerminalModes.MouseEncoding.SGR, true),

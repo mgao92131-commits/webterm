@@ -36,7 +36,8 @@ public final class UnifiedContentAxisTest {
             Collections.singletonList(new ScreenRowWrite(
                 1, V2ModelTestData.line(12, 1, 0, "c")))),
         HistoryMutation.fromLineData(new HistoryExtent(1, 101), Collections.emptyList(),
-            Collections.singletonList(new HistoryPromotion(10, 1, 101))),
+            Collections.singletonList(new HistoryPromotion(10, 1, 101)),
+            100),
         null, null, null)));
 
     assertEquals(Long.valueOf(10), model.historyIndex().lineId(101));

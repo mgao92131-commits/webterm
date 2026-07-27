@@ -246,8 +246,31 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 	}
 }
 
+// HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。
+func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	result := p.scrollback.Range(fromSeq, toSeq)
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	lines := make([]terminalengine.Line, len(result.Lines))
+	for i, line := range result.Lines {
+		lines[i] = exp.exportScrollbackEntry(line)
+	}
+	return terminalengine.HistoryRangeData{
+		Status:            result.Status,
+		Extent:            result.Extent,
+		Lines:             lines,
+		Styles:            exp.styleTable.Styles(),
+		Links:             exp.linkTable.Links(),
+		HistoryGeneration: p.historyGeneration,
+	}
+}
+
 // HistoryGeneration returns the identity of the currently published history
-// lineage. Baseline and TerminalCommit carry it for client identity checks.
+// lineage. HistoryRange responses use it even when no line body is returned.
 func (p *Projector) HistoryGeneration() uint64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -516,7 +539,13 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		return state
 	}
 	// 否则生成 patch（整行替换）。
-	patch := diffToPatch(*baseline, state, maxScrollbackEntrys, maxHistoryBytes)
+	patch, hotIncomplete := diffToPatch(*baseline, state, maxScrollbackEntrys, maxHistoryBytes)
+	// 未封存热尾正文必须完整到达客户端；HTTP 不能补 sealedThroughSeq 之后的洞。
+	// 行数/字节预算裁掉热尾时，退化 Baseline（携带完整最新窗口），不得静默丢正文。
+	if hotIncomplete {
+		*baseline = state
+		return state
+	}
 	if patch.Kind != terminalengine.FramePatch {
 		*baseline = state
 		return patch
@@ -570,9 +599,12 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 // frameForBaseline 的真实同步边界（首帧、epoch/buffer/dictionary 变化或
 // ForceSnapshot）触发。断线恢复的成本判定仍在 resume.go 单独处理。
 //
-// 历史窗口是 epoch 内连续 LineID 的尾部窗口，且历史行推出后不可变，因此
+// 历史窗口是 epoch 内连续 HistorySeq 的尾部窗口，且历史行推出后不可变，因此
 // history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
-func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) terminalengine.ScreenFrame {
+//
+// 第二个返回值 hotIncomplete 表示：未封存热尾（HistorySeq > SealedThroughSeq，
+// 或尚无任何封存）中仍有客户端未知正文因预算被跳过。调用方必须退化 Baseline。
+func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) (terminalengine.ScreenFrame, bool) {
 	// Stable screen IDs can leave gaps in scrollback after delete/resize. Select
 	// the newly present IDs instead of relying on historical ID contiguity.
 	oldHistory := make(map[uint64]struct{}, len(old.History.Lines))
@@ -603,23 +635,37 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 		promotions = append(promotions, entry)
 		promotedIDs[line.ID] = struct{}{}
 	}
+	sealed := new.History.SealedThroughSeq
 	var historyAppend []terminalengine.Line
 	historyBytes := 0
+	coldAppended := 0
+	hotIncomplete := false
 	for _, line := range new.History.Lines {
 		_, explicitlySeen := oldHistory[line.HistorySeq]
 		knownByContiguousRange := oldHistoryFirst > 0 &&
 			line.HistorySeq >= oldHistoryFirst && line.HistorySeq <= oldHistoryLast
-		if !explicitlySeen && !knownByContiguousRange {
-			if _, promoted := promotedIDs[line.ID]; promoted {
-				continue
-			}
-			estimated := estimateLineWireBytes(line)
-			if len(historyAppend) >= maxScrollbackEntrys || historyBytes+estimated > maxHistoryBytes {
-				continue
-			}
-			historyAppend = append(historyAppend, line)
-			historyBytes += estimated
+		if explicitlySeen || knownByContiguousRange {
+			continue
 		}
+		if _, promoted := promotedIDs[line.ID]; promoted {
+			continue
+		}
+		estimated := estimateLineWireBytes(line)
+		// 未封存热尾只能走 WS；行数预算不得裁掉。已封存冷历史可裁，HTTP Segment 可补。
+		unsealed := sealed == 0 || line.HistorySeq > sealed
+		if unsealed {
+			if historyBytes+estimated > maxHistoryBytes {
+				hotIncomplete = true
+				break
+			}
+		} else {
+			if coldAppended >= maxScrollbackEntrys || historyBytes+estimated > maxHistoryBytes {
+				continue
+			}
+			coldAppended++
+		}
+		historyAppend = append(historyAppend, line)
+		historyBytes += estimated
 	}
 	activeBufferChanged := old.ActiveBuffer != new.ActiveBuffer
 	var scroll *terminalengine.ScreenScroll
@@ -682,7 +728,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 			old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq ||
 			old.History.SealedThroughSeq != new.History.SealedThroughSeq,
-	}
+	}, hotIncomplete
 }
 
 func estimateLineWireBytes(line terminalengine.Line) int {

@@ -23,7 +23,10 @@ func TestDiffToPatchPublishesSealOnlyHistoryChange(t *testing.T) {
 	next.Seq = 2
 	next.History.LastIncludedHistorySeq = 128
 	next.History.SealedThroughSeq = 128
-	patch := diffToPatch(old, next, 128, 1<<20)
+	patch, hotIncomplete := diffToPatch(old, next, 128, 1<<20)
+	if hotIncomplete {
+		t.Fatal("seal-only advance must not mark hot tail incomplete")
+	}
 	if !patch.FirstAvailableHistorySeqChanged {
 		t.Fatal("seal-only advance must mark history changed")
 	}

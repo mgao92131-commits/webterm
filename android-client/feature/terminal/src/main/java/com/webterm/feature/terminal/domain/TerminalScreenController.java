@@ -209,7 +209,7 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     long anchor = pendingDemandAnchor;
     int direction = pendingDemandDirection;
     if (from <= 0 || to < from) {
-      runtime.onVisibleHistoryDemandCleared();
+      // 无效区间不主动 clearDemand；detach 仍走 onVisibleHistoryDemandCleared。
       return;
     }
     runtime.onVisibleHistoryDemand(from, to, anchor, direction,

@@ -43,7 +43,7 @@ WebTerm 是 Android-only 的远程终端项目。PC Agent 支持两种互相独�
 - `go-core/internal/config`：Agent 配置与 mode（direct/relay）校验。
 - `go-core/internal/relay*`：Relay/Agent 中转、认证、存储和指标。
 - `go-core/internal/agenthooks`、`agentnotify`、`hook`：AI Agent hook 与通知。
-- `go-core/internal/logs`：结构化事件日志（内存 Ring + 本地 `agent.jsonl` 1 MiB×3 滚动 + 5s 限流，限流状态表容量有界）；新埋点用 `logger.Event`，ID 类字段经 `SafeID/HashID`。
+- `go-core/internal/logs`：结构化事件日志（内存 Ring 5000 条 / 5 MiB + 5s 限流，限流状态表容量有界）；新埋点用 `logger.Event`，ID 类字段经 `SafeID/HashID`。
 - `go-core/internal/diagnostics`：进程级指标（`diagnostics.Default`）与本地导出；`webterm diagnostics summary|export` 经 Local IPC 查询/导出诊断包（manifest/events/metrics/state/summary）。
 - `android-client/core-session`、`core-relay`、`feature/*`：Android 连接与业务 UI。
 

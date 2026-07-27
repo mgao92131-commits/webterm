@@ -2,16 +2,12 @@ package diagnostics
 
 import (
 	"archive/zip"
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"time"
 
 	"webterm/go-core/internal/logs"
@@ -22,17 +18,13 @@ const (
 	DefaultExportMaxBytes = int64(4) << 20
 	// DefaultExportMaxEvents 是导出事件条数上限。
 	DefaultExportMaxEvents = 1000
-	// exportKeepCount 是诊断包历史保留上限；导出成功后删除最旧的超出部分。
-	exportKeepCount  = 5
-	exportDirName    = "diagnostics"
-	exportFilePrefix = "webterm-agent-diagnostics-"
+	exportDirName          = "diagnostics"
+	exportFilePrefix       = "webterm-agent-diagnostics-"
 )
 
 // ExportOptions 控制一次本地诊断导出。
 type ExportOptions struct {
-	// LogDir 是 agent.jsonl 所在目录（通常 ~/.webterm/logs）。
-	LogDir string
-	// OutDir 是 ZIP 输出目录（通常 ~/.webterm/diagnostics）；为空时使用 LogDir 同级 diagnostics。
+	// OutDir 是 ZIP 输出目录（通常 ~/.webterm/diagnostics）。
 	OutDir string
 	// MaxBytes/MaxEvents 是事件预算；非正值取默认值。
 	MaxBytes  int64
@@ -47,7 +39,7 @@ type ExportOptions struct {
 	// IncludePaths 控制导出事件的脱敏：false（默认）把自由文本 Message 与路径类
 	// Field 折叠；true 时才放行原文（对应 CLI --include-paths）。
 	IncludePaths bool
-	// RingEntries 是内存 Ring 中可能尚未落盘的最新事件（可为空），按 seq 与磁盘事件去重。
+	// RingEntries 是当前进程内存 Ring 的快照（可为空）。
 	RingEntries []logs.Entry
 	// now 可注入测试时钟；nil 用真实时间。
 	now func() time.Time
@@ -62,8 +54,7 @@ type ExportResult struct {
 
 // Export 生成 webterm-agent-diagnostics-<时间戳>-<毫秒>-<随机>.zip：
 // manifest.json / events.jsonl / metrics.json / state.json / session-traffic.json / summary.txt。
-// 写入先落到 .tmp 再原子 rename；成功后清理历史，最多保留 exportKeepCount 个。
-// 导出只读磁盘日志与内存快照，不阻塞终端主要读写循环。
+// 写入先落到 .tmp 再原子 rename；导出只读内存 Ring，不阻塞终端主要读写循环。
 func Export(options ExportOptions) (ExportResult, error) {
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = DefaultExportMaxBytes
@@ -77,28 +68,11 @@ func Export(options ExportOptions) (ExportResult, error) {
 	}
 	outDir := options.OutDir
 	if outDir == "" {
-		if options.LogDir == "" {
-			return ExportResult{}, fmt.Errorf("either LogDir or OutDir is required")
-		}
-		outDir = filepath.Join(filepath.Dir(options.LogDir), exportDirName)
+		return ExportResult{}, fmt.Errorf("OutDir is required")
 	}
 
-	// LogDir 为空表示调用方不希望读取磁盘日志（例如测试 App 仅导出内存 Ring），
-	// 此时跳过 readLogEntries，避免误读机器上属于其他 run 的生产日志。
-	var entries []logs.Entry
-	if options.LogDir != "" {
-		diskEntries, err := readLogEntries(options.LogDir)
-		if err != nil {
-			return ExportResult{}, err
-		}
-		entries = diskEntries
-	}
-	entries = mergeRingEntries(entries, options.RingEntries)
-	// 第二层保护：裁剪前优先保留当前 run 的事件，避免历史日志再次挤掉本次
-	// 运行的关键事件（根本保护仍是测试不写生产日志目录）。
-	entries, preTruncated := prioritizeCurrentRun(entries, options.Manifest.RunID, options.MaxEvents)
+	entries := append([]logs.Entry(nil), options.RingEntries...)
 	events, truncated := trimEntries(entries, options.MaxEvents, options.MaxBytes)
-	truncated = truncated || preTruncated
 	// 默认折叠自由文本 Message 与路径类 Field，诊断包不泄露原始错误正文与路径；
 	// --include-paths 时才放行原文。
 	events = logs.SanitizeEntries(events, options.IncludePaths)
@@ -199,7 +173,6 @@ func Export(options ExportOptions) (ExportResult, error) {
 		return ExportResult{}, fmt.Errorf("commit export zip: %w", err)
 	}
 	committed = true
-	cleanupOldExports(outDir, exportKeepCount)
 	return ExportResult{Path: path, Events: len(events), Truncated: truncated}, nil
 }
 
@@ -210,147 +183,6 @@ func randomExportSuffix() string {
 		return "0000"
 	}
 	return hex.EncodeToString(buf[:])
-}
-
-// cleanupOldExports 只保留最近 keep 个诊断包（文件名时间戳字典序即时间序），
-// 删除失败静默忽略——清理是尽力而为，不影响本次导出结果。
-func cleanupOldExports(outDir string, keep int) {
-	matches, err := filepath.Glob(filepath.Join(outDir, exportFilePrefix+"*.zip"))
-	if err != nil || len(matches) <= keep {
-		return
-	}
-	sort.Strings(matches)
-	for _, stale := range matches[:len(matches)-keep] {
-		_ = os.Remove(stale)
-	}
-}
-
-// readLogEntries 按从旧到新顺序读取 agent.jsonl 的备份与当前文件。
-func readLogEntries(logDir string) ([]logs.Entry, error) {
-	var paths []string
-	for i := logs.DefaultLogBackups; i >= 1; i-- {
-		paths = append(paths, filepath.Join(logDir, fmt.Sprintf("agent.jsonl.%d", i)))
-	}
-	paths = append(paths, filepath.Join(logDir, "agent.jsonl"))
-
-	seen := make(map[string]struct{})
-	var entries []logs.Entry
-	for _, path := range paths {
-		file, err := os.Open(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("open log file %s: %w", path, err)
-		}
-		scanner := bufio.NewScanner(file)
-		scanner.Buffer(make([]byte, 64*1024), 1<<20)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
-			}
-			var entry logs.Entry
-			if err := json.Unmarshal(line, &entry); err != nil {
-				continue // 跳过崩溃造成的半行，不中断导出
-			}
-			key := entryKey(entry)
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			entries = append(entries, entry)
-		}
-		file.Close()
-	}
-	sort.Slice(entries, func(i, j int) bool { return entryLess(entries[i], entries[j]) })
-	return entries, nil
-}
-
-// mergeRingEntries 把内存 Ring 事件并入磁盘事件，按 entryKey 去重。
-func mergeRingEntries(disk []logs.Entry, ring []logs.Entry) []logs.Entry {
-	if len(ring) == 0 {
-		return disk
-	}
-	seen := make(map[string]struct{}, len(disk))
-	for _, entry := range disk {
-		seen[entryKey(entry)] = struct{}{}
-	}
-	merged := disk
-	for _, entry := range ring {
-		key := entryKey(entry)
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		merged = append(merged, entry)
-	}
-	sort.Slice(merged, func(i, j int) bool { return entryLess(merged[i], merged[j]) })
-	return merged
-}
-
-// entryKey 返回导出去重键。带 RunID 的条目以 RunID+Seq 为键：不同运行相同 Seq
-// 的事件互不覆盖，同一运行磁盘与 Ring 中的同一条目只保留一次。无 RunID 的旧版
-// 条目以内容指纹（time+seq+source+event+message）为键：相同 seq 的旧日志互不
-// 覆盖，完全相同的磁盘/Ring 副本只保留一次。
-func entryKey(entry logs.Entry) string {
-	if entry.RunID != "" {
-		return "r\x00" + entry.RunID + "\x00" + strconv.FormatUint(entry.Seq, 10)
-	}
-	hash := fnv.New64a()
-	hash.Write([]byte("legacy\x00"))
-	hash.Write([]byte(strconv.FormatInt(entry.Time.UnixNano(), 10)))
-	hash.Write([]byte{0})
-	hash.Write([]byte(strconv.FormatUint(entry.Seq, 10)))
-	hash.Write([]byte{0})
-	hash.Write([]byte(entry.Source))
-	hash.Write([]byte{0})
-	hash.Write([]byte(entry.Event))
-	hash.Write([]byte{0})
-	hash.Write([]byte(entry.Message))
-	return "l\x00" + strconv.FormatUint(hash.Sum64(), 16)
-}
-
-// entryLess 以时间为主排序；同一时间按 RunID 区分，同一运行同一时间再按 Seq。
-// 时间优先保证多运行混合时截断逻辑仍保留“按时间最新”的事件。
-func entryLess(a, b logs.Entry) bool {
-	if !a.Time.Equal(b.Time) {
-		return a.Time.Before(b.Time)
-	}
-	if a.RunID != b.RunID {
-		return a.RunID < b.RunID
-	}
-	return a.Seq < b.Seq
-}
-
-// prioritizeCurrentRun 在裁剪前把当前 run 的事件排进保留窗口：当前 run 事件
-// 全部优先保留（受 maxEvents 上限约束），剩余条数预算再填充最新的历史事件。
-// 返回切片仍按 entryLess 排序，交由 trimEntries 继续按字节预算截断。
-// 第二个返回值标记本步骤是否丢弃了事件（用于汇总 Truncated 标志）。
-// runID 为空（旧版兼容）或总量未超预算时原样返回，不改变既有行为。
-func prioritizeCurrentRun(entries []logs.Entry, runID string, maxEvents int) ([]logs.Entry, bool) {
-	if runID == "" || len(entries) <= maxEvents {
-		return entries, false
-	}
-	var current, historical []logs.Entry
-	for _, entry := range entries {
-		if entry.RunID == runID {
-			current = append(current, entry)
-		} else {
-			historical = append(historical, entry)
-		}
-	}
-	// 当前 run 自身即超过预算：只保留最新的 maxEvents 条当前 run 事件。
-	if len(current) >= maxEvents {
-		return current[len(current)-maxEvents:], true
-	}
-	budget := maxEvents - len(current)
-	if len(historical) > budget {
-		historical = historical[len(historical)-budget:]
-	}
-	merged := append(historical, current...)
-	sort.Slice(merged, func(i, j int) bool { return entryLess(merged[i], merged[j]) })
-	return merged, true
 }
 
 // trimEntries 保留最新的事件：先按条数，再按编码后字节预算截断最旧记录。

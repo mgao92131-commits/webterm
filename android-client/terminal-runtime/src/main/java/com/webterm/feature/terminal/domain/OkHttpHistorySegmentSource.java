@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.core.api.WebTermUrls;
+import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
@@ -15,7 +16,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntSupplier;
@@ -63,6 +66,7 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
   @NonNull @Override
   public RequestHandle fetch(@NonNull SegmentKey key, @NonNull HistorySegmentSource.Callback callback) {
     if (closed.get()) {
+      emitFetchResult(key, 0, FailureKind.SESSION_GONE, null, 0, 0);
       callbackExecutor.execute(() -> callback.onFailure(
           new Failure(FailureKind.SESSION_GONE, 0, key.generation)));
       return () -> {};
@@ -78,6 +82,7 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
     call.enqueue(new okhttp3.Callback() {
       @Override public void onFailure(@NonNull Call call, @NonNull IOException e) {
         if (call.isCanceled() || closed.get()) return;
+        emitFetchResult(key, 0, FailureKind.NETWORK, null, 250, 0);
         callbackExecutor.execute(() -> callback.onFailure(
             new Failure(FailureKind.NETWORK, 250, key.generation)));
       }
@@ -87,14 +92,16 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
           if (call.isCanceled() || closed.get()) return;
           int code = response.code();
           if (code == 401 || code == 403) {
+            emitFetchResult(key, code, FailureKind.AUTH_REQUIRED, null, 0, 0);
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(FailureKind.AUTH_REQUIRED, 0, key.generation)));
             return;
           }
           ResponseBody body = response.body();
           if (body == null) {
-            callbackExecutor.execute(() -> callback.onFailure(
-                mapHttpOnlyFailure(code, key.generation)));
+            Failure mapped = mapHttpOnlyFailure(code, key.generation);
+            emitFetchResult(key, code, mapped.kind, null, mapped.retryAfterMs, 0);
+            callbackExecutor.execute(() -> callback.onFailure(mapped));
             return;
           }
           String contentType = response.header("Content-Type", "");
@@ -102,12 +109,14 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
               && !contentType.contains(PROTO_CONTENT_TYPE)
               && code != 200) {
             // 非 protobuf 错误页：用 HTTP 兜底。
-            callbackExecutor.execute(() -> callback.onFailure(
-                mapHttpOnlyFailure(code, key.generation)));
+            Failure mapped = mapHttpOnlyFailure(code, key.generation);
+            emitFetchResult(key, code, mapped.kind, null, mapped.retryAfterMs, 0);
+            callbackExecutor.execute(() -> callback.onFailure(mapped));
             return;
           }
           long declared = body.contentLength();
           if (declared > MAX_BODY_BYTES) {
+            emitFetchResult(key, code, FailureKind.PROTOCOL, null, 0, declared);
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(FailureKind.PROTOCOL, 0, key.generation)));
             return;
@@ -116,6 +125,7 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
           try {
             bytes = readBounded(body.byteStream(), MAX_BODY_BYTES);
           } catch (IOException oversized) {
+            emitFetchResult(key, code, FailureKind.PROTOCOL, null, 0, 0);
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(FailureKind.PROTOCOL, 0, key.generation)));
             return;
@@ -124,8 +134,9 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
           try {
             pb = TerminalHistoryProto.HistorySegmentResponse.parseFrom(bytes);
           } catch (Exception parseFailed) {
-            callbackExecutor.execute(() -> callback.onFailure(
-                mapHttpOnlyFailure(code, key.generation)));
+            Failure mapped = mapHttpOnlyFailure(code, key.generation);
+            emitFetchResult(key, code, mapped.kind, null, mapped.retryAfterMs, bytes.length);
+            callbackExecutor.execute(() -> callback.onFailure(mapped));
             return;
           }
           if (pb.getStatus() != TerminalHistoryProto.HistorySegmentStatus.HISTORY_SEGMENT_STATUS_OK
@@ -136,19 +147,24 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
             }
             long retry = pb.getRetryAfterMs();
             FailureKind finalKind = kind;
+            emitFetchResult(key, code, finalKind, pb.getStatus().name(), retry, bytes.length);
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(finalKind, retry, pb.getHistoryGeneration())));
             return;
           }
           DecodedHistorySegment decoded = decode(pb, key);
           if (decoded == null) {
+            emitFetchResult(key, code, FailureKind.PROTOCOL,
+                pb.getStatus().name(), 0, bytes.length);
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(FailureKind.PROTOCOL, 0, key.generation)));
             return;
           }
+          emitFetchResult(key, code, null, pb.getStatus().name(), 0, bytes.length);
           callbackExecutor.execute(() -> callback.onResult(decoded));
         } catch (Exception ex) {
           if (call.isCanceled() || closed.get()) return;
+          emitFetchResult(key, response.code(), FailureKind.PROTOCOL, null, 0, 0);
           callbackExecutor.execute(() -> callback.onFailure(
               new Failure(FailureKind.PROTOCOL, 0, key.generation)));
         } finally {
@@ -161,6 +177,31 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
 
   @Override public void close() {
     closed.set(true);
+  }
+
+  private void emitFetchResult(
+      @NonNull SegmentKey key,
+      int httpCode,
+      @Nullable FailureKind failureKind,
+      @Nullable String pbStatus,
+      long retryAfterMs,
+      long bodyBytes) {
+    Map<String, Object> fields = new HashMap<>();
+    fields.put("sessionId", sessionId);
+    fields.put("generation", key.generation);
+    fields.put("segmentNumber", key.number);
+    fields.put("httpCode", httpCode);
+    fields.put("retryAfterMs", retryAfterMs);
+    fields.put("bodyBytes", bodyBytes);
+    if (pbStatus != null) {
+      fields.put("pbStatus", pbStatus);
+    }
+    if (failureKind != null) {
+      fields.put("failureKind", failureKind.name());
+      Diagnostics.warn("history_segment", "fetch_result", fields);
+    } else {
+      Diagnostics.info("history_segment", "fetch_result", fields);
+    }
   }
 
   @Nullable

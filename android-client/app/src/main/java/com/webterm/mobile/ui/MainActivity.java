@@ -10,6 +10,7 @@ import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.webterm.mobile.R;
+import com.webterm.mobile.diagnostics.DiagnosticLogExporter;
 import com.webterm.mobile.device.AndroidNotificationRenderer;
 import com.webterm.mobile.device.WebTermDeviceService;
 import com.webterm.core.config.ServerConfig;
@@ -92,6 +93,7 @@ public final class MainActivity extends FragmentActivity implements HomeHost, Te
 
     @Override protected void onResume() {
         super.onResume();
+        DiagnosticLogExporter.cleanupAfterShareIfNeeded();
         coordinator.onResume();
         WebTermDeviceService.markActive();
     }

@@ -13,6 +13,11 @@ public final class HistoryMutation {
     this(finalExtent, encode(appendedLines), Collections.emptyList(), 0);
   }
 
+  public HistoryMutation(HistoryExtent finalExtent, List<TerminalLine> appendedLines,
+                         long sealedThroughSeq) {
+    this(finalExtent, encode(appendedLines), Collections.emptyList(), sealedThroughSeq);
+  }
+
   private HistoryMutation(HistoryExtent finalExtent, List<LineData> appendedLines,
                           List<HistoryPromotion> promotions, long sealedThroughSeq) {
     this.finalExtent = finalExtent;

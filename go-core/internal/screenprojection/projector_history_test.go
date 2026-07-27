@@ -253,8 +253,8 @@ func TestProjector_PatchCarriesHistoryIDsAndOnlyUnknownLineContent(t *testing.T)
 	assertStateEquivalent(t, state, forceFullExport(p, 3))
 }
 
-// Commit 用 final extent 解耦逻辑历史推进与随帧正文，因此大窗口不回退 Snapshot。
-func TestProjector_LargeHistoryAdvanceStaysCommit(t *testing.T) {
+// 未封存热尾行数不受 64 行冷历史预算限制：一次大推进仍可走 Commit，但必须带齐热尾正文。
+func TestProjector_LargeHistoryAdvanceSendsFullUnsealedHotTail(t *testing.T) {
 	engine, _, p := newHistoryRig(t, 24, 20)
 	fillScreenStable(t, engine, 24)
 
@@ -265,29 +265,101 @@ func TestProjector_LargeHistoryAdvanceStaysCommit(t *testing.T) {
 	}
 	deriver.deriveAndSeedForTest(baseline)
 
-	// 历史追加量超过首屏窗口容量，中间行无法由 append 补齐。
 	regionScrollLines(t, engine, snapshotTailLines+1)
 	state := p.ExportState(0, 2)
 	frame := deriver.deriveAndSeedForTest(state)
-	if frame.Kind != terminalengine.FramePatch {
-		t.Fatalf("large history advance must stay incremental, got kind=%v", frame.Kind)
+	if frame.Kind != terminalengine.FramePatch && frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("unexpected kind=%v", frame.Kind)
 	}
-	if got := len(frame.History.Lines); got > defaultMaxAppendedScrollbackEntrys {
-		t.Fatalf("commit history lines=%d, exceeds budget %d", got, defaultMaxAppendedScrollbackEntrys)
+	covered := make(map[uint64]struct{}, len(frame.History.Lines)+len(frame.HistoryPromotions))
+	for _, line := range frame.History.Lines {
+		covered[line.HistorySeq] = struct{}{}
 	}
-	if len(frame.HistoryPromotions) == 0 {
-		t.Fatal("old active rows were not promoted")
+	for _, promo := range frame.HistoryPromotions {
+		covered[promo.HistorySeq] = struct{}{}
 	}
-	if frame.History.FirstAvailableHistorySeq != state.History.FirstAvailableHistorySeq ||
-		frame.History.LastIncludedHistorySeq != state.History.LastIncludedHistorySeq {
-		t.Fatalf("commit final extent wrong: %+v", frame.History)
+	sealed := state.History.SealedThroughSeq
+	unsealedNew := 0
+	for _, line := range state.History.Lines {
+		if sealed != 0 && line.HistorySeq <= sealed {
+			continue
+		}
+		unsealedNew++
+		if _, ok := covered[line.HistorySeq]; !ok {
+			t.Fatalf("unsealed seq %d missing from %v coverage", line.HistorySeq, frame.Kind)
+		}
 	}
-	for i := 1; i < len(frame.History.Lines); i++ {
-		if frame.History.Lines[i-1].HistorySeq >= frame.History.Lines[i].HistorySeq {
-			t.Fatal("budgeted appended history is not monotone")
+	if frame.Kind == terminalengine.FramePatch && unsealedNew > defaultMaxAppendedScrollbackEntrys {
+		if len(frame.History.Lines)+len(frame.HistoryPromotions) <= defaultMaxAppendedScrollbackEntrys {
+			t.Fatalf("hot-tail bodies still capped by cold budget: append=%d promo=%d unsealed=%d",
+				len(frame.History.Lines), len(frame.HistoryPromotions), unsealedNew)
 		}
 	}
 	assertStateEquivalent(t, state, forceFullExport(p, 3))
+}
+
+// 字节预算裁掉未封存热尾时必须退化 Baseline，不能静默留洞。
+func TestProjector_HotTailByteBudgetFallsBackToBaseline(t *testing.T) {
+	engine, _, p := newHistoryRig(t, 24, 20)
+	fillScreenStable(t, engine, 24)
+
+	var deriver FrameDeriver
+	deriver.SetHistoryAppendBudget(defaultMaxAppendedScrollbackEntrys, 1) // 几乎立刻触达字节上限
+	baseline := p.ExportState(0, 1)
+	deriver.deriveAndSeedForTest(baseline)
+
+	regionScrollLines(t, engine, 40)
+	state := p.ExportState(0, 2)
+	frame := deriver.deriveAndSeedForTest(state)
+	if frame.Kind != terminalengine.FrameSnapshot {
+		t.Fatalf("byte-truncated hot tail must fall back to baseline, got kind=%v lines=%d",
+			frame.Kind, len(frame.History.Lines))
+	}
+	if got := len(frame.History.Lines); got != len(state.History.Lines) {
+		t.Fatalf("baseline must carry full hot window: got %d want %d", got, len(state.History.Lines))
+	}
+}
+
+// 已封存冷历史上的正文仍可按行预算截断：客户端可经 HTTP Segment 补洞。
+func TestProjector_SealedColdHistoryMayBudgetAppendBodies(t *testing.T) {
+	engine, sb, p := newHistoryRig(t, 24, 20)
+	fillScreenStable(t, engine, 24)
+	// 先推过至少一个完整封存段，使后续窗口含已封存前缀。
+	regionScrollLines(t, engine, snapshotTailLines+40)
+	var deriver FrameDeriver
+	seed := p.ExportState(0, 1)
+	if seed.History.SealedThroughSeq < snapshotTailLines {
+		t.Fatalf("need sealed history, sealed=%d", seed.History.SealedThroughSeq)
+	}
+	deriver.deriveAndSeedForTest(seed)
+
+	regionScrollLines(t, engine, 80)
+	state := p.ExportState(0, 2)
+	_ = sb
+	frame := deriver.deriveAndSeedForTest(state)
+	if frame.Kind != terminalengine.FramePatch {
+		t.Fatalf("sealed cold budget path should stay commit, got kind=%v", frame.Kind)
+	}
+	// 未封存后缀必须全部在 append∪promotion 中；已封存新增可被行预算截断。
+	sealed := state.History.SealedThroughSeq
+	covered := make(map[uint64]struct{}, len(frame.History.Lines)+len(frame.HistoryPromotions))
+	for _, line := range frame.History.Lines {
+		covered[line.HistorySeq] = struct{}{}
+	}
+	for _, promo := range frame.HistoryPromotions {
+		covered[promo.HistorySeq] = struct{}{}
+	}
+	for _, line := range state.History.Lines {
+		if sealed != 0 && line.HistorySeq <= sealed {
+			continue
+		}
+		if line.HistorySeq <= seed.History.LastIncludedHistorySeq {
+			continue
+		}
+		if _, ok := covered[line.HistorySeq]; !ok {
+			t.Fatalf("unsealed seq %d missing from commit coverage", line.HistorySeq)
+		}
+	}
 }
 
 // §6.4：resize（layoutEpoch 变化）走全量路径——客户端得 snapshot；历史本身

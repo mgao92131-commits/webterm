@@ -35,20 +35,17 @@ type BuildInfo struct {
 }
 
 type App struct {
-	cfg          config.Config
-	version      string
-	buildInfo    BuildInfo
-	runID        string
-	sessions     *session.Manager
-	fileSend     *filesend.Service
-	fileUpload   *fileupload.Service
-	agentNotify  *agentnotify.Dispatcher
-	logger       *logs.Logger
-	sink         *logs.FileSink
-	logDir       string
-	readDiskLogs bool
-	mu           sync.RWMutex
-	ipcEndpoint  string
+	cfg         config.Config
+	version     string
+	buildInfo   BuildInfo
+	runID       string
+	sessions    *session.Manager
+	fileSend    *filesend.Service
+	fileUpload  *fileupload.Service
+	agentNotify *agentnotify.Dispatcher
+	logger      *logs.Logger
+	mu          sync.RWMutex
+	ipcEndpoint string
 
 	// relay 连接状态（由 SetRelayConnected 更新），仅供诊断只读快照使用。
 	relayConnected  bool
@@ -58,45 +55,13 @@ type App struct {
 	relayLastErrorKind RelayErrorKind
 }
 
-// Options 控制 App 的可选行为。日志落盘与读盘都被建模为显式依赖，使测试可以
-// 构造既不写也不读生产日志的 App，从根本上避免测试污染或误读正式 runtime 日志
-// 目录（不依赖检测 os.Args 或 testing 环境变量）。
-type Options struct {
-	// LogDir 是 FileSink 落盘目录。PersistentLogs 为 true 且 LogDir 为空时，
-	// 回退到按 IPC endpoint 隔离的默认 runtime 日志目录。
-	LogDir string
-	// PersistentLogs 决定是否创建 FileSink 落盘。普通单元测试应传 false。
-	PersistentLogs bool
-	// ReadDiskLogs 决定 ExportDiagnostics 是否读取磁盘日志。false 时导出只携带
-	// 内存 Ring，不会触碰机器上的（可能属于其他 run 的）生产日志。
-	ReadDiskLogs bool
-}
-
-// DefaultOptions 返回生产默认：落盘到按 endpoint 隔离的 runtime 日志目录，
-// 诊断导出读取同一目录。
-func DefaultOptions(ipcEndpoint string) Options {
-	return Options{
-		LogDir:         filepath.Join(agenthooks.RuntimeBaseDir(ipcEndpoint), "logs"),
-		PersistentLogs: true,
-		ReadDiskLogs:   true,
-	}
-}
-
-// New 是测试/诊断工具用的便捷构造函数：默认不落盘、不读盘，避免污染或误读
-// 正式日志目录。生产入口请使用 NewWithBuildInfoAndOptions 并显式开启持久化。
+// New 是测试/诊断工具用的便捷构造函数。
 func New(cfg config.Config, version string) *App {
-	return NewWithBuildInfoAndOptions(cfg,
-		BuildInfo{Version: version, GitCommit: "unknown", BuildTime: "unknown"},
-		Options{PersistentLogs: false})
+	return NewWithBuildInfo(cfg,
+		BuildInfo{Version: version, GitCommit: "unknown", BuildTime: "unknown"})
 }
 
-// NewWithBuildInfo 是库级便捷构造函数：默认无副作用（不落盘、不读盘）。
-// 正式 cmd 入口应使用 NewWithBuildInfoAndOptions / DefaultOptions 显式启用持久化。
 func NewWithBuildInfo(cfg config.Config, buildInfo BuildInfo) *App {
-	return NewWithBuildInfoAndOptions(cfg, buildInfo, Options{PersistentLogs: false})
-}
-
-func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options Options) *App {
 	if buildInfo.Version == "" {
 		buildInfo.Version = "0.1.0-dev"
 	}
@@ -134,23 +99,6 @@ func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options 
 	runtimeHookDir := agenthooks.RuntimeBaseDir(ipcEndpoint)
 	hookReady := installShellHook(logger, runtimeHookDir)
 
-	// 本地 JSONL 落盘：与 ExportDiagnostics 读取的日志目录一致（按 runtime 隔离）。
-	// 落盘是非关键能力，失败时降级为仅内存 Ring，不阻塞 Agent 启动。
-	// 仅当 options.PersistentLogs 为 true 时创建 FileSink，测试可显式关闭。
-	logDir := options.LogDir
-	if logDir == "" {
-		logDir = filepath.Join(runtimeHookDir, "logs")
-	}
-	var sink *logs.FileSink
-	if options.PersistentLogs {
-		if fileSink, sinkErr := logs.NewFileSink(logDir, 0, -1); sinkErr != nil {
-			logger.Add("warn", "diagnostics", fmt.Sprintf("log file sink unavailable: %v", sinkErr))
-		} else {
-			sink = fileSink
-			logger.SetSink(sink)
-		}
-	}
-
 	manager := session.NewManager(session.TerminalDefaults{
 		CWD:                cfg.Shell.CWD,
 		Command:            cfg.Shell.Command,
@@ -186,9 +134,6 @@ func NewWithBuildInfoAndOptions(cfg config.Config, buildInfo BuildInfo, options 
 		buildInfo:       buildInfo,
 		runID:           runID,
 		logger:          logger,
-		sink:            sink,
-		logDir:          logDir,
-		readDiskLogs:    options.ReadDiskLogs,
 		ipcEndpoint:     ipcEndpoint,
 		sessions:        manager,
 		fileSend:        fileSendSvc,
@@ -310,21 +255,8 @@ func (app *App) RunID() string { return app.runID }
 // BuildInfo 返回构建时注入的版本信息。
 func (app *App) BuildInfo() BuildInfo { return app.buildInfo }
 
-// Shutdown 永久关闭诊断日志落盘：先把 logger 的 sink 摘下来（其后的日志只进
-// 内存 Ring），再永久关闭文件句柄（迟到的 Write 返回错误而不是重开文件）。
-// 幂等，关闭失败不阻塞 Agent 退出。
-func (app *App) Shutdown() {
-	app.mu.Lock()
-	sink := app.sink
-	app.sink = nil
-	app.mu.Unlock()
-	if app.logger != nil {
-		app.logger.SetSink(nil)
-	}
-	if sink != nil {
-		_ = sink.ClosePermanent()
-	}
-}
+// Shutdown 在 Agent 退出时调用；诊断日志仅存于内存，进程结束后自然释放。幂等。
+func (app *App) Shutdown() {}
 
 // diagnosticsRecentLogLimit 是诊断摘要中携带的最近日志条数上限。
 const diagnosticsRecentLogLimit = 100
@@ -440,8 +372,7 @@ func endpointKind(endpoint string) string {
 const diagnosticsRingLimit = 5000
 
 // ExportDiagnostics 生成诊断包 ZIP 并返回实际输出路径（满足 localipc.Application）。
-// 复用任务 1 的 diagnostics.Export：磁盘日志由 FileSink 写入与导出读取同一目录；
-// 无磁盘日志时仍包含内存 Ring 事件、指标与状态（diagnostics.Export 对缺失日志容错）。
+// 导出只携带当前进程内存 Ring 事件、指标与状态。
 // 默认 state.json 中的会话 id/termTitle 已脱敏；includePaths 为 true 时恢复完整值。
 // 任何失败都以 error 返回（并 recover 兜底），绝不影响 Agent 主循环。
 func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path string, err error) {
@@ -451,21 +382,10 @@ func (app *App) ExportDiagnostics(exportDir string, includePaths bool) (path str
 			err = fmt.Errorf("diagnostics export panic: %v", recovered)
 		}
 	}()
-	baseDir := agenthooks.RuntimeBaseDir(app.IPCEndpoint())
-	// 仅在显式开启 ReadDiskLogs 时读取磁盘日志（生产）；否则 LogDir 传空，
-	// 导出只携带内存 Ring，避免测试 App 误读机器上属于其他 run 的生产日志。
-	logDir := ""
-	if app.readDiskLogs {
-		logDir = app.logDir
-		if logDir == "" {
-			logDir = filepath.Join(baseDir, "logs")
-		}
-	}
 	if exportDir == "" {
-		exportDir = filepath.Join(baseDir, "diagnostics")
+		exportDir = filepath.Join(agenthooks.RuntimeBaseDir(app.IPCEndpoint()), "diagnostics")
 	}
 	result, err := diagnostics.Export(diagnostics.ExportOptions{
-		LogDir: logDir,
 		OutDir: exportDir,
 		Manifest: diagnostics.Manifest{
 			Version:            app.version,

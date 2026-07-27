@@ -268,10 +268,33 @@ const (
 
 // SegmentFetchResult 是不进入 actor 的并发安全分段查询结果。
 type SegmentFetchResult struct {
-	Status       SegmentFetchStatus
-	Segment      *historysegment.Segment
-	Generation   uint64
-	RetryAfterMS uint32
+	Status           SegmentFetchStatus
+	Segment          *historysegment.Segment
+	Generation       uint64
+	RetryAfterMS     uint32
+	SealedThroughSeq uint64
+	TrimBeforeSeq    uint64
+	StoreHit         bool
+}
+
+// SegmentFetchStatusName 返回诊断用的稳定状态名。
+func SegmentFetchStatusName(status SegmentFetchStatus) string {
+	switch status {
+	case SegmentFetchOK:
+		return "OK"
+	case SegmentFetchStaleGeneration:
+		return "STALE_GENERATION"
+	case SegmentFetchNotSealed:
+		return "NOT_SEALED"
+	case SegmentFetchTrimmed:
+		return "TRIMMED"
+	case SegmentFetchNotFound:
+		return "NOT_FOUND"
+	case SegmentFetchRetryable:
+		return "RETRYABLE"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 // FetchSealedSegment 校验 Catalog 后从不可变 Store 读取分段。
@@ -284,7 +307,11 @@ func (r *Runtime) FetchSealedSegment(generation, segmentNumber uint64) SegmentFe
 		return SegmentFetchResult{Status: SegmentFetchRetryable, RetryAfterMS: 125, Generation: generation}
 	}
 	catalog := r.scrollback.HistoryCatalog()
-	result := SegmentFetchResult{Generation: catalog.Generation}
+	result := SegmentFetchResult{
+		Generation:       catalog.Generation,
+		SealedThroughSeq: catalog.SealedThroughSeq,
+		TrimBeforeSeq:    catalog.TrimBeforeSeq,
+	}
 	if generation == 0 || generation != catalog.Generation {
 		result.Status = SegmentFetchStaleGeneration
 		return result
@@ -311,6 +338,7 @@ func (r *Runtime) FetchSealedSegment(generation, segmentNumber uint64) SegmentFe
 	}
 	result.Status = SegmentFetchOK
 	result.Segment = seg
+	result.StoreHit = true
 	return result
 }
 

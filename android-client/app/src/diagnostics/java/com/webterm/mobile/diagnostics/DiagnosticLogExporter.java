@@ -23,17 +23,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
@@ -41,21 +36,29 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Debug/Diag 专用：只导出有界的本地诊断日志，不包含终端正文或 PTY 捕获。
- * 导出包脱敏：server/deviceId/channelId 一律以每次导出随机 salt 的哈希形式输出，
- * 包内同一标识哈希一致、跨包不可关联；日志文件内的标识在写入时已用进程级 salt 哈希化。
- * 写入先落 .tmp、完成后 rename，失败删除临时文件；历史导出包最多保留 {@link #MAX_ARCHIVES} 个。
+ * Debug/Diag 专用：导出当前进程内存 Ring 与指标快照，不包含终端正文或 PTY 捕获。
+ * 导出包脱敏：server/deviceId/channelId 一律以每次导出随机 salt 的哈希形式输出。
+ * 写入先落 .tmp、完成后 rename；分享返回后删除临时导出文件。
  */
 public final class DiagnosticLogExporter {
-    private static final int BUFFER_SIZE = 8 * 1024;
-    /** 历史导出包保留上限。 */
-    static final int MAX_ARCHIVES = 5;
     private static final String ARCHIVE_PREFIX = "webterm-diagnostics-";
+
+    private static volatile File pendingShareArchive = null;
 
     private DiagnosticLogExporter() {}
 
     public static boolean isAvailable() {
         return true;
+    }
+
+    /** 分享流程结束后（用户从分享目标返回）清理临时导出文件。 */
+    public static void cleanupAfterShareIfNeeded() {
+        File archive = pendingShareArchive;
+        if (archive != null) {
+            //noinspection ResultOfMethodCallIgnored
+            archive.delete();
+            pendingShareArchive = null;
+        }
     }
 
     public static void share(Activity activity) {
@@ -70,46 +73,31 @@ public final class DiagnosticLogExporter {
         }, "webterm-diagnostic-export").start();
     }
 
-    private static File createArchive(Activity activity) throws IOException {
-        // 导出前强制 trim：保证 ZIP 只含预算内的日志，且日志目录回落到容量约束内。
-        DiagnosticLogFiles.trim(activity);
-        List<File> logs = DiagnosticLogFiles.list(activity);
+    private static File createArchive(Context context) throws IOException {
+        clearExportDirectory(context);
 
-        File exportDir = new File(activity.getCacheDir(), "diagnostics-export");
+        File exportDir = new File(context.getCacheDir(), "diagnostics-export");
         if (!exportDir.exists() && !exportDir.mkdirs()) {
             throw new IOException("cannot create export directory");
         }
         File archive = new File(exportDir, newArchiveName());
         File temp = new File(exportDir, archive.getName() + ".tmp");
-        // 每次导出随机 salt：包内同一标识哈希一致，跨导出包不可关联。
         String salt = DiagnosticIdHasher.randomSalt();
         try {
             try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(temp))) {
-                byte[] buffer = new byte[BUFFER_SIZE];
-                for (File log : logs) {
-                    if (!log.isFile()) continue;
-                    output.putNextEntry(new ZipEntry(log.getName()));
-                    try (BufferedInputStream input = new BufferedInputStream(new FileInputStream(log))) {
-                        int count;
-                        while ((count = input.read(buffer)) != -1) {
-                            output.write(buffer, 0, count);
-                        }
-                    }
-                    output.closeEntry();
-                }
+                writeEventsJsonl(output, DiagnosticMemoryRing.getInstance().snapshot());
                 output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
-                output.write(buildTrafficSummary(salt).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                output.write(buildTrafficSummary(salt).getBytes(StandardCharsets.UTF_8));
                 output.closeEntry();
                 try {
-                    writeJsonEntry(output, "manifest.json", buildManifestJson(activity));
+                    writeJsonEntry(output, "manifest.json", buildManifestJson(context));
                     writeJsonEntry(output, "android-metrics.json", buildMetricsJson(salt));
-                    writeJsonEntry(output, "android-state.json", buildStateJson(activity));
+                    writeJsonEntry(output, "android-state.json", buildStateJson());
                 } catch (JSONException e) {
                     throw new IOException("failed to build diagnostics json", e);
                 }
             }
         } catch (IOException | RuntimeException e) {
-            // 失败清理临时文件，目录里不留半成品。
             //noinspection ResultOfMethodCallIgnored
             temp.delete();
             throw e;
@@ -119,49 +107,45 @@ public final class DiagnosticLogExporter {
             temp.delete();
             throw new IOException("cannot finalize diagnostics archive");
         }
-        pruneOldArchives(exportDir);
         return archive;
     }
 
-    /** 毫秒时间戳 + 随机后缀，保证并发导出文件名不冲突、同秒不覆盖。 */
+    private static void clearExportDirectory(Context context) {
+        File exportDir = new File(context.getCacheDir(), "diagnostics-export");
+        File[] files = exportDir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
+
+    private static void writeEventsJsonl(ZipOutputStream output, java.util.List<DiagnosticEntry> entries)
+        throws IOException {
+        output.putNextEntry(new ZipEntry("events.jsonl"));
+        for (DiagnosticEntry entry : entries) {
+            try {
+                String line = entry.toJson().toString() + "\n";
+                output.write(line.getBytes(StandardCharsets.UTF_8));
+            } catch (JSONException e) {
+                throw new IOException("encode diagnostic entry", e);
+            }
+        }
+        output.closeEntry();
+    }
+
     static String newArchiveName() {
         String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date());
         String suffix = DiagnosticIdHasher.randomSalt().substring(0, 8);
         return ARCHIVE_PREFIX + timestamp + "-" + suffix + ".zip";
     }
 
-    /** 历史导出包最多保留 MAX_ARCHIVES 个（按修改时间保留最新）；顺带清理残留的 .tmp。 */
-    static void pruneOldArchives(File exportDir) {
-        File[] files = exportDir.listFiles();
-        if (files == null) return;
-        List<File> archives = new ArrayList<>();
-        for (File file : files) {
-            String name = file.getName();
-            if (name.endsWith(".tmp")) {
-                //noinspection ResultOfMethodCallIgnored
-                file.delete();
-            } else if (name.startsWith(ARCHIVE_PREFIX) && name.endsWith(".zip")) {
-                archives.add(file);
-            }
-        }
-        if (archives.size() <= MAX_ARCHIVES) return;
-        Collections.sort(archives, new Comparator<File>() {
-            @Override
-            public int compare(File f1, File f2) {
-                return Long.compare(f1.lastModified(), f2.lastModified());
-            }
-        });
-        int toDelete = archives.size() - MAX_ARCHIVES;
-        for (int i = 0; i < toDelete; i++) {
-            //noinspection ResultOfMethodCallIgnored
-            archives.get(i).delete();
-        }
-    }
-
     private static void writeJsonEntry(ZipOutputStream output, String name, JSONObject json)
         throws IOException {
         output.putNextEntry(new ZipEntry(name));
-        output.write(json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        output.write(json.toString().getBytes(StandardCharsets.UTF_8));
         output.closeEntry();
     }
 
@@ -171,11 +155,12 @@ public final class DiagnosticLogExporter {
         return format.format(new Date());
     }
 
-    /** manifest.json：导出包 schema 版本、导出时间、应用版本与设备信息。 */
     private static JSONObject buildManifestJson(Context context) throws JSONException {
+        DiagnosticMemoryRing ring = DiagnosticMemoryRing.getInstance();
         JSONObject json = new JSONObject();
         json.put("schemaVersion", 1);
         json.put("exportedAt", isoNow());
+        json.put("runId", ring.runId());
         json.put("appVersion", appVersionName(context));
         json.put("gitCommit", BuildConfig.GIT_COMMIT);
         json.put("gitDirty", BuildConfig.GIT_DIRTY);
@@ -188,7 +173,6 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    /** android-metrics.json：网络流量、渲染指标与恢复指标快照；标识全部哈希化。 */
     static JSONObject buildMetricsJson(String salt) throws JSONException {
         JSONObject json = new JSONObject();
 
@@ -294,21 +278,16 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    /** android-state.json：导出时的本地状态摘要（当前时间、日志文件数与总字节）。 */
-    private static JSONObject buildStateJson(Context context) throws JSONException {
+    private static JSONObject buildStateJson() throws JSONException {
+        DiagnosticMemoryRing ring = DiagnosticMemoryRing.getInstance();
         JSONObject json = new JSONObject();
         json.put("generatedAt", isoNow());
-        List<File> logs = DiagnosticLogFiles.list(context);
-        int fileCount = 0;
-        for (File log : logs) {
-            if (log.isFile()) fileCount++;
-        }
-        json.put("logFileCount", fileCount);
-        json.put("logTotalBytes", DiagnosticLogFiles.totalBytes(context));
+        json.put("runId", ring.runId());
+        json.put("memoryEntryCount", ring.entryCount());
+        json.put("memoryTotalBytes", ring.totalBytes());
         return json;
     }
 
-    /** BuildConfig 未生成（buildFeatures.buildConfig=false），版本号从 PackageManager 读取。 */
     private static String appVersionName(Context context) {
         PackageManager pm = context.getPackageManager();
         try {
@@ -366,7 +345,12 @@ public final class DiagnosticLogExporter {
     }
 
     private static void shareArchive(Activity activity, File archive) {
-        if (activity.isFinishing()) return;
+        if (activity.isFinishing()) {
+            //noinspection ResultOfMethodCallIgnored
+            archive.delete();
+            return;
+        }
+        pendingShareArchive = archive;
         Uri uri = FileProvider.getUriForFile(activity,
             activity.getPackageName() + ".diagnostics", archive);
         Intent send = new Intent(Intent.ACTION_SEND);

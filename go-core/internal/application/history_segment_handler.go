@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"webterm/go-core/internal/logs"
 	pb "webterm/go-core/internal/screenprotocol/generatedv2"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/screenprotocolv2"
@@ -50,15 +51,25 @@ func isHistorySegmentRequest(method, path string) bool {
 }
 
 func (handler *TransferHTTPHandler) routeHistorySegment(sessionID string, generation, number uint64) *HTTPResult {
+	// 定性对照：Android fetch_result.failureKind ↔ 本事件 status
+	// （SESSION_GONE / NOT_SEALED / NOT_FOUND / TRIMMED / PROTOCOL/ENCODE_FAILED / OK）。
 	terminal, found := handler.sessions.manager.Get(sessionID)
 	if !found || terminal == nil {
-		return historySegmentResult(http.StatusNotFound,
+		result := historySegmentResult(http.StatusNotFound,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_SESSION_GONE, generation, nil, 0)
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusNotFound,
+			terminalsession.SegmentFetchResult{Status: terminalsession.SegmentFetchNotFound},
+			"SESSION_GONE")
+		return result
 	}
 	rt := terminal.ScreenRuntime()
 	if rt == nil {
-		return historySegmentResult(http.StatusNotFound,
+		result := historySegmentResult(http.StatusNotFound,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_SESSION_GONE, generation, nil, 0)
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusNotFound,
+			terminalsession.SegmentFetchResult{Status: terminalsession.SegmentFetchNotFound},
+			"SESSION_GONE")
+		return result
 	}
 	fetch := rt.FetchSealedSegment(generation, number)
 	switch fetch.Status {
@@ -68,29 +79,69 @@ func (handler *TransferHTTPHandler) routeHistorySegment(sessionID string, genera
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_OK,
 			fetch.Generation, fetch.Segment, exported.Lines, exported.Styles, exported.Links, 0)
 		if err != nil {
+			handler.logSegmentFetch(sessionID, generation, number, http.StatusInternalServerError, fetch, "ENCODE_FAILED")
 			return &HTTPResult{StatusCode: http.StatusInternalServerError, Data: []byte(err.Error())}
 		}
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusOK, fetch, "OK")
 		return &HTTPResult{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{historySegmentContentType}},
 			Data:       wire,
 		}
 	case terminalsession.SegmentFetchStaleGeneration:
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusConflict, fetch, "")
 		return historySegmentResult(http.StatusConflict,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_STALE_GENERATION, fetch.Generation, nil, 0)
 	case terminalsession.SegmentFetchNotSealed:
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusConflict, fetch, "")
 		return historySegmentResult(http.StatusConflict,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_NOT_SEALED, fetch.Generation, nil, 0)
 	case terminalsession.SegmentFetchTrimmed:
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusConflict, fetch, "")
 		return historySegmentResult(http.StatusConflict,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_TRIMMED, fetch.Generation, nil, 0)
 	case terminalsession.SegmentFetchRetryable:
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusTooManyRequests, fetch, "")
 		return historySegmentResult(http.StatusTooManyRequests,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_RETRYABLE, fetch.Generation, nil, fetch.RetryAfterMS)
 	default:
+		handler.logSegmentFetch(sessionID, generation, number, http.StatusNotFound, fetch, "")
 		return historySegmentResult(http.StatusNotFound,
 			pb.HistorySegmentStatus_HISTORY_SEGMENT_STATUS_NOT_FOUND, fetch.Generation, nil, 0)
 	}
+}
+
+func (handler *TransferHTTPHandler) logSegmentFetch(
+	sessionID string,
+	generation, number uint64,
+	httpStatus int,
+	fetch terminalsession.SegmentFetchResult,
+	statusOverride string,
+) {
+	if handler == nil || handler.logger == nil {
+		return
+	}
+	status := statusOverride
+	if status == "" {
+		status = terminalsession.SegmentFetchStatusName(fetch.Status)
+	}
+	level := "info"
+	if status != "OK" {
+		level = "warn"
+	}
+	handler.logger.Event(level, "history_segment", "segment_fetch", map[string]any{
+		"sessionId":          logs.SafeID(sessionID),
+		"generation":         generation,
+		"segmentNumber":      number,
+		"status":             status,
+		"httpStatus":         httpStatus,
+		"catalogGeneration":  fetch.Generation,
+		"sealedThroughSeq":   fetch.SealedThroughSeq,
+		"trimBeforeSeq":      fetch.TrimBeforeSeq,
+		"storeHit":           fetch.StoreHit,
+		"retryAfterMs":       fetch.RetryAfterMS,
+		"reason":             status, // 限流 discriminator：按状态分开窗口
+	})
 }
 
 func historySegmentResult(

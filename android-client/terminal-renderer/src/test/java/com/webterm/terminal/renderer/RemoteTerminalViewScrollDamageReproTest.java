@@ -142,7 +142,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
     extentLast++;
     applyCommit(null, new HistoryMutation(
         new HistoryExtent(extentFirst, extentLast), java.util.Collections.singletonList(
-            textLine(90_000L + extentLast, 1, extentLast, "hist-only"))), null);
+            textLine(90_000L + extentLast, 1, extentLast, "hist-only")),
+        extentLast), null);
     renderPendingModelUpdate();
   }
 
@@ -600,7 +601,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
                 ROWS - 1, textLine(id, 1, 0, "live-" + nextRevision)))),
         new HistoryMutation(new HistoryExtent(extentFirst, extentLast),
             java.util.Collections.singletonList(
-                textLine(off.id, off.version, extentLast, lineText(off)))), null);
+                textLine(off.id, off.version, extentLast, lineText(off))),
+            extentLast), null);
     renderPendingModelUpdate();
   }
 
@@ -680,7 +682,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
                 ROWS - 1, textLine(id, 1, 0, "s" + nextRevision)))),
         new HistoryMutation(new HistoryExtent(extentFirst, extentLast),
             java.util.Collections.singletonList(
-                textLine(off.id, off.version, extentLast, lineText(off)))), null);
+                textLine(off.id, off.version, extentLast, lineText(off))),
+            extentLast), null);
   }
 
   private void pumpCursorPatch(int col) {
@@ -695,7 +698,8 @@ public final class RemoteTerminalViewScrollDamageReproTest {
   private void pumpHeadEvictionDelta() {
     extentFirst += 2;
     applyCommit(null, new HistoryMutation(
-        new HistoryExtent(extentFirst, extentLast), java.util.Collections.emptyList()), null);
+        new HistoryExtent(extentFirst, extentLast), java.util.Collections.emptyList(),
+        extentLast), null);
     renderPendingModelUpdate();
   }
 

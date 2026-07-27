@@ -2,6 +2,8 @@ package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
+import com.webterm.terminal.model.HistoryBudget;
+import com.webterm.terminal.model.PagedTerminalHistory;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 
@@ -77,6 +79,21 @@ public class TerminalSelectionTextExtractorTest {
         new TerminalLine(7, 1, 2, false, cells("second")));
     TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(2, 6)).normalized();
     assertEquals("first\nsecond", extract(sel, history, null));
+  }
+
+  @Test
+  public void pagedHistorySelectionUsesSlotSeqWhenLineHistorySeqZeroed() {
+    // 模拟 LineStore 归零后的分页历史：正文 historySeq=0，位置只在槽位。
+    PagedTerminalHistory pages = new PagedTerminalHistory(
+        HistoryBudget.defaults(), line -> 64);
+    pages.edit()
+        .setExtent(10, 11)
+        .put(10, new TerminalLine(1000, 1, 0, false, cells("alpha")))
+        .put(11, new TerminalLine(1001, 1, 0, false, cells("bravo")))
+        .commit();
+    TerminalSelection sel = new TerminalSelection(hist(10, 0), hist(11, 5)).normalized();
+    assertEquals("alpha\nbravo",
+        TerminalSelectionTextExtractor.extract(sel, pages.snapshot(), null));
   }
 
   @Test

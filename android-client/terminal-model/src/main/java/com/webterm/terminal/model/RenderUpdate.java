@@ -6,10 +6,16 @@ public final class RenderUpdate {
   public final RenderDirtyState dirty;
   public final TerminalStateUpdate state;
 
-  RenderUpdate(RemoteTerminalModel.RenderSnapshot snapshot, RenderDirtyState dirty,
+  public RenderUpdate(RemoteTerminalModel.RenderSnapshot snapshot, RenderDirtyState dirty,
                TerminalStateUpdate state) {
     this.snapshot = snapshot;
     this.dirty = dirty;
     this.state = state;
+  }
+
+  public static RenderUpdate full(RemoteTerminalModel.RenderSnapshot snapshot) {
+    RenderDirtyState fullDirty = new RenderDirtyState();
+    fullDirty.fullInvalidate = true;
+    return new RenderUpdate(snapshot, fullDirty, new TerminalStateUpdate());
   }
 }

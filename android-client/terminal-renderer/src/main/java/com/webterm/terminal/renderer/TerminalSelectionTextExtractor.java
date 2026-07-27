@@ -23,7 +23,7 @@ final class TerminalSelectionTextExtractor {
    * 提取选择范围内的文本。
    *
    * @param selection 已归一化的选择范围（start <= end）
-   * @param history   按 {@link TerminalLine#historyOrder()}（HistorySeq）升序排列的历史行快照；可能为空
+   * @param history   按逻辑 HistorySeq 槽位排列的历史视图；可能为空
    * @param screen    活动屏幕行数组；可能为 null
    */
   static String extract(TerminalSelection selection, TerminalHistoryView history, TerminalLine[] screen) {
@@ -57,8 +57,12 @@ final class TerminalSelectionTextExtractor {
     if (endIndex < 0) endIndex = history.size() - 1;
 
     for (int i = startIndex; i <= endIndex && i < history.size(); i++) {
+      long seq = history.seqAt(i);
       TerminalLine line = history.lineAt(i);
-      long seq = line.historyOrder();
+      if (line == null) {
+        // 未加载槽位：跳过该行，避免 NPE；不把 LineID 误当 HistorySeq。
+        continue;
+      }
       if (seq < startSeq) continue;
       if (seq > endSeq) break;
       int c0 = seq == startSeq ? startCol : 0;

@@ -8,11 +8,19 @@ import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
 import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.SlotState;
 
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 /**
  * 基于视口的单活动分段加载器：无 pendingRange 合并、无长期队列。
  * 普通滚动不取消 activeRequest。
+ * 对 NOT_FOUND / TRIMMED / PROTOCOL 等坏段记入跳过集，避免队头永久阻塞。
+ * NOT_SEALED 为临时封存竞态，由 Runtime 退避重试，不跳过。
  */
 public final class HistorySegmentLoader {
+  private static final int MAX_SKIPPED = 64;
+
   public static final class Demand {
     public final long visibleFromSeq;
     public final long visibleToSeq;
@@ -50,6 +58,8 @@ public final class HistorySegmentLoader {
   private long nextCallId = 1;
   private long lifecycleEpoch = 1;
   private boolean closed;
+  private long skippedGeneration;
+  private final Set<Long> skippedNumbers = new LinkedHashSet<>();
 
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
@@ -76,12 +86,36 @@ public final class HistorySegmentLoader {
     return closed;
   }
 
+  /** 将本 generation 下的坏段移出候选，防止反复堵在同一 SegmentKey。 */
+  public synchronized void markSkipped(@NonNull SegmentKey key) {
+    if (key.generation != skippedGeneration) {
+      skippedNumbers.clear();
+      skippedGeneration = key.generation;
+    }
+    skippedNumbers.add(key.number);
+    while (skippedNumbers.size() > MAX_SKIPPED) {
+      Iterator<Long> it = skippedNumbers.iterator();
+      it.next();
+      it.remove();
+    }
+  }
+
+  public synchronized boolean isSkipped(@NonNull SegmentKey key) {
+    return key.generation == skippedGeneration && skippedNumbers.contains(key.number);
+  }
+
+  public synchronized void clearSkipped() {
+    skippedNumbers.clear();
+    skippedGeneration = 0;
+  }
+
   /** identity/close 变化时取消活动请求并推进 lifecycle。 */
   public synchronized void resetLifecycle(@Nullable HistorySegmentSource.RequestHandle toCancel) {
     if (activeRequest != null && activeRequest.handle != null) {
       activeRequest.handle.cancel();
     }
     activeRequest = null;
+    clearSkipped();
     lifecycleEpoch++;
     if (toCancel != null) toCancel.cancel();
   }
@@ -113,8 +147,8 @@ public final class HistorySegmentLoader {
   }
 
   /**
-   * 从可见范围派生最高优先级缺失 SegmentKey；排除 resident 与 in-flight。
-   * 仅选择 lastSeq &lt;= sealedThroughSeq 的段。
+   * 从可见范围（含上下各约一段预取窗）派生最高优先级缺失 SegmentKey。
+   * 排除 resident、in-flight 与跳过集；仅选择 lastSeq &lt;= sealedThroughSeq 的段。
    */
   @Nullable
   public synchronized SegmentKey highestPriorityMissing(
@@ -124,27 +158,37 @@ public final class HistorySegmentLoader {
         || catalog.sealedThroughSeq < 1) {
       return null;
     }
-    Demand demand = latestDemand;
-    long from = Math.max(demand.visibleFromSeq, catalog.trimBeforeSeq);
-    long to = Math.min(demand.visibleToSeq, catalog.sealedThroughSeq);
-    to = Math.min(to, history.extent().lastSeq);
-    from = Math.max(from, history.extent().firstSeq);
-    if (from <= 0 || to < from) {
-      // 尝试方向预取
-      return prefetchOnly(catalog, history, demand);
+    if (catalog.generation != skippedGeneration && skippedGeneration != 0) {
+      clearSkipped();
     }
+    Demand demand = latestDemand;
+    long visibleFrom = Math.max(demand.visibleFromSeq, catalog.trimBeforeSeq);
+    long visibleTo = Math.min(demand.visibleToSeq, catalog.sealedThroughSeq);
+    visibleTo = Math.min(visibleTo, history.extent().lastSeq);
+    visibleFrom = Math.max(visibleFrom, history.extent().firstSeq);
     SegmentKey inFlight = activeRequest != null ? activeRequest.key : null;
-    SegmentKey best = firstMissingInRange(catalog, history, from, to, inFlight);
-    if (best != null) return best;
+    if (visibleFrom > 0 && visibleTo >= visibleFrom) {
+      SegmentKey best = firstMissingInRange(catalog, history, visibleFrom, visibleTo, inFlight);
+      if (best != null) return best;
+    }
+    // 可见区内已齐：再补可见区上方一段（滚到顶的冷历史主路径）。
+    long olderTo = visibleFrom > 0 ? visibleFrom - 1 : catalog.sealedThroughSeq;
+    long olderFrom = Math.max(catalog.trimBeforeSeq,
+        Math.max(history.extent().firstSeq, olderTo - SegmentKey.SIZE + 1));
+    if (olderFrom > 0 && olderTo >= olderFrom) {
+      SegmentKey older = firstMissingInRange(catalog, history, olderFrom, olderTo, inFlight);
+      if (older != null) return older;
+    }
     return prefetchOnly(catalog, history, demand);
   }
 
   @Nullable
   private SegmentKey prefetchOnly(HistoryCatalog catalog, PagedTerminalHistorySnapshot history,
                                   Demand demand) {
-    if (demand.direction == 0) return null;
+    // 未报告方向时默认向上补冷历史（滚到顶的主路径）。
+    int direction = demand.direction != 0 ? demand.direction : -1;
     long anchor = demand.anchorSeq > 0 ? demand.anchorSeq : demand.visibleFromSeq;
-    long prefetchSeq = demand.direction < 0
+    long prefetchSeq = direction < 0
         ? Math.max(1, anchor - SegmentKey.SIZE)
         : anchor + SegmentKey.SIZE;
     if (prefetchSeq > catalog.sealedThroughSeq || prefetchSeq < catalog.trimBeforeSeq) {
@@ -152,18 +196,19 @@ public final class HistorySegmentLoader {
     }
     SegmentKey key = SegmentKey.forSeq(catalog.generation, prefetchSeq);
     if (activeRequest != null && key.equals(activeRequest.key)) return null;
+    if (isSkipped(key)) return null;
     if (!hasUnloadedInSegment(history, key, catalog)) return null;
     return key;
   }
 
   @Nullable
-  private static SegmentKey firstMissingInRange(
+  private SegmentKey firstMissingInRange(
       HistoryCatalog catalog, PagedTerminalHistorySnapshot history,
       long from, long to, @Nullable SegmentKey inFlight) {
     long seq = from;
     while (seq <= to) {
       SegmentKey key = SegmentKey.forSeq(catalog.generation, seq);
-      if (inFlight == null || !key.equals(inFlight)) {
+      if ((inFlight == null || !key.equals(inFlight)) && !isSkipped(key)) {
         if (hasUnloadedInSegment(history, key, catalog)) return key;
       }
       seq = key.lastSeq() + 1;

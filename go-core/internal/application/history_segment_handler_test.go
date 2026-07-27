@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/session"
 )
 
@@ -31,5 +32,50 @@ func TestHistorySegmentSessionGone(t *testing.T) {
 	}
 	if result.StatusCode != http.StatusNotFound {
 		t.Fatalf("status=%d", result.StatusCode)
+	}
+}
+
+func TestHistorySegmentSessionGoneEmitsSegmentFetchEvent(t *testing.T) {
+	manager := session.NewManager(session.TerminalDefaults{Command: "/bin/sh"})
+	logger := logs.New(logs.DefaultCapacity)
+	logger.SetRateLimiter(nil)
+	handler := NewTransferHTTPHandlerWithLogger(NewSessionHTTPHandler(manager), logger)
+
+	result, err := handler.Route(http.MethodGet,
+		"/api/sessions/missing/history/segments/3/2", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StatusCode != http.StatusNotFound {
+		t.Fatalf("status=%d", result.StatusCode)
+	}
+
+	found := false
+	for _, entry := range logger.Recent(0) {
+		if entry.Source != "history_segment" || entry.Event != "segment_fetch" {
+			continue
+		}
+		found = true
+		if entry.Level != "warn" {
+			t.Fatalf("level=%s", entry.Level)
+		}
+		if got, _ := entry.Fields["status"].(string); got != "SESSION_GONE" {
+			t.Fatalf("status=%v", entry.Fields["status"])
+		}
+		if got, _ := entry.Fields["httpStatus"].(int); got != http.StatusNotFound {
+			t.Fatalf("httpStatus=%v", entry.Fields["httpStatus"])
+		}
+		if got, _ := entry.Fields["generation"].(uint64); got != 3 {
+			t.Fatalf("generation=%v", entry.Fields["generation"])
+		}
+		if got, _ := entry.Fields["segmentNumber"].(uint64); got != 2 {
+			t.Fatalf("segmentNumber=%v", entry.Fields["segmentNumber"])
+		}
+		if hit, _ := entry.Fields["storeHit"].(bool); hit {
+			t.Fatal("storeHit must be false")
+		}
+	}
+	if !found {
+		t.Fatal("expected history_segment/segment_fetch event")
 	}
 }
