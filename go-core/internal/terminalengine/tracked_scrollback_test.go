@@ -491,32 +491,29 @@ func TestTrackedScrollback_LinesAfterPopLowersLastSeq(t *testing.T) {
 	}
 }
 
-func TestTrackedScrollback_QueriesRemainValidAfterPopCreatesIDGap(t *testing.T) {
+func TestTrackedScrollback_QueriesRemainValidAfterPopRecyclesTailSeq(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
 	pushBlankLines(sb, 3)
-	sb.Pop()              // 移除 ID 3，nextSeq 保持 4。
-	pushBlankLines(sb, 2) // 新增 ID 4、5，驻留序列为 1、2、4、5。
+	sb.Pop()              // 移除 seq 3，nextSeq 回退到 3。
+	pushBlankLines(sb, 2) // 新增 seq 3、4，驻留序列为 1、2、3、4。
 
 	if line, ok := sb.LineByID(4); !ok || line.LineID != 4 {
 		t.Fatalf("LineByID(4)=(%+v,%v), want ID 4", line, ok)
 	}
-	if _, ok := sb.LineByID(3); ok {
-		t.Fatal("popped ID 3 must remain absent")
-	}
-	if got := windowIDs(sb.LinesAfter(2, 10)); len(got) != 2 || got[0] != 4 || got[1] != 5 {
-		t.Fatalf("LinesAfter(2)=%v, want [4 5]", got)
+	if got := windowIDs(sb.LinesAfter(2, 10)); len(got) != 2 || got[0] != 3 || got[1] != 4 {
+		t.Fatalf("LinesAfter(2)=%v, want [3 4]", got)
 	}
 	page := sb.PageBefore(5, 10)
-	if len(page) != 3 || page[0].LineID != 1 || page[2].LineID != 4 {
-		t.Fatalf("PageBefore(5) IDs=%v, want [1 2 4]", historyIDs(page))
+	if len(page) != 4 || page[0].LineID != 1 || page[3].LineID != 4 {
+		t.Fatalf("PageBefore(5) IDs=%v, want [1 2 3 4]", historyIDs(page))
 	}
 	idx := sb.IndexAfter(2)
-	if len(idx.LineIDs) != 2 || idx.LineIDs[0] != 4 || idx.LineIDs[1] != 5 {
-		t.Fatalf("IndexAfter(2)=%v, want [4 5]", idx.LineIDs)
+	if len(idx.LineIDs) != 2 || idx.LineIDs[0] != 3 || idx.LineIDs[1] != 4 {
+		t.Fatalf("IndexAfter(2)=%v, want [3 4]", idx.LineIDs)
 	}
 }
 
-func TestTrackedScrollback_PopThenPushAllocatesNewHistorySeq(t *testing.T) {
+func TestTrackedScrollback_PopThenPushReusesHistorySeq(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
 	line := headlessterm.ScrollbackLine{LineID: 100, LineVersion: 1,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()}}
@@ -527,16 +524,16 @@ func TestTrackedScrollback_PopThenPushAllocatesNewHistorySeq(t *testing.T) {
 
 	sb.Pop()
 	sb.Push(line)
-	got, ok := sb.LineByHistorySeq(2)
-	if !ok || got.LineID != 100 || got.HistorySeq != 2 {
-		t.Fatalf("second push=(%+v,%v), want HistorySeq=2 LineID=100", got, ok)
+	got, ok := sb.LineByHistorySeq(1)
+	if !ok || got.LineID != 100 || got.HistorySeq != 1 {
+		t.Fatalf("second push=(%+v,%v), want HistorySeq=1 LineID=100", got, ok)
 	}
-	if next := sb.NextSeq(); next != 3 {
-		t.Fatalf("NextSeq=%d, want 3", next)
+	if next := sb.NextSeq(); next != 2 {
+		t.Fatalf("NextSeq=%d, want 2", next)
 	}
 	window := sb.Window(10)
-	if window.FirstSeq != 2 || window.LastSeq != 2 || len(window.Lines) != 1 {
-		t.Fatalf("history window after Pop→Push=%+v, want only seq 2", window)
+	if window.FirstSeq != 1 || window.LastSeq != 1 || len(window.Lines) != 1 {
+		t.Fatalf("history window after Pop→Push=%+v, want only seq 1", window)
 	}
 }
 

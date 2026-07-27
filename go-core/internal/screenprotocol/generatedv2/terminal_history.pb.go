@@ -94,7 +94,6 @@ type HistorySegment struct {
 	LastSeq           uint64                 `protobuf:"varint,4,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
 	Lines             []*LineData            `protobuf:"bytes,5,rep,name=lines,proto3" json:"lines,omitempty"`
 	Dictionary        *Dictionary            `protobuf:"bytes,6,opt,name=dictionary,proto3" json:"dictionary,omitempty"`
-	Checksum          []byte                 `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -167,13 +166,6 @@ func (x *HistorySegment) GetLines() []*LineData {
 func (x *HistorySegment) GetDictionary() *Dictionary {
 	if x != nil {
 		return x.Dictionary
-	}
-	return nil
-}
-
-func (x *HistorySegment) GetChecksum() []byte {
-	if x != nil {
-		return x.Checksum
 	}
 	return nil
 }
@@ -251,7 +243,7 @@ var File_shared_proto_terminal_history_proto protoreflect.FileDescriptor
 
 const file_shared_proto_terminal_history_proto_rawDesc = "" +
 	"\n" +
-	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\xbe\x02\n" +
+	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\xa8\x02\n" +
 	"\x0eHistorySegment\x12-\n" +
 	"\x12history_generation\x18\x01 \x01(\x04R\x11historyGeneration\x12%\n" +
 	"\x0esegment_number\x18\x02 \x01(\x04R\rsegmentNumber\x12\x1b\n" +
@@ -260,8 +252,7 @@ const file_shared_proto_terminal_history_proto_rawDesc = "" +
 	"\x05lines\x18\x05 \x03(\v2$.webterm.terminal.screen.v2.LineDataR\x05lines\x12F\n" +
 	"\n" +
 	"dictionary\x18\x06 \x01(\v2&.webterm.terminal.screen.v2.DictionaryR\n" +
-	"dictionary\x12\x1a\n" +
-	"\bchecksum\x18\a \x01(\fR\bchecksum\"\xfd\x01\n" +
+	"dictionaryJ\x04\b\a\x10\b\"\xfd\x01\n" +
 	"\x16HistorySegmentResponse\x12H\n" +
 	"\x06status\x18\x01 \x01(\x0e20.webterm.terminal.screen.v2.HistorySegmentStatusR\x06status\x12D\n" +
 	"\asegment\x18\x02 \x01(\v2*.webterm.terminal.screen.v2.HistorySegmentR\asegment\x12-\n" +

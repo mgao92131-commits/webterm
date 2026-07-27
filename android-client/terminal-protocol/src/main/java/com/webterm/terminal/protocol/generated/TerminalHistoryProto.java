@@ -262,12 +262,6 @@ public final class TerminalHistoryProto {
      * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 6;</code>
      */
     com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder getDictionaryOrBuilder();
-
-    /**
-     * <code>bytes checksum = 7;</code>
-     * @return The checksum.
-     */
-    com.google.protobuf.ByteString getChecksum();
   }
   /**
    * <pre>
@@ -296,7 +290,6 @@ public final class TerminalHistoryProto {
     }
     private HistorySegment() {
       lines_ = java.util.Collections.emptyList();
-      checksum_ = com.google.protobuf.ByteString.EMPTY;
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -424,17 +417,6 @@ public final class TerminalHistoryProto {
       return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance() : dictionary_;
     }
 
-    public static final int CHECKSUM_FIELD_NUMBER = 7;
-    private com.google.protobuf.ByteString checksum_ = com.google.protobuf.ByteString.EMPTY;
-    /**
-     * <code>bytes checksum = 7;</code>
-     * @return The checksum.
-     */
-    @java.lang.Override
-    public com.google.protobuf.ByteString getChecksum() {
-      return checksum_;
-    }
-
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -466,9 +448,6 @@ public final class TerminalHistoryProto {
       }
       if (((bitField0_ & 0x00000001) != 0)) {
         output.writeMessage(6, getDictionary());
-      }
-      if (!checksum_.isEmpty()) {
-        output.writeBytes(7, checksum_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -503,10 +482,6 @@ public final class TerminalHistoryProto {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(6, getDictionary());
       }
-      if (!checksum_.isEmpty()) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBytesSize(7, checksum_);
-      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -537,8 +512,6 @@ public final class TerminalHistoryProto {
         if (!getDictionary()
             .equals(other.getDictionary())) return false;
       }
-      if (!getChecksum()
-          .equals(other.getChecksum())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -570,8 +543,6 @@ public final class TerminalHistoryProto {
         hash = (37 * hash) + DICTIONARY_FIELD_NUMBER;
         hash = (53 * hash) + getDictionary().hashCode();
       }
-      hash = (37 * hash) + CHECKSUM_FIELD_NUMBER;
-      hash = (53 * hash) + getChecksum().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -730,7 +701,6 @@ public final class TerminalHistoryProto {
           dictionaryBuilder_.dispose();
           dictionaryBuilder_ = null;
         }
-        checksum_ = com.google.protobuf.ByteString.EMPTY;
         return this;
       }
 
@@ -796,9 +766,6 @@ public final class TerminalHistoryProto {
               : dictionaryBuilder_.build();
           to_bitField0_ |= 0x00000001;
         }
-        if (((from_bitField0_ & 0x00000040) != 0)) {
-          result.checksum_ = checksum_;
-        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -854,9 +821,6 @@ public final class TerminalHistoryProto {
         }
         if (other.hasDictionary()) {
           mergeDictionary(other.getDictionary());
-        }
-        if (other.getChecksum() != com.google.protobuf.ByteString.EMPTY) {
-          setChecksum(other.getChecksum());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -924,11 +888,6 @@ public final class TerminalHistoryProto {
                 bitField0_ |= 0x00000020;
                 break;
               } // case 50
-              case 58: {
-                checksum_ = input.readBytes();
-                bitField0_ |= 0x00000040;
-                break;
-              } // case 58
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -1433,38 +1392,6 @@ public final class TerminalHistoryProto {
           dictionary_ = null;
         }
         return dictionaryBuilder_;
-      }
-
-      private com.google.protobuf.ByteString checksum_ = com.google.protobuf.ByteString.EMPTY;
-      /**
-       * <code>bytes checksum = 7;</code>
-       * @return The checksum.
-       */
-      @java.lang.Override
-      public com.google.protobuf.ByteString getChecksum() {
-        return checksum_;
-      }
-      /**
-       * <code>bytes checksum = 7;</code>
-       * @param value The checksum to set.
-       * @return This builder for chaining.
-       */
-      public Builder setChecksum(com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        checksum_ = value;
-        bitField0_ |= 0x00000040;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>bytes checksum = 7;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearChecksum() {
-        bitField0_ = (bitField0_ & ~0x00000040);
-        checksum_ = getDefaultInstance().getChecksum();
-        onChanged();
-        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.HistorySegment)
@@ -2367,30 +2294,29 @@ public final class TerminalHistoryProto {
     java.lang.String[] descriptorData = {
       "\n#shared/proto/terminal_history.proto\022\032w" +
       "ebterm.terminal.screen.v2\032%shared/proto/" +
-      "terminal_screen_v2.proto\"\354\001\n\016HistorySegm" +
+      "terminal_screen_v2.proto\"\340\001\n\016HistorySegm" +
       "ent\022\032\n\022history_generation\030\001 \001(\004\022\026\n\016segme" +
       "nt_number\030\002 \001(\004\022\021\n\tfirst_seq\030\003 \001(\004\022\020\n\010la" +
       "st_seq\030\004 \001(\004\0223\n\005lines\030\005 \003(\0132$.webterm.te" +
       "rminal.screen.v2.LineData\022:\n\ndictionary\030" +
       "\006 \001(\0132&.webterm.terminal.screen.v2.Dicti" +
-      "onary\022\020\n\010checksum\030\007 \001(\014\"\313\001\n\026HistorySegme" +
-      "ntResponse\022@\n\006status\030\001 \001(\01620.webterm.ter" +
-      "minal.screen.v2.HistorySegmentStatus\022;\n\007" +
-      "segment\030\002 \001(\0132*.webterm.terminal.screen." +
-      "v2.HistorySegment\022\032\n\022history_generation\030" +
-      "\003 \001(\004\022\026\n\016retry_after_ms\030\004 \001(\r*\312\002\n\024Histor" +
-      "ySegmentStatus\022&\n\"HISTORY_SEGMENT_STATUS" +
-      "_UNSPECIFIED\020\000\022\035\n\031HISTORY_SEGMENT_STATUS" +
-      "_OK\020\001\022+\n\'HISTORY_SEGMENT_STATUS_STALE_GE" +
-      "NERATION\020\002\022%\n!HISTORY_SEGMENT_STATUS_NOT" +
-      "_SEALED\020\003\022\"\n\036HISTORY_SEGMENT_STATUS_TRIM" +
-      "MED\020\004\022$\n HISTORY_SEGMENT_STATUS_NOT_FOUN" +
-      "D\020\005\022\'\n#HISTORY_SEGMENT_STATUS_SESSION_GO" +
-      "NE\020\006\022$\n HISTORY_SEGMENT_STATUS_RETRYABLE" +
-      "\020\007Bt\n\'com.webterm.terminal.protocol.gene" +
-      "ratedB\024TerminalHistoryProtoZ3webterm/go-" +
-      "core/internal/screenprotocol/generatedv2" +
-      "b\006proto3"
+      "onaryJ\004\010\007\020\010\"\313\001\n\026HistorySegmentResponse\022@" +
+      "\n\006status\030\001 \001(\01620.webterm.terminal.screen" +
+      ".v2.HistorySegmentStatus\022;\n\007segment\030\002 \001(" +
+      "\0132*.webterm.terminal.screen.v2.HistorySe" +
+      "gment\022\032\n\022history_generation\030\003 \001(\004\022\026\n\016ret" +
+      "ry_after_ms\030\004 \001(\r*\312\002\n\024HistorySegmentStat" +
+      "us\022&\n\"HISTORY_SEGMENT_STATUS_UNSPECIFIED" +
+      "\020\000\022\035\n\031HISTORY_SEGMENT_STATUS_OK\020\001\022+\n\'HIS" +
+      "TORY_SEGMENT_STATUS_STALE_GENERATION\020\002\022%" +
+      "\n!HISTORY_SEGMENT_STATUS_NOT_SEALED\020\003\022\"\n" +
+      "\036HISTORY_SEGMENT_STATUS_TRIMMED\020\004\022$\n HIS" +
+      "TORY_SEGMENT_STATUS_NOT_FOUND\020\005\022\'\n#HISTO" +
+      "RY_SEGMENT_STATUS_SESSION_GONE\020\006\022$\n HIST" +
+      "ORY_SEGMENT_STATUS_RETRYABLE\020\007Bt\n\'com.we" +
+      "bterm.terminal.protocol.generatedB\024Termi" +
+      "nalHistoryProtoZ3webterm/go-core/interna" +
+      "l/screenprotocol/generatedv2b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -2402,7 +2328,7 @@ public final class TerminalHistoryProto {
     internal_static_webterm_terminal_screen_v2_HistorySegment_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_HistorySegment_descriptor,
-        new java.lang.String[] { "HistoryGeneration", "SegmentNumber", "FirstSeq", "LastSeq", "Lines", "Dictionary", "Checksum", });
+        new java.lang.String[] { "HistoryGeneration", "SegmentNumber", "FirstSeq", "LastSeq", "Lines", "Dictionary", });
     internal_static_webterm_terminal_screen_v2_HistorySegmentResponse_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_webterm_terminal_screen_v2_HistorySegmentResponse_fieldAccessorTable = new

@@ -1,7 +1,6 @@
 package historysegment
 
 import (
-	"bytes"
 	"testing"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
@@ -25,12 +24,8 @@ func TestNewSegmentRequiresFullAlignedRange(t *testing.T) {
 	}
 	lines = makeLines(1, 128)
 	seg, ok := NewSegment(1, 0, lines)
-	if !ok || seg.Number != 0 || len(seg.Checksum) != 32 {
-		t.Fatalf("full segment rejected or checksum missing: ok=%v seg=%v", ok, seg)
-	}
-	again, _ := NewSegment(1, 0, makeLines(1, 128))
-	if !bytes.Equal(seg.Checksum, again.Checksum) {
-		t.Fatal("checksum must be deterministic")
+	if !ok || seg.Number != 0 || seg.FirstSeq != 1 || seg.LastSeq != 128 {
+		t.Fatalf("full segment rejected: ok=%v seg=%v", ok, seg)
 	}
 }
 

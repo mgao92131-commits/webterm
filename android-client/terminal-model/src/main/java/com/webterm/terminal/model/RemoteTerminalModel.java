@@ -44,6 +44,7 @@ public final class RemoteTerminalModel {
   private HistoryExtent displayExtent = HistoryExtent.INITIAL_EMPTY;
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private long sealedThroughSeq;
+  private EvictionPins evictionPins = EvictionPins.NONE;
   private boolean staleProjection;
   private TerminalLine[] screen;
 
@@ -223,8 +224,8 @@ public final class RemoteTerminalModel {
           historyEditor.put(historySeq, canonical);
         }
       }
-      historyEditor.evictIfNeeded(
-          baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq);
+      historyEditor.evictIfNeeded(currentEvictionPins(
+          baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq));
       // 同 projection 的 Baseline 可以保留旧驻留页；提交前用有界索引验证新 screen，
       // 不能让同一 LineID 同时归属于 screen 与 loaded history。
       for (int row = 0; row < normalizedScreen.size(); row++) {
@@ -484,7 +485,8 @@ public final class RemoteTerminalModel {
             throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
           }
         }
-        historyEditor.evictIfNeeded(nextExtent.isEmpty() ? 1 : nextExtent.lastSeq);
+        historyEditor.evictIfNeeded(currentEvictionPins(
+            nextExtent.isEmpty() ? 1 : nextExtent.lastSeq));
       } catch (CommitValidationException failure) {
         throw failure;
       } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
@@ -628,17 +630,14 @@ public final class RemoteTerminalModel {
     TerminalSurface targetSurface = mainSurface;
     HistoryExtent mainExtent = targetSurface.historyIndex.extent();
 
-    // 先规范化并验证整批响应，再创建 Editor。任一异常行都不能写入页面 overlay、
-    // 清理 migration、更新 available extent 或发布 RenderPublication。
+    // 完整不可变 Segment 可能含已裁剪前缀；只校验序号形态，写入时与 Catalog 取交集。
     List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
     Set<Long> responseLineIds = new HashSet<>();
     long previousSeq = 0;
     for (TerminalLine line : range.lines) {
       TerminalLine normalized = normalizeHistoryLine(line);
       long seq = normalized.historySeq;
-      if (seq < requestedFromSeq || seq > requestedToSeq
-          || !remoteAvailableExtent.contains(seq)
-          || !mainExtent.contains(seq)) {
+      if (seq < requestedFromSeq || seq > requestedToSeq) {
         throw new IllegalArgumentException("HistoryRange line outside negotiated bounds");
       }
       if (previousSeq != 0 && seq <= previousSeq) {
@@ -647,8 +646,15 @@ public final class RemoteTerminalModel {
       if (!responseLineIds.add(normalized.id)) {
         throw new IllegalArgumentException("HistoryRange contains duplicate LineID");
       }
-      normalizedLines.add(normalized);
       previousSeq = seq;
+      // 已裁剪前缀：丢弃，不拒绝整段。
+      if (!remoteAvailableExtent.contains(seq) || !mainExtent.contains(seq)) {
+        continue;
+      }
+      normalizedLines.add(normalized);
+    }
+    if (normalizedLines.isEmpty()) {
+      return false;
     }
 
     PagedTerminalHistorySnapshot beforeWrite = targetSurface.history.snapshot();
@@ -674,7 +680,8 @@ public final class RemoteTerminalModel {
         throw new IllegalArgumentException(invalidLineage.failure.name(), invalidLineage);
       }
     }
-    editor.evictIfNeeded(anchorSeq > 0 ? anchorSeq : mainExtent.lastSeq).commit();
+    long fallbackAnchor = anchorSeq > 0 ? anchorSeq : mainExtent.lastSeq;
+    editor.evictIfNeeded(currentEvictionPins(fallbackAnchor)).commit();
     Set<Long> loadedHistoryIds = targetSurface.history.snapshot().loadedLineIds();
     historyIndexEditor.retainLineIds(loadedHistoryIds);
     Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
@@ -692,6 +699,18 @@ public final class RemoteTerminalModel {
       publishPendingRenderUpdate();
     }
     return true;
+  }
+
+  /** Runtime 更新视口/请求 pins；后续 Baseline/Commit/Segment 驱逐共用。 */
+  public synchronized void setEvictionPins(EvictionPins pins) {
+    evictionPins = pins == null ? EvictionPins.NONE : pins;
+  }
+
+  private EvictionPins currentEvictionPins(long fallbackAnchor) {
+    if (evictionPins != null && evictionPins != EvictionPins.NONE) {
+      return evictionPins;
+    }
+    return EvictionPins.forAnchor(fallbackAnchor);
   }
 
   public synchronized long dictionaryGeneration() { return dictionaryGeneration; }

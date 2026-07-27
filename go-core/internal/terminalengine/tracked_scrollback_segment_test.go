@@ -9,9 +9,9 @@ import (
 )
 
 func TestDefaultScrollbackLineLimitAlignsToSegmentSize(t *testing.T) {
-	if DefaultScrollbackLineLimit%historysegment.SEGMENT_SIZE != 0 {
+	if DefaultScrollbackLineLimit%historysegment.Size != 0 {
 		t.Fatalf("DefaultScrollbackLineLimit=%d must be a multiple of %d",
-			DefaultScrollbackLineLimit, historysegment.SEGMENT_SIZE)
+			DefaultScrollbackLineLimit, historysegment.Size)
 	}
 }
 
@@ -139,6 +139,29 @@ func TestTrackedScrollbackClearInvalidatesSegments(t *testing.T) {
 	}
 	if sb.Generation() != 2 {
 		t.Fatalf("Generation=%d, want 2", sb.Generation())
+	}
+}
+
+func TestTrackedScrollbackSetLayoutEpochKeepsGenerationAndSegments(t *testing.T) {
+	store := historysegment.NewMemoryStore()
+	sb := NewTrackedScrollback(10_000, nil)
+	sb.AttachSegmentStore(store)
+	for i := 0; i < 128; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+	sb.SetLayoutEpoch(3)
+	if sb.Generation() != 1 {
+		t.Fatalf("Generation=%d, want 1", sb.Generation())
+	}
+	seg, ok := store.Get(historysegment.Key{Generation: 1, Number: 0})
+	if !ok || seg.LastSeq != 128 {
+		t.Fatalf("sealed segment must survive ordinary layout epoch: ok=%v", ok)
+	}
+	if sb.SealedThroughSeq() != 128 {
+		t.Fatalf("SealedThroughSeq=%d", sb.SealedThroughSeq())
 	}
 }
 

@@ -749,11 +749,20 @@ public final class RemoteTerminalView extends View {
    */
   @androidx.annotation.VisibleForTesting
   void reportVisibleHistoryDemand() {
-    if (host == null || renderedSnapshot == null || isAlternateBuffer()) return;
+    if (host == null || renderedSnapshot == null || isAlternateBuffer()) {
+      if (host != null) host.onVisibleHistoryDemand(0, 0, 0, 0);
+      return;
+    }
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (!(snapshot.history instanceof PagedTerminalHistorySnapshot)) return;
+    if (!(snapshot.history instanceof PagedTerminalHistorySnapshot)) {
+      host.onVisibleHistoryDemand(0, 0, 0, 0);
+      return;
+    }
     PagedTerminalHistorySnapshot history = (PagedTerminalHistorySnapshot) snapshot.history;
-    if (history.isEmpty() || getHeight() <= 0 || lineHeight() <= 0f) return;
+    if (history.isEmpty() || getHeight() <= 0 || lineHeight() <= 0f) {
+      host.onVisibleHistoryDemand(0, 0, 0, 0);
+      return;
+    }
 
     int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
     int historyRows = history.size();

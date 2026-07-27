@@ -300,9 +300,7 @@ func Load(options Options) Config {
 	if cfg.Scrollback.MaxLines <= 0 {
 		cfg.Scrollback.MaxLines = DefaultScrollbackMaxLines
 	}
-	if cfg.Scrollback.MaxBytes <= 0 {
-		cfg.Scrollback.MaxBytes = DefaultScrollbackMaxBytes
-	}
+	// MaxBytes==0 表示不按字节驱逐；负值在 validate 中拒绝。
 	return cfg
 }
 
@@ -433,8 +431,11 @@ func (cfg Config) validate() error {
 	if cfg.Upload.MaxBytes <= 0 {
 		return fmt.Errorf("配置无效：upload.maxBytes 必须大于 0")
 	}
-	if cfg.Scrollback.MaxLines <= 0 || cfg.Scrollback.MaxBytes <= 0 {
-		return fmt.Errorf("配置无效：scrollback 限制必须大于 0")
+	if cfg.Scrollback.MaxLines <= 0 {
+		return fmt.Errorf("配置无效：scrollback.maxLines 必须大于 0")
+	}
+	if cfg.Scrollback.MaxBytes < 0 {
+		return fmt.Errorf("配置无效：scrollback.maxBytes 不能为负（0 表示不限字节）")
 	}
 	if _, err := localipc.Normalize(firstNonEmpty(cfg.IPCEndpoint, cfg.SocketPath)); err != nil {
 		return fmt.Errorf("配置无效：ipc endpoint: %w", err)

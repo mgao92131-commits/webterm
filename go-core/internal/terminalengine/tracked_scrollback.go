@@ -102,21 +102,18 @@ type TrackedScrollback struct {
 	onTrim func(ScrollbackTrimEvent)
 }
 
-// DefaultScrollbackLineLimit 是行数安全上限的缺省值。它是上限而非保留承诺：
-// 字节预算（DefaultScrollbackByteLimit）可能先触发驱逐，实际保留行数可以远低于它。
-// 必须为 historysegment.SEGMENT_SIZE（128）的整数倍，使 trim 边界落在整段边界上，
+// DefaultScrollbackLineLimit 是行数安全上限的缺省值。
+// 必须为 historysegment.Size（128）的整数倍，使 trim 边界落在整段边界上，
 // 避免首段与 Catalog.trimBeforeSeq 部分相交。
 const DefaultScrollbackLineLimit = 20096 // 128 * 157
 
-// DefaultScrollbackByteLimit bounds memory independently of line count. Wide
-// terminals and richly styled output can make ~20k physical rows much larger
-// than a line-only capacity suggests.
-const DefaultScrollbackByteLimit = 8 << 20
+// DefaultScrollbackByteLimit 是字节预算缺省值；0 表示不按字节驱逐，
+// 仅受行数上限约束。显式 SetMaxBytes(>0) 仍可启用字节预算。
+const DefaultScrollbackByteLimit = 0
 
 // NewTrackedScrollback 创建可跟踪 scrollback。
-// capacity 是行数安全上限（<=0 使用 DefaultScrollbackLineLimit），字节预算
-// 默认 DefaultScrollbackByteLimit；两个上限以先达到者为准从最旧端驱逐，
-// 因此不承诺保留任何固定行数。
+// capacity 是行数安全上限（<=0 使用 DefaultScrollbackLineLimit）。
+// 默认不启用字节预算；仅当 SetMaxBytes(>0) 时才与行数上限取先到者驱逐。
 func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *TrackedScrollback {
 	if capacity <= 0 {
 		capacity = DefaultScrollbackLineLimit
@@ -266,6 +263,8 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	line := t.lines[len(t.lines)-1]
 	t.lines = t.lines[:len(t.lines)-1]
 	t.bytes -= line.bytes
+	// 回收尾部 HistorySeq，避免 resize Pop 后再 Push 留下永久空洞。
+	t.nextSeq = line.HistorySeq
 	if len(t.lines) > 0 {
 		t.firstSeq = t.lines[0].HistorySeq
 	} else {
@@ -483,7 +482,7 @@ func (t *TrackedScrollback) Clear() {
 	t.fireTrimLocked()
 }
 
-// SetMaxLines 调整行数安全上限；字节预算（SetMaxBytes）仍可能先触发驱逐。
+// SetMaxLines 调整行数安全上限。
 func (t *TrackedScrollback) SetMaxLines(max int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

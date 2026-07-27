@@ -51,7 +51,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   private boolean renderConsumerActive;
   @Nullable private Runnable scheduledRenderCallback;
   private long renderGeneration;
-  /** 上一次成功排队的历史分页边界；用于保证 beforeSeq 严格向旧方向推进。 */
+  private boolean historyDemandScheduled;
+  private long pendingDemandFrom;
+  private long pendingDemandTo;
+  private long pendingDemandAnchor;
+  private int pendingDemandDirection;
+  private final Runnable flushHistoryDemandRunnable = this::flushPendingHistoryDemand;
 
   public TerminalScreenController(@NonNull TerminalSessionRuntime runtime) {
     this(runtime, new TerminalViewportState(), new ChoreographerFrameScheduler());
@@ -91,6 +96,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   public void detach(@NonNull LifecycleOwner owner) {
     deactivateRenderConsumer();
     owner.getLifecycle().removeObserver(lifecycleObserver);
+    cancelPendingHistoryDemand();
+    runtime.onVisibleHistoryDemandCleared();
     view = null;
   }
 
@@ -175,18 +182,44 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
     // Controller 不保存像素 offset，也不触发任何网络状态变化。
   }
 
-  /** View 上报可见历史需求；Controller 已做帧合并。 */
+  /** View 上报可见历史需求；同一帧内合并为最新 demand。 */
   public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq) {
     onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, 0);
   }
 
   public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq, int direction) {
-    runtime.onVisibleHistoryDemand(fromSeq, toSeq, anchorSeq, direction,
-        (int) Math.max(1, toSeq - fromSeq + 1));
+    pendingDemandFrom = fromSeq;
+    pendingDemandTo = toSeq;
+    pendingDemandAnchor = anchorSeq;
+    pendingDemandDirection = direction;
+    if (historyDemandScheduled) return;
+    historyDemandScheduled = true;
+    frameScheduler.postFrame(flushHistoryDemandRunnable);
   }
 
   public void onVisibleHistoryDemandCleared() {
+    cancelPendingHistoryDemand();
     runtime.onVisibleHistoryDemandCleared();
+  }
+
+  private void flushPendingHistoryDemand() {
+    historyDemandScheduled = false;
+    long from = pendingDemandFrom;
+    long to = pendingDemandTo;
+    long anchor = pendingDemandAnchor;
+    int direction = pendingDemandDirection;
+    if (from <= 0 || to < from) {
+      runtime.onVisibleHistoryDemandCleared();
+      return;
+    }
+    runtime.onVisibleHistoryDemand(from, to, anchor, direction,
+        (int) Math.max(1, to - from + 1));
+  }
+
+  private void cancelPendingHistoryDemand() {
+    if (!historyDemandScheduled) return;
+    historyDemandScheduled = false;
+    frameScheduler.cancelFrame(flushHistoryDemandRunnable);
   }
 
   private void sendResizeNow() {

@@ -10,7 +10,9 @@ import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
 import com.webterm.terminal.protocol.generated.TerminalHistoryProto;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,6 +32,7 @@ import okhttp3.ResponseBody;
  */
 public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
   private static final long MAX_BODY_BYTES = 2L << 20;
+  private static final String PROTO_CONTENT_TYPE = "application/x-protobuf";
 
   private final OkHttpClient http;
   private final Executor callbackExecutor;
@@ -67,7 +70,7 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
     String url = baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId(sessionId))
         + "/history/segments/" + key.generation + "/" + key.number;
     Request.Builder builder = new Request.Builder().url(url).get()
-        .header("Accept", "application/x-protobuf")
+        .header("Accept", PROTO_CONTENT_TYPE)
         .header("Cache-Control", "no-store");
     if (!cookie.isEmpty()) builder.header("Cookie", cookie);
     if (!deviceId.isEmpty()) builder.header("X-Device-Id", deviceId);
@@ -82,31 +85,65 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
       @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
         try {
           if (call.isCanceled() || closed.get()) return;
-          HistorySegmentSource.Failure failure = mapHttpFailure(response, key.generation);
-          if (failure != null) {
-            callbackExecutor.execute(() -> callback.onFailure(failure));
+          int code = response.code();
+          if (code == 401 || code == 403) {
+            callbackExecutor.execute(() -> callback.onFailure(
+                new Failure(FailureKind.AUTH_REQUIRED, 0, key.generation)));
             return;
           }
           ResponseBody body = response.body();
           if (body == null) {
             callbackExecutor.execute(() -> callback.onFailure(
-                new Failure(FailureKind.PROTOCOL, 0, key.generation)));
+                mapHttpOnlyFailure(code, key.generation)));
             return;
           }
-          byte[] bytes = body.bytes();
-          if (bytes.length > MAX_BODY_BYTES) {
+          String contentType = response.header("Content-Type", "");
+          if (contentType != null && !contentType.isEmpty()
+              && !contentType.contains(PROTO_CONTENT_TYPE)
+              && code != 200) {
+            // 非 protobuf 错误页：用 HTTP 兜底。
+            callbackExecutor.execute(() -> callback.onFailure(
+                mapHttpOnlyFailure(code, key.generation)));
+            return;
+          }
+          long declared = body.contentLength();
+          if (declared > MAX_BODY_BYTES) {
             callbackExecutor.execute(() -> callback.onFailure(
                 new Failure(FailureKind.PROTOCOL, 0, key.generation)));
             return;
           }
-          TerminalHistoryProto.HistorySegmentResponse pb =
-              TerminalHistoryProto.HistorySegmentResponse.parseFrom(bytes);
+          byte[] bytes;
+          try {
+            bytes = readBounded(body.byteStream(), MAX_BODY_BYTES);
+          } catch (IOException oversized) {
+            callbackExecutor.execute(() -> callback.onFailure(
+                new Failure(FailureKind.PROTOCOL, 0, key.generation)));
+            return;
+          }
+          TerminalHistoryProto.HistorySegmentResponse pb;
+          try {
+            pb = TerminalHistoryProto.HistorySegmentResponse.parseFrom(bytes);
+          } catch (Exception parseFailed) {
+            callbackExecutor.execute(() -> callback.onFailure(
+                mapHttpOnlyFailure(code, key.generation)));
+            return;
+          }
+          if (pb.getStatus() != TerminalHistoryProto.HistorySegmentStatus.HISTORY_SEGMENT_STATUS_OK
+              || !pb.hasSegment()) {
+            FailureKind kind = mapStatus(pb.getStatus());
+            if (kind == FailureKind.PROTOCOL && code != 200) {
+              kind = mapHttpOnlyFailure(code, key.generation).kind;
+            }
+            long retry = pb.getRetryAfterMs();
+            FailureKind finalKind = kind;
+            callbackExecutor.execute(() -> callback.onFailure(
+                new Failure(finalKind, retry, pb.getHistoryGeneration())));
+            return;
+          }
           DecodedHistorySegment decoded = decode(pb, key);
           if (decoded == null) {
-            FailureKind kind = mapStatus(pb.getStatus());
-            long retry = pb.getRetryAfterMs();
             callbackExecutor.execute(() -> callback.onFailure(
-                new Failure(kind, retry, pb.getHistoryGeneration())));
+                new Failure(FailureKind.PROTOCOL, 0, key.generation)));
             return;
           }
           callbackExecutor.execute(() -> callback.onResult(decoded));
@@ -153,25 +190,41 @@ public final class OkHttpHistorySegmentSource implements HistorySegmentSource {
     }
     return new DecodedHistorySegment(
         requested, seg.getFirstSeq(), seg.getLastSeq(),
-        Collections.unmodifiableList(lines), seg.getChecksum().toByteArray());
+        Collections.unmodifiableList(lines));
   }
 
-  @Nullable
-  private static Failure mapHttpFailure(Response response, long generation) {
-    int code = response.code();
-    if (code == 200) return null;
-    if (code == 404) return new Failure(FailureKind.SESSION_GONE, 0, generation);
-    if (code == 429) {
-      long retry = 250;
-      String header = response.header("Retry-After");
-      if (header != null) {
-        try { retry = Long.parseLong(header) * 1000L; } catch (NumberFormatException ignored) {}
+  /** 最多读取 maxBytes；超过则抛 IOException 并停止。 */
+  @NonNull
+  static byte[] readBounded(@NonNull InputStream in, long maxBytes) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    byte[] buf = new byte[8192];
+    long total = 0;
+    while (true) {
+      int n = in.read(buf);
+      if (n < 0) break;
+      total += n;
+      if (total > maxBytes) {
+        throw new IOException("history segment body exceeds " + maxBytes);
       }
-      return new Failure(FailureKind.RETRYABLE, retry, generation);
+      out.write(buf, 0, n);
+    }
+    return out.toByteArray();
+  }
+
+  @NonNull
+  private static Failure mapHttpOnlyFailure(int code, long generation) {
+    if (code == 401 || code == 403) {
+      return new Failure(FailureKind.AUTH_REQUIRED, 0, generation);
+    }
+    if (code == 404) {
+      // 无可用 protobuf 时，404 更可能是会话不存在；有 body 时应优先读 status。
+      return new Failure(FailureKind.SESSION_GONE, 0, generation);
+    }
+    if (code == 429) {
+      return new Failure(FailureKind.RETRYABLE, 250, generation);
     }
     if (code == 409) {
-      // body 仍可能含精确 status；交由 parse 路径。返回 null 让 body 解析。
-      return null;
+      return new Failure(FailureKind.RETRYABLE, 200, generation);
     }
     return new Failure(FailureKind.NETWORK, 250, generation);
   }

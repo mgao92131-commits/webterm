@@ -67,12 +67,42 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void lineOutsideWsAvailableExtentRejectsWholeTransaction() {
-    RemoteTerminalModel model = baselineModel();
-    // seq 105 在 WS available 内；使用超出 mainExtent 的序号验证拒绝。
-    assertRejected(model, range(HistoryRangeResult.Status.OK, new HistoryExtent(1, 300),
-        V2ModelTestData.line(10_9999, 1, 9999, "x")), 100, 127);
-    assertNull(model.loadedHistorySeqForLineIdForTest(10_9999));
+  public void linesOutsideWsAvailableExtentAreSkippedNotRejected() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    List<TerminalLine> tail = new ArrayList<>();
+    for (long seq = 173; seq <= 300; seq++) {
+      tail.add(V2ModelTestData.line(seq, 1, seq, "h"));
+    }
+    assertTrue(model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, false, DictionaryEntries.EMPTY, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(57, 300), tail,
+        Collections.singletonList(V2ModelTestData.line(1000, 1, 0, "a")),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
+    model.consumeRenderUpdate();
+
+    // 仅含已裁剪前缀：过滤后无写入。
+    List<TerminalLine> trimmedOnly = new ArrayList<>();
+    for (long seq = 1; seq <= 56; seq++) {
+      trimmedOnly.add(V2ModelTestData.line(40_000 + seq, 1, seq, "x"));
+    }
+    assertFalse(model.applyHistoryRange(new HistoryRangeResult(
+        "r0", "i1", 1, HistoryRangeResult.Status.OK,
+        model.remoteAvailableExtent(), trimmedOnly, 0), 1, 1, 128));
+
+    // 完整段含已裁剪前缀 + 有效后缀：只写入 57—128。
+    List<TerminalLine> mixed = new ArrayList<>();
+    for (long seq = 1; seq <= 128; seq++) {
+      mixed.add(V2ModelTestData.line(30_000 + seq, 1, seq, "x"));
+    }
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "r", "i1", 1, HistoryRangeResult.Status.OK,
+        model.remoteAvailableExtent(), mixed, 0), 57, 1, 128));
+    PagedTerminalHistorySnapshot history =
+        (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
+    assertNull(history.lineBySeq(1));
+    assertEquals(SlotState.LOADED, history.slotStateAt(0)); // seq 57
+    // LineStore 归零 historySeq；位置由槽位绑定，用 LineID 断言写入成功。
+    assertEquals(30_000 + 57, history.lineBySeq(57).id);
   }
 
   @Test

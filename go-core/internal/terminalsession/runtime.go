@@ -197,7 +197,7 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 	}
 
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
-	// scrollbackMaxBytes<=0 时保留 NewTrackedScrollback 的 DefaultScrollbackByteLimit。
+	// scrollbackMaxBytes<=0 表示不启用字节预算。
 	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, nil)
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
@@ -911,10 +911,9 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	layoutEpoch := r.layoutEpoch
 	r.mu.Unlock()
 	r.engine.Resize(e.rows, e.cols)
-	// layoutEpoch scopes the live screen geometry. Resize may Pop rows from the
-	// scrollback and later Push them again; rebase retained history so the new
-	// epoch exposes a dense HistorySeq space without destroying scrollback.
-	r.scrollback.RebaseForLayoutEpoch(layoutEpoch)
+	// layoutEpoch 只界定活动屏几何。普通 resize 不得推进 historyGeneration /
+	// 清空 SegmentStore；Pop 已回收尾部 HistorySeq，后续 Push 保持稠密。
+	r.scrollback.SetLayoutEpoch(layoutEpoch)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
 	// Geometry changes replace physical rows, so do not wait for the regular

@@ -14,6 +14,8 @@ import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.EvictionPins;
+import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.TerminalLine;
@@ -575,12 +577,19 @@ public final class TerminalSessionRuntime {
   public void onVisibleHistoryDemand(long visibleFromSeq, long visibleToSeq, long anchorSeq,
                                      int direction, int visibleRowCount) {
     modelExecutor.execute(() -> {
+      if (state != State.LIVE) {
+        historyLoader.clearDemand();
+        refreshEvictionPins();
+        return;
+      }
       if (visibleFromSeq <= 0 || visibleToSeq < visibleFromSeq) {
         historyLoader.clearDemand();
+        refreshEvictionPins();
         return;
       }
       historyLoader.setDemand(new HistorySegmentLoader.Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount));
+      refreshEvictionPins();
       pumpHistorySegments();
     });
   }
@@ -588,6 +597,7 @@ public final class TerminalSessionRuntime {
   public void onVisibleHistoryDemandCleared() {
     modelExecutor.execute(() -> {
       historyLoader.clearDemand();
+      refreshEvictionPins();
     });
   }
 
@@ -605,6 +615,7 @@ public final class TerminalSessionRuntime {
     com.webterm.terminal.model.PagedTerminalHistorySnapshot history =
         (com.webterm.terminal.model.PagedTerminalHistorySnapshot) snap.history;
     com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
+    refreshEvictionPins();
     com.webterm.terminal.model.SegmentKey target =
         historyLoader.highestPriorityMissing(catalog, history);
     if (target == null) return;
@@ -615,6 +626,7 @@ public final class TerminalSessionRuntime {
       if (inner != null) inner.cancel();
     };
     if (!historyLoader.begin(target, cancelProxy)) return;
+    refreshEvictionPins();
     HistorySegmentLoader.ActiveRequest active = historyLoader.activeRequest();
     HistorySegmentSource.RequestHandle handle = source.fetch(target,
         new HistorySegmentSource.Callback() {
@@ -623,6 +635,7 @@ public final class TerminalSessionRuntime {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
               historyLoader.complete(active);
+              refreshEvictionPins();
               applyDecodedHistorySegment(result);
               pumpHistorySegments();
             });
@@ -633,12 +646,48 @@ public final class TerminalSessionRuntime {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
               historyLoader.complete(active);
+              refreshEvictionPins();
               handleSegmentFailure(failure);
               scheduleSegmentRetry(failure.retryAfterMs);
             });
           }
         });
     handleSlot[0] = handle;
+  }
+
+  /** 根据最新 demand / active / hot tail 刷新模型驱逐 pins。 */
+  private void refreshEvictionPins() {
+    HistorySegmentLoader.Demand demand = historyLoader.latestDemand();
+    HistorySegmentLoader.ActiveRequest active = historyLoader.activeRequest();
+    com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
+    EvictionPins.LongRange visible = null;
+    EvictionPins.LongRange anchor = null;
+    EvictionPins.LongRange prefetch = null;
+    java.util.List<EvictionPins.LongRange> inFlight = new java.util.ArrayList<>();
+    if (demand != null && demand.visibleFromSeq > 0
+        && demand.visibleToSeq >= demand.visibleFromSeq) {
+      visible = new EvictionPins.LongRange(demand.visibleFromSeq, demand.visibleToSeq);
+      long anchorSeq = demand.anchorSeq > 0 ? demand.anchorSeq : demand.visibleFromSeq;
+      anchor = new EvictionPins.LongRange(anchorSeq, anchorSeq);
+      if (demand.direction != 0 && catalog.sealedThroughSeq > 0) {
+        long prefetchSeq = demand.direction < 0
+            ? Math.max(catalog.trimBeforeSeq, anchorSeq - SegmentKey.SIZE)
+            : Math.min(catalog.sealedThroughSeq, anchorSeq + SegmentKey.SIZE);
+        if (prefetchSeq >= catalog.trimBeforeSeq && prefetchSeq <= catalog.sealedThroughSeq) {
+          SegmentKey key = SegmentKey.forSeq(catalog.generation, prefetchSeq);
+          prefetch = new EvictionPins.LongRange(key.firstSeq(), key.lastSeq());
+        }
+      }
+    }
+    if (active != null) {
+      inFlight.add(new EvictionPins.LongRange(active.key.firstSeq(), active.key.lastSeq()));
+    }
+    if (catalog.tailLastSeq >= catalog.trimBeforeSeq && catalog.tailLastSeq > 0) {
+      long tailFirst = Math.max(catalog.trimBeforeSeq,
+          catalog.tailLastSeq - SegmentKey.SIZE + 1);
+      inFlight.add(new EvictionPins.LongRange(tailFirst, catalog.tailLastSeq));
+    }
+    model.setEvictionPins(new EvictionPins(visible, anchor, inFlight, null, prefetch));
   }
 
   private void applyDecodedHistorySegment(
@@ -663,6 +712,14 @@ public final class TerminalSessionRuntime {
   }
 
   private void handleSegmentFailure(@NonNull HistorySegmentSource.Failure failure) {
+    if (failure.kind == HistorySegmentSource.FailureKind.AUTH_REQUIRED) {
+      historyLoader.clearDemand();
+      AuthenticationListener listener = authenticationListener;
+      if (listener != null) {
+        callbackExecutor.execute(() -> listener.onAuthenticationRequired("history_segment_auth"));
+      }
+      return;
+    }
     if (failure.kind == HistorySegmentSource.FailureKind.STALE_GENERATION
         || failure.kind == HistorySegmentSource.FailureKind.SESSION_GONE) {
       historyLoader.clearDemand();
@@ -670,6 +727,14 @@ public final class TerminalSessionRuntime {
         sendResync("history_segment_stale");
       }
     }
+  }
+
+  private void shutdownHistoryLoading() {
+    historyLoader.close();
+    HistorySegmentSource source = historySegmentSource;
+    historySegmentSource = null;
+    if (source != null) source.close();
+    model.setEvictionPins(EvictionPins.NONE);
   }
 
   private void scheduleSegmentRetry(long serverDelayMs) {
@@ -703,7 +768,10 @@ public final class TerminalSessionRuntime {
     updateState(State.CLOSED);
     screenMailbox.reset();
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
-    modelExecutor.execute(this::resetResyncRecovery);
+    modelExecutor.execute(() -> {
+      resetResyncRecovery();
+      shutdownHistoryLoading();
+    });
     ScreenConnection c = connection;
     if (c != null) {
       c.releaseLayout();
@@ -1097,6 +1165,7 @@ public final class TerminalSessionRuntime {
           break;
         case EXIT:
           updateState(State.CLOSED);
+          shutdownHistoryLoading();
           break;
         default:
           break;
@@ -1263,7 +1332,16 @@ public final class TerminalSessionRuntime {
   }
 
   private void updateState(@NonNull State newState) {
+    State previous = state;
     state = newState;
+    if (previous == State.LIVE && newState != State.LIVE) {
+      modelExecutor.execute(() -> {
+        if (!historyLoader.closed()) {
+          historyLoader.clearDemand();
+          refreshEvictionPins();
+        }
+      });
+    }
     callbackExecutor.execute(() -> {
       notifyListeners("connection_state", listener -> listener.onConnectionStateChange(newState));
     });

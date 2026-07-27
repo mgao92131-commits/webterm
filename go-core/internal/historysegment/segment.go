@@ -7,9 +7,6 @@
 package historysegment
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-
 	headlessterm "github.com/danielgatis/go-headless-term"
 )
 
@@ -55,14 +52,13 @@ type Line struct {
 	Cells      []headlessterm.Cell
 }
 
-// Segment 是封存后的不可变历史段。Put 之后不得修改 Lines/Checksum。
+// Segment 是封存后的不可变历史段。Put 之后不得修改 Lines。
 type Segment struct {
 	Generation uint64
 	Number     uint64
 	FirstSeq   uint64
 	LastSeq    uint64
 	Lines      []Line
-	Checksum   []byte
 }
 
 // Key 返回本段的 SegmentKey。
@@ -70,7 +66,7 @@ func (s *Segment) Key() Key {
 	return Key{Generation: s.Generation, Number: s.Number}
 }
 
-// NewSegment 从完整的 128 行构造不可变分段并计算 checksum。
+// NewSegment 从完整的 128 行构造不可变分段。
 // lines 必须恰好覆盖 [first, last] 且严格递增；调用方应传入新切片头。
 func NewSegment(generation, segmentNumber uint64, lines []Line) (*Segment, bool) {
 	first, last := SeqRange(segmentNumber)
@@ -85,42 +81,11 @@ func NewSegment(generation, segmentNumber uint64, lines []Line) (*Segment, bool)
 			return nil, false
 		}
 	}
-	seg := &Segment{
+	return &Segment{
 		Generation: generation,
 		Number:     segmentNumber,
 		FirstSeq:   first,
 		LastSeq:    last,
 		Lines:      lines,
-	}
-	seg.Checksum = Checksum(seg)
-	return seg, true
-}
-
-// Checksum 计算分段内容指纹（seq/LineID/version/wrapped/cell 文本）。
-func Checksum(seg *Segment) []byte {
-	h := sha256.New()
-	var buf [8]byte
-	putU64 := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
-	putU64(seg.Generation)
-	putU64(seg.Number)
-	putU64(seg.FirstSeq)
-	putU64(seg.LastSeq)
-	for _, line := range seg.Lines {
-		putU64(line.HistorySeq)
-		putU64(line.LineID)
-		putU64(line.Version)
-		if line.Wrapped {
-			_, _ = h.Write([]byte{1})
-		} else {
-			_, _ = h.Write([]byte{0})
-		}
-		for _, cell := range line.Cells {
-			_, _ = h.Write([]byte(cell.Char))
-		}
-		_, _ = h.Write([]byte{0}) // cell 分隔
-	}
-	return h.Sum(nil)
+	}, true
 }

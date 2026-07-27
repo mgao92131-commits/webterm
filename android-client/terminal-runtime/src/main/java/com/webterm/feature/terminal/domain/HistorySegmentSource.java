@@ -1,7 +1,6 @@
 package com.webterm.feature.terminal.domain;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.TerminalLine;
@@ -27,6 +26,7 @@ public interface HistorySegmentSource {
     TRIMMED,
     NOT_FOUND,
     SESSION_GONE,
+    AUTH_REQUIRED,
     PROTOCOL
   }
 
@@ -47,15 +47,13 @@ public interface HistorySegmentSource {
     public final long firstSeq;
     public final long lastSeq;
     public final List<TerminalLine> lines;
-    public final byte[] checksum;
 
     public DecodedHistorySegment(@NonNull SegmentKey key, long firstSeq, long lastSeq,
-                                 @NonNull List<TerminalLine> lines, @Nullable byte[] checksum) {
+                                 @NonNull List<TerminalLine> lines) {
       this.key = key;
       this.firstSeq = firstSeq;
       this.lastSeq = lastSeq;
       this.lines = lines;
-      this.checksum = checksum;
     }
   }
 

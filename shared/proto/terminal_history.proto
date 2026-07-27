@@ -30,7 +30,7 @@ message HistorySegment {
   uint64 last_seq = 4;
   repeated LineData lines = 5;
   Dictionary dictionary = 6;
-  bytes checksum = 7;
+  reserved 7; // 曾为 checksum；完整性改依赖 HTTPS + protobuf + SegmentKey
 }
 
 // HistorySegmentResponse 是 HTTP 响应体；不含 historyExtent/availableExtent。

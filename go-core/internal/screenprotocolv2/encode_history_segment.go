@@ -38,7 +38,6 @@ func EncodeHistorySegmentResponse(
 			LastSeq:           seg.LastSeq,
 			Lines:             encodeLines(lines),
 			Dictionary:        encodeDictionaryForLines(lines, styles, links),
-			Checksum:          append([]byte(nil), seg.Checksum...),
 		}
 	}
 	wire, err := proto.Marshal(resp)

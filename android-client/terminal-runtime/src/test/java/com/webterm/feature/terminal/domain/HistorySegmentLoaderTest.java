@@ -56,4 +56,21 @@ public class HistorySegmentLoaderTest {
     assertNotNull(next);
     assertEquals(1, next.number);
   }
+
+  @Test
+  public void closeCancelsActiveAndRejectsLateBegin() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    AtomicBoolean cancelled = new AtomicBoolean();
+    assertTrue(loader.begin(new SegmentKey(1, 0), () -> cancelled.set(true)));
+    HistorySegmentLoader.ActiveRequest active = loader.activeRequest();
+    loader.close();
+    assertTrue(loader.closed());
+    assertTrue(cancelled.get());
+    assertNull(loader.activeRequest());
+    assertNull(loader.latestDemand());
+    assertFalse(loader.complete(active));
+    AtomicBoolean lateCancelled = new AtomicBoolean();
+    assertFalse(loader.begin(new SegmentKey(1, 1), () -> lateCancelled.set(true)));
+    assertTrue(lateCancelled.get());
+  }
 }
