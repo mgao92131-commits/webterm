@@ -59,8 +59,8 @@ public final class DiagnosticMemoryRing {
         String safeArea = area != null && !area.isEmpty() ? area : "core";
         String safeEvent = event != null ? event : "";
         Map<String, Object> copy = copyFields(fields);
-        DiagnosticEntry entry = buildEntry(safeLevel, safeArea, safeEvent, copy, null);
         synchronized (lock) {
+            DiagnosticEntry entry = buildEntry(safeLevel, safeArea, safeEvent, copy, null);
             entries.add(entry);
             totalBytes += entry.encodedSize;
             trimLocked();
@@ -126,6 +126,9 @@ public final class DiagnosticMemoryRing {
         }
     }
 
+    /**
+     * 仅允许在持有 {@link #lock} 时调用：分配 seq 并构建条目。
+     */
     private DiagnosticEntry buildEntry(String level, String source, String event,
                                        Map<String, Object> fields, String message) {
         long seq = nextSeq++;

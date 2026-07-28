@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.ArrayDeque;
 import java.io.IOException;
 
@@ -119,11 +120,14 @@ public final class TerminalSessionRuntime {
       return false;
     }
     void setLayoutLeaseId(@NonNull String leaseId);
-    void sendTextInput(@NonNull String text);
-    void sendPasteInput(@NonNull String text);
-    void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
-    void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
-                        boolean shift, boolean alt, boolean ctrl, boolean meta, boolean pressed);
+    /** @return true 表示本地 outbound 队列已接受；最终 WebSocket 入队经 {@link Listener#onInputSendResult}。 */
+    boolean sendTextInput(@NonNull String text);
+    boolean sendPasteInput(@NonNull String text);
+    boolean sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
+                         boolean meta, boolean pressed);
+    boolean sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+                           boolean shift, boolean alt, boolean ctrl, boolean meta,
+                           boolean pressed);
     void sendFocusInput(boolean focused);
     /** 返回 true 表示 resize 已被本地发送队列接受；false 表示当前无可用通道，调用方不得记录"已发送"。 */
     boolean requestResize(int cols, int rows);
@@ -144,6 +148,8 @@ public final class TerminalSessionRuntime {
       void onDisconnected(@Nullable String reason);
       default void onAuthenticationRequired(@Nullable String reason) {}
       default void onInputDeliveryUncertain(@NonNull String message) {}
+      /** 输入帧最终入队结果：WEBSOCKET_ENQUEUED / LOCAL_QUEUE_FULL / TRANSPORT_REJECTED 等。 */
+      default void onInputSendResult(@NonNull String result) {}
       void onClosed();
     }
   }
@@ -190,6 +196,14 @@ public final class TerminalSessionRuntime {
   private static final long HISTORY_REQUEST_TIMEOUT_MS = 5_000L;
   private static final long HISTORY_RETRY_MIN_MS = 200L;
   private static final long HISTORY_RETRY_MAX_MS = 5_000L;
+
+  private long inputAttemptCount;
+  private long inputRejectedNotLiveCount;
+  private long inputRejectedNoLeaseCount;
+  private long inputLocalQueueAcceptedCount;
+  private long inputWebSocketEnqueuedCount;
+  private long inputQueueFullCount;
+  private long inputTransportRejectedCount;
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -284,7 +298,23 @@ public final class TerminalSessionRuntime {
   @NonNull
   TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshot() {
     return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
-        sessionId, state.name(), pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot());
+        sessionId, state.name(), pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot(),
+        inputDeliverySnapshot(),
+        0L, "", connectionEpoch.get(), syncGeneration,
+        projectionContinuity.name(), renderConsumer.get() != null, listeners.size(),
+        screenMailbox.pendingMessages(), screenMailbox.pendingBytes());
+  }
+
+  /** 关闭时最终快照：补充 closedAt / finalState 等，供 recentClosed 保留。 */
+  @NonNull
+  TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshotForClose() {
+    String finalStateName = state.name();
+    return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
+        sessionId, finalStateName, pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot(),
+        inputDeliverySnapshot(),
+        System.currentTimeMillis(), finalStateName, connectionEpoch.get(), syncGeneration,
+        projectionContinuity.name(), renderConsumer.get() != null, listeners.size(),
+        screenMailbox.pendingMessages(), screenMailbox.pendingBytes());
   }
 
   @NonNull
@@ -370,6 +400,12 @@ public final class TerminalSessionRuntime {
           notifyListeners("input_delivery_uncertain",
               listener -> listener.onInputDeliveryUncertain(message));
         });
+      }
+
+      @Override
+      public void onInputSendResult(@NonNull String result) {
+        if (TerminalSessionRuntime.this.connection != connection) return;
+        noteInputSendResult(result);
       }
 
       @Override
@@ -520,10 +556,37 @@ public final class TerminalSessionRuntime {
     }
   }
 
-  /** VSync 绘制完成后由 Controller 回调，更新 drawn 水位。 */
-  public void onRenderFrameDrawn(long publicationVersion, long screenRevision,
-                                 long drawDurationNanos) {
-    pipelineMetrics.onRenderFrameDrawn(publicationVersion, screenRevision, drawDurationNanos);
+  /** Controller 完成对该 publication 的处理（成功绘制或 state-only）。 */
+  public void onRenderPublicationHandled(long publicationVersion, long screenRevision,
+                                         boolean rendered) {
+    pipelineMetrics.onRenderPublicationHandled(publicationVersion, screenRevision, rendered);
+  }
+
+  /** view.render() 正常返回后由 Controller 回调，推进 rendered 水位。 */
+  public void onRenderFrameRendered(long publicationVersion, long screenRevision,
+                                    long drawDurationNanos) {
+    pipelineMetrics.onRenderFrameRendered(publicationVersion, screenRevision, drawDurationNanos);
+  }
+
+  /**
+   * view.render() 抛异常：推进 failed 水位；不推进 handled/rendered。
+   * 只记录异常类型，不记录异常正文。
+   */
+  public void onRenderFrameFailed(long publicationVersion, long screenRevision,
+                                  long drawDurationNanos, @NonNull RuntimeException error) {
+    pipelineMetrics.onRenderFrameFailed(publicationVersion, screenRevision, drawDurationNanos);
+    Diagnostics.warn("terminal_runtime", "render_frame_failed", diagnosticFields(
+        "failureKind", error.getClass().getSimpleName(),
+        "publicationVersion", publicationVersion,
+        "screenRevision", screenRevision));
+  }
+
+  /** 若模型操作推进了 publicationVersion，则同步 published 水位。 */
+  private void recordPublicationAdvance(long versionBefore) {
+    long versionAfter = model.lastPublicationVersion();
+    if (versionAfter > versionBefore) {
+      pipelineMetrics.onPublicationCreated(versionAfter, model.screenRevision);
+    }
   }
 
   private static String ownerType(@Nullable Object owner) {
@@ -567,17 +630,61 @@ public final class TerminalSessionRuntime {
   }
 
   private interface LiveInput {
-    void send(@NonNull ScreenConnection connection);
+    boolean send(@NonNull ScreenConnection connection);
   }
 
   private void sendWhenLive(int units, @NonNull LiveInput input) {
-    if (state != State.LIVE || projectionContinuity != ProjectionContinuityState.CONTINUOUS
-        || !hasLayoutLease()) {
+    inputAttemptCount++;
+    if (state != State.LIVE || projectionContinuity != ProjectionContinuityState.CONTINUOUS) {
+      inputRejectedNotLiveCount++;
       notifyInputDeliveryUncertain("INPUT_NOT_LIVE");
       return;
     }
+    if (!hasLayoutLease()) {
+      inputRejectedNoLeaseCount++;
+      notifyInputDeliveryUncertain("INPUT_NO_LEASE");
+      return;
+    }
     ScreenConnection c = connection;
-    if (c != null) input.send(c);
+    if (c == null) {
+      inputRejectedNotLiveCount++;
+      notifyInputDeliveryUncertain("INPUT_NOT_LIVE");
+      return;
+    }
+    if (input.send(c)) {
+      inputLocalQueueAcceptedCount++;
+    }
+  }
+
+  void noteInputSendResult(@NonNull String result) {
+    if (result == null) return;
+    switch (result) {
+      case "WEBSOCKET_ENQUEUED":
+        inputWebSocketEnqueuedCount++;
+        break;
+      case "LOCAL_QUEUE_FULL":
+        inputQueueFullCount++;
+        break;
+      case "TRANSPORT_REJECTED":
+        inputTransportRejectedCount++;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** 诊断导出：输入投递计数（不含输入正文）。 */
+  @NonNull
+  public Map<String, Long> inputDeliverySnapshot() {
+    Map<String, Long> out = new LinkedHashMap<>();
+    out.put("inputAttemptCount", inputAttemptCount);
+    out.put("inputRejectedNotLiveCount", inputRejectedNotLiveCount);
+    out.put("inputRejectedNoLeaseCount", inputRejectedNoLeaseCount);
+    out.put("inputLocalQueueAcceptedCount", inputLocalQueueAcceptedCount);
+    out.put("inputWebSocketEnqueuedCount", inputWebSocketEnqueuedCount);
+    out.put("inputQueueFullCount", inputQueueFullCount);
+    out.put("inputTransportRejectedCount", inputTransportRejectedCount);
+    return out;
   }
 
   private void notifyInputDeliveryUncertain(@NonNull String message) {
@@ -665,7 +772,7 @@ public final class TerminalSessionRuntime {
       return;
     }
     if (historyLoader.activeRequest() != null) {
-      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_BUSY);
+      historyLoader.incrementPumpWhileFetching();
       return;
     }
     HistorySegmentSource source = historySegmentSource;
@@ -708,7 +815,7 @@ public final class TerminalSessionRuntime {
       if (inner != null) inner.cancel();
     };
     if (!historyLoader.begin(target, cancelProxy)) {
-      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_BUSY);
+      historyLoader.incrementPumpWhileFetching();
       return;
     }
     refreshEvictionPins();
@@ -724,6 +831,7 @@ public final class TerminalSessionRuntime {
               long durationMs = historyFetchDurationMs(active);
               historyLoader.complete(active);
               boolean applyChanged = applyDecodedHistorySegment(result);
+              historyLoader.clearRetryAttempt();
               emitHistoryFetchCompleted(active, result, durationMs, applyChanged);
               observeAndEmitLoaderState(HistorySegmentLoader.State.READY);
               refreshEvictionPins();
@@ -752,7 +860,7 @@ public final class TerminalSessionRuntime {
                 pumpHistorySegments();
                 return;
               }
-              historyLoader.markRetryPending();
+              historyLoader.markRetryPending(active.retryAttempt + 1);
               scheduleSegmentRetry(failure.retryAfterMs);
             });
           }
@@ -816,13 +924,17 @@ public final class TerminalSessionRuntime {
         projection.remoteAvailableExtent,
         decoded.lines,
         0);
+    long publicationBefore = model.lastPublicationVersion();
+    long revisionBefore = model.screenRevision;
     boolean changed = model.applyHistoryRange(
         range, decoded.firstSeq, decoded.firstSeq, decoded.lastSeq);
     if (changed) {
       recordCapturedModelState(false);
-      // 历史段不推进 screenRevision，但会推进 publicationVersion；水位需同步。
-      pipelineMetrics.onModelApplied(
-          model.screenRevision, model.lastPublicationVersion());
+      // 历史段通常不推进 screenRevision，但会推进 publicationVersion。
+      recordPublicationAdvance(publicationBefore);
+      if (model.screenRevision != revisionBefore) {
+        pipelineMetrics.onModelApplied(model.screenRevision);
+      }
       dispatchRenderNeeded();
     }
     return changed;
@@ -862,6 +974,15 @@ public final class TerminalSessionRuntime {
         Diagnostics.info("history_segment", "history_loader_blocked",
             historySegmentFields("reason", reason));
       }
+    }
+    if (transition.reasonChanged) {
+      String reason = HistorySegmentLoader.blockedReason(transition.next);
+      Diagnostics.info("history_segment", "history_loader_blocked_reason_changed",
+          historySegmentFields(
+              "previousReason", transition.previousReason,
+              "reason", reason,
+              "previousDurationMs", transition.blockedDurationMs,
+              "suppressedPumpCount", transition.suppressedPumpCount));
     }
     if (transition.leftBlocked) {
       Diagnostics.info("history_segment", "history_loader_resumed", historySegmentFields(
@@ -1352,6 +1473,8 @@ public final class TerminalSessionRuntime {
     String failureReason = "UNKNOWN_APPLY_FAILURE";
     long commitBaseRevision = 0;
     long commitTargetRevision = 0;
+    long publicationBefore = model.lastPublicationVersion();
+    long revisionBefore = model.screenRevision;
     try {
       switch (envelope.getPayloadCase()) {
         case BASELINE: {
@@ -1423,6 +1546,7 @@ public final class TerminalSessionRuntime {
           } finally {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
+          // history promotion 也在 stagedCommit.commit() 内走 publishPendingRenderUpdate。
           RemoteTerminalModel.StagedCommit stagedCommit = model.stageCommit(commit);
           long commitApplyStartedNanos = System.nanoTime();
           try {
@@ -1486,19 +1610,22 @@ public final class TerminalSessionRuntime {
       return;
     }
     TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);
-    updatePipelineAfterApply(envelope.getPayloadCase(), renderChanged);
+    updatePipelineAfterApply(envelope.getPayloadCase(), publicationBefore, revisionBefore);
     if (renderChanged) dispatchRenderNeeded();
   }
 
   private void updatePipelineAfterApply(
       @NonNull TerminalScreenV2Proto.ScreenEnvelope.PayloadCase payloadCase,
-      boolean renderChanged) {
+      long publicationBefore,
+      long revisionBefore) {
     switch (payloadCase) {
       case BASELINE:
       case TERMINAL_COMMIT:
-        // 用计数器而非 peek：UI 可能在 apply 与水位更新之间已消费 pending。
-        long publishedVersion = renderChanged ? model.lastPublicationVersion() : 0L;
-        pipelineMetrics.onModelApplied(model.screenRevision, publishedVersion);
+        // 用 lastPublicationVersion 计数器而非 peek：UI 可能在 apply 与水位更新之间已消费 pending。
+        recordPublicationAdvance(publicationBefore);
+        if (model.screenRevision != revisionBefore) {
+          pipelineMetrics.onModelApplied(model.screenRevision);
+        }
         break;
       default:
         break;
@@ -1632,7 +1759,9 @@ public final class TerminalSessionRuntime {
     if (!fullRenderRequestScheduled.compareAndSet(false, true)) return;
     modelExecutor.execute(() -> {
       fullRenderRequestScheduled.set(false);
+      long publicationBefore = model.lastPublicationVersion();
       model.requestFullRender();
+      recordPublicationAdvance(publicationBefore);
       dispatchRenderNeeded();
     });
   }

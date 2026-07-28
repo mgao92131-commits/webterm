@@ -68,16 +68,23 @@ func TestObserveWriterQueueDepthHighWater(t *testing.T) {
 	if m.WriterDataQueueDepth.Load() != 5 {
 		t.Fatalf("data depth = %d, want 5", m.WriterDataQueueDepth.Load())
 	}
-	if m.WriterHighWaterDepth.Load() != 5 {
-		t.Fatalf("high water = %d, want 5", m.WriterHighWaterDepth.Load())
+	if m.WriterTotalQueueCurrentDepth.Load() != 8 {
+		t.Fatalf("total current = %d, want 8", m.WriterTotalQueueCurrentDepth.Load())
+	}
+	// 高水位按两条队列深度之和计。
+	if m.WriterTotalQueueHighWaterDepth.Load() != 8 {
+		t.Fatalf("total high water = %d, want 8", m.WriterTotalQueueHighWaterDepth.Load())
+	}
+	if m.WriterHighWaterDepth.Load() != 8 {
+		t.Fatalf("compat high water = %d, want 8", m.WriterHighWaterDepth.Load())
 	}
 	m.ObserveWriterQueueDepth(2, 4)
-	if m.WriterHighWaterDepth.Load() != 5 {
-		t.Fatalf("high water must not decrease: %d", m.WriterHighWaterDepth.Load())
+	if m.WriterTotalQueueHighWaterDepth.Load() != 8 {
+		t.Fatalf("high water must not decrease: %d", m.WriterTotalQueueHighWaterDepth.Load())
 	}
 	m.ObserveWriterQueueDepth(8, 1)
-	if m.WriterHighWaterDepth.Load() != 8 {
-		t.Fatalf("high water = %d, want 8", m.WriterHighWaterDepth.Load())
+	if m.WriterTotalQueueHighWaterDepth.Load() != 9 {
+		t.Fatalf("total high water = %d, want 9", m.WriterTotalQueueHighWaterDepth.Load())
 	}
 }
 
@@ -95,6 +102,11 @@ func TestSnapshotCapabilitiesDeclareUninstrumented(t *testing.T) {
 	} {
 		if caps[name] != false {
 			t.Errorf("capabilities[%q] = %v, want false", name, caps[name])
+		}
+	}
+	for _, name := range []string{"writerQueueMetrics", "writerDurationMetrics"} {
+		if caps[name] != true {
+			t.Errorf("capabilities[%q] = %v, want true", name, caps[name])
 		}
 	}
 

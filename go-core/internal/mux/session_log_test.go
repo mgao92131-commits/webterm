@@ -13,6 +13,7 @@ import (
 
 	"nhooyr.io/websocket"
 
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/logs"
 	termsession "webterm/go-core/internal/session"
 	"webterm/go-core/internal/transporterr"
@@ -66,26 +67,75 @@ func (timeoutNetError) Temporary() bool { return true }
 
 func TestErrorKindClassifiesErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want string
+		name      string
+		err       error
+		wantKind  string
+		wantLevel string
+		wantCode  int
 	}{
-		{"nil", nil, "none"},
-		{"context cancelled", context.Canceled, "context_cancelled"},
-		{"deadline", context.DeadlineExceeded, "timeout"},
-		{"net timeout", timeoutNetError{}, "timeout"},
-		{"relay stream closed", transporterr.ErrRelayStreamClosed, "stream_closed"},
-		{"wrapped relay stream closed", fmt.Errorf("read: %w", transporterr.ErrRelayStreamClosed), "stream_closed"},
-		{"closed", net.ErrClosed, "closed"},
-		{"eof", io.EOF, "closed"},
-		{"unexpected eof", io.ErrUnexpectedEOF, "closed"},
-		{"websocket closed", websocket.CloseError{Code: websocket.StatusNormalClosure}, "websocket_closed"},
-		{"generic io", errors.New("boom"), "io_error"},
+		{"nil", nil, "none", "info", 0},
+		{"context cancelled", context.Canceled, "context_cancelled", "info", 0},
+		{"deadline", context.DeadlineExceeded, "timeout", "warn", 0},
+		{"net timeout", timeoutNetError{}, "timeout", "warn", 0},
+		{"relay stream closed", transporterr.ErrRelayStreamClosed, "stream_closed", "info", 0},
+		{"wrapped relay stream closed", fmt.Errorf("read: %w", transporterr.ErrRelayStreamClosed), "stream_closed", "info", 0},
+		{"closed", net.ErrClosed, "closed", "info", 0},
+		{"eof", io.EOF, "closed", "info", 0},
+		{"unexpected eof", io.ErrUnexpectedEOF, "closed", "info", 0},
+		{"ws normal", websocket.CloseError{Code: websocket.StatusNormalClosure}, "websocket_closed", "info", 1000},
+		{"ws going away", websocket.CloseError{Code: websocket.StatusGoingAway}, "websocket_closed", "info", 1001},
+		{"ws no status", websocket.CloseError{Code: websocket.StatusNoStatusRcvd}, "websocket_closed", "warn", 1005},
+		{"ws protocol", websocket.CloseError{Code: websocket.StatusProtocolError}, "websocket_closed", "warn", 1002},
+		{"ws unsupported", websocket.CloseError{Code: websocket.StatusUnsupportedData}, "websocket_closed", "warn", 1003},
+		{"ws policy", websocket.CloseError{Code: websocket.StatusPolicyViolation}, "websocket_closed", "warn", 1008},
+		{"ws internal", websocket.CloseError{Code: websocket.StatusInternalError}, "websocket_closed", "warn", 1011},
+		{"ws unknown", websocket.CloseError{Code: 4999}, "websocket_closed", "error", 4999},
+		{"generic io", errors.New("boom"), "io_error", "warn", 0},
 	}
 	for _, tc := range cases {
-		if got := errorKind(tc.err); got != tc.want {
-			t.Errorf("%s: errorKind = %q, want %q", tc.name, got, tc.want)
+		got := classifyError(tc.err)
+		if got.Kind != tc.wantKind {
+			t.Errorf("%s: Kind = %q, want %q", tc.name, got.Kind, tc.wantKind)
 		}
+		if got.Level != tc.wantLevel {
+			t.Errorf("%s: Level = %q, want %q", tc.name, got.Level, tc.wantLevel)
+		}
+		if got.CloseCode != tc.wantCode {
+			t.Errorf("%s: CloseCode = %d, want %d", tc.name, got.CloseCode, tc.wantCode)
+		}
+		if errorKind(tc.err) != tc.wantKind {
+			t.Errorf("%s: errorKind = %q, want %q", tc.name, errorKind(tc.err), tc.wantKind)
+		}
+	}
+}
+
+func TestMuxReadFailureEmitsCloseCodeForWebSocket(t *testing.T) {
+	logger := logs.New(logs.DefaultCapacity)
+	logger.SetRateLimiter(nil)
+	sock := &fakeSocket{reads: []fakeRead{
+		{err: websocket.CloseError{Code: websocket.StatusProtocolError, Reason: "bad"}},
+	}}
+	sess := Serve(sock, &ServeOpts{Logger: logger})
+
+	if err := sess.readLoop(context.Background()); err == nil {
+		t.Fatal("readLoop = nil, want websocket close error")
+	}
+	entries := logger.Recent(0)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	if entry.Event != "mux_read_failed" {
+		t.Fatalf("event = %q, want mux_read_failed", entry.Event)
+	}
+	if entry.Level != "warn" {
+		t.Errorf("level = %q, want warn", entry.Level)
+	}
+	if entry.Fields["reason"] != "websocket_closed" {
+		t.Errorf("reason = %v, want websocket_closed", entry.Fields["reason"])
+	}
+	if entry.Fields["closeCode"] != 1002 {
+		t.Errorf("closeCode = %v, want 1002", entry.Fields["closeCode"])
 	}
 }
 
@@ -186,15 +236,15 @@ func TestMuxReadFailureEmitsClassifiedEvent(t *testing.T) {
 }
 
 // TestDiagnosticsConnectionSetsContextAndMergesIntoEvents diagnostics.connection
-// 写入 HashID 上下文后，后续 mux 事件应带上 connectionHash 等字段。
+// 传入 Android 侧已计算的 12 位 hex hash 后，后续 mux 事件应原样带上 connectionHash。
 func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
 	logger := logs.New(logs.DefaultCapacity)
 	logger.SetRateLimiter(nil)
 
-	connectionID := "11111111-2222-3333-4444-555555555555"
-	recoveryID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	ctrl := []byte(`{"type":"diagnostics.connection","connection_id":"` + connectionID +
-		`","recovery_id":"` + recoveryID + `","transport_generation":12}`)
+	connectionHash := "a1b2c3d4e5f6"
+	recoveryHash := "fedcba987654"
+	ctrl := []byte(`{"type":"diagnostics.connection","connection_hash":"` + connectionHash +
+		`","recovery_hash":"` + recoveryHash + `","transport_generation":12}`)
 
 	var onControlCalls int
 	sock := &fakeSocket{reads: []fakeRead{
@@ -214,11 +264,11 @@ func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
 	if onControlCalls != 0 {
 		t.Fatalf("onControl calls = %d, want 0 (diagnostics.connection must not forward)", onControlCalls)
 	}
-	if sess.diag.ConnectionHash != logs.HashID(connectionID) {
-		t.Errorf("ConnectionHash = %q, want %q", sess.diag.ConnectionHash, logs.HashID(connectionID))
+	if sess.diag.ConnectionHash != connectionHash {
+		t.Errorf("ConnectionHash = %q, want %q", sess.diag.ConnectionHash, connectionHash)
 	}
-	if sess.diag.RecoveryHash != logs.HashID(recoveryID) {
-		t.Errorf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, logs.HashID(recoveryID))
+	if sess.diag.RecoveryHash != recoveryHash {
+		t.Errorf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, recoveryHash)
 	}
 	if sess.diag.TransportGeneration != 12 {
 		t.Errorf("TransportGeneration = %d, want 12", sess.diag.TransportGeneration)
@@ -232,14 +282,13 @@ func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
 	if entry.Event != "mux_stream_closed" {
 		t.Fatalf("event = %q, want mux_stream_closed", entry.Event)
 	}
-	if entry.Fields["connectionHash"] != logs.HashID(connectionID) {
-		t.Errorf("connectionHash = %v, want %q", entry.Fields["connectionHash"], logs.HashID(connectionID))
+	if entry.Fields["connectionHash"] != connectionHash {
+		t.Errorf("connectionHash = %v, want %q", entry.Fields["connectionHash"], connectionHash)
 	}
-	if entry.Fields["recoveryHash"] != logs.HashID(recoveryID) {
-		t.Errorf("recoveryHash = %v, want %q", entry.Fields["recoveryHash"], logs.HashID(recoveryID))
+	if entry.Fields["recoveryHash"] != recoveryHash {
+		t.Errorf("recoveryHash = %v, want %q", entry.Fields["recoveryHash"], recoveryHash)
 	}
 	if entry.Fields["transportGeneration"] != uint64(12) {
-		// json/log fields may be uint64; accept common numeric forms
 		switch v := entry.Fields["transportGeneration"].(type) {
 		case uint64:
 			if v != 12 {
@@ -259,5 +308,46 @@ func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
 	}
 	if entry.Fields["connection_id"] != nil || entry.Fields["recovery_id"] != nil {
 		t.Fatalf("raw UUIDs must not appear in fields: %+v", entry.Fields)
+	}
+}
+
+func TestDiagnosticsConnectionRejectsInvalidHash(t *testing.T) {
+	before := diagnostics.Default.MuxDiagnosticsContextRejectedCount.Load()
+	sess := Serve(&fakeSocket{}, &ServeOpts{})
+	sess.applyDiagnosticsConnection(map[string]any{
+		"connection_hash": "NOT_VALID!!!!",
+		"recovery_hash":   "abc",
+	})
+	if sess.diag.ConnectionHash != "" || sess.diag.RecoveryHash != "" {
+		t.Fatalf("invalid hashes must be ignored, got %+v", sess.diag)
+	}
+	if got := diagnostics.Default.MuxDiagnosticsContextRejectedCount.Load(); got <= before {
+		t.Fatalf("rejected count = %d, want > %d", got, before)
+	}
+}
+
+func TestValidAndroidDiagnosticHash(t *testing.T) {
+	if !validAndroidDiagnosticHash("a1b2c3d4e5f6") {
+		t.Fatal("expected valid hash")
+	}
+	if validAndroidDiagnosticHash("A1B2C3D4E5F6") {
+		t.Fatal("uppercase must be rejected")
+	}
+	if validAndroidDiagnosticHash("short") {
+		t.Fatal("short must be rejected")
+	}
+}
+
+// TestAndroidCrossVectorHashFormat 与 Android DiagnosticIdHasher.hash("testsalt", ...)
+// 对齐：12 位小写 hex。进程 salt 不可固定，故用固定 salt 向量校验格式；
+// Agent 对合法 connection_hash 原样回显（见 TestDiagnosticsConnectionSetsContextAndMergesIntoEvents）。
+func TestAndroidCrossVectorHashFormat(t *testing.T) {
+	// SHA-256("testsalt:connection-id-vector-1")[:12] == 687dccd95cb4
+	const androidFixedVector = "687dccd95cb4"
+	if !validAndroidDiagnosticHash(androidFixedVector) {
+		t.Fatalf("android fixed vector %q must pass validAndroidDiagnosticHash", androidFixedVector)
+	}
+	if len(androidFixedVector) != 12 {
+		t.Fatalf("len = %d, want 12", len(androidFixedVector))
 	}
 }

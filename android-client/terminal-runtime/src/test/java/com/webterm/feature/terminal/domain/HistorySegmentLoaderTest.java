@@ -45,6 +45,52 @@ public class HistorySegmentLoaderTest {
   }
 
   @Test
+  public void blockedReasonChangeEmitsTransition() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    assertNotNull(loader.observeState(HistorySegmentLoader.State.BLOCKED_NO_SOURCE));
+    HistorySegmentLoader.StateTransition changed = loader.observeState(
+        HistorySegmentLoader.State.BLOCKED_NO_DEMAND);
+    assertNotNull(changed);
+    assertTrue(changed.reasonChanged);
+    assertFalse(changed.enteredBlocked);
+    assertFalse(changed.leftBlocked);
+    assertEquals("no_source", changed.previousReason);
+  }
+
+  @Test
+  public void markRetryPendingUsesExplicitAttempt() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    assertTrue(loader.begin(new SegmentKey(1, 0), () -> {}));
+    HistorySegmentLoader.ActiveRequest first = loader.activeRequest();
+    assertEquals(0, first.retryAttempt);
+    assertTrue(loader.complete(first));
+    loader.markRetryPending(first.retryAttempt + 1);
+    assertTrue(loader.begin(new SegmentKey(1, 1), () -> {}));
+    assertEquals(1, loader.activeRequest().retryAttempt);
+    HistorySegmentLoader.ActiveRequest second = loader.activeRequest();
+    assertTrue(loader.complete(second));
+    loader.markRetryPending(second.retryAttempt + 1);
+    assertTrue(loader.begin(new SegmentKey(1, 2), () -> {}));
+    assertEquals(2, loader.activeRequest().retryAttempt);
+    assertTrue(loader.complete(loader.activeRequest()));
+    loader.clearDemand();
+    loader.clearRetryAttempt();
+    assertTrue(loader.begin(new SegmentKey(1, 3), () -> {}));
+    assertEquals(0, loader.activeRequest().retryAttempt);
+  }
+
+  @Test
+  public void pumpWhileFetchingIsMetricOnly() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    assertTrue(loader.begin(new SegmentKey(1, 0), () -> {}));
+    loader.incrementPumpWhileFetching();
+    loader.incrementPumpWhileFetching();
+    assertEquals(2, loader.pumpWhileFetchingCount());
+    assertTrue(loader.setDemand(new HistorySegmentLoader.Demand(1, 10, 1, -1, 5)));
+    assertEquals(1, loader.demandChangedWhileFetchingCount());
+  }
+
+  @Test
   public void scrollDoesNotCancelActiveRequest() {
     HistorySegmentLoader loader = new HistorySegmentLoader();
     loader.setDemand(new HistorySegmentLoader.Demand(1, 50, 1, -1, 20));

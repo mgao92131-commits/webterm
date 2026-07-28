@@ -37,7 +37,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-/** DiagnosticLogExporter 的纯逻辑测试：命名并发唯一、processHash 关联、schema v2。 */
+/** DiagnosticLogExporter 的纯逻辑测试：命名并发唯一、processHash 关联、schema v3。 */
 public class DiagnosticLogExporterTest {
 
     @Before
@@ -102,8 +102,8 @@ public class DiagnosticLogExporterTest {
     }
 
     @Test
-    public void schemaVersionIsV2AndTrafficSummaryRemoved() {
-        assertEquals(2, DiagnosticLogExporter.SCHEMA_VERSION);
+    public void schemaVersionIsV3AndTrafficSummaryRemoved() {
+        assertEquals(3, DiagnosticLogExporter.SCHEMA_VERSION);
         // network-traffic-summary.txt 已删除；导出仅保留结构化 JSON。
         assertFalse(hasDeclaredMethod(DiagnosticLogExporter.class, "buildTrafficSummary"));
     }
@@ -134,6 +134,13 @@ public class DiagnosticLogExporterTest {
         assertTrue(metrics.contains("\"connectionRecovery\":{"));
         assertTrue(metrics.contains("\"screenPipelineAggregate\":{"));
         assertTrue(metrics.contains("\"historyLoaderAggregate\":{"));
+        assertTrue(metrics.contains("\"inputDelivery\":{"));
+        assertTrue(metrics.contains("\"residenceLatencyBuckets\":["));
+        assertTrue(metrics.contains("\"byFrameKind\":{"));
+        assertTrue(metrics.contains("\"startedCount\":"));
+        assertTrue(metrics.contains("\"renderSuccessCount\":"));
+        assertTrue(metrics.contains("\"renderFailureCount\":"));
+        assertTrue(metrics.contains("\"stateOnlyHandledCount\":"));
 
         // 同进程内再次导出，processHash 必须保持一致（可关联）。
         String metricsAgain = DiagnosticLogExporter.buildMetricsJson().toString();
@@ -156,9 +163,11 @@ public class DiagnosticLogExporterTest {
         assertTrue(eventRing.getLong("newestSeq") >= eventRing.getLong("oldestSeq"));
         assertFalse(eventRing.getString("oldestAt").isEmpty());
         assertFalse(eventRing.getString("newestAt").isEmpty());
-        assertEquals(0, state.getJSONArray("connections").length());
-        assertEquals(0, state.getJSONArray("terminalSessions").length());
-        assertEquals(0, state.getJSONArray("historyLoaders").length());
+        assertEquals(0, state.getJSONObject("connections").getJSONArray("active").length());
+        assertEquals(0, state.getJSONObject("connections").getJSONArray("recentClosed").length());
+        assertEquals(0, state.getJSONObject("terminalSessions").getJSONArray("recentClosed").length());
+        assertEquals(0, state.getJSONObject("historyLoaders").getJSONArray("active").length());
+        assertEquals(0, state.getJSONObject("historyLoaders").getJSONArray("recentClosed").length());
     }
 
     @Test
@@ -182,7 +191,7 @@ public class DiagnosticLogExporterTest {
             assertTrue(metrics.toString().contains("\"deviceHash\":\"" + expectedDeviceHash + "\""));
             assertTrue(metrics.toString().contains("\"serverHash\":\"" + expectedServerHash + "\""));
 
-            JSONArray connections = state.getJSONArray("connections");
+            JSONArray connections = state.getJSONObject("connections").getJSONArray("active");
             assertEquals(1, connections.length());
             JSONObject connJson = connections.getJSONObject(0);
             assertEquals(expectedDeviceHash, connJson.getString("deviceHash"));

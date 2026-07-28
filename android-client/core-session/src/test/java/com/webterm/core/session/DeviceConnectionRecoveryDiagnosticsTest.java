@@ -127,6 +127,27 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
         assertTrue(connection.hasActiveRecovery());
         assertTrue(sink.hasEvent("device_connection", "transport_connect_failed"));
         assertTrue(sink.hasEvent("device_connection", "recovery_started"));
+        assertEquals("CONNECTING", sink.firstField("device_connection", "transport_connect_failed", "stateBefore"));
+        assertEquals("CONNECT", sink.firstField("device_connection", "transport_connect_failed", "failureStage"));
+        assertTrue(sink.firstField("device_connection", "transport_connect_failed", "connectDurationMs") instanceof Number);
+    }
+
+    @Test
+    public void connectFailureBeforeOpenEmitsTransportConnectFailed() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "secret-cookie", "device-raw-1",
+                new FakeTransportFactory(transport));
+        connection.openScreenChannel("s1", new SimpleListener());
+        assertEquals(1, transport.startCount);
+
+        transport.simulateFailure(0, "dns failed");
+
+        assertTrue(connection.hasActiveRecovery());
+        assertTrue(sink.hasEvent("device_connection", "transport_connect_failed"));
+        assertFalse(sink.hasEvent("device_connection", "transport_disconnected"));
+        assertEquals("CONNECTING", sink.firstField("device_connection", "transport_connect_failed", "stateBefore"));
+        assertEquals("WEBSOCKET", sink.firstField("device_connection", "transport_connect_failed", "failureStage"));
     }
 
     @Test
@@ -297,6 +318,15 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
                 if (area.equals(recorded.area) && event.equals(recorded.event)) return true;
             }
             return false;
+        }
+
+        Object firstField(String area, String event, String key) {
+            for (Recorded recorded : events) {
+                if (area.equals(recorded.area) && event.equals(recorded.event)) {
+                    return recorded.fields.get(key);
+                }
+            }
+            return null;
         }
 
         int countEvents(String area, String event) {

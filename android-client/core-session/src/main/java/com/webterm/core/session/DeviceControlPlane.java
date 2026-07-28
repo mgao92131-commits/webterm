@@ -1,5 +1,6 @@
 package com.webterm.core.session;
 
+import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -48,14 +49,16 @@ final class DeviceControlPlane {
         sender.send(message);
     }
 
-    /** 向 Agent 发送可选 diagnostics.connection，用于跨端关联 connection/recovery。 */
+    /** 向 Agent 发送可选 diagnostics.connection，传递已用于日志的关联 hash（非原始 UUID）。 */
     void sendDiagnosticsConnection(String connectionId, String recoveryId, int transportGeneration) {
-        if (connectionId == null || connectionId.isEmpty()) return;
+        String connectionHash = DiagnosticIdHasher.processHash(connectionId);
+        if (connectionHash.isEmpty()) return;
         JSONObject message = new JSONObject();
         put(message, "type", "diagnostics.connection");
-        put(message, "connection_id", connectionId);
-        if (recoveryId != null && !recoveryId.isEmpty()) {
-            put(message, "recovery_id", recoveryId);
+        put(message, "connection_hash", connectionHash);
+        String recoveryHash = DiagnosticIdHasher.processHash(recoveryId);
+        if (!recoveryHash.isEmpty()) {
+            put(message, "recovery_hash", recoveryHash);
         }
         put(message, "transport_generation", transportGeneration);
         sender.send(message);

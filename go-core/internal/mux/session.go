@@ -40,7 +40,7 @@ type ServeOpts struct {
 	Logger    *logs.Logger
 }
 
-// DiagnosticContext 关联 Android 侧 connection/recovery 诊断 ID（仅存 HashID）。
+// DiagnosticContext 关联 Android 侧 connection/recovery 诊断 hash（原样保存，不再二次 Hash）。
 type DiagnosticContext struct {
 	ConnectionHash      string
 	RecoveryHash        string
@@ -86,15 +86,16 @@ func (s *Session) readLoop(ctx context.Context) error {
 	for {
 		msgType, data, err := s.conn.Read(ctx)
 		if err != nil {
-			kind := errorKind(err)
-			switch kind {
-			case "context_cancelled", "stream_closed", "closed", "websocket_closed":
-				s.event("info", "mux_stream_closed", map[string]any{"reason": kind})
-			case "timeout", "io_error":
-				s.event("warn", "mux_read_failed", map[string]any{"reason": kind})
-			default:
-				s.event("error", "mux_read_failed", map[string]any{"reason": kind})
+			c := classifyError(err)
+			fields := map[string]any{"reason": c.Kind}
+			if c.CloseCode > 0 {
+				fields["closeCode"] = c.CloseCode
 			}
+			event := "mux_read_failed"
+			if c.Level == "info" {
+				event = "mux_stream_closed"
+			}
+			s.event(c.Level, event, fields)
 			return err
 		}
 		switch msgType {
@@ -131,16 +132,25 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 	}
 }
 
-// applyDiagnosticsConnection 接收 Android 侧 diagnostics.connection，仅存 HashID。
+// applyDiagnosticsConnection 接收 Android 侧已计算的 correlation hash，原样保存。
 func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 	if raw == nil {
 		return
 	}
-	if v, ok := raw["connection_id"].(string); ok && v != "" {
-		s.diag.ConnectionHash = logs.HashID(v)
+	rejected := false
+	if v, ok := raw["connection_hash"].(string); ok && v != "" {
+		if validAndroidDiagnosticHash(v) {
+			s.diag.ConnectionHash = v
+		} else {
+			rejected = true
+		}
 	}
-	if v, ok := raw["recovery_id"].(string); ok && v != "" {
-		s.diag.RecoveryHash = logs.HashID(v)
+	if v, ok := raw["recovery_hash"].(string); ok && v != "" {
+		if validAndroidDiagnosticHash(v) {
+			s.diag.RecoveryHash = v
+		} else {
+			rejected = true
+		}
 	}
 	switch v := raw["transport_generation"].(type) {
 	case float64:
@@ -160,6 +170,21 @@ func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 			s.diag.TransportGeneration = uint64(v)
 		}
 	}
+	if rejected {
+		diagnostics.Default.MuxDiagnosticsContextRejectedCount.Add(1)
+	}
+}
+
+func validAndroidDiagnosticHash(value string) bool {
+	if len(value) != 12 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
@@ -332,38 +357,76 @@ func (s *Session) event(level, event string, fields map[string]any) {
 	s.logger.Event(level, "mux", event, fields)
 }
 
+// ErrorClassification 是读/写错误的稳定分类：Kind 作 reason，CloseCode 保留
+// WebSocket 关闭码，Level 决定事件等级（info/warn/error）。
+type ErrorClassification struct {
+	Kind      string
+	CloseCode int
+	Level     string
+}
+
 // errorKind 把错误归类为少量稳定枚举，作为事件 reason 字段。
 // 协议解析失败不由本函数归类，调用点直接写 reason=protocol。
 func errorKind(err error) string {
+	return classifyError(err).Kind
+}
+
+func classifyError(err error) ErrorClassification {
 	switch {
 	case err == nil:
-		return "none"
+		return ErrorClassification{Kind: "none", Level: "info"}
 
 	case errors.Is(err, context.Canceled):
-		return "context_cancelled"
+		return ErrorClassification{Kind: "context_cancelled", Level: "info"}
 
 	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
+		return ErrorClassification{Kind: "timeout", Level: "warn"}
 
 	case errors.Is(err, transporterr.ErrRelayStreamClosed):
-		return "stream_closed"
+		return ErrorClassification{Kind: "stream_closed", Level: "info"}
 
 	case errors.Is(err, net.ErrClosed),
 		errors.Is(err, io.EOF),
 		errors.Is(err, io.ErrUnexpectedEOF):
-		return "closed"
+		return ErrorClassification{Kind: "closed", Level: "info"}
 	}
 
-	if websocket.CloseStatus(err) != -1 {
-		return "websocket_closed"
+	if status := websocket.CloseStatus(err); status != -1 {
+		return classifyWebSocketClose(status)
 	}
 
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout"
+		return ErrorClassification{Kind: "timeout", Level: "warn"}
 	}
 
-	return "io_error"
+	return ErrorClassification{Kind: "io_error", Level: "warn"}
+}
+
+func classifyWebSocketClose(status websocket.StatusCode) ErrorClassification {
+	code := int(status)
+	base := ErrorClassification{Kind: "websocket_closed", CloseCode: code}
+	switch status {
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
+		base.Level = "info"
+		return base
+	case websocket.StatusNoStatusRcvd:
+		// 未收到关闭帧：多数为对端直接断 TCP，按 WARN 便于区分于正常关闭。
+		base.Level = "warn"
+		return base
+	case websocket.StatusProtocolError,
+		websocket.StatusUnsupportedData,
+		websocket.StatusPolicyViolation,
+		websocket.StatusInternalError:
+		base.Level = "warn"
+		return base
+	case websocket.StatusAbnormalClosure:
+		base.Level = "warn"
+		return base
+	default:
+		base.Level = "error"
+		return base
+	}
 }
 
 type channelSink struct {

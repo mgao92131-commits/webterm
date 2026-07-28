@@ -97,6 +97,22 @@ public final class MuxOutboundQueueTest {
     }
 
     @Test
+    public void tracksByKindStatsOnOfferAndCompletion() {
+        MuxOutboundQueue queue = new MuxOutboundQueue(8, 128L);
+        queue.offer("a", new byte[] {1, 2}, true, MuxOutboundQueue.FrameKind.INPUT, result -> {});
+        queue.offer("b", new byte[] {3}, true, MuxOutboundQueue.FrameKind.CONTROL, result -> {});
+        MuxOutboundQueue.Frame input = queue.poll();
+        input.completion.onResult(MuxOutboundQueue.Result.WEBSOCKET_ENQUEUED);
+
+        MuxOutboundQueue.Snapshot snapshot = queue.snapshot();
+        assertEquals(Long.valueOf(1L), snapshot.acceptedByKind.get("INPUT"));
+        assertEquals(Long.valueOf(1L), snapshot.acceptedByKind.get("CONTROL"));
+        assertEquals(Long.valueOf(1L), snapshot.webSocketEnqueuedByKind.get("INPUT"));
+        assertEquals(Long.valueOf(2L), snapshot.bytesByKind.get("INPUT"));
+        assertEquals(Long.valueOf(1L), snapshot.bytesByKind.get("CONTROL"));
+    }
+
+    @Test
     public void stopIncrementsConnectionStoppedCount() {
         MuxOutboundQueue queue = new MuxOutboundQueue(2, 10L);
         queue.offer("a", new byte[] {1}, true, result -> {});

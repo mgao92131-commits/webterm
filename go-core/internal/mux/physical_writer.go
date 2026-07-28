@@ -44,6 +44,10 @@ func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
 
 func (writer *PhysicalWriter) Done() <-chan struct{} { return writer.done }
 
+func (writer *PhysicalWriter) observeQueueDepths() {
+	diagnostics.Default.ObserveWriterQueueDepth(len(writer.highWrites), len(writer.dataWrites))
+}
+
 func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
 	diagnostics.Default.WriterSubmitCount.Add(1)
 	request := physicalWrite{
@@ -61,7 +65,7 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 	}
 	select {
 	case queue <- request:
-		diagnostics.Default.ObserveWriterQueueDepth(len(writer.highWrites), len(writer.dataWrites))
+		writer.observeQueueDepths()
 	case <-ctx.Done():
 		// 排队阶段被 ctx 拒绝（队列满/超时），计入 writer 队列拒绝指标。
 		diagnostics.Default.WriterQueueRejectedCount.Add(1)
@@ -77,11 +81,13 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 
 func (writer *PhysicalWriter) Run(ctx context.Context) {
 	defer close(writer.done)
+	defer writer.observeQueueDepths()
 	highBurst := 0
 	for {
 		if highBurst >= maxHighPriorityBurst {
 			select {
 			case request := <-writer.dataWrites:
+				writer.observeQueueDepths()
 				writer.perform(request)
 				highBurst = 0
 				continue
@@ -91,6 +97,7 @@ func (writer *PhysicalWriter) Run(ctx context.Context) {
 
 		select {
 		case request := <-writer.highWrites:
+			writer.observeQueueDepths()
 			writer.perform(request)
 			highBurst++
 			continue
@@ -101,9 +108,11 @@ func (writer *PhysicalWriter) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case request := <-writer.highWrites:
+			writer.observeQueueDepths()
 			writer.perform(request)
 			highBurst++
 		case request := <-writer.dataWrites:
+			writer.observeQueueDepths()
 			writer.perform(request)
 			highBurst = 0
 		}

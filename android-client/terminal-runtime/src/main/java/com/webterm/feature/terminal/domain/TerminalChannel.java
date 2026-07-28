@@ -9,6 +9,7 @@ import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.ConnectionCloseReason;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
+import com.webterm.core.session.MuxOutboundQueue;
 import com.webterm.terminal.protocol.ScreenMessageV2Builder;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
@@ -100,42 +101,36 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public void sendTextInput(@NonNull String text) {
-    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.textInput(layoutLeaseId, text), true);
+  public boolean sendTextInput(@NonNull String text) {
+    return sendInputFrame(ScreenMessageV2Builder.textInput(layoutLeaseId, text));
   }
 
   @Override
-  public void sendPasteInput(@NonNull String text) {
-    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.pasteInput(layoutLeaseId, text), true);
+  public boolean sendPasteInput(@NonNull String text) {
+    return sendInputFrame(ScreenMessageV2Builder.pasteInput(layoutLeaseId, text));
   }
 
   @Override
-  public void sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
+  public boolean sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    deviceConnection.sendTunnelFrame(channelId, ScreenMessageV2Builder.keyInput(
-        layoutLeaseId, key, shift, alt, ctrl, meta, pressed), true);
+    return sendInputFrame(ScreenMessageV2Builder.keyInput(
+        layoutLeaseId, key, shift, alt, ctrl, meta, pressed));
   }
 
   @Override
-  public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+  public boolean sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
     TerminalScreenV2Proto.MouseButton protoButton = mouseButtonFromString(button);
-    deviceConnection.sendTunnelFrame(channelId, ScreenMessageV2Builder.mouseInput(
-        layoutLeaseId, row, col, protoButton, wheelDelta, shift, alt, ctrl, meta, pressed), true);
+    return sendInputFrame(ScreenMessageV2Builder.mouseInput(
+        layoutLeaseId, row, col, protoButton, wheelDelta, shift, alt, ctrl, meta, pressed));
   }
 
   @Override
   public void sendFocusInput(boolean focused) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.focusInput(layoutLeaseId, focused), true);
+    sendFrame(ScreenMessageV2Builder.focusInput(layoutLeaseId, focused),
+        MuxOutboundQueue.FrameKind.INPUT, null);
   }
 
   @Override
@@ -144,8 +139,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     this.columns = clamp(cols, 10, 500);
     this.rows = clamp(rows, 5, 200);
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return false;
-    return deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageV2Builder.resize(layoutLeaseId, this.columns, this.rows), true);
+    return sendFrame(ScreenMessageV2Builder.resize(layoutLeaseId, this.columns, this.rows),
+        MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
   @Override
@@ -156,8 +151,8 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   @Override
   public void acquireLayout(@NonNull String requestId, boolean interactive) {
     if (deviceConnection == null || channelId == null) return;
-    deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.acquireLayout(requestId, interactive), true);
+    sendFrame(ScreenMessageV2Builder.acquireLayout(requestId, interactive),
+        MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
   @Override
@@ -166,16 +161,16 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     layoutLeaseId = "";
     if (deviceConnection == null || channelId == null) return;
     if (!releasedLeaseId.isEmpty()) {
-      deviceConnection.sendTunnelFrame(
-          channelId, ScreenMessageV2Builder.releaseLayout(releasedLeaseId), true);
+      sendFrame(ScreenMessageV2Builder.releaseLayout(releasedLeaseId),
+          MuxOutboundQueue.FrameKind.CONTROL, null);
     }
   }
 
   @Override
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
     if (deviceConnection == null || channelId == null) return;
-    deviceConnection.sendTunnelFrame(channelId,
-        ScreenMessageV2Builder.clipboardResponse(requestId, allowed, timeout, data), true);
+    sendFrame(ScreenMessageV2Builder.clipboardResponse(requestId, allowed, timeout, data),
+        MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
   @Override
@@ -284,10 +279,25 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     TerminalScreenV2Proto.InitialSyncMode mode = forceBaseline
         ? TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE
         : TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO;
-    return deviceConnection.sendTunnelFrame(
-        channelId, ScreenMessageV2Builder.hello(
+    return sendFrame(ScreenMessageV2Builder.hello(
             columns, rows, resume,
-            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT, mode), true);
+            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT, mode),
+        MuxOutboundQueue.FrameKind.CONTROL, null);
+  }
+
+  private boolean sendInputFrame(byte[] payload) {
+    if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return false;
+    return deviceConnection.sendTunnelFrame(channelId, payload, true,
+        MuxOutboundQueue.FrameKind.INPUT, result -> {
+          Listener current = listener;
+          if (current != null) current.onInputSendResult(result.name());
+        });
+  }
+
+  private boolean sendFrame(byte[] payload, MuxOutboundQueue.FrameKind kind,
+                            DeviceConnection.TunnelSendCallback callback) {
+    if (deviceConnection == null || channelId == null || payload == null) return false;
+    return deviceConnection.sendTunnelFrame(channelId, payload, true, kind, callback);
   }
 
   /**

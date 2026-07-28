@@ -265,13 +265,17 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
       return true;
     }
     @Override public void setLayoutLeaseId(@NonNull String leaseId) {}
-    @Override public void sendTextInput(@NonNull String text) {}
-    @Override public void sendPasteInput(@NonNull String text) {}
-    @Override public void sendKeyInput(@NonNull String key, boolean shift, boolean alt,
-                                       boolean ctrl, boolean meta, boolean pressed) {}
-    @Override public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+    @Override public boolean sendTextInput(@NonNull String text) { return true; }
+    @Override public boolean sendPasteInput(@NonNull String text) { return true; }
+    @Override public boolean sendKeyInput(@NonNull String key, boolean shift, boolean alt,
+                                       boolean ctrl, boolean meta, boolean pressed) {
+      return true;
+    }
+    @Override public boolean sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                                          boolean shift, boolean alt, boolean ctrl, boolean meta,
-                                         boolean pressed) {}
+                                         boolean pressed) {
+      return true;
+    }
     @Override public void sendFocusInput(boolean focused) {}
     @Override public boolean requestResize(int cols, int rows) { return true; }
     @Override public void acquireLayout(boolean interactive) {}

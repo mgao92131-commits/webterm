@@ -30,8 +30,8 @@ import java.util.Map;
 import org.junit.Test;
 
 /**
- * 屏幕管线水位：Baseline/Commit 推进 decoded/model/published/consumed/drawn；
- * 历史-only 发布不改 screenRevision，但推进 publicationVersion 与 consumed/drawn。
+ * 屏幕管线水位：Baseline/Commit 推进 decoded/model/published/consumed/handled/rendered；
+ * 历史-only 与 requestFullRender 推进 publicationVersion；失败不推进 handled/rendered。
  */
 public final class TerminalSessionRuntimePipelineMetricsTest {
 
@@ -49,6 +49,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertEquals(100L, afterBaseline.get("lastModelScreenRevision"));
     long publishedAfterBaseline = (Long) afterBaseline.get("lastPublishedVersion");
     assertTrue(publishedAfterBaseline > 0L);
+    assertEquals(100L, afterBaseline.get("lastPublishedScreenRevision"));
     assertEquals(100L, (long) model.screenRevision);
 
     connection.listener.onScreenMessage(commitEnvelope(100, 101));
@@ -59,19 +60,28 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertEquals(102L, afterCommits.get("lastModelScreenRevision"));
     long publishedAfterCommits = (Long) afterCommits.get("lastPublishedVersion");
     assertTrue(publishedAfterCommits > publishedAfterBaseline);
+    assertEquals(102L, afterCommits.get("lastPublishedScreenRevision"));
     assertEquals(102L, (long) model.screenRevision);
 
     RenderUpdate update = runtime.consumeRenderUpdate(renderConsumer);
     assertNotNull(update);
     assertEquals(102L, update.snapshot.screenRevision);
-    runtime.onRenderFrameDrawn(update.publicationVersion, update.snapshot.screenRevision, 1_000L);
+    runtime.onRenderFrameRendered(update.publicationVersion, update.snapshot.screenRevision, 1_000L);
+    runtime.onRenderPublicationHandled(
+        update.publicationVersion, update.snapshot.screenRevision, true);
 
     Map<String, Object> afterDraw = runtime.pipelineMetrics().snapshot();
     assertEquals(update.publicationVersion, afterDraw.get("lastConsumedVersion"));
-    assertEquals(update.publicationVersion, afterDraw.get("lastDrawnVersion"));
+    assertEquals(update.publicationVersion, afterDraw.get("lastRenderedVersion"));
+    assertEquals(update.publicationVersion, afterDraw.get("lastHandledVersion"));
+    assertEquals(0L, afterDraw.get("lastRenderFailedVersion"));
     assertEquals(102L, afterDraw.get("lastConsumedScreenRevision"));
-    assertEquals(102L, afterDraw.get("lastDrawnScreenRevision"));
-    assertTrue((Long) afterDraw.get("lastDrawnAtNanos") > 0L);
+    assertEquals(102L, afterDraw.get("lastRenderedScreenRevision"));
+    assertEquals(102L, afterDraw.get("lastHandledScreenRevision"));
+    assertTrue((Long) afterDraw.get("lastRenderedAtNanos") > 0L);
+    assertEquals(1L, afterDraw.get("renderSuccessCount"));
+    assertEquals(0L, afterDraw.get("renderFailureCount"));
+    assertEquals(0L, afterDraw.get("stateOnlyHandledCount"));
   }
 
   @Test
@@ -102,19 +112,85 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertTrue(model.lastPublicationVersion() > publishedBefore);
 
     Map<String, Object> afterHistory = runtime.pipelineMetrics().snapshot();
-    assertEquals(revBefore, afterHistory.get("lastModelScreenRevision"));
+    // 历史段不改 screenRevision，故不推进 lastModelScreenRevision。
+    assertEquals(0L, afterHistory.get("lastModelScreenRevision"));
     assertEquals(model.lastPublicationVersion(), afterHistory.get("lastPublishedVersion"));
+    assertEquals(revBefore, afterHistory.get("lastPublishedScreenRevision"));
 
     RenderUpdate update = runtime.consumeRenderUpdate(renderConsumer);
     assertNotNull(update);
     assertTrue(update.state.historyChanged);
     assertEquals(revBefore, update.snapshot.screenRevision);
-    runtime.onRenderFrameDrawn(update.publicationVersion, update.snapshot.screenRevision, 500L);
+    runtime.onRenderFrameRendered(update.publicationVersion, update.snapshot.screenRevision, 500L);
+    runtime.onRenderPublicationHandled(
+        update.publicationVersion, update.snapshot.screenRevision, true);
 
     Map<String, Object> afterDraw = runtime.pipelineMetrics().snapshot();
     assertEquals(update.publicationVersion, afterDraw.get("lastConsumedVersion"));
-    assertEquals(update.publicationVersion, afterDraw.get("lastDrawnVersion"));
-    assertEquals(revBefore, afterDraw.get("lastDrawnScreenRevision"));
+    assertEquals(update.publicationVersion, afterDraw.get("lastRenderedVersion"));
+    assertEquals(update.publicationVersion, afterDraw.get("lastHandledVersion"));
+    assertEquals(revBefore, afterDraw.get("lastRenderedScreenRevision"));
+  }
+
+  @Test
+  public void requestFullRenderAdvancesLastPublishedVersion() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline(/*sealedThrough*/ 256)));
+    model.consumeRenderUpdate();
+
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("full-wm", model, Runnable::run);
+    connect(runtime);
+    runtime.enterLiveForTest();
+
+    long publishedBefore = model.lastPublicationVersion();
+    long revBefore = model.screenRevision;
+    Map<String, Object> before = runtime.pipelineMetrics().snapshot();
+    assertEquals(0L, before.get("lastPublishedVersion"));
+
+    runtime.requestModelRender();
+
+    assertTrue(model.lastPublicationVersion() > publishedBefore);
+    assertEquals(revBefore, model.screenRevision);
+
+    Map<String, Object> after = runtime.pipelineMetrics().snapshot();
+    assertEquals(model.lastPublicationVersion(), after.get("lastPublishedVersion"));
+    assertEquals(revBefore, after.get("lastPublishedScreenRevision"));
+    // requestFullRender 不改 screenRevision，不应推进 lastModelScreenRevision。
+    assertEquals(0L, after.get("lastModelScreenRevision"));
+  }
+
+  @Test
+  public void stateOnlyHandledDoesNotAdvanceRendered() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("state-wm", model, Runnable::run);
+    Object renderConsumer = new Object();
+    runtime.registerRenderConsumer(renderConsumer);
+
+    runtime.onRenderPublicationHandled(/*publicationVersion*/ 7L, /*screenRevision*/ 3L, false);
+
+    Map<String, Object> snap = runtime.pipelineMetrics().snapshot();
+    assertEquals(7L, snap.get("lastHandledVersion"));
+    assertEquals(3L, snap.get("lastHandledScreenRevision"));
+    assertEquals(0L, snap.get("lastRenderedVersion"));
+    assertEquals(0L, snap.get("lastRenderFailedVersion"));
+    assertEquals(1L, snap.get("stateOnlyHandledCount"));
+    assertEquals(0L, snap.get("renderSuccessCount"));
+  }
+
+  @Test
+  public void renderFailureAdvancesFailedNotHandledOrRendered() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("fail-wm", model, Runnable::run);
+
+    runtime.onRenderFrameFailed(9L, 4L, 100L, new IllegalStateException("secret-detail"));
+
+    Map<String, Object> snap = runtime.pipelineMetrics().snapshot();
+    assertEquals(9L, snap.get("lastRenderFailedVersion"));
+    assertEquals(4L, snap.get("lastRenderFailedScreenRevision"));
+    assertEquals(0L, snap.get("lastRenderedVersion"));
+    assertEquals(0L, snap.get("lastHandledVersion"));
+    assertEquals(1L, snap.get("renderFailureCount"));
+    assertEquals(0L, snap.get("renderSuccessCount"));
   }
 
   private static byte[] baselineEnvelope(long screenRevision) {
@@ -205,13 +281,17 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
       return true;
     }
     @Override public void setLayoutLeaseId(@NonNull String leaseId) {}
-    @Override public void sendTextInput(@NonNull String text) {}
-    @Override public void sendPasteInput(@NonNull String text) {}
-    @Override public void sendKeyInput(@NonNull String key, boolean shift, boolean alt,
-                                       boolean ctrl, boolean meta, boolean pressed) {}
-    @Override public void sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
+    @Override public boolean sendTextInput(@NonNull String text) { return true; }
+    @Override public boolean sendPasteInput(@NonNull String text) { return true; }
+    @Override public boolean sendKeyInput(@NonNull String key, boolean shift, boolean alt,
+                                       boolean ctrl, boolean meta, boolean pressed) {
+      return true;
+    }
+    @Override public boolean sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                                          boolean shift, boolean alt, boolean ctrl, boolean meta,
-                                         boolean pressed) {}
+                                         boolean pressed) {
+      return true;
+    }
     @Override public void sendFocusInput(boolean focused) {}
     @Override public boolean requestResize(int cols, int rows) { return true; }
     @Override public void acquireLayout(boolean interactive) {}

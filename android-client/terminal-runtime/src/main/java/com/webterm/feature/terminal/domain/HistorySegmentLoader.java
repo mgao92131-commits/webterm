@@ -86,7 +86,7 @@ public final class HistorySegmentLoader {
     }
   }
 
-  /** Pump 状态转换结果：仅在进入/离开 blocked 时需要写诊断事件。 */
+  /** Pump 状态转换结果：进入/离开 blocked，或 blocked 原因变化时需要写诊断事件。 */
   public static final class StateTransition {
     public final State previous;
     public final State next;
@@ -95,10 +95,11 @@ public final class HistorySegmentLoader {
     public final long suppressedPumpCount;
     public final boolean enteredBlocked;
     public final boolean leftBlocked;
+    public final boolean reasonChanged;
 
     StateTransition(State previous, State next, @Nullable String previousReason,
                     long blockedDurationMs, long suppressedPumpCount,
-                    boolean enteredBlocked, boolean leftBlocked) {
+                    boolean enteredBlocked, boolean leftBlocked, boolean reasonChanged) {
       this.previous = previous;
       this.next = next;
       this.previousReason = previousReason;
@@ -106,6 +107,7 @@ public final class HistorySegmentLoader {
       this.suppressedPumpCount = suppressedPumpCount;
       this.enteredBlocked = enteredBlocked;
       this.leftBlocked = leftBlocked;
+      this.reasonChanged = reasonChanged;
     }
   }
 
@@ -117,6 +119,8 @@ public final class HistorySegmentLoader {
   private long skippedGeneration;
   private final Set<Long> skippedNumbers = new LinkedHashSet<>();
   private long demandDeduplicatedCount;
+  private long pumpWhileFetchingCount;
+  private long demandChangedWhileFetchingCount;
   private State state = State.READY;
   private long blockedEnteredAtNanos;
   private long suppressedPumpCount;
@@ -129,11 +133,15 @@ public final class HistorySegmentLoader {
       return false;
     }
     latestDemand = demand;
+    if (activeRequest != null) {
+      demandChangedWhileFetchingCount++;
+    }
     return true;
   }
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    nextRetryAttempt = 0;
   }
 
   public synchronized Demand latestDemand() {
@@ -156,6 +164,14 @@ public final class HistorySegmentLoader {
     return demandDeduplicatedCount;
   }
 
+  public synchronized long pumpWhileFetchingCount() {
+    return pumpWhileFetchingCount;
+  }
+
+  public synchronized long demandChangedWhileFetchingCount() {
+    return demandChangedWhileFetchingCount;
+  }
+
   public synchronized State state() {
     return state;
   }
@@ -167,6 +183,8 @@ public final class HistorySegmentLoader {
     out.put("lifecycleEpoch", lifecycleEpoch);
     out.put("closed", closed);
     out.put("demandDeduplicatedCount", demandDeduplicatedCount);
+    out.put("pumpWhileFetchingCount", pumpWhileFetchingCount);
+    out.put("demandChangedWhileFetchingCount", demandChangedWhileFetchingCount);
     out.put("hasDemand", latestDemand != null);
     out.put("hasActiveRequest", activeRequest != null);
     if (activeRequest != null) {
@@ -174,6 +192,11 @@ public final class HistorySegmentLoader {
       out.put("activeRetryAttempt", activeRequest.retryAttempt);
     }
     return out;
+  }
+
+  /** 有 active fetch 时再次 pump：只累计指标，不写 blocked 事件。 */
+  public synchronized void incrementPumpWhileFetching() {
+    pumpWhileFetchingCount++;
   }
 
   /** 将本 generation 下的坏段移出候选，防止反复堵在同一 SegmentKey。 */
@@ -243,14 +266,22 @@ public final class HistorySegmentLoader {
     return true;
   }
 
+  /** 请求成功后重置 retry 计数（失败路径应先 complete 再 {@link #markRetryPending}）。 */
+  public synchronized void clearRetryAttempt() {
+    nextRetryAttempt = 0;
+  }
+
   public synchronized boolean isActive(@NonNull ActiveRequest expected) {
     return !closed && activeRequest == expected;
   }
 
-  /** 标记下次 begin 的 retryAttempt（NOT_SEALED 等退避重试路径）。 */
-  public synchronized void markRetryPending() {
+  /**
+   * 标记下次 begin 的 retryAttempt（NOT_SEALED 等退避重试路径）。
+   * 调用方应传入 {@code active.retryAttempt + 1}。
+   */
+  public synchronized void markRetryPending(int nextAttempt) {
     if (closed) return;
-    nextRetryAttempt++;
+    nextRetryAttempt = Math.max(0, nextAttempt);
     transitionTo(State.RETRY_WAIT);
   }
 
@@ -287,6 +318,11 @@ public final class HistorySegmentLoader {
       }
       suppressed = suppressedPumpCount;
     }
+    String nextReason = nowBlocked ? blockedReason(next) : null;
+    boolean reasonChanged = wasBlocked && nowBlocked
+        && previousReason != null
+        && nextReason != null
+        && !previousReason.equals(nextReason);
     state = next;
     if (nowBlocked) {
       blockedEnteredAtNanos = System.nanoTime();
@@ -297,23 +333,26 @@ public final class HistorySegmentLoader {
     }
     boolean enteredBlocked = !wasBlocked && nowBlocked;
     boolean leftBlocked = wasBlocked && !nowBlocked;
-    if (!enteredBlocked && !leftBlocked) {
+    if (!enteredBlocked && !leftBlocked && !reasonChanged) {
       return null;
     }
     return new StateTransition(
-        previous, next, previousReason, durationMs, suppressed, enteredBlocked, leftBlocked);
+        previous, next, previousReason, durationMs, suppressed,
+        enteredBlocked, leftBlocked, reasonChanged);
   }
 
   static boolean isBlocked(@NonNull State state) {
     switch (state) {
       case BLOCKED_NOT_LIVE:
-      case BLOCKED_BUSY:
       case BLOCKED_NO_SOURCE:
       case BLOCKED_PROJECTION_INCOMPLETE:
       case BLOCKED_NOT_SEALED:
       case BLOCKED_NO_DEMAND:
       case BLOCKED_NO_TARGET:
         return true;
+      case BLOCKED_BUSY:
+        // BUSY 本质是 FETCHING；不作为 blocked 事件。
+        return false;
       default:
         return false;
     }
@@ -324,8 +363,6 @@ public final class HistorySegmentLoader {
     switch (state) {
       case BLOCKED_NOT_LIVE:
         return "not_live";
-      case BLOCKED_BUSY:
-        return "busy";
       case BLOCKED_NO_SOURCE:
         return "no_source";
       case BLOCKED_PROJECTION_INCOMPLETE:

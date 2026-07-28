@@ -48,4 +48,26 @@ public class DiagnosticIdHasherTest {
         assertTrue(first.matches("[0-9a-f]+"));
         assertNotEquals(first, second);
     }
+
+    /**
+     * 跨端固定向量：Android {@code DiagnosticIdHasher.hash(salt, id)} 输出 12 位小写 hex。
+     * Agent 侧 {@code validAndroidDiagnosticHash} 接受相同格式；进程 salt 随机故无法固定
+     * processHash，但 {@code hash("testsalt", id)} 可跨语言复算。
+     * <p>向量：SHA-256("testsalt:connection-id-vector-1") 截断 12 hex = {@code 687dccd95cb4}。
+     */
+    @Test
+    public void fixedSaltHashIsTwelveLowercaseHexCrossVector() {
+        String hash = DiagnosticIdHasher.hash("testsalt", "connection-id-vector-1");
+        assertEquals(12, hash.length());
+        assertTrue(hash.matches("[0-9a-f]{12}"));
+        assertEquals("687dccd95cb4", hash);
+    }
+
+    @Test
+    public void processHashMatchesAgentAcceptedFormat() {
+        String hash = DiagnosticIdHasher.processHash("device-control-plane-id");
+        assertEquals(DiagnosticIdHasher.HASH_LENGTH, hash.length());
+        assertTrue("Agent validAndroidDiagnosticHash requires [0-9a-f]{12}",
+            hash.matches("[0-9a-f]{12}"));
+    }
 }

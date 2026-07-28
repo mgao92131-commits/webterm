@@ -307,18 +307,30 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
       com.webterm.terminal.model.capture.TerminalCapture.recordRenderUpdate(
           runtime.captureStreamIdentity(), update);
     }
-    if (update != null) applyTerminalState(update);
-    if (v != null && update != null && !update.dirty.isEmpty()) {
-      com.webterm.terminal.model.TerminalRenderMetrics.vsyncRender();
-      long drawStartedNanos = System.nanoTime();
-      try {
-        v.render(update, viewport);
-      } finally {
-        long drawDurationNanos = System.nanoTime() - drawStartedNanos;
-        com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(drawDurationNanos);
-        runtime.onRenderFrameDrawn(
-            update.publicationVersion, update.snapshot.screenRevision, drawDurationNanos);
-      }
+    if (update == null) return;
+    applyTerminalState(update);
+    if (update.dirty.isEmpty()) {
+      runtime.onRenderPublicationHandled(
+          update.publicationVersion, update.snapshot.screenRevision, false);
+      return;
+    }
+    if (v == null) return;
+    com.webterm.terminal.model.TerminalRenderMetrics.vsyncRender();
+    long started = System.nanoTime();
+    try {
+      v.render(update, viewport);
+      long duration = System.nanoTime() - started;
+      com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(duration);
+      runtime.onRenderFrameRendered(
+          update.publicationVersion, update.snapshot.screenRevision, duration);
+      runtime.onRenderPublicationHandled(
+          update.publicationVersion, update.snapshot.screenRevision, true);
+    } catch (RuntimeException error) {
+      long duration = System.nanoTime() - started;
+      com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(duration);
+      runtime.onRenderFrameFailed(
+          update.publicationVersion, update.snapshot.screenRevision, duration, error);
+      throw error;
     }
   }
 

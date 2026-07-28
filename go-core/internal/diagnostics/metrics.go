@@ -22,9 +22,10 @@ type AgentMetrics struct {
 	RelayConnectFailureCount atomic.Uint64
 
 	// mux 通道与物理 writer。
-	MuxChannelOpenedCount   atomic.Uint64
-	MuxChannelReplacedCount atomic.Uint64
-	MuxWriterFailureCount   atomic.Uint64
+	MuxChannelOpenedCount               atomic.Uint64
+	MuxChannelReplacedCount             atomic.Uint64
+	MuxWriterFailureCount               atomic.Uint64
+	MuxDiagnosticsContextRejectedCount  atomic.Uint64
 
 	// 屏幕编码/投影。
 	ScreenEncodeFailureCount atomic.Uint64
@@ -36,8 +37,11 @@ type AgentMetrics struct {
 	WriterTimeoutCount       atomic.Uint64
 	WriterQueueRejectedCount atomic.Uint64
 
-	WriterHighQueueDepth atomic.Uint64
-	WriterDataQueueDepth atomic.Uint64
+	WriterHighQueueDepth         atomic.Uint64
+	WriterDataQueueDepth         atomic.Uint64
+	WriterTotalQueueCurrentDepth atomic.Uint64
+	WriterTotalQueueHighWaterDepth atomic.Uint64
+	// Deprecated alias kept for older readers; mirrors total high water.
 	WriterHighWaterDepth atomic.Uint64
 
 	WriterQueueResidenceBuckets DurationBuckets
@@ -89,11 +93,13 @@ var Default = NewAgentMetrics()
 // 这些分组当前没有真实观测，诊断输出据此显示 not instrumented，避免把
 // 占位零值误读为真实数据；接线埋点后把对应项改为 true 并补上计数器。
 var uninstrumentedCapabilities = map[string]any{
-	"mailboxMetrics":    false,
-	"inputMetrics":      false,
-	"resyncMetrics":     false,
-	"projectionMetrics": false,
-	"durationMetrics":   false,
+	"mailboxMetrics":        false,
+	"inputMetrics":          false,
+	"resyncMetrics":         false,
+	"projectionMetrics":     false,
+	"durationMetrics":       false,
+	"writerQueueMetrics":    true,
+	"writerDurationMetrics": true,
 }
 
 // Snapshot 返回 JSON 友好的指标 map。生产代码已埋点的计数器平铺为 uint64；
@@ -109,21 +115,26 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"relayDisconnectCount":        m.RelayDisconnectCount.Load(),
 		"relayReconnectCount":         m.RelayReconnectCount.Load(),
 		"relayConnectFailureCount":    m.RelayConnectFailureCount.Load(),
-		"muxChannelOpenedCount":       m.MuxChannelOpenedCount.Load(),
-		"muxChannelReplacedCount":     m.MuxChannelReplacedCount.Load(),
-		"muxWriterFailureCount":       m.MuxWriterFailureCount.Load(),
-		"screenEncodeFailureCount":    m.ScreenEncodeFailureCount.Load(),
-		"writerSubmitCount":           m.WriterSubmitCount.Load(),
-		"writerSuccessCount":          m.WriterSuccessCount.Load(),
-		"writerFailureCount":          m.WriterFailureCount.Load(),
-		"writerTimeoutCount":          m.WriterTimeoutCount.Load(),
-		"writerQueueRejectedCount":    m.WriterQueueRejectedCount.Load(),
-		"writerHighQueueDepth":        m.WriterHighQueueDepth.Load(),
-		"writerDataQueueDepth":        m.WriterDataQueueDepth.Load(),
-		"writerHighWaterDepth":        m.WriterHighWaterDepth.Load(),
-		"writerQueueResidenceBuckets": m.WriterQueueResidenceBuckets.Snapshot(),
-		"writerWriteDurationBuckets":  m.WriterWriteDurationBuckets.Snapshot(),
-		"capabilities":                capabilities,
+		"muxChannelOpenedCount":              m.MuxChannelOpenedCount.Load(),
+		"muxChannelReplacedCount":            m.MuxChannelReplacedCount.Load(),
+		"muxWriterFailureCount":              m.MuxWriterFailureCount.Load(),
+		"muxDiagnosticsContextRejectedCount": m.MuxDiagnosticsContextRejectedCount.Load(),
+		"screenEncodeFailureCount":           m.ScreenEncodeFailureCount.Load(),
+		"writerSubmitCount":                  m.WriterSubmitCount.Load(),
+		"writerSuccessCount":                 m.WriterSuccessCount.Load(),
+		"writerFailureCount":                 m.WriterFailureCount.Load(),
+		"writerTimeoutCount":                 m.WriterTimeoutCount.Load(),
+		"writerQueueRejectedCount":           m.WriterQueueRejectedCount.Load(),
+		"writerHighQueueCurrentDepth":        m.WriterHighQueueDepth.Load(),
+		"writerDataQueueCurrentDepth":        m.WriterDataQueueDepth.Load(),
+		"writerTotalQueueCurrentDepth":       m.WriterTotalQueueCurrentDepth.Load(),
+		"writerTotalQueueHighWaterDepth":     m.WriterTotalQueueHighWaterDepth.Load(),
+		"writerHighQueueDepth":               m.WriterHighQueueDepth.Load(),
+		"writerDataQueueDepth":               m.WriterDataQueueDepth.Load(),
+		"writerHighWaterDepth":               m.WriterHighWaterDepth.Load(),
+		"writerQueueResidenceBuckets":        m.WriterQueueResidenceBuckets.Snapshot(),
+		"writerWriteDurationBuckets":         m.WriterWriteDurationBuckets.Snapshot(),
+		"capabilities":                       capabilities,
 	}
 }
 
@@ -136,17 +147,17 @@ func (m *AgentMetrics) ObserveWriterQueueDepth(highDepth, dataDepth int) {
 	}
 	m.WriterHighQueueDepth.Store(uint64(highDepth))
 	m.WriterDataQueueDepth.Store(uint64(dataDepth))
-	combined := highDepth
-	if dataDepth > combined {
-		combined = dataDepth
-	}
+	total := highDepth + dataDepth
+	m.WriterTotalQueueCurrentDepth.Store(uint64(total))
 	for {
-		cur := m.WriterHighWaterDepth.Load()
-		if uint64(combined) <= cur {
-			return
+		cur := m.WriterTotalQueueHighWaterDepth.Load()
+		if uint64(total) <= cur {
+			break
 		}
-		if m.WriterHighWaterDepth.CompareAndSwap(cur, uint64(combined)) {
-			return
+		if m.WriterTotalQueueHighWaterDepth.CompareAndSwap(cur, uint64(total)) {
+			break
 		}
 	}
+	// 兼容旧字段：高水位改为总和语义。
+	m.WriterHighWaterDepth.Store(m.WriterTotalQueueHighWaterDepth.Load())
 }

@@ -3,8 +3,11 @@ package com.webterm.core.session;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * 设备级 Mux 帧有界队列。
@@ -55,12 +58,20 @@ public final class MuxOutboundQueue {
         public final long residenceTotalNanos;
         public final long residenceMaxNanos;
         public final long[] residenceLatencyBuckets;
+        public final Map<String, Long> acceptedByKind;
+        public final Map<String, Long> webSocketEnqueuedByKind;
+        public final Map<String, Long> rejectedByKind;
+        public final Map<String, Long> bytesByKind;
 
         Snapshot(int currentFrames, long currentBytes, int highWaterFrames, long highWaterBytes,
                  long acceptedCount, long webSocketEnqueuedCount, long queueFullCount,
                  long channelNotOpenCount, long transportRejectedCount, long connectionStoppedCount,
                  long residenceCount, long residenceTotalNanos, long residenceMaxNanos,
-                 long[] residenceLatencyBuckets) {
+                 long[] residenceLatencyBuckets,
+                 Map<String, Long> acceptedByKind,
+                 Map<String, Long> webSocketEnqueuedByKind,
+                 Map<String, Long> rejectedByKind,
+                 Map<String, Long> bytesByKind) {
             this.currentFrames = currentFrames;
             this.currentBytes = currentBytes;
             this.highWaterFrames = highWaterFrames;
@@ -75,6 +86,10 @@ public final class MuxOutboundQueue {
             this.residenceTotalNanos = residenceTotalNanos;
             this.residenceMaxNanos = residenceMaxNanos;
             this.residenceLatencyBuckets = residenceLatencyBuckets;
+            this.acceptedByKind = acceptedByKind;
+            this.webSocketEnqueuedByKind = webSocketEnqueuedByKind;
+            this.rejectedByKind = rejectedByKind;
+            this.bytesByKind = bytesByKind;
         }
     }
 
@@ -128,6 +143,10 @@ public final class MuxOutboundQueue {
     private long residenceTotalNanos;
     private long residenceMaxNanos;
     private final long[] residenceLatencyBuckets = new long[LATENCY_BUCKET_COUNT];
+    private final EnumMap<FrameKind, Long> acceptedByKind = newEmptyKindMap();
+    private final EnumMap<FrameKind, Long> webSocketEnqueuedByKind = newEmptyKindMap();
+    private final EnumMap<FrameKind, Long> rejectedByKind = newEmptyKindMap();
+    private final EnumMap<FrameKind, Long> bytesByKind = newEmptyKindMap();
 
     public MuxOutboundQueue(int maxFrames, long maxBytes) {
         if (maxFrames <= 0 || maxBytes <= 0L) {
@@ -144,21 +163,25 @@ public final class MuxOutboundQueue {
 
     synchronized Offer offer(String channelId, byte[] payload, boolean binary, FrameKind kind,
                              Completion completion) {
+        FrameKind resolved = kind != null ? kind : FrameKind.OTHER;
         if (!accepting) {
             connectionStoppedCount++;
+            incrementKind(rejectedByKind, resolved);
             return new Offer(Result.CONNECTION_STOPPED, false);
         }
         if (frames.size() >= maxFrames || bytes + payload.length > maxBytes) {
             queueFullCount++;
+            incrementKind(rejectedByKind, resolved);
             return new Offer(Result.QUEUE_FULL, false);
         }
-        FrameKind resolved = kind != null ? kind : FrameKind.OTHER;
         long enqueuedAt = System.nanoTime();
-        Completion wrapped = wrapCompletion(enqueuedAt, completion);
+        Completion wrapped = wrapCompletion(enqueuedAt, resolved, completion);
         frames.addLast(new Frame(channelId, payload, binary, wrapped, enqueuedAt,
             payload.length, resolved));
         bytes += payload.length;
         acceptedCount++;
+        incrementKind(acceptedByKind, resolved);
+        addKind(bytesByKind, resolved, payload.length);
         if (frames.size() > highWaterFrames) highWaterFrames = frames.size();
         if (bytes > highWaterBytes) highWaterBytes = bytes;
         boolean schedule = !drainScheduled;
@@ -200,7 +223,11 @@ public final class MuxOutboundQueue {
             acceptedCount, webSocketEnqueuedCount, queueFullCount,
             channelNotOpenCount, transportRejectedCount, connectionStoppedCount,
             residenceCount, residenceTotalNanos, residenceMaxNanos,
-            Arrays.copyOf(residenceLatencyBuckets, residenceLatencyBuckets.length));
+            Arrays.copyOf(residenceLatencyBuckets, residenceLatencyBuckets.length),
+            copyKindMap(acceptedByKind),
+            copyKindMap(webSocketEnqueuedByKind),
+            copyKindMap(rejectedByKind),
+            copyKindMap(bytesByKind));
     }
 
     static FrameKind inferFrameKind(String channelId) {
@@ -215,27 +242,31 @@ public final class MuxOutboundQueue {
         return FrameKind.OTHER;
     }
 
-    private Completion wrapCompletion(long enqueuedAtNanos, Completion completion) {
+    private Completion wrapCompletion(long enqueuedAtNanos, FrameKind kind, Completion completion) {
         return result -> {
-            noteResult(result, enqueuedAtNanos);
+            noteResult(result, kind, enqueuedAtNanos);
             if (completion != null) completion.onResult(result);
         };
     }
 
-    private synchronized void noteResult(Result result, long enqueuedAtNanos) {
+    private synchronized void noteResult(Result result, FrameKind kind, long enqueuedAtNanos) {
         switch (result) {
             case WEBSOCKET_ENQUEUED:
                 webSocketEnqueuedCount++;
+                incrementKind(webSocketEnqueuedByKind, kind);
                 recordResidence(System.nanoTime() - enqueuedAtNanos);
                 break;
             case CHANNEL_NOT_OPEN:
                 channelNotOpenCount++;
+                incrementKind(rejectedByKind, kind);
                 break;
             case TRANSPORT_REJECTED:
                 transportRejectedCount++;
+                incrementKind(rejectedByKind, kind);
                 break;
             case CONNECTION_STOPPED:
                 connectionStoppedCount++;
+                incrementKind(rejectedByKind, kind);
                 break;
             case QUEUE_FULL:
             case LOCAL_ACCEPTED:
@@ -256,5 +287,30 @@ public final class MuxOutboundQueue {
             }
         }
         residenceLatencyBuckets[bucket]++;
+    }
+
+    private static EnumMap<FrameKind, Long> newEmptyKindMap() {
+        EnumMap<FrameKind, Long> map = new EnumMap<>(FrameKind.class);
+        for (FrameKind kind : FrameKind.values()) {
+            map.put(kind, 0L);
+        }
+        return map;
+    }
+
+    private static void incrementKind(EnumMap<FrameKind, Long> map, FrameKind kind) {
+        addKind(map, kind, 1L);
+    }
+
+    private static void addKind(EnumMap<FrameKind, Long> map, FrameKind kind, long delta) {
+        FrameKind resolved = kind != null ? kind : FrameKind.OTHER;
+        map.put(resolved, map.getOrDefault(resolved, 0L) + delta);
+    }
+
+    private static Map<String, Long> copyKindMap(EnumMap<FrameKind, Long> source) {
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (FrameKind kind : FrameKind.values()) {
+            out.put(kind.name(), source.getOrDefault(kind, 0L));
+        }
+        return out;
     }
 }
