@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -57,11 +58,11 @@ type Session struct {
 	onControl ControlHandler
 	logger    *logs.Logger
 	writer    *PhysicalWriter
-	diag      DiagnosticContext
+	diag      atomic.Value // DiagnosticContext
 }
 
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
-	return &Session{
+	s := &Session{
 		conn:      conn,
 		registry:  NewChannelRegistry(),
 		onOpen:    opts.OnOpen,
@@ -69,6 +70,16 @@ func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
 		logger:    opts.Logger,
 		writer:    NewPhysicalWriter(conn, 128),
 	}
+	s.diag.Store(DiagnosticContext{})
+	return s
+}
+
+func (s *Session) diagnosticContext() DiagnosticContext {
+	v := s.diag.Load()
+	if v == nil {
+		return DiagnosticContext{}
+	}
+	return v.(DiagnosticContext)
 }
 
 func (s *Session) Run(ctx context.Context) error {
@@ -138,10 +149,11 @@ func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 	if raw == nil {
 		return
 	}
+	diag := s.diagnosticContext()
 	rejected := false
 	if v, ok := raw["connection_hash"].(string); ok && v != "" {
 		if validAndroidDiagnosticHash(v) {
-			s.diag.ConnectionHash = v
+			diag.ConnectionHash = v
 		} else {
 			rejected = true
 		}
@@ -151,9 +163,9 @@ func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 		if !ok {
 			rejected = true
 		} else if v == "" {
-			s.diag.RecoveryHash = ""
+			diag.RecoveryHash = ""
 		} else if validAndroidDiagnosticHash(v) {
-			s.diag.RecoveryHash = v
+			diag.RecoveryHash = v
 		} else {
 			rejected = true
 		}
@@ -161,21 +173,22 @@ func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 	switch v := raw["transport_generation"].(type) {
 	case float64:
 		if v >= 0 {
-			s.diag.TransportGeneration = uint64(v)
+			diag.TransportGeneration = uint64(v)
 		}
 	case json.Number:
 		if n, err := v.Int64(); err == nil && n >= 0 {
-			s.diag.TransportGeneration = uint64(n)
+			diag.TransportGeneration = uint64(n)
 		}
 	case int:
 		if v >= 0 {
-			s.diag.TransportGeneration = uint64(v)
+			diag.TransportGeneration = uint64(v)
 		}
 	case int64:
 		if v >= 0 {
-			s.diag.TransportGeneration = uint64(v)
+			diag.TransportGeneration = uint64(v)
 		}
 	}
+	s.diag.Store(diag)
 	if rejected {
 		diagnostics.Default.MuxDiagnosticsContextRejectedCount.Add(1)
 	}
@@ -351,14 +364,15 @@ func (s *Session) event(level, event string, fields map[string]any) {
 	if fields == nil {
 		fields = map[string]any{}
 	}
-	if s.diag.ConnectionHash != "" {
-		fields["connectionHash"] = s.diag.ConnectionHash
+	diag := s.diagnosticContext()
+	if diag.ConnectionHash != "" {
+		fields["connectionHash"] = diag.ConnectionHash
 	}
-	if s.diag.RecoveryHash != "" {
-		fields["recoveryHash"] = s.diag.RecoveryHash
+	if diag.RecoveryHash != "" {
+		fields["recoveryHash"] = diag.RecoveryHash
 	}
-	if s.diag.TransportGeneration != 0 {
-		fields["transportGeneration"] = s.diag.TransportGeneration
+	if diag.TransportGeneration != 0 {
+		fields["transportGeneration"] = diag.TransportGeneration
 	}
 	s.logger.Event(level, "mux", event, fields)
 }

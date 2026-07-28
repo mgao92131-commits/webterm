@@ -198,6 +198,14 @@ func (m *AgentMetrics) UnregisterWriter(id uint64) {
 	m.recomputeWriterDepthsLocked()
 }
 
+// ResetWriterDepthsForTest 清空 writer 深度注册表（仅测试）。
+func (m *AgentMetrics) ResetWriterDepthsForTest() {
+	m.writerDepths.mu.Lock()
+	defer m.writerDepths.mu.Unlock()
+	m.writerDepths.writers = make(map[uint64]WriterDepth)
+	m.recomputeWriterDepthsLocked()
+}
+
 func (m *AgentMetrics) recomputeWriterDepthsLocked() {
 	highSum, dataSum := 0, 0
 	for _, depth := range m.writerDepths.writers {

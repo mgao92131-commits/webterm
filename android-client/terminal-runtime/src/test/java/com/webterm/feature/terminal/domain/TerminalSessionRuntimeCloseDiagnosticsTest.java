@@ -166,6 +166,156 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
     assertEquals(40L, (long) finalAgg.get("renderSuccessCount"));
   }
 
+  @Test
+  public void requestModelRenderNoopsAfterClosing() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    ArrayDeque<Runnable> modelQueue = new ArrayDeque<>();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("render-close", model, modelQueue::add, Runnable::run);
+    runtime.enterLiveForTest();
+    drain(modelQueue);
+    long publishedBefore = model.lastPublicationVersion();
+
+    runtime.close();
+    assertEquals(TerminalSessionRuntime.State.CLOSING, runtime.state());
+    int queuedAfterClose = modelQueue.size();
+    runtime.requestModelRender();
+    // CLOSING 时不得再排队 full-render 任务。
+    assertEquals(queuedAfterClose, modelQueue.size());
+    drain(modelQueue);
+
+    assertEquals(TerminalSessionRuntime.State.CLOSED, runtime.state());
+    assertEquals(publishedBefore, model.lastPublicationVersion());
+    runtime.requestModelRender();
+    assertTrue(modelQueue.isEmpty());
+    assertEquals(publishedBefore, model.lastPublicationVersion());
+  }
+
+  @Test
+  public void requestModelRenderAlreadyQueuedIsDroppedWhenClosing() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    ArrayDeque<Runnable> modelQueue = new ArrayDeque<>();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("render-race", model, modelQueue::add, Runnable::run);
+    runtime.enterLiveForTest();
+    drain(modelQueue);
+    long publishedBefore = model.lastPublicationVersion();
+
+    runtime.requestModelRender();
+    assertEquals(1, modelQueue.size());
+    runtime.close();
+    assertEquals(TerminalSessionRuntime.State.CLOSING, runtime.state());
+    // 队列中：full-render 任务 + finishClose；full-render 执行时发现 CLOSING 应 no-op。
+    drain(modelQueue);
+    assertEquals(TerminalSessionRuntime.State.CLOSED, runtime.state());
+    assertEquals(publishedBefore, model.lastPublicationVersion());
+  }
+
+  @Test
+  public void inputAbandonedAtCloseClosesDeliveryEquation() {
+    ArrayDeque<Runnable> modelQueue = new ArrayDeque<>();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "input-abandon", new RemoteTerminalModel(), modelQueue::add, Runnable::run);
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    drain(modelQueue);
+    runtime.enterLiveForTest();
+    drain(modelQueue);
+    runtime.grantLayoutLeaseForTest("lease-abandon");
+
+    runtime.sendTextInput("ab");
+    runtime.sendTextInput("c");
+    Map<String, Long> beforeClose = runtime.inputDeliverySnapshot();
+    assertEquals(2L, (long) beforeClose.get("inputLocalQueueAcceptedCount"));
+    assertEquals(2L, (long) beforeClose.get("inputPendingFinalResultCount"));
+    assertEquals(0L, (long) beforeClose.get("inputAbandonedAtCloseCount"));
+
+    // 清空 connection 后仍能记账（模拟 close 已清空 connection 字段的在途回调）。
+    runtime.close();
+    assertEquals(TerminalSessionRuntime.State.CLOSING, runtime.state());
+    connection.listener.onInputSendResult("WEBSOCKET_ENQUEUED");
+    Map<String, Long> mid = runtime.inputDeliverySnapshot();
+    assertEquals(1L, (long) mid.get("inputWebSocketEnqueuedCount"));
+    assertEquals(1L, (long) mid.get("inputPendingFinalResultCount"));
+
+    drain(modelQueue);
+    assertEquals(TerminalSessionRuntime.State.CLOSED, runtime.state());
+    Map<String, Long> closed = runtime.inputDeliverySnapshot();
+    assertEquals(0L, (long) closed.get("inputPendingFinalResultCount"));
+    assertEquals(1L, (long) closed.get("inputAbandonedAtCloseCount"));
+    assertEquals(
+        (long) closed.get("inputLocalQueueAcceptedCount"),
+        closed.get("inputWebSocketEnqueuedCount")
+            + closed.get("inputChannelNotOpenCount")
+            + closed.get("inputTransportRejectedCount")
+            + closed.get("inputConnectionStoppedCount")
+            + closed.get("inputAbandonedAtCloseCount"));
+
+    TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot snap =
+        TerminalPipelineDiagnosticsRegistry.snapshotRecentClosed().get(0);
+    assertEquals(1L, (long) snap.inputDelivery.get("inputAbandonedAtCloseCount"));
+    assertEquals(0L, (long) snap.inputDelivery.get("inputPendingFinalResultCount"));
+  }
+
+  @Test
+  public void concurrentUnregisterDuringAggregateDoesNotDoubleCountLifetime() throws Exception {
+    final int sessionCount = 48;
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newFixedThreadPool(8);
+    try {
+      java.util.concurrent.CountDownLatch start =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.CountDownLatch done =
+          new java.util.concurrent.CountDownLatch(sessionCount);
+      java.util.concurrent.atomic.AtomicLong maxLifetime =
+          new java.util.concurrent.atomic.AtomicLong(0L);
+      java.util.concurrent.atomic.AtomicLong maxFrames =
+          new java.util.concurrent.atomic.AtomicLong(0L);
+
+      for (int i = 0; i < sessionCount; i++) {
+        final int index = i;
+        pool.execute(() -> {
+          try {
+            start.await();
+            TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+                "conc-" + index, new RemoteTerminalModel(), Runnable::run);
+            runtime.pipelineMetrics().onFrameReceived("BASELINE", 1);
+            runtime.close();
+            Map<String, Long> counts =
+                TerminalPipelineDiagnosticsRegistry.lifetimeSessionCounts();
+            long lifetime = counts.get("lifetimeSessionCount");
+            for (;;) {
+              long cur = maxLifetime.get();
+              if (lifetime <= cur || maxLifetime.compareAndSet(cur, lifetime)) break;
+            }
+            Map<String, Long> agg =
+                TerminalPipelineDiagnosticsRegistry.aggregateScreenPipeline();
+            long frames = agg.get("receivedFrameCount");
+            for (;;) {
+              long cur = maxFrames.get();
+              if (frames <= cur || maxFrames.compareAndSet(cur, frames)) break;
+            }
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          } finally {
+            done.countDown();
+          }
+        });
+      }
+      start.countDown();
+      assertTrue(done.await(30, java.util.concurrent.TimeUnit.SECONDS));
+
+      Map<String, Long> counts = TerminalPipelineDiagnosticsRegistry.lifetimeSessionCounts();
+      assertEquals(sessionCount, (long) counts.get("lifetimeSessionCount"));
+      assertEquals(sessionCount, (long) maxLifetime.get());
+      Map<String, Long> agg = TerminalPipelineDiagnosticsRegistry.aggregateScreenPipeline();
+      assertEquals(sessionCount, (long) agg.get("receivedFrameCount"));
+      assertEquals(sessionCount, (long) maxFrames.get());
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
   private static void drain(ArrayDeque<Runnable> queue) {
     while (!queue.isEmpty()) {
       queue.removeFirst().run();

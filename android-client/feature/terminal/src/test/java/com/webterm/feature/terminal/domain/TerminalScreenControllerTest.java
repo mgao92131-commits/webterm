@@ -131,6 +131,24 @@ public final class TerminalScreenControllerTest {
     second.detach(secondOwner);
   }
 
+  @Test
+  public void closingOrClosedConnectionStateDoesNotRequestRender() {
+    CountingStateView stateView = new CountingStateView();
+    controller.attach(new TestLifecycleOwner(), stateView);
+    clearInvocations(runtime);
+
+    controller.onConnectionStateChange(TerminalSessionRuntime.State.CLOSING);
+    assertEquals(1, stateView.stateChangeCount);
+    verify(runtime, org.mockito.Mockito.never()).requestRender();
+
+    controller.onConnectionStateChange(TerminalSessionRuntime.State.CLOSED);
+    assertEquals(2, stateView.stateChangeCount);
+    verify(runtime, org.mockito.Mockito.never()).requestRender();
+
+    controller.onConnectionStateChange(TerminalSessionRuntime.State.LIVE);
+    verify(runtime).requestRender();
+  }
+
   private static TerminalScreenController.View noOpView() {
     return new TerminalScreenController.View() {
       @Override public void bindModel(RemoteTerminalModel ignored) {}
@@ -148,6 +166,17 @@ public final class TerminalScreenControllerTest {
     }
     @Override public void onCursorChanged() {}
     @Override public void requestInvalidate() {}
+  }
+
+  private static final class CountingStateView implements TerminalScreenController.View {
+    int stateChangeCount;
+    @Override public void bindModel(RemoteTerminalModel ignored) {}
+    @Override public void render(RenderUpdate update, TerminalViewportState ignored) {}
+    @Override public void onCursorChanged() {}
+    @Override public void requestInvalidate() {}
+    @Override public void onConnectionStateChanged(TerminalSessionRuntime.State state) {
+      stateChangeCount++;
+    }
   }
 
   private static final class TestLifecycleOwner implements LifecycleOwner {

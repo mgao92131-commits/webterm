@@ -2,7 +2,6 @@ package com.webterm.core.session;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,12 +12,15 @@ import java.util.concurrent.atomic.AtomicLong;
  * 活跃 {@link DeviceConnection} 的进程级注册表，供诊断导出采集 outbound/inbound 快照。
  * 关闭后保留最近 {@link #MAX_RECENT_CLOSED} 条最终快照；淘汰时并入
  * {@link #ARCHIVED_TOTALS}，保证 lifetime 累计计数单调不减。
+ * <p>
+ * ACTIVE / RECENT_CLOSED / ARCHIVED_TOTALS 由同一把 {@link #LOCK} 保护，
+ * 避免 unregister 与 aggregate 交错导致连接被双重计数。
  */
 public final class DeviceConnectionDiagnosticsRegistry {
     static final int MAX_RECENT_CLOSED = 16;
 
-    private static final Map<DeviceConnection, Boolean> ACTIVE =
-        Collections.synchronizedMap(new IdentityHashMap<>());
+    private static final Object LOCK = new Object();
+    private static final Map<DeviceConnection, Boolean> ACTIVE = new IdentityHashMap<>();
     private static final ArrayDeque<DeviceConnection.DiagnosticsSnapshot> RECENT_CLOSED =
         new ArrayDeque<>();
     private static final ArchivedTotals ARCHIVED_TOTALS = new ArchivedTotals();
@@ -36,17 +38,27 @@ public final class DeviceConnectionDiagnosticsRegistry {
 
     public static void register(DeviceConnection connection) {
         if (connection == null) return;
-        ACTIVE.put(connection, Boolean.TRUE);
+        synchronized (LOCK) {
+            ACTIVE.put(connection, Boolean.TRUE);
+        }
     }
 
+    /**
+     * 注销连接：先从 ACTIVE 移除，再写入 recentClosed（必要时归档最旧项）。
+     * 快照在持锁前读取，避免在 LOCK 内调用 connection 业务逻辑。
+     */
     public static void unregister(DeviceConnection connection) {
         if (connection == null) return;
         DeviceConnection.DiagnosticsSnapshot snapshot = connection.diagnosticsSnapshot();
         ConnectionCloseReason closeReason = snapshot.lastCloseReason != null
             ? snapshot.lastCloseReason
             : ConnectionCloseReason.APP_SHUTDOWN;
-        retainClosed(snapshot.withClosed(System.currentTimeMillis(), closeReason));
-        ACTIVE.remove(connection);
+        DeviceConnection.DiagnosticsSnapshot closed =
+            snapshot.withClosed(System.currentTimeMillis(), closeReason);
+        synchronized (LOCK) {
+            ACTIVE.remove(connection);
+            retainClosedLocked(closed);
+        }
     }
 
     public static void noteRecoveryStarted() {
@@ -76,11 +88,11 @@ public final class DeviceConnectionDiagnosticsRegistry {
 
     /** 测试用：清空注册表。 */
     public static void clearForTest() {
-        ACTIVE.clear();
-        synchronized (RECENT_CLOSED) {
+        synchronized (LOCK) {
+            ACTIVE.clear();
             RECENT_CLOSED.clear();
+            ARCHIVED_TOTALS.clear();
         }
-        ARCHIVED_TOTALS.clear();
         RECOVERY_STARTED.set(0L);
         RECOVERY_COMPLETED.set(0L);
         RECOVERY_TOTAL_DOWNTIME_MS.set(0L);
@@ -96,7 +108,7 @@ public final class DeviceConnectionDiagnosticsRegistry {
 
     public static List<DeviceConnection.DiagnosticsSnapshot> snapshotActive() {
         DeviceConnection[] connections;
-        synchronized (ACTIVE) {
+        synchronized (LOCK) {
             connections = ACTIVE.keySet().toArray(new DeviceConnection[0]);
         }
         List<DeviceConnection.DiagnosticsSnapshot> out = new ArrayList<>(connections.length);
@@ -107,40 +119,60 @@ public final class DeviceConnectionDiagnosticsRegistry {
     }
 
     public static List<DeviceConnection.DiagnosticsSnapshot> snapshotRecentClosed() {
-        synchronized (RECENT_CLOSED) {
+        synchronized (LOCK) {
             return new ArrayList<>(RECENT_CLOSED);
         }
     }
 
     /** 指标聚合：活跃 + 最近关闭（不含 archived；聚合方法会另加 ARCHIVED_TOTALS）。 */
     public static List<DeviceConnection.DiagnosticsSnapshot> snapshotForMetrics() {
-        List<DeviceConnection.DiagnosticsSnapshot> out = new ArrayList<>();
-        out.addAll(snapshotActive());
-        out.addAll(snapshotRecentClosed());
+        DeviceConnection[] connections;
+        List<DeviceConnection.DiagnosticsSnapshot> recentClosed;
+        synchronized (LOCK) {
+            connections = ACTIVE.keySet().toArray(new DeviceConnection[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+        }
+        List<DeviceConnection.DiagnosticsSnapshot> out =
+            new ArrayList<>(connections.length + recentClosed.size());
+        for (DeviceConnection connection : connections) {
+            out.add(connection.diagnosticsSnapshot());
+        }
+        out.addAll(recentClosed);
         return out;
     }
 
     /** 活跃 / 最近关闭 / 已归档连接计数（lifetime = 三者之和）。 */
     public static Map<String, Long> lifetimeConnectionCounts() {
-        long active;
-        synchronized (ACTIVE) {
-            active = ACTIVE.size();
+        synchronized (LOCK) {
+            long active = ACTIVE.size();
+            long recentClosed = RECENT_CLOSED.size();
+            long archived = ARCHIVED_TOTALS.archivedConnectionCount;
+            Map<String, Long> out = new LinkedHashMap<>();
+            out.put("activeConnectionCount", active);
+            out.put("recentClosedConnectionCount", recentClosed);
+            out.put("archivedConnectionCount", archived);
+            out.put("lifetimeConnectionCount", active + recentClosed + archived);
+            return out;
         }
-        long recentClosed;
-        synchronized (RECENT_CLOSED) {
-            recentClosed = RECENT_CLOSED.size();
-        }
-        long archived = ARCHIVED_TOTALS.archivedConnectionCount();
-        Map<String, Long> out = new LinkedHashMap<>();
-        out.put("activeConnectionCount", active);
-        out.put("recentClosedConnectionCount", recentClosed);
-        out.put("archivedConnectionCount", archived);
-        out.put("lifetimeConnectionCount", active + recentClosed + archived);
-        return out;
     }
 
     /** outbound 累计聚合（active + recentClosed + archived）；current* 仅来自 active/recent。 */
     public static Map<String, Object> aggregateOutboundQueue() {
+        DeviceConnection[] connections;
+        List<DeviceConnection.DiagnosticsSnapshot> recentClosed;
+        ArchivedTotals archived;
+        synchronized (LOCK) {
+            connections = ACTIVE.keySet().toArray(new DeviceConnection[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+            archived = ARCHIVED_TOTALS.copy();
+        }
+        List<DeviceConnection.DiagnosticsSnapshot> metrics =
+            new ArrayList<>(connections.length + recentClosed.size());
+        for (DeviceConnection connection : connections) {
+            metrics.add(connection.diagnosticsSnapshot());
+        }
+        metrics.addAll(recentClosed);
+
         long currentFrames = 0L;
         long currentBytes = 0L;
         long highWaterFrames = 0L;
@@ -160,8 +192,7 @@ public final class DeviceConnectionDiagnosticsRegistry {
         Map<String, Long> rejectedByKind = new LinkedHashMap<>();
         Map<String, Long> bytesByKind = new LinkedHashMap<>();
 
-        List<DeviceConnection.DiagnosticsSnapshot> connections = snapshotForMetrics();
-        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
+        for (DeviceConnection.DiagnosticsSnapshot connection : metrics) {
             MuxOutboundQueue.Snapshot q = connection.outboundQueue;
             if (q == null) continue;
             currentFrames += q.currentFrames;
@@ -184,7 +215,6 @@ public final class DeviceConnectionDiagnosticsRegistry {
             mergeKindCounts(bytesByKind, q.bytesByKind);
         }
 
-        ArchivedTotals archived = ARCHIVED_TOTALS.copy();
         if (archived.highWaterFrames > highWaterFrames) highWaterFrames = archived.highWaterFrames;
         if (archived.highWaterBytes > highWaterBytes) highWaterBytes = archived.highWaterBytes;
         acceptedCount += archived.acceptedCount;
@@ -232,11 +262,27 @@ public final class DeviceConnectionDiagnosticsRegistry {
 
     /** inbound 丢弃累计聚合（含 archived）。 */
     public static Map<String, Long> aggregateInboundDrops() {
+        DeviceConnection[] connections;
+        List<DeviceConnection.DiagnosticsSnapshot> recentClosed;
+        ArchivedTotals archived;
+        synchronized (LOCK) {
+            connections = ACTIVE.keySet().toArray(new DeviceConnection[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+            archived = ARCHIVED_TOTALS.copy();
+        }
         long staleTransportGenerationDropped = 0L;
         long tunnelDecodeFailed = 0L;
         long unknownChannelDropped = 0L;
         long channelNotOpenDropped = 0L;
-        for (DeviceConnection.DiagnosticsSnapshot connection : snapshotForMetrics()) {
+        for (DeviceConnection connection : connections) {
+            DeviceConnection.InboundDropSnapshot drops = connection.diagnosticsSnapshot().inboundDrops;
+            if (drops == null) continue;
+            staleTransportGenerationDropped += drops.staleTransportGenerationDropped;
+            tunnelDecodeFailed += drops.tunnelDecodeFailed;
+            unknownChannelDropped += drops.unknownChannelDropped;
+            channelNotOpenDropped += drops.channelNotOpenDropped;
+        }
+        for (DeviceConnection.DiagnosticsSnapshot connection : recentClosed) {
             DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
             if (drops == null) continue;
             staleTransportGenerationDropped += drops.staleTransportGenerationDropped;
@@ -244,7 +290,6 @@ public final class DeviceConnectionDiagnosticsRegistry {
             unknownChannelDropped += drops.unknownChannelDropped;
             channelNotOpenDropped += drops.channelNotOpenDropped;
         }
-        ArchivedTotals archived = ARCHIVED_TOTALS.copy();
         staleTransportGenerationDropped += archived.staleTransportGenerationDropped;
         tunnelDecodeFailed += archived.tunnelDecodeFailed;
         unknownChannelDropped += archived.unknownChannelDropped;
@@ -285,15 +330,14 @@ public final class DeviceConnectionDiagnosticsRegistry {
         return out;
     }
 
-    private static void retainClosed(DeviceConnection.DiagnosticsSnapshot snapshot) {
+    /** 调用方必须已持有 {@link #LOCK}。 */
+    private static void retainClosedLocked(DeviceConnection.DiagnosticsSnapshot snapshot) {
         if (snapshot == null) return;
-        synchronized (RECENT_CLOSED) {
-            while (RECENT_CLOSED.size() >= MAX_RECENT_CLOSED) {
-                DeviceConnection.DiagnosticsSnapshot oldest = RECENT_CLOSED.removeFirst();
-                ARCHIVED_TOTALS.merge(oldest);
-            }
-            RECENT_CLOSED.addLast(snapshot);
+        while (RECENT_CLOSED.size() >= MAX_RECENT_CLOSED) {
+            DeviceConnection.DiagnosticsSnapshot oldest = RECENT_CLOSED.removeFirst();
+            ARCHIVED_TOTALS.merge(oldest);
         }
+        RECENT_CLOSED.addLast(snapshot);
     }
 
     private static void mergeKindCounts(Map<String, Long> target, Map<String, Long> source) {
@@ -313,29 +357,29 @@ public final class DeviceConnectionDiagnosticsRegistry {
 
     /** 被 recentClosed 淘汰的连接累计；不含 currentFrames/currentBytes 等当前深度。 */
     static final class ArchivedTotals {
-        private long archivedConnectionCount;
-        private long highWaterFrames;
-        private long highWaterBytes;
-        private long acceptedCount;
-        private long webSocketEnqueuedCount;
-        private long queueFullCount;
-        private long channelNotOpenCount;
-        private long transportRejectedCount;
-        private long connectionStoppedCount;
-        private long residenceCount;
-        private long residenceTotalNanos;
-        private long residenceMaxNanos;
-        private final long[] residenceLatencyBuckets = new long[MuxOutboundQueue.LATENCY_BUCKET_COUNT];
-        private final Map<String, Long> acceptedByKind = new LinkedHashMap<>();
-        private final Map<String, Long> webSocketEnqueuedByKind = new LinkedHashMap<>();
-        private final Map<String, Long> rejectedByKind = new LinkedHashMap<>();
-        private final Map<String, Long> bytesByKind = new LinkedHashMap<>();
-        private long staleTransportGenerationDropped;
-        private long tunnelDecodeFailed;
-        private long unknownChannelDropped;
-        private long channelNotOpenDropped;
+        long archivedConnectionCount;
+        long highWaterFrames;
+        long highWaterBytes;
+        long acceptedCount;
+        long webSocketEnqueuedCount;
+        long queueFullCount;
+        long channelNotOpenCount;
+        long transportRejectedCount;
+        long connectionStoppedCount;
+        long residenceCount;
+        long residenceTotalNanos;
+        long residenceMaxNanos;
+        final long[] residenceLatencyBuckets = new long[MuxOutboundQueue.LATENCY_BUCKET_COUNT];
+        final Map<String, Long> acceptedByKind = new LinkedHashMap<>();
+        final Map<String, Long> webSocketEnqueuedByKind = new LinkedHashMap<>();
+        final Map<String, Long> rejectedByKind = new LinkedHashMap<>();
+        final Map<String, Long> bytesByKind = new LinkedHashMap<>();
+        long staleTransportGenerationDropped;
+        long tunnelDecodeFailed;
+        long unknownChannelDropped;
+        long channelNotOpenDropped;
 
-        synchronized void merge(DeviceConnection.DiagnosticsSnapshot snapshot) {
+        void merge(DeviceConnection.DiagnosticsSnapshot snapshot) {
             if (snapshot == null) return;
             archivedConnectionCount++;
             MuxOutboundQueue.Snapshot q = snapshot.outboundQueue;
@@ -366,7 +410,7 @@ public final class DeviceConnectionDiagnosticsRegistry {
             }
         }
 
-        synchronized void clear() {
+        void clear() {
             archivedConnectionCount = 0L;
             highWaterFrames = 0L;
             highWaterBytes = 0L;
@@ -390,11 +434,7 @@ public final class DeviceConnectionDiagnosticsRegistry {
             channelNotOpenDropped = 0L;
         }
 
-        synchronized long archivedConnectionCount() {
-            return archivedConnectionCount;
-        }
-
-        synchronized ArchivedTotals copy() {
+        ArchivedTotals copy() {
             ArchivedTotals out = new ArchivedTotals();
             out.archivedConnectionCount = archivedConnectionCount;
             out.highWaterFrames = highWaterFrames;

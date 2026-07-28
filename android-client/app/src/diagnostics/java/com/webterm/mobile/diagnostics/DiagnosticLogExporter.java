@@ -290,7 +290,8 @@ public final class DiagnosticLogExporter {
         json.put("screenPipelineAggregate", longMapJson(screenPipeline));
         json.put("historyLoaderAggregate",
             longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateHistoryLoader()));
-        // inputDelivery 不含 focus；关闭后 localAccept 可能暂时大于最终结果之和（在途帧）。
+        // inputDelivery 不含 focus；关闭快照满足
+        // localAccepted = enqueued + channelNotOpen + transportRejected + connectionStopped + abandonedAtClose。
         json.put("inputDelivery",
             longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateInputDelivery()));
         return json;
@@ -467,10 +468,11 @@ public final class DiagnosticLogExporter {
         if (connection.lastCloseReason != null) {
             json.put("lastCloseReason", connection.lastCloseReason.name());
         }
-        json.put("connectElapsedMs", connection.connectElapsedMs);
-        json.put("connectedElapsedMs", connection.connectedElapsedMs);
+        json.put("connectElapsedMs", connection.connectElapsedMsNow());
+        json.put("connectedElapsedMs", connection.connectedElapsedMsNow());
         json.put("recoveryStartedAtNanos", connection.recoveryStartedAtNanos);
         json.put("recoveryAttemptCount", connection.recoveryAttemptCount);
+        json.put("agentRecoveryContextClearPending", connection.agentRecoveryContextClearPending);
         if (connection.recoveryInitialFailureKind != null
                 && !connection.recoveryInitialFailureKind.isEmpty()) {
             json.put("recoveryInitialFailureKind", connection.recoveryInitialFailureKind);

@@ -221,6 +221,10 @@ public final class TerminalSessionRuntime {
   private final AtomicLong inputUnknownResultCount = new AtomicLong();
   private final AtomicLong inputUnitsAttempted = new AtomicLong();
   private final AtomicLong inputUnitsLocallyAccepted = new AtomicLong();
+  /** 本地队列已接受、尚待最终入队结果的输入帧数。 */
+  private final AtomicLong inputPendingFinalResultCount = new AtomicLong();
+  /** close 时仍未收到最终结果的输入帧数（并入关闭快照方程）。 */
+  private final AtomicLong inputAbandonedAtCloseCount = new AtomicLong();
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -433,7 +437,8 @@ public final class TerminalSessionRuntime {
 
       @Override
       public void onInputSendResult(@NonNull String result) {
-        if (TerminalSessionRuntime.this.connection != connection) return;
+        // 输入最终结果必须始终记账，即使 connection 已被替换/清空；
+        // 否则 close 或重连后在途回调会破坏 localAccepted 方程。
         noteInputSendResult(result);
       }
 
@@ -698,6 +703,7 @@ public final class TerminalSessionRuntime {
     if (input.send(c)) {
       inputLocalQueueAcceptedCount.incrementAndGet();
       inputUnitsLocallyAccepted.addAndGet(Math.max(1, units));
+      inputPendingFinalResultCount.incrementAndGet();
     }
   }
 
@@ -705,18 +711,23 @@ public final class TerminalSessionRuntime {
     if (result == null) return;
     switch (result) {
       case "WEBSOCKET_ENQUEUED":
+        settlePendingFinalResult();
         inputWebSocketEnqueuedCount.incrementAndGet();
         break;
       case "LOCAL_QUEUE_FULL":
+        // 本地队列未接受，sendWhenLive 未递增 pending；只计数。
         inputQueueFullCount.incrementAndGet();
         break;
       case "TRANSPORT_REJECTED":
+        settlePendingFinalResult();
         inputTransportRejectedCount.incrementAndGet();
         break;
       case "CHANNEL_NOT_OPEN":
+        settlePendingFinalResult();
         inputChannelNotOpenCount.incrementAndGet();
         break;
       case "CONNECTION_STOPPED":
+        settlePendingFinalResult();
         inputConnectionStoppedCount.incrementAndGet();
         break;
       default:
@@ -725,11 +736,19 @@ public final class TerminalSessionRuntime {
     }
   }
 
+  /** 将 pending 减一并钳制到 ≥0（并发结算时可能短暂下溢）。 */
+  private void settlePendingFinalResult() {
+    inputPendingFinalResultCount.getAndUpdate(v -> Math.max(0L, v - 1L));
+  }
+
   /**
    * 诊断导出：输入投递计数（不含输入正文）。
    * <p>
    * Focus 输入走 {@link #sendFocusInput} 独立路径，不计入本快照。
-   * 关闭后本地接受计数可能暂时大于最终结果之和（队列中仍有在途帧时属正常）。
+   * 关闭快照必须满足：
+   * {@code localAccepted = enqueued + channelNotOpen + transportRejected
+   * + connectionStopped + abandonedAtClose}。
+   * {@code LOCAL_QUEUE_FULL} / {@code UNKNOWN} 不参与该方程（前者未计入 localAccepted）。
    */
   @NonNull
   public Map<String, Long> inputDeliverySnapshot() {
@@ -744,6 +763,8 @@ public final class TerminalSessionRuntime {
     out.put("inputChannelNotOpenCount", inputChannelNotOpenCount.get());
     out.put("inputConnectionStoppedCount", inputConnectionStoppedCount.get());
     out.put("inputUnknownResultCount", inputUnknownResultCount.get());
+    out.put("inputPendingFinalResultCount", inputPendingFinalResultCount.get());
+    out.put("inputAbandonedAtCloseCount", inputAbandonedAtCloseCount.get());
     out.put("inputUnitsAttempted", inputUnitsAttempted.get());
     out.put("inputUnitsLocallyAccepted", inputUnitsLocallyAccepted.get());
     return out;
@@ -1125,6 +1146,11 @@ public final class TerminalSessionRuntime {
     });
   }
 
+  /** 测试用：注入 layout lease，使 {@link #sendWhenLive} 可通过租约检查。 */
+  void grantLayoutLeaseForTest(@NonNull String leaseId) {
+    layoutLeaseCoordinator.forceHeldForTest(leaseId);
+  }
+
   private static boolean shouldSkipFailedSegment(@NonNull HistorySegmentSource.FailureKind kind) {
     switch (kind) {
       case NOT_FOUND:
@@ -1218,6 +1244,10 @@ public final class TerminalSessionRuntime {
     resetResyncRecovery();
     shutdownHistoryLoading();
     screenMailbox.reset();
+    long abandoned = Math.max(0L, inputPendingFinalResultCount.getAndSet(0L));
+    if (abandoned > 0L) {
+      inputAbandonedAtCloseCount.addAndGet(abandoned);
+    }
     updateState(State.CLOSED);
     TerminalPipelineDiagnosticsRegistry.unregister(
         this,
@@ -1856,9 +1886,11 @@ public final class TerminalSessionRuntime {
 
   /** 请求一次最新模型绘制，供页面 attach、恢复和重新绑定使用。 */
   public void requestModelRender() {
+    if (isClosingOrClosed()) return;
     if (!fullRenderRequestScheduled.compareAndSet(false, true)) return;
     modelExecutor.execute(() -> {
       fullRenderRequestScheduled.set(false);
+      if (isClosingOrClosed()) return;
       long publicationBefore = model.lastPublicationVersion();
       model.requestFullRender();
       recordPublicationAdvance(publicationBefore);

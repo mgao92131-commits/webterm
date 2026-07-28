@@ -264,14 +264,14 @@ func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
 	if onControlCalls != 0 {
 		t.Fatalf("onControl calls = %d, want 0 (diagnostics.connection must not forward)", onControlCalls)
 	}
-	if sess.diag.ConnectionHash != connectionHash {
-		t.Errorf("ConnectionHash = %q, want %q", sess.diag.ConnectionHash, connectionHash)
+	if sess.diagnosticContext().ConnectionHash != connectionHash {
+		t.Errorf("ConnectionHash = %q, want %q", sess.diagnosticContext().ConnectionHash, connectionHash)
 	}
-	if sess.diag.RecoveryHash != recoveryHash {
-		t.Errorf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, recoveryHash)
+	if sess.diagnosticContext().RecoveryHash != recoveryHash {
+		t.Errorf("RecoveryHash = %q, want %q", sess.diagnosticContext().RecoveryHash, recoveryHash)
 	}
-	if sess.diag.TransportGeneration != 12 {
-		t.Errorf("TransportGeneration = %d, want 12", sess.diag.TransportGeneration)
+	if sess.diagnosticContext().TransportGeneration != 12 {
+		t.Errorf("TransportGeneration = %d, want 12", sess.diagnosticContext().TransportGeneration)
 	}
 
 	entries := logger.Recent(0)
@@ -318,8 +318,8 @@ func TestDiagnosticsConnectionRejectsInvalidHash(t *testing.T) {
 		"connection_hash": "NOT_VALID!!!!",
 		"recovery_hash":   "abc",
 	})
-	if sess.diag.ConnectionHash != "" || sess.diag.RecoveryHash != "" {
-		t.Fatalf("invalid hashes must be ignored, got %+v", sess.diag)
+	if sess.diagnosticContext().ConnectionHash != "" || sess.diagnosticContext().RecoveryHash != "" {
+		t.Fatalf("invalid hashes must be ignored, got %+v", sess.diagnosticContext())
 	}
 	if got := diagnostics.Default.MuxDiagnosticsContextRejectedCount.Load(); got <= before {
 		t.Fatalf("rejected count = %d, want > %d", got, before)
@@ -364,8 +364,8 @@ func TestDiagnosticsConnectionClearsRecoveryHash(t *testing.T) {
 		"recovery_hash":        recoveryHash,
 		"transport_generation": float64(3),
 	})
-	if sess.diag.RecoveryHash != recoveryHash {
-		t.Fatalf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, recoveryHash)
+	if sess.diagnosticContext().RecoveryHash != recoveryHash {
+		t.Fatalf("RecoveryHash = %q, want %q", sess.diagnosticContext().RecoveryHash, recoveryHash)
 	}
 
 	sess.event("info", "mux_test_with_recovery", map[string]any{"probe": true})
@@ -386,11 +386,11 @@ func TestDiagnosticsConnectionClearsRecoveryHash(t *testing.T) {
 		"connection_hash": connectionHash,
 		"recovery_hash":   "",
 	})
-	if sess.diag.RecoveryHash != "" {
-		t.Fatalf("RecoveryHash after clear = %q, want empty", sess.diag.RecoveryHash)
+	if sess.diagnosticContext().RecoveryHash != "" {
+		t.Fatalf("RecoveryHash after clear = %q, want empty", sess.diagnosticContext().RecoveryHash)
 	}
-	if sess.diag.ConnectionHash != connectionHash {
-		t.Fatalf("ConnectionHash after clear = %q, want %q", sess.diag.ConnectionHash, connectionHash)
+	if sess.diagnosticContext().ConnectionHash != connectionHash {
+		t.Fatalf("ConnectionHash after clear = %q, want %q", sess.diagnosticContext().ConnectionHash, connectionHash)
 	}
 
 	sess.event("info", "mux_test_after_clear", map[string]any{"probe": true})
@@ -407,8 +407,7 @@ func TestDiagnosticsConnectionClearsRecoveryHash(t *testing.T) {
 	sess.applyDiagnosticsConnection(map[string]any{
 		"connection_hash": connectionHash,
 	})
-	if sess.diag.RecoveryHash != "" {
-		t.Fatalf("absent recovery_hash must keep empty, got %q", sess.diag.RecoveryHash)
+	if sess.diagnosticContext().RecoveryHash != "" {
+		t.Fatalf("absent recovery_hash must keep empty, got %q", sess.diagnosticContext().RecoveryHash)
 	}
 }
-

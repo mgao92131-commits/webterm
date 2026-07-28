@@ -145,6 +145,16 @@ public final class LayoutLeaseCoordinator {
     return state == State.HELD;
   }
 
+  /** 测试用：直接进入 HELD，绕过 acquire/grant 往返。 */
+  void forceHeldForTest(@NonNull String id) {
+    if (id == null || id.isEmpty()) return;
+    leaseId = id;
+    state = State.HELD;
+    pendingRequestId = "";
+    expiresAtMs = 0L;
+    retryAttempt = 0;
+  }
+
   public boolean isPageAttached() {
     return pageAttached;
   }

@@ -211,6 +211,9 @@ func waitUntil(t *testing.T, deadline time.Time, cond func() bool, msg string) {
 }
 
 func TestPhysicalWriterGlobalDepthAcrossWriters(t *testing.T) {
+	diagnostics.Default.ResetWriterDepthsForTest()
+	t.Cleanup(diagnostics.Default.ResetWriterDepthsForTest)
+
 	socketA := &blockingMuxSocket{}
 	socketB := &blockingMuxSocket{}
 	writerA := NewPhysicalWriter(socketA, 128)
@@ -226,6 +229,7 @@ func TestPhysicalWriterGlobalDepthAcrossWriters(t *testing.T) {
 	waitUntil(t, time.Now().Add(time.Second), func() bool {
 		return len(writerA.highWrites) == 80
 	}, "writer A queue did not reach depth 80")
+	writerA.observeQueueDepths()
 
 	for range 20 {
 		go func() {
@@ -235,26 +239,27 @@ func TestPhysicalWriterGlobalDepthAcrossWriters(t *testing.T) {
 	waitUntil(t, time.Now().Add(time.Second), func() bool {
 		return len(writerB.highWrites) == 20
 	}, "writer B queue did not reach depth 20")
+	writerB.observeQueueDepths()
 
-	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 100 {
-		t.Fatalf("global total depth = %d, want 100", got)
-	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return diagnostics.Default.WriterTotalQueueCurrentDepth.Load() == 100
+	}, "global total depth did not reach 100")
 
 	ctxB, cancelB := context.WithCancel(context.Background())
 	cancelB()
 	go writerB.Run(ctxB)
 	<-writerB.Done()
-	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 80 {
-		t.Fatalf("after B close total depth = %d, want 80", got)
-	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return diagnostics.Default.WriterTotalQueueCurrentDepth.Load() == 80
+	}, "after B close total depth did not settle at 80")
 
 	ctxA, cancelA := context.WithCancel(context.Background())
 	cancelA()
 	go writerA.Run(ctxA)
 	<-writerA.Done()
-	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 0 {
-		t.Fatalf("after A close total depth = %d, want 0", got)
-	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return diagnostics.Default.WriterTotalQueueCurrentDepth.Load() == 0
+	}, "after A close total depth did not settle at 0")
 
 	for range 100 {
 		if err := <-results; err != ErrWriterClosed {
@@ -288,5 +293,35 @@ func TestPhysicalWriterCloseUnblocksSubmitWaiters(t *testing.T) {
 		if err != nil && err != ErrWriterClosed {
 			t.Fatalf("submit result = %v, want nil or ErrWriterClosed", err)
 		}
+	}
+}
+
+func TestPhysicalWriterSubmitAfterAcceptingFalseFailsImmediately(t *testing.T) {
+	socket := &blockingMuxSocket{}
+	writer := NewPhysicalWriter(socket, 128)
+	ctx := context.Background()
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	go writer.Run(runCtx)
+	<-writer.Done()
+
+	if writer.accepting.Load() {
+		t.Fatal("accepting must be false after Run exits")
+	}
+
+	started := time.Now()
+	err := writer.Submit(ctx, termsession.MessageText, []byte("after-close"), true)
+	if err != ErrWriterClosed {
+		t.Fatalf("Submit after close = %v, want ErrWriterClosed", err)
+	}
+	if time.Since(started) > 200*time.Millisecond {
+		t.Fatalf("Submit after accepting=false must fail immediately, took %v", time.Since(started))
+	}
+
+	// 关闭后不应再有排队请求卡住。
+	if len(writer.highWrites) != 0 || len(writer.dataWrites) != 0 {
+		t.Fatalf("queues must be empty after close, high=%d data=%d",
+			len(writer.highWrites), len(writer.dataWrites))
 	}
 }

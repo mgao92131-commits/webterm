@@ -101,6 +101,9 @@ public final class DeviceConnection {
     private long tunnelDecodeFailed;
     private long unknownChannelDropped;
     private long channelNotOpenDropped;
+    /** Agent recoveryHash 清除失败后，待下次控制发送机会重试。 */
+    private boolean agentRecoveryContextClearPending;
+    private boolean clearingAgentRecoveryContext;
     /** 仅在 state handler 上发布；导出线程只读此不可变快照。 */
     private volatile DiagnosticsSnapshot publishedDiagnosticsSnapshot;
 
@@ -132,13 +135,21 @@ public final class DeviceConnection {
         public final int transportGeneration;
         public final int activeChannelCount;
         public final ConnectionCloseReason lastCloseReason;
-        /** 自 connectionStartedAtNanos 起的相对耗时（发布时刻），非原始纳秒。 */
+        /** 连接 attempt 起点（nanoTime）；未开始为 0。导出请用 {@link #connectElapsedMsNow()}。 */
+        public final long connectionStartedAtNanos;
+        /** 物理已 open 的单调时钟；未连接为 0。导出请用 {@link #connectedElapsedMsNow()}。 */
+        public final long connectedAtNanos;
+        /** 快照发布时刻（nanoTime）。 */
+        public final long snapshotPublishedAtNanos;
+        /** 发布时刻冻结的 connect 耗时；活跃连接导出优先用 {@link #connectElapsedMsNow()}。 */
         public final long connectElapsedMs;
-        /** 自 connectedAtNanos 起的相对存活时长（发布时刻）；未连接为 0。 */
+        /** 发布时刻冻结的已连接存活时长；活跃连接导出优先用 {@link #connectedElapsedMsNow()}。 */
         public final long connectedElapsedMs;
         public final long recoveryStartedAtNanos;
         public final int recoveryAttemptCount;
         public final String recoveryInitialFailureKind;
+        /** Agent recoveryHash 清除失败后待重试。 */
+        public final boolean agentRecoveryContextClearPending;
         public final MuxOutboundQueue.Snapshot outboundQueue;
         public final InboundDropSnapshot inboundDrops;
         /** 仅 recentClosed 填充；活跃快照为 0。 */
@@ -151,16 +162,20 @@ public final class DeviceConnection {
                             boolean physicalConnecting, boolean stopped,
                             int transportGeneration, int activeChannelCount,
                             ConnectionCloseReason lastCloseReason,
+                            long connectionStartedAtNanos, long connectedAtNanos,
+                            long snapshotPublishedAtNanos,
                             long connectElapsedMs, long connectedElapsedMs,
                             long recoveryStartedAtNanos,
                             int recoveryAttemptCount, String recoveryInitialFailureKind,
+                            boolean agentRecoveryContextClearPending,
                             MuxOutboundQueue.Snapshot outboundQueue,
                             InboundDropSnapshot inboundDrops) {
             this(baseUrl, deviceId, connectionId, recoveryId, physicalDesired, physicalConnected,
                 physicalConnecting, stopped, transportGeneration, activeChannelCount,
-                lastCloseReason, connectElapsedMs, connectedElapsedMs, recoveryStartedAtNanos,
-                recoveryAttemptCount, recoveryInitialFailureKind, outboundQueue, inboundDrops,
-                0L, "");
+                lastCloseReason, connectionStartedAtNanos, connectedAtNanos, snapshotPublishedAtNanos,
+                connectElapsedMs, connectedElapsedMs, recoveryStartedAtNanos,
+                recoveryAttemptCount, recoveryInitialFailureKind, agentRecoveryContextClearPending,
+                outboundQueue, inboundDrops, 0L, "");
         }
 
         DiagnosticsSnapshot(String baseUrl, String deviceId, String connectionId, String recoveryId,
@@ -168,9 +183,12 @@ public final class DeviceConnection {
                             boolean physicalConnecting, boolean stopped,
                             int transportGeneration, int activeChannelCount,
                             ConnectionCloseReason lastCloseReason,
+                            long connectionStartedAtNanos, long connectedAtNanos,
+                            long snapshotPublishedAtNanos,
                             long connectElapsedMs, long connectedElapsedMs,
                             long recoveryStartedAtNanos,
                             int recoveryAttemptCount, String recoveryInitialFailureKind,
+                            boolean agentRecoveryContextClearPending,
                             MuxOutboundQueue.Snapshot outboundQueue,
                             InboundDropSnapshot inboundDrops,
                             long closedAtEpochMs, String closeReason) {
@@ -185,16 +203,41 @@ public final class DeviceConnection {
             this.transportGeneration = transportGeneration;
             this.activeChannelCount = activeChannelCount;
             this.lastCloseReason = lastCloseReason;
+            this.connectionStartedAtNanos = connectionStartedAtNanos;
+            this.connectedAtNanos = connectedAtNanos;
+            this.snapshotPublishedAtNanos = snapshotPublishedAtNanos;
             this.connectElapsedMs = connectElapsedMs;
             this.connectedElapsedMs = connectedElapsedMs;
             this.recoveryStartedAtNanos = recoveryStartedAtNanos;
             this.recoveryAttemptCount = recoveryAttemptCount;
             this.recoveryInitialFailureKind =
                 recoveryInitialFailureKind != null ? recoveryInitialFailureKind : "";
+            this.agentRecoveryContextClearPending = agentRecoveryContextClearPending;
             this.outboundQueue = outboundQueue;
             this.inboundDrops = inboundDrops;
             this.closedAtEpochMs = closedAtEpochMs;
             this.closeReason = closeReason != null ? closeReason : "";
+        }
+
+        /** 自 connectedAtNanos 起的实时存活时长；未连接为 0。 */
+        public long connectedElapsedMsNow() {
+            if (connectedAtNanos <= 0L) return 0L;
+            return Math.max(0L, (System.nanoTime() - connectedAtNanos) / 1_000_000L);
+        }
+
+        /**
+         * connecting 期间随时间增长；已连接则冻结为 open 时刻相对 started 的耗时；
+         * 否则回落发布时刻冻结值。
+         */
+        public long connectElapsedMsNow() {
+            if (connectionStartedAtNanos <= 0L) return 0L;
+            if (physicalConnected && connectedAtNanos > 0L) {
+                return Math.max(0L, (connectedAtNanos - connectionStartedAtNanos) / 1_000_000L);
+            }
+            if (physicalConnecting) {
+                return Math.max(0L, (System.nanoTime() - connectionStartedAtNanos) / 1_000_000L);
+            }
+            return connectElapsedMs;
         }
 
         DiagnosticsSnapshot withClosed(long closedAtEpochMs, ConnectionCloseReason closeReason) {
@@ -202,8 +245,10 @@ public final class DeviceConnection {
                 baseUrl, deviceId, connectionId, recoveryId,
                 physicalDesired, physicalConnected, physicalConnecting, stopped,
                 transportGeneration, activeChannelCount, lastCloseReason,
+                connectionStartedAtNanos, connectedAtNanos, snapshotPublishedAtNanos,
                 connectElapsedMs, connectedElapsedMs, recoveryStartedAtNanos, recoveryAttemptCount,
-                recoveryInitialFailureKind, outboundQueue, inboundDrops,
+                recoveryInitialFailureKind, agentRecoveryContextClearPending,
+                outboundQueue, inboundDrops,
                 closedAtEpochMs, closeReason != null ? closeReason.name() : "");
         }
     }
@@ -320,6 +365,7 @@ public final class DeviceConnection {
         controlPlane.onConnected();
         reconcileChannels();
         maybeEmitTransportRecovered();
+        tryClearAgentRecoveryContextIfPending();
         publishDiagnosticsSnapshot();
     }
 
@@ -336,7 +382,10 @@ public final class DeviceConnection {
         DeviceConnectionDiagnosticsRegistry.noteRecoveryCompleted(downtimeMs);
         clearRecoveryState();
         boolean cleared = controlPlane.clearDiagnosticsRecovery(connectionId, transportGeneration);
-        if (!cleared) {
+        if (cleared) {
+            agentRecoveryContextClearPending = false;
+        } else {
+            agentRecoveryContextClearPending = true;
             Diagnostics.warn("device_connection", "diagnostics_recovery_context_clear_failed",
                 physicalFields(
                     "transportGeneration", transportGeneration,
@@ -344,6 +393,26 @@ public final class DeviceConnection {
                     "stateAfter", "CONNECTED"));
         }
         publishDiagnosticsSnapshot();
+    }
+
+    /**
+     * 若上次清除 Agent recoveryHash 失败且物理仍连接，则再试一次。
+     * 由 sendControlInternal / onPhysicalOpen 等控制发送机会触发。
+     */
+    private void tryClearAgentRecoveryContextIfPending() {
+        if (!agentRecoveryContextClearPending || !physicalConnected || clearingAgentRecoveryContext) {
+            return;
+        }
+        clearingAgentRecoveryContext = true;
+        try {
+            boolean cleared = controlPlane.clearDiagnosticsRecovery(connectionId, transportGeneration);
+            if (cleared) {
+                agentRecoveryContextClearPending = false;
+                publishDiagnosticsSnapshot();
+            }
+        } finally {
+            clearingAgentRecoveryContext = false;
+        }
     }
 
     private void clearRecoveryState() {
@@ -430,6 +499,7 @@ public final class DeviceConnection {
             lastCloseReason = ConnectionCloseReason.AUTH_REQUIRED;
             physicalDesired = false;
             clearRecoveryState();
+            agentRecoveryContextClearPending = false;
             if (transport != null) transport.close();
             publishDiagnosticsSnapshot();
             return;
@@ -593,13 +663,16 @@ public final class DeviceConnection {
     }
 
     private void publishDiagnosticsSnapshot() {
+        long publishedAt = System.nanoTime();
         publishedDiagnosticsSnapshot = new DiagnosticsSnapshot(
             baseUrl, deviceId, connectionId, recoveryId,
             physicalDesired, physicalConnected, physicalConnecting, stopped,
             transportGeneration, activeChannelCount, lastCloseReason,
+            connectionStartedAtNanos, connectedAtNanos, publishedAt,
             connectDurationMs(), connectedDurationMs(),
             recoveryStartedAtNanos, recoveryAttemptCount,
             recoveryInitialFailure != null ? recoveryInitialFailure.name() : "",
+            agentRecoveryContextClearPending,
             outboundQueue.snapshot(), inboundDropSnapshot());
     }
 
@@ -607,13 +680,16 @@ public final class DeviceConnection {
     public DiagnosticsSnapshot diagnosticsSnapshot() {
         DiagnosticsSnapshot snapshot = publishedDiagnosticsSnapshot;
         if (snapshot != null) return snapshot;
+        long publishedAt = System.nanoTime();
         return new DiagnosticsSnapshot(
             baseUrl, deviceId, connectionId, recoveryId,
             physicalDesired, physicalConnected, physicalConnecting, stopped,
             transportGeneration, activeChannelCount, lastCloseReason,
+            connectionStartedAtNanos, connectedAtNanos, publishedAt,
             connectDurationMs(), connectedDurationMs(),
             recoveryStartedAtNanos, recoveryAttemptCount,
             recoveryInitialFailure != null ? recoveryInitialFailure.name() : "",
+            agentRecoveryContextClearPending,
             outboundQueue.snapshot(), inboundDropSnapshot());
     }
 
@@ -638,6 +714,9 @@ public final class DeviceConnection {
     }
 
     private boolean sendControlInternal(JSONObject msg) {
+        if (!clearingAgentRecoveryContext) {
+            tryClearAgentRecoveryContextIfPending();
+        }
         return msg != null && physicalConnected && transport != null
             && transport.sendText(msg.toString());
     }
@@ -664,6 +743,7 @@ public final class DeviceConnection {
         physicalConnecting = false;
         physicalReconnectAttempts = 0;
         connectedAtNanos = 0L;
+        agentRecoveryContextClearPending = false;
         clearRecoveryState();
         if (transport != null) transport.close();
         publishDiagnosticsSnapshot();

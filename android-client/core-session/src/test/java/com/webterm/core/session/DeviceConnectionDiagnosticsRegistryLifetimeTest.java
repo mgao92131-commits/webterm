@@ -67,6 +67,80 @@ public final class DeviceConnectionDiagnosticsRegistryLifetimeTest {
         assertEquals(0L, ((Number) finalOutbound.get("currentFrames")).longValue());
     }
 
+    @Test
+    public void concurrentUnregisterDuringAggregateDoesNotDoubleCountLifetime() throws Exception {
+        Handler handler = synchronousHandler();
+        MuxTransport transport = mock(MuxTransport.class);
+        TransportFactory factory = (url, cookie, protocol) -> transport;
+
+        final int connectionCount = 32;
+        java.util.concurrent.ExecutorService pool =
+            java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            java.util.concurrent.CountDownLatch start =
+                new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.CountDownLatch done =
+                new java.util.concurrent.CountDownLatch(connectionCount);
+            java.util.concurrent.atomic.AtomicLong maxLifetime =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+            java.util.concurrent.atomic.AtomicLong maxAccepted =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+
+            for (int i = 0; i < connectionCount; i++) {
+                final int index = i;
+                pool.execute(() -> {
+                    try {
+                        start.await();
+                        DeviceConnection connection = new DeviceConnection(
+                            handler,
+                            "https://relay-conc-" + index + ".example/",
+                            "cookie",
+                            "device-conc-" + index,
+                            factory);
+                        connection.tryEnqueueTunnelFrame(
+                            "ch-" + index,
+                            new byte[] {1},
+                            true,
+                            MuxOutboundQueue.FrameKind.OTHER,
+                            null);
+                        connection.stop();
+                        Map<String, Long> counts =
+                            DeviceConnectionDiagnosticsRegistry.lifetimeConnectionCounts();
+                        long lifetime = counts.get("lifetimeConnectionCount");
+                        for (;;) {
+                            long cur = maxLifetime.get();
+                            if (lifetime <= cur || maxLifetime.compareAndSet(cur, lifetime)) break;
+                        }
+                        Map<String, Object> outbound =
+                            DeviceConnectionDiagnosticsRegistry.aggregateOutboundQueue();
+                        long accepted = ((Number) outbound.get("acceptedCount")).longValue();
+                        for (;;) {
+                            long cur = maxAccepted.get();
+                            if (accepted <= cur || maxAccepted.compareAndSet(cur, accepted)) break;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            start.countDown();
+            assertTrue(done.await(30, java.util.concurrent.TimeUnit.SECONDS));
+
+            Map<String, Long> counts =
+                DeviceConnectionDiagnosticsRegistry.lifetimeConnectionCounts();
+            assertEquals(connectionCount, (long) counts.get("lifetimeConnectionCount"));
+            assertEquals(connectionCount, maxLifetime.get());
+            Map<String, Object> outbound =
+                DeviceConnectionDiagnosticsRegistry.aggregateOutboundQueue();
+            assertEquals(connectionCount, ((Number) outbound.get("acceptedCount")).longValue());
+            assertEquals(connectionCount, maxAccepted.get());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     private static Handler synchronousHandler() {
         Handler handler = mock(Handler.class);
         when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {

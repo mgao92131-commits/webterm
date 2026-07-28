@@ -2,7 +2,6 @@ package com.webterm.feature.terminal.domain;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,41 +12,48 @@ import java.util.Map;
  * per-session pipeline / history loader 快照与进程聚合。
  * 关闭后保留最近 {@link #MAX_RECENT_CLOSED} 条最终快照；淘汰时并入
  * {@link #ARCHIVED_TOTALS}，保证 lifetime 累计计数单调不减。
+ * <p>
+ * ACTIVE / RECENT_CLOSED / ARCHIVED_TOTALS 由同一把 {@link #LOCK} 保护，
+ * 避免 unregister 与 aggregate 交错导致会话被双重计数。
  */
 public final class TerminalPipelineDiagnosticsRegistry {
     static final int MAX_RECENT_CLOSED = 32;
 
-    private static final Map<TerminalSessionRuntime, Boolean> ACTIVE =
-        Collections.synchronizedMap(new IdentityHashMap<>());
-    private static final ArrayDeque<SessionDiagnosticsSnapshot> RECENT_CLOSED =
-        new ArrayDeque<>();
+    private static final Object LOCK = new Object();
+    private static final Map<TerminalSessionRuntime, Boolean> ACTIVE = new IdentityHashMap<>();
+    private static final ArrayDeque<SessionDiagnosticsSnapshot> RECENT_CLOSED = new ArrayDeque<>();
     private static final ArchivedTotals ARCHIVED_TOTALS = new ArchivedTotals();
 
     private TerminalPipelineDiagnosticsRegistry() {}
 
     public static void register(TerminalSessionRuntime runtime) {
         if (runtime == null) return;
-        ACTIVE.put(runtime, Boolean.TRUE);
+        synchronized (LOCK) {
+            ACTIVE.put(runtime, Boolean.TRUE);
+        }
     }
 
     /**
      * 注销 runtime 并保留调用方提供的最终不可变快照。
      * 不得再主动读取 runtime（清理后状态由 {@code finalSnapshot} 承载）。
+     * 顺序：先从 ACTIVE 移除，再写入 recentClosed（必要时归档最旧项）。
      */
     public static void unregister(TerminalSessionRuntime runtime,
                                   SessionDiagnosticsSnapshot finalSnapshot) {
         if (runtime == null) return;
-        retainClosed(finalSnapshot);
-        ACTIVE.remove(runtime);
+        synchronized (LOCK) {
+            ACTIVE.remove(runtime);
+            retainClosedLocked(finalSnapshot);
+        }
     }
 
     /** 测试用：清空注册表。 */
     public static void clearForTest() {
-        ACTIVE.clear();
-        synchronized (RECENT_CLOSED) {
+        synchronized (LOCK) {
+            ACTIVE.clear();
             RECENT_CLOSED.clear();
+            ARCHIVED_TOTALS.clear();
         }
-        ARCHIVED_TOTALS.clear();
     }
 
     public static List<SessionDiagnosticsSnapshot> snapshotAll() {
@@ -56,7 +62,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
 
     public static List<SessionDiagnosticsSnapshot> snapshotActive() {
         TerminalSessionRuntime[] runtimes;
-        synchronized (ACTIVE) {
+        synchronized (LOCK) {
             runtimes = ACTIVE.keySet().toArray(new TerminalSessionRuntime[0]);
         }
         List<SessionDiagnosticsSnapshot> out = new ArrayList<>(runtimes.length);
@@ -67,32 +73,42 @@ public final class TerminalPipelineDiagnosticsRegistry {
     }
 
     public static List<SessionDiagnosticsSnapshot> snapshotRecentClosed() {
-        synchronized (RECENT_CLOSED) {
+        synchronized (LOCK) {
             return new ArrayList<>(RECENT_CLOSED);
         }
     }
 
     /** 活跃 / 最近关闭 / 已归档会话计数（lifetime = 三者之和）。 */
     public static Map<String, Long> lifetimeSessionCounts() {
-        long active;
-        synchronized (ACTIVE) {
-            active = ACTIVE.size();
+        synchronized (LOCK) {
+            long active = ACTIVE.size();
+            long recentClosed = RECENT_CLOSED.size();
+            long archived = ARCHIVED_TOTALS.archivedSessionCount;
+            Map<String, Long> out = new LinkedHashMap<>();
+            out.put("activeSessionCount", active);
+            out.put("recentClosedSessionCount", recentClosed);
+            out.put("archivedSessionCount", archived);
+            out.put("lifetimeSessionCount", active + recentClosed + archived);
+            return out;
         }
-        long recentClosed;
-        synchronized (RECENT_CLOSED) {
-            recentClosed = RECENT_CLOSED.size();
-        }
-        long archived = ARCHIVED_TOTALS.archivedSessionCount();
-        Map<String, Long> out = new LinkedHashMap<>();
-        out.put("activeSessionCount", active);
-        out.put("recentClosedSessionCount", recentClosed);
-        out.put("archivedSessionCount", archived);
-        out.put("lifetimeSessionCount", active + recentClosed + archived);
-        return out;
     }
 
     /** 跨会话 pipeline 计数聚合（active + recentClosed + archived，lifetime 单调）。 */
     public static Map<String, Long> aggregateScreenPipeline() {
+        TerminalSessionRuntime[] runtimes;
+        List<SessionDiagnosticsSnapshot> recentClosed;
+        ArchivedTotals archived;
+        synchronized (LOCK) {
+            runtimes = ACTIVE.keySet().toArray(new TerminalSessionRuntime[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+            archived = ARCHIVED_TOTALS.copy();
+        }
+        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>(runtimes.length + recentClosed.size());
+        for (TerminalSessionRuntime runtime : runtimes) {
+            sessions.add(runtime.diagnosticsSnapshot());
+        }
+        sessions.addAll(recentClosed);
+
         long receivedFrameCount = 0L;
         long receivedBytes = 0L;
         long staleConnectionEpochDropped = 0L;
@@ -107,9 +123,6 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long renderSuccessCount = 0L;
         long renderFailureCount = 0L;
         long stateOnlyHandledCount = 0L;
-        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>();
-        sessions.addAll(snapshotActive());
-        sessions.addAll(snapshotRecentClosed());
         for (SessionDiagnosticsSnapshot session : sessions) {
             Map<String, Object> pipeline = session.pipeline;
             receivedFrameCount += longOf(pipeline, "receivedFrameCount");
@@ -127,7 +140,6 @@ public final class TerminalPipelineDiagnosticsRegistry {
             renderFailureCount += longOf(pipeline, "renderFailureCount");
             stateOnlyHandledCount += longOf(pipeline, "stateOnlyHandledCount");
         }
-        ArchivedTotals archived = ARCHIVED_TOTALS.copy();
         receivedFrameCount += archived.receivedFrameCount;
         receivedBytes += archived.receivedBytes;
         staleConnectionEpochDropped += archived.staleConnectionEpochDropped;
@@ -165,14 +177,25 @@ public final class TerminalPipelineDiagnosticsRegistry {
 
     /** 跨会话 history loader 计数聚合（含 archived）。 */
     public static Map<String, Long> aggregateHistoryLoader() {
+        TerminalSessionRuntime[] runtimes;
+        List<SessionDiagnosticsSnapshot> recentClosed;
+        ArchivedTotals archived;
+        synchronized (LOCK) {
+            runtimes = ACTIVE.keySet().toArray(new TerminalSessionRuntime[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+            archived = ARCHIVED_TOTALS.copy();
+        }
+        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>(runtimes.length + recentClosed.size());
+        for (TerminalSessionRuntime runtime : runtimes) {
+            sessions.add(runtime.diagnosticsSnapshot());
+        }
+        sessions.addAll(recentClosed);
+
         long demandDeduplicatedCount = 0L;
         long pumpWhileFetchingCount = 0L;
         long demandChangedWhileFetchingCount = 0L;
         long activeRequestCount = 0L;
         long closedCount = 0L;
-        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>();
-        sessions.addAll(snapshotActive());
-        sessions.addAll(snapshotRecentClosed());
         for (SessionDiagnosticsSnapshot session : sessions) {
             Map<String, Object> loader = session.historyLoader;
             demandDeduplicatedCount += longOf(loader, "demandDeduplicatedCount");
@@ -186,7 +209,6 @@ public final class TerminalPipelineDiagnosticsRegistry {
                 closedCount++;
             }
         }
-        ArchivedTotals archived = ARCHIVED_TOTALS.copy();
         demandDeduplicatedCount += archived.demandDeduplicatedCount;
         pumpWhileFetchingCount += archived.pumpWhileFetchingCount;
         demandChangedWhileFetchingCount += archived.demandChangedWhileFetchingCount;
@@ -204,6 +226,20 @@ public final class TerminalPipelineDiagnosticsRegistry {
 
     /** 跨会话输入投递计数聚合（含 archived）。 */
     public static Map<String, Long> aggregateInputDelivery() {
+        TerminalSessionRuntime[] runtimes;
+        List<SessionDiagnosticsSnapshot> recentClosed;
+        ArchivedTotals archived;
+        synchronized (LOCK) {
+            runtimes = ACTIVE.keySet().toArray(new TerminalSessionRuntime[0]);
+            recentClosed = new ArrayList<>(RECENT_CLOSED);
+            archived = ARCHIVED_TOTALS.copy();
+        }
+        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>(runtimes.length + recentClosed.size());
+        for (TerminalSessionRuntime runtime : runtimes) {
+            sessions.add(runtime.diagnosticsSnapshot());
+        }
+        sessions.addAll(recentClosed);
+
         long inputAttemptCount = 0L;
         long inputRejectedNotLiveCount = 0L;
         long inputRejectedNoLeaseCount = 0L;
@@ -214,11 +250,10 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long inputChannelNotOpenCount = 0L;
         long inputConnectionStoppedCount = 0L;
         long inputUnknownResultCount = 0L;
+        long inputPendingFinalResultCount = 0L;
+        long inputAbandonedAtCloseCount = 0L;
         long inputUnitsAttempted = 0L;
         long inputUnitsLocallyAccepted = 0L;
-        List<SessionDiagnosticsSnapshot> sessions = new ArrayList<>();
-        sessions.addAll(snapshotActive());
-        sessions.addAll(snapshotRecentClosed());
         for (SessionDiagnosticsSnapshot session : sessions) {
             Map<String, Long> input = session.inputDelivery;
             if (input == null) continue;
@@ -232,10 +267,12 @@ public final class TerminalPipelineDiagnosticsRegistry {
             inputChannelNotOpenCount += longOf(input, "inputChannelNotOpenCount");
             inputConnectionStoppedCount += longOf(input, "inputConnectionStoppedCount");
             inputUnknownResultCount += longOf(input, "inputUnknownResultCount");
+            // pending 是当前深度，只统计仍可见会话。
+            inputPendingFinalResultCount += longOf(input, "inputPendingFinalResultCount");
+            inputAbandonedAtCloseCount += longOf(input, "inputAbandonedAtCloseCount");
             inputUnitsAttempted += longOf(input, "inputUnitsAttempted");
             inputUnitsLocallyAccepted += longOf(input, "inputUnitsLocallyAccepted");
         }
-        ArchivedTotals archived = ARCHIVED_TOTALS.copy();
         inputAttemptCount += archived.inputAttemptCount;
         inputRejectedNotLiveCount += archived.inputRejectedNotLiveCount;
         inputRejectedNoLeaseCount += archived.inputRejectedNoLeaseCount;
@@ -246,6 +283,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
         inputChannelNotOpenCount += archived.inputChannelNotOpenCount;
         inputConnectionStoppedCount += archived.inputConnectionStoppedCount;
         inputUnknownResultCount += archived.inputUnknownResultCount;
+        inputAbandonedAtCloseCount += archived.inputAbandonedAtCloseCount;
         inputUnitsAttempted += archived.inputUnitsAttempted;
         inputUnitsLocallyAccepted += archived.inputUnitsLocallyAccepted;
 
@@ -260,6 +298,8 @@ public final class TerminalPipelineDiagnosticsRegistry {
         out.put("inputChannelNotOpenCount", inputChannelNotOpenCount);
         out.put("inputConnectionStoppedCount", inputConnectionStoppedCount);
         out.put("inputUnknownResultCount", inputUnknownResultCount);
+        out.put("inputPendingFinalResultCount", inputPendingFinalResultCount);
+        out.put("inputAbandonedAtCloseCount", inputAbandonedAtCloseCount);
         out.put("inputUnitsAttempted", inputUnitsAttempted);
         out.put("inputUnitsLocallyAccepted", inputUnitsLocallyAccepted);
         return out;
@@ -332,38 +372,39 @@ public final class TerminalPipelineDiagnosticsRegistry {
 
     /** 被 recentClosed 淘汰的会话累计计数；不含当前深度类字段。 */
     static final class ArchivedTotals {
-        private long archivedSessionCount;
-        private long receivedFrameCount;
-        private long receivedBytes;
-        private long staleConnectionEpochDropped;
-        private long staleMailboxGenerationDropped;
-        private long wrongSourceConnectionDropped;
-        private long invalidFrameSizeRejected;
-        private long projectionOverflowDiscarded;
-        private long urgentOverflowDiscarded;
-        private long reliableOverflowDiscarded;
-        private long backgroundDropped;
-        private long unknownEnvelopeCount;
-        private long renderSuccessCount;
-        private long renderFailureCount;
-        private long stateOnlyHandledCount;
-        private long inputAttemptCount;
-        private long inputRejectedNotLiveCount;
-        private long inputRejectedNoLeaseCount;
-        private long inputLocalQueueAcceptedCount;
-        private long inputWebSocketEnqueuedCount;
-        private long inputQueueFullCount;
-        private long inputTransportRejectedCount;
-        private long inputChannelNotOpenCount;
-        private long inputConnectionStoppedCount;
-        private long inputUnknownResultCount;
-        private long inputUnitsAttempted;
-        private long inputUnitsLocallyAccepted;
-        private long demandDeduplicatedCount;
-        private long pumpWhileFetchingCount;
-        private long demandChangedWhileFetchingCount;
+        long archivedSessionCount;
+        long receivedFrameCount;
+        long receivedBytes;
+        long staleConnectionEpochDropped;
+        long staleMailboxGenerationDropped;
+        long wrongSourceConnectionDropped;
+        long invalidFrameSizeRejected;
+        long projectionOverflowDiscarded;
+        long urgentOverflowDiscarded;
+        long reliableOverflowDiscarded;
+        long backgroundDropped;
+        long unknownEnvelopeCount;
+        long renderSuccessCount;
+        long renderFailureCount;
+        long stateOnlyHandledCount;
+        long inputAttemptCount;
+        long inputRejectedNotLiveCount;
+        long inputRejectedNoLeaseCount;
+        long inputLocalQueueAcceptedCount;
+        long inputWebSocketEnqueuedCount;
+        long inputQueueFullCount;
+        long inputTransportRejectedCount;
+        long inputChannelNotOpenCount;
+        long inputConnectionStoppedCount;
+        long inputUnknownResultCount;
+        long inputAbandonedAtCloseCount;
+        long inputUnitsAttempted;
+        long inputUnitsLocallyAccepted;
+        long demandDeduplicatedCount;
+        long pumpWhileFetchingCount;
+        long demandChangedWhileFetchingCount;
 
-        synchronized void merge(SessionDiagnosticsSnapshot snapshot) {
+        void merge(SessionDiagnosticsSnapshot snapshot) {
             if (snapshot == null) return;
             archivedSessionCount++;
             Map<String, Object> pipeline = snapshot.pipeline;
@@ -393,6 +434,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             inputChannelNotOpenCount += longOf(input, "inputChannelNotOpenCount");
             inputConnectionStoppedCount += longOf(input, "inputConnectionStoppedCount");
             inputUnknownResultCount += longOf(input, "inputUnknownResultCount");
+            inputAbandonedAtCloseCount += longOf(input, "inputAbandonedAtCloseCount");
             inputUnitsAttempted += longOf(input, "inputUnitsAttempted");
             inputUnitsLocallyAccepted += longOf(input, "inputUnitsLocallyAccepted");
 
@@ -402,7 +444,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             demandChangedWhileFetchingCount += longOf(loader, "demandChangedWhileFetchingCount");
         }
 
-        synchronized void clear() {
+        void clear() {
             archivedSessionCount = 0L;
             receivedFrameCount = 0L;
             receivedBytes = 0L;
@@ -428,6 +470,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             inputChannelNotOpenCount = 0L;
             inputConnectionStoppedCount = 0L;
             inputUnknownResultCount = 0L;
+            inputAbandonedAtCloseCount = 0L;
             inputUnitsAttempted = 0L;
             inputUnitsLocallyAccepted = 0L;
             demandDeduplicatedCount = 0L;
@@ -435,11 +478,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             demandChangedWhileFetchingCount = 0L;
         }
 
-        synchronized long archivedSessionCount() {
-            return archivedSessionCount;
-        }
-
-        synchronized ArchivedTotals copy() {
+        ArchivedTotals copy() {
             ArchivedTotals out = new ArchivedTotals();
             out.archivedSessionCount = archivedSessionCount;
             out.receivedFrameCount = receivedFrameCount;
@@ -466,6 +505,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             out.inputChannelNotOpenCount = inputChannelNotOpenCount;
             out.inputConnectionStoppedCount = inputConnectionStoppedCount;
             out.inputUnknownResultCount = inputUnknownResultCount;
+            out.inputAbandonedAtCloseCount = inputAbandonedAtCloseCount;
             out.inputUnitsAttempted = inputUnitsAttempted;
             out.inputUnitsLocallyAccepted = inputUnitsLocallyAccepted;
             out.demandDeduplicatedCount = demandDeduplicatedCount;
@@ -475,15 +515,14 @@ public final class TerminalPipelineDiagnosticsRegistry {
         }
     }
 
-    private static void retainClosed(SessionDiagnosticsSnapshot snapshot) {
+    /** 调用方必须已持有 {@link #LOCK}。 */
+    private static void retainClosedLocked(SessionDiagnosticsSnapshot snapshot) {
         if (snapshot == null) return;
-        synchronized (RECENT_CLOSED) {
-            while (RECENT_CLOSED.size() >= MAX_RECENT_CLOSED) {
-                SessionDiagnosticsSnapshot oldest = RECENT_CLOSED.removeFirst();
-                ARCHIVED_TOTALS.merge(oldest);
-            }
-            RECENT_CLOSED.addLast(snapshot);
+        while (RECENT_CLOSED.size() >= MAX_RECENT_CLOSED) {
+            SessionDiagnosticsSnapshot oldest = RECENT_CLOSED.removeFirst();
+            ARCHIVED_TOTALS.merge(oldest);
         }
+        RECENT_CLOSED.addLast(snapshot);
     }
 
     private static long longOf(Map<?, ?> map, String key) {

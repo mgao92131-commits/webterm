@@ -268,6 +268,12 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   @Override
   public void onConnectionStateChange(@NonNull TerminalSessionRuntime.State state) {
     View v = view;
+    if (state == TerminalSessionRuntime.State.CLOSING
+        || state == TerminalSessionRuntime.State.CLOSED) {
+      // 关闭路径只更新视图状态，禁止再 requestRender（避免 close 后唤醒 model 绘制）。
+      if (v != null) v.onConnectionStateChanged(state);
+      return;
+    }
     if (v != null) v.onConnectionStateChanged(state);
     runtime.requestRender();
   }

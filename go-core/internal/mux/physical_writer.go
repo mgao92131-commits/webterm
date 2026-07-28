@@ -3,6 +3,7 @@ package mux
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"webterm/go-core/internal/diagnostics"
@@ -32,6 +33,7 @@ type PhysicalWriter struct {
 	dataWrites chan physicalWrite
 	done       chan struct{}
 	metricsID  uint64
+	accepting  atomic.Bool // true at construct；Run 退出前先置 false
 }
 
 func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
@@ -45,6 +47,7 @@ func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
 		done:       make(chan struct{}),
 		metricsID:  diagnostics.Default.RegisterWriter(),
 	}
+	writer.accepting.Store(true)
 	return writer
 }
 
@@ -77,6 +80,9 @@ drainData:
 }
 
 func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
+	if !writer.accepting.Load() {
+		return ErrWriterClosed
+	}
 	diagnostics.Default.WriterSubmitCount.Add(1)
 	request := physicalWrite{
 		ctx:          ctx,
@@ -125,8 +131,14 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 func (writer *PhysicalWriter) Run(ctx context.Context) {
 	defer close(writer.done)
 	defer diagnostics.Default.UnregisterWriter(writer.metricsID)
-	defer writer.failPending(ErrWriterClosed)
 
+	writer.runLoop(ctx)
+
+	writer.accepting.Store(false)
+	writer.failPending(ErrWriterClosed)
+}
+
+func (writer *PhysicalWriter) runLoop(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}

@@ -206,6 +206,64 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
         assertFalse(sink.hasEvent("device_connection", "channel_failed"));
     }
 
+    @Test
+    public void recoveryClearFailureSetsPendingAndRetriesOnNextControlSend() throws Exception {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport transport = new FakeMuxTransport();
+        transport.rejectRecoveryClear = true;
+        DeviceConnection connection = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device-clear-pending",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        transport.simulateClose(1001, "going away");
+        assertTrue(connection.hasActiveRecovery());
+
+        handler.runDelayed();
+        transport.simulateOpen();
+
+        assertFalse(connection.hasActiveRecovery());
+        assertTrue(connection.diagnosticsSnapshot().agentRecoveryContextClearPending);
+        assertTrue(sink.hasEvent("device_connection", "diagnostics_recovery_context_clear_failed"));
+
+        transport.rejectRecoveryClear = false;
+        org.json.JSONObject ping = new org.json.JSONObject();
+        ping.put("type", "client.ping");
+        assertTrue(connection.sendControl(ping));
+
+        assertFalse(connection.diagnosticsSnapshot().agentRecoveryContextClearPending);
+        boolean sawClear = false;
+        for (String text : transport.sentTexts) {
+            if (text.contains("\"recovery_hash\":\"\"")) {
+                sawClear = true;
+                break;
+            }
+        }
+        assertTrue("expected a successful recovery_hash clear after pending retry", sawClear);
+    }
+
+    @Test
+    public void connectedElapsedMsNowGrowsWhileIdleConnected() throws Exception {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device-uptime",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        DeviceConnection.DiagnosticsSnapshot snap = connection.diagnosticsSnapshot();
+        assertTrue(snap.connectedAtNanos > 0L);
+        long first = snap.connectedElapsedMsNow();
+        Thread.sleep(30L);
+        long second = snap.connectedElapsedMsNow();
+        assertTrue("uptime must grow for idle connected snapshot, first=" + first + " second=" + second,
+                second >= first);
+        assertTrue(second >= 20L);
+    }
+
     private static Handler synchronousHandler() {
         Handler handler = mock(Handler.class);
         when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {
@@ -269,6 +327,8 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
         private boolean open;
         private int closeCount;
         private int startCount;
+        /** 拒绝 recovery_hash="" 的 diagnostics.connection，用于 pending 重试测试。 */
+        boolean rejectRecoveryClear;
 
         @Override public void start(Listener listener) {
             this.listener = listener;
@@ -298,6 +358,11 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
         @Override public boolean isConnected() { return open; }
 
         @Override public boolean sendText(String text) {
+            if (rejectRecoveryClear && text != null
+                    && text.contains("\"type\":\"diagnostics.connection\"")
+                    && text.contains("\"recovery_hash\":\"\"")) {
+                return false;
+            }
             sentTexts.add(text);
             return true;
         }
