@@ -23,8 +23,8 @@ type ScrollbackTrimEvent struct {
 	FirstAvailableSeq uint64
 }
 
-// ScrollbackIndexWindow 是供版本索引使用的轻量窗口。它只复制 LineID，
-// 不复制 Cell 切片；FirstSeq/LastSeq/NextSeq 与 LineIDs 在同一次 RLock 下取得。
+// ScrollbackIndexWindow 是供版本索引使用的完整轻量窗口。它只复制位置身份，
+// 不复制 Cell 切片；边界与 Entries 在同一次 RLock 下取得。
 type ScrollbackIndexWindow struct {
 	FirstSeq uint64
 	LastSeq  uint64
@@ -293,10 +293,8 @@ func (t *TrackedScrollback) Range(fromSeq, toSeq uint64) HistoryRangeResult {
 	return result
 }
 
-// IndexAfter 返回 HistorySeq 严格大于 lastSeq 的所有当前驻留行 LineID 以及原子边界。
-// 该接口只供 HistoryChangeIndex 的增量同步使用；返回量最多等于实际驻留行数，
-// 且不会复制历史 Cell。
-func (t *TrackedScrollback) IndexAfter(lastSeq uint64) ScrollbackIndexWindow {
+// IndexWindow 返回当前完整的轻量位置索引，不复制历史 Cell。
+func (t *TrackedScrollback) IndexWindow() ScrollbackIndexWindow {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	w := ScrollbackIndexWindow{
@@ -304,18 +302,14 @@ func (t *TrackedScrollback) IndexAfter(lastSeq uint64) ScrollbackIndexWindow {
 		LastSeq:  t.lastSeqLocked(),
 		NextSeq:  t.nextSeq,
 	}
-	if len(t.lines) == 0 || lastSeq >= w.LastSeq {
+	if len(t.lines) == 0 {
 		return w
 	}
-	start := 0
-	if lastSeq >= t.firstSeq {
-		start = sort.Search(len(t.lines), func(i int) bool { return t.lines[i].HistorySeq > lastSeq })
-	}
-	w.Entries = make([]HistoryIndexEntry, len(t.lines)-start)
-	w.LineIDs = make([]uint64, len(t.lines)-start)
-	for i := start; i < len(t.lines); i++ {
-		w.Entries[i-start] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID, LineVersion: t.lines[i].Version}
-		w.LineIDs[i-start] = t.lines[i].LineID
+	w.Entries = make([]HistoryIndexEntry, len(t.lines))
+	w.LineIDs = make([]uint64, len(t.lines))
+	for i := range t.lines {
+		w.Entries[i] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID, LineVersion: t.lines[i].Version}
+		w.LineIDs[i] = t.lines[i].LineID
 	}
 	return w
 }

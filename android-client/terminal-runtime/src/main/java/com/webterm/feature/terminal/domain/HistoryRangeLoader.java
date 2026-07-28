@@ -12,7 +12,6 @@ import java.util.Map;
 
 /** 每会话单在途、只保留最新视口 Demand 的历史 Range 状态机。 */
 public final class HistoryRangeLoader {
-  public static final int MAX_LINES = 256;
   private static final long PREFETCH_LINES = 64;
 
   public static final class Demand {
@@ -133,10 +132,6 @@ public final class HistoryRangeLoader {
     if (missingFrom == 0) return null;
     if (demand.direction < 0) missingFrom = Math.max(extent.firstSeq, missingFrom - PREFETCH_LINES);
     if (demand.direction > 0) missingTo = Math.min(extent.lastSeq, missingTo + PREFETCH_LINES);
-    if (missingTo - missingFrom + 1 > MAX_LINES) {
-      if (demand.direction >= 0) missingTo = missingFrom + MAX_LINES - 1;
-      else missingFrom = missingTo - MAX_LINES + 1;
-    }
     return new Range(instanceId, layoutEpoch, generation, missingFrom, missingTo);
   }
 

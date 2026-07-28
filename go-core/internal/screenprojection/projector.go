@@ -488,9 +488,14 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 // Push 按 HistorySeq 新增位置生成，与客户端是否持有正文无关。
 func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	var pushes []terminalengine.HistoryPush
-	oldLast := old.History.LastIncludedHistorySeq
+	oldRefs := make(map[uint64]terminalengine.HistoryPush, len(old.ScrollbackLineage))
+	for _, entry := range old.ScrollbackLineage {
+		oldRefs[entry.HistorySeq] = entry
+	}
 	for _, entry := range new.ScrollbackLineage {
-		if entry.HistorySeq > oldLast &&
+		previous, exists := oldRefs[entry.HistorySeq]
+		if (!exists || previous.LineID != entry.LineID ||
+			previous.LineVersion != entry.LineVersion) &&
 			entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
 			entry.HistorySeq <= new.History.LastIncludedHistorySeq {
 			pushes = append(pushes, entry)
@@ -691,7 +696,8 @@ func newlyAddedLinks(old, new []terminalengine.Hyperlink) []terminalengine.Hyper
 }
 
 func linesEqual(a, b terminalengine.Line) bool {
-	if a.Wrapped != b.Wrapped || len(a.Runs) != len(b.Runs) {
+	if a.PhysicalColumns != b.PhysicalColumns ||
+		a.Wrapped != b.Wrapped || len(a.Runs) != len(b.Runs) {
 		return false
 	}
 	for i := range a.Runs {

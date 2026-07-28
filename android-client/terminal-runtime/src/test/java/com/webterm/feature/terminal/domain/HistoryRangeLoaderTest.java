@@ -61,4 +61,18 @@ public final class HistoryRangeLoaderTest {
     assertFalse(loader.isActive(active));
     assertFalse(loader.complete(active));
   }
+
+  @Test
+  public void contiguousFiveThousandLineGapIsRequestedWhole() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    loader.setDemand(new HistoryRangeLoader.Demand(1, 5000, 1, 1));
+    PagedTerminalHistory history =
+        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
+    history.edit().setExtent(1, 5000).setAvailableExtent(1, 5000).commit();
+
+    HistoryRangeLoader.Range range = loader.firstMissingRange(
+        "i1", 1, 1, new HistoryExtent(1, 5000), history.snapshot());
+    assertEquals(1, range.fromSeq);
+    assertEquals(5000, range.toSeq);
+  }
 }

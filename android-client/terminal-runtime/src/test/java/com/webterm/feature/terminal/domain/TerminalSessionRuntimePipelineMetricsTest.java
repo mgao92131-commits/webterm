@@ -163,6 +163,37 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
+  public void historyRangeProtocolErrorCompletesRequestAndStopsPump() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("range-conflict", model, Runnable::run);
+    connect(runtime);
+    runtime.enterLiveForTest();
+    runtime.setHistoryRangeSource(new HistoryRangeSource() {
+      @Override public RequestHandle fetch(
+          @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback) {
+        callback.onResult(new Result(
+            range.instanceId, range.layoutEpoch, range.generation,
+            new HistoryExtent(1, 300),
+            java.util.Arrays.asList(
+                domainLine(9000, 100, "a"),
+                domainLine(9000, 101, "b"))));
+        return () -> {};
+      }
+
+      @Override public void close() {}
+    });
+
+    runtime.onVisibleHistoryDemand(100, 101, 100, 1, 50);
+
+    Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(false, loader.get("hasActiveRequest"));
+    assertEquals(false, loader.get("hasDemand"));
+  }
+
+  @Test
   public void stateOnlyHandledDoesNotAdvanceRendered() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("state-wm", model, Runnable::run);
@@ -306,6 +337,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   private static TerminalScreenV2Proto.LineData line(long id, long historySeq, String text) {
     return TerminalScreenV2Proto.LineData.newBuilder()
         .setLineId(id).setLineVersion(1).setHistorySeq(historySeq)
+        .setPhysicalColumns(1)
         .setUtf8Text(ByteString.copyFromUtf8(text))
         .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
         .build();
@@ -331,7 +363,8 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
       lines.add(domainLine(10_000 + seq, seq, "h"));
     }
     return new HistoryRangeSource.Result(
-        range.generation, new HistoryExtent(1, 300), lines);
+        range.instanceId, range.layoutEpoch, range.generation,
+        new HistoryExtent(1, 300), lines);
   }
 
   private static FakeV2Connection connect(TerminalSessionRuntime runtime) {

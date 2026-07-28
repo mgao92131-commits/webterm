@@ -44,6 +44,9 @@ public final class ScreenMessageV2Mapper {
         if (write.getRow() < 0 || write.getRow() >= rows || seenRows[write.getRow()]) {
           throw new IllegalArgumentException("invalid or duplicate screen row write");
         }
+        if (write.getLine().getPhysicalColumns() != columns) {
+          throw new IllegalArgumentException("screen line physical columns mismatch");
+        }
         seenRows[write.getRow()] = true;
         LineData mapped = lineData(write.getLine());
         if (mapped.historySeq != 0) {
@@ -81,15 +84,18 @@ public final class ScreenMessageV2Mapper {
 
   /** 将 HTTP Range 中的单行映射为 TerminalLine。 */
   public static TerminalLine mapHistoryLine(
-      TerminalScreenV2Proto.LineData pb, int columns,
+      TerminalScreenV2Proto.LineData pb,
       TerminalScreenV2Proto.Dictionary dictionaryPb) {
-    return line(pb, columns, dictionary(dictionaryPb));
+    return line(pb, pb.getPhysicalColumns(), dictionary(dictionaryPb));
   }
 
   private static Map<Long, TerminalLine> mapLines(
       List<TerminalScreenV2Proto.LineData> lines, int columns, Dictionary dictionary) {
     Map<Long, TerminalLine> result = new HashMap<>();
     for (TerminalScreenV2Proto.LineData line : lines) {
+      if (line.getPhysicalColumns() != columns) {
+        throw new IllegalArgumentException("screen line physical columns mismatch");
+      }
       TerminalLine mapped = line(line, columns, dictionary);
       if (result.put(mapped.id, mapped) != null) {
         throw new IllegalArgumentException("duplicate line id " + mapped.id);

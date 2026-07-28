@@ -70,8 +70,7 @@ public final class ScreenMessageV2Validator {
       }
     }
     if (commit.hasHistory()) {
-      if (!commit.getHistory().hasFinalExtent()
-          || commit.getHistory().getPushesCount() > 4096) {
+      if (!commit.getHistory().hasFinalExtent()) {
         throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
       }
       try {

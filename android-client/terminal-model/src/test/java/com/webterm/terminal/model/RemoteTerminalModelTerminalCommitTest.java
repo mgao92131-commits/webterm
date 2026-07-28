@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 import org.junit.Test;
 
@@ -101,6 +102,63 @@ public final class RemoteTerminalModelTerminalCommitTest {
     assertTrue(model.applyTerminalCommit(pop));
     assertNull(model.historyIndex().ref(301));
     assertEquals(10, model.renderSnapshot().screen[0].id);
+  }
+
+  @Test
+  public void sameHistorySeqAuthoritativelyRebindsAndInvalidatesOldBody() throws Exception {
+    RemoteTerminalModel model = baseline();
+    assertTrue(model.applyTerminalCommit(scrollCommit(
+        1, 2, 301, 10, 3, V2ModelTestData.line(12, 1, 0, "c"))));
+    assertEquals(SlotState.LOADED, history(model).slotStateAt(300));
+
+    TerminalCommit rebound = new TerminalCommit(
+        "i1", 1, 2, 3, 1, 1, DictionaryEntries.EMPTY, null,
+        null,
+        new HistoryMutation(new HistoryExtent(1, 301),
+            Collections.singletonList(new HistoryPush(301, 2001, 1))),
+        null, null, null);
+    assertTrue(model.applyTerminalCommit(rebound));
+    assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(301));
+    assertEquals(SlotState.UNLOADED, history(model).slotStateAt(300));
+
+    assertTrue(model.applyHistoryRange(range(
+        V2ModelTestData.line(2001, 1, 301, "new")), 301, 301, 301));
+    assertEquals("new", history(model).lineBySeq(301).at(0).text);
+  }
+
+  @Test
+  public void fiveThousandHistoryPushesAreAppliedWithoutLimit() throws Exception {
+    RemoteTerminalModel model = baseline();
+    ArrayList<HistoryPush> pushes = new ArrayList<>(5000);
+    for (long seq = 301; seq <= 5300; seq++) {
+      pushes.add(new HistoryPush(seq, 100_000 + seq, 1));
+    }
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 5300), pushes), null, null, null)));
+    assertEquals(new HistoryLineRef(105_300, 1), model.historyIndex().ref(5300));
+  }
+
+  @Test
+  public void authoritativeBatchCanSwapMultipleExistingPositions() throws Exception {
+    RemoteTerminalModel model = baseline();
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "seed", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 300),
+        Arrays.asList(
+            V2ModelTestData.line(2001, 1, 299, "a"),
+            V2ModelTestData.line(2002, 1, 300, "b")), 0),
+        299, 299, 300));
+
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 300), Arrays.asList(
+            new HistoryPush(299, 2002, 1),
+            new HistoryPush(300, 2001, 1))), null, null, null)));
+    assertEquals(new HistoryLineRef(2002, 1), model.historyIndex().ref(299));
+    assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(300));
+    assertEquals("b", history(model).lineBySeq(299).at(0).text);
+    assertEquals("a", history(model).lineBySeq(300).at(0).text);
   }
 
   private static RemoteTerminalModel baseline() {

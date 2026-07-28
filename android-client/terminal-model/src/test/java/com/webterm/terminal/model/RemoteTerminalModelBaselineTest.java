@@ -1,7 +1,7 @@
 package com.webterm.terminal.model;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Collections;
@@ -37,7 +37,7 @@ public final class RemoteTerminalModelBaselineTest {
   }
 
   @Test
-  public void compatibleBaselineKeepsResidentHistoryAcrossLayoutEpoch() {
+  public void everyBaselineClearsResidentHistoryAndPositionBindings() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
     assertTrue(model.applyHistoryRange(new HistoryRangeResult(
@@ -45,12 +45,7 @@ public final class RemoteTerminalModelBaselineTest {
         new HistoryExtent(1, 300),
         Collections.singletonList(V2ModelTestData.line(173, 1, 173, "h")), 0),
         173, 173, 173));
-    TerminalViewportState viewport = new TerminalViewportState();
-    viewport.anchorLine(TerminalBufferKind.MAIN, 173, -7);
-    ViewportPosition position = viewport.position(TerminalBufferKind.MAIN);
-    PagedTerminalHistorySnapshot before =
-        (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    TerminalLine resident = before.lineBySeq(173);
+    assertEquals(new HistoryLineRef(173, 1), model.historyIndex().ref(173));
 
     ScreenBaseline preserve = new ScreenBaseline(
         "s1", "i1", 2, 2, 1, 1,
@@ -62,10 +57,10 @@ public final class RemoteTerminalModelBaselineTest {
 
     PagedTerminalHistorySnapshot after =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertSame(resident, after.lineBySeq(173));
-    assertSame(position, viewport.position(TerminalBufferKind.MAIN));
-    assertEquals(173, ((ViewportPosition.LineAnchor) position).lineId);
-    assertEquals(-7, ((ViewportPosition.LineAnchor) position).pixelOffset);
+    assertNull(after.lineBySeq(173));
+    assertNull(model.historyIndex().ref(173));
+    assertEquals(new HistoryExtent(1, 300), model.historyIndex().extent());
+    assertEquals("new", model.renderSnapshot().screen[0].at(0).text);
   }
 
 }

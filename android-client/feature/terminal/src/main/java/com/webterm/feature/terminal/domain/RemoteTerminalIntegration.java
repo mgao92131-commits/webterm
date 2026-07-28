@@ -366,13 +366,11 @@ public final class RemoteTerminalIntegration {
   private void installHistoryRangeSource(
       @NonNull TerminalViewModel.TerminalSessionArgs args) {
     if (runtime == null) return;
-    final TerminalSessionRuntime target = runtime;
     runtime.setHistoryRangeSource(new OkHttpHistoryRangeSource(
         new okhttp3.OkHttpClient(),
         command -> new android.os.Handler(android.os.Looper.getMainLooper()).post(command),
         args.baseUrl, args.cookie, args.sessionId,
-        args.directDevice ? "" : args.relayDeviceId,
-        () -> Math.max(1, target.model().columns)));
+        args.directDevice ? "" : args.relayDeviceId));
   }
 
   public void updateFontSize(int size) {

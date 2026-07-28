@@ -26,7 +26,7 @@ type HistoryRangeStatus int32
 const (
 	HistoryRangeStatus_HISTORY_RANGE_STATUS_UNSPECIFIED      HistoryRangeStatus = 0
 	HistoryRangeStatus_HISTORY_RANGE_STATUS_OK               HistoryRangeStatus = 1
-	HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_GENERATION HistoryRangeStatus = 2
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_PROJECTION HistoryRangeStatus = 2
 	HistoryRangeStatus_HISTORY_RANGE_STATUS_SESSION_GONE     HistoryRangeStatus = 3
 	HistoryRangeStatus_HISTORY_RANGE_STATUS_RETRYABLE        HistoryRangeStatus = 4
 )
@@ -36,14 +36,14 @@ var (
 	HistoryRangeStatus_name = map[int32]string{
 		0: "HISTORY_RANGE_STATUS_UNSPECIFIED",
 		1: "HISTORY_RANGE_STATUS_OK",
-		2: "HISTORY_RANGE_STATUS_STALE_GENERATION",
+		2: "HISTORY_RANGE_STATUS_STALE_PROJECTION",
 		3: "HISTORY_RANGE_STATUS_SESSION_GONE",
 		4: "HISTORY_RANGE_STATUS_RETRYABLE",
 	}
 	HistoryRangeStatus_value = map[string]int32{
 		"HISTORY_RANGE_STATUS_UNSPECIFIED":      0,
 		"HISTORY_RANGE_STATUS_OK":               1,
-		"HISTORY_RANGE_STATUS_STALE_GENERATION": 2,
+		"HISTORY_RANGE_STATUS_STALE_PROJECTION": 2,
 		"HISTORY_RANGE_STATUS_SESSION_GONE":     3,
 		"HISTORY_RANGE_STATUS_RETRYABLE":        4,
 	}
@@ -79,11 +79,13 @@ func (HistoryRangeStatus) EnumDescriptor() ([]byte, []int) {
 type HistoryRangeResponse struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Status            HistoryRangeStatus     `protobuf:"varint,1,opt,name=status,proto3,enum=webterm.terminal.screen.v2.HistoryRangeStatus" json:"status,omitempty"`
-	HistoryGeneration uint64                 `protobuf:"varint,2,opt,name=history_generation,json=historyGeneration,proto3" json:"history_generation,omitempty"`
-	CurrentExtent     *HistoryExtent         `protobuf:"bytes,3,opt,name=current_extent,json=currentExtent,proto3" json:"current_extent,omitempty"`
-	Lines             []*LineData            `protobuf:"bytes,4,rep,name=lines,proto3" json:"lines,omitempty"`
-	Dictionary        *Dictionary            `protobuf:"bytes,5,opt,name=dictionary,proto3" json:"dictionary,omitempty"`
-	RetryAfterMs      uint32                 `protobuf:"varint,6,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
+	InstanceId        string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	LayoutEpoch       uint64                 `protobuf:"varint,3,opt,name=layout_epoch,json=layoutEpoch,proto3" json:"layout_epoch,omitempty"`
+	HistoryGeneration uint64                 `protobuf:"varint,4,opt,name=history_generation,json=historyGeneration,proto3" json:"history_generation,omitempty"`
+	CurrentExtent     *HistoryExtent         `protobuf:"bytes,5,opt,name=current_extent,json=currentExtent,proto3" json:"current_extent,omitempty"`
+	Lines             []*LineData            `protobuf:"bytes,6,rep,name=lines,proto3" json:"lines,omitempty"`
+	Dictionary        *Dictionary            `protobuf:"bytes,7,opt,name=dictionary,proto3" json:"dictionary,omitempty"`
+	RetryAfterMs      uint32                 `protobuf:"varint,8,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -125,6 +127,20 @@ func (x *HistoryRangeResponse) GetStatus() HistoryRangeStatus {
 	return HistoryRangeStatus_HISTORY_RANGE_STATUS_UNSPECIFIED
 }
 
+func (x *HistoryRangeResponse) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *HistoryRangeResponse) GetLayoutEpoch() uint64 {
+	if x != nil {
+		return x.LayoutEpoch
+	}
+	return 0
+}
+
 func (x *HistoryRangeResponse) GetHistoryGeneration() uint64 {
 	if x != nil {
 		return x.HistoryGeneration
@@ -164,20 +180,23 @@ var File_shared_proto_terminal_history_proto protoreflect.FileDescriptor
 
 const file_shared_proto_terminal_history_proto_rawDesc = "" +
 	"\n" +
-	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\x89\x03\n" +
+	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\xcd\x03\n" +
 	"\x14HistoryRangeResponse\x12F\n" +
-	"\x06status\x18\x01 \x01(\x0e2..webterm.terminal.screen.v2.HistoryRangeStatusR\x06status\x12-\n" +
-	"\x12history_generation\x18\x02 \x01(\x04R\x11historyGeneration\x12P\n" +
-	"\x0ecurrent_extent\x18\x03 \x01(\v2).webterm.terminal.screen.v2.HistoryExtentR\rcurrentExtent\x12:\n" +
-	"\x05lines\x18\x04 \x03(\v2$.webterm.terminal.screen.v2.LineDataR\x05lines\x12F\n" +
+	"\x06status\x18\x01 \x01(\x0e2..webterm.terminal.screen.v2.HistoryRangeStatusR\x06status\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\x12!\n" +
+	"\flayout_epoch\x18\x03 \x01(\x04R\vlayoutEpoch\x12-\n" +
+	"\x12history_generation\x18\x04 \x01(\x04R\x11historyGeneration\x12P\n" +
+	"\x0ecurrent_extent\x18\x05 \x01(\v2).webterm.terminal.screen.v2.HistoryExtentR\rcurrentExtent\x12:\n" +
+	"\x05lines\x18\x06 \x03(\v2$.webterm.terminal.screen.v2.LineDataR\x05lines\x12F\n" +
 	"\n" +
-	"dictionary\x18\x05 \x01(\v2&.webterm.terminal.screen.v2.DictionaryR\n" +
+	"dictionary\x18\a \x01(\v2&.webterm.terminal.screen.v2.DictionaryR\n" +
 	"dictionary\x12$\n" +
-	"\x0eretry_after_ms\x18\x06 \x01(\rR\fretryAfterMs*\xcd\x01\n" +
+	"\x0eretry_after_ms\x18\b \x01(\rR\fretryAfterMs*\xcd\x01\n" +
 	"\x12HistoryRangeStatus\x12$\n" +
 	" HISTORY_RANGE_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17HISTORY_RANGE_STATUS_OK\x10\x01\x12)\n" +
-	"%HISTORY_RANGE_STATUS_STALE_GENERATION\x10\x02\x12%\n" +
+	"%HISTORY_RANGE_STATUS_STALE_PROJECTION\x10\x02\x12%\n" +
 	"!HISTORY_RANGE_STATUS_SESSION_GONE\x10\x03\x12\"\n" +
 	"\x1eHISTORY_RANGE_STATUS_RETRYABLE\x10\x04Bt\n" +
 	"'com.webterm.terminal.protocol.generatedB\x14TerminalHistoryProtoZ3webterm/go-core/internal/screenprotocol/generatedv2b\x06proto3"

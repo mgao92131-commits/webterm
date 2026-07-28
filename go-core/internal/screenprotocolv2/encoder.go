@@ -188,7 +188,8 @@ func encodeLines(lines []terminalengine.Line) []*pb.LineData {
 
 func encodeLine(line terminalengine.Line) *pb.LineData {
 	wire := &pb.LineData{LineId: line.ID, LineVersion: line.Version,
-		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq}
+		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq,
+		PhysicalColumns: uint32(line.PhysicalColumns)}
 	type positionedCell struct {
 		col  int
 		cell terminalengine.Cell

@@ -29,7 +29,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void okLoadsReturnedLinesAndAppliesCurrentTrimmedExtent() {
+  public void okLoadsReturnedLinesWithoutChangingWsExtent() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(V2ModelTestData.baseline(1, 1));
     assertTrue(model.applyHistoryRange(new HistoryRangeResult(
@@ -40,7 +40,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(new HistoryExtent(50, 300), model.remoteAvailableExtent());
+    assertEquals(new HistoryExtent(1, 300), model.remoteAvailableExtent());
     assertEquals(50, history.lineBySeq(50).id);
   }
 
@@ -122,7 +122,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void partialRangeCommitsAndAdvancesTrimBoundary() {
+  public void partialRangeCommitsWithoutAdvancingTrimBoundary() {
     RemoteTerminalModel model = baselineModel();
     List<TerminalLine> lines = new ArrayList<>();
     for (long seq = 110; seq <= 120; seq++) {
@@ -134,10 +134,11 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(new HistoryExtent(110, 300), model.remoteAvailableExtent());
-    assertEquals(SlotState.LOADED, history.slotStateAt(0));
-    assertEquals(SlotState.LOADED, history.slotStateAt(10));
-    assertEquals(SlotState.UNLOADED, history.slotStateAt(11));
+    assertEquals(new HistoryExtent(1, 300), model.remoteAvailableExtent());
+    assertEquals(SlotState.UNLOADED, history.slotStateAt(0));
+    assertEquals(SlotState.LOADED, history.slotStateAt(109));
+    assertEquals(SlotState.LOADED, history.slotStateAt(119));
+    assertEquals(SlotState.UNLOADED, history.slotStateAt(120));
   }
 
   @Test
@@ -154,9 +155,58 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
     assertEquals(200, history.lineBySeq(200).id);
   }
 
+  @Test
+  public void lateOldRangeCannotRollBackNewerWsExtent() throws Exception {
+    RemoteTerminalModel model = modelWithExtent(new HistoryExtent(1, 100));
+    List<HistoryPush> pushes = new ArrayList<>();
+    for (long seq = 101; seq <= 120; seq++) {
+      pushes.add(new HistoryPush(seq, 50_000 + seq, 1));
+    }
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 120), pushes), null, null, null)));
+
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "old", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 100),
+        Collections.singletonList(V2ModelTestData.line(50, 1, 50, "old")), 0),
+        50, 1, 100));
+
+    assertEquals(new HistoryExtent(1, 120), model.historyIndex().extent());
+    assertEquals(new HistoryLineRef(50_120, 1), model.historyIndex().ref(120));
+  }
+
+  @Test
+  public void rangeMaySeeFutureTailButCannotAdvanceWsExtent() {
+    RemoteTerminalModel model = modelWithExtent(new HistoryExtent(1, 100));
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "future", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 120),
+        Arrays.asList(
+            V2ModelTestData.line(10_099, 1, 99, "loaded"),
+            V2ModelTestData.line(10_101, 1, 101, "future")), 0),
+        99, 99, 101));
+
+    assertEquals(new HistoryExtent(1, 100), model.historyIndex().extent());
+    assertEquals(10_099, ((PagedTerminalHistorySnapshot)
+        model.renderSnapshot().history).lineBySeq(99).id);
+    assertNull(model.historyIndex().ref(101));
+  }
+
   private static RemoteTerminalModel baselineModel() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
+    model.consumeRenderUpdate();
+    return model;
+  }
+
+  private static RemoteTerminalModel modelWithExtent(HistoryExtent extent) {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
+        TerminalBufferKind.MAIN, extent,
+        Collections.singletonList(V2ModelTestData.line(1000, 1, 0, "a")),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();
     return model;
   }

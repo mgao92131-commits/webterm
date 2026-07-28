@@ -587,7 +587,8 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	if err := writeMuxTunnel(ctx, ws, historyTerminalID, historyInput, true); err != nil {
 		return err
 	}
-	var historyGeneration, historyFrom, historyTo uint64
+	var historyInstanceID string
+	var historyLayoutEpoch, historyGeneration, historyFrom, historyTo uint64
 	for historyTo == 0 {
 		frame, err := readMuxTunnel(ctx, ws)
 		if err != nil {
@@ -605,12 +606,14 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 			continue
 		}
 		pushes := commit.GetHistory().GetPushes()
+		historyInstanceID = commit.GetInstanceId()
+		historyLayoutEpoch = commit.GetLayoutEpoch()
 		historyGeneration = commit.GetHistoryGeneration()
 		historyFrom = pushes[0].GetHistorySeq()
 		historyTo = pushes[len(pushes)-1].GetHistorySeq()
 	}
 	if err := fetchHistoryRange(ctx, baseURL, token, deviceID, historyProbe.sessionID,
-		historyGeneration, historyFrom, historyTo); err != nil {
+		historyInstanceID, historyLayoutEpoch, historyGeneration, historyFrom, historyTo); err != nil {
 		return err
 	}
 
@@ -625,10 +628,13 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	return nil
 }
 
-func fetchHistoryRange(ctx context.Context, baseURL, token, deviceID, sessionID string,
-	generation, from, to uint64) error {
-	path := fmt.Sprintf("/api/sessions/%s/history/range?generation=%d&from=%d&to=%d",
-		url.PathEscape(sessionID), generation, from, to)
+func fetchHistoryRange(
+	ctx context.Context, baseURL, token, deviceID, sessionID, instanceID string,
+	layoutEpoch, generation, from, to uint64,
+) error {
+	path := fmt.Sprintf(
+		"/api/sessions/%s/history/range?instanceId=%s&layoutEpoch=%d&generation=%d&from=%d&to=%d",
+		url.PathEscape(sessionID), url.QueryEscape(instanceID), layoutEpoch, generation, from, to)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
 		return err
@@ -641,7 +647,7 @@ func fetchHistoryRange(ctx context.Context, baseURL, token, deviceID, sessionID 
 		return err
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
 	}
@@ -653,6 +659,8 @@ func fetchHistoryRange(ctx context.Context, baseURL, token, deviceID, sessionID 
 		return fmt.Errorf("decode history Range: %w", err)
 	}
 	if decoded.GetStatus() != pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK ||
+		decoded.GetInstanceId() != instanceID ||
+		decoded.GetLayoutEpoch() != layoutEpoch ||
 		decoded.GetHistoryGeneration() != generation ||
 		len(decoded.GetLines()) != int(to-from+1) {
 		return fmt.Errorf("history Range mismatch: status=%s generation=%d lines=%d want=%d",

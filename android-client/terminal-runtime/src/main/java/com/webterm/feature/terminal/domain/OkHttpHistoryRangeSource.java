@@ -10,14 +10,11 @@ import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
 import com.webterm.terminal.protocol.generated.TerminalHistoryProto;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.IntSupplier;
 
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -27,7 +24,6 @@ import okhttp3.ResponseBody;
 
 /** Direct/Relay 统一的 HTTP History Range 实现。 */
 public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
-  private static final long MAX_BODY_BYTES = 1L << 20;
   private static final String PROTO_CONTENT_TYPE = "application/x-protobuf";
 
   private final OkHttpClient http;
@@ -36,21 +32,18 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
   private final String cookie;
   private final String sessionId;
   private final String deviceId;
-  private final IntSupplier columns;
   private final AtomicBoolean closed = new AtomicBoolean();
 
   public OkHttpHistoryRangeSource(
       @NonNull OkHttpClient http, @NonNull Executor callbackExecutor,
       @NonNull String baseUrl, @Nullable String cookie,
-      @NonNull String sessionId, @Nullable String deviceId,
-      @NonNull IntSupplier columns) {
+      @NonNull String sessionId, @Nullable String deviceId) {
     this.http = http;
     this.callbackExecutor = callbackExecutor;
     this.baseUrl = stripTrailingSlash(baseUrl);
     this.cookie = cookie == null ? "" : cookie;
     this.sessionId = sessionId;
     this.deviceId = deviceId == null ? "" : deviceId;
-    this.columns = columns;
   }
 
   @NonNull @Override
@@ -62,7 +55,9 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
       return () -> {};
     }
     String url = baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId(sessionId))
-        + "/history/range?generation=" + range.generation
+        + "/history/range?instanceId=" + WebTermUrls.encodePath(range.instanceId)
+        + "&layoutEpoch=" + range.layoutEpoch
+        + "&generation=" + range.generation
         + "&from=" + range.fromSeq + "&to=" + range.toSeq;
     Request.Builder builder = new Request.Builder().url(url).get()
         .header("Accept", PROTO_CONTENT_TYPE)
@@ -85,14 +80,13 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
             return;
           }
           ResponseBody body = response.body();
-          if (body == null || body.contentLength() > MAX_BODY_BYTES) {
+          if (body == null) {
             emitFailure(callback, httpFailure(response.code()), 0, range.generation);
             return;
           }
           TerminalHistoryProto.HistoryRangeResponse pb;
           try {
-            pb = TerminalHistoryProto.HistoryRangeResponse.parseFrom(
-                readBounded(body.byteStream(), MAX_BODY_BYTES));
+            pb = TerminalHistoryProto.HistoryRangeResponse.parseFrom(body.byteStream());
           } catch (Exception invalid) {
             emitFailure(callback, httpFailure(response.code()), 0, range.generation);
             return;
@@ -100,8 +94,8 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
           switch (pb.getStatus()) {
             case HISTORY_RANGE_STATUS_OK:
               break;
-            case HISTORY_RANGE_STATUS_STALE_GENERATION:
-              emitFailure(callback, FailureKind.STALE_GENERATION, 0,
+            case HISTORY_RANGE_STATUS_STALE_PROJECTION:
+              emitFailure(callback, FailureKind.STALE_PROJECTION, 0,
                   pb.getHistoryGeneration());
               return;
             case HISTORY_RANGE_STATUS_SESSION_GONE:
@@ -116,7 +110,8 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
               emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
               return;
           }
-          if (pb.getHistoryGeneration() != range.generation || !pb.hasCurrentExtent()) {
+          if (!pb.hasCurrentExtent() || pb.getInstanceId().isEmpty()
+              || pb.getLayoutEpoch() == 0 || pb.getHistoryGeneration() == 0) {
             emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
             return;
           }
@@ -132,10 +127,11 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
             }
             previous = line.getHistorySeq();
             lines.add(ScreenMessageV2Mapper.mapHistoryLine(
-                line, columns.getAsInt(), pb.getDictionary()));
+                line, pb.getDictionary()));
           }
           callbackExecutor.execute(() -> callback.onResult(
-              new Result(pb.getHistoryGeneration(), extent, lines)));
+              new Result(pb.getInstanceId(), pb.getLayoutEpoch(),
+                  pb.getHistoryGeneration(), extent, lines)));
         }
       }
     });
@@ -154,22 +150,9 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
 
   private static FailureKind httpFailure(int code) {
     if (code == 404 || code == 410) return FailureKind.SESSION_GONE;
-    if (code == 409) return FailureKind.STALE_GENERATION;
+    if (code == 409) return FailureKind.STALE_PROJECTION;
     if (code == 429 || code >= 500) return FailureKind.RETRYABLE;
     return FailureKind.PROTOCOL;
-  }
-
-  static byte[] readBounded(InputStream input, long max) throws IOException {
-    ByteArrayOutputStream out = new ByteArrayOutputStream();
-    byte[] buffer = new byte[8192];
-    long total = 0;
-    int read;
-    while ((read = input.read(buffer)) != -1) {
-      total += read;
-      if (total > max) throw new IOException("history range response too large");
-      out.write(buffer, 0, read);
-    }
-    return out.toByteArray();
   }
 
   private static String stripTrailingSlash(String value) {

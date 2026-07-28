@@ -31,6 +31,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation("org.mockito:mockito-core:5.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 // 性能基线测试通过 stdout 打印结构化报告。

@@ -12,16 +12,21 @@ public interface HistoryRangeSource {
   interface RequestHandle { void cancel(); }
 
   enum FailureKind {
-    NETWORK, RETRYABLE, STALE_GENERATION, SESSION_GONE, AUTH_REQUIRED, PROTOCOL
+    NETWORK, RETRYABLE, STALE_PROJECTION, SESSION_GONE, AUTH_REQUIRED, PROTOCOL
   }
 
   final class Result {
+    public final String instanceId;
+    public final long layoutEpoch;
     public final long historyGeneration;
     public final HistoryExtent currentExtent;
     public final List<TerminalLine> lines;
 
-    public Result(long historyGeneration, @NonNull HistoryExtent currentExtent,
+    public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
+                  @NonNull HistoryExtent currentExtent,
                   @NonNull List<TerminalLine> lines) {
+      this.instanceId = instanceId;
+      this.layoutEpoch = layoutEpoch;
       this.historyGeneration = historyGeneration;
       this.currentExtent = currentExtent;
       this.lines = lines;

@@ -72,6 +72,39 @@ public final class HistoryIndex {
       return this;
     }
 
+    /** WS 权威绑定：允许尾部 Pop 后同一 HistorySeq 重新绑定新的行身份。 */
+    public Editor bindAuthoritative(long historySeq, long lineId, long lineVersion)
+        throws CommitValidationException {
+      ensureOpen();
+      if (!workingExtent.contains(historySeq) || lineId <= 0 || lineVersion <= 0) {
+        throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
+      }
+      HistoryLineRef previous = workingSeq.get(historySeq);
+      if (previous != null && previous.lineId == lineId
+          && previous.lineVersion == lineVersion) {
+        return this;
+      }
+      if (previous != null) {
+        workingLine.remove(previous.lineId);
+      }
+      Long previousSeq = workingLine.get(lineId);
+      if (previousSeq != null && previousSeq != historySeq) {
+        throw new CommitValidationException(CommitFailure.HISTORY_LINE_ID_CONFLICT);
+      }
+      workingSeq.put(historySeq, new HistoryLineRef(lineId, lineVersion));
+      workingLine.put(lineId, historySeq);
+      return this;
+    }
+
+    public Editor removeBinding(long historySeq) {
+      ensureOpen();
+      HistoryLineRef previous = workingSeq.remove(historySeq);
+      if (previous != null) {
+        workingLine.remove(previous.lineId);
+      }
+      return this;
+    }
+
     public Long historySeq(long lineId) {
       ensureOpen();
       return workingLine.get(lineId);

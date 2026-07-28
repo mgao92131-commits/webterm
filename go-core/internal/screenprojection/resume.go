@@ -52,6 +52,7 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBase
 		token.HistoryGeneration != state.HistoryGeneration ||
 		token.DictionaryGeneration != state.DictionaryGeneration ||
 		token.ScreenRevision > state.Seq || token.ScreenRevision < p.changeIndex.SnapshotBarrierRevision ||
+		token.ScreenRevision < p.historyChangeIndex.WatermarkChangedRevision ||
 		len(token.ActiveRows) != len(state.Screen) {
 		return baseline()
 	}
@@ -81,13 +82,19 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBase
 		Screen: oldScreen, DictionaryGeneration: token.DictionaryGeneration,
 		HistoryGeneration: token.HistoryGeneration,
 		History: terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: state.History.FirstAvailableHistorySeq,
+			FirstAvailableHistorySeq: 1,
 		},
 	}
 	// 用创建 revision 推导客户端最后已知的位置。正文是否连续驻留不参与恢复。
 	for _, change := range p.historyChangeIndex.Changes {
 		if change.CreatedRevision <= token.ScreenRevision && change.HistorySeq > old.History.LastIncludedHistorySeq {
 			old.History.LastIncludedHistorySeq = change.HistorySeq
+		}
+		if change.CreatedRevision <= token.ScreenRevision {
+			old.ScrollbackLineage = append(old.ScrollbackLineage, terminalengine.HistoryPush{
+				HistorySeq: change.HistorySeq, LineID: change.LineID,
+				LineVersion: change.LineVersion,
+			})
 		}
 	}
 	for i, created := range p.changeIndex.StyleCreatedRevision {

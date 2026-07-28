@@ -1750,16 +1750,17 @@ func (x *ScreenLayout) GetLineIds() []uint64 {
 }
 
 type LineData struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LineId        uint64                 `protobuf:"varint,1,opt,name=line_id,json=lineId,proto3" json:"line_id,omitempty"`
-	LineVersion   uint64                 `protobuf:"varint,2,opt,name=line_version,json=lineVersion,proto3" json:"line_version,omitempty"`
-	Wrapped       bool                   `protobuf:"varint,3,opt,name=wrapped,proto3" json:"wrapped,omitempty"`
-	Utf8Text      []byte                 `protobuf:"bytes,4,opt,name=utf8_text,json=utf8Text,proto3" json:"utf8_text,omitempty"`
-	StyleSpans    []*StyleSpan           `protobuf:"bytes,5,rep,name=style_spans,json=styleSpans,proto3" json:"style_spans,omitempty"`
-	HistorySeq    uint64                 `protobuf:"varint,7,opt,name=history_seq,json=historySeq,proto3" json:"history_seq,omitempty"`
-	GlyphMeta     []byte                 `protobuf:"bytes,8,opt,name=glyph_meta,json=glyphMeta,proto3" json:"glyph_meta,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	LineId          uint64                 `protobuf:"varint,1,opt,name=line_id,json=lineId,proto3" json:"line_id,omitempty"`
+	LineVersion     uint64                 `protobuf:"varint,2,opt,name=line_version,json=lineVersion,proto3" json:"line_version,omitempty"`
+	Wrapped         bool                   `protobuf:"varint,3,opt,name=wrapped,proto3" json:"wrapped,omitempty"`
+	Utf8Text        []byte                 `protobuf:"bytes,4,opt,name=utf8_text,json=utf8Text,proto3" json:"utf8_text,omitempty"`
+	StyleSpans      []*StyleSpan           `protobuf:"bytes,5,rep,name=style_spans,json=styleSpans,proto3" json:"style_spans,omitempty"`
+	HistorySeq      uint64                 `protobuf:"varint,7,opt,name=history_seq,json=historySeq,proto3" json:"history_seq,omitempty"`
+	GlyphMeta       []byte                 `protobuf:"bytes,8,opt,name=glyph_meta,json=glyphMeta,proto3" json:"glyph_meta,omitempty"`
+	PhysicalColumns uint32                 `protobuf:"varint,9,opt,name=physical_columns,json=physicalColumns,proto3" json:"physical_columns,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *LineData) Reset() {
@@ -1839,6 +1840,13 @@ func (x *LineData) GetGlyphMeta() []byte {
 		return x.GlyphMeta
 	}
 	return nil
+}
+
+func (x *LineData) GetPhysicalColumns() uint32 {
+	if x != nil {
+		return x.PhysicalColumns
+	}
+	return 0
 }
 
 type StyleSpan struct {
@@ -3920,7 +3928,7 @@ const file_shared_proto_terminal_screen_v2_proto_rawDesc = "" +
 	"\aline_id\x18\x02 \x01(\x04R\x06lineId\x12!\n" +
 	"\fline_version\x18\x03 \x01(\x04R\vlineVersion\")\n" +
 	"\fScreenLayout\x12\x19\n" +
-	"\bline_ids\x18\x01 \x03(\x04R\alineIds\"\x8b\x02\n" +
+	"\bline_ids\x18\x01 \x03(\x04R\alineIds\"\xb6\x02\n" +
 	"\bLineData\x12\x17\n" +
 	"\aline_id\x18\x01 \x01(\x04R\x06lineId\x12!\n" +
 	"\fline_version\x18\x02 \x01(\x04R\vlineVersion\x12\x18\n" +
@@ -3931,7 +3939,8 @@ const file_shared_proto_terminal_screen_v2_proto_rawDesc = "" +
 	"\vhistory_seq\x18\a \x01(\x04R\n" +
 	"historySeq\x12\x1d\n" +
 	"\n" +
-	"glyph_meta\x18\b \x01(\fR\tglyphMetaJ\x04\b\x06\x10\a\"u\n" +
+	"glyph_meta\x18\b \x01(\fR\tglyphMeta\x12)\n" +
+	"\x10physical_columns\x18\t \x01(\rR\x0fphysicalColumnsJ\x04\b\x06\x10\a\"u\n" +
 	"\tStyleSpan\x12\x1b\n" +
 	"\tstart_col\x18\x01 \x01(\x05R\bstartCol\x12\x17\n" +
 	"\aend_col\x18\x02 \x01(\x05R\x06endCol\x12\x19\n" +

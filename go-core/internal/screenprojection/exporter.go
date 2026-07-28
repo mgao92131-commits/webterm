@@ -98,17 +98,19 @@ func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols, c
 	// The direct exporter is only used for isolated fixtures; ReadFullProjection
 	// is the authoritative path that carries stable identity.
 	return terminalengine.Line{Row: row, ID: uint64(row + 1), Version: 1,
-		Wrapped: engine.IsWrapped(row), Runs: exp.exportCells(cells, row, cursorRow, cursorCol)}
+		PhysicalColumns: cols, Wrapped: engine.IsWrapped(row),
+		Runs: exp.exportCells(cells, row, cursorRow, cursorCol)}
 }
 
 // exportProjectionRow 把投影中的一行（已是不可变拷贝）转换为导出 Line。
 func (exp *exporter) exportProjectionRow(row headlessterm.ProjectionRow, cursorRow, cursorCol int) terminalengine.Line {
 	return terminalengine.Line{
-		Row:     row.Index,
-		ID:      row.LineID,
-		Version: row.LineVersion,
-		Wrapped: row.Wrapped,
-		Runs:    exp.exportCells(row.Cells, row.Index, cursorRow, cursorCol),
+		Row:             row.Index,
+		ID:              row.LineID,
+		Version:         row.LineVersion,
+		PhysicalColumns: len(row.Cells),
+		Wrapped:         row.Wrapped,
+		Runs:            exp.exportCells(row.Cells, row.Index, cursorRow, cursorCol),
 	}
 }
 
@@ -243,12 +245,13 @@ func historyExtentWindow(scrollback *terminalengine.TrackedScrollback) terminale
 
 func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry) terminalengine.Line {
 	return terminalengine.Line{
-		ID:         hl.LineID,
-		Version:    hl.Version,
-		HistorySeq: hl.HistorySeq,
-		Row:        -1,
-		Wrapped:    hl.Wrapped,
-		Runs:       exp.exportHistoryCells(hl.Cells),
+		ID:              hl.LineID,
+		Version:         hl.Version,
+		PhysicalColumns: len(hl.Cells),
+		HistorySeq:      hl.HistorySeq,
+		Row:             -1,
+		Wrapped:         hl.Wrapped,
+		Runs:            exp.exportHistoryCells(hl.Cells),
 	}
 }
 

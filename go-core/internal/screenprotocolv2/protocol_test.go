@@ -1,6 +1,7 @@
 package screenprotocolv2
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -281,7 +282,7 @@ func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T
 }
 
 func TestEncodeTerminalCommitCarriesAllHistoryPushesWithoutBodies(t *testing.T) {
-	pushes := make([]terminalengine.HistoryPush, 200)
+	pushes := make([]terminalengine.HistoryPush, 5000)
 	for i := range pushes {
 		pushes[i] = terminalengine.HistoryPush{
 			HistorySeq: uint64(i + 1), LineID: uint64(i + 1001), LineVersion: 1,
@@ -305,11 +306,49 @@ func TestEncodeTerminalCommitCarriesAllHistoryPushesWithoutBodies(t *testing.T) 
 		t.Fatal(err)
 	}
 	history := env.GetTerminalCommit().GetHistory()
-	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetPushes()) != 200 {
-		t.Fatalf("encoded pushes=%d extent=%d, want 200/10000",
+	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetPushes()) != 5000 {
+		t.Fatalf("encoded pushes=%d extent=%d, want 5000/10000",
 			len(history.GetPushes()), history.GetFinalExtent().GetLastSeq())
 	}
 	if history.ProtoReflect().Descriptor().Fields().ByName("appended_lines") != nil {
 		t.Fatal("HistoryMutation schema still carries appended_lines")
+	}
+}
+
+func TestEncodeHistoryRangeHasIdentityPhysicalColumnsAndNoByteLimit(t *testing.T) {
+	lines := make([]terminalengine.Line, 5000)
+	for i := range lines {
+		lines[i] = terminalengine.Line{
+			ID: uint64(10_000 + i), Version: 1, HistorySeq: uint64(i + 1),
+			PhysicalColumns: 200,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{
+				Text: strings.Repeat("x", 300), Width: 1,
+			}}}},
+		}
+	}
+	wire, err := EncodeHistoryRangeResponse(
+		pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK,
+		terminalengine.HistoryRangeData{
+			Status: terminalengine.HistoryRangeOK, InstanceID: "i1", LayoutEpoch: 7,
+			HistoryGeneration: 3, Extent: terminalengine.HistoryExtent{FirstSeq: 1, LastSeq: 5000},
+			Lines: lines,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) <= 1<<20 {
+		t.Fatalf("wire=%d, want >1MiB", len(wire))
+	}
+	var response pb.HistoryRangeResponse
+	if err := proto.Unmarshal(wire, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetInstanceId() != "i1" || response.GetLayoutEpoch() != 7 ||
+		len(response.GetLines()) != 5000 ||
+		response.GetLines()[0].GetPhysicalColumns() != 200 {
+		t.Fatalf("response identity/lines mismatch: instance=%q epoch=%d lines=%d columns=%d",
+			response.GetInstanceId(), response.GetLayoutEpoch(), len(response.GetLines()),
+			response.GetLines()[0].GetPhysicalColumns())
 	}
 }

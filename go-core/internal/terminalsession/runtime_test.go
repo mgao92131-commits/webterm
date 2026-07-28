@@ -19,6 +19,22 @@ type reliableInputPTY struct {
 	data   bytes.Buffer
 }
 
+func TestHistoryRangeRejectsMismatchedProjectionIdentity(t *testing.T) {
+	r := NewRuntime("history-identity", newReliableInputPTY(), 2, 20)
+	defer r.Close()
+	info := r.Info()
+
+	stale := r.HistoryRange(
+		"wrong-instance", info.LayoutEpoch, 1, 1, 1)
+	if stale.Status != 0 || len(stale.Lines) != 0 {
+		t.Fatalf("stale projection returned body: %+v", stale)
+	}
+	if stale.InstanceID != info.InstanceID || stale.LayoutEpoch != info.LayoutEpoch {
+		t.Fatalf("response identity=%q/%d, want %q/%d",
+			stale.InstanceID, stale.LayoutEpoch, info.InstanceID, info.LayoutEpoch)
+	}
+}
+
 func TestPendingClipboardRequestsAreBoundedAndExpire(t *testing.T) {
 	r := &Runtime{pendingClipboard: make(map[string]pendingClipboardRequest)}
 	now := time.Unix(1_000, 0)

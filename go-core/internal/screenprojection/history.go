@@ -29,42 +29,36 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	if scrollback == nil {
 		return false
 	}
-	w := scrollback.IndexAfter(h.lastSeq)
+	w := scrollback.IndexWindow()
 	gap := false
 	if h.firstSeq != 0 && w.FirstSeq > h.firstSeq {
 		h.WatermarkChangedRevision = revision
 	}
 
-	if h.lastSeq != 0 && w.LastSeq < h.lastSeq {
-		// Resize Pop 通过 final extent 表达尾删，并允许以后复用这些位置。
-		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].HistorySeq > w.LastSeq {
-			h.Changes = h.Changes[:len(h.Changes)-1]
-		}
+	old := make(map[uint64]HistoryChange, len(h.Changes))
+	for _, change := range h.Changes {
+		old[change.HistorySeq] = change
 	}
-
-	// 实际 trim 事件是唯一水位锚点；同步删除已不再权威窗口中的索引项。
-	cut := 0
-	for cut < len(h.Changes) && h.Changes[cut].HistorySeq < w.FirstSeq {
-		cut++
-	}
-	if cut > 0 {
-		copy(h.Changes, h.Changes[cut:])
-		h.Changes = h.Changes[:len(h.Changes)-cut]
-	}
-
+	next := make([]HistoryChange, 0, len(w.Entries))
 	last := uint64(0)
-	if len(h.Changes) > 0 {
-		last = h.Changes[len(h.Changes)-1].HistorySeq
-	}
 	for _, entry := range w.Entries {
-		if entry.HistorySeq < w.FirstSeq || entry.HistorySeq > w.LastSeq || (last != 0 && entry.HistorySeq <= last) {
+		if entry.HistorySeq < w.FirstSeq || entry.HistorySeq > w.LastSeq ||
+			(last != 0 && entry.HistorySeq <= last) {
 			gap = true
+			continue
 		}
-		if last == 0 || entry.HistorySeq > last {
-			h.Changes = append(h.Changes, HistoryChange{HistorySeq: entry.HistorySeq, LineID: entry.LineID, LineVersion: entry.LineVersion, CreatedRevision: revision})
-			last = entry.HistorySeq
+		change := HistoryChange{
+			HistorySeq: entry.HistorySeq, LineID: entry.LineID,
+			LineVersion: entry.LineVersion, CreatedRevision: revision,
 		}
+		if previous, ok := old[entry.HistorySeq]; ok &&
+			previous.LineID == entry.LineID && previous.LineVersion == entry.LineVersion {
+			change.CreatedRevision = previous.CreatedRevision
+		}
+		next = append(next, change)
+		last = entry.HistorySeq
 	}
+	h.Changes = next
 
 	// 防御性核对：当前驻留窗口非空却没有覆盖到尾部，说明一次 flush 跨过了
 	// 未捕获的 LineID，禁止静默少发。

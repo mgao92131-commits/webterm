@@ -55,13 +55,13 @@ public final class ScreenMessageV2ValidatorTest {
         .build(), 2);
   }
 
-  @Test(expected = CommitValidationException.class)
-  public void terminalCommitRejectsMoreThan4096HistoryPushes() throws Exception {
+  @Test
+  public void terminalCommitAcceptsFiveThousandHistoryPushes() throws Exception {
     TerminalScreenV2Proto.HistoryMutation.Builder history =
         TerminalScreenV2Proto.HistoryMutation.newBuilder()
             .setFinalExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
-                .setFirstSeq(1).setLastSeq(4097));
-    for (int i = 1; i <= 4097; i++) history.addPushes(push(i, 1000 + i, 1));
+                .setFirstSeq(1).setLastSeq(5000));
+    for (int i = 1; i <= 5000; i++) history.addPushes(push(i, 10_000 + i, 1));
     ScreenMessageV2Validator.validateTerminalCommit(
         commitBuilder().setHistory(history).build(), 2);
   }

@@ -245,13 +245,22 @@ func (r *Runtime) ID() string {
 }
 
 // HistoryRange 并发读取权威 Scrollback 的任意闭区间，不进入 actor。
-func (r *Runtime) HistoryRange(generation, fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
+func (r *Runtime) HistoryRange(
+	instanceID string, layoutEpoch, generation, fromSeq, toSeq uint64,
+) terminalengine.HistoryRangeData {
 	if r == nil || r.scrollback == nil || r.projector == nil {
-		return terminalengine.HistoryRangeData{HistoryGeneration: generation}
-	}
-	currentGeneration := r.scrollback.Generation()
-	if generation == 0 || generation != currentGeneration {
 		return terminalengine.HistoryRangeData{
+			InstanceID: instanceID, LayoutEpoch: layoutEpoch, HistoryGeneration: generation,
+		}
+	}
+	before := r.Info()
+	currentGeneration := r.scrollback.Generation()
+	if instanceID == "" || instanceID != before.InstanceID ||
+		layoutEpoch == 0 || layoutEpoch != before.LayoutEpoch ||
+		generation == 0 || generation != currentGeneration {
+		return terminalengine.HistoryRangeData{
+			InstanceID:        before.InstanceID,
+			LayoutEpoch:       before.LayoutEpoch,
 			HistoryGeneration: currentGeneration,
 			Extent:            r.scrollback.Extent(),
 		}
@@ -259,12 +268,24 @@ func (r *Runtime) HistoryRange(generation, fromSeq, toSeq uint64) terminalengine
 	if !r.allowHistoryRange() {
 		return terminalengine.HistoryRangeData{
 			Status:            terminalengine.HistoryRangeRetryable,
+			InstanceID:        before.InstanceID,
+			LayoutEpoch:       before.LayoutEpoch,
 			HistoryGeneration: currentGeneration,
 			Extent:            r.scrollback.Extent(),
 			RetryAfterMS:      125,
 		}
 	}
-	return r.projector.HistoryRange(fromSeq, toSeq)
+	data := r.projector.HistoryRange(fromSeq, toSeq)
+	after := r.Info()
+	data.InstanceID = after.InstanceID
+	data.LayoutEpoch = after.LayoutEpoch
+	if after.InstanceID != before.InstanceID || after.LayoutEpoch != before.LayoutEpoch {
+		data.Status = 0
+		data.Lines = nil
+		data.Styles = nil
+		data.Links = nil
+	}
+	return data
 }
 
 // Info 返回当前版本信息。

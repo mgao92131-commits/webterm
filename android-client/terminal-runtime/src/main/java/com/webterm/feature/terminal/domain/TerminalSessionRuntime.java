@@ -865,14 +865,19 @@ public final class TerminalSessionRuntime {
               if (active == null || !historyLoader.isActive(active)) return;
               long durationMs = historyRangeDurationMs(active);
               historyLoader.complete(active);
-              boolean applyChanged = applyDecodedHistoryRange(active, result);
-              emitHistoryRangeInfo("history_range_completed",
-                  "requestId", active.callId, "historyGeneration", result.historyGeneration,
-                  "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
-                  "returnedLineCount", result.lines.size(), "durationMs", durationMs,
-                  "applyChanged", applyChanged);
-              refreshEvictionPins();
-              pumpHistoryRanges();
+              try {
+                boolean applyChanged = applyDecodedHistoryRange(active, result);
+                emitHistoryRangeInfo("history_range_completed",
+                    "requestId", active.callId, "historyGeneration", result.historyGeneration,
+                    "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
+                    "responseFirstSeq", result.currentExtent.firstSeq,
+                    "responseLastSeq", result.currentExtent.lastSeq,
+                    "returnedLineCount", result.lines.size(), "durationMs", durationMs,
+                    "applyChanged", applyChanged);
+              } finally {
+                refreshEvictionPins();
+                pumpHistoryRanges();
+              }
             });
           }
 
@@ -919,7 +924,9 @@ public final class TerminalSessionRuntime {
       @NonNull HistoryRangeLoader.ActiveRequest active,
       @NonNull HistoryRangeSource.Result decoded) {
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-    if (decoded.historyGeneration != projection.historyGeneration) {
+    if (!decoded.instanceId.equals(projection.instanceId)
+        || decoded.layoutEpoch != projection.layoutEpoch
+        || decoded.historyGeneration != projection.historyGeneration) {
       Diagnostics.info("history_range", "history_range_discarded_stale", historyRangeFields(
           "requestId", active.callId,
           "historyGeneration", decoded.historyGeneration,
@@ -928,8 +935,8 @@ public final class TerminalSessionRuntime {
     }
     HistoryRangeResult range = new HistoryRangeResult(
         "range-" + active.callId,
-        active.range.instanceId,
-        active.range.layoutEpoch,
+        decoded.instanceId,
+        decoded.layoutEpoch,
         decoded.historyGeneration,
         HistoryRangeResult.Status.OK,
         decoded.currentExtent,
@@ -937,8 +944,25 @@ public final class TerminalSessionRuntime {
         0);
     long publicationBefore = model.lastPublicationVersion();
     long revisionBefore = model.screenRevision;
-    boolean changed = model.applyHistoryRange(
-        range, active.range.fromSeq, active.range.fromSeq, active.range.toSeq);
+    boolean changed;
+    try {
+      changed = model.applyHistoryRange(
+          range, active.range.fromSeq, active.range.fromSeq, active.range.toSeq);
+    } catch (IllegalArgumentException protocolError) {
+      Diagnostics.warn("history_range", "history_range_protocol_conflict",
+          historyRangeFields("requestId", active.callId,
+              "failureKind", protocolError.getClass().getSimpleName()));
+      historyLoader.clearDemand();
+      sendResync("history_range_protocol_conflict");
+      return false;
+    } catch (RuntimeException runtimeError) {
+      Diagnostics.warn("history_range", "history_range_protocol_conflict",
+          historyRangeFields("requestId", active.callId,
+              "failureKind", runtimeError.getClass().getSimpleName()));
+      historyLoader.clearDemand();
+      sendResync("history_range_protocol_conflict");
+      return false;
+    }
     if (changed) {
       recordCapturedModelState(false);
       // 历史段通常不推进 screenRevision，但会推进 publicationVersion。
@@ -961,13 +985,13 @@ public final class TerminalSessionRuntime {
       }
       return true;
     }
-    if (failure.kind == HistoryRangeSource.FailureKind.STALE_GENERATION
+    if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION
         || failure.kind == HistoryRangeSource.FailureKind.SESSION_GONE) {
       historyLoader.clearDemand();
       emitHistoryRangeInfo("history_range_demand_cleared", "reason",
-          failure.kind == HistoryRangeSource.FailureKind.STALE_GENERATION
+          failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION
               ? "stale" : "session_gone");
-      if (failure.kind == HistoryRangeSource.FailureKind.STALE_GENERATION) {
+      if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION) {
         sendResync("history_range_stale");
       }
       return true;

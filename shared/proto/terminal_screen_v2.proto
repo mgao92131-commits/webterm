@@ -10,7 +10,7 @@ option java_outer_classname = "TerminalScreenV2Proto";
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
-  // 6/7 曾为 WS HistoryRange request/response；冷历史改走 HTTP Segment。
+  // 6/7 曾为 WS HistoryRange request/response；历史正文统一走 HTTP Range。
   reserved 4, 5, 6, 7, 8, 9, 15, 18;
 
   oneof payload {
@@ -169,6 +169,7 @@ message LineData {
   reserved 6;
   uint64 history_seq = 7;
   bytes glyph_meta = 8;
+  uint32 physical_columns = 9;
 }
 
 message StyleSpan {

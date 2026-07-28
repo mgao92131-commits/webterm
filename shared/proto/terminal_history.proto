@@ -9,21 +9,25 @@ option java_outer_classname = "TerminalHistoryProto";
 import "shared/proto/terminal_screen_v2.proto";
 
 // HTTP 历史范围协议（不经 ScreenEnvelope）。
-// GET /api/sessions/{id}/history/range?generation={generation}&from={fromSeq}&to={toSeq}
+// GET /api/sessions/{id}/history/range
+//   ?instanceId={instanceId}&layoutEpoch={layoutEpoch}
+//   &generation={generation}&from={fromSeq}&to={toSeq}
 
 enum HistoryRangeStatus {
   HISTORY_RANGE_STATUS_UNSPECIFIED = 0;
   HISTORY_RANGE_STATUS_OK = 1;
-  HISTORY_RANGE_STATUS_STALE_GENERATION = 2;
+  HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;
   HISTORY_RANGE_STATUS_SESSION_GONE = 3;
   HISTORY_RANGE_STATUS_RETRYABLE = 4;
 }
 
 message HistoryRangeResponse {
   HistoryRangeStatus status = 1;
-  uint64 history_generation = 2;
-  HistoryExtent current_extent = 3;
-  repeated LineData lines = 4;
-  Dictionary dictionary = 5;
-  uint32 retry_after_ms = 6;
+  string instance_id = 2;
+  uint64 layout_epoch = 3;
+  uint64 history_generation = 4;
+  HistoryExtent current_extent = 5;
+  repeated LineData lines = 6;
+  Dictionary dictionary = 7;
+  uint32 retry_after_ms = 8;
 }

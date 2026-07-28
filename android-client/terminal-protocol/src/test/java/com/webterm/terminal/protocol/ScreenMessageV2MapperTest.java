@@ -6,6 +6,7 @@ import static org.junit.Assert.assertNotNull;
 import com.google.protobuf.ByteString;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCommit;
+import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 import org.junit.Test;
 
@@ -22,6 +23,7 @@ public final class ScreenMessageV2MapperTest {
     TerminalScreenV2Proto.LineData line =
         TerminalScreenV2Proto.LineData.newBuilder()
             .setLineId(9).setLineVersion(1)
+            .setPhysicalColumns(1)
             .setUtf8Text(ByteString.copyFromUtf8("A"))
             .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
             .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
@@ -90,6 +92,19 @@ public final class ScreenMessageV2MapperTest {
     assertEquals(99, commit.screen.writes.get(0).lineData.styleSpans.get(0).styleId);
   }
 
+  @Test
+  public void historyLineUsesItsOwnPhysicalColumnsAfterResize() {
+    TerminalScreenV2Proto.LineData history = TerminalScreenV2Proto.LineData.newBuilder()
+        .setLineId(20).setLineVersion(1).setHistorySeq(7)
+        .setPhysicalColumns(200)
+        .setUtf8Text(ByteString.copyFromUtf8("x"))
+        .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
+        .build();
+    TerminalLine mapped = ScreenMessageV2Mapper.mapHistoryLine(
+        history, TerminalScreenV2Proto.Dictionary.getDefaultInstance());
+    assertEquals(200, mapped.cells.length);
+  }
+
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {
     return TerminalScreenV2Proto.TerminalCommit.newBuilder()
         .setInstanceId("i").setLayoutEpoch(1)
@@ -99,6 +114,7 @@ public final class ScreenMessageV2MapperTest {
 
   private static TerminalScreenV2Proto.LineData line(long id, long historySeq) {
     return TerminalScreenV2Proto.LineData.newBuilder()
-        .setLineId(id).setLineVersion(1).setHistorySeq(historySeq).build();
+        .setLineId(id).setLineVersion(1).setHistorySeq(historySeq)
+        .setPhysicalColumns(1).build();
   }
 }

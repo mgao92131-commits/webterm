@@ -212,6 +212,18 @@ public final class PagedTerminalHistory {
       return this;
     }
 
+    /** 使一个历史位置的驻留正文失效，但不影响独立的 HistoryIndex 绑定。 */
+    public Editor invalidate(long historySeq) {
+      ensureOpen();
+      if (!workingExtent.contains(historySeq)) return this;
+      HistoryPageChunk page = workingPages.get(pageNumber(historySeq));
+      if (page == null) return this;
+      page = mutablePage(pageNumber(historySeq));
+      clearSlot(page, pageOffset(historySeq));
+      if (page.empty()) workingPages.remove(pageNumber(historySeq));
+      return this;
+    }
+
     Long historySeqByLineId(long lineId) {
       if (identityRemoves.contains(lineId)) return null;
       Long added = identityAdds.get(lineId);

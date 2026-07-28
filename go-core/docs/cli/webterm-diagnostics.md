@@ -9,7 +9,9 @@ Usage:
 
 Available Commands:
   export      导出 Agent 诊断包
+  state       显示 Agent 连接状态（机器可读）
   summary     显示 Agent 诊断摘要
+  wait-relay  等待 Relay 连接就绪（脚本用）
 
 Flags:
   -h, --help   help for diagnostics

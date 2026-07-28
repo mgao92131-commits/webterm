@@ -170,13 +170,8 @@ public final class RemoteTerminalModel {
       if (normalized == null) return false;
       normalizedScreen.add(normalized);
     }
-    boolean sameProjection = v2Projection
-        && baseline.instanceId.equals(instanceId)
-        && baseline.historyGeneration == historyGeneration;
-    boolean geometryChanged = !sameProjection || rows != baseline.rows || columns != baseline.cols;
-    boolean preserveHistory = sameProjection;
-    TerminalSurface baselineSurface = preserveHistory
-        ? surface(baseline.activeBuffer) : new TerminalSurface(historyBudget);
+    boolean geometryChanged = !v2Projection || rows != baseline.rows || columns != baseline.cols;
+    TerminalSurface baselineSurface = new TerminalSurface(historyBudget);
 
     Map<Integer, TerminalStyle> baselineStyles;
     Map<Integer, Hyperlink> baselineLinks;
@@ -193,16 +188,11 @@ public final class RemoteTerminalModel {
         baselineSurface.historyIndex.edit().setExtent(baseline.historyExtent);
     long[] activeLineIds = new long[baseline.rows];
     try {
-      if (!preserveHistory) {
-        historyEditor.setExtent(1, 0);
-      }
       historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
       historyEditor.setAvailableExtent(
           baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
       historyEditor.evictIfNeeded(currentEvictionPins(
           baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq));
-      // 同 projection 的 Baseline 可以保留旧驻留页；提交前用有界索引验证新 screen，
-      // 不能让同一 LineID 同时归属于 screen 与 loaded history。
       for (int row = 0; row < normalizedScreen.size(); row++) {
         TerminalLine normalized = normalizedScreen.get(row);
         if (historyEditor.historySeqByLineId(normalized.id) != null) return false;
@@ -224,9 +214,11 @@ public final class RemoteTerminalModel {
     lineEditor.commit();
     baselineSurface.activeRows = new ActiveRows(activeLineIds);
     if (baseline.activeBuffer == TerminalBufferKind.ALTERNATE) {
+      mainSurface = new TerminalSurface(historyBudget);
       alternateSurface = baselineSurface;
     } else {
       mainSurface = baselineSurface;
+      alternateSurface = new TerminalSurface(historyBudget);
     }
     // Baseline 是权威完整投影；不让旧 Patch 的迁移身份跨同步边界存活。
     this.v2Projection = true;
@@ -316,7 +308,7 @@ public final class RemoteTerminalModel {
     HistoryExtent nextExtent = oldExtent;
     List<HistoryPush> historyPushes = Collections.emptyList();
     if (commit.history != null) {
-      if (commit.history.finalExtent == null || commit.history.pushes.size() > 4096) {
+      if (commit.history.finalExtent == null) {
         throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
       }
       nextExtent = commit.history.finalExtent;
@@ -327,7 +319,6 @@ public final class RemoteTerminalModel {
       long previousSeq = 0;
       for (HistoryPush push : historyPushes) {
         if (push == null || push.historySeq <= previousSeq
-            || push.historySeq <= oldExtent.lastSeq
             || !nextExtent.contains(push.historySeq)
             || push.lineId <= 0 || push.lineVersion <= 0) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
@@ -406,9 +397,6 @@ public final class RemoteTerminalModel {
         if (!activeLineIds.add(line.id)) {
           throw new CommitValidationException(CommitFailure.DUPLICATE_ACTIVE_LINE_ID);
         }
-        if (historyIndexEditor.historySeq(line.id) != null) {
-          throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
-        }
       }
     } else if (activeBufferChanged) {
       throw new CommitValidationException(CommitFailure.INVALID_ACTIVE_BUFFER_TRANSITION);
@@ -425,6 +413,17 @@ public final class RemoteTerminalModel {
         Set<Long> pushedIds = new HashSet<>();
         Set<Long> finalActive = new HashSet<>();
         for (TerminalLine line : stagedScreen) finalActive.add(line.id);
+        // 先统一释放被替换位置的旧反向映射，再写入新绑定，允许同一批权威
+        // Push 中多个位置交换/重排 LineID。
+        for (HistoryPush push : historyPushes) {
+          HistoryLineRef previous = historyIndexEditor.ref(push.historySeq);
+          if (previous != null
+              && (previous.lineId != push.lineId
+                  || previous.lineVersion != push.lineVersion)) {
+            historyEditor.invalidate(push.historySeq);
+            historyIndexEditor.removeBinding(push.historySeq);
+          }
+        }
         for (HistoryPush push : historyPushes) {
           if (!pushedSeqs.add(push.historySeq)) {
             throw new CommitValidationException(CommitFailure.DUPLICATE_HISTORY_SEQUENCE);
@@ -435,16 +434,11 @@ public final class RemoteTerminalModel {
           if (finalActive.contains(push.lineId)) {
             throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
           }
-          historyIndexEditor.bind(
+          historyIndexEditor.bindAuthoritative(
               push.historySeq, push.lineId, push.lineVersion);
           TerminalLine held = lineEditor.line(push.lineId);
           if (held != null && held.version == push.lineVersion) {
             historyEditor.put(push.historySeq, held.withHistorySeq(push.historySeq));
-          }
-        }
-        for (TerminalLine line : stagedScreen) {
-          if (historyIndexEditor.historySeq(line.id) != null) {
-            throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
           }
         }
         historyEditor.evictIfNeeded(currentEvictionPins(
@@ -453,6 +447,11 @@ public final class RemoteTerminalModel {
         throw failure;
       } catch (IllegalArgumentException | IllegalStateException invalidHistory) {
         throw new CommitValidationException(CommitFailure.HISTORY_LINE_ID_CONFLICT, invalidHistory);
+      }
+    }
+    for (TerminalLine line : stagedScreen) {
+      if (historyIndexEditor.historySeq(line.id) != null) {
+        throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
       }
     }
 
@@ -578,20 +577,12 @@ public final class RemoteTerminalModel {
       }
       return false;
     }
-    if (requestedFromSeq < 1 || requestedToSeq < requestedFromSeq
-        || requestedToSeq - requestedFromSeq >= 256
-        || range.lines.size() > requestedToSeq - requestedFromSeq + 1) {
+    if (requestedFromSeq < 1 || requestedToSeq < requestedFromSeq) {
       throw new IllegalArgumentException("invalid HistoryRange request bounds");
     }
 
     TerminalSurface targetSurface = mainSurface;
-    HistoryExtent previousExtent = targetSurface.historyIndex.extent();
-    HistoryExtent responseExtent = range.availableExtent == null
-        ? previousExtent : range.availableExtent;
-    if (responseExtent.firstSeq < previousExtent.firstSeq
-        || responseExtent.lastSeq > remoteAvailableExtent.lastSeq) {
-      throw new IllegalArgumentException("HistoryRange extent exceeds declared history");
-    }
+    HistoryExtent currentExtent = targetSurface.historyIndex.extent();
 
     // 响应可能含请求发出后已裁剪的前缀；只写入当前 extent 内仍存活的正文。
     List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
@@ -611,18 +602,18 @@ public final class RemoteTerminalModel {
       }
       previousSeq = seq;
       // 已裁剪前缀：丢弃，不拒绝整段。
-      if (!responseExtent.contains(seq)) {
+      if (!currentExtent.contains(seq)) {
         continue;
       }
       normalizedLines.add(normalized);
     }
     PagedTerminalHistorySnapshot beforeWrite = targetSurface.history.snapshot();
     PagedTerminalHistory.Editor editor = targetSurface.history.edit()
-        .setExtent(responseExtent.firstSeq, responseExtent.lastSeq)
-        .setAvailableExtent(responseExtent.firstSeq, responseExtent.lastSeq);
+        .setExtent(currentExtent.firstSeq, currentExtent.lastSeq)
+        .setAvailableExtent(currentExtent.firstSeq, currentExtent.lastSeq);
     LineStore.Editor lineEditor = targetSurface.lineStore.edit();
     HistoryIndex.Editor historyIndexEditor =
-        targetSurface.historyIndex.edit().setExtent(responseExtent);
+        targetSurface.historyIndex.edit().setExtent(currentExtent);
     // HTTP Range 补正文；已有绑定必须完全匹配，缺失绑定可由响应建立。
     for (TerminalLine normalized : normalizedLines) {
       if (targetSurface.activeRows.contains(normalized.id)) {
@@ -646,7 +637,7 @@ public final class RemoteTerminalModel {
         throw new IllegalArgumentException(invalidLineage.failure.name(), invalidLineage);
       }
     }
-    long fallbackAnchor = anchorSeq > 0 ? anchorSeq : responseExtent.lastSeq;
+    long fallbackAnchor = anchorSeq > 0 ? anchorSeq : currentExtent.lastSeq;
     editor.evictIfNeeded(currentEvictionPins(fallbackAnchor)).commit();
     Set<Long> loadedHistoryIds = targetSurface.history.snapshot().loadedLineIds();
     Set<Long> retainedLineIds = new HashSet<>(loadedHistoryIds);
@@ -656,17 +647,14 @@ public final class RemoteTerminalModel {
     lineEditor.retainOnly(retainedLineIds);
     historyIndexEditor.commit();
     lineEditor.commit();
-    remoteAvailableExtent = responseExtent;
-    displayExtent = responseExtent;
-    firstAvailableHistorySeq = responseExtent.firstSeq;
     if (activeBuffer == TerminalBufferKind.MAIN) {
       markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
           false, false, false, false, false);
-      mergeHistoryDirtyRange(normalizedLines, !previousExtent.equals(responseExtent));
+      mergeHistoryDirtyRange(normalizedLines, false);
       markTerminalState(false, true, false, false, 0, 0);
       publishPendingRenderUpdate();
     }
-    return !normalizedLines.isEmpty() || !previousExtent.equals(responseExtent);
+    return !normalizedLines.isEmpty();
   }
 
   /** Runtime 更新视口/请求 pins；后续 Baseline/Commit/Range 驱逐共用。 */

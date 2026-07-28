@@ -76,6 +76,8 @@ type CellRun struct {
 type Line struct {
 	ID      uint64 // session 内稳定行 ID；屏幕与历史共用同一命名空间
 	Version uint64 // 行内容版本；行移动不改变，内容/宽度变化递增
+	// PhysicalColumns 是该正文产生时的物理列数。历史行 resize 后仍按原列宽解码。
+	PhysicalColumns int
 	// HistorySeq is non-zero only while this Line is represented in scrollback.
 	// It orders history entrance and pagination independently from the stable
 	// logical Line ID, which is allowed to move in non-monotonic order.
@@ -147,6 +149,8 @@ type HistoryWindow struct {
 
 type HistoryRangeData struct {
 	Status            HistoryRangeStatus
+	InstanceID        string
+	LayoutEpoch       uint64
 	Extent            HistoryExtent
 	Lines             []Line
 	Styles            []TerminalStyle
@@ -222,7 +226,8 @@ type ScreenFrame struct {
 	// snapshot instead of a patch referencing dictionary IDs the client never
 	// received.
 	DictionaryGeneration uint64
-	// HistoryGeneration 标识 historySeq -> LineID lineage；同一 generation 内只追加/trim。
+	// HistoryGeneration 标识 historySeq -> LineID lineage；同一 generation 内允许
+	// 追加、trim 以及 Resize Pop 后的尾部位置重绑定。
 	HistoryGeneration uint64
 	// HistoryPushes 是 HistorySeq -> LineID + LineVersion 的位置绑定，不含正文。
 	HistoryPushes []HistoryPush
