@@ -156,7 +156,7 @@ func TestMuxWriterFailuresAreRateLimited(t *testing.T) {
 }
 
 // TestMuxReadFailureEmitsClassifiedEvent readLoop 读到 EOF 时应产出
-// mux_read_failed 事件，reason 为 closed 分类而非错误原文。
+// mux_stream_closed 事件（info），reason 为 closed 分类而非错误原文。
 func TestMuxReadFailureEmitsClassifiedEvent(t *testing.T) {
 	logger := logs.New(logs.DefaultCapacity)
 	logger.SetRateLimiter(nil)
@@ -171,13 +171,93 @@ func TestMuxReadFailureEmitsClassifiedEvent(t *testing.T) {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
 	entry := entries[0]
-	if entry.Event != "mux_read_failed" {
-		t.Fatalf("event = %q, want mux_read_failed", entry.Event)
+	if entry.Event != "mux_stream_closed" {
+		t.Fatalf("event = %q, want mux_stream_closed", entry.Event)
+	}
+	if entry.Level != "info" {
+		t.Errorf("level = %q, want info", entry.Level)
 	}
 	if entry.Fields["reason"] != "closed" {
 		t.Errorf("reason = %v, want closed", entry.Fields["reason"])
 	}
 	if entry.Message != "" {
 		t.Errorf("free-text message must be empty, got %q", entry.Message)
+	}
+}
+
+// TestDiagnosticsConnectionSetsContextAndMergesIntoEvents diagnostics.connection
+// 写入 HashID 上下文后，后续 mux 事件应带上 connectionHash 等字段。
+func TestDiagnosticsConnectionSetsContextAndMergesIntoEvents(t *testing.T) {
+	logger := logs.New(logs.DefaultCapacity)
+	logger.SetRateLimiter(nil)
+
+	connectionID := "11111111-2222-3333-4444-555555555555"
+	recoveryID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	ctrl := []byte(`{"type":"diagnostics.connection","connection_id":"` + connectionID +
+		`","recovery_id":"` + recoveryID + `","transport_generation":12}`)
+
+	var onControlCalls int
+	sock := &fakeSocket{reads: []fakeRead{
+		{msgType: termsession.MessageText, data: ctrl},
+		{err: io.EOF},
+	}}
+	sess := Serve(sock, &ServeOpts{
+		Logger: logger,
+		OnControl: func(ctx context.Context, source *Session, msg map[string]any) {
+			onControlCalls++
+		},
+	})
+
+	if err := sess.readLoop(context.Background()); !errors.Is(err, io.EOF) {
+		t.Fatalf("readLoop = %v, want EOF", err)
+	}
+	if onControlCalls != 0 {
+		t.Fatalf("onControl calls = %d, want 0 (diagnostics.connection must not forward)", onControlCalls)
+	}
+	if sess.diag.ConnectionHash != logs.HashID(connectionID) {
+		t.Errorf("ConnectionHash = %q, want %q", sess.diag.ConnectionHash, logs.HashID(connectionID))
+	}
+	if sess.diag.RecoveryHash != logs.HashID(recoveryID) {
+		t.Errorf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, logs.HashID(recoveryID))
+	}
+	if sess.diag.TransportGeneration != 12 {
+		t.Errorf("TransportGeneration = %d, want 12", sess.diag.TransportGeneration)
+	}
+
+	entries := logger.Recent(0)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	if entry.Event != "mux_stream_closed" {
+		t.Fatalf("event = %q, want mux_stream_closed", entry.Event)
+	}
+	if entry.Fields["connectionHash"] != logs.HashID(connectionID) {
+		t.Errorf("connectionHash = %v, want %q", entry.Fields["connectionHash"], logs.HashID(connectionID))
+	}
+	if entry.Fields["recoveryHash"] != logs.HashID(recoveryID) {
+		t.Errorf("recoveryHash = %v, want %q", entry.Fields["recoveryHash"], logs.HashID(recoveryID))
+	}
+	if entry.Fields["transportGeneration"] != uint64(12) {
+		// json/log fields may be uint64; accept common numeric forms
+		switch v := entry.Fields["transportGeneration"].(type) {
+		case uint64:
+			if v != 12 {
+				t.Errorf("transportGeneration = %v, want 12", v)
+			}
+		case int:
+			if v != 12 {
+				t.Errorf("transportGeneration = %v, want 12", v)
+			}
+		case float64:
+			if v != 12 {
+				t.Errorf("transportGeneration = %v, want 12", v)
+			}
+		default:
+			t.Errorf("transportGeneration = %v (%T), want 12", v, v)
+		}
+	}
+	if entry.Fields["connection_id"] != nil || entry.Fields["recovery_id"] != nil {
+		t.Fatalf("raw UUIDs must not appear in fields: %+v", entry.Fields)
 	}
 }

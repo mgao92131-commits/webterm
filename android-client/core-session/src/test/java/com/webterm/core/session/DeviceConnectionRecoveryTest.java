@@ -711,14 +711,26 @@ public class DeviceConnectionRecoveryTest {
         manager.openScreenChannel("s1", new SimpleListener());
         transport.simulateOpen();
 
-        assertTrue("registration and terminal open should both be sent", transport.sentTexts.size() >= 2);
-        JSONObject registration = new JSONObject(transport.sentTexts.get(0));
-        assertEquals("client.register", registration.getString("type"));
+        assertTrue("open should emit diagnostics + registration + channel open",
+            transport.sentTexts.size() >= 2);
+        int registerIndex = -1;
+        int connectIndex = -1;
+        for (int i = 0; i < transport.sentTexts.size(); i++) {
+            JSONObject msg = new JSONObject(transport.sentTexts.get(i));
+            String type = msg.optString("type");
+            if ("client.register".equals(type) && registerIndex < 0) registerIndex = i;
+            if ("ws-connect".equals(type) && connectIndex < 0) connectIndex = i;
+        }
+        assertTrue("client.register must be sent", registerIndex >= 0);
+        assertTrue("ws-connect must be sent", connectIndex >= 0);
+        assertTrue("client.register must precede terminal channel open",
+            registerIndex < connectIndex);
+
+        JSONObject registration = new JSONObject(transport.sentTexts.get(registerIndex));
         assertEquals("android_1234", registration.getString("client_id"));
         assertEquals("Pixel 9", registration.getString("client_name"));
         assertEquals("file_receive", registration.getJSONArray("capabilities").getString(0));
-        JSONObject channelOpen = new JSONObject(transport.sentTexts.get(1));
-        assertEquals("ws-connect", channelOpen.getString("type"));
+        JSONObject channelOpen = new JSONObject(transport.sentTexts.get(connectIndex));
         assertEquals("term:s1:webterm.screen.v2", channelOpen.getString("channelRouteKey"));
         assertTrue(channelOpen.getString("channelOwnerKey")
             .endsWith(":term:s1:webterm.screen.v2"));

@@ -13,9 +13,13 @@ import android.widget.Toast;
 import androidx.core.content.FileProvider;
 
 import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
-import com.webterm.mobile.BuildConfig;
+import com.webterm.core.session.DeviceConnection;
+import com.webterm.core.session.DeviceConnectionDiagnosticsRegistry;
+import com.webterm.core.session.MuxOutboundQueue;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
+import com.webterm.feature.terminal.domain.TerminalPipelineDiagnosticsRegistry;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
+import com.webterm.mobile.BuildConfig;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
 
@@ -29,6 +33,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
@@ -37,11 +42,13 @@ import java.util.zip.ZipOutputStream;
 
 /**
  * Debug/Diag 专用：导出当前进程内存 Ring 与指标快照，不包含终端正文或 PTY 捕获。
- * 导出包脱敏：server/deviceId/channelId 一律以每次导出随机 salt 的哈希形式输出。
+ * 导出包脱敏：server/deviceId/channelId/sessionId 一律以进程级 {@link DiagnosticIdHasher#processHash}
+ * 形式输出，保证同 ZIP 内 events / metrics / state 可关联。
  * 写入先落 .tmp、完成后 rename；分享返回后删除临时导出文件。
  */
 public final class DiagnosticLogExporter {
     private static final String ARCHIVE_PREFIX = "webterm-diagnostics-";
+    static final int SCHEMA_VERSION = 2;
 
     private static volatile File pendingShareArchive = null;
 
@@ -82,16 +89,12 @@ public final class DiagnosticLogExporter {
         }
         File archive = new File(exportDir, newArchiveName());
         File temp = new File(exportDir, archive.getName() + ".tmp");
-        String salt = DiagnosticIdHasher.randomSalt();
         try {
             try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(temp))) {
                 writeEventsJsonl(output, DiagnosticMemoryRing.getInstance().snapshot());
-                output.putNextEntry(new ZipEntry("network-traffic-summary.txt"));
-                output.write(buildTrafficSummary(salt).getBytes(StandardCharsets.UTF_8));
-                output.closeEntry();
                 try {
                     writeJsonEntry(output, "manifest.json", buildManifestJson(context));
-                    writeJsonEntry(output, "android-metrics.json", buildMetricsJson(salt));
+                    writeJsonEntry(output, "android-metrics.json", buildMetricsJson());
                     writeJsonEntry(output, "android-state.json", buildStateJson());
                 } catch (JSONException e) {
                     throw new IOException("failed to build diagnostics json", e);
@@ -158,7 +161,7 @@ public final class DiagnosticLogExporter {
     private static JSONObject buildManifestJson(Context context) throws JSONException {
         DiagnosticMemoryRing ring = DiagnosticMemoryRing.getInstance();
         JSONObject json = new JSONObject();
-        json.put("schemaVersion", 1);
+        json.put("schemaVersion", SCHEMA_VERSION);
         json.put("exportedAt", isoNow());
         json.put("runId", ring.runId());
         json.put("appVersion", appVersionName(context));
@@ -173,7 +176,7 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    static JSONObject buildMetricsJson(String salt) throws JSONException {
+    static JSONObject buildMetricsJson() throws JSONException {
         JSONObject json = new JSONObject();
 
         NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
@@ -192,8 +195,8 @@ public final class DiagnosticLogExporter {
         for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
             MuxTransport.TrafficSnapshot s = e.getValue();
             JSONObject device = new JSONObject();
-            device.put("serverHash", DiagnosticIdHasher.hash(salt, NetworkTrafficStats.serverOfKey(e.getKey())));
-            device.put("deviceHash", DiagnosticIdHasher.hash(salt, NetworkTrafficStats.deviceOfKey(e.getKey())));
+            device.put("serverHash", DiagnosticIdHasher.processHash(NetworkTrafficStats.serverOfKey(e.getKey())));
+            device.put("deviceHash", DiagnosticIdHasher.processHash(NetworkTrafficStats.deviceOfKey(e.getKey())));
             device.put("rxFrames", s.rxFrames);
             device.put("rxBytes", s.rxBytes);
             device.put("txFrames", s.txFrames);
@@ -269,6 +272,16 @@ public final class DiagnosticLogExporter {
         resumeJson.put("mailboxRecoveredCount", resume.mailboxRecoveredCount);
         resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
         json.put("resume", resumeJson);
+
+        List<DeviceConnection.DiagnosticsSnapshot> connections =
+            DeviceConnectionDiagnosticsRegistry.snapshotAll();
+        json.put("outboundQueue", aggregateOutboundQueue(connections));
+        json.put("inboundDrops", aggregateInboundDrops(connections));
+        json.put("connectionRecovery", aggregateConnectionRecovery(connections));
+        json.put("screenPipelineAggregate",
+            longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateScreenPipeline()));
+        json.put("historyLoaderAggregate",
+            longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateHistoryLoader()));
         return json;
     }
 
@@ -278,13 +291,195 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    private static JSONObject buildStateJson() throws JSONException {
+    private static JSONObject longMapJson(Map<String, Long> map) throws JSONException {
+        JSONObject json = new JSONObject();
+        if (map == null) return json;
+        for (Map.Entry<String, Long> entry : map.entrySet()) {
+            json.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : 0L);
+        }
+        return json;
+    }
+
+    private static JSONObject aggregateOutboundQueue(
+        List<DeviceConnection.DiagnosticsSnapshot> connections) throws JSONException {
+        long currentFrames = 0L;
+        long currentBytes = 0L;
+        long highWaterFrames = 0L;
+        long highWaterBytes = 0L;
+        long acceptedCount = 0L;
+        long webSocketEnqueuedCount = 0L;
+        long queueFullCount = 0L;
+        long channelNotOpenCount = 0L;
+        long transportRejectedCount = 0L;
+        long connectionStoppedCount = 0L;
+        long residenceCount = 0L;
+        long residenceTotalNanos = 0L;
+        long residenceMaxNanos = 0L;
+        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
+            MuxOutboundQueue.Snapshot q = connection.outboundQueue;
+            if (q == null) continue;
+            currentFrames += q.currentFrames;
+            currentBytes += q.currentBytes;
+            if (q.highWaterFrames > highWaterFrames) highWaterFrames = q.highWaterFrames;
+            if (q.highWaterBytes > highWaterBytes) highWaterBytes = q.highWaterBytes;
+            acceptedCount += q.acceptedCount;
+            webSocketEnqueuedCount += q.webSocketEnqueuedCount;
+            queueFullCount += q.queueFullCount;
+            channelNotOpenCount += q.channelNotOpenCount;
+            transportRejectedCount += q.transportRejectedCount;
+            connectionStoppedCount += q.connectionStoppedCount;
+            residenceCount += q.residenceCount;
+            residenceTotalNanos += q.residenceTotalNanos;
+            if (q.residenceMaxNanos > residenceMaxNanos) residenceMaxNanos = q.residenceMaxNanos;
+        }
+        JSONObject json = new JSONObject();
+        json.put("connectionCount", connections.size());
+        json.put("currentFrames", currentFrames);
+        json.put("currentBytes", currentBytes);
+        json.put("highWaterFrames", highWaterFrames);
+        json.put("highWaterBytes", highWaterBytes);
+        json.put("acceptedCount", acceptedCount);
+        json.put("webSocketEnqueuedCount", webSocketEnqueuedCount);
+        json.put("queueFullCount", queueFullCount);
+        json.put("channelNotOpenCount", channelNotOpenCount);
+        json.put("transportRejectedCount", transportRejectedCount);
+        json.put("connectionStoppedCount", connectionStoppedCount);
+        json.put("residenceCount", residenceCount);
+        json.put("residenceTotalNanos", residenceTotalNanos);
+        json.put("residenceMaxNanos", residenceMaxNanos);
+        return json;
+    }
+
+    private static JSONObject aggregateInboundDrops(
+        List<DeviceConnection.DiagnosticsSnapshot> connections) throws JSONException {
+        long staleTransportGenerationDropped = 0L;
+        long tunnelDecodeFailed = 0L;
+        long unknownChannelDropped = 0L;
+        long channelNotOpenDropped = 0L;
+        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
+            DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
+            if (drops == null) continue;
+            staleTransportGenerationDropped += drops.staleTransportGenerationDropped;
+            tunnelDecodeFailed += drops.tunnelDecodeFailed;
+            unknownChannelDropped += drops.unknownChannelDropped;
+            channelNotOpenDropped += drops.channelNotOpenDropped;
+        }
+        JSONObject json = new JSONObject();
+        json.put("connectionCount", connections.size());
+        json.put("staleTransportGenerationDropped", staleTransportGenerationDropped);
+        json.put("tunnelDecodeFailed", tunnelDecodeFailed);
+        json.put("unknownChannelDropped", unknownChannelDropped);
+        json.put("channelNotOpenDropped", channelNotOpenDropped);
+        return json;
+    }
+
+    private static JSONObject aggregateConnectionRecovery(
+        List<DeviceConnection.DiagnosticsSnapshot> connections) throws JSONException {
+        int activeRecoveryCount = 0;
+        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
+            if (connection.recoveryId != null && !connection.recoveryId.isEmpty()) {
+                activeRecoveryCount++;
+            }
+        }
+        JSONObject json = new JSONObject();
+        json.put("connectionCount", connections.size());
+        json.put("activeRecoveryCount", activeRecoveryCount);
+        return json;
+    }
+
+    static JSONObject buildStateJson() throws JSONException {
         DiagnosticMemoryRing ring = DiagnosticMemoryRing.getInstance();
+        DiagnosticMemoryRing.RingStats stats = ring.ringStats();
         JSONObject json = new JSONObject();
         json.put("generatedAt", isoNow());
         json.put("runId", ring.runId());
-        json.put("memoryEntryCount", ring.entryCount());
-        json.put("memoryTotalBytes", ring.totalBytes());
+
+        JSONObject eventRing = new JSONObject();
+        eventRing.put("entryCount", stats.entryCount);
+        eventRing.put("totalBytes", stats.totalBytes);
+        eventRing.put("droppedEntryCount", stats.droppedEntryCount);
+        eventRing.put("oldestSeq", stats.oldestSeq);
+        eventRing.put("newestSeq", stats.newestSeq);
+        eventRing.put("oldestAt", stats.oldestAt);
+        eventRing.put("newestAt", stats.newestAt);
+        json.put("eventRing", eventRing);
+
+        JSONArray connections = new JSONArray();
+        for (DeviceConnection.DiagnosticsSnapshot connection :
+            DeviceConnectionDiagnosticsRegistry.snapshotAll()) {
+            connections.put(connectionStateJson(connection));
+        }
+        json.put("connections", connections);
+
+        JSONArray terminalSessions = new JSONArray();
+        JSONArray historyLoaders = new JSONArray();
+        for (TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot session :
+            TerminalPipelineDiagnosticsRegistry.snapshotAll()) {
+            String sessionHash = DiagnosticIdHasher.processHash(session.sessionId);
+            JSONObject terminal = new JSONObject();
+            terminal.put("sessionHash", sessionHash);
+            terminal.put("state", session.state);
+            terminal.put("pipeline", mapToJson(session.pipeline));
+            terminalSessions.put(terminal);
+
+            JSONObject loader = new JSONObject();
+            loader.put("sessionHash", sessionHash);
+            for (Map.Entry<String, Object> entry : session.historyLoader.entrySet()) {
+                loader.put(entry.getKey(), entry.getValue());
+            }
+            historyLoaders.put(loader);
+        }
+        json.put("terminalSessions", terminalSessions);
+        json.put("historyLoaders", historyLoaders);
+        return json;
+    }
+
+    private static JSONObject connectionStateJson(DeviceConnection.DiagnosticsSnapshot connection)
+        throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("serverHash", DiagnosticIdHasher.processHash(connection.baseUrl));
+        json.put("deviceHash", DiagnosticIdHasher.processHash(connection.deviceId));
+        json.put("connectionHash", DiagnosticIdHasher.processHash(connection.connectionId));
+        if (connection.recoveryId != null && !connection.recoveryId.isEmpty()) {
+            json.put("recoveryHash", DiagnosticIdHasher.processHash(connection.recoveryId));
+        }
+        json.put("physicalConnected", connection.physicalConnected);
+        json.put("physicalConnecting", connection.physicalConnecting);
+        json.put("transportGeneration", connection.transportGeneration);
+        json.put("activeChannelCount", connection.activeChannelCount);
+        MuxOutboundQueue.Snapshot q = connection.outboundQueue;
+        if (q != null) {
+            JSONObject outbound = new JSONObject();
+            outbound.put("currentFrames", q.currentFrames);
+            outbound.put("currentBytes", q.currentBytes);
+            outbound.put("highWaterFrames", q.highWaterFrames);
+            outbound.put("highWaterBytes", q.highWaterBytes);
+            outbound.put("acceptedCount", q.acceptedCount);
+            outbound.put("webSocketEnqueuedCount", q.webSocketEnqueuedCount);
+            outbound.put("queueFullCount", q.queueFullCount);
+            outbound.put("channelNotOpenCount", q.channelNotOpenCount);
+            outbound.put("transportRejectedCount", q.transportRejectedCount);
+            outbound.put("connectionStoppedCount", q.connectionStoppedCount);
+            json.put("outboundQueue", outbound);
+        }
+        DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
+        if (drops != null) {
+            JSONObject inbound = new JSONObject();
+            inbound.put("staleTransportGenerationDropped", drops.staleTransportGenerationDropped);
+            inbound.put("tunnelDecodeFailed", drops.tunnelDecodeFailed);
+            inbound.put("unknownChannelDropped", drops.unknownChannelDropped);
+            inbound.put("channelNotOpenDropped", drops.channelNotOpenDropped);
+            json.put("inboundDrops", inbound);
+        }
+        return json;
+    }
+
+    private static JSONObject mapToJson(Map<String, Object> map) throws JSONException {
+        JSONObject json = new JSONObject();
+        if (map == null) return json;
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            json.put(entry.getKey(), entry.getValue());
+        }
         return json;
     }
 
@@ -301,47 +496,6 @@ public final class DiagnosticLogExporter {
         } catch (PackageManager.NameNotFoundException e) {
             return "unknown";
         }
-    }
-
-    static String buildTrafficSummary(String salt) {
-        NetworkTrafficStats.Snapshot network = NetworkTrafficStats.snapshot();
-        TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
-        StringBuilder sb = new StringBuilder();
-        sb.append("WebTerm Network Traffic Summary (Android only)\n");
-        sb.append("===============================================\n");
-        sb.append("NOTE: This file contains Android-side statistics only.\n");
-        sb.append("For Go Agent statistics, run `webterm diagnostics summary` or\n");
-        sb.append("`webterm diagnostics export` in a terminal on the computer running the Agent.\n\n");
-        sb.append("uidRxBytes=").append(network.uid.rxBytes).append('\n');
-        sb.append("uidTxBytes=").append(network.uid.txBytes).append('\n');
-        sb.append("uidSupported=").append(network.uid.supported).append('\n');
-        sb.append("websocketRxFrames=").append(network.websocket.rxFrames).append('\n');
-        sb.append("websocketRxBytes=").append(network.websocket.rxBytes).append('\n');
-        sb.append("websocketTxFrames=").append(network.websocket.txFrames).append('\n');
-        sb.append("websocketTxBytes=").append(network.websocket.txBytes).append('\n');
-        if (!network.websocketByDevice.isEmpty()) {
-            sb.append("\n[WebSocket by device]\n");
-            for (Map.Entry<String, MuxTransport.TrafficSnapshot> e : network.websocketByDevice.entrySet()) {
-                MuxTransport.TrafficSnapshot s = e.getValue();
-                sb.append("serverHash=").append(DiagnosticIdHasher.hash(salt, NetworkTrafficStats.serverOfKey(e.getKey())))
-                  .append(" deviceHash=").append(DiagnosticIdHasher.hash(salt, NetworkTrafficStats.deviceOfKey(e.getKey())))
-                  .append(" rxFrames=").append(s.rxFrames)
-                  .append(" rxBytes=").append(s.rxBytes)
-                  .append(" txFrames=").append(s.txFrames)
-                  .append(" txBytes=").append(s.txBytes)
-                  .append('\n');
-            }
-        }
-        sb.append('\n');
-        sb.append("screenBaselineCount=").append(screen.baselineFrameCount).append('\n');
-        sb.append("screenBaselineBytes=").append(screen.baselineFrameBytes).append('\n');
-        sb.append("screenPatchCount=").append(screen.commitFrameCount).append('\n');
-        sb.append("screenPatchBytes=").append(screen.commitFrameBytes).append('\n');
-        sb.append("screenHistoryRangeCount=").append(screen.historyRangeFrameCount).append('\n');
-        sb.append("screenHistoryRangeBytes=").append(screen.historyRangeFrameBytes).append('\n');
-        sb.append("screenOtherCount=").append(screen.otherFrameCount).append('\n');
-        sb.append("screenOtherBytes=").append(screen.otherFrameBytes).append('\n');
-        return sb.toString();
     }
 
     private static void shareArchive(Activity activity, File archive) {

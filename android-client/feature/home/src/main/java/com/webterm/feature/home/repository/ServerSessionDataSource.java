@@ -5,6 +5,7 @@ import android.os.Looper;
 
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.session.ChannelFailure;
+import com.webterm.core.session.ConnectionCloseReason;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.feature.home.domain.SessionMessageParser;
@@ -77,8 +78,9 @@ public final class ServerSessionDataSource {
 
     public void stop(ServerConfig server) {
         DeviceConnection connection = connectionFor(server);
-        connection.closeChannel(managerChannelId(server));
-        deviceConnectionRegistry.releaseIfIdle(connection);
+        connection.closeChannelAndReleaseIfIdle(managerChannelId(server),
+            ConnectionCloseReason.CHANNELS_IDLE,
+            () -> deviceConnectionRegistry.removeIfSame(connection));
     }
 
     private DeviceConnection connectionFor(ServerConfig server) {

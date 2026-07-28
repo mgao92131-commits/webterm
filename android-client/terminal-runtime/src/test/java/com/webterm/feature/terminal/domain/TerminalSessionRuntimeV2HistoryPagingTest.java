@@ -39,7 +39,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-/** Segment 加载路径诊断：pump early-return 与 fetch_begin。 */
+/** Segment 加载路径诊断：loader 状态转换与 fetch 生命周期。 */
 public class TerminalSessionRuntimeV2HistoryPagingTest {
   private RecordingSink sink;
 
@@ -86,7 +86,7 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
     runtime.onVisibleHistoryDemand(1, 64, 1, -1, 20);
 
     assertTrue(sink.hasEvent("history_segment", "demand_updated"));
-    assertTrue(sink.hasEventWithReason("history_segment", "pump_idle", "sealed_zero"));
+    assertTrue(sink.hasEventWithReason("history_segment", "history_loader_blocked", "sealed_zero"));
   }
 
   @Test
@@ -99,7 +99,7 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
 
     runtime.onVisibleHistoryDemand(1, 64, 1, -1, 20);
 
-    assertTrue(sink.hasEventWithReason("history_segment", "pump_idle", "no_source"));
+    assertTrue(sink.hasEventWithReason("history_segment", "history_loader_blocked", "no_source"));
   }
 
   @Test
@@ -122,7 +122,23 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
     runtime.onVisibleHistoryDemand(1, 64, 1, -1, 20);
 
     assertNotNull(requested.get());
-    assertTrue(sink.hasEvent("history_segment", "fetch_begin"));
+    assertTrue(sink.hasEvent("history_segment", "history_fetch_started"));
+  }
+
+  @Test
+  public void identicalDemandDoesNotEmitSecondDemandUpdated() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baseline(/*sealedThrough*/ 256)));
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("diag-dedup", model, Runnable::run);
+    connect(runtime);
+    runtime.enterLiveForTest();
+    runtime.setHistorySegmentSource(idleSource());
+
+    runtime.onVisibleHistoryDemand(1, 64, 1, -1, 20);
+    assertEquals(1, sink.countEvents("history_segment", "demand_updated"));
+
+    runtime.onVisibleHistoryDemand(1, 64, 1, -1, 20);
+    assertEquals(1, sink.countEvents("history_segment", "demand_updated"));
   }
 
   @Test
@@ -278,6 +294,14 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
         if (area.equals(recorded.area) && event.equals(recorded.event)) return true;
       }
       return false;
+    }
+
+    int countEvents(String area, String event) {
+      int count = 0;
+      for (Recorded recorded : events) {
+        if (area.equals(recorded.area) && event.equals(recorded.event)) count++;
+      }
+      return count;
     }
 
     boolean hasEventWithReason(String area, String event, String reason) {

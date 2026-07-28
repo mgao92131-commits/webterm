@@ -74,6 +74,11 @@ public final class DeviceConnectionRegistry {
             managers.remove(key);
             manager = null;
         }
+        // 已 stop 的实例禁止复用；removeIfSame 用实例比较，避免误删替换后的新 manager。
+        if (manager != null && manager.isStopped()) {
+            removeIfSameLocked(manager);
+            manager = null;
+        }
         if (manager == null) {
             StateHandler state = stateHandlerFactory.create(key);
             manager = new DeviceConnection(
@@ -91,10 +96,23 @@ public final class DeviceConnectionRegistry {
         return manager;
     }
 
-    public synchronized void releaseIfIdle(DeviceConnection manager) {
+    /**
+     * control-listener 移除后的回收入口。idle 判定与 stop 落到 manager 的 stateHandler，
+     * 避免与 channel 关闭并发时读到陈旧 activeChannelCount。
+     */
+    public void releaseIfIdle(DeviceConnection manager) {
         if (manager == null) return;
-        if (!manager.isIdle()) return;
-        forceReleaseLocked(manager);
+        manager.scheduleReleaseIfIdle(ConnectionCloseReason.CONTROL_LISTENER_REMOVED,
+            () -> removeIfSame(manager));
+    }
+
+    /**
+     * 仅当 map 中仍是该实例时移除；不会误删已经替换的新 manager。
+     * 调用方若已在 stateHandler 上 stop，则只做移除；否则由 forceRelease 负责 stop。
+     */
+    public synchronized void removeIfSame(DeviceConnection expected) {
+        if (expected == null) return;
+        removeIfSameLocked(expected);
     }
 
     /** 显式删除设备时强制释放连接，不依赖异步 channel 关闭后的再次检查。 */
@@ -108,20 +126,26 @@ public final class DeviceConnectionRegistry {
         String key = DeviceConnectionKeys.direct(configId, baseUrl);
         DeviceConnection manager = managers.remove(key);
         if (manager == null) return;
+        if (manager.isStopped()) return;
         manager.setControlListener(null);
         manager.stop();
     }
 
     private void forceReleaseLocked(DeviceConnection manager) {
+        removeIfSameLocked(manager);
+        if (manager.isStopped()) return;
+        manager.setControlListener(null);
+        manager.stop();
+    }
+
+    private void removeIfSameLocked(DeviceConnection expected) {
         // Collection.removeIf 是 API 24；项目 minSdk 为 23，使用显式迭代保持兼容。
         Iterator<Map.Entry<String, DeviceConnection>> iterator = managers.entrySet().iterator();
         while (iterator.hasNext()) {
-            if (iterator.next().getValue() == manager) {
+            if (iterator.next().getValue() == expected) {
                 iterator.remove();
             }
         }
-        manager.setControlListener(null);
-        manager.stop();
     }
 
     public synchronized void shutdown() {

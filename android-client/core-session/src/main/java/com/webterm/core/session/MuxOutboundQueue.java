@@ -2,15 +2,27 @@ package com.webterm.core.session;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 设备级 Mux 帧有界队列。
  *
  * <p>本类只拥有内存预算、drain 调度标记和停止语义；logical channel 是否已打开、
  * WebSocket 是否接受帧仍由 {@link DeviceConnection} 在其唯一 event loop 上判断。</p>
+ *
+ * <p>成功路径只累计计数器（高水位、驻留时间、accepted/enqueued），不写 Diagnostics 事件；
+ * 拒绝类结果由调用方（DeviceConnection）按需记 WARN。</p>
  */
 public final class MuxOutboundQueue {
+    /** 与 TerminalRenderMetrics 对齐的 8 桶上限（纳秒）：250µs…16ms，最后一桶为 ≥16ms。 */
+    public static final int LATENCY_BUCKET_COUNT = 8;
+    private static final long[] LATENCY_BUCKET_UPPER_BOUNDS_NANOS = {
+        250_000L, 500_000L, 1_000_000L, 2_000_000L,
+        4_000_000L, 8_000_000L, 16_000_000L
+    };
+
     public enum Result {
         LOCAL_ACCEPTED,
         WEBSOCKET_ENQUEUED,
@@ -20,8 +32,50 @@ public final class MuxOutboundQueue {
         CONNECTION_STOPPED
     }
 
+    public enum FrameKind {
+        SCREEN, INPUT, CONTROL, MANAGER, FILE, OTHER
+    }
+
     public interface Completion {
         void onResult(Result result);
+    }
+
+    public static final class Snapshot {
+        public final int currentFrames;
+        public final long currentBytes;
+        public final int highWaterFrames;
+        public final long highWaterBytes;
+        public final long acceptedCount;
+        public final long webSocketEnqueuedCount;
+        public final long queueFullCount;
+        public final long channelNotOpenCount;
+        public final long transportRejectedCount;
+        public final long connectionStoppedCount;
+        public final long residenceCount;
+        public final long residenceTotalNanos;
+        public final long residenceMaxNanos;
+        public final long[] residenceLatencyBuckets;
+
+        Snapshot(int currentFrames, long currentBytes, int highWaterFrames, long highWaterBytes,
+                 long acceptedCount, long webSocketEnqueuedCount, long queueFullCount,
+                 long channelNotOpenCount, long transportRejectedCount, long connectionStoppedCount,
+                 long residenceCount, long residenceTotalNanos, long residenceMaxNanos,
+                 long[] residenceLatencyBuckets) {
+            this.currentFrames = currentFrames;
+            this.currentBytes = currentBytes;
+            this.highWaterFrames = highWaterFrames;
+            this.highWaterBytes = highWaterBytes;
+            this.acceptedCount = acceptedCount;
+            this.webSocketEnqueuedCount = webSocketEnqueuedCount;
+            this.queueFullCount = queueFullCount;
+            this.channelNotOpenCount = channelNotOpenCount;
+            this.transportRejectedCount = transportRejectedCount;
+            this.connectionStoppedCount = connectionStoppedCount;
+            this.residenceCount = residenceCount;
+            this.residenceTotalNanos = residenceTotalNanos;
+            this.residenceMaxNanos = residenceMaxNanos;
+            this.residenceLatencyBuckets = residenceLatencyBuckets;
+        }
     }
 
     static final class Frame {
@@ -29,12 +83,19 @@ public final class MuxOutboundQueue {
         final byte[] payload;
         final boolean binary;
         final Completion completion;
+        final long enqueuedAtNanos;
+        final int payloadBytes;
+        final FrameKind kind;
 
-        Frame(String channelId, byte[] payload, boolean binary, Completion completion) {
+        Frame(String channelId, byte[] payload, boolean binary, Completion completion,
+              long enqueuedAtNanos, int payloadBytes, FrameKind kind) {
             this.channelId = channelId;
             this.payload = payload;
             this.binary = binary;
             this.completion = completion;
+            this.enqueuedAtNanos = enqueuedAtNanos;
+            this.payloadBytes = payloadBytes;
+            this.kind = kind;
         }
     }
 
@@ -55,6 +116,19 @@ public final class MuxOutboundQueue {
     private boolean drainScheduled;
     private boolean accepting = true;
 
+    private int highWaterFrames;
+    private long highWaterBytes;
+    private long acceptedCount;
+    private long webSocketEnqueuedCount;
+    private long queueFullCount;
+    private long channelNotOpenCount;
+    private long transportRejectedCount;
+    private long connectionStoppedCount;
+    private long residenceCount;
+    private long residenceTotalNanos;
+    private long residenceMaxNanos;
+    private final long[] residenceLatencyBuckets = new long[LATENCY_BUCKET_COUNT];
+
     public MuxOutboundQueue(int maxFrames, long maxBytes) {
         if (maxFrames <= 0 || maxBytes <= 0L) {
             throw new IllegalArgumentException("queue budgets must be positive");
@@ -65,12 +139,28 @@ public final class MuxOutboundQueue {
 
     synchronized Offer offer(String channelId, byte[] payload, boolean binary,
                              Completion completion) {
-        if (!accepting) return new Offer(Result.CONNECTION_STOPPED, false);
+        return offer(channelId, payload, binary, inferFrameKind(channelId), completion);
+    }
+
+    synchronized Offer offer(String channelId, byte[] payload, boolean binary, FrameKind kind,
+                             Completion completion) {
+        if (!accepting) {
+            connectionStoppedCount++;
+            return new Offer(Result.CONNECTION_STOPPED, false);
+        }
         if (frames.size() >= maxFrames || bytes + payload.length > maxBytes) {
+            queueFullCount++;
             return new Offer(Result.QUEUE_FULL, false);
         }
-        frames.addLast(new Frame(channelId, payload, binary, completion));
+        FrameKind resolved = kind != null ? kind : FrameKind.OTHER;
+        long enqueuedAt = System.nanoTime();
+        Completion wrapped = wrapCompletion(enqueuedAt, completion);
+        frames.addLast(new Frame(channelId, payload, binary, wrapped, enqueuedAt,
+            payload.length, resolved));
         bytes += payload.length;
+        acceptedCount++;
+        if (frames.size() > highWaterFrames) highWaterFrames = frames.size();
+        if (bytes > highWaterBytes) highWaterBytes = bytes;
         boolean schedule = !drainScheduled;
         drainScheduled = true;
         return new Offer(Result.LOCAL_ACCEPTED, schedule);
@@ -82,7 +172,7 @@ public final class MuxOutboundQueue {
             drainScheduled = false;
             return null;
         }
-        bytes -= frame.payload.length;
+        bytes -= frame.payloadBytes;
         return frame;
     }
 
@@ -101,5 +191,70 @@ public final class MuxOutboundQueue {
 
     synchronized long pendingBytes() {
         return bytes;
+    }
+
+    /** 返回队列深度、高水位与分类累计的不可变快照。 */
+    public synchronized Snapshot snapshot() {
+        return new Snapshot(
+            frames.size(), bytes, highWaterFrames, highWaterBytes,
+            acceptedCount, webSocketEnqueuedCount, queueFullCount,
+            channelNotOpenCount, transportRejectedCount, connectionStoppedCount,
+            residenceCount, residenceTotalNanos, residenceMaxNanos,
+            Arrays.copyOf(residenceLatencyBuckets, residenceLatencyBuckets.length));
+    }
+
+    static FrameKind inferFrameKind(String channelId) {
+        if (channelId == null || channelId.isEmpty()) return FrameKind.OTHER;
+        String id = channelId.toLowerCase(Locale.ROOT);
+        if (id.contains("capture")) return FrameKind.OTHER;
+        if (id.contains("webterm.screen") || id.contains("screen")) return FrameKind.SCREEN;
+        if (id.contains("manager")) return FrameKind.MANAGER;
+        if (id.contains("input")) return FrameKind.INPUT;
+        if (id.contains("control")) return FrameKind.CONTROL;
+        if (id.contains("file")) return FrameKind.FILE;
+        return FrameKind.OTHER;
+    }
+
+    private Completion wrapCompletion(long enqueuedAtNanos, Completion completion) {
+        return result -> {
+            noteResult(result, enqueuedAtNanos);
+            if (completion != null) completion.onResult(result);
+        };
+    }
+
+    private synchronized void noteResult(Result result, long enqueuedAtNanos) {
+        switch (result) {
+            case WEBSOCKET_ENQUEUED:
+                webSocketEnqueuedCount++;
+                recordResidence(System.nanoTime() - enqueuedAtNanos);
+                break;
+            case CHANNEL_NOT_OPEN:
+                channelNotOpenCount++;
+                break;
+            case TRANSPORT_REJECTED:
+                transportRejectedCount++;
+                break;
+            case CONNECTION_STOPPED:
+                connectionStoppedCount++;
+                break;
+            case QUEUE_FULL:
+            case LOCAL_ACCEPTED:
+                break;
+        }
+    }
+
+    private void recordResidence(long nanos) {
+        long safe = Math.max(0L, nanos);
+        residenceCount++;
+        residenceTotalNanos += safe;
+        if (safe > residenceMaxNanos) residenceMaxNanos = safe;
+        int bucket = LATENCY_BUCKET_UPPER_BOUNDS_NANOS.length;
+        for (int i = 0; i < LATENCY_BUCKET_UPPER_BOUNDS_NANOS.length; i++) {
+            if (safe < LATENCY_BUCKET_UPPER_BOUNDS_NANOS[i]) {
+                bucket = i;
+                break;
+            }
+        }
+        residenceLatencyBuckets[bucket]++;
     }
 }

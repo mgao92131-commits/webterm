@@ -75,17 +75,76 @@ public final class DeviceConnection {
     private final String screenOwnerId = UUID.randomUUID().toString();
     private MuxTransport transport;
     private int transportGeneration;
+    /** 单次物理连接 attempt 的诊断 ID（非 transportGeneration）。 */
+    private String connectionId = "";
+    private long connectionStartedAtNanos;
+    private String recoveryId;
+    private long recoveryStartedAtNanos;
+    private int recoveryAttemptCount;
+    private ChannelFailure.Kind recoveryInitialFailure;
     private boolean physicalDesired;
     private volatile boolean physicalConnected;
     private boolean physicalConnecting;
     private int physicalReconnectAttempts;
     private volatile boolean stopped;
+    private volatile ConnectionCloseReason lastCloseReason;
     private final LogicalChannelRegistry channelRegistry = new LogicalChannelRegistry();
     private final MuxOutboundQueue outboundQueue =
         new MuxOutboundQueue(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES);
     private final MuxControlCodec controlCodec = new MuxControlCodec();
     private final DeviceControlPlane controlPlane;
     private volatile int activeChannelCount;
+
+    private long staleTransportGenerationDropped;
+    private long tunnelDecodeFailed;
+    private long unknownChannelDropped;
+    private long channelNotOpenDropped;
+
+    public static final class InboundDropSnapshot {
+        public final long staleTransportGenerationDropped;
+        public final long tunnelDecodeFailed;
+        public final long unknownChannelDropped;
+        public final long channelNotOpenDropped;
+
+        InboundDropSnapshot(long staleTransportGenerationDropped, long tunnelDecodeFailed,
+                            long unknownChannelDropped, long channelNotOpenDropped) {
+            this.staleTransportGenerationDropped = staleTransportGenerationDropped;
+            this.tunnelDecodeFailed = tunnelDecodeFailed;
+            this.unknownChannelDropped = unknownChannelDropped;
+            this.channelNotOpenDropped = channelNotOpenDropped;
+        }
+    }
+
+    /** 诊断导出用连接快照（不含 Cookie / 原始 URL 明文落盘由导出层 hash）。 */
+    public static final class DiagnosticsSnapshot {
+        public final String baseUrl;
+        public final String deviceId;
+        public final String connectionId;
+        public final String recoveryId;
+        public final boolean physicalConnected;
+        public final boolean physicalConnecting;
+        public final int transportGeneration;
+        public final int activeChannelCount;
+        public final MuxOutboundQueue.Snapshot outboundQueue;
+        public final InboundDropSnapshot inboundDrops;
+
+        DiagnosticsSnapshot(String baseUrl, String deviceId, String connectionId, String recoveryId,
+                            boolean physicalConnected, boolean physicalConnecting,
+                            int transportGeneration, int activeChannelCount,
+                            MuxOutboundQueue.Snapshot outboundQueue,
+                            InboundDropSnapshot inboundDrops) {
+            this.baseUrl = baseUrl != null ? baseUrl : "";
+            this.deviceId = deviceId != null ? deviceId : "";
+            this.connectionId = connectionId != null ? connectionId : "";
+            this.recoveryId = recoveryId;
+            this.physicalConnected = physicalConnected;
+            this.physicalConnecting = physicalConnecting;
+            this.transportGeneration = transportGeneration;
+            this.activeChannelCount = activeChannelCount;
+            this.outboundQueue = outboundQueue;
+            this.inboundDrops = inboundDrops;
+        }
+    }
 
     DeviceConnection(Handler handler, String baseUrl, String cookie, String deviceId, TransportFactory transportFactory) {
         this(handler, handler, baseUrl, cookie, deviceId, transportFactory, () -> {});
@@ -103,6 +162,7 @@ public final class DeviceConnection {
         this.deviceId = deviceId == null ? "" : deviceId;
         this.controlPlane = new DeviceControlPlane(this::sendControlInternal);
         installTransport();
+        DeviceConnectionDiagnosticsRegistry.register(this);
     }
 
     private void installTransport() {
@@ -130,7 +190,15 @@ public final class DeviceConnection {
         }
         if (physicalConnected || physicalConnecting) return;
         physicalConnecting = true;
+        connectionId = UUID.randomUUID().toString();
+        connectionStartedAtNanos = System.nanoTime();
         int generation = transportGeneration;
+        if (recoveryId != null) {
+            recoveryAttemptCount++;
+        }
+        Diagnostics.info("device_connection", "transport_connect_requested", physicalFields(
+            "stateBefore", "DISCONNECTED",
+            "stateAfter", "CONNECTING"));
         stateHandler.postDelayed(
             () -> onPhysicalConnectTimeout(generation), PHYSICAL_CONNECT_TIMEOUT_MS);
         transport.start(new MuxTransport.Listener() {
@@ -168,8 +236,46 @@ public final class DeviceConnection {
         physicalConnecting = false;
         physicalConnected = true;
         physicalReconnectAttempts = 0;
+        Diagnostics.info("device_connection", "transport_connected", physicalFields(
+            "stateBefore", "CONNECTING",
+            "stateAfter", "CONNECTED"));
+        controlPlane.sendDiagnosticsConnection(connectionId, recoveryId, transportGeneration);
         controlPlane.onConnected();
         reconcileChannels();
+        maybeEmitTransportRecovered();
+    }
+
+    private void maybeEmitTransportRecovered() {
+        if (recoveryId == null) return;
+        long downtimeMs = Math.max(0L, (System.nanoTime() - recoveryStartedAtNanos) / 1_000_000L);
+        Diagnostics.info("device_connection", "transport_recovered", physicalFields(
+            "attemptCount", recoveryAttemptCount,
+            "downtimeMs", downtimeMs,
+            "initialFailureKind",
+                recoveryInitialFailure != null ? recoveryInitialFailure.name() : "",
+            "stateBefore", "RETRY_WAIT",
+            "stateAfter", "CONNECTED"));
+        clearRecoveryState();
+    }
+
+    private void clearRecoveryState() {
+        recoveryId = null;
+        recoveryStartedAtNanos = 0L;
+        recoveryAttemptCount = 0;
+        recoveryInitialFailure = null;
+    }
+
+    private void beginRecoveryIfNeeded(ChannelFailure failure) {
+        if (recoveryId != null) return;
+        recoveryId = UUID.randomUUID().toString();
+        recoveryStartedAtNanos = System.nanoTime();
+        recoveryAttemptCount = 0;
+        recoveryInitialFailure = failure != null ? failure.kind : ChannelFailure.Kind.MUX_TEMPORARY;
+        Diagnostics.warn("device_connection", "recovery_started", physicalFields(
+            "initialFailureKind", recoveryInitialFailure.name(),
+            "closeCode", failure != null ? failure.code : 0,
+            "stateBefore", "DISCONNECTED",
+            "stateAfter", "RETRY_WAIT"));
     }
 
     private void onPhysicalConnectTimeout(int generation) {
@@ -177,8 +283,15 @@ public final class DeviceConnection {
                 || physicalConnected || !physicalConnecting) return;
         physicalConnecting = false;
         physicalConnected = false;
+        ChannelFailure failure = ChannelFailure.muxTemporary(0, "connect timeout");
+        beginRecoveryIfNeeded(failure);
+        Diagnostics.warn("device_connection", "transport_connect_failed", physicalFields(
+            "failureKind", failure.kind.name(),
+            "closeCode", 0,
+            "stateBefore", "CONNECTING",
+            "stateAfter", "RETRY_WAIT"));
         if (transport != null) transport.close();
-        notifyPhysicalFailure(ChannelFailure.muxTemporary(0, "connect timeout"));
+        notifyPhysicalFailure(failure);
         schedulePhysicalReconnect();
     }
 
@@ -189,15 +302,26 @@ public final class DeviceConnection {
         ChannelFailure failure = code == 401 || code == 403
             ? ChannelFailure.authRequired(code, reason)
             : ChannelFailure.muxTemporary(code, reason);
-        Diagnostics.warn("device_connection", "channel_failed", physicalFields(
-            "transportGeneration", generation,
-            "failureKind", failure.kind.name(),
-            "closeCode", code,
-            "stateBefore", "CONNECTED",
-            "stateAfter", failure.kind == ChannelFailure.Kind.AUTH_REQUIRED ? "STOPPED" : "RETRY_WAIT"));
+        boolean authFailure = failure.kind == ChannelFailure.Kind.AUTH_REQUIRED;
+        if (authFailure) {
+            Diagnostics.warn("device_connection", "transport_disconnected", physicalFields(
+                "failureKind", failure.kind.name(),
+                "closeCode", code,
+                "stateBefore", "CONNECTED",
+                "stateAfter", "STOPPED"));
+        } else {
+            beginRecoveryIfNeeded(failure);
+            Diagnostics.warn("device_connection", "transport_disconnected", physicalFields(
+                "failureKind", failure.kind.name(),
+                "closeCode", code,
+                "stateBefore", "CONNECTED",
+                "stateAfter", "RETRY_WAIT"));
+        }
         notifyPhysicalFailure(failure);
-        if (failure.kind == ChannelFailure.Kind.AUTH_REQUIRED) {
+        if (authFailure) {
+            lastCloseReason = ConnectionCloseReason.AUTH_REQUIRED;
             physicalDesired = false;
+            clearRecoveryState();
             if (transport != null) transport.close();
             return;
         }
@@ -220,8 +344,7 @@ public final class DeviceConnection {
         }
         long cap = Math.min(1_000L * attempt, 8_000L);
         long delayMs = Math.max(200L, (long) (Math.random() * cap));
-        Diagnostics.info("device_connection", "physical_reconnect_scheduled", physicalFields(
-            "transportGeneration", transportGeneration,
+        Diagnostics.info("device_connection", "transport_reconnect_scheduled", physicalFields(
             "retryAttempt", attempt,
             "delayMs", delayMs,
             "stateBefore", "DISCONNECTED",
@@ -311,13 +434,44 @@ public final class DeviceConnection {
     }
 
     private void dispatchBinaryFrame(int generation, byte[] data) {
-        if (generation != transportGeneration || !physicalConnected) return;
+        if (generation != transportGeneration || !physicalConnected) {
+            staleTransportGenerationDropped++;
+            return;
+        }
         WebTermProtocol.TunnelFrame frame = WebTermProtocol.decodeTunnelFrame(data);
-        if (frame == null) return;
+        if (frame == null) {
+            tunnelDecodeFailed++;
+            return;
+        }
         LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.tunnelId);
-        if (channel == null || channel.state != LogicalChannelRegistry.Channel.State.OPEN) return;
+        if (channel == null) {
+            unknownChannelDropped++;
+            return;
+        }
+        if (channel.state != LogicalChannelRegistry.Channel.State.OPEN) {
+            channelNotOpenDropped++;
+            return;
+        }
         boolean binary = (frame.extraByte & 0xff) == WebTermProtocol.WS_DATA_BINARY;
         channel.listener.onData(frame.tunnelId, frame.payload, binary);
+    }
+
+    InboundDropSnapshot inboundDropSnapshot() {
+        return new InboundDropSnapshot(
+            staleTransportGenerationDropped, tunnelDecodeFailed,
+            unknownChannelDropped, channelNotOpenDropped);
+    }
+
+    MuxOutboundQueue.Snapshot outboundQueueSnapshot() {
+        return outboundQueue.snapshot();
+    }
+
+    /** 诊断导出：当前连接的队列/丢弃/身份快照。 */
+    public DiagnosticsSnapshot diagnosticsSnapshot() {
+        return new DiagnosticsSnapshot(
+            baseUrl, deviceId, connectionId, recoveryId,
+            physicalConnected, physicalConnecting, transportGeneration, activeChannelCount,
+            outboundQueue.snapshot(), inboundDropSnapshot());
     }
 
     private boolean sendChannelOpen(LogicalChannelRegistry.Channel channel) {
@@ -345,11 +499,30 @@ public final class DeviceConnection {
             && transport.sendText(msg.toString());
     }
 
-    private void stopPhysical() {
+    private void stopPhysical(ConnectionCloseReason reason) {
+        ConnectionCloseReason closeReason =
+            reason != null ? reason : ConnectionCloseReason.CHANNELS_IDLE;
+        boolean wasDesired = physicalDesired;
+        boolean wasConnected = physicalConnected;
+        boolean wasConnecting = physicalConnecting;
+        long connectedDurationMs = connectionStartedAtNanos > 0L
+            ? Math.max(0L, (System.nanoTime() - connectionStartedAtNanos) / 1_000_000L)
+            : 0L;
+        if (wasDesired || wasConnected || wasConnecting) {
+            Diagnostics.info("device_connection", "transport_close_requested", physicalFields(
+                "reason", closeReason.name(),
+                "pendingOutboundFrames", outboundQueue.pendingFrames(),
+                "pendingOutboundBytes", outboundQueue.pendingBytes(),
+                "connectedDurationMs", connectedDurationMs,
+                "stateBefore", wasConnected ? "CONNECTED" : (wasConnecting ? "CONNECTING" : "DISCONNECTED"),
+                "stateAfter", "STOPPED"));
+        }
+        lastCloseReason = closeReason;
         physicalDesired = false;
         physicalConnected = false;
         physicalConnecting = false;
         physicalReconnectAttempts = 0;
+        clearRecoveryState();
         if (transport != null) transport.close();
     }
 
@@ -378,8 +551,32 @@ public final class DeviceConnection {
         return activeChannelCount == 0 && !controlPlane.hasListener();
     }
 
+    /** Registry 用：已 stop 的实例不得再复用，必须新建 DeviceConnection。 */
+    public boolean isStopped() {
+        return stopped;
+    }
+
     public String deviceId() {
         return deviceId;
+    }
+
+    /** 当前物理连接 attempt 的原始 ID（仅用于可选 diagnostics.connection 控制消息）。 */
+    String connectionIdForDiagnostics() {
+        return connectionId;
+    }
+
+    /** 当前恢复事务 ID；无恢复时为 null。 */
+    String recoveryIdForDiagnostics() {
+        return recoveryId;
+    }
+
+    int transportGenerationForDiagnostics() {
+        return transportGeneration;
+    }
+
+    /** 测试用：是否处于恢复事务中。 */
+    boolean hasActiveRecovery() {
+        return recoveryId != null;
     }
 
     /** 归一化后的 Relay 服务器地址（诊断流量统计按 baseUrl+deviceId 隔离累计）。 */
@@ -501,6 +698,46 @@ public final class DeviceConnection {
         runOnState(() -> closeChannelInternal(channelId));
     }
 
+    /**
+     * 在唯一 stateHandler 上原子执行：关闭 logical channel → 更新计数 →
+     * 若已 idle 则 stopInternal，再通知 Registry 移除本实例。
+     * 产品代码不得再自行组合 {@link #closeChannel} + {@code releaseIfIdle}。
+     *
+     * @param onReleased 已在 stateHandler 上、且仅在本实例因 idle 被 stop 后调用；
+     *                   典型实现为 {@code registry.removeIfSame(this)}。
+     */
+    public void closeChannelAndReleaseIfIdle(String channelId, ConnectionCloseReason reason,
+                                             Runnable onReleased) {
+        if (channelId == null || channelId.isEmpty()) return;
+        final ConnectionCloseReason closeReason =
+            reason != null ? reason : ConnectionCloseReason.CHANNELS_IDLE;
+        runOnState(() -> {
+            closeChannelInternal(channelId);
+            releaseIfIdleOnState(closeReason, onReleased);
+        });
+    }
+
+    /** 将 idle 回收投递到 stateHandler（供 Registry.releaseIfIdle 使用）。 */
+    void scheduleReleaseIfIdle(ConnectionCloseReason reason, Runnable onReleased) {
+        final ConnectionCloseReason closeReason =
+            reason != null ? reason : ConnectionCloseReason.CHANNELS_IDLE;
+        runOnState(() -> releaseIfIdleOnState(closeReason, onReleased));
+    }
+
+    /**
+     * 已在 stateHandler 上：若 idle 则 stop 并回调 Registry。
+     * control-listener 移除后的回收也走此路径，保证与 channel 关闭同一线程判定。
+     */
+    private void releaseIfIdleOnState(ConnectionCloseReason reason, Runnable onReleased) {
+        if (!isIdle()) return;
+        lastCloseReason = reason != null ? reason : ConnectionCloseReason.CHANNELS_IDLE;
+        if (!stopped) {
+            stopInternal();
+            eventLoopShutdown.run();
+        }
+        if (onReleased != null) onReleased.run();
+    }
+
     private void closeChannelInternal(String channelId) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(channelId);
         if (channel != null) removeChannelIfCurrent(channel);
@@ -539,7 +776,7 @@ public final class DeviceConnection {
             markWaiting(channel);
             notifyFailure(channel, failure);
         }
-        stopPhysical();
+        stopPhysical(ConnectionCloseReason.RECONNECT_RESET);
         installTransport();
         if (autoStart && (wasDesired || channelRegistry.size() > 0)) connectPhysical();
     }
@@ -635,6 +872,7 @@ public final class DeviceConnection {
     private void stopInternal() {
         if (stopped) return;
         stopped = true;
+        DeviceConnectionDiagnosticsRegistry.unregister(this);
         controlPlane.setListener(null);
         for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             sendChannelClose(channel.id);
@@ -642,7 +880,7 @@ public final class DeviceConnection {
         channelRegistry.clear();
         activeChannelCount = 0;
         failPendingTunnelFrames(TunnelSendResult.CONNECTION_STOPPED);
-        stopPhysical();
+        stopPhysical(lastCloseReason != null ? lastCloseReason : ConnectionCloseReason.APP_SHUTDOWN);
     }
 
     private static String terminalChannelRouteKey(String localSessionId, String subprotocol) {
@@ -833,6 +1071,12 @@ public final class DeviceConnection {
         fields.put("deviceHash", DiagnosticIdHasher.processHash(deviceId));
         fields.put("transportGeneration", transportGeneration);
         fields.put("activeChannelCount", activeChannelCount);
+        if (connectionId != null && !connectionId.isEmpty()) {
+            fields.put("connectionHash", DiagnosticIdHasher.processHash(connectionId));
+        }
+        if (recoveryId != null && !recoveryId.isEmpty()) {
+            fields.put("recoveryHash", DiagnosticIdHasher.processHash(recoveryId));
+        }
         addFields(fields, pairs);
         return fields;
     }
@@ -843,6 +1087,12 @@ public final class DeviceConnection {
         fields.put("channelHash", DiagnosticIdHasher.processHash(channel.id));
         fields.put("transportGeneration", transportGeneration);
         fields.put("activeChannelCount", activeChannelCount);
+        if (connectionId != null && !connectionId.isEmpty()) {
+            fields.put("connectionHash", DiagnosticIdHasher.processHash(connectionId));
+        }
+        if (recoveryId != null && !recoveryId.isEmpty()) {
+            fields.put("recoveryHash", DiagnosticIdHasher.processHash(recoveryId));
+        }
         addFields(fields, pairs);
         return fields;
     }

@@ -192,3 +192,8 @@ func TestPhysicalWriterBoundsHighPriorityBurst(t *testing.T) {
 		t.Fatalf("normal write index=%d, want <= %d; writes=%q", normalIndex, maxHighPriorityBurst, socket.writes)
 	}
 }
+
+// 指标埋点不得改变公平调度：连续 maxHighPriorityBurst 条高优先级后必须插入 data。
+func TestPhysicalWriterPrefersDataAfterEightHighBurst(t *testing.T) {
+	TestPhysicalWriterBoundsHighPriorityBurst(t)
+}

@@ -9,7 +9,8 @@ import java.security.SecureRandom;
  * 诊断标识哈希工具：server/deviceId/channelId 等标识一律以
  * SHA-256(salt + ':' + value) 截断 12 位 hex 的形式出现在日志与导出包中。
  * 进程级 salt 在进程启动时随机生成且不落地，保证同次运行内同一标识可关联、
- * 跨运行不可关联；导出时使用每次导出随机生成的 salt，保证跨导出包不可关联。
+ * 跨运行不可关联；导出包与事件日志统一使用 {@link #processHash}，保证同进程内
+ * events / metrics / state 可关联。
  */
 public final class DiagnosticIdHasher {
     /** 对外输出的 hash 长度（hex 字符数）。 */
@@ -49,7 +50,7 @@ public final class DiagnosticIdHasher {
         }
     }
 
-    /** 生成 16 字节随机 salt 的 hex 形式（每次导出生成一次）。 */
+    /** 生成 16 字节随机 salt 的 hex 形式（进程 salt、runId/归档名后缀等）。 */
     public static String randomSalt() {
         byte[] bytes = new byte[16];
         RANDOM.nextBytes(bytes);

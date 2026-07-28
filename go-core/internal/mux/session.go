@@ -40,6 +40,13 @@ type ServeOpts struct {
 	Logger    *logs.Logger
 }
 
+// DiagnosticContext 关联 Android 侧 connection/recovery 诊断 ID（仅存 HashID）。
+type DiagnosticContext struct {
+	ConnectionHash      string
+	RecoveryHash        string
+	TransportGeneration uint64
+}
+
 // Session 是一条 Android 设备连接的 actor。它解析 webterm.mux.v1 外层，
 // 再把 channel payload 直接交给 handler，Agent 内不再伪造第二层 Socket。
 type Session struct {
@@ -50,6 +57,7 @@ type Session struct {
 	onControl ControlHandler
 	logger    *logs.Logger
 	writer    *PhysicalWriter
+	diag      DiagnosticContext
 }
 
 func Serve(conn termsession.Socket, opts *ServeOpts) *Session {
@@ -78,7 +86,15 @@ func (s *Session) readLoop(ctx context.Context) error {
 	for {
 		msgType, data, err := s.conn.Read(ctx)
 		if err != nil {
-			s.event("warn", "mux_read_failed", map[string]any{"reason": errorKind(err)})
+			kind := errorKind(err)
+			switch kind {
+			case "context_cancelled", "stream_closed", "closed", "websocket_closed":
+				s.event("info", "mux_stream_closed", map[string]any{"reason": kind})
+			case "timeout", "io_error":
+				s.event("warn", "mux_read_failed", map[string]any{"reason": kind})
+			default:
+				s.event("error", "mux_read_failed", map[string]any{"reason": kind})
+			}
 			return err
 		}
 		switch msgType {
@@ -106,9 +122,42 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 		s.closeChannel(msg.TunnelConnectionID)
 	case protocol.WSConnected, protocol.WSError:
 		// 服务端角色不应收到这两类回包。
+	case "diagnostics.connection":
+		s.applyDiagnosticsConnection(msg.Raw)
 	default:
 		if s.onControl != nil {
 			s.onControl(ctx, s, msg.Raw)
+		}
+	}
+}
+
+// applyDiagnosticsConnection 接收 Android 侧 diagnostics.connection，仅存 HashID。
+func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
+	if raw == nil {
+		return
+	}
+	if v, ok := raw["connection_id"].(string); ok && v != "" {
+		s.diag.ConnectionHash = logs.HashID(v)
+	}
+	if v, ok := raw["recovery_id"].(string); ok && v != "" {
+		s.diag.RecoveryHash = logs.HashID(v)
+	}
+	switch v := raw["transport_generation"].(type) {
+	case float64:
+		if v >= 0 {
+			s.diag.TransportGeneration = uint64(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n >= 0 {
+			s.diag.TransportGeneration = uint64(n)
+		}
+	case int:
+		if v >= 0 {
+			s.diag.TransportGeneration = uint64(v)
+		}
+	case int64:
+		if v >= 0 {
+			s.diag.TransportGeneration = uint64(v)
 		}
 	}
 }
@@ -267,6 +316,18 @@ func (s *Session) logWriteError(err error) {
 func (s *Session) event(level, event string, fields map[string]any) {
 	if s.logger == nil {
 		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	if s.diag.ConnectionHash != "" {
+		fields["connectionHash"] = s.diag.ConnectionHash
+	}
+	if s.diag.RecoveryHash != "" {
+		fields["recoveryHash"] = s.diag.RecoveryHash
+	}
+	if s.diag.TransportGeneration != 0 {
+		fields["transportGeneration"] = s.diag.TransportGeneration
 	}
 	s.logger.Event(level, "mux", event, fields)
 }

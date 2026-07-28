@@ -18,6 +18,33 @@ import static org.junit.Assert.assertTrue;
 
 public class HistorySegmentLoaderTest {
   @Test
+  public void setDemandDedupReturnsFalseAndIncrementsCount() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    HistorySegmentLoader.Demand demand = new HistorySegmentLoader.Demand(1, 50, 1, -1, 20);
+    assertTrue(loader.setDemand(demand));
+    assertFalse(loader.setDemand(demand));
+    assertEquals(1, loader.demandDeduplicatedCount());
+    assertTrue(loader.setDemand(new HistorySegmentLoader.Demand(1, 51, 1, -1, 20)));
+    assertEquals(1, loader.demandDeduplicatedCount());
+  }
+
+  @Test
+  public void observeStateReportsBlockedTransitions() {
+    HistorySegmentLoader loader = new HistorySegmentLoader();
+    HistorySegmentLoader.StateTransition entered = loader.observeState(
+        HistorySegmentLoader.State.BLOCKED_NO_DEMAND);
+    assertNotNull(entered);
+    assertTrue(entered.enteredBlocked);
+    assertEquals(HistorySegmentLoader.State.BLOCKED_NO_DEMAND, entered.next);
+    assertNull(loader.observeState(HistorySegmentLoader.State.BLOCKED_NO_DEMAND));
+    HistorySegmentLoader.StateTransition left = loader.observeState(
+        HistorySegmentLoader.State.READY);
+    assertNotNull(left);
+    assertTrue(left.leftBlocked);
+    assertEquals("no_demand", left.previousReason);
+  }
+
+  @Test
   public void scrollDoesNotCancelActiveRequest() {
     HistorySegmentLoader loader = new HistorySegmentLoader();
     loader.setDemand(new HistorySegmentLoader.Demand(1, 50, 1, -1, 20));

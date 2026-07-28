@@ -943,6 +943,11 @@ public final class RemoteTerminalModel {
     return publication == null ? null : publication.update;
   }
 
+  /** 最近一次成功 publish 分配的 publicationVersion（含已消费）；从未发布时为 0。 */
+  public long lastPublicationVersion() {
+    return publicationVersion.get();
+  }
+
   public synchronized void requestFullRender() {
     markRenderDirty(true, null, 0, null, rows, false, false, false, -1, -1,
         false, false, false, false, false);
@@ -1151,7 +1156,7 @@ public final class RemoteTerminalModel {
     pendingPublication.getAndUpdate(previous -> {
       if (previous == null) {
         return new RenderPublication(version,
-            new RenderUpdate(currentSnapshot, currentDirty, currentState));
+            new RenderUpdate(version, currentSnapshot, currentDirty, currentState));
       }
       RenderDirtyState mergedDirty = new RenderDirtyState();
       mergedDirty.mergeFrom(previous.update.dirty, rows);
@@ -1160,7 +1165,7 @@ public final class RemoteTerminalModel {
       mergedState.mergeFrom(previous.update.state);
       mergedState.mergeFrom(currentState);
       return new RenderPublication(version,
-          new RenderUpdate(currentSnapshot, mergedDirty, mergedState));
+          new RenderUpdate(version, currentSnapshot, mergedDirty, mergedState));
     });
     } finally {
       TerminalRenderMetrics.renderPublicationDuration(

@@ -34,6 +34,11 @@ public class DiagnosticMemoryRingTest {
         }
         assertEquals(DiagnosticMemoryRing.MAX_ENTRIES, ring.entryCount());
         assertEquals(11L, ring.snapshot().get(0).seq);
+        assertEquals(10L, ring.droppedEntryCount());
+        DiagnosticMemoryRing.RingStats stats = ring.ringStats();
+        assertEquals(10L, stats.droppedEntryCount);
+        assertEquals(11L, stats.oldestSeq);
+        assertEquals(DiagnosticMemoryRing.MAX_ENTRIES + 10L, stats.newestSeq);
     }
 
     @Test

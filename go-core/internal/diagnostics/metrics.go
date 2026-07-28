@@ -29,8 +29,52 @@ type AgentMetrics struct {
 	// 屏幕编码/投影。
 	ScreenEncodeFailureCount atomic.Uint64
 
-	// writer 队列拒绝。
+	// writer 队列与写入。
+	WriterSubmitCount        atomic.Uint64
+	WriterSuccessCount       atomic.Uint64
+	WriterFailureCount       atomic.Uint64
+	WriterTimeoutCount       atomic.Uint64
 	WriterQueueRejectedCount atomic.Uint64
+
+	WriterHighQueueDepth atomic.Uint64
+	WriterDataQueueDepth atomic.Uint64
+	WriterHighWaterDepth atomic.Uint64
+
+	WriterQueueResidenceBuckets DurationBuckets
+	WriterWriteDurationBuckets  DurationBuckets
+}
+
+const DurationBucketCount = 8
+
+// DurationBucketUpperBoundsNanos 与 Android TerminalRenderMetrics 对齐。
+var DurationBucketUpperBoundsNanos = [DurationBucketCount - 1]int64{
+	250_000, 500_000, 1_000_000, 2_000_000,
+	4_000_000, 8_000_000, 16_000_000,
+}
+
+// DurationBuckets 是固定 8 桶延迟直方图。
+type DurationBuckets [DurationBucketCount]atomic.Uint64
+
+func (b *DurationBuckets) Observe(nanos int64) {
+	if nanos < 0 {
+		nanos = 0
+	}
+	bucket := DurationBucketCount - 1
+	for i := 0; i < len(DurationBucketUpperBoundsNanos); i++ {
+		if nanos < DurationBucketUpperBoundsNanos[i] {
+			bucket = i
+			break
+		}
+	}
+	b[bucket].Add(1)
+}
+
+func (b *DurationBuckets) Snapshot() []uint64 {
+	out := make([]uint64, DurationBucketCount)
+	for i := 0; i < DurationBucketCount; i++ {
+		out[i] = b[i].Load()
+	}
+	return out
 }
 
 // NewAgentMetrics 创建一组清零的指标。
@@ -61,15 +105,48 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		capabilities[key] = value
 	}
 	return map[string]any{
-		"relayConnectCount":        m.RelayConnectCount.Load(),
-		"relayDisconnectCount":     m.RelayDisconnectCount.Load(),
-		"relayReconnectCount":      m.RelayReconnectCount.Load(),
-		"relayConnectFailureCount": m.RelayConnectFailureCount.Load(),
-		"muxChannelOpenedCount":    m.MuxChannelOpenedCount.Load(),
-		"muxChannelReplacedCount":  m.MuxChannelReplacedCount.Load(),
-		"muxWriterFailureCount":    m.MuxWriterFailureCount.Load(),
-		"screenEncodeFailureCount": m.ScreenEncodeFailureCount.Load(),
-		"writerQueueRejectedCount": m.WriterQueueRejectedCount.Load(),
-		"capabilities":             capabilities,
+		"relayConnectCount":           m.RelayConnectCount.Load(),
+		"relayDisconnectCount":        m.RelayDisconnectCount.Load(),
+		"relayReconnectCount":         m.RelayReconnectCount.Load(),
+		"relayConnectFailureCount":    m.RelayConnectFailureCount.Load(),
+		"muxChannelOpenedCount":       m.MuxChannelOpenedCount.Load(),
+		"muxChannelReplacedCount":     m.MuxChannelReplacedCount.Load(),
+		"muxWriterFailureCount":       m.MuxWriterFailureCount.Load(),
+		"screenEncodeFailureCount":    m.ScreenEncodeFailureCount.Load(),
+		"writerSubmitCount":           m.WriterSubmitCount.Load(),
+		"writerSuccessCount":          m.WriterSuccessCount.Load(),
+		"writerFailureCount":          m.WriterFailureCount.Load(),
+		"writerTimeoutCount":          m.WriterTimeoutCount.Load(),
+		"writerQueueRejectedCount":    m.WriterQueueRejectedCount.Load(),
+		"writerHighQueueDepth":        m.WriterHighQueueDepth.Load(),
+		"writerDataQueueDepth":        m.WriterDataQueueDepth.Load(),
+		"writerHighWaterDepth":        m.WriterHighWaterDepth.Load(),
+		"writerQueueResidenceBuckets": m.WriterQueueResidenceBuckets.Snapshot(),
+		"writerWriteDurationBuckets":  m.WriterWriteDurationBuckets.Snapshot(),
+		"capabilities":                capabilities,
+	}
+}
+
+func (m *AgentMetrics) ObserveWriterQueueDepth(highDepth, dataDepth int) {
+	if highDepth < 0 {
+		highDepth = 0
+	}
+	if dataDepth < 0 {
+		dataDepth = 0
+	}
+	m.WriterHighQueueDepth.Store(uint64(highDepth))
+	m.WriterDataQueueDepth.Store(uint64(dataDepth))
+	combined := highDepth
+	if dataDepth > combined {
+		combined = dataDepth
+	}
+	for {
+		cur := m.WriterHighWaterDepth.Load()
+		if uint64(combined) <= cur {
+			return
+		}
+		if m.WriterHighWaterDepth.CompareAndSwap(cur, uint64(combined)) {
+			return
+		}
 	}
 }

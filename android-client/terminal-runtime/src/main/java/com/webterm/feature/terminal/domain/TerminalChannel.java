@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.core.session.ChannelFailure;
+import com.webterm.core.session.ConnectionCloseReason;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.terminal.protocol.ScreenMessageV2Builder;
@@ -201,8 +202,10 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   @Override
   public void close() {
     if (deviceConnection != null && channelId != null) {
-      deviceConnection.closeChannel(channelId);
-      deviceConnectionRegistry.releaseIfIdle(deviceConnection);
+      DeviceConnection connection = deviceConnection;
+      String id = channelId;
+      connection.closeChannelAndReleaseIfIdle(id, ConnectionCloseReason.RUNTIME_CLOSED,
+          () -> deviceConnectionRegistry.removeIfSame(connection));
     }
     deviceConnection = null;
     channelId = null;

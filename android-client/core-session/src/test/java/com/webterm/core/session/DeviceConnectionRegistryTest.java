@@ -3,6 +3,7 @@ package com.webterm.core.session;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -84,6 +85,79 @@ public class DeviceConnectionRegistryTest {
 
         assertNotSame(oldManager, newManager);
         assertTrue(factory.transports.get(0).closed.await(2, TimeUnit.SECONDS));
+        registry.forceRelease(newManager);
+    }
+
+    @Test
+    public void closeChannelAndReleaseIfIdleStopsTransportWhenLastChannelCloses() throws Exception {
+        RecordingFactory factory = new RecordingFactory();
+        DeviceConnectionRegistry registry = new DeviceConnectionRegistry(
+            synchronousHandler(), factory, synchronousStateFactory());
+        DeviceConnection manager = registry.forDirectDevice("direct_atomic", "http://host", "");
+        manager.openChannel("ch1", "/ws/sessions", null, new NoOpChannelListener());
+        assertFalse(manager.isIdle());
+
+        manager.closeChannelAndReleaseIfIdle("ch1", ConnectionCloseReason.RUNTIME_CLOSED,
+            () -> registry.removeIfSame(manager));
+
+        assertTrue(manager.isStopped());
+        assertTrue(manager.isIdle());
+        assertTrue(factory.transports.get(0).closed.await(2, TimeUnit.SECONDS));
+
+        DeviceConnection replacement = registry.forDirectDevice("direct_atomic", "http://host", "");
+        assertNotSame(manager, replacement);
+        assertFalse(replacement.isStopped());
+        registry.forceRelease(replacement);
+    }
+
+    @Test
+    public void closeChannelAndReleaseIfIdleKeepsManagerWhenControlListenerPresent() throws Exception {
+        RecordingFactory factory = new RecordingFactory();
+        DeviceConnectionRegistry registry = new DeviceConnectionRegistry(
+            synchronousHandler(), factory, synchronousStateFactory());
+        DeviceConnection manager = registry.forDirectDevice("direct_control", "http://host", "");
+        manager.setControlListener(msg -> {});
+        manager.openChannel("ch1", "/ws/sessions", null, new NoOpChannelListener());
+
+        manager.closeChannelAndReleaseIfIdle("ch1", ConnectionCloseReason.CHANNELS_IDLE,
+            () -> registry.removeIfSame(manager));
+
+        assertFalse("control listener must keep the shared connection", manager.isStopped());
+        assertFalse(manager.isIdle());
+        assertSame(manager, registry.forDirectDevice("direct_control", "http://host", ""));
+        registry.forceRelease(manager);
+    }
+
+    @Test
+    public void getOrCreateDoesNotReturnStoppedManager() throws Exception {
+        RecordingFactory factory = new RecordingFactory();
+        DeviceConnectionRegistry registry = new DeviceConnectionRegistry(
+            synchronousHandler(), factory, synchronousStateFactory());
+        DeviceConnection oldManager = registry.forDirectDevice("direct_stopped", "http://host", "");
+        oldManager.openChannel("ch1", "/ws/sessions", null, new NoOpChannelListener());
+        oldManager.closeChannelAndReleaseIfIdle("ch1", ConnectionCloseReason.RUNTIME_CLOSED,
+            () -> registry.removeIfSame(oldManager));
+        assertTrue(oldManager.isStopped());
+
+        DeviceConnection next = registry.forDirectDevice("direct_stopped", "http://host", "");
+        assertNotSame(oldManager, next);
+        assertFalse(next.isStopped());
+        registry.forceRelease(next);
+    }
+
+    @Test
+    public void removeIfSameDoesNotDeleteReplacementManager() throws Exception {
+        RecordingFactory factory = new RecordingFactory();
+        DeviceConnectionRegistry registry = new DeviceConnectionRegistry(
+            synchronousHandler(), factory, synchronousStateFactory());
+        DeviceConnection oldManager = registry.forDirectDevice("direct_replace", "http://host", "");
+        registry.forceRelease(oldManager);
+        DeviceConnection newManager = registry.forDirectDevice("direct_replace", "http://host", "");
+
+        registry.removeIfSame(oldManager);
+
+        assertSame("async remove of old manager must not drop the replacement",
+            newManager, registry.forDirectDevice("direct_replace", "http://host", ""));
         registry.forceRelease(newManager);
     }
 

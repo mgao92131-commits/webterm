@@ -164,6 +164,7 @@ public final class TerminalSessionRuntime {
   private final AtomicBoolean fullRenderRequestScheduled = new AtomicBoolean();
   private final ScreenMailbox screenMailbox =
       new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
+  private final TerminalPipelineMetrics pipelineMetrics = new TerminalPipelineMetrics();
 
   private volatile State state = State.DISCONNECTED;
   private final LayoutLeaseCoordinator layoutLeaseCoordinator;
@@ -276,6 +277,14 @@ public final class TerminalSessionRuntime {
           }
         }, LEASE_RETRY_BACKOFF_MS, LEASE_REQUEST_TIMEOUT_MS,
         LEASE_FALLBACK_RENEW_MS, LEASE_MIN_RENEW_DELAY_MS);
+    TerminalPipelineDiagnosticsRegistry.register(this);
+  }
+
+  /** 诊断导出：会话 pipeline / history loader 快照。 */
+  @NonNull
+  TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshot() {
+    return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
+        sessionId, state.name(), pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot());
   }
 
   @NonNull
@@ -286,6 +295,11 @@ public final class TerminalSessionRuntime {
   @NonNull
   public RemoteTerminalModel model() {
     return model;
+  }
+
+  @NonNull
+  public TerminalPipelineMetrics pipelineMetrics() {
+    return pipelineMetrics;
   }
 
   /**
@@ -498,8 +512,18 @@ public final class TerminalSessionRuntime {
         throw new IllegalStateException("render consumer is not active for terminal session "
             + sessionId + ": " + ownerType(consumer));
       }
-      return model.consumeRenderUpdate(renderPublicationAuthority);
+      RenderUpdate update = model.consumeRenderUpdate(renderPublicationAuthority);
+      if (update != null) {
+        pipelineMetrics.onRenderConsumed(update.publicationVersion, update.snapshot.screenRevision);
+      }
+      return update;
     }
+  }
+
+  /** VSync 绘制完成后由 Controller 回调，更新 drawn 水位。 */
+  public void onRenderFrameDrawn(long publicationVersion, long screenRevision,
+                                 long drawDurationNanos) {
+    pipelineMetrics.onRenderFrameDrawn(publicationVersion, screenRevision, drawDurationNanos);
   }
 
   private static String ownerType(@Nullable Object owner) {
@@ -583,12 +607,13 @@ public final class TerminalSessionRuntime {
    * <p>定性决策（滚到顶无效果时按序查 Diagnostics area={@code history_segment}）：
    * <ol>
    *   <li>无 {@code demand_updated} → View/Controller 未上报可见历史</li>
-   *   <li>{@code pump_idle} reason={@code sealed_zero} → 服务端未封存，HTTP 不可拉</li>
-   *   <li>{@code pump_idle} reason={@code no_source} → Source 未安装</li>
-   *   <li>有 {@code fetch_begin} 无 {@code fetch_result} → 网络挂起/取消</li>
-   *   <li>{@code fetch_result} + Agent {@code NOT_FOUND} → Catalog 与 Store 不一致</li>
-   *   <li>{@code fetch_result} {@code PROTOCOL} → 段行数/边界与客户端校验不符</li>
-   *   <li>{@code segment_skipped} 连续增长后 {@code pump_idle}/{@code no_target}
+   *   <li>{@code history_loader_blocked} reason={@code sealed_zero} → 服务端未封存，HTTP 不可拉</li>
+   *   <li>{@code history_loader_blocked} reason={@code no_source} → Source 未安装</li>
+   *   <li>有 {@code history_fetch_started} 无 {@code history_fetch_completed/failed}
+   *       → 网络挂起/取消</li>
+   *   <li>{@code history_fetch_failed} + Agent {@code NOT_FOUND} → Catalog 与 Store 不一致</li>
+   *   <li>{@code history_fetch_failed} {@code PROTOCOL} → 段行数/边界与客户端校验不符</li>
+   *   <li>{@code segment_skipped} 连续增长后 {@code history_loader_blocked}/{@code no_target}
    *       → 可见区内已无候选</li>
    * </ol>
    */
@@ -611,8 +636,11 @@ public final class TerminalSessionRuntime {
         }
         return;
       }
-      historyLoader.setDemand(new HistorySegmentLoader.Demand(
-          visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount));
+      HistorySegmentLoader.Demand demand = new HistorySegmentLoader.Demand(
+          visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount);
+      if (!historyLoader.setDemand(demand)) {
+        return;
+      }
       emitHistorySegmentInfo("demand_updated",
           "fromSeq", visibleFromSeq,
           "toSeq", visibleToSeq,
@@ -633,26 +661,26 @@ public final class TerminalSessionRuntime {
 
   private void pumpHistorySegments() {
     if (state != State.LIVE || historyLoader.closed()) {
-      emitPumpIdle("not_live");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_NOT_LIVE);
       return;
     }
     if (historyLoader.activeRequest() != null) {
-      emitPumpIdle("busy");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_BUSY);
       return;
     }
     HistorySegmentSource source = historySegmentSource;
     if (source == null) {
-      emitPumpIdle("no_source");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_NO_SOURCE);
       return;
     }
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (!projection.projectionComplete || projection.historyGeneration < 1) {
-      emitPumpIdle("projection_incomplete");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_PROJECTION_INCOMPLETE);
       return;
     }
     RemoteTerminalModel.RenderSnapshot snap = model.peekRenderSnapshot();
     if (snap == null || !(snap.history instanceof com.webterm.terminal.model.PagedTerminalHistorySnapshot)) {
-      emitPumpIdle("projection_incomplete");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_PROJECTION_INCOMPLETE);
       return;
     }
     com.webterm.terminal.model.PagedTerminalHistorySnapshot history =
@@ -660,17 +688,17 @@ public final class TerminalSessionRuntime {
     com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
     refreshEvictionPins();
     if (catalog.sealedThroughSeq < 1) {
-      emitPumpIdle("sealed_zero");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_NOT_SEALED);
       return;
     }
     if (historyLoader.latestDemand() == null) {
-      emitPumpIdle("no_demand");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_NO_DEMAND);
       return;
     }
     com.webterm.terminal.model.SegmentKey target =
         historyLoader.highestPriorityMissing(catalog, history);
     if (target == null) {
-      emitPumpIdle("no_target");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_NO_TARGET);
       return;
     }
     // 先占住 active，再发起 fetch，避免同步回调看到 active==null 后永久卡住。
@@ -680,24 +708,24 @@ public final class TerminalSessionRuntime {
       if (inner != null) inner.cancel();
     };
     if (!historyLoader.begin(target, cancelProxy)) {
-      emitPumpIdle("busy");
+      observeAndEmitLoaderState(HistorySegmentLoader.State.BLOCKED_BUSY);
       return;
     }
     refreshEvictionPins();
     HistorySegmentLoader.ActiveRequest active = historyLoader.activeRequest();
-    Diagnostics.info("history_segment", "fetch_begin", historySegmentFields(
-        "generation", target.generation,
-        "segmentNumber", target.number,
-        "firstSeq", target.firstSeq(),
-        "lastSeq", target.lastSeq()));
+    observeAndEmitLoaderState(HistorySegmentLoader.State.FETCHING);
+    emitHistoryFetchStarted(active, target);
     HistorySegmentSource.RequestHandle handle = source.fetch(target,
         new HistorySegmentSource.Callback() {
           @Override
           public void onResult(@NonNull HistorySegmentSource.DecodedHistorySegment result) {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
+              long durationMs = historyFetchDurationMs(active);
               historyLoader.complete(active);
-              applyDecodedHistorySegment(result);
+              boolean applyChanged = applyDecodedHistorySegment(result);
+              emitHistoryFetchCompleted(active, result, durationMs, applyChanged);
+              observeAndEmitLoaderState(HistorySegmentLoader.State.READY);
               refreshEvictionPins();
               pumpHistorySegments();
             });
@@ -707,8 +735,10 @@ public final class TerminalSessionRuntime {
           public void onFailure(@NonNull HistorySegmentSource.Failure failure) {
             modelExecutor.execute(() -> {
               if (active == null || !historyLoader.isActive(active)) return;
+              long durationMs = historyFetchDurationMs(active);
               SegmentKey failedKey = active.key;
               historyLoader.complete(active);
+              emitHistoryFetchFailed(active, failure, durationMs);
               refreshEvictionPins();
               boolean terminal = handleSegmentFailure(failure);
               if (terminal) return;
@@ -718,10 +748,11 @@ public final class TerminalSessionRuntime {
                     "generation", failedKey.generation,
                     "segmentNumber", failedKey.number,
                     "failureKind", failure.kind.name()));
-                // 坏段跳过：立刻尝试下一段，避免队头阻塞顶部冷历史。
+                observeAndEmitLoaderState(HistorySegmentLoader.State.READY);
                 pumpHistorySegments();
                 return;
               }
+              historyLoader.markRetryPending();
               scheduleSegmentRetry(failure.retryAfterMs);
             });
           }
@@ -764,7 +795,7 @@ public final class TerminalSessionRuntime {
     model.setEvictionPins(new EvictionPins(visible, anchor, inFlight, null, prefetch));
   }
 
-  private void applyDecodedHistorySegment(
+  private boolean applyDecodedHistorySegment(
       @NonNull HistorySegmentSource.DecodedHistorySegment decoded) {
     com.webterm.terminal.model.HistoryCatalog catalog = model.historyCatalog();
     if (!catalog.acceptsSegment(decoded.key.generation, decoded.firstSeq, decoded.lastSeq)) {
@@ -773,13 +804,7 @@ public final class TerminalSessionRuntime {
           "generation", decoded.key.generation,
           "segmentNumber", decoded.key.number,
           "failureKind", "ACCEPTS_REJECTED"));
-      Diagnostics.info("history_segment", "apply_result", historySegmentFields(
-          "accepted", false,
-          "changed", false,
-          "skipped", true,
-          "generation", decoded.key.generation,
-          "segmentNumber", decoded.key.number));
-      return;
+      return false;
     }
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     HistoryRangeResult range = new HistoryRangeResult(
@@ -795,14 +820,12 @@ public final class TerminalSessionRuntime {
         range, decoded.firstSeq, decoded.firstSeq, decoded.lastSeq);
     if (changed) {
       recordCapturedModelState(false);
+      // 历史段不推进 screenRevision，但会推进 publicationVersion；水位需同步。
+      pipelineMetrics.onModelApplied(
+          model.screenRevision, model.lastPublicationVersion());
       dispatchRenderNeeded();
     }
-    Diagnostics.info("history_segment", "apply_result", historySegmentFields(
-        "accepted", true,
-        "changed", changed,
-        "skipped", false,
-        "generation", decoded.key.generation,
-        "segmentNumber", decoded.key.number));
+    return changed;
   }
 
   /** @return true 表示终态（已清 demand / 需 resync），调用方不应再泵。 */
@@ -830,8 +853,70 @@ public final class TerminalSessionRuntime {
     return false;
   }
 
-  private void emitPumpIdle(@NonNull String reason) {
-    Diagnostics.info("history_segment", "pump_idle", historySegmentFields("reason", reason));
+  private void observeAndEmitLoaderState(@NonNull HistorySegmentLoader.State next) {
+    HistorySegmentLoader.StateTransition transition = historyLoader.observeState(next);
+    if (transition == null) return;
+    if (transition.enteredBlocked) {
+      String reason = HistorySegmentLoader.blockedReason(transition.next);
+      if (reason != null) {
+        Diagnostics.info("history_segment", "history_loader_blocked",
+            historySegmentFields("reason", reason));
+      }
+    }
+    if (transition.leftBlocked) {
+      Diagnostics.info("history_segment", "history_loader_resumed", historySegmentFields(
+          "previousReason", transition.previousReason,
+          "blockedDurationMs", transition.blockedDurationMs,
+          "suppressedPumpCount", transition.suppressedPumpCount));
+    }
+  }
+
+  private static long historyFetchDurationMs(@NonNull HistorySegmentLoader.ActiveRequest active) {
+    return Math.max(0L, (System.nanoTime() - active.startedAtNanos) / 1_000_000L);
+  }
+
+  private void emitHistoryFetchStarted(
+      @NonNull HistorySegmentLoader.ActiveRequest active,
+      @NonNull SegmentKey target) {
+    Diagnostics.info("history_segment", "history_fetch_started", historySegmentFields(
+        "requestId", active.callId,
+        "generation", target.generation,
+        "segmentNumber", target.number,
+        "firstSeq", target.firstSeq(),
+        "lastSeq", target.lastSeq(),
+        "retryAttempt", active.retryAttempt));
+  }
+
+  private void emitHistoryFetchCompleted(
+      @NonNull HistorySegmentLoader.ActiveRequest active,
+      @NonNull HistorySegmentSource.DecodedHistorySegment result,
+      long durationMs,
+      boolean applyChanged) {
+    Diagnostics.info("history_segment", "history_fetch_completed", historySegmentFields(
+        "requestId", active.callId,
+        "generation", result.key.generation,
+        "segmentNumber", result.key.number,
+        "firstSeq", result.firstSeq,
+        "lastSeq", result.lastSeq,
+        "durationMs", durationMs,
+        "decodedLineCount", result.lines.size(),
+        "retryAttempt", active.retryAttempt,
+        "applyChanged", applyChanged));
+  }
+
+  private void emitHistoryFetchFailed(
+      @NonNull HistorySegmentLoader.ActiveRequest active,
+      @NonNull HistorySegmentSource.Failure failure,
+      long durationMs) {
+    Diagnostics.warn("history_segment", "history_fetch_failed", historySegmentFields(
+        "requestId", active.callId,
+        "generation", active.key.generation,
+        "segmentNumber", active.key.number,
+        "firstSeq", active.key.firstSeq(),
+        "lastSeq", active.key.lastSeq(),
+        "durationMs", durationMs,
+        "failureKind", failure.kind.name(),
+        "retryAttempt", active.retryAttempt));
   }
 
   private void emitHistorySegmentInfo(@NonNull String event, Object... pairs) {
@@ -906,6 +991,7 @@ public final class TerminalSessionRuntime {
     renderWakeDispatcher.cancel();
     updateState(State.CLOSED);
     screenMailbox.reset();
+    TerminalPipelineDiagnosticsRegistry.unregister(this);
     // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
     modelExecutor.execute(() -> {
       resetResyncRecovery();
@@ -987,6 +1073,13 @@ public final class TerminalSessionRuntime {
     boolean frameSizeValid = payload.length > 0 && payload.length <= 2 * 1024 * 1024;
     if (state == State.CLOSED) return;
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
+    pipelineMetrics.onFrameReceived(kind.name(), payload.length);
+    if (!frameSizeValid) {
+      pipelineMetrics.incrementInvalidFrameSizeRejected();
+    }
+    if (kind == ScreenMailbox.MessageKind.UNKNOWN) {
+      pipelineMetrics.incrementUnknownEnvelopeCount();
+    }
     // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
     TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payload.length);
     // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse。先做一次廉价的
@@ -999,6 +1092,7 @@ public final class TerminalSessionRuntime {
         messageEpoch, sourceConnection, payload, frameSizeValid, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
     if (offer.droppedBackgroundMessages > 0) {
+      pipelineMetrics.incrementBackgroundDropped(offer.droppedBackgroundMessages);
       Diagnostics.info("screen_protocol", "screen_mailbox_background_dropped", diagnosticFields(
           "droppedMessages", offer.droppedBackgroundMessages,
           "droppedBytes", offer.droppedBackgroundBytes,
@@ -1018,6 +1112,7 @@ public final class TerminalSessionRuntime {
         processed++;
         try {
           if (drain.fence != null) {
+            incrementPipelineFenceCounters(drain.fence);
             if (drain.fence.rebuildChannel) {
               onMailboxFatalControlOverflow(
                   drain.fence.reason, drain.fence.discardedBytes,
@@ -1030,10 +1125,19 @@ public final class TerminalSessionRuntime {
           }
           ScreenMailbox.Message message = drain.message;
           // 旧物理连接已经到达本地但尚未处理的 Snapshot/Patch/Lease 不得跨代际生效。
-          if (message.connectionEpoch != connectionEpoch.get()
-              || (ScreenMailbox.isProjectionMessage(message.kind)
-                  && message.mailboxGeneration != screenMailbox.generation())
-              || message.sourceConnection != connection) continue;
+          if (message.connectionEpoch != connectionEpoch.get()) {
+            pipelineMetrics.incrementStaleConnectionEpochDropped();
+            continue;
+          }
+          if (ScreenMailbox.isProjectionMessage(message.kind)
+              && message.mailboxGeneration != screenMailbox.generation()) {
+            pipelineMetrics.incrementStaleMailboxGenerationDropped();
+            continue;
+          }
+          if (message.sourceConnection != connection) {
+            pipelineMetrics.incrementWrongSourceConnectionDropped();
+            continue;
+          }
           TerminalRenderMetrics.mailboxResidenceDuration(System.nanoTime() - message.enqueuedAtNanos);
           processScreenMessage(message);
         } catch (RuntimeException e) {
@@ -1261,6 +1365,7 @@ public final class TerminalSessionRuntime {
           } finally {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
+          pipelineMetrics.onDecodedScreenRevision(baseline.screenRevision);
           if (!model.applyBaseline(baseline)) {
             if (baseline.preserveCompatibleHistory) {
               baseline = withoutPreservedHistory(baseline);
@@ -1284,6 +1389,7 @@ public final class TerminalSessionRuntime {
         }
         case RESUME_ACCEPTED: {
           TerminalScreenV2Proto.ResumeAccepted accepted = envelope.getResumeAccepted();
+          pipelineMetrics.onDecodedScreenRevision(accepted.getScreenRevision());
           if (!accepted.getInstanceId().equals(model.instanceId)
               || accepted.getLayoutEpoch() != model.layoutEpoch
               || accepted.getScreenRevision() != model.screenRevision
@@ -1301,6 +1407,7 @@ public final class TerminalSessionRuntime {
           TerminalScreenV2Proto.TerminalCommit wire = envelope.getTerminalCommit();
           commitBaseRevision = wire.getBaseRevision();
           commitTargetRevision = wire.getRevision();
+          pipelineMetrics.onDecodedScreenRevision(wire.getRevision());
           failureReason = CommitFailure.INVALID_LINE_DATA.name();
           ScreenMessageV2Validator.validateTerminalCommit(wire, model.rows);
           long mapStartedNanos = System.nanoTime();
@@ -1379,7 +1486,39 @@ public final class TerminalSessionRuntime {
       return;
     }
     TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);
+    updatePipelineAfterApply(envelope.getPayloadCase(), renderChanged);
     if (renderChanged) dispatchRenderNeeded();
+  }
+
+  private void updatePipelineAfterApply(
+      @NonNull TerminalScreenV2Proto.ScreenEnvelope.PayloadCase payloadCase,
+      boolean renderChanged) {
+    switch (payloadCase) {
+      case BASELINE:
+      case TERMINAL_COMMIT:
+        // 用计数器而非 peek：UI 可能在 apply 与水位更新之间已消费 pending。
+        long publishedVersion = renderChanged ? model.lastPublicationVersion() : 0L;
+        pipelineMetrics.onModelApplied(model.screenRevision, publishedVersion);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private void incrementPipelineFenceCounters(@NonNull ScreenMailbox.Fence fence) {
+    String reason = fence.reason;
+    long count = fence.discardedMessages;
+    // oversized 已在 handleScreenMessage 按帧计一次 invalidFrameSizeRejected，此处不再累加。
+    if (reason.contains("oversized")) {
+      return;
+    }
+    if (reason.contains("urgent")) {
+      pipelineMetrics.incrementUrgentOverflowDiscarded(count);
+    } else if (reason.contains("reliable")) {
+      pipelineMetrics.incrementReliableOverflowDiscarded(count);
+    } else if (reason.contains("exceeded")) {
+      pipelineMetrics.incrementProjectionOverflowDiscarded(count);
+    }
   }
 
   private void rebuildScreenChannel(@NonNull String reason) {

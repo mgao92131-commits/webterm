@@ -19,6 +19,13 @@ func TestAgentMetricsCounters(t *testing.T) {
 		"screenEncodeFailureCount": 5,
 		"relayDisconnectCount":     0,
 		"writerQueueRejectedCount": 0,
+		"writerSubmitCount":        0,
+		"writerSuccessCount":       0,
+		"writerFailureCount":       0,
+		"writerTimeoutCount":       0,
+		"writerHighQueueDepth":     0,
+		"writerDataQueueDepth":     0,
+		"writerHighWaterDepth":     0,
 	}
 	for key, want := range checks {
 		got, ok := snapshot[key].(uint64)
@@ -28,6 +35,49 @@ func TestAgentMetricsCounters(t *testing.T) {
 		if got != want {
 			t.Fatalf("snapshot[%q] = %d, want %d", key, got, want)
 		}
+	}
+
+	residenceBuckets, ok := snapshot["writerQueueResidenceBuckets"].([]uint64)
+	if !ok || len(residenceBuckets) != DurationBucketCount {
+		t.Fatalf("writerQueueResidenceBuckets missing or wrong length: %v", snapshot["writerQueueResidenceBuckets"])
+	}
+	writeBuckets, ok := snapshot["writerWriteDurationBuckets"].([]uint64)
+	if !ok || len(writeBuckets) != DurationBucketCount {
+		t.Fatalf("writerWriteDurationBuckets missing or wrong length: %v", snapshot["writerWriteDurationBuckets"])
+	}
+}
+
+func TestDurationBucketsObserve(t *testing.T) {
+	var buckets DurationBuckets
+	buckets.Observe(100_000)
+	buckets.Observe(300_000)
+	buckets.Observe(20_000_000)
+
+	snap := buckets.Snapshot()
+	if snap[0] != 1 || snap[1] != 1 || snap[DurationBucketCount-1] != 1 {
+		t.Fatalf("unexpected bucket counts: %v", snap)
+	}
+}
+
+func TestObserveWriterQueueDepthHighWater(t *testing.T) {
+	m := NewAgentMetrics()
+	m.ObserveWriterQueueDepth(3, 5)
+	if m.WriterHighQueueDepth.Load() != 3 {
+		t.Fatalf("high depth = %d, want 3", m.WriterHighQueueDepth.Load())
+	}
+	if m.WriterDataQueueDepth.Load() != 5 {
+		t.Fatalf("data depth = %d, want 5", m.WriterDataQueueDepth.Load())
+	}
+	if m.WriterHighWaterDepth.Load() != 5 {
+		t.Fatalf("high water = %d, want 5", m.WriterHighWaterDepth.Load())
+	}
+	m.ObserveWriterQueueDepth(2, 4)
+	if m.WriterHighWaterDepth.Load() != 5 {
+		t.Fatalf("high water must not decrease: %d", m.WriterHighWaterDepth.Load())
+	}
+	m.ObserveWriterQueueDepth(8, 1)
+	if m.WriterHighWaterDepth.Load() != 8 {
+		t.Fatalf("high water = %d, want 8", m.WriterHighWaterDepth.Load())
 	}
 }
 

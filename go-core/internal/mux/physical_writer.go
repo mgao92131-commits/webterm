@@ -2,6 +2,7 @@ package mux
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"webterm/go-core/internal/diagnostics"
@@ -11,10 +12,13 @@ import (
 const maxHighPriorityBurst = 8
 
 type physicalWrite struct {
-	ctx     context.Context
-	msgType termsession.MessageType
-	data    []byte
-	result  chan error
+	ctx          context.Context
+	msgType      termsession.MessageType
+	data         []byte
+	result       chan error
+	enqueuedAt   time.Time
+	payloadBytes int
+	highPriority bool
 }
 
 // PhysicalWriter 是一条 mux 物理连接的唯一写入所有者。
@@ -41,13 +45,23 @@ func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
 func (writer *PhysicalWriter) Done() <-chan struct{} { return writer.done }
 
 func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
-	request := physicalWrite{ctx: ctx, msgType: msgType, data: data, result: make(chan error, 1)}
+	diagnostics.Default.WriterSubmitCount.Add(1)
+	request := physicalWrite{
+		ctx:          ctx,
+		msgType:      msgType,
+		data:         data,
+		result:       make(chan error, 1),
+		enqueuedAt:   time.Now(),
+		payloadBytes: len(data),
+		highPriority: high,
+	}
 	queue := writer.dataWrites
 	if high {
 		queue = writer.highWrites
 	}
 	select {
 	case queue <- request:
+		diagnostics.Default.ObserveWriterQueueDepth(len(writer.highWrites), len(writer.dataWrites))
 	case <-ctx.Done():
 		// 排队阶段被 ctx 拒绝（队列满/超时），计入 writer 队列拒绝指标。
 		diagnostics.Default.WriterQueueRejectedCount.Add(1)
@@ -97,8 +111,22 @@ func (writer *PhysicalWriter) Run(ctx context.Context) {
 }
 
 func (writer *PhysicalWriter) perform(request physicalWrite) {
+	residence := time.Since(request.enqueuedAt)
+	diagnostics.Default.WriterQueueResidenceBuckets.Observe(residence.Nanoseconds())
+
 	writeCtx, cancel := context.WithTimeout(request.ctx, 10*time.Second)
+	writeStarted := time.Now()
 	err := writer.conn.Write(writeCtx, request.msgType, request.data)
+	writeDuration := time.Since(writeStarted)
 	cancel()
+	diagnostics.Default.WriterWriteDurationBuckets.Observe(writeDuration.Nanoseconds())
+
+	if err == nil {
+		diagnostics.Default.WriterSuccessCount.Add(1)
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		diagnostics.Default.WriterTimeoutCount.Add(1)
+	} else {
+		diagnostics.Default.WriterFailureCount.Add(1)
+	}
 	request.result <- err
 }

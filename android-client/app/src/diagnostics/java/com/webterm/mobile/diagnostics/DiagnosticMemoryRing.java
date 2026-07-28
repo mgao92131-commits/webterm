@@ -16,7 +16,7 @@ import java.util.TimeZone;
 
 /**
  * 进程级诊断事件内存 Ring：应用启动时创建，进程结束前始终使用同一缓冲区。
- * 达到条数或字节上限后丢弃最旧记录。
+ * 达到条数或字节上限后丢弃最旧记录，并累计 {@link #droppedEntryCount()}。
  */
 public final class DiagnosticMemoryRing {
     public static final int MAX_ENTRIES = 5000;
@@ -29,6 +29,7 @@ public final class DiagnosticMemoryRing {
     private final List<DiagnosticEntry> entries = new ArrayList<>();
     private long totalBytes = 0;
     private long nextSeq = 1;
+    private long droppedEntryCount = 0;
 
     private DiagnosticMemoryRing(String runId) {
         this.runId = runId;
@@ -84,6 +85,47 @@ public final class DiagnosticMemoryRing {
         }
     }
 
+    public long droppedEntryCount() {
+        synchronized (lock) {
+            return droppedEntryCount;
+        }
+    }
+
+    /** Ring 截断与窗口元数据，供 android-state.json 的 eventRing 段。 */
+    public RingStats ringStats() {
+        synchronized (lock) {
+            if (entries.isEmpty()) {
+                return new RingStats(0, totalBytes, droppedEntryCount, 0L, 0L, "", "");
+            }
+            DiagnosticEntry oldest = entries.get(0);
+            DiagnosticEntry newest = entries.get(entries.size() - 1);
+            return new RingStats(
+                entries.size(), totalBytes, droppedEntryCount,
+                oldest.seq, newest.seq, oldest.time, newest.time);
+        }
+    }
+
+    public static final class RingStats {
+        public final int entryCount;
+        public final long totalBytes;
+        public final long droppedEntryCount;
+        public final long oldestSeq;
+        public final long newestSeq;
+        public final String oldestAt;
+        public final String newestAt;
+
+        RingStats(int entryCount, long totalBytes, long droppedEntryCount,
+                  long oldestSeq, long newestSeq, String oldestAt, String newestAt) {
+            this.entryCount = entryCount;
+            this.totalBytes = totalBytes;
+            this.droppedEntryCount = droppedEntryCount;
+            this.oldestSeq = oldestSeq;
+            this.newestSeq = newestSeq;
+            this.oldestAt = oldestAt != null ? oldestAt : "";
+            this.newestAt = newestAt != null ? newestAt : "";
+        }
+    }
+
     private DiagnosticEntry buildEntry(String level, String source, String event,
                                        Map<String, Object> fields, String message) {
         long seq = nextSeq++;
@@ -105,6 +147,7 @@ public final class DiagnosticMemoryRing {
     private void dropOldestLocked() {
         DiagnosticEntry oldest = entries.remove(0);
         totalBytes -= oldest.encodedSize;
+        droppedEntryCount++;
     }
 
     private static Map<String, Object> copyFields(Map<String, ?> fields) {

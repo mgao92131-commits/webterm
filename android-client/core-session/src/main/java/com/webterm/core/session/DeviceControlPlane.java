@@ -48,6 +48,19 @@ final class DeviceControlPlane {
         sender.send(message);
     }
 
+    /** 向 Agent 发送可选 diagnostics.connection，用于跨端关联 connection/recovery。 */
+    void sendDiagnosticsConnection(String connectionId, String recoveryId, int transportGeneration) {
+        if (connectionId == null || connectionId.isEmpty()) return;
+        JSONObject message = new JSONObject();
+        put(message, "type", "diagnostics.connection");
+        put(message, "connection_id", connectionId);
+        if (recoveryId != null && !recoveryId.isEmpty()) {
+            put(message, "recovery_id", recoveryId);
+        }
+        put(message, "transport_generation", transportGeneration);
+        sender.send(message);
+    }
+
     void markActive() {
         if (clientId.isEmpty()) return;
         JSONObject message = new JSONObject();

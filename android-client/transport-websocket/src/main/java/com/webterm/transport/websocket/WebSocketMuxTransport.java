@@ -150,6 +150,9 @@ public final class WebSocketMuxTransport implements MuxTransport {
             Attempt attempt = currentAttempt;
             currentAttempt = null;
             if (attempt == null) return;
+            Diagnostics.info("ws", "ws_close_requested", Map.of(
+                "attempt", attempt.number,
+                "connected", attempt.connected));
             attempt.connected = false;
             ws = attempt.socket;
         }
