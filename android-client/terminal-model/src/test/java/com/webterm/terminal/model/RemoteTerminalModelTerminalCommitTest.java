@@ -64,12 +64,26 @@ public final class RemoteTerminalModelTerminalCommitTest {
     assertEquals("body", history(model).lineBySeq(301).at(0).text);
     assertTrue(model.renderPublicationPendingForTest());
 
+    assertFalse(model.applyHistoryRange(range(
+        V2ModelTestData.line(100, 2, 301, "stale")), 301, 301, 301));
+    assertEquals(99, model.historyIndex().ref(301).lineId);
+    assertEquals("body", history(model).lineBySeq(301).at(0).text);
+  }
+
+  @Test
+  public void sameReferenceAndVersionWithDifferentBodyIsRejected() throws Exception {
+    RemoteTerminalModel model = baseline();
+    model.applyTerminalCommit(scrollCommit(
+        1, 2, 301, 99, 2, V2ModelTestData.line(12, 1, 0, "c")));
+    assertTrue(model.applyHistoryRange(range(
+        V2ModelTestData.line(99, 2, 301, "body")), 301, 301, 301));
+
     try {
       model.applyHistoryRange(range(
-          V2ModelTestData.line(100, 2, 301, "conflict")), 301, 301, 301);
-      fail("conflicting Range binding accepted");
+          V2ModelTestData.line(99, 2, 301, "changed")), 301, 301, 301);
+      fail("same LineID/version with changed body accepted");
     } catch (IllegalArgumentException expected) {
-      assertEquals(99, model.historyIndex().ref(301).lineId);
+      assertEquals("body", history(model).lineBySeq(301).at(0).text);
     }
   }
 
@@ -124,6 +138,61 @@ public final class RemoteTerminalModelTerminalCommitTest {
     assertTrue(model.applyHistoryRange(range(
         V2ModelTestData.line(2001, 1, 301, "new")), 301, 301, 301));
     assertEquals("new", history(model).lineBySeq(301).at(0).text);
+  }
+
+  @Test
+  public void oldRangeAfterAuthoritativeRebindIsIgnoredThenNewBodyLoads() throws Exception {
+    RemoteTerminalModel model = baseline();
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "old-seed", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 300),
+        Collections.singletonList(V2ModelTestData.line(1001, 1, 100, "old")), 0),
+        100, 100, 100));
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 300),
+            Collections.singletonList(new HistoryPush(100, 2001, 1))),
+        null, null, null)));
+
+    assertFalse(model.applyHistoryRange(new HistoryRangeResult(
+        "late-old", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 300),
+        Collections.singletonList(V2ModelTestData.line(1001, 1, 100, "old")), 0),
+        100, 100, 100));
+    assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(100));
+    assertEquals(SlotState.UNLOADED, history(model).slotStateAt(99));
+
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "new", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 300),
+        Collections.singletonList(V2ModelTestData.line(2001, 1, 100, "new")), 0),
+        100, 100, 100));
+    assertEquals("new", history(model).lineBySeq(100).at(0).text);
+  }
+
+  @Test
+  public void historyBodyKeepsItsPhysicalWidthAcrossCurrentResize() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalCell[] screenCells = new TerminalCell[80];
+    TerminalCell[] historyCells = new TerminalCell[200];
+    java.util.Arrays.fill(screenCells, TerminalCell.EMPTY);
+    java.util.Arrays.fill(historyCells, TerminalCell.EMPTY);
+    historyCells[199] = new TerminalCell("z", (byte) 1, null, null);
+    assertTrue(model.applyBaseline(new ScreenBaseline(
+        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 80,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 1),
+        Collections.singletonList(new TerminalLine(10, 1, 0, false, screenCells)),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
+
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "wide", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 1),
+        Collections.singletonList(new TerminalLine(20, 1, 1, false, historyCells)), 0),
+        1, 1, 1));
+    TerminalLine stored = history(model).lineBySeq(1);
+    assertEquals(200, stored.length());
+    assertEquals("z", stored.at(199).text);
+    assertEquals(200, model.lineStore().line(20).length());
   }
 
   @Test

@@ -58,6 +58,10 @@ public final class HistoryRangeLoader {
   @Nullable private ActiveRequest activeRequest;
   private long lifecycleEpoch = 1;
   private long nextCallId = 1;
+  private String observedInstanceId = "";
+  private long observedLayoutEpoch;
+  private long observedGeneration;
+  private long observedServerFirstSeq;
   private boolean closed;
 
   public synchronized void setDemand(@Nullable Demand demand) {
@@ -101,6 +105,7 @@ public final class HistoryRangeLoader {
   public synchronized void resetLifecycle() {
     if (activeRequest != null && activeRequest.handle != null) activeRequest.handle.cancel();
     activeRequest = null;
+    clearObservedServerExtent();
     lifecycleEpoch++;
   }
 
@@ -117,8 +122,11 @@ public final class HistoryRangeLoader {
       @NonNull PagedTerminalHistorySnapshot history) {
     Demand demand = latestDemand;
     if (closed || demand == null || extent.isEmpty()) return null;
-    long from = Math.max(extent.firstSeq, demand.visibleFromSeq);
+    ensureObservedProjection(instanceId, layoutEpoch, generation);
+    long from = Math.max(Math.max(extent.firstSeq, demand.visibleFromSeq),
+        observedServerFirstSeq);
     long to = Math.min(extent.lastSeq, demand.visibleToSeq);
+    if (from > to) return null;
     long missingFrom = 0;
     long missingTo = 0;
     for (long seq = from; seq <= to; seq++) {
@@ -133,6 +141,37 @@ public final class HistoryRangeLoader {
     if (demand.direction < 0) missingFrom = Math.max(extent.firstSeq, missingFrom - PREFETCH_LINES);
     if (demand.direction > 0) missingTo = Math.min(extent.lastSeq, missingTo + PREFETCH_LINES);
     return new Range(instanceId, layoutEpoch, generation, missingFrom, missingTo);
+  }
+
+  /**
+   * 记录 HTTP 已观察到的服务端最旧水位，只抑制已被服务端裁剪区域的重复请求。
+   * 它不修改 WS extent、HistoryIndex 或渲染范围。
+   */
+  public synchronized void observeServerExtent(
+      @NonNull String instanceId, long layoutEpoch, long generation,
+      @NonNull HistoryExtent extent) {
+    ensureObservedProjection(instanceId, layoutEpoch, generation);
+    if (extent.firstSeq > observedServerFirstSeq) {
+      observedServerFirstSeq = extent.firstSeq;
+    }
+  }
+
+  private void ensureObservedProjection(
+      @NonNull String instanceId, long layoutEpoch, long generation) {
+    if (!instanceId.equals(observedInstanceId)
+        || layoutEpoch != observedLayoutEpoch || generation != observedGeneration) {
+      clearObservedServerExtent();
+      observedInstanceId = instanceId;
+      observedLayoutEpoch = layoutEpoch;
+      observedGeneration = generation;
+    }
+  }
+
+  private void clearObservedServerExtent() {
+    observedInstanceId = "";
+    observedLayoutEpoch = 0;
+    observedGeneration = 0;
+    observedServerFirstSeq = 0;
   }
 
   public synchronized boolean begin(

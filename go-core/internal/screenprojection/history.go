@@ -20,6 +20,8 @@ type HistoryChangeIndex struct {
 	firstSeq                 uint64
 	lastSeq                  uint64
 	nextSeq                  uint64
+	mutationVersion          uint64
+	lineage                  []terminalengine.HistoryPush
 }
 
 // sync 在 Projector 的导出提交点同步一次历史索引。返回 true 表示本次发现了
@@ -29,7 +31,10 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	if scrollback == nil {
 		return false
 	}
-	w := scrollback.IndexWindow()
+	w, changed := scrollback.IndexWindowIfChanged(h.mutationVersion)
+	if !changed {
+		return false
+	}
 	gap := false
 	if h.firstSeq != 0 && w.FirstSeq > h.firstSeq {
 		h.WatermarkChangedRevision = revision
@@ -59,6 +64,13 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		last = entry.HistorySeq
 	}
 	h.Changes = next
+	h.lineage = make([]terminalengine.HistoryPush, len(next))
+	for i, change := range next {
+		h.lineage[i] = terminalengine.HistoryPush{
+			HistorySeq: change.HistorySeq, LineID: change.LineID,
+			LineVersion: change.LineVersion,
+		}
+	}
 
 	// 防御性核对：当前驻留窗口非空却没有覆盖到尾部，说明一次 flush 跨过了
 	// 未捕获的 LineID，禁止静默少发。
@@ -69,5 +81,6 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		h.GapRevision = revision
 	}
 	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
+	h.mutationVersion = w.MutationVersion
 	return gap
 }

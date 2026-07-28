@@ -26,13 +26,11 @@ type ScrollbackTrimEvent struct {
 // ScrollbackIndexWindow 是供版本索引使用的完整轻量窗口。它只复制位置身份，
 // 不复制 Cell 切片；边界与 Entries 在同一次 RLock 下取得。
 type ScrollbackIndexWindow struct {
-	FirstSeq uint64
-	LastSeq  uint64
-	NextSeq  uint64
-	Entries  []HistoryIndexEntry
-	// LineIDs is retained for internal tests/diagnostics; ordering decisions
-	// must use Entries[].HistorySeq.
-	LineIDs []uint64
+	FirstSeq        uint64
+	LastSeq         uint64
+	NextSeq         uint64
+	MutationVersion uint64
+	Entries         []HistoryIndexEntry
 }
 
 type HistoryIndexEntry struct {
@@ -74,11 +72,12 @@ type TrackedScrollback struct {
 	maxBytes int
 	bytes    int
 
-	layoutEpoch uint64
-	generation  uint64
-	firstSeq    uint64
-	nextSeq     uint64
-	lines       []ScrollbackEntry
+	layoutEpoch     uint64
+	generation      uint64
+	firstSeq        uint64
+	nextSeq         uint64
+	mutationVersion uint64
+	lines           []ScrollbackEntry
 
 	onTrim func(ScrollbackTrimEvent)
 }
@@ -98,12 +97,13 @@ func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *Track
 		capacity = DefaultScrollbackLineLimit
 	}
 	return &TrackedScrollback{
-		capacity:   capacity,
-		maxBytes:   DefaultScrollbackByteLimit,
-		onTrim:     onTrim,
-		firstSeq:   1,
-		nextSeq:    1,
-		generation: 1,
+		capacity:        capacity,
+		maxBytes:        DefaultScrollbackByteLimit,
+		onTrim:          onTrim,
+		firstSeq:        1,
+		nextSeq:         1,
+		mutationVersion: 1,
+		generation:      1,
 	}
 }
 
@@ -131,6 +131,7 @@ func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 	}
 	t.firstSeq = 1
 	t.nextSeq = uint64(len(t.lines)) + 1
+	t.mutationVersion++
 }
 
 // ResetForReflow discards physical history after a real reflow rebuild. It is
@@ -145,6 +146,7 @@ func (t *TrackedScrollback) ResetForReflow(epoch uint64) {
 	t.nextSeq = 1
 	t.lines = t.lines[:0]
 	t.bytes = 0
+	t.mutationVersion++
 }
 
 // LayoutEpoch 返回当前 layout epoch。
@@ -190,6 +192,7 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	if t.trimToLimitsLocked() {
 		t.fireTrimLocked()
 	}
+	t.mutationVersion++
 }
 
 // Pop 移除并返回最新一行，同时回收尾部 HistorySeq。
@@ -209,6 +212,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	} else {
 		t.firstSeq = t.nextSeq
 	}
+	t.mutationVersion++
 	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID, LineVersion: line.Version}
 }
 
@@ -293,25 +297,28 @@ func (t *TrackedScrollback) Range(fromSeq, toSeq uint64) HistoryRangeResult {
 	return result
 }
 
-// IndexWindow 返回当前完整的轻量位置索引，不复制历史 Cell。
-func (t *TrackedScrollback) IndexWindow() ScrollbackIndexWindow {
+// IndexWindowIfChanged 在 mutationVersion 变化时返回完整轻量索引；未变化
+// 时不分配 Entries。检查版本与复制窗口在同一次 RLock 下完成。
+func (t *TrackedScrollback) IndexWindowIfChanged(previousVersion uint64) (ScrollbackIndexWindow, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	w := ScrollbackIndexWindow{
-		FirstSeq: t.firstSeq,
-		LastSeq:  t.lastSeqLocked(),
-		NextSeq:  t.nextSeq,
+		FirstSeq:        t.firstSeq,
+		LastSeq:         t.lastSeqLocked(),
+		NextSeq:         t.nextSeq,
+		MutationVersion: t.mutationVersion,
+	}
+	if previousVersion == t.mutationVersion {
+		return w, false
 	}
 	if len(t.lines) == 0 {
-		return w
+		return w, true
 	}
 	w.Entries = make([]HistoryIndexEntry, len(t.lines))
-	w.LineIDs = make([]uint64, len(t.lines))
 	for i := range t.lines {
 		w.Entries[i] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID, LineVersion: t.lines[i].Version}
-		w.LineIDs[i] = t.lines[i].LineID
 	}
-	return w
+	return w, true
 }
 
 // lastSeqLocked 返回当前最新 HistorySeq；历史为空时为 firstSeq-1。
@@ -344,6 +351,7 @@ func (t *TrackedScrollback) Clear() {
 	t.bytes = 0
 	// Clear 只是裁剪全部历史，不改变 generation，也不对齐或跳跃 nextSeq。
 	t.firstSeq = t.nextSeq
+	t.mutationVersion++
 	t.fireTrimLocked()
 }
 
@@ -353,6 +361,7 @@ func (t *TrackedScrollback) SetMaxLines(max int) {
 	defer t.mu.Unlock()
 	t.capacity = max
 	if t.trimToLimitsLocked() {
+		t.mutationVersion++
 		t.fireTrimLocked()
 	}
 }
@@ -364,6 +373,7 @@ func (t *TrackedScrollback) SetMaxBytes(max int) {
 	defer t.mu.Unlock()
 	t.maxBytes = max
 	if t.trimToLimitsLocked() {
+		t.mutationVersion++
 		t.fireTrimLocked()
 	}
 }

@@ -51,6 +51,72 @@ func TestHistoryChangeIndexRecordsTrimWatermarkRevision(t *testing.T) {
 	}
 }
 
+func TestHistoryChangeIndexPureScreenRevisionsDoNotAllocateWithTwentyThousandLines(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(20_000, nil)
+	for i := 0; i < 20_000; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+		})
+	}
+	var index HistoryChangeIndex
+	index.sync(sb, 1)
+
+	revision := uint64(1)
+	allocs := testing.AllocsPerRun(1_000, func() {
+		revision++
+		if index.sync(sb, revision) {
+			t.Fatal("unchanged history reported a gap")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("unchanged 20k history allocs/revision=%f, want 0", allocs)
+	}
+}
+
+func BenchmarkHistoryChangeIndexPureScreenRevision20000(b *testing.B) {
+	sb := terminalengine.NewTrackedScrollback(20_000, nil)
+	for i := 0; i < 20_000; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+		})
+	}
+	var index HistoryChangeIndex
+	index.sync(sb, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		index.sync(sb, uint64(i+2))
+	}
+}
+
+func BenchmarkDiffToPatchPureScreenRevisionWith20000History(b *testing.B) {
+	lineage := make([]terminalengine.HistoryPush, 20_000)
+	for i := range lineage {
+		seq := uint64(i + 1)
+		lineage[i] = terminalengine.HistoryPush{
+			HistorySeq: seq, LineID: seq, LineVersion: 1,
+		}
+	}
+	old := terminalengine.ScreenFrame{
+		InstanceID: "i1", Epoch: 1, Seq: 1,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 20_000,
+		},
+		ScrollbackLineage:     lineage,
+		HistoryLineageVersion: 20_001,
+		Screen:                []terminalengine.Line{{ID: 30_001, Version: 1}},
+	}
+	next := old
+	next.Seq = 2
+	next.Cursor = terminalengine.Cursor{Row: 1}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = diffToPatch(old, next)
+	}
+}
+
 func TestDiffToPatchEmitsFiveThousandRebindings(t *testing.T) {
 	old := terminalengine.ScreenFrame{
 		InstanceID: "i1", Epoch: 1, Seq: 1,

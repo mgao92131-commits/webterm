@@ -4,10 +4,35 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
 	"webterm/go-core/internal/terminalengine"
 )
+
+func TestHistoryRangeDoesNotWaitForProjectorProjectionLock(t *testing.T) {
+	_, sb, projector := newHistoryRig(t, 1, 8)
+	sb.Push(headlessterm.ScrollbackLine{
+		LineID: 1, LineVersion: 1,
+		Cells: []headlessterm.Cell{headlessterm.NewCell()},
+	})
+
+	projector.mu.Lock()
+	done := make(chan terminalengine.HistoryRangeData, 1)
+	go func() {
+		done <- projector.HistoryRange(1, 1)
+	}()
+	select {
+	case result := <-done:
+		projector.mu.Unlock()
+		if len(result.Lines) != 1 {
+			t.Fatalf("range lines=%d, want 1", len(result.Lines))
+		}
+	case <-time.After(500 * time.Millisecond):
+		projector.mu.Unlock()
+		t.Fatal("HistoryRange blocked on projector projection lock")
+	}
+}
 
 func newHistoryRig(t *testing.T, rows, cols int) (*terminalengine.Engine, *terminalengine.TrackedScrollback, *Projector) {
 	t.Helper()

@@ -233,6 +233,9 @@ type ScreenFrame struct {
 	HistoryPushes []HistoryPush
 	// ScrollbackLineage 是完整的权威位置索引，只供派生器计算 Push，不编码到 wire。
 	ScrollbackLineage []HistoryPush
+	// HistoryLineageVersion 是进程内 mutation 标记。相同非零版本表示 lineage
+	// 切片完全相同，派生器可跳过完整历史比较；不编码到 wire。
+	HistoryLineageVersion uint64
 }
 
 type HistoryPush struct {

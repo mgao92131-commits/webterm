@@ -933,6 +933,9 @@ public final class TerminalSessionRuntime {
           "currentGeneration", projection.historyGeneration));
       return false;
     }
+    historyLoader.observeServerExtent(
+        decoded.instanceId, decoded.layoutEpoch, decoded.historyGeneration,
+        decoded.currentExtent);
     HistoryRangeResult range = new HistoryRangeResult(
         "range-" + active.callId,
         decoded.instanceId,

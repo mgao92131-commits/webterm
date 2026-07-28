@@ -75,4 +75,39 @@ public final class HistoryRangeLoaderTest {
     assertEquals(1, range.fromSeq);
     assertEquals(5000, range.toSeq);
   }
+
+  @Test
+  public void observedTrimWatermarkSuppressesRequestsWithoutChangingWsExtent() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    loader.setDemand(new HistoryRangeLoader.Demand(1, 20, 1, -1));
+    PagedTerminalHistory history =
+        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
+    HistoryExtent wsExtent = new HistoryExtent(1, 100);
+    history.edit().setExtent(1, 100).setAvailableExtent(1, 100).commit();
+
+    assertEquals(1, loader.firstMissingRange(
+        "i1", 1, 1, wsExtent, history.snapshot()).fromSeq);
+    loader.observeServerExtent("i1", 1, 1, new HistoryExtent(50, 100));
+    assertNull(loader.firstMissingRange("i1", 1, 1, wsExtent, history.snapshot()));
+    assertEquals(new HistoryExtent(1, 100), wsExtent);
+
+    loader.resetLifecycle();
+    assertEquals(1, loader.firstMissingRange(
+        "i1", 1, 1, wsExtent, history.snapshot()).fromSeq);
+  }
+
+  @Test
+  public void observedTrimWatermarkResetsWhenProjectionChanges() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    loader.setDemand(new HistoryRangeLoader.Demand(1, 20, 1, -1));
+    PagedTerminalHistory history =
+        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
+    HistoryExtent extent = new HistoryExtent(1, 100);
+    history.edit().setExtent(1, 100).setAvailableExtent(1, 100).commit();
+    loader.observeServerExtent("i1", 1, 1, new HistoryExtent(50, 100));
+
+    assertNull(loader.firstMissingRange("i1", 1, 1, extent, history.snapshot()));
+    assertEquals(1, loader.firstMissingRange(
+        "i2", 1, 1, extent, history.snapshot()).fromSeq);
+  }
 }

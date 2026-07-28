@@ -614,25 +614,32 @@ public final class RemoteTerminalModel {
     LineStore.Editor lineEditor = targetSurface.lineStore.edit();
     HistoryIndex.Editor historyIndexEditor =
         targetSurface.historyIndex.edit().setExtent(currentExtent);
-    // HTTP Range 补正文；已有绑定必须完全匹配，缺失绑定可由响应建立。
+    // HTTP Range 只补正文。它可能比 WS 位置提交更旧：这种绑定冲突是正常
+    // 乱序，必须丢弃旧正文并让 Loader 按当前 WS Ref 重新请求。
+    List<TerminalLine> appliedLines = new ArrayList<>(normalizedLines.size());
     for (TerminalLine normalized : normalizedLines) {
       if (targetSurface.activeRows.contains(normalized.id)) {
-        throw new IllegalArgumentException("history LineID conflicts with ActiveRows");
+        continue;
       }
       long historySeq = normalized.historySeq;
       HistoryLineRef ref = historyIndexEditor.ref(historySeq);
       if (ref != null
           && (ref.lineId != normalized.id || ref.lineVersion != normalized.version)) {
-        throw new IllegalArgumentException(CommitFailure.HISTORY_PROMOTION_CONFLICT.name());
+        continue;
       }
       int logicalIndex = beforeWrite.findSeqIndex(historySeq);
       if (logicalIndex >= 0 && beforeWrite.slotStateAt(logicalIndex) == SlotState.LOADED) {
-        continue; // 已加载：忽略，不重复写入
+        TerminalLine loaded = beforeWrite.lineBySeq(historySeq);
+        if (loaded == null || !loaded.sameContent(normalized)) {
+          throw new IllegalArgumentException("same history line version changed body");
+        }
+        continue; // 完全相同的正文重放：幂等忽略
       }
       try {
         TerminalLine canonical = lineEditor.put(normalized);
         historyIndexEditor.bind(historySeq, canonical.id, canonical.version);
         editor.put(historySeq, canonical);
+        appliedLines.add(normalized);
       } catch (CommitValidationException invalidLineage) {
         throw new IllegalArgumentException(invalidLineage.failure.name(), invalidLineage);
       }
@@ -650,11 +657,11 @@ public final class RemoteTerminalModel {
     if (activeBuffer == TerminalBufferKind.MAIN) {
       markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
           false, false, false, false, false);
-      mergeHistoryDirtyRange(normalizedLines, false);
+      mergeHistoryDirtyRange(appliedLines, false);
       markTerminalState(false, true, false, false, 0, 0);
       publishPendingRenderUpdate();
     }
-    return !normalizedLines.isEmpty();
+    return !appliedLines.isEmpty();
   }
 
   /** Runtime 更新视口/请求 pins；后续 Baseline/Commit/Range 驱逐共用。 */
@@ -960,11 +967,13 @@ public final class RemoteTerminalModel {
   }
 
   private TerminalLine normalizeHistoryLine(TerminalLine line) {
-    TerminalLine normalized = normalizeCompleteLine(line, columns);
-    if (normalized == null || normalized.id <= 0 || normalized.historySeq <= 0) {
+    if (line == null || line.cells == null
+        || line.cells.length < 1 || line.cells.length > 500
+        || line.id <= 0 || line.version <= 0 || line.historySeq <= 0
+        || !referencesComplete(line)) {
       throw new IllegalStateException("screen.v2 contains invalid history line");
     }
-    return normalized;
+    return line;
   }
 
   /**

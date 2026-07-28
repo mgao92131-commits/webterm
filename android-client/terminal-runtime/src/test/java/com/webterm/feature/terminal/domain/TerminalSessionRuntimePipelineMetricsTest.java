@@ -11,6 +11,10 @@ import androidx.annotation.Nullable;
 import com.google.protobuf.ByteString;
 import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.HistoryLineRef;
+import com.webterm.terminal.model.HistoryMutation;
+import com.webterm.terminal.model.HistoryPush;
+import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
@@ -20,6 +24,7 @@ import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
+import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.ArrayList;
@@ -191,6 +196,53 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
     assertEquals(false, loader.get("hasActiveRequest"));
     assertEquals(false, loader.get("hasDemand"));
+  }
+
+  @Test
+  public void lateOldRangeAfterWsRebindDoesNotReconnectAndNextRangeLoadsCurrentBody()
+      throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "seed", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 300),
+        Collections.singletonList(domainLine(1001, 100, "old")), 0),
+        100, 100, 100));
+    assertTrue(model.applyTerminalCommit(new TerminalCommit(
+        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        new HistoryMutation(new HistoryExtent(1, 300),
+            Collections.singletonList(new HistoryPush(100, 2001, 1))),
+        null, null, null)));
+    model.consumeRenderUpdate();
+
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("range-rebind-race", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    runtime.enterLiveForTest();
+    java.util.concurrent.atomic.AtomicInteger requests =
+        new java.util.concurrent.atomic.AtomicInteger();
+    runtime.setHistoryRangeSource(new HistoryRangeSource() {
+      @Override public RequestHandle fetch(
+          @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback) {
+        int request = requests.incrementAndGet();
+        callback.onResult(new Result(
+            range.instanceId, range.layoutEpoch, range.generation,
+            new HistoryExtent(1, 300),
+            Collections.singletonList(request == 1
+                ? domainLine(1001, 100, "old")
+                : domainLine(2001, 100, "new"))));
+        return () -> {};
+      }
+
+      @Override public void close() {}
+    });
+
+    runtime.onVisibleHistoryDemand(100, 100, 100, 0, 1);
+
+    assertEquals(2, requests.get());
+    assertEquals(0, connection.reconnectCount);
+    assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(100));
+    assertEquals("new", model.lineStore().line(2001).at(0).text);
   }
 
   @Test
@@ -376,6 +428,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
 
   private static final class FakeV2Connection implements TerminalSessionRuntime.ScreenConnection {
     TerminalSessionRuntime.ScreenConnection.Listener listener;
+    int reconnectCount;
 
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
     @Override public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
@@ -400,6 +453,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     @Override public void releaseLayout() {}
     @Override public void sendClipboardResponse(@NonNull String requestId, boolean allowed,
                                                 boolean timeout, @Nullable byte[] data) {}
+    @Override public void requestReconnect(@NonNull String reason) { reconnectCount++; }
     @Override public void close() {}
   }
 }

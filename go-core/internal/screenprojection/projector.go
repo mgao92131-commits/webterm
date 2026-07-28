@@ -218,8 +218,6 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 
 // HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。
 func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	result := p.scrollback.Range(fromSeq, toSeq)
 	exp := newExporter(
 		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
@@ -362,12 +360,6 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	copy(screen, s.screen)
 	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
 	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
-	historyLineage := make([]terminalengine.HistoryPush, len(p.historyChangeIndex.Changes))
-	for i, change := range p.historyChangeIndex.Changes {
-		historyLineage[i] = terminalengine.HistoryPush{LineID: change.LineID,
-			LineVersion: change.LineVersion, HistorySeq: change.HistorySeq}
-	}
-
 	history := terminalengine.HistoryWindow{}
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
@@ -376,32 +368,33 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	}
 
 	return terminalengine.ScreenFrame{
-		Version:              1,
-		Kind:                 terminalengine.FrameSnapshot,
-		SessionID:            p.sessionID,
-		InstanceID:           p.instanceID,
-		Epoch:                epoch,
-		Seq:                  seq,
-		Rows:                 s.rows,
-		Cols:                 s.cols,
-		ActiveBuffer:         s.activeBuffer,
-		ReverseVideo:         s.palette.reverseVideo,
-		DefaultFG:            s.palette.defaultFG,
-		DefaultBG:            s.palette.defaultBG,
-		CursorColor:          s.palette.cursorColor,
-		IndexedPalette:       s.palette.indexed,
-		IndexedPaletteSet:    s.palette.indexedSet,
-		PaletteGeneration:    s.palette.generation,
-		Cursor:               s.cursor,
-		Modes:                s.modes,
-		History:              history,
-		Screen:               screen,
-		Styles:               p.exporter.styleTable.Styles(),
-		Links:                p.exporter.linkTable.Links(),
-		RowChangedRevision:   rowChangedRevision,
-		DictionaryGeneration: p.dictGeneration,
-		HistoryGeneration:    p.historyGeneration,
-		ScrollbackLineage:    historyLineage,
+		Version:               1,
+		Kind:                  terminalengine.FrameSnapshot,
+		SessionID:             p.sessionID,
+		InstanceID:            p.instanceID,
+		Epoch:                 epoch,
+		Seq:                   seq,
+		Rows:                  s.rows,
+		Cols:                  s.cols,
+		ActiveBuffer:          s.activeBuffer,
+		ReverseVideo:          s.palette.reverseVideo,
+		DefaultFG:             s.palette.defaultFG,
+		DefaultBG:             s.palette.defaultBG,
+		CursorColor:           s.palette.cursorColor,
+		IndexedPalette:        s.palette.indexed,
+		IndexedPaletteSet:     s.palette.indexedSet,
+		PaletteGeneration:     s.palette.generation,
+		Cursor:                s.cursor,
+		Modes:                 s.modes,
+		History:               history,
+		Screen:                screen,
+		Styles:                p.exporter.styleTable.Styles(),
+		Links:                 p.exporter.linkTable.Links(),
+		RowChangedRevision:    rowChangedRevision,
+		DictionaryGeneration:  p.dictGeneration,
+		HistoryGeneration:     p.historyGeneration,
+		ScrollbackLineage:     p.historyChangeIndex.lineage,
+		HistoryLineageVersion: p.historyChangeIndex.mutationVersion,
 	}
 }
 
@@ -488,17 +481,20 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 // Push 按 HistorySeq 新增位置生成，与客户端是否持有正文无关。
 func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	var pushes []terminalengine.HistoryPush
-	oldRefs := make(map[uint64]terminalengine.HistoryPush, len(old.ScrollbackLineage))
-	for _, entry := range old.ScrollbackLineage {
-		oldRefs[entry.HistorySeq] = entry
-	}
-	for _, entry := range new.ScrollbackLineage {
-		previous, exists := oldRefs[entry.HistorySeq]
-		if (!exists || previous.LineID != entry.LineID ||
-			previous.LineVersion != entry.LineVersion) &&
-			entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
-			entry.HistorySeq <= new.History.LastIncludedHistorySeq {
-			pushes = append(pushes, entry)
+	if old.HistoryLineageVersion == 0 || new.HistoryLineageVersion == 0 ||
+		old.HistoryLineageVersion != new.HistoryLineageVersion {
+		oldRefs := make(map[uint64]terminalengine.HistoryPush, len(old.ScrollbackLineage))
+		for _, entry := range old.ScrollbackLineage {
+			oldRefs[entry.HistorySeq] = entry
+		}
+		for _, entry := range new.ScrollbackLineage {
+			previous, exists := oldRefs[entry.HistorySeq]
+			if (!exists || previous.LineID != entry.LineID ||
+				previous.LineVersion != entry.LineVersion) &&
+				entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
+				entry.HistorySeq <= new.History.LastIncludedHistorySeq {
+				pushes = append(pushes, entry)
+			}
 		}
 	}
 	activeBufferChanged := old.ActiveBuffer != new.ActiveBuffer

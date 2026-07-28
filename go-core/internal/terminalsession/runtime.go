@@ -279,7 +279,8 @@ func (r *Runtime) HistoryRange(
 	after := r.Info()
 	data.InstanceID = after.InstanceID
 	data.LayoutEpoch = after.LayoutEpoch
-	if after.InstanceID != before.InstanceID || after.LayoutEpoch != before.LayoutEpoch {
+	if after.InstanceID != before.InstanceID || after.LayoutEpoch != before.LayoutEpoch ||
+		data.HistoryGeneration != generation {
 		data.Status = 0
 		data.Lines = nil
 		data.Styles = nil
