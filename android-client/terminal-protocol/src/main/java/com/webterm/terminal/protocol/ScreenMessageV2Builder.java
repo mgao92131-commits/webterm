@@ -16,8 +16,17 @@ public final class ScreenMessageV2Builder {
   @NonNull
   public static byte[] hello(int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume,
                              int coldHistoryTailLines) {
+    return hello(cols, rows, resume, coldHistoryTailLines,
+        TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO);
+  }
+
+  @NonNull
+  public static byte[] hello(int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume,
+                             int coldHistoryTailLines,
+                             @NonNull TerminalScreenV2Proto.InitialSyncMode initialSyncMode) {
     TerminalScreenV2Proto.Hello.Builder builder = TerminalScreenV2Proto.Hello.newBuilder()
         .setColdHistoryTailLines(coldHistoryTailLines)
+        .setInitialSyncMode(initialSyncMode)
         .setDesiredGeometry(TerminalScreenV2Proto.Geometry.newBuilder()
             .setCols(cols).setRows(rows));
     if (resume != null) builder.setResume(resume);

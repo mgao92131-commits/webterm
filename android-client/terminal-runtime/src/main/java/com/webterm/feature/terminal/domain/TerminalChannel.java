@@ -82,7 +82,13 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
   @Override
   public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
-    return sendHello(resume);
+    return beginSync(resume, false);
+  }
+
+  @Override
+  public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+                           boolean forceBaseline) {
+    return sendHello(resume, forceBaseline);
   }
 
   @Override
@@ -266,11 +272,19 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+    return sendHello(resume, false);
+  }
+
+  private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+                            boolean forceBaseline) {
     if (deviceConnection == null || channelId == null) return false;
+    TerminalScreenV2Proto.InitialSyncMode mode = forceBaseline
+        ? TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE
+        : TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO;
     return deviceConnection.sendTunnelFrame(
         channelId, ScreenMessageV2Builder.hello(
             columns, rows, resume,
-            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT), true);
+            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT, mode), true);
   }
 
   /**

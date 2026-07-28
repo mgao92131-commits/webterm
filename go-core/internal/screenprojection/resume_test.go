@@ -33,7 +33,7 @@ func TestResumeUnchangedIsAccepted(t *testing.T) {
 	projector := NewProjector(engine, sb, "session", "instance")
 	state := projector.ExportState(1, 7)
 
-	result := projector.Resume(resumeTokenFor(state), 1, 7)
+	result := projector.Resume(resumeTokenFor(state), 1, 7, false)
 	if result.Kind != ResumeAccepted {
 		t.Fatalf("kind=%v, want ResumeAccepted", result.Kind)
 	}
@@ -53,7 +53,7 @@ func TestResumeChangedCanSkipRevisionsWithCommit(t *testing.T) {
 	}
 	projector.ExportState(1, 4)
 
-	result := projector.Resume(token, 1, 9)
+	result := projector.Resume(token, 1, 9, false)
 	if result.Kind != ResumeCommit {
 		t.Fatalf("kind=%v, want ResumeCommit", result.Kind)
 	}
@@ -70,14 +70,14 @@ func TestResumeInvalidIdentityAndMalformedTailUseBaseline(t *testing.T) {
 
 	identity := resumeTokenFor(state)
 	identity.ActiveRows[0].LineID = 0
-	if got := projector.Resume(identity, 1, 2).Kind; got != ResumeBaseline {
+	if got := projector.Resume(identity, 1, 2, false).Kind; got != ResumeBaseline {
 		t.Fatalf("invalid active identity kind=%v, want baseline", got)
 	}
 
 	tail := resumeTokenFor(state)
 	tail.ContiguousHistoryTailFirstSeq = 10
 	tail.ContiguousHistoryTailLastSeq = 0
-	if got := projector.Resume(tail, 1, 2).Kind; got != ResumeBaseline {
+	if got := projector.Resume(tail, 1, 2, false).Kind; got != ResumeBaseline {
 		t.Fatalf("malformed tail kind=%v, want baseline", got)
 	}
 }
@@ -92,7 +92,7 @@ func TestResumeCommitDoesNotRepeatClientContiguousHistoryTail(t *testing.T) {
 	token := resumeTokenFor(old)
 
 	writeScrollLines(t, engine, 12, 5)
-	result := projector.Resume(token, 1, 9)
+	result := projector.Resume(token, 1, 9, false)
 	if result.Kind != ResumeCommit {
 		t.Fatalf("kind=%v, want ResumeCommit", result.Kind)
 	}
@@ -117,7 +117,7 @@ func TestResumeCommitWithCurrentTailSendsNoHistoryBody(t *testing.T) {
 	if err := engine.Write([]byte("\x1b[1;1Hchanged")); err != nil {
 		t.Fatal(err)
 	}
-	result := projector.Resume(token, 1, 8)
+	result := projector.Resume(token, 1, 8, false)
 	if result.Kind != ResumeCommit {
 		t.Fatalf("kind=%v, want ResumeCommit", result.Kind)
 	}
@@ -132,7 +132,7 @@ func TestResumeEmptyHistoryTailMaySendNewBodiesAndPromotionsRemainBodyless(t *te
 	token := resumeTokenFor(old)
 	writeScrollLines(t, engine, 0, 8)
 
-	result := projector.Resume(token, 1, 7)
+	result := projector.Resume(token, 1, 7, false)
 	if result.Kind != ResumeCommit {
 		t.Fatalf("kind=%v, want ResumeCommit", result.Kind)
 	}
@@ -157,14 +157,14 @@ func TestResumeTailOutsideCurrentExtentUsesCompatibleBaseline(t *testing.T) {
 	token := resumeTokenFor(state)
 	token.ContiguousHistoryTailLastSeq = state.History.LastIncludedHistorySeq + 1
 
-	result := projector.Resume(token, 1, 4)
+	result := projector.Resume(token, 1, 4, false)
 	if result.Kind != ResumeBaseline || !result.State.PreserveCompatibleHistory {
 		t.Fatalf("invalid tail result=%+v, want compatible baseline", result)
 	}
 
 	token = resumeTokenFor(state)
 	token.HistoryGeneration++
-	result = projector.Resume(token, 1, 4)
+	result = projector.Resume(token, 1, 4, false)
 	if result.Kind != ResumeBaseline || result.State.PreserveCompatibleHistory {
 		t.Fatalf("generation mismatch result=%+v, want reset baseline", result)
 	}

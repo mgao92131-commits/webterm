@@ -64,9 +64,10 @@ type projectedMeta struct {
 	layout       []uint64
 }
 
-// updateChangeIndexLocked 在一次权威状态合并后更新 ChangeIndex（持 p.mu 调用）。
-// seq 是本次导出 revision；prev 是合并前的元数据快照；proj 是刚合并的投影。
-func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj headlessterm.ProjectionRead) {
+// updateChangeIndexScreenLocked 在一次权威状态合并后更新行与元数据索引（持 p.mu
+// 调用）。字典 created revision 须在 assembleFrame 之后单独更新，因为历史窗口
+// 导出会在 assemble 阶段向 style/link 表追加条目。
+func (p *Projector) updateChangeIndexScreenLocked(seq uint64, prev projectedMeta, proj headlessterm.ProjectionRead) {
 	s := &p.projected
 	idx := &p.changeIndex
 
@@ -111,11 +112,14 @@ func (p *Projector) updateChangeIndexLocked(seq uint64, prev projectedMeta, proj
 			idx.PaletteChangedRevision = seq
 		}
 	}
+}
 
-	// 规则 3：字典世代内只追加，新增项记录 created revision。长度缺口填充
-	// 同时覆盖历史范围导出表复用路径在两次导出之间追加的条目——其
-	// created revision 记到下一次导出（偏晚、偏保守：推导时只会多带不会漏带，
-	// 重发字典项幂等无害）。
+// updateChangeIndexDictionaryLocked 在 assembleFrame 之后记录 style/link 的
+// created revision，保证 revision N 帧内已发送的字典项其 created ≤ N。
+func (p *Projector) updateChangeIndexDictionaryLocked(seq uint64) {
+	idx := &p.changeIndex
+
+	// 规则 3：字典世代内只追加，新增项记录 created revision。
 	styles := p.exporter.styleTable.Styles()
 	if len(idx.StyleCreatedRevision) > len(styles) {
 		// 索引不应长于字典（字典重建走 resetDictionary）；防御性截断保持

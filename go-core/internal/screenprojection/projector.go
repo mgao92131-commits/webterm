@@ -361,9 +361,9 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 }
 
 // mergeAndExport 读一次投影、合并进全屏缓存并产出完整 State。产出的帧始终
-// 是完整状态（全屏行 + 元数据），FrameDeriver 与协议层无感知。合并完成后
-// 同步更新 ChangeIndex（每次导出只与上一权威投影比较一次，因此同一 16ms
-// 窗口内的多次变化天然只保留最终值与最终 revision，规则 6）。
+// 是完整状态（全屏行 + 元数据），FrameDeriver 与协议层无感知。行/元数据索引
+// 在 assemble 前更新；字典 created revision 在 assemble 后更新（历史窗口导出
+// 可能在 assemble 阶段向字典表追加条目）。
 func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame {
 	s := &p.projected
 	prev := projectedMeta{
@@ -386,8 +386,10 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 		s.merge(proj, p.exporter)
 	}
 	p.engine.ConsumeProjectionDirty(proj)
-	p.updateChangeIndexLocked(seq, prev, proj)
-	return p.assembleFrame(epoch, seq)
+	p.updateChangeIndexScreenLocked(seq, prev, proj)
+	frame := p.assembleFrame(epoch, seq)
+	p.updateChangeIndexDictionaryLocked(seq)
+	return frame
 }
 
 // assembleFrame 从全屏缓存组装完整 State。历史窗口走增量缓存（syncHistoryWindow）；

@@ -112,6 +112,10 @@ public final class TerminalSessionRuntime {
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
     default boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+      return beginSync(resume, false);
+    }
+    default boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+                              boolean forceBaseline) {
       return false;
     }
     void setLayoutLeaseId(@NonNull String leaseId);
@@ -179,6 +183,7 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
+  private boolean forceBaselineOnNextSync;
   private volatile ProjectionContinuityState projectionContinuity =
       ProjectionContinuityState.EMPTY;
   private static final long HISTORY_REQUEST_TIMEOUT_MS = 5_000L;
@@ -946,7 +951,8 @@ public final class TerminalSessionRuntime {
       }
       resume = builder.build();
     }
-    boolean helloSent = expectedConnection.beginSync(resume);
+    boolean helloSent = expectedConnection.beginSync(resume, forceBaselineOnNextSync);
+    forceBaselineOnNextSync = false;
     if (!helloSent) {
       // logical channel 已报告 connected，但 Hello 没有真正写入物理 Mux。继续等待
       // Snapshot 只会让页面永久闪烁；立即换 channel，并作废当前代际的迟到帧。
@@ -1183,6 +1189,35 @@ public final class TerminalSessionRuntime {
     screenMailbox.reset();
   }
 
+  private void startForceBaselineRecovery(@NonNull String reason) {
+    forceBaselineOnNextSync = true;
+    rebuildScreenChannel(reason);
+  }
+
+  private static boolean requiresForceBaselineRecovery(@NonNull Throwable error) {
+    if (!(error instanceof CommitValidationException)) return false;
+    switch (((CommitValidationException) error).failure) {
+      case DICTIONARY_ID_REDEFINED:
+      case DICTIONARY_GENERATION_MISMATCH:
+      case UNKNOWN_STYLE_ID:
+      case UNKNOWN_LINK_ID:
+      case IDENTITY_MISMATCH:
+      case INVALID_LINE_DATA:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private static ScreenBaseline withoutPreservedHistory(@NonNull ScreenBaseline baseline) {
+    return new ScreenBaseline(
+        baseline.sessionId, baseline.instanceId, baseline.layoutEpoch, baseline.screenRevision,
+        baseline.dictionaryGeneration, baseline.historyGeneration, false, baseline.dictionary,
+        baseline.rows, baseline.cols, baseline.activeBuffer, baseline.historyExtent,
+        baseline.historyTail, baseline.screen, baseline.cursor, baseline.modes, baseline.palette,
+        baseline.sealedThroughSeq);
+  }
+
   private void sendResync(@NonNull String reason) {
     projectionContinuity = ProjectionContinuityState.LOST;
     rebuildScreenChannel(reason);
@@ -1227,8 +1262,16 @@ public final class TerminalSessionRuntime {
             TerminalRenderMetrics.mapperDuration(System.nanoTime() - mapStartedNanos);
           }
           if (!model.applyBaseline(baseline)) {
-            failureReason = "STALE_BASELINE";
-            throw new IllegalArgumentException("model rejected Baseline");
+            if (baseline.preserveCompatibleHistory) {
+              baseline = withoutPreservedHistory(baseline);
+              if (!model.applyBaseline(baseline)) {
+                failureReason = "STALE_BASELINE";
+                throw new IllegalArgumentException("model rejected Baseline");
+              }
+            } else {
+              failureReason = "STALE_BASELINE";
+              throw new IllegalArgumentException("model rejected Baseline");
+            }
           }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
               captureStreamIdentity(), baseline);
@@ -1328,7 +1371,11 @@ public final class TerminalSessionRuntime {
           "localRevision", model.screenRevision,
           "connectionEpoch", connectionEpoch.get(),
           "mailboxGeneration", message.mailboxGeneration));
-      startResyncRecovery("screen.v2 apply failed");
+      if (requiresForceBaselineRecovery(e)) {
+        startForceBaselineRecovery("screen.v2 dictionary recovery: " + e.getClass().getSimpleName());
+      } else {
+        startResyncRecovery("screen.v2 apply failed");
+      }
       return;
     }
     TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);

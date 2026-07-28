@@ -36,6 +36,12 @@ message Hello {
   ResumeToken resume = 4;
   Geometry desired_geometry = 7;
   uint32 cold_history_tail_lines = 8;
+  InitialSyncMode initial_sync_mode = 9;
+}
+
+enum InitialSyncMode {
+  INITIAL_SYNC_MODE_AUTO = 0;
+  INITIAL_SYNC_MODE_FORCE_BASELINE = 1;
 }
 
 message ResumeScreenLine {

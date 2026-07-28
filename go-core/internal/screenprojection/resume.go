@@ -35,7 +35,9 @@ type ResumeResult struct {
 
 // Resume 从完整连续性令牌判断无变化接受、跨 revision Commit 或 Baseline。
 // 它不依赖无界 patch journal；Commit 只由令牌中可证明的 ActiveRows 身份派生。
-func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeResult {
+// forceBaseline 为 true 时跳过 Resume Commit，直接返回完整 Baseline（仍根据
+// token 判定 preserveCompatibleHistory）。
+func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBaseline bool) ResumeResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state := p.exportStateLocked(epoch, revision)
@@ -43,6 +45,11 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64) ResumeRes
 		state.Kind = terminalengine.FrameSnapshot
 		state.PreserveCompatibleHistory = preserve
 		return ResumeResult{Kind: ResumeBaseline, State: state, Frame: state}
+	}
+	if forceBaseline {
+		compatibleHistory := token != nil && token.InstanceID == state.InstanceID &&
+			token.LayoutEpoch == state.Epoch && token.HistoryGeneration == state.HistoryGeneration
+		return baseline(compatibleHistory)
 	}
 	if token == nil {
 		return baseline(false)

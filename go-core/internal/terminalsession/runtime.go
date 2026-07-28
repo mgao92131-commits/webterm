@@ -118,6 +118,7 @@ type ScreenClient struct {
 	SendEffect      func(instanceID string, revision uint64, effect terminalengine.Effect)
 	SendLayoutLease func(LayoutLeaseEvent)
 	ResumeToken     *screenprojection.ResumeToken
+	ForceBaseline   bool
 
 	// 以下字段仅由 Runtime actor 访问。
 	synced            bool
@@ -1038,7 +1039,7 @@ func (r *Runtime) allowSegmentFetch() bool {
 
 func (r *Runtime) startInitialSync(client *ScreenClient) {
 	rev := r.currentRevision()
-	result := r.projector.Resume(client.ResumeToken, r.layoutEpoch, rev)
+	result := r.projector.Resume(client.ResumeToken, r.layoutEpoch, rev, client.ForceBaseline)
 	client.ResumeToken = nil
 	state := result.State
 	sync := InitialSync{State: state, Projection: result.Frame,

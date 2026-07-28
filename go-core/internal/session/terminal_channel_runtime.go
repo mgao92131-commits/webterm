@@ -567,6 +567,7 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
 		ID:              client.screenClientID,
 		ResumeToken:     resume,
+		ForceBaseline:   hello.GetInitialSyncMode() == pb.InitialSyncMode_INITIAL_SYNC_MODE_FORCE_BASELINE,
 		Send:            client.sendScreenState,
 		SendInitial:     client.sendInitialScreenSync,
 		SendEffect:      client.sendScreenEffect,

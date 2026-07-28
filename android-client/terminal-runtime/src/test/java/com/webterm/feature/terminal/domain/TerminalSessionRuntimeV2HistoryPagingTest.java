@@ -244,7 +244,8 @@ public class TerminalSessionRuntimeV2HistoryPagingTest {
   private static final class FakeV2Connection implements TerminalSessionRuntime.ScreenConnection {
     TerminalSessionRuntime.ScreenConnection.Listener listener;
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
-    @Override public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+    @Override public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+                                        boolean forceBaseline) {
       return true;
     }
     @Override public void setLayoutLeaseId(@NonNull String leaseId) {}
