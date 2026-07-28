@@ -59,6 +59,32 @@ func TestDurationBucketsObserve(t *testing.T) {
 	}
 }
 
+func TestWriterDepthRegistryMultiWriter(t *testing.T) {
+	m := NewAgentMetrics()
+	a := m.RegisterWriter()
+	b := m.RegisterWriter()
+
+	m.UpdateWriterDepth(a, 80, 0)
+	m.UpdateWriterDepth(b, 20, 0)
+	if got := m.WriterTotalQueueCurrentDepth.Load(); got != 100 {
+		t.Fatalf("total depth = %d, want 100", got)
+	}
+	highWater := m.WriterTotalQueueHighWaterDepth.Load()
+
+	m.UpdateWriterDepth(b, 0, 0)
+	if got := m.WriterTotalQueueCurrentDepth.Load(); got != 80 {
+		t.Fatalf("after B empty total = %d, want 80", got)
+	}
+	if m.WriterTotalQueueHighWaterDepth.Load() < highWater {
+		t.Fatalf("high water decreased: %d < %d", m.WriterTotalQueueHighWaterDepth.Load(), highWater)
+	}
+
+	m.UnregisterWriter(a)
+	if got := m.WriterTotalQueueCurrentDepth.Load(); got != 0 {
+		t.Fatalf("after A unregister total = %d, want 0", got)
+	}
+}
+
 func TestObserveWriterQueueDepthHighWater(t *testing.T) {
 	m := NewAgentMetrics()
 	m.ObserveWriterQueueDepth(3, 5)

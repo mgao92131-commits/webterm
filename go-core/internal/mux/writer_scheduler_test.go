@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"webterm/go-core/internal/diagnostics"
 	termsession "webterm/go-core/internal/session"
 )
 
@@ -196,4 +197,96 @@ func TestPhysicalWriterBoundsHighPriorityBurst(t *testing.T) {
 // 指标埋点不得改变公平调度：连续 maxHighPriorityBurst 条高优先级后必须插入 data。
 func TestPhysicalWriterPrefersDataAfterEightHighBurst(t *testing.T) {
 	TestPhysicalWriterBoundsHighPriorityBurst(t)
+}
+
+func waitUntil(t *testing.T, deadline time.Time, cond func() bool, msg string) {
+	t.Helper()
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+func TestPhysicalWriterGlobalDepthAcrossWriters(t *testing.T) {
+	socketA := &blockingMuxSocket{}
+	socketB := &blockingMuxSocket{}
+	writerA := NewPhysicalWriter(socketA, 128)
+	writerB := NewPhysicalWriter(socketB, 128)
+
+	ctx := context.Background()
+	results := make(chan error, 100)
+	for range 80 {
+		go func() {
+			results <- writerA.Submit(ctx, termsession.MessageText, []byte("a"), true)
+		}()
+	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return len(writerA.highWrites) == 80
+	}, "writer A queue did not reach depth 80")
+
+	for range 20 {
+		go func() {
+			results <- writerB.Submit(ctx, termsession.MessageText, []byte("b"), true)
+		}()
+	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return len(writerB.highWrites) == 20
+	}, "writer B queue did not reach depth 20")
+
+	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 100 {
+		t.Fatalf("global total depth = %d, want 100", got)
+	}
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	cancelB()
+	go writerB.Run(ctxB)
+	<-writerB.Done()
+	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 80 {
+		t.Fatalf("after B close total depth = %d, want 80", got)
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	cancelA()
+	go writerA.Run(ctxA)
+	<-writerA.Done()
+	if got := diagnostics.Default.WriterTotalQueueCurrentDepth.Load(); got != 0 {
+		t.Fatalf("after A close total depth = %d, want 0", got)
+	}
+
+	for range 100 {
+		if err := <-results; err != ErrWriterClosed {
+			t.Fatalf("submit result = %v, want ErrWriterClosed", err)
+		}
+	}
+}
+
+func TestPhysicalWriterCloseUnblocksSubmitWaiters(t *testing.T) {
+	socket := &blockingMuxSocket{}
+	writer := NewPhysicalWriter(socket, 128)
+	ctx := context.Background()
+
+	results := make(chan error, 8)
+	for range 8 {
+		go func() {
+			results <- writer.Submit(ctx, termsession.MessageBinary, []byte("pending"), false)
+		}()
+	}
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return len(writer.dataWrites) == 8
+	}, "writer queue did not fill")
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	go writer.Run(runCtx)
+	<-writer.Done()
+
+	for range 8 {
+		err := <-results
+		if err != nil && err != ErrWriterClosed {
+			t.Fatalf("submit result = %v, want nil or ErrWriterClosed", err)
+		}
+	}
 }

@@ -6,7 +6,12 @@ package com.webterm.core.session;
 public enum TransportReconnectTrigger {
     COOKIE_UPDATED,
     SCREEN_CHANNEL_REBUILD,
+    /** 仅 beginSynchronization 中 Hello 本地发送失败路径使用。 */
     SCREEN_HELLO_SEND_FAILED,
+    INPUT_CHANNEL_NOT_OPEN,
+    CONTROL_CHANNEL_NOT_OPEN,
+    SCREEN_CHANNEL_NOT_OPEN,
+    OTHER_CHANNEL_NOT_OPEN,
     CONTROL_SEND_REJECTED,
     TUNNEL_SEND_REJECTED,
     SUPERSEDED_CHANNEL_CLOSE_FAILED,

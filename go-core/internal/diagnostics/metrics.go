@@ -6,6 +6,7 @@
 package diagnostics
 
 import (
+	"sync"
 	"sync/atomic"
 )
 
@@ -22,10 +23,10 @@ type AgentMetrics struct {
 	RelayConnectFailureCount atomic.Uint64
 
 	// mux 通道与物理 writer。
-	MuxChannelOpenedCount               atomic.Uint64
-	MuxChannelReplacedCount             atomic.Uint64
-	MuxWriterFailureCount               atomic.Uint64
-	MuxDiagnosticsContextRejectedCount  atomic.Uint64
+	MuxChannelOpenedCount              atomic.Uint64
+	MuxChannelReplacedCount            atomic.Uint64
+	MuxWriterFailureCount              atomic.Uint64
+	MuxDiagnosticsContextRejectedCount atomic.Uint64
 
 	// 屏幕编码/投影。
 	ScreenEncodeFailureCount atomic.Uint64
@@ -37,15 +38,18 @@ type AgentMetrics struct {
 	WriterTimeoutCount       atomic.Uint64
 	WriterQueueRejectedCount atomic.Uint64
 
-	WriterHighQueueDepth         atomic.Uint64
-	WriterDataQueueDepth         atomic.Uint64
-	WriterTotalQueueCurrentDepth atomic.Uint64
+	WriterHighQueueDepth           atomic.Uint64
+	WriterDataQueueDepth           atomic.Uint64
+	WriterTotalQueueCurrentDepth   atomic.Uint64
 	WriterTotalQueueHighWaterDepth atomic.Uint64
 	// Deprecated alias kept for older readers; mirrors total high water.
 	WriterHighWaterDepth atomic.Uint64
 
 	WriterQueueResidenceBuckets DurationBuckets
 	WriterWriteDurationBuckets  DurationBuckets
+
+	// writerDepths 聚合多 PhysicalWriter 的队列深度；全局高/数据/总和经 UpdateWriterDepth 重算。
+	writerDepths WriterDepthRegistry
 }
 
 const DurationBucketCount = 8
@@ -111,10 +115,10 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		capabilities[key] = value
 	}
 	return map[string]any{
-		"relayConnectCount":           m.RelayConnectCount.Load(),
-		"relayDisconnectCount":        m.RelayDisconnectCount.Load(),
-		"relayReconnectCount":         m.RelayReconnectCount.Load(),
-		"relayConnectFailureCount":    m.RelayConnectFailureCount.Load(),
+		"relayConnectCount":                  m.RelayConnectCount.Load(),
+		"relayDisconnectCount":               m.RelayDisconnectCount.Load(),
+		"relayReconnectCount":                m.RelayReconnectCount.Load(),
+		"relayConnectFailureCount":           m.RelayConnectFailureCount.Load(),
 		"muxChannelOpenedCount":              m.MuxChannelOpenedCount.Load(),
 		"muxChannelReplacedCount":            m.MuxChannelReplacedCount.Load(),
 		"muxWriterFailureCount":              m.MuxWriterFailureCount.Load(),
@@ -138,6 +142,87 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 	}
 }
 
+// WriterDepth 是单个 PhysicalWriter 的 high/data 队列深度快照。
+type WriterDepth struct {
+	High int
+	Data int
+}
+
+// WriterDepthRegistry 跟踪多个 PhysicalWriter 的队列深度并维护全局求和。
+type WriterDepthRegistry struct {
+	mu      sync.Mutex
+	writers map[uint64]WriterDepth
+	nextID  atomic.Uint64
+}
+
+// RegisterWriter 注册一个 writer，返回供 Update/Unregister 使用的 id。
+func (m *AgentMetrics) RegisterWriter() uint64 {
+	id := m.writerDepths.nextID.Add(1)
+	m.writerDepths.mu.Lock()
+	defer m.writerDepths.mu.Unlock()
+	if m.writerDepths.writers == nil {
+		m.writerDepths.writers = make(map[uint64]WriterDepth)
+	}
+	m.writerDepths.writers[id] = WriterDepth{}
+	return id
+}
+
+// UpdateWriterDepth 更新指定 writer 的深度并重算全局 high/data/total 与高水位。
+func (m *AgentMetrics) UpdateWriterDepth(id uint64, high, data int) {
+	if high < 0 {
+		high = 0
+	}
+	if data < 0 {
+		data = 0
+	}
+	m.writerDepths.mu.Lock()
+	defer m.writerDepths.mu.Unlock()
+	if m.writerDepths.writers == nil {
+		return
+	}
+	if _, ok := m.writerDepths.writers[id]; !ok {
+		return
+	}
+	m.writerDepths.writers[id] = WriterDepth{High: high, Data: data}
+	m.recomputeWriterDepthsLocked()
+}
+
+// UnregisterWriter 移除 writer 并重算全局深度（该 writer 不再计入求和）。
+func (m *AgentMetrics) UnregisterWriter(id uint64) {
+	m.writerDepths.mu.Lock()
+	defer m.writerDepths.mu.Unlock()
+	if m.writerDepths.writers == nil {
+		return
+	}
+	delete(m.writerDepths.writers, id)
+	m.recomputeWriterDepthsLocked()
+}
+
+func (m *AgentMetrics) recomputeWriterDepthsLocked() {
+	highSum, dataSum := 0, 0
+	for _, depth := range m.writerDepths.writers {
+		highSum += depth.High
+		dataSum += depth.Data
+	}
+	m.WriterHighQueueDepth.Store(uint64(highSum))
+	m.WriterDataQueueDepth.Store(uint64(dataSum))
+	total := highSum + dataSum
+	m.WriterTotalQueueCurrentDepth.Store(uint64(total))
+	for {
+		cur := m.WriterTotalQueueHighWaterDepth.Load()
+		if uint64(total) <= cur {
+			break
+		}
+		if m.WriterTotalQueueHighWaterDepth.CompareAndSwap(cur, uint64(total)) {
+			break
+		}
+	}
+	// 兼容旧字段：高水位改为总和语义。
+	m.WriterHighWaterDepth.Store(m.WriterTotalQueueHighWaterDepth.Load())
+}
+
+// ObserveWriterQueueDepth 已废弃：单值 Store 覆盖，不支持多 writer 聚合。
+// 新代码应使用 RegisterWriter / UpdateWriterDepth / UnregisterWriter。
 func (m *AgentMetrics) ObserveWriterQueueDepth(highDepth, dataDepth int) {
 	if highDepth < 0 {
 		highDepth = 0

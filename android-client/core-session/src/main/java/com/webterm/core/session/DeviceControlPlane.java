@@ -49,10 +49,14 @@ final class DeviceControlPlane {
         sender.send(message);
     }
 
-    /** 向 Agent 发送可选 diagnostics.connection，传递已用于日志的关联 hash（非原始 UUID）。 */
-    void sendDiagnosticsConnection(String connectionId, String recoveryId, int transportGeneration) {
+    /**
+     * 向 Agent 发送可选 diagnostics.connection，传递已用于日志的关联 hash（非原始 UUID）。
+     * @return 是否成功交给底层 sender（失败时调用方记 WARN，不阻断业务 channel）
+     */
+    boolean sendDiagnosticsConnection(String connectionId, String recoveryId,
+                                      int transportGeneration) {
         String connectionHash = DiagnosticIdHasher.processHash(connectionId);
-        if (connectionHash.isEmpty()) return;
+        if (connectionHash.isEmpty()) return false;
         JSONObject message = new JSONObject();
         put(message, "type", "diagnostics.connection");
         put(message, "connection_hash", connectionHash);
@@ -61,7 +65,22 @@ final class DeviceControlPlane {
             put(message, "recovery_hash", recoveryHash);
         }
         put(message, "transport_generation", transportGeneration);
-        sender.send(message);
+        return sender.send(message);
+    }
+
+    /**
+     * 恢复事务结束后清除 Agent 侧 recoveryHash（发送 recovery_hash=""）。
+     * connection_hash 仍附带，便于 Agent 校验同一物理连接上下文。
+     */
+    boolean clearDiagnosticsRecovery(String connectionId, int transportGeneration) {
+        String connectionHash = DiagnosticIdHasher.processHash(connectionId);
+        if (connectionHash.isEmpty()) return false;
+        JSONObject message = new JSONObject();
+        put(message, "type", "diagnostics.connection");
+        put(message, "connection_hash", connectionHash);
+        put(message, "recovery_hash", "");
+        put(message, "transport_generation", transportGeneration);
+        return sender.send(message);
     }
 
     void markActive() {

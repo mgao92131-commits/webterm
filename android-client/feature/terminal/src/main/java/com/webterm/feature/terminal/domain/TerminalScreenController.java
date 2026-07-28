@@ -321,10 +321,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
       v.render(update, viewport);
       long duration = System.nanoTime() - started;
       com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(duration);
-      runtime.onRenderFrameRendered(
+      runtime.onRenderFrameSucceeded(
           update.publicationVersion, update.snapshot.screenRevision, duration);
-      runtime.onRenderPublicationHandled(
-          update.publicationVersion, update.snapshot.screenRevision, true);
     } catch (RuntimeException error) {
       long duration = System.nanoTime() - started;
       com.webterm.terminal.model.TerminalRenderMetrics.vsyncDrawDuration(duration);

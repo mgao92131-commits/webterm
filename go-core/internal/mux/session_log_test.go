@@ -351,3 +351,64 @@ func TestAndroidCrossVectorHashFormat(t *testing.T) {
 		t.Fatalf("len = %d, want 12", len(androidFixedVector))
 	}
 }
+
+func TestDiagnosticsConnectionClearsRecoveryHash(t *testing.T) {
+	logger := logs.New(logs.DefaultCapacity)
+	logger.SetRateLimiter(nil)
+	sess := Serve(&fakeSocket{}, &ServeOpts{Logger: logger})
+
+	connectionHash := "a1b2c3d4e5f6"
+	recoveryHash := "fedcba987654"
+	sess.applyDiagnosticsConnection(map[string]any{
+		"connection_hash":      connectionHash,
+		"recovery_hash":        recoveryHash,
+		"transport_generation": float64(3),
+	})
+	if sess.diag.RecoveryHash != recoveryHash {
+		t.Fatalf("RecoveryHash = %q, want %q", sess.diag.RecoveryHash, recoveryHash)
+	}
+
+	sess.event("info", "mux_test_with_recovery", map[string]any{"probe": true})
+	entries := logger.Recent(0)
+	if len(entries) == 0 {
+		t.Fatal("expected at least one event")
+	}
+	last := entries[len(entries)-1]
+	if last.Fields["recoveryHash"] != recoveryHash {
+		t.Fatalf("recoveryHash field = %v, want %q", last.Fields["recoveryHash"], recoveryHash)
+	}
+	if last.Fields["connectionHash"] != connectionHash {
+		t.Fatalf("connectionHash field = %v, want %q", last.Fields["connectionHash"], connectionHash)
+	}
+
+	// 字段存在且为空 → 清除 RecoveryHash；connectionHash 保持。
+	sess.applyDiagnosticsConnection(map[string]any{
+		"connection_hash": connectionHash,
+		"recovery_hash":   "",
+	})
+	if sess.diag.RecoveryHash != "" {
+		t.Fatalf("RecoveryHash after clear = %q, want empty", sess.diag.RecoveryHash)
+	}
+	if sess.diag.ConnectionHash != connectionHash {
+		t.Fatalf("ConnectionHash after clear = %q, want %q", sess.diag.ConnectionHash, connectionHash)
+	}
+
+	sess.event("info", "mux_test_after_clear", map[string]any{"probe": true})
+	entries = logger.Recent(0)
+	last = entries[len(entries)-1]
+	if _, ok := last.Fields["recoveryHash"]; ok {
+		t.Fatalf("recoveryHash must be absent after clear, fields=%v", last.Fields)
+	}
+	if last.Fields["connectionHash"] != connectionHash {
+		t.Fatalf("connectionHash after clear = %v, want %q", last.Fields["connectionHash"], connectionHash)
+	}
+
+	// 字段不存在 → 保持（仍为空）。
+	sess.applyDiagnosticsConnection(map[string]any{
+		"connection_hash": connectionHash,
+	})
+	if sess.diag.RecoveryHash != "" {
+		t.Fatalf("absent recovery_hash must keep empty, got %q", sess.diag.RecoveryHash)
+	}
+}
+

@@ -94,6 +94,7 @@ public final class TerminalSessionRuntime {
     SYNCING,
     LIVE,
     RECONNECTING,
+    CLOSING,
     CLOSED
   }
 
@@ -134,6 +135,14 @@ public final class TerminalSessionRuntime {
     default void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {}
     /** resync 重试耗尽后的最终恢复：重建 channel，依赖服务端 hello 触发新 snapshot。 */
     default void requestReconnect(@NonNull String reason) {}
+    /**
+     * beginSynchronization 中 Hello 本地发送失败专用恢复路径。
+     * 默认回落到 {@link #requestReconnect}；TerminalChannel 映射为
+     * {@link com.webterm.core.session.TransportReconnectTrigger#SCREEN_HELLO_SEND_FAILED}。
+     */
+    default void requestHelloSendFailedReconnect() {
+      requestReconnect("screen Hello send failed");
+    }
     void acquireLayout(boolean interactive);
     default void acquireLayout(@NonNull String requestId, boolean interactive) {
       acquireLayout(interactive);
@@ -173,6 +182,7 @@ public final class TerminalSessionRuntime {
   private final TerminalPipelineMetrics pipelineMetrics = new TerminalPipelineMetrics();
 
   private volatile State state = State.DISCONNECTED;
+  private final AtomicBoolean closeRequested = new AtomicBoolean();
   private final LayoutLeaseCoordinator layoutLeaseCoordinator;
   /**
    * Screen 连接代际。网络回调可以早于 modelExecutor 中的任务完成；任何断线、替换或
@@ -190,6 +200,8 @@ public final class TerminalSessionRuntime {
   private final TimeoutScheduler timeoutScheduler;
   private final TimeoutScheduler leaseScheduler;
   private long syncGeneration;
+  /** 供诊断快照读取的 syncGeneration 发布值（model executor 更新后同步）。 */
+  private volatile long publishedSyncGeneration;
   private boolean forceBaselineOnNextSync;
   private volatile ProjectionContinuityState projectionContinuity =
       ProjectionContinuityState.EMPTY;
@@ -197,13 +209,18 @@ public final class TerminalSessionRuntime {
   private static final long HISTORY_RETRY_MIN_MS = 200L;
   private static final long HISTORY_RETRY_MAX_MS = 5_000L;
 
-  private long inputAttemptCount;
-  private long inputRejectedNotLiveCount;
-  private long inputRejectedNoLeaseCount;
-  private long inputLocalQueueAcceptedCount;
-  private long inputWebSocketEnqueuedCount;
-  private long inputQueueFullCount;
-  private long inputTransportRejectedCount;
+  private final AtomicLong inputAttemptCount = new AtomicLong();
+  private final AtomicLong inputRejectedNotLiveCount = new AtomicLong();
+  private final AtomicLong inputRejectedNoLeaseCount = new AtomicLong();
+  private final AtomicLong inputLocalQueueAcceptedCount = new AtomicLong();
+  private final AtomicLong inputWebSocketEnqueuedCount = new AtomicLong();
+  private final AtomicLong inputQueueFullCount = new AtomicLong();
+  private final AtomicLong inputTransportRejectedCount = new AtomicLong();
+  private final AtomicLong inputChannelNotOpenCount = new AtomicLong();
+  private final AtomicLong inputConnectionStoppedCount = new AtomicLong();
+  private final AtomicLong inputUnknownResultCount = new AtomicLong();
+  private final AtomicLong inputUnitsAttempted = new AtomicLong();
+  private final AtomicLong inputUnitsLocallyAccepted = new AtomicLong();
 
   public TerminalSessionRuntime(@NonNull String sessionId) {
     this(sessionId, HistoryBudget.defaults());
@@ -300,21 +317,33 @@ public final class TerminalSessionRuntime {
     return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
         sessionId, state.name(), pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot(),
         inputDeliverySnapshot(),
-        0L, "", connectionEpoch.get(), syncGeneration,
+        0L, 0L, "", connectionEpoch.get(), publishedSyncGeneration,
         projectionContinuity.name(), renderConsumer.get() != null, listeners.size(),
-        screenMailbox.pendingMessages(), screenMailbox.pendingBytes());
+        screenMailbox.pendingMessages(), screenMailbox.pendingBytes(),
+        0, 0L, 0, 0L);
   }
 
-  /** 关闭时最终快照：补充 closedAt / finalState 等，供 recentClosed 保留。 */
+  /**
+   * 关闭清理完成后的最终快照：history/mailbox 已复位，供 recentClosed 保留。
+   * Registry 不得再主动读取 runtime，必须使用本快照。
+   */
   @NonNull
-  TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshotForClose() {
-    String finalStateName = state.name();
+  TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshotForClose(
+      long closeRequestedAtEpochMs,
+      int mailboxMessagesAtCloseRequest,
+      long mailboxBytesAtCloseRequest) {
+    int finalMailboxMessages = screenMailbox.pendingMessages();
+    long finalMailboxBytes = screenMailbox.pendingBytes();
     return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
-        sessionId, finalStateName, pipelineMetrics.snapshot(), historyLoader.diagnosticsSnapshot(),
+        sessionId, State.CLOSED.name(), pipelineMetrics.snapshot(),
+        historyLoader.diagnosticsSnapshot(),
         inputDeliverySnapshot(),
-        System.currentTimeMillis(), finalStateName, connectionEpoch.get(), syncGeneration,
+        closeRequestedAtEpochMs, System.currentTimeMillis(), State.CLOSED.name(),
+        connectionEpoch.get(), publishedSyncGeneration,
         projectionContinuity.name(), renderConsumer.get() != null, listeners.size(),
-        screenMailbox.pendingMessages(), screenMailbox.pendingBytes());
+        finalMailboxMessages, finalMailboxBytes,
+        mailboxMessagesAtCloseRequest, mailboxBytesAtCloseRequest,
+        finalMailboxMessages, finalMailboxBytes);
   }
 
   @NonNull
@@ -387,7 +416,7 @@ public final class TerminalSessionRuntime {
         connectionRequiresReplacement = false;
         // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
         modelExecutor.execute(() -> {
-          syncGeneration++;
+          bumpSyncGeneration();
           resetResyncRecovery();
         });
         updateState(State.RECONNECTING);
@@ -418,7 +447,7 @@ public final class TerminalSessionRuntime {
         // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
         // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
         modelExecutor.execute(() -> {
-          syncGeneration++;
+          bumpSyncGeneration();
           resetResyncRecovery();
         });
         updateState(State.RECONNECTING);
@@ -448,7 +477,12 @@ public final class TerminalSessionRuntime {
   }
 
   public boolean hasConnection() {
-    return connection != null && state != State.CLOSED && !connectionRequiresReplacement;
+    return connection != null && !isClosingOrClosed() && !connectionRequiresReplacement;
+  }
+
+  private boolean isClosingOrClosed() {
+    State current = state;
+    return current == State.CLOSING || current == State.CLOSED;
   }
 
   /** HOT→WARM：关闭 screen channel，但保留完整 model 与 resume token。 */
@@ -458,7 +492,7 @@ public final class TerminalSessionRuntime {
     connection = null;
     connectionRequiresReplacement = false;
     modelExecutor.execute(() -> {
-      syncGeneration++;
+      bumpSyncGeneration();
       resetResyncRecovery();
     });
     if (current != null) {
@@ -466,7 +500,7 @@ public final class TerminalSessionRuntime {
       current.close();
     }
     layoutLeaseCoordinator.invalidate();
-    if (state != State.CLOSED) updateState(State.RECONNECTING);
+    if (!isClosingOrClosed()) updateState(State.RECONNECTING);
   }
 
   /** View detach 只释放焦点与交互租约，不关闭 channel。 */
@@ -482,7 +516,7 @@ public final class TerminalSessionRuntime {
   public void attachPage() {
     boolean wasAttached = layoutLeaseCoordinator.isPageAttached();
     layoutLeaseCoordinator.attachPage();
-    if (!wasAttached && state != State.LIVE && state != State.CLOSED) {
+    if (!wasAttached && state != State.LIVE && !isClosingOrClosed()) {
       recoverUnhealthyConnectionOnPageReattach();
     }
   }
@@ -494,12 +528,12 @@ public final class TerminalSessionRuntime {
    */
   private void recoverUnhealthyConnectionOnPageReattach() {
     ScreenConnection current = connection;
-    if (current == null || state == State.CLOSED || state == State.LIVE) return;
+    if (current == null || isClosingOrClosed() || state == State.LIVE) return;
     connectionEpoch.incrementAndGet();
     layoutLeaseCoordinator.invalidate();
     updateState(State.RECONNECTING);
     modelExecutor.execute(() -> {
-      syncGeneration++;
+      bumpSyncGeneration();
       resetResyncRecovery();
     });
     current.requestReconnect("page reattached while terminal connection was not ready");
@@ -562,10 +596,19 @@ public final class TerminalSessionRuntime {
     pipelineMetrics.onRenderPublicationHandled(publicationVersion, screenRevision, rendered);
   }
 
-  /** view.render() 正常返回后由 Controller 回调，推进 rendered 水位。 */
+  /** view.render() 正常返回后由 Controller 回调，原子推进 handled 与 rendered 水位。 */
+  public void onRenderFrameSucceeded(long publicationVersion, long screenRevision,
+                                     long drawDurationNanos) {
+    pipelineMetrics.onRenderFrameSucceeded(publicationVersion, screenRevision, drawDurationNanos);
+  }
+
+  /**
+   * @deprecated 使用 {@link #onRenderFrameSucceeded}。
+   */
+  @Deprecated
   public void onRenderFrameRendered(long publicationVersion, long screenRevision,
                                     long drawDurationNanos) {
-    pipelineMetrics.onRenderFrameRendered(publicationVersion, screenRevision, drawDurationNanos);
+    onRenderFrameSucceeded(publicationVersion, screenRevision, drawDurationNanos);
   }
 
   /**
@@ -634,25 +677,27 @@ public final class TerminalSessionRuntime {
   }
 
   private void sendWhenLive(int units, @NonNull LiveInput input) {
-    inputAttemptCount++;
+    inputAttemptCount.incrementAndGet();
+    inputUnitsAttempted.addAndGet(Math.max(1, units));
     if (state != State.LIVE || projectionContinuity != ProjectionContinuityState.CONTINUOUS) {
-      inputRejectedNotLiveCount++;
+      inputRejectedNotLiveCount.incrementAndGet();
       notifyInputDeliveryUncertain("INPUT_NOT_LIVE");
       return;
     }
     if (!hasLayoutLease()) {
-      inputRejectedNoLeaseCount++;
+      inputRejectedNoLeaseCount.incrementAndGet();
       notifyInputDeliveryUncertain("INPUT_NO_LEASE");
       return;
     }
     ScreenConnection c = connection;
     if (c == null) {
-      inputRejectedNotLiveCount++;
+      inputRejectedNotLiveCount.incrementAndGet();
       notifyInputDeliveryUncertain("INPUT_NOT_LIVE");
       return;
     }
     if (input.send(c)) {
-      inputLocalQueueAcceptedCount++;
+      inputLocalQueueAcceptedCount.incrementAndGet();
+      inputUnitsLocallyAccepted.addAndGet(Math.max(1, units));
     }
   }
 
@@ -660,30 +705,47 @@ public final class TerminalSessionRuntime {
     if (result == null) return;
     switch (result) {
       case "WEBSOCKET_ENQUEUED":
-        inputWebSocketEnqueuedCount++;
+        inputWebSocketEnqueuedCount.incrementAndGet();
         break;
       case "LOCAL_QUEUE_FULL":
-        inputQueueFullCount++;
+        inputQueueFullCount.incrementAndGet();
         break;
       case "TRANSPORT_REJECTED":
-        inputTransportRejectedCount++;
+        inputTransportRejectedCount.incrementAndGet();
+        break;
+      case "CHANNEL_NOT_OPEN":
+        inputChannelNotOpenCount.incrementAndGet();
+        break;
+      case "CONNECTION_STOPPED":
+        inputConnectionStoppedCount.incrementAndGet();
         break;
       default:
+        inputUnknownResultCount.incrementAndGet();
         break;
     }
   }
 
-  /** 诊断导出：输入投递计数（不含输入正文）。 */
+  /**
+   * 诊断导出：输入投递计数（不含输入正文）。
+   * <p>
+   * Focus 输入走 {@link #sendFocusInput} 独立路径，不计入本快照。
+   * 关闭后本地接受计数可能暂时大于最终结果之和（队列中仍有在途帧时属正常）。
+   */
   @NonNull
   public Map<String, Long> inputDeliverySnapshot() {
     Map<String, Long> out = new LinkedHashMap<>();
-    out.put("inputAttemptCount", inputAttemptCount);
-    out.put("inputRejectedNotLiveCount", inputRejectedNotLiveCount);
-    out.put("inputRejectedNoLeaseCount", inputRejectedNoLeaseCount);
-    out.put("inputLocalQueueAcceptedCount", inputLocalQueueAcceptedCount);
-    out.put("inputWebSocketEnqueuedCount", inputWebSocketEnqueuedCount);
-    out.put("inputQueueFullCount", inputQueueFullCount);
-    out.put("inputTransportRejectedCount", inputTransportRejectedCount);
+    out.put("inputAttemptCount", inputAttemptCount.get());
+    out.put("inputRejectedNotLiveCount", inputRejectedNotLiveCount.get());
+    out.put("inputRejectedNoLeaseCount", inputRejectedNoLeaseCount.get());
+    out.put("inputLocalQueueAcceptedCount", inputLocalQueueAcceptedCount.get());
+    out.put("inputWebSocketEnqueuedCount", inputWebSocketEnqueuedCount.get());
+    out.put("inputQueueFullCount", inputQueueFullCount.get());
+    out.put("inputTransportRejectedCount", inputTransportRejectedCount.get());
+    out.put("inputChannelNotOpenCount", inputChannelNotOpenCount.get());
+    out.put("inputConnectionStoppedCount", inputConnectionStoppedCount.get());
+    out.put("inputUnknownResultCount", inputUnknownResultCount.get());
+    out.put("inputUnitsAttempted", inputUnitsAttempted.get());
+    out.put("inputUnitsLocallyAccepted", inputUnitsLocallyAccepted.get());
     return out;
   }
 
@@ -1057,7 +1119,7 @@ public final class TerminalSessionRuntime {
   /** 测试用：跳过完整 Snapshot 同步，直接进入 LIVE。 */
   void enterLiveForTest() {
     modelExecutor.execute(() -> {
-      if (state == State.CLOSED) return;
+      if (isClosingOrClosed()) return;
       updateState(State.LIVE);
       projectionContinuity = ProjectionContinuityState.CONTINUOUS;
     });
@@ -1108,23 +1170,61 @@ public final class TerminalSessionRuntime {
   }
 
   public void close() {
+    if (!closeRequested.compareAndSet(false, true)) {
+      return;
+    }
+
     connectionEpoch.incrementAndGet();
     renderWakeDispatcher.cancel();
-    updateState(State.CLOSED);
-    screenMailbox.reset();
-    TerminalPipelineDiagnosticsRegistry.unregister(this);
-    // 取消在途 timeout 并复位恢复状态机（递增 generation 作废旧回调）。
-    modelExecutor.execute(() -> {
-      resetResyncRecovery();
-      shutdownHistoryLoading();
-    });
-    ScreenConnection c = connection;
-    if (c != null) {
-      c.releaseLayout();
-      c.close();
+    updateState(State.CLOSING);
+
+    long closeRequestedAtEpochMs = System.currentTimeMillis();
+    int mailboxMessagesAtCloseRequest = screenMailbox.pendingMessages();
+    long mailboxBytesAtCloseRequest = screenMailbox.pendingBytes();
+
+    ScreenConnection current = connection;
+    connection = null;
+    connectionRequiresReplacement = false;
+    if (current != null) {
+      current.releaseLayout();
+      current.close();
     }
     layoutLeaseCoordinator.detachPage();
-    modelExecutor.execute(() -> syncGeneration++);
+
+    modelExecutor.execute(() -> finishCloseOnModelExecutor(
+        closeRequestedAtEpochMs,
+        mailboxMessagesAtCloseRequest,
+        mailboxBytesAtCloseRequest));
+  }
+
+
+  /** model executor 上推进 syncGeneration，并发布给诊断快照读取。 */
+  private void bumpSyncGeneration() {
+    syncGeneration++;
+    publishedSyncGeneration = syncGeneration;
+  }
+
+  private long nextSyncGeneration() {
+    long generation = ++syncGeneration;
+    publishedSyncGeneration = syncGeneration;
+    return generation;
+  }
+
+  /** modelExecutor 上完成最终清理后再写入 recentClosed，保证快照反映清理后状态。 */
+  private void finishCloseOnModelExecutor(long closeRequestedAtEpochMs,
+                                          int mailboxMessagesAtCloseRequest,
+                                          long mailboxBytesAtCloseRequest) {
+    bumpSyncGeneration();
+    resetResyncRecovery();
+    shutdownHistoryLoading();
+    screenMailbox.reset();
+    updateState(State.CLOSED);
+    TerminalPipelineDiagnosticsRegistry.unregister(
+        this,
+        diagnosticsSnapshotForClose(
+            closeRequestedAtEpochMs,
+            mailboxMessagesAtCloseRequest,
+            mailboxBytesAtCloseRequest));
   }
 
   // ---- transport/screen 同步状态机（modelExecutor 唯一推进） ----
@@ -1135,7 +1235,7 @@ public final class TerminalSessionRuntime {
         || connectionEpoch.get() != expectedEpoch
         || state != State.SYNCING) return;
     projectionContinuity = ProjectionContinuityState.SYNCING;
-    long generation = ++syncGeneration;
+    long generation = nextSyncGeneration();
     TerminalScreenV2Proto.ResumeToken resume = null;
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
     if (model.projectionReadView().projectionComplete && snapshot.screen != null
@@ -1166,7 +1266,7 @@ public final class TerminalSessionRuntime {
       connectionEpoch.incrementAndGet();
       layoutLeaseCoordinator.invalidate();
       updateState(State.RECONNECTING);
-      expectedConnection.requestReconnect("screen Hello send failed");
+      expectedConnection.requestHelloSendFailedReconnect();
       return;
     }
     timeoutScheduler.schedule(
@@ -1182,7 +1282,7 @@ public final class TerminalSessionRuntime {
 
   private void completeSynchronization() {
     if (state != State.SYNCING) return;
-    syncGeneration++;
+    bumpSyncGeneration();
     updateState(State.LIVE);
     projectionContinuity = ProjectionContinuityState.CONTINUOUS;
     layoutLeaseCoordinator.onSynchronizationComplete();
@@ -1192,7 +1292,7 @@ public final class TerminalSessionRuntime {
                                    @NonNull ScreenConnection sourceConnection,
                                    @NonNull byte[] payload) {
     boolean frameSizeValid = payload.length > 0 && payload.length <= 2 * 1024 * 1024;
-    if (state == State.CLOSED) return;
+    if (isClosingOrClosed()) return;
     ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
     pipelineMetrics.onFrameReceived(kind.name(), payload.length);
     if (!frameSizeValid) {
@@ -1650,7 +1750,7 @@ public final class TerminalSessionRuntime {
 
   private void rebuildScreenChannel(@NonNull String reason) {
     ScreenConnection current = connection;
-    if (current == null || state == State.CLOSED) return;
+    if (current == null || isClosingOrClosed()) return;
     connectionEpoch.incrementAndGet();
     layoutLeaseCoordinator.invalidate();
     updateState(State.RECONNECTING);

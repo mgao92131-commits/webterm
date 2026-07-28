@@ -133,6 +133,7 @@ func (s *Session) handleControlMessage(ctx context.Context, data []byte) {
 }
 
 // applyDiagnosticsConnection 接收 Android 侧已计算的 correlation hash，原样保存。
+// recovery_hash：字段不存在→保持；存在且为空→清除；合法 hash→设置。
 func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 	if raw == nil {
 		return
@@ -145,8 +146,13 @@ func (s *Session) applyDiagnosticsConnection(raw map[string]any) {
 			rejected = true
 		}
 	}
-	if v, ok := raw["recovery_hash"].(string); ok && v != "" {
-		if validAndroidDiagnosticHash(v) {
+	if rawValue, exists := raw["recovery_hash"]; exists {
+		v, ok := rawValue.(string)
+		if !ok {
+			rejected = true
+		} else if v == "" {
+			s.diag.RecoveryHash = ""
+		} else if validAndroidDiagnosticHash(v) {
 			s.diag.RecoveryHash = v
 		} else {
 			rejected = true

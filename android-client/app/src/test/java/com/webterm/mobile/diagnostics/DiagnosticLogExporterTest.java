@@ -135,6 +135,12 @@ public class DiagnosticLogExporterTest {
         assertTrue(metrics.contains("\"screenPipelineAggregate\":{"));
         assertTrue(metrics.contains("\"historyLoaderAggregate\":{"));
         assertTrue(metrics.contains("\"inputDelivery\":{"));
+        assertTrue(metrics.contains("\"sessionLifetime\":{"));
+        assertTrue(metrics.contains("\"connectionLifetime\":{"));
+        assertTrue(metrics.contains("\"activeSessionCount\":"));
+        assertTrue(metrics.contains("\"lifetimeSessionCount\":"));
+        assertTrue(metrics.contains("\"activeConnectionCount\":"));
+        assertTrue(metrics.contains("\"lifetimeConnectionCount\":"));
         assertTrue(metrics.contains("\"residenceLatencyBuckets\":["));
         assertTrue(metrics.contains("\"byFrameKind\":{"));
         assertTrue(metrics.contains("\"startedCount\":"));

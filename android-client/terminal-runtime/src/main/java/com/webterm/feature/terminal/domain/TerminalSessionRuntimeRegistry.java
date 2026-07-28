@@ -75,9 +75,13 @@ public final class TerminalSessionRuntimeRegistry {
   public synchronized TerminalSessionRuntime acquire(@NonNull TerminalRuntimeKey key,
                                                       @NonNull HistoryBudget historyBudget) {
     Entry entry = entries.get(key);
-    if (entry != null && entry.runtime.state() == TerminalSessionRuntime.State.CLOSED) {
-      entries.remove(key);
-      entry = null;
+    if (entry != null) {
+      TerminalSessionRuntime.State runtimeState = entry.runtime.state();
+      if (runtimeState == TerminalSessionRuntime.State.CLOSED
+          || runtimeState == TerminalSessionRuntime.State.CLOSING) {
+        entries.remove(key);
+        entry = null;
+      }
     }
     if (entry == null) {
       entry = new Entry(key, runtimeFactory.create(key.sessionId, historyBudget), clock.nowMs());

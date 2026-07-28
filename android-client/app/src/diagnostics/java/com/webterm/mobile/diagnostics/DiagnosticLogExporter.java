@@ -33,7 +33,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -274,17 +273,24 @@ public final class DiagnosticLogExporter {
         resumeJson.put("mailboxMaxPendingBytes", resume.mailboxMaxPendingBytes);
         json.put("resume", resumeJson);
 
-        List<DeviceConnection.DiagnosticsSnapshot> connections =
-            DeviceConnectionDiagnosticsRegistry.snapshotForMetrics();
-        json.put("outboundQueue", aggregateOutboundQueue(connections));
-        json.put("inboundDrops", aggregateInboundDrops(connections));
+        json.put("outboundQueue",
+            outboundQueueAggregateJson(DeviceConnectionDiagnosticsRegistry.aggregateOutboundQueue()));
+        json.put("inboundDrops",
+            longMapJson(DeviceConnectionDiagnosticsRegistry.aggregateInboundDrops()));
         json.put("connectionRecovery",
             longMapJson(DeviceConnectionDiagnosticsRegistry.aggregateConnectionRecovery()));
+        json.put("diagnosticsContextSend",
+            longMapJson(DeviceConnectionDiagnosticsRegistry.aggregateDiagnosticsContextSend()));
+        json.put("sessionLifetime",
+            longMapJson(TerminalPipelineDiagnosticsRegistry.lifetimeSessionCounts()));
+        json.put("connectionLifetime",
+            longMapJson(DeviceConnectionDiagnosticsRegistry.lifetimeConnectionCounts()));
         Map<String, Long> screenPipeline =
             TerminalPipelineDiagnosticsRegistry.aggregateScreenPipeline();
         json.put("screenPipelineAggregate", longMapJson(screenPipeline));
         json.put("historyLoaderAggregate",
             longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateHistoryLoader()));
+        // inputDelivery 不含 focus；关闭后 localAccept 可能暂时大于最终结果之和（在途帧）。
         json.put("inputDelivery",
             longMapJson(TerminalPipelineDiagnosticsRegistry.aggregateInputDelivery()));
         return json;
@@ -305,106 +311,33 @@ public final class DiagnosticLogExporter {
         return json;
     }
 
-    private static JSONObject aggregateOutboundQueue(
-        List<DeviceConnection.DiagnosticsSnapshot> connections) throws JSONException {
-        long currentFrames = 0L;
-        long currentBytes = 0L;
-        long highWaterFrames = 0L;
-        long highWaterBytes = 0L;
-        long acceptedCount = 0L;
-        long webSocketEnqueuedCount = 0L;
-        long queueFullCount = 0L;
-        long channelNotOpenCount = 0L;
-        long transportRejectedCount = 0L;
-        long connectionStoppedCount = 0L;
-        long residenceCount = 0L;
-        long residenceTotalNanos = 0L;
-        long residenceMaxNanos = 0L;
-        long[] residenceLatencyBuckets = new long[MuxOutboundQueue.LATENCY_BUCKET_COUNT];
-        Map<String, Long> acceptedByKind = new LinkedHashMap<>();
-        Map<String, Long> webSocketEnqueuedByKind = new LinkedHashMap<>();
-        Map<String, Long> rejectedByKind = new LinkedHashMap<>();
-        Map<String, Long> bytesByKind = new LinkedHashMap<>();
-        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
-            MuxOutboundQueue.Snapshot q = connection.outboundQueue;
-            if (q == null) continue;
-            currentFrames += q.currentFrames;
-            currentBytes += q.currentBytes;
-            if (q.highWaterFrames > highWaterFrames) highWaterFrames = q.highWaterFrames;
-            if (q.highWaterBytes > highWaterBytes) highWaterBytes = q.highWaterBytes;
-            acceptedCount += q.acceptedCount;
-            webSocketEnqueuedCount += q.webSocketEnqueuedCount;
-            queueFullCount += q.queueFullCount;
-            channelNotOpenCount += q.channelNotOpenCount;
-            transportRejectedCount += q.transportRejectedCount;
-            connectionStoppedCount += q.connectionStoppedCount;
-            residenceCount += q.residenceCount;
-            residenceTotalNanos += q.residenceTotalNanos;
-            if (q.residenceMaxNanos > residenceMaxNanos) residenceMaxNanos = q.residenceMaxNanos;
-            if (q.residenceLatencyBuckets != null) {
-                for (int i = 0; i < residenceLatencyBuckets.length
-                    && i < q.residenceLatencyBuckets.length; i++) {
-                    residenceLatencyBuckets[i] += q.residenceLatencyBuckets[i];
+    @SuppressWarnings("unchecked")
+    private static JSONObject outboundQueueAggregateJson(Map<String, Object> aggregate)
+            throws JSONException {
+        JSONObject json = new JSONObject();
+        if (aggregate == null) return json;
+        for (Map.Entry<String, Object> entry : aggregate.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if ("residenceLatencyBuckets".equals(key) && value instanceof long[]) {
+                json.put(key, latencyBucketsJson((long[]) value));
+            } else if ("byFrameKind".equals(key) && value instanceof Map) {
+                JSONObject byFrameKind = new JSONObject();
+                Map<String, Object> kinds = (Map<String, Object>) value;
+                for (Map.Entry<String, Object> kindEntry : kinds.entrySet()) {
+                    Object kindValue = kindEntry.getValue();
+                    if (kindValue instanceof Map) {
+                        byFrameKind.put(kindEntry.getKey(),
+                            longMapJson((Map<String, Long>) kindValue));
+                    }
                 }
+                json.put(key, byFrameKind);
+            } else if (value instanceof Number) {
+                json.put(key, ((Number) value).longValue());
+            } else if (value != null) {
+                json.put(key, value);
             }
-            mergeKindCounts(acceptedByKind, q.acceptedByKind);
-            mergeKindCounts(webSocketEnqueuedByKind, q.webSocketEnqueuedByKind);
-            mergeKindCounts(rejectedByKind, q.rejectedByKind);
-            mergeKindCounts(bytesByKind, q.bytesByKind);
         }
-        JSONObject json = new JSONObject();
-        json.put("connectionCount", connections.size());
-        json.put("currentFrames", currentFrames);
-        json.put("currentBytes", currentBytes);
-        json.put("highWaterFrames", highWaterFrames);
-        json.put("highWaterBytes", highWaterBytes);
-        json.put("acceptedCount", acceptedCount);
-        json.put("webSocketEnqueuedCount", webSocketEnqueuedCount);
-        json.put("queueFullCount", queueFullCount);
-        json.put("channelNotOpenCount", channelNotOpenCount);
-        json.put("transportRejectedCount", transportRejectedCount);
-        json.put("connectionStoppedCount", connectionStoppedCount);
-        json.put("residenceCount", residenceCount);
-        json.put("residenceTotalNanos", residenceTotalNanos);
-        json.put("residenceMaxNanos", residenceMaxNanos);
-        json.put("residenceLatencyBuckets", latencyBucketsJson(residenceLatencyBuckets));
-        JSONObject byFrameKind = new JSONObject();
-        byFrameKind.put("acceptedByKind", longMapJson(acceptedByKind));
-        byFrameKind.put("webSocketEnqueuedByKind", longMapJson(webSocketEnqueuedByKind));
-        byFrameKind.put("rejectedByKind", longMapJson(rejectedByKind));
-        byFrameKind.put("bytesByKind", longMapJson(bytesByKind));
-        json.put("byFrameKind", byFrameKind);
-        return json;
-    }
-
-    private static void mergeKindCounts(Map<String, Long> target, Map<String, Long> source) {
-        if (source == null) return;
-        for (Map.Entry<String, Long> entry : source.entrySet()) {
-            long add = entry.getValue() != null ? entry.getValue() : 0L;
-            target.put(entry.getKey(), target.getOrDefault(entry.getKey(), 0L) + add);
-        }
-    }
-
-    private static JSONObject aggregateInboundDrops(
-        List<DeviceConnection.DiagnosticsSnapshot> connections) throws JSONException {
-        long staleTransportGenerationDropped = 0L;
-        long tunnelDecodeFailed = 0L;
-        long unknownChannelDropped = 0L;
-        long channelNotOpenDropped = 0L;
-        for (DeviceConnection.DiagnosticsSnapshot connection : connections) {
-            DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
-            if (drops == null) continue;
-            staleTransportGenerationDropped += drops.staleTransportGenerationDropped;
-            tunnelDecodeFailed += drops.tunnelDecodeFailed;
-            unknownChannelDropped += drops.unknownChannelDropped;
-            channelNotOpenDropped += drops.channelNotOpenDropped;
-        }
-        JSONObject json = new JSONObject();
-        json.put("connectionCount", connections.size());
-        json.put("staleTransportGenerationDropped", staleTransportGenerationDropped);
-        json.put("tunnelDecodeFailed", tunnelDecodeFailed);
-        json.put("unknownChannelDropped", unknownChannelDropped);
-        json.put("channelNotOpenDropped", channelNotOpenDropped);
         return json;
     }
 
@@ -485,12 +418,19 @@ public final class DiagnosticLogExporter {
         terminal.put("mailboxMessages", session.mailboxMessages);
         terminal.put("mailboxBytes", session.mailboxBytes);
         if (closed) {
+            if (session.closeRequestedAtEpochMs > 0L) {
+                terminal.put("closeRequestedAt", isoFromEpochMs(session.closeRequestedAtEpochMs));
+            }
             if (session.closedAtEpochMs > 0L) {
                 terminal.put("closedAt", isoFromEpochMs(session.closedAtEpochMs));
             }
             if (session.finalState != null && !session.finalState.isEmpty()) {
                 terminal.put("finalState", session.finalState);
             }
+            terminal.put("mailboxMessagesAtCloseRequest", session.mailboxMessagesAtCloseRequest);
+            terminal.put("mailboxBytesAtCloseRequest", session.mailboxBytesAtCloseRequest);
+            terminal.put("finalMailboxMessages", session.finalMailboxMessages);
+            terminal.put("finalMailboxBytes", session.finalMailboxBytes);
         }
         return terminal;
     }
@@ -527,7 +467,8 @@ public final class DiagnosticLogExporter {
         if (connection.lastCloseReason != null) {
             json.put("lastCloseReason", connection.lastCloseReason.name());
         }
-        json.put("connectionStartedAtNanos", connection.connectionStartedAtNanos);
+        json.put("connectElapsedMs", connection.connectElapsedMs);
+        json.put("connectedElapsedMs", connection.connectedElapsedMs);
         json.put("recoveryStartedAtNanos", connection.recoveryStartedAtNanos);
         json.put("recoveryAttemptCount", connection.recoveryAttemptCount);
         if (connection.recoveryInitialFailureKind != null

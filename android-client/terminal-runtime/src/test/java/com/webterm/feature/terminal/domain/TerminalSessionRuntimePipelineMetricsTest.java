@@ -1,6 +1,7 @@
 package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -26,12 +27,18 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.Test;
 
 /**
  * 屏幕管线水位：Baseline/Commit 推进 decoded/model/published/consumed/handled/rendered；
  * 历史-only 与 requestFullRender 推进 publicationVersion；失败不推进 handled/rendered。
+ * 成功路径经 {@link TerminalSessionRuntime#onRenderFrameSucceeded} 原子推进 handled+rendered。
  */
 public final class TerminalSessionRuntimePipelineMetricsTest {
 
@@ -66,9 +73,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     RenderUpdate update = runtime.consumeRenderUpdate(renderConsumer);
     assertNotNull(update);
     assertEquals(102L, update.snapshot.screenRevision);
-    runtime.onRenderFrameRendered(update.publicationVersion, update.snapshot.screenRevision, 1_000L);
-    runtime.onRenderPublicationHandled(
-        update.publicationVersion, update.snapshot.screenRevision, true);
+    runtime.onRenderFrameSucceeded(update.publicationVersion, update.snapshot.screenRevision, 1_000L);
 
     Map<String, Object> afterDraw = runtime.pipelineMetrics().snapshot();
     assertEquals(update.publicationVersion, afterDraw.get("lastConsumedVersion"));
@@ -121,9 +126,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertNotNull(update);
     assertTrue(update.state.historyChanged);
     assertEquals(revBefore, update.snapshot.screenRevision);
-    runtime.onRenderFrameRendered(update.publicationVersion, update.snapshot.screenRevision, 500L);
-    runtime.onRenderPublicationHandled(
-        update.publicationVersion, update.snapshot.screenRevision, true);
+    runtime.onRenderFrameSucceeded(update.publicationVersion, update.snapshot.screenRevision, 500L);
 
     Map<String, Object> afterDraw = runtime.pipelineMetrics().snapshot();
     assertEquals(update.publicationVersion, afterDraw.get("lastConsumedVersion"));
@@ -175,6 +178,79 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertEquals(0L, snap.get("lastRenderFailedVersion"));
     assertEquals(1L, snap.get("stateOnlyHandledCount"));
     assertEquals(0L, snap.get("renderSuccessCount"));
+  }
+
+  @Test
+  public void renderSuccessMaintainsPublishedConsumedHandledRenderedInvariant() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime("inv-wm", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    Object renderConsumer = new Object();
+    runtime.registerRenderConsumer(renderConsumer);
+
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+    connection.listener.onScreenMessage(commitEnvelope(100, 101));
+
+    RenderUpdate update = runtime.consumeRenderUpdate(renderConsumer);
+    assertNotNull(update);
+    runtime.onRenderFrameSucceeded(update.publicationVersion, update.snapshot.screenRevision, 1L);
+
+    Map<String, Object> snap = runtime.pipelineMetrics().snapshot();
+    long published = (Long) snap.get("lastPublishedVersion");
+    long consumed = (Long) snap.get("lastConsumedVersion");
+    long handled = (Long) snap.get("lastHandledVersion");
+    long rendered = (Long) snap.get("lastRenderedVersion");
+    assertTrue(published >= consumed);
+    assertTrue(consumed >= handled);
+    assertTrue(handled >= rendered);
+    assertEquals(handled, rendered);
+  }
+
+  @Test
+  public void concurrentSnapshotDuringSuccessNeverShowsRenderedAboveHandled() throws Exception {
+    TerminalPipelineMetrics metrics = new TerminalPipelineMetrics();
+    ExecutorService pool = Executors.newFixedThreadPool(4);
+    CountDownLatch started = new CountDownLatch(1);
+    AtomicBoolean sawViolation = new AtomicBoolean(false);
+
+    Runnable successLoop = () -> {
+      try {
+        started.await(2, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+      for (int n = 0; n < 500; n++) {
+        metrics.onRenderFrameSucceeded(n + 1, n + 1, 100L);
+      }
+    };
+    Runnable snapshotLoop = () -> {
+      try {
+        started.await(2, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+      for (int n = 0; n < 2000; n++) {
+        Map<String, Object> snap = metrics.snapshot();
+        long handled = (Long) snap.get("lastHandledVersion");
+        long rendered = (Long) snap.get("lastRenderedVersion");
+        if (rendered > handled) {
+          sawViolation.set(true);
+          return;
+        }
+      }
+    };
+
+    for (int i = 0; i < 3; i++) {
+      pool.submit(successLoop);
+    }
+    pool.submit(snapshotLoop);
+
+    started.countDown();
+    pool.shutdown();
+    assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
+    assertFalse(sawViolation.get());
   }
 
   @Test

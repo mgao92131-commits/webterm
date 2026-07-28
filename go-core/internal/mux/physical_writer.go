@@ -11,6 +11,9 @@ import (
 
 const maxHighPriorityBurst = 8
 
+// ErrWriterClosed 表示 PhysicalWriter 已关闭，排队或等待结果的 Submit 应失败。
+var ErrWriterClosed = errors.New("mux: physical writer closed")
+
 type physicalWrite struct {
 	ctx          context.Context
 	msgType      termsession.MessageType
@@ -28,24 +31,49 @@ type PhysicalWriter struct {
 	highWrites chan physicalWrite
 	dataWrites chan physicalWrite
 	done       chan struct{}
+	metricsID  uint64
 }
 
 func NewPhysicalWriter(conn termsession.Socket, queueSize int) *PhysicalWriter {
 	if queueSize <= 0 {
 		queueSize = 128
 	}
-	return &PhysicalWriter{
+	writer := &PhysicalWriter{
 		conn:       conn,
 		highWrites: make(chan physicalWrite, queueSize),
 		dataWrites: make(chan physicalWrite, queueSize),
 		done:       make(chan struct{}),
+		metricsID:  diagnostics.Default.RegisterWriter(),
 	}
+	return writer
 }
 
 func (writer *PhysicalWriter) Done() <-chan struct{} { return writer.done }
 
 func (writer *PhysicalWriter) observeQueueDepths() {
-	diagnostics.Default.ObserveWriterQueueDepth(len(writer.highWrites), len(writer.dataWrites))
+	diagnostics.Default.UpdateWriterDepth(
+		writer.metricsID, len(writer.highWrites), len(writer.dataWrites))
+}
+
+func (writer *PhysicalWriter) failPending(err error) {
+	for {
+		select {
+		case request := <-writer.highWrites:
+			request.result <- err
+		default:
+			goto drainData
+		}
+	}
+drainData:
+	for {
+		select {
+		case request := <-writer.dataWrites:
+			request.result <- err
+		default:
+			writer.observeQueueDepths()
+			return
+		}
+	}
 }
 
 func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
@@ -66,6 +94,8 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 	select {
 	case queue <- request:
 		writer.observeQueueDepths()
+	case <-writer.done:
+		return ErrWriterClosed
 	case <-ctx.Done():
 		// 排队阶段被 ctx 拒绝（队列满/超时），计入 writer 队列拒绝指标。
 		diagnostics.Default.WriterQueueRejectedCount.Add(1)
@@ -74,14 +104,33 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 	select {
 	case err := <-request.result:
 		return err
+	case <-writer.done:
+		// failPending/perform 可能已写入 result；优先取真实结果，避免成功写入被误报 closed。
+		select {
+		case err := <-request.result:
+			return err
+		default:
+			return ErrWriterClosed
+		}
 	case <-ctx.Done():
-		return ctx.Err()
+		select {
+		case err := <-request.result:
+			return err
+		default:
+			return ctx.Err()
+		}
 	}
 }
 
 func (writer *PhysicalWriter) Run(ctx context.Context) {
 	defer close(writer.done)
-	defer writer.observeQueueDepths()
+	defer diagnostics.Default.UnregisterWriter(writer.metricsID)
+	defer writer.failPending(ErrWriterClosed)
+
+	if ctx.Err() != nil {
+		return
+	}
+
 	highBurst := 0
 	for {
 		if highBurst >= maxHighPriorityBurst {

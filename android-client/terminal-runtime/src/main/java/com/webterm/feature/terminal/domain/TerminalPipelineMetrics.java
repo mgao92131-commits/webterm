@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>published — 模型生成了新的 RenderUpdate</li>
  *   <li>consumed — Controller 取走了该 RenderUpdate</li>
  *   <li>handled — 已完成处理（成功绘制或 state-only）</li>
- *   <li>rendered — view.render() 正常返回</li>
+ *   <li>rendered — view.render() 正常返回（与 handled 在 {@link #onRenderFrameSucceeded} 中原子推进）</li>
  *   <li>renderFailed — view.render() 抛异常（不推进 handled/rendered）</li>
  * </ul>
  */
@@ -83,24 +83,41 @@ public final class TerminalPipelineMetrics {
 
   /**
    * Controller 完成对该 publication 的处理。
-   * @param rendered true 表示已成功绘制；false 表示 state-only（无视觉 dirty）。
+   * @param rendered true 时转发至 {@link #onRenderFrameSucceeded}；false 表示 state-only。
    */
   public void onRenderPublicationHandled(long publicationVersion, long screenRevision,
                                          boolean rendered) {
-    lastHandledVersion.set(publicationVersion);
-    lastHandledScreenRevision.set(screenRevision);
-    if (!rendered) {
+    if (rendered) {
+      onRenderFrameSucceeded(publicationVersion, screenRevision, 0L);
+      return;
+    }
+    synchronized (this) {
+      lastHandledVersion.set(publicationVersion);
+      lastHandledScreenRevision.set(screenRevision);
       stateOnlyHandledCount.incrementAndGet();
     }
   }
 
-  /** view.render() 正常返回后推进 rendered 水位。 */
-  public void onRenderFrameRendered(long publicationVersion, long screenRevision,
-                                    long drawDurationNanos) {
+  /**
+   * view.render() 正常返回：在同一 monitor 内先推进 handled，再 rendered，最后 success 计数。
+   */
+  public synchronized void onRenderFrameSucceeded(long publicationVersion, long screenRevision,
+                                                  long durationNanos) {
+    lastHandledVersion.set(publicationVersion);
+    lastHandledScreenRevision.set(screenRevision);
     lastRenderedVersion.set(publicationVersion);
     lastRenderedScreenRevision.set(screenRevision);
     lastRenderedAtNanos.set(System.nanoTime());
     renderSuccessCount.incrementAndGet();
+  }
+
+  /**
+   * @deprecated 使用 {@link #onRenderFrameSucceeded}；保留以兼容旧调用路径。
+   */
+  @Deprecated
+  public void onRenderFrameRendered(long publicationVersion, long screenRevision,
+                                    long drawDurationNanos) {
+    onRenderFrameSucceeded(publicationVersion, screenRevision, drawDurationNanos);
   }
 
   /**
@@ -158,8 +175,8 @@ public final class TerminalPipelineMetrics {
     unknownEnvelopeCount.incrementAndGet();
   }
 
-  /** 稳定字段映射，供后续诊断导出。 */
-  public Map<String, Object> snapshot() {
+  /** 稳定字段映射，供后续诊断导出。并发 snapshot 不会看到部分 success 更新。 */
+  public synchronized Map<String, Object> snapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("lastDecodedScreenRevision", lastDecodedScreenRevision.get());
     out.put("lastModelScreenRevision", lastModelScreenRevision.get());

@@ -10,6 +10,7 @@ import com.webterm.core.session.ConnectionCloseReason;
 import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.core.session.MuxOutboundQueue;
+import com.webterm.core.session.TransportReconnectTrigger;
 import com.webterm.terminal.protocol.ScreenMessageV2Builder;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
@@ -191,6 +192,16 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
       }
       channelId = null;
       connectNow();
+    });
+  }
+
+  @Override
+  public void requestHelloSendFailedReconnect() {
+    mainHandler.post(() -> {
+      if (deviceConnection == null) return;
+      deviceConnection.requestTransportReconnect(
+          TransportReconnectTrigger.SCREEN_HELLO_SEND_FAILED,
+          "screen Hello send failed");
     });
   }
 
