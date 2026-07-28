@@ -291,8 +291,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
         ? TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE
         : TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO;
     return sendFrame(ScreenMessageV2Builder.hello(
-            columns, rows, resume,
-            ScreenMessageV2Builder.COLD_HISTORY_TAIL_SERVER_DEFAULT, mode),
+            columns, rows, resume, mode),
         MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 

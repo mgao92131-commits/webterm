@@ -569,6 +569,51 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		}
 	}
 
+	// 通过真实 mux 输入制造 scrollback，再走 Relay HTTP Range 读取正文。
+	// 这同时验证 WS 只给位置 Push、HTTP query 透传与消息局部字典解码入口。
+	historyProbe := probes[0]
+	historyTerminalID := "term:" + historyProbe.sessionID
+	historyCommand := "i=1; while [ $i -le 40 ]; do printf 'HISTORY_RANGE_%03d\\n' \"$i\"; i=$((i+1)); done\r"
+	historyInput, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: 2,
+		Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
+			LeaseId: leaseIDs[historyTerminalID],
+			Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: historyCommand}},
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if err := writeMuxTunnel(ctx, ws, historyTerminalID, historyInput, true); err != nil {
+		return err
+	}
+	var historyGeneration, historyFrom, historyTo uint64
+	for historyTo == 0 {
+		frame, err := readMuxTunnel(ctx, ws)
+		if err != nil {
+			return err
+		}
+		if frame.ID != historyTerminalID {
+			continue
+		}
+		var envelope pb.ScreenEnvelope
+		if err := proto.Unmarshal(frame.Payload, &envelope); err != nil {
+			continue
+		}
+		commit := envelope.GetTerminalCommit()
+		if commit == nil || commit.GetHistory() == nil || len(commit.GetHistory().GetPushes()) == 0 {
+			continue
+		}
+		pushes := commit.GetHistory().GetPushes()
+		historyGeneration = commit.GetHistoryGeneration()
+		historyFrom = pushes[0].GetHistorySeq()
+		historyTo = pushes[len(pushes)-1].GetHistorySeq()
+	}
+	if err := fetchHistoryRange(ctx, baseURL, token, deviceID, historyProbe.sessionID,
+		historyGeneration, historyFrom, historyTo); err != nil {
+		return err
+	}
+
 	for _, probe := range probes {
 		if err := writeMuxControl(ctx, ws, map[string]any{
 			"type":               protocol.WSClose,
@@ -576,6 +621,48 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func fetchHistoryRange(ctx context.Context, baseURL, token, deviceID, sessionID string,
+	generation, from, to uint64) error {
+	path := fmt.Sprintf("/api/sessions/%s/history/range?generation=%d&from=%d&to=%d",
+		url.PathEscape(sessionID), generation, from, to)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token})
+	req.Header.Set("X-Device-Id", deviceID)
+	req.Header.Set("Accept", "application/x-protobuf")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("history Range status=%d body=%q", res.StatusCode, body)
+	}
+	var decoded pb.HistoryRangeResponse
+	if err := proto.Unmarshal(body, &decoded); err != nil {
+		return fmt.Errorf("decode history Range: %w", err)
+	}
+	if decoded.GetStatus() != pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK ||
+		decoded.GetHistoryGeneration() != generation ||
+		len(decoded.GetLines()) != int(to-from+1) {
+		return fmt.Errorf("history Range mismatch: status=%s generation=%d lines=%d want=%d",
+			decoded.GetStatus(), decoded.GetHistoryGeneration(), len(decoded.GetLines()), to-from+1)
+	}
+	if decoded.GetLines()[0].GetHistorySeq() != from ||
+		decoded.GetLines()[len(decoded.GetLines())-1].GetHistorySeq() != to {
+		return fmt.Errorf("history Range bounds mismatch: %d..%d want %d..%d",
+			decoded.GetLines()[0].GetHistorySeq(),
+			decoded.GetLines()[len(decoded.GetLines())-1].GetHistorySeq(), from, to)
 	}
 	return nil
 }
@@ -594,9 +681,6 @@ func screenEnvelopeContains(data []byte, text string) bool {
 			for _, write := range payload.TerminalCommit.GetScreen().GetWrites() {
 				lines = append(lines, write.GetLine())
 			}
-		}
-		if payload.TerminalCommit.GetHistory() != nil {
-			lines = append(lines, payload.TerminalCommit.GetHistory().GetAppendedLines()...)
 		}
 	default:
 		return false

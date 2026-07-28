@@ -12,7 +12,7 @@ type HistoryChange struct {
 }
 
 // HistoryChangeIndex 是有界历史版本索引。Changes 与权威 scrollback 同步 trim；
-// GapRevision 记录最近一次不能用 append 表达的尾部回退/ID 缺口。
+// GapRevision 记录最近一次不能用 HistoryPush + final extent 表达的 ID 缺口。
 type HistoryChangeIndex struct {
 	Changes                  []HistoryChange
 	GapRevision              uint64
@@ -35,14 +35,8 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		h.WatermarkChangedRevision = revision
 	}
 
-	if h.nextSeq != 0 && w.NextSeq < h.nextSeq {
-		// Clear/ResetForReflow 重置了 LineID 空间。
-		h.Changes = nil
-		gap = true
-	}
 	if h.lastSeq != 0 && w.LastSeq < h.lastSeq {
-		// Pop 从尾部删除历史，append+前端水位无法表达尾删。
-		gap = true
+		// Resize Pop 通过 final extent 表达尾删，并允许以后复用这些位置。
 		for len(h.Changes) > 0 && h.Changes[len(h.Changes)-1].HistorySeq > w.LastSeq {
 			h.Changes = h.Changes[:len(h.Changes)-1]
 		}
@@ -82,67 +76,4 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	}
 	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
 	return gap
-}
-
-// HistoryView 提供分页历史查询。
-type HistoryView struct {
-	scrollback *terminalengine.TrackedScrollback
-}
-
-// NewHistoryView 创建历史视图。
-func NewHistoryView(scrollback *terminalengine.TrackedScrollback) *HistoryView {
-	return &HistoryView{scrollback: scrollback}
-}
-
-// Page 返回严格小于 beforeSeq 的最多 limit 行，按 ID 升序。
-func (v *HistoryView) Page(beforeSeq uint64, limit int) terminalengine.HistoryWindow {
-	exp := newExporter(
-		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
-		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
-	)
-	return v.pageWithExporter(beforeSeq, limit, exp)
-}
-
-func (v *HistoryView) pageWithExporter(beforeSeq uint64, limit int, exp *exporter) terminalengine.HistoryWindow {
-	if limit <= 0 {
-		limit = 250
-	}
-	if limit > 500 {
-		limit = 500
-	}
-
-	firstAvailable := v.scrollback.FirstSeq()
-	if beforeSeq <= firstAvailable {
-		return terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: firstAvailable,
-			FirstIncludedHistorySeq:  firstAvailable,
-			LastIncludedHistorySeq:   firstAvailable - 1,
-			HasMoreBefore:            false,
-			Lines:                    nil,
-		}
-	}
-
-	lines := v.scrollback.PageBefore(beforeSeq, limit)
-	if len(lines) == 0 {
-		return terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: firstAvailable,
-			FirstIncludedHistorySeq:  beforeSeq,
-			LastIncludedHistorySeq:   beforeSeq - 1,
-			HasMoreBefore:            false,
-			Lines:                    nil,
-		}
-	}
-
-	exported := make([]terminalengine.Line, len(lines))
-	for i, hl := range lines {
-		exported[i] = exp.exportScrollbackEntry(hl)
-	}
-
-	return terminalengine.HistoryWindow{
-		FirstAvailableHistorySeq: firstAvailable,
-		FirstIncludedHistorySeq:  exported[0].HistorySeq,
-		LastIncludedHistorySeq:   exported[len(exported)-1].HistorySeq,
-		HasMoreBefore:            exported[0].HistorySeq > firstAvailable,
-		Lines:                    exported,
-	}
 }

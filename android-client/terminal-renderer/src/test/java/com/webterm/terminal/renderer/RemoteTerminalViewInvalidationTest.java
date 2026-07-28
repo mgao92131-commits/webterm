@@ -60,8 +60,8 @@ public final class RemoteTerminalViewInvalidationTest {
         ? HistoryExtent.INITIAL_EMPTY
         : new HistoryExtent(1, historyRows);
     ScreenBaseline baseline = new ScreenBaseline(
-        "session-1", "term-1", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, TerminalBufferKind.MAIN,
-        extent, Arrays.asList(history), Arrays.asList(screen),
+        "session-1", "term-1", 1L, 1L, 1L, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, TerminalBufferKind.MAIN,
+        extent, Arrays.asList(screen),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
     model.applyBaseline(baseline);
     model.consumeRenderUpdate();
@@ -276,8 +276,8 @@ public final class RemoteTerminalViewInvalidationTest {
     List<TerminalLine> screen = new ArrayList<>();
     for (int row = 0; row < rows; row++) screen.add(line(1_000_000L + row, cols));
     assertEquals(true, model.applyBaseline(new ScreenBaseline(
-        "session-large", "term-large", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
-        TerminalBufferKind.MAIN, new HistoryExtent(firstSeq, lastSeq), historyTail, screen,
+        "session-large", "term-large", 1L, 1L, 1L, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
+        TerminalBufferKind.MAIN, new HistoryExtent(firstSeq, lastSeq), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();
     return model;

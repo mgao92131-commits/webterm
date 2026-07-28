@@ -40,7 +40,7 @@ public final class ScreenMessageV2ValidatorTest {
         .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
             .setFinalExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
                 .setFirstSeq(1).setLastSeq(2))
-            .addAppendedLines(line(20, 2)))
+            .addPushes(push(2, 20, 1)))
         .build(), 3);
   }
 
@@ -56,12 +56,12 @@ public final class ScreenMessageV2ValidatorTest {
   }
 
   @Test(expected = CommitValidationException.class)
-  public void terminalCommitRejectsMoreThan128HistoryBodies() throws Exception {
+  public void terminalCommitRejectsMoreThan4096HistoryPushes() throws Exception {
     TerminalScreenV2Proto.HistoryMutation.Builder history =
         TerminalScreenV2Proto.HistoryMutation.newBuilder()
             .setFinalExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
-                .setFirstSeq(1).setLastSeq(129));
-    for (int i = 1; i <= 129; i++) history.addAppendedLines(line(1000 + i, i));
+                .setFirstSeq(1).setLastSeq(4097));
+    for (int i = 1; i <= 4097; i++) history.addPushes(push(i, 1000 + i, 1));
     ScreenMessageV2Validator.validateTerminalCommit(
         commitBuilder().setHistory(history).build(), 2);
   }
@@ -76,6 +76,12 @@ public final class ScreenMessageV2ValidatorTest {
   private static TerminalScreenV2Proto.LineData line(long id, long historySeq) {
     return TerminalScreenV2Proto.LineData.newBuilder()
         .setLineId(id).setLineVersion(1).setHistorySeq(historySeq).build();
+  }
+
+  private static TerminalScreenV2Proto.HistoryPush push(
+      long historySeq, long lineId, long lineVersion) {
+    return TerminalScreenV2Proto.HistoryPush.newBuilder()
+        .setHistorySeq(historySeq).setLineId(lineId).setLineVersion(lineVersion).build();
   }
 
   private static void assertAcceptedExtent(long first, long last) throws Exception {

@@ -15,7 +15,6 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: 4,
 			LastIncludedHistorySeq:   3,
-			SealedThroughSeq:         256,
 		},
 		Screen: []terminalengine.Line{{
 			ID: 7, Version: 1,
@@ -39,15 +38,12 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 	if got := baseline.GetHistoryExtent(); got.GetFirstSeq() != 4 || got.GetLastSeq() != 3 {
 		t.Fatalf("empty extent = %d..%d, want 4..3", got.GetFirstSeq(), got.GetLastSeq())
 	}
-	if baseline.GetSealedThroughSeq() != 256 {
-		t.Fatalf("SealedThroughSeq=%d, want 256", baseline.GetSealedThroughSeq())
-	}
 	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x" {
 		t.Fatal("default trailing blank was not trimmed")
 	}
 }
 
-func TestEncodeBaselineHonorsColdTailAndPreservePolicy(t *testing.T) {
+func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 	history := make([]terminalengine.Line, 200)
 	for i := range history {
 		seq := uint64(i + 1)
@@ -68,55 +64,7 @@ func TestEncodeBaselineHonorsColdTailAndPreservePolicy(t *testing.T) {
 		},
 		Screen: []terminalengine.Line{{ID: 1, Version: 1}},
 	}
-	for _, tc := range []struct {
-		name      string
-		requested uint32
-		want      int
-	}{
-		{"sixteen", 16, 16},
-		{"sixty-four", 64, 64},
-		{"clamped", 999, 128},
-		{"default", 0, 128},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			wire, err := EncodeBaseline(frame, tc.requested)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var env pb.ScreenEnvelope
-			if err := proto.Unmarshal(wire, &env); err != nil {
-				t.Fatal(err)
-			}
-			baseline := env.GetBaseline()
-			if got := len(baseline.GetHistoryTail().GetLines()); got != tc.want {
-				t.Fatalf("tail lines=%d, want %d", got, tc.want)
-			}
-			if baseline.GetHistoryExtent().GetFirstSeq() != 1 ||
-				baseline.GetHistoryExtent().GetLastSeq() != 200 {
-				t.Fatalf("extent changed by per-client tail policy: %+v",
-					baseline.GetHistoryExtent())
-			}
-		})
-	}
-	if len(frame.History.Lines) != 200 {
-		t.Fatalf("shared canonical history mutated: %d", len(frame.History.Lines))
-	}
-	short := frame
-	short.History.Lines = short.History.Lines[:5]
-	short.History.LastIncludedHistorySeq = 5
-	wire, err := EncodeBaseline(short, 16)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var shortEnv pb.ScreenEnvelope
-	if err := proto.Unmarshal(wire, &shortEnv); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(shortEnv.GetBaseline().GetHistoryTail().GetLines()); got != 5 {
-		t.Fatalf("short history tail=%d, want existing 5", got)
-	}
-	frame.PreserveCompatibleHistory = true
-	wire, err = EncodeBaseline(frame, 16)
+	wire, err := EncodeBaseline(frame, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,11 +72,16 @@ func TestEncodeBaselineHonorsColdTailAndPreservePolicy(t *testing.T) {
 	if err := proto.Unmarshal(wire, &env); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(env.GetBaseline().GetHistoryTail().GetLines()); got != 0 {
-		t.Fatalf("preserve baseline repeated %d history bodies", got)
+	baseline := env.GetBaseline()
+	if baseline.GetHistoryExtent().GetFirstSeq() != 1 ||
+		baseline.GetHistoryExtent().GetLastSeq() != 200 {
+		t.Fatalf("extent changed: %+v", baseline.GetHistoryExtent())
 	}
-	if env.GetBaseline().GetHistoryExtent().GetLastSeq() != 200 {
-		t.Fatal("preserve baseline lost authoritative extent")
+	if baseline.ProtoReflect().Descriptor().Fields().ByName("history_tail") != nil {
+		t.Fatal("Baseline schema still carries history_tail")
+	}
+	if len(frame.History.Lines) != 200 {
+		t.Fatalf("shared canonical history mutated: %d", len(frame.History.Lines))
 	}
 }
 
@@ -264,9 +217,8 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 		Screen:       []terminalengine.Line{{ID: 9, Version: 1, Row: 2}},
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 1000,
-			SealedThroughSeq: 896,
-			Lines:            []terminalengine.Line{{ID: 8, Version: 1, HistorySeq: 1000}},
 		},
+		HistoryPushes:                   []terminalengine.HistoryPush{{HistorySeq: 1000, LineID: 8, LineVersion: 1}},
 		FirstAvailableHistorySeqChanged: true,
 	}
 	wire, err := EncodeTerminalCommit(frame, 3)
@@ -285,11 +237,12 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 		t.Fatalf("screen mutation missing: %+v", commit.GetScreen())
 	}
 	if commit.GetHistory().GetFinalExtent().GetLastSeq() != 1000 ||
-		len(commit.GetHistory().GetAppendedLines()) != 1 {
+		len(commit.GetHistory().GetPushes()) != 1 {
 		t.Fatalf("history mutation missing: %+v", commit.GetHistory())
 	}
-	if commit.GetHistory().GetSealedThroughSeq() != 896 {
-		t.Fatalf("SealedThroughSeq=%d, want 896", commit.GetHistory().GetSealedThroughSeq())
+	push := commit.GetHistory().GetPushes()[0]
+	if push.GetHistorySeq() != 1000 || push.GetLineId() != 8 || push.GetLineVersion() != 1 {
+		t.Fatalf("history push=%+v", push)
 	}
 }
 
@@ -327,17 +280,20 @@ func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T
 	}
 }
 
-func TestEncodeTerminalCommitDoesNotSilentlyTruncateDerivedHistoryBodies(t *testing.T) {
-	lines := make([]terminalengine.Line, 200)
-	for i := range lines {
-		lines[i] = terminalengine.Line{ID: uint64(i + 1), Version: 1, HistorySeq: uint64(i + 1)}
+func TestEncodeTerminalCommitCarriesAllHistoryPushesWithoutBodies(t *testing.T) {
+	pushes := make([]terminalengine.HistoryPush, 200)
+	for i := range pushes {
+		pushes[i] = terminalengine.HistoryPush{
+			HistorySeq: uint64(i + 1), LineID: uint64(i + 1001), LineVersion: 1,
+		}
 	}
 	frame := terminalengine.ScreenFrame{
 		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
 		BaseRevision: 1, Seq: 2, Rows: 1, Cols: 1,
 		History: terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 10000, Lines: lines,
+			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 10000,
 		},
+		HistoryPushes:                   pushes,
 		FirstAvailableHistorySeqChanged: true,
 	}
 	wire, err := EncodeTerminalCommit(frame, 1)
@@ -349,8 +305,11 @@ func TestEncodeTerminalCommitDoesNotSilentlyTruncateDerivedHistoryBodies(t *test
 		t.Fatal(err)
 	}
 	history := env.GetTerminalCommit().GetHistory()
-	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetAppendedLines()) != 200 {
-		t.Fatalf("encoded history=%d extent=%d, want 200/10000",
-			len(history.GetAppendedLines()), history.GetFinalExtent().GetLastSeq())
+	if history.GetFinalExtent().GetLastSeq() != 10000 || len(history.GetPushes()) != 200 {
+		t.Fatalf("encoded pushes=%d extent=%d, want 200/10000",
+			len(history.GetPushes()), history.GetFinalExtent().GetLastSeq())
+	}
+	if history.ProtoReflect().Descriptor().Fields().ByName("appended_lines") != nil {
+		t.Fatal("HistoryMutation schema still carries appended_lines")
 	}
 }

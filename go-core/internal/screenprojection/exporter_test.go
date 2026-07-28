@@ -119,11 +119,14 @@ func TestExportSnapshot_HistoryWindow(t *testing.T) {
 	}
 
 	frame := ExportSnapshot(engine, sb, "s1", "i1", 0, 1)
-	if len(frame.History.Lines) == 0 {
-		t.Fatal("expected history lines")
+	if len(frame.History.Lines) != 0 {
+		t.Fatalf("snapshot carried %d history bodies", len(frame.History.Lines))
 	}
 	if frame.History.FirstAvailableHistorySeq != 1 {
 		t.Fatalf("FirstAvailableHistorySeq=1, got %d", frame.History.FirstAvailableHistorySeq)
+	}
+	if frame.History.LastIncludedHistorySeq != sb.Extent().LastSeq {
+		t.Fatalf("history extent=%+v, scrollback=%+v", frame.History, sb.Extent())
 	}
 }
 

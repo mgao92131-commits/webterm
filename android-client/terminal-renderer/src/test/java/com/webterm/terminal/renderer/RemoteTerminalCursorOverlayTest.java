@@ -152,8 +152,8 @@ public final class RemoteTerminalCursorOverlayTest {
     screen[2] = new TerminalLine(3, false, emptyCells(columns));
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(new ScreenBaseline(
-        "session-1", "term-1", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Arrays.<TerminalLine>asList(), Arrays.asList(screen),
+        "session-1", "term-1", 1L, 1L, 1L, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns, TerminalBufferKind.MAIN,
+        HistoryExtent.INITIAL_EMPTY, Arrays.asList(screen),
         cursor, TerminalModes.defaults(), palette));
 
     model.requestFullRender();

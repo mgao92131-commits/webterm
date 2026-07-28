@@ -22,16 +22,12 @@ public final class ScreenMessageV2Mapper {
       if (line == null) throw new IllegalArgumentException("baseline layout line missing");
       screen.add(line);
     }
-    List<TerminalLine> history = mapLineList(
-        pb.getHistoryTail().getLinesList(), columns, dictionary);
     return new ScreenBaseline(
         pb.getSessionId(), pb.getInstanceId(), pb.getLayoutEpoch(),
         pb.getScreenRevision(), pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
-        pb.getHistoryPolicy() == TerminalScreenV2Proto.BaselineHistoryPolicy.BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE,
         dictionary.entries(), pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
-        extent(pb.getHistoryExtent()), history, screen,
-        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()),
-        pb.getSealedThroughSeq());
+        extent(pb.getHistoryExtent()), screen,
+        cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
   }
 
   public static TerminalCommit mapTerminalCommit(
@@ -60,24 +56,18 @@ public final class ScreenMessageV2Mapper {
     HistoryMutation history = null;
     if (pb.hasHistory()) {
       HistoryExtent finalExtent = extent(pb.getHistory().getFinalExtent());
-      List<LineData> lines = new ArrayList<>();
-      for (TerminalScreenV2Proto.LineData line : pb.getHistory().getAppendedLinesList()) {
-        lines.add(lineData(line));
-      }
+      List<HistoryPush> pushes = new ArrayList<>();
       long previous = 0;
-      for (LineData line : lines) {
-        if (line.historySeq <= previous || !finalExtent.contains(line.historySeq)) {
-          throw new IllegalArgumentException("invalid appended history sequence");
+      for (TerminalScreenV2Proto.HistoryPush push : pb.getHistory().getPushesList()) {
+        if (push.getHistorySeq() <= previous || !finalExtent.contains(push.getHistorySeq())
+            || push.getLineId() == 0 || push.getLineVersion() == 0) {
+          throw new IllegalArgumentException("invalid history push");
         }
-        previous = line.historySeq;
+        previous = push.getHistorySeq();
+        pushes.add(new HistoryPush(
+            push.getHistorySeq(), push.getLineId(), push.getLineVersion()));
       }
-      List<HistoryPromotion> promotions = new ArrayList<>();
-      for (TerminalScreenV2Proto.HistoryPromotion promotion : pb.getHistory().getPromotionsList()) {
-        promotions.add(new HistoryPromotion(promotion.getLineId(), promotion.getLineVersion(),
-            promotion.getHistorySeq()));
-      }
-      history = HistoryMutation.fromLineData(finalExtent, lines, promotions,
-          pb.getHistory().getSealedThroughSeq());
+      history = new HistoryMutation(finalExtent, pushes);
     }
     return new TerminalCommit(
         pb.getInstanceId(), pb.getLayoutEpoch(), pb.getBaseRevision(), pb.getRevision(),
@@ -89,7 +79,7 @@ public final class ScreenMessageV2Mapper {
         pb.hasPalette() ? palette(pb.getPalette()) : null);
   }
 
-  /** 将 HTTP 分段中的单行映射为 TerminalLine（供 OkHttpHistorySegmentSource 使用）。 */
+  /** 将 HTTP Range 中的单行映射为 TerminalLine。 */
   public static TerminalLine mapHistoryLine(
       TerminalScreenV2Proto.LineData pb, int columns,
       TerminalScreenV2Proto.Dictionary dictionaryPb) {

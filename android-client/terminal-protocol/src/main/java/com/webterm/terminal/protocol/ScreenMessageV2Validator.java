@@ -18,14 +18,12 @@ public final class ScreenMessageV2Validator {
     int cols = baseline.getGeometry().getCols();
     if (rows < 1 || rows > 200 || cols < 1 || cols > 500
         || baseline.getScreenLinesCount() != rows
-        || baseline.getScreenLayout().getLineIdsCount() != rows
-        || baseline.getHistoryTail().getLinesCount() > 128) {
+        || baseline.getScreenLayout().getLineIdsCount() != rows) {
       throw new IllegalArgumentException("invalid Baseline bounds");
     }
     validateExtent(baseline.getHistoryExtent());
     validateDictionary(baseline.getDictionary());
     for (TerminalScreenV2Proto.LineData line : baseline.getScreenLinesList()) validateLineData(line, cols);
-    for (TerminalScreenV2Proto.LineData line : baseline.getHistoryTail().getLinesList()) validateLineData(line, cols);
   }
 
   public static void validateTerminalCommit(
@@ -73,8 +71,7 @@ public final class ScreenMessageV2Validator {
     }
     if (commit.hasHistory()) {
       if (!commit.getHistory().hasFinalExtent()
-          || commit.getHistory().getAppendedLinesCount() > 128
-          || commit.getHistory().getPromotionsCount() > rows) {
+          || commit.getHistory().getPushesCount() > 4096) {
         throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
       }
       try {
@@ -84,19 +81,15 @@ public final class ScreenMessageV2Validator {
             CommitFailure.INVALID_HISTORY_SEQUENCE, invalidExtent);
       }
       long previous = 0;
-      long appendedBytes = 0;
       long first = commit.getHistory().getFinalExtent().getFirstSeq();
       long last = commit.getHistory().getFinalExtent().getLastSeq();
-      for (TerminalScreenV2Proto.LineData line : commit.getHistory().getAppendedLinesList()) {
-        long seq = line.getHistorySeq();
+      for (TerminalScreenV2Proto.HistoryPush push : commit.getHistory().getPushesList()) {
+        long seq = push.getHistorySeq();
         if (seq == 0 || seq <= previous || seq < first || seq > last) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
         previous = seq;
-        validateCommitLineData(line, 500);
-        appendedBytes += line.getUtf8Text().size() + line.getGlyphMeta().size()
-            + (long) line.getStyleSpansCount() * 16L;
-        if (appendedBytes > (1L << 20)) {
+        if (push.getLineId() == 0 || push.getLineVersion() == 0) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
       }

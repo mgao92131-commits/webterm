@@ -8,15 +8,13 @@ type ResumeScreenLine struct {
 }
 
 type ResumeToken struct {
-	InstanceID                    string
-	LayoutEpoch                   uint64
-	ScreenRevision                uint64
-	DictionaryGeneration          uint64
-	HistoryGeneration             uint64
-	ContiguousHistoryTailFirstSeq uint64
-	ContiguousHistoryTailLastSeq  uint64
-	ActiveBuffer                  terminalengine.BufferKind
-	ActiveRows                    []ResumeScreenLine
+	InstanceID           string
+	LayoutEpoch          uint64
+	ScreenRevision       uint64
+	DictionaryGeneration uint64
+	HistoryGeneration    uint64
+	ActiveBuffer         terminalengine.BufferKind
+	ActiveRows           []ResumeScreenLine
 }
 
 type ResumeKind uint8
@@ -35,49 +33,37 @@ type ResumeResult struct {
 
 // Resume 从完整连续性令牌判断无变化接受、跨 revision Commit 或 Baseline。
 // 它不依赖无界 patch journal；Commit 只由令牌中可证明的 ActiveRows 身份派生。
-// forceBaseline 为 true 时跳过 Resume Commit，直接返回完整 Baseline（仍根据
-// token 判定 preserveCompatibleHistory）。
+// forceBaseline 为 true 时跳过 Resume Commit，直接返回完整 Baseline。
 func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBaseline bool) ResumeResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state := p.exportStateLocked(epoch, revision)
-	baseline := func(preserve bool) ResumeResult {
+	baseline := func() ResumeResult {
 		state.Kind = terminalengine.FrameSnapshot
-		state.PreserveCompatibleHistory = preserve
 		return ResumeResult{Kind: ResumeBaseline, State: state, Frame: state}
 	}
 	if forceBaseline {
-		compatibleHistory := token != nil && token.InstanceID == state.InstanceID &&
-			token.LayoutEpoch == state.Epoch && token.HistoryGeneration == state.HistoryGeneration
-		return baseline(compatibleHistory)
+		return baseline()
 	}
 	if token == nil {
-		return baseline(false)
+		return baseline()
 	}
-	compatibleHistory := token.InstanceID == state.InstanceID && token.LayoutEpoch == state.Epoch &&
-		token.HistoryGeneration == state.HistoryGeneration
 	if token.InstanceID != state.InstanceID || token.LayoutEpoch != state.Epoch ||
 		token.HistoryGeneration != state.HistoryGeneration ||
 		token.DictionaryGeneration != state.DictionaryGeneration ||
 		token.ScreenRevision > state.Seq || token.ScreenRevision < p.changeIndex.SnapshotBarrierRevision ||
 		len(token.ActiveRows) != len(state.Screen) {
-		return baseline(compatibleHistory)
-	}
-	tailFirst, tailLast := token.ContiguousHistoryTailFirstSeq, token.ContiguousHistoryTailLastSeq
-	if (tailFirst == 0) != (tailLast == 0) || tailFirst > tailLast ||
-		(tailLast != 0 && (tailFirst < state.History.FirstAvailableHistorySeq ||
-			tailLast > state.History.LastIncludedHistorySeq)) {
-		return baseline(compatibleHistory)
+		return baseline()
 	}
 	seen := make(map[uint64]struct{}, len(token.ActiveRows))
 	oldScreen := make([]terminalengine.Line, len(token.ActiveRows))
 	identityEqual := token.ActiveBuffer == state.ActiveBuffer
 	for i, line := range token.ActiveRows {
 		if line.LineID == 0 || line.LineVersion == 0 {
-			return baseline(compatibleHistory)
+			return baseline()
 		}
 		if _, duplicate := seen[line.LineID]; duplicate {
-			return baseline(compatibleHistory)
+			return baseline()
 		}
 		seen[line.LineID] = struct{}{}
 		oldScreen[i] = terminalengine.Line{ID: line.LineID, Version: line.LineVersion, Row: i}
@@ -96,13 +82,13 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBase
 		HistoryGeneration: token.HistoryGeneration,
 		History: terminalengine.HistoryWindow{
 			FirstAvailableHistorySeq: state.History.FirstAvailableHistorySeq,
-			LastIncludedHistorySeq:   tailLast,
 		},
 	}
-	if tailLast > 0 {
-		// Resume appends only content newer than the client's contiguous tail.
-		// Any older local gap remains an HTTP Segment concern.
-		old.History.FirstIncludedHistorySeq = state.History.FirstAvailableHistorySeq
+	// 用创建 revision 推导客户端最后已知的位置。正文是否连续驻留不参与恢复。
+	for _, change := range p.historyChangeIndex.Changes {
+		if change.CreatedRevision <= token.ScreenRevision && change.HistorySeq > old.History.LastIncludedHistorySeq {
+			old.History.LastIncludedHistorySeq = change.HistorySeq
+		}
 	}
 	for i, created := range p.changeIndex.StyleCreatedRevision {
 		if created <= token.ScreenRevision && i < len(state.Styles) {
@@ -114,10 +100,7 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBase
 			old.Links = append(old.Links, state.Links[i])
 		}
 	}
-	frame, hotIncomplete := diffToPatch(old, state, defaultMaxAppendedScrollbackEntrys, defaultMaxAppendedHistoryBytes)
-	if hotIncomplete {
-		return ResumeResult{Kind: ResumeBaseline, State: state, Frame: state}
-	}
+	frame := diffToPatch(old, state)
 	frame.CursorChanged = true
 	frame.ModesChanged = true
 	frame.PaletteChanged = true

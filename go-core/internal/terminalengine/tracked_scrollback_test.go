@@ -2,7 +2,6 @@ package terminalengine
 
 import (
 	"image/color"
-	"math"
 	"reflect"
 	"runtime"
 	"testing"
@@ -53,18 +52,14 @@ func TestTrackedScrollback_PreservesNonMonotonicLineIDsAndAssignsHistorySeq(t *t
 		sb.Push(headlessterm.ScrollbackLine{LineID: id, LineVersion: 3,
 			Cells: []headlessterm.Cell{headlessterm.NewCell()}})
 	}
-	w := sb.Window(10)
-	if got := historyIDs(w.Lines); !reflect.DeepEqual(got, []uint64{100, 7, 55}) {
+	result := sb.Range(1, 3)
+	if got := historyIDs(result.Lines); !reflect.DeepEqual(got, []uint64{100, 7, 55}) {
 		t.Fatalf("LineIDs were rewritten: got %v", got)
 	}
-	for i, line := range w.Lines {
+	for i, line := range result.Lines {
 		if want := uint64(i + 1); line.HistorySeq != want {
 			t.Fatalf("entry %d HistorySeq=%d, want %d", i, line.HistorySeq, want)
 		}
-	}
-	page := sb.PageBefore(math.MaxUint64, 10)
-	if got := historyIDs(page); !reflect.DeepEqual(got, []uint64{100, 7, 55}) {
-		t.Fatalf("HistorySeq pagination changed LineID order: %v", got)
 	}
 }
 
@@ -94,8 +89,8 @@ func TestTrackedScrollback_ClearKeepsLineIDsMonotonicAndFiresTrim(t *testing.T) 
 
 	sb.Clear()
 
-	// Clear 将 nextSeq 对齐到下一段起点（3 行后 nextSeq=4 → 129）。
-	const wantSeq = 129
+	// Clear 保留单调位置轴（3 行后 nextSeq=4），不再做固定段对齐。
+	const wantSeq = 4
 	if got := sb.Len(); got != 0 {
 		t.Fatalf("Len after Clear = %d, want 0", got)
 	}
@@ -116,24 +111,6 @@ func TestTrackedScrollback_ClearKeepsLineIDsMonotonicAndFiresTrim(t *testing.T) 
 	}
 	if _, ok := sb.LineByID(1); ok {
 		t.Fatal("cleared LineID 1 must not become available again")
-	}
-}
-
-func TestTrackedScrollback_PageBefore(t *testing.T) {
-	sb := NewTrackedScrollback(10000, nil)
-	for i := 0; i < 10; i++ {
-		sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
-	}
-	page := sb.PageBefore(8, 3)
-	if len(page) != 3 {
-		t.Fatalf("expected 3 lines, got %d", len(page))
-	}
-	if page[0].LineID != 5 {
-		t.Fatalf("page[0].LineID=5, got %d", page[0].LineID)
-	}
-	page = sb.PageBefore(math.MaxUint64, 3)
-	if len(page) != 3 || page[0].LineID != 8 || page[2].LineID != 10 {
-		t.Fatalf("max before id should return tail page: %+v", page)
 	}
 }
 
@@ -363,158 +340,6 @@ func pushBlankLines(sb *TrackedScrollback, n int) {
 	}
 }
 
-func windowIDs(w ScrollbackWindow) []uint64 {
-	ids := make([]uint64, len(w.Lines))
-	for i, hl := range w.Lines {
-		ids[i] = hl.LineID
-	}
-	return ids
-}
-
-func TestTrackedScrollback_LinesAfter(t *testing.T) {
-	sb := NewTrackedScrollback(10000, nil)
-	pushBlankLines(sb, 10)
-
-	w := sb.LinesAfter(3, 100)
-	if w.FirstSeq != 1 || w.LastSeq != 10 {
-		t.Fatalf("bounds FirstSeq=%d LastSeq=%d, want 1/10", w.FirstSeq, w.LastSeq)
-	}
-	if got := windowIDs(w); len(got) != 7 || got[0] != 4 || got[6] != 10 {
-		t.Fatalf("LinesAfter(3) ids=%v, want 4..10", got)
-	}
-
-	// limit 保留最新段。
-	w = sb.LinesAfter(3, 2)
-	if got := windowIDs(w); len(got) != 2 || got[0] != 9 || got[1] != 10 {
-		t.Fatalf("LinesAfter(3, 2) ids=%v, want [9 10]", got)
-	}
-
-	// lastSeq 已是最新：只返回边界。
-	w = sb.LinesAfter(10, 100)
-	if len(w.Lines) != 0 || w.LastSeq != 10 {
-		t.Fatalf("LinesAfter(10) lines=%v lastSeq=%d, want none/10", windowIDs(w), w.LastSeq)
-	}
-
-	// lastSeq=0：从头开始，受 limit 约束取最新段。
-	w = sb.LinesAfter(0, 4)
-	if got := windowIDs(w); len(got) != 4 || got[0] != 7 {
-		t.Fatalf("LinesAfter(0, 4) ids=%v, want 7..10", got)
-	}
-
-	// 空历史：Lines 为 nil，LastSeq = FirstSeq-1。
-	empty := NewTrackedScrollback(10000, nil)
-	w = empty.LinesAfter(0, 10)
-	if w.Lines != nil || w.FirstSeq != 1 || w.LastSeq != 0 {
-		t.Fatalf("empty LinesAfter: %+v", w)
-	}
-
-	// limit<=0：只返回边界。
-	w = sb.LinesAfter(3, 0)
-	if w.Lines != nil || w.LastSeq != 10 {
-		t.Fatalf("LinesAfter limit=0: lines=%v lastSeq=%d", windowIDs(w), w.LastSeq)
-	}
-}
-
-func TestTrackedScrollback_Window(t *testing.T) {
-	sb := NewTrackedScrollback(10000, nil)
-	pushBlankLines(sb, 10)
-
-	w := sb.Window(3)
-	if got := windowIDs(w); len(got) != 3 || got[0] != 8 || got[2] != 10 {
-		t.Fatalf("Window(3) ids=%v, want 8..10", got)
-	}
-	if w.FirstSeq != 1 || w.LastSeq != 10 {
-		t.Fatalf("Window bounds FirstSeq=%d LastSeq=%d, want 1/10", w.FirstSeq, w.LastSeq)
-	}
-
-	w = sb.Window(100)
-	if len(w.Lines) != 10 {
-		t.Fatalf("Window(100) returned %d lines, want 10", len(w.Lines))
-	}
-
-	w = sb.Window(0)
-	if w.Lines != nil {
-		t.Fatalf("Window(0) lines=%v, want nil", windowIDs(w))
-	}
-
-	empty := NewTrackedScrollback(10000, nil)
-	w = empty.Window(300)
-	if w.Lines != nil || w.FirstSeq != 1 || w.LastSeq != 0 {
-		t.Fatalf("empty Window: %+v", w)
-	}
-}
-
-func TestTrackedScrollback_LinesAfterExposesTrimDiscontinuity(t *testing.T) {
-	sb := NewTrackedScrollback(3, nil)
-	pushBlankLines(sb, 5) // 行数上限 3：firstSeq 推进到 3
-
-	// baseline 的最后行（1）已被驱逐：FirstSeq=3 > 1+1，调用方据此判定不连续。
-	w := sb.LinesAfter(1, 10)
-	if w.FirstSeq != 3 || w.LastSeq != 5 {
-		t.Fatalf("bounds FirstSeq=%d LastSeq=%d, want 3/5", w.FirstSeq, w.LastSeq)
-	}
-	if w.FirstSeq <= 1+1 {
-		t.Fatal("expected discontinuity signal: FirstSeq > lastSeq+1")
-	}
-	if got := windowIDs(w); len(got) != 3 || got[0] != 3 {
-		t.Fatalf("ids=%v, want 3..5", got)
-	}
-
-	// 恰好连续：FirstSeq == lastSeq+1。
-	w = sb.LinesAfter(2, 10)
-	if w.FirstSeq != 3 || len(w.Lines) != 3 {
-		t.Fatalf("LinesAfter(2): %+v", w)
-	}
-
-	// 窗口中间：返回 lastSeq 之后的行。
-	w = sb.LinesAfter(4, 10)
-	if got := windowIDs(w); len(got) != 1 || got[0] != 5 {
-		t.Fatalf("LinesAfter(4) ids=%v, want [5]", got)
-	}
-}
-
-func TestTrackedScrollback_LinesAfterPopLowersLastSeq(t *testing.T) {
-	sb := NewTrackedScrollback(10000, nil)
-	pushBlankLines(sb, 3)
-	sb.Pop()
-
-	// Pop 移除了 ID 3：LastSeq 回落到 2，调用方据此判定缓存失效。
-	w := sb.LinesAfter(3, 10)
-	if w.LastSeq != 2 || w.Lines != nil {
-		t.Fatalf("after Pop: lastSeq=%d lines=%v, want 2/nil", w.LastSeq, windowIDs(w))
-	}
-	if w.LastSeq >= 3 {
-		t.Fatal("expected LastSeq < cached lastSeq after Pop")
-	}
-
-	w = sb.Window(10)
-	if got := windowIDs(w); len(got) != 2 || got[1] != 2 {
-		t.Fatalf("Window after Pop ids=%v, want [1 2]", got)
-	}
-}
-
-func TestTrackedScrollback_QueriesRemainValidAfterPopRecyclesTailSeq(t *testing.T) {
-	sb := NewTrackedScrollback(10000, nil)
-	pushBlankLines(sb, 3)
-	sb.Pop()              // 移除 seq 3，nextSeq 回退到 3。
-	pushBlankLines(sb, 2) // 新增 seq 3、4，驻留序列为 1、2、3、4。
-
-	if line, ok := sb.LineByID(4); !ok || line.LineID != 4 {
-		t.Fatalf("LineByID(4)=(%+v,%v), want ID 4", line, ok)
-	}
-	if got := windowIDs(sb.LinesAfter(2, 10)); len(got) != 2 || got[0] != 3 || got[1] != 4 {
-		t.Fatalf("LinesAfter(2)=%v, want [3 4]", got)
-	}
-	page := sb.PageBefore(5, 10)
-	if len(page) != 4 || page[0].LineID != 1 || page[3].LineID != 4 {
-		t.Fatalf("PageBefore(5) IDs=%v, want [1 2 3 4]", historyIDs(page))
-	}
-	idx := sb.IndexAfter(2)
-	if len(idx.LineIDs) != 2 || idx.LineIDs[0] != 3 || idx.LineIDs[1] != 4 {
-		t.Fatalf("IndexAfter(2)=%v, want [3 4]", idx.LineIDs)
-	}
-}
-
 func TestTrackedScrollback_PopThenPushReusesHistorySeq(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
 	line := headlessterm.ScrollbackLine{LineID: 100, LineVersion: 1,
@@ -533,9 +358,9 @@ func TestTrackedScrollback_PopThenPushReusesHistorySeq(t *testing.T) {
 	if next := sb.NextSeq(); next != 2 {
 		t.Fatalf("NextSeq=%d, want 2", next)
 	}
-	window := sb.Window(10)
-	if window.FirstSeq != 1 || window.LastSeq != 1 || len(window.Lines) != 1 {
-		t.Fatalf("history window after Pop→Push=%+v, want only seq 1", window)
+	result := sb.Range(1, 1)
+	if result.Extent.FirstSeq != 1 || result.Extent.LastSeq != 1 || len(result.Lines) != 1 {
+		t.Fatalf("history Range after Pop→Push=%+v, want only seq 1", result)
 	}
 }
 
@@ -544,10 +369,10 @@ func TestTrackedScrollback_ExtentPreservesEmptyTrimWatermark(t *testing.T) {
 	pushBlankLines(sb, 3)
 	sb.Clear()
 
-	// 3 行后 Clear → nextSeq 对齐到 129；空窗口 LastSeq+1==FirstSeq。
+	// 3 行后 Clear 保持 nextSeq=4；空窗口 LastSeq+1==FirstSeq。
 	got := sb.Extent()
-	if got.FirstSeq != 129 || got.LastSeq != 128 || !got.Empty() {
-		t.Fatalf("Extent after clear = %+v, want empty 129..128", got)
+	if got.FirstSeq != 4 || got.LastSeq != 3 || !got.Empty() {
+		t.Fatalf("Extent after clear = %+v, want empty 4..3", got)
 	}
 }
 
@@ -556,8 +381,8 @@ func TestTrackedScrollback_RangeReportsTrimmedPrefixAndSurvivingLines(t *testing
 	pushBlankLines(sb, 5)
 
 	got := sb.Range(1, 5)
-	if got.Status != HistoryRangeTrimmed {
-		t.Fatalf("status = %v, want trimmed", got.Status)
+	if got.Status != HistoryRangeOK {
+		t.Fatalf("status = %v, want OK intersection", got.Status)
 	}
 	if got.Extent.FirstSeq != 3 || got.Extent.LastSeq != 5 {
 		t.Fatalf("extent = %+v, want 3..5", got.Extent)

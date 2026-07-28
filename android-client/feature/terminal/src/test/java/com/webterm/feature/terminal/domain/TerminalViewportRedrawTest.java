@@ -160,8 +160,8 @@ public final class TerminalViewportRedrawTest {
     List<TerminalLine> history = createHistoryLines(1, historySize);
     List<TerminalLine> screen = createScreenLines(screenRows, 1000);
     return new ScreenBaseline(
-        screenId, instanceId, 1, seq, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, screenRows, 24, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, historySize), history, screen,
+        screenId, instanceId, 1, seq, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, screenRows, 24, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, historySize), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 

@@ -122,10 +122,10 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       screen.add(line(100_000 + row, 1, 0, "row"));
     }
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false,
+        "s1", "i1", 1, 1, 1, 1,
         com.webterm.terminal.model.DictionaryEntries.EMPTY,
         ROWS, COLS, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 

@@ -8,35 +8,22 @@ option java_outer_classname = "TerminalHistoryProto";
 
 import "shared/proto/terminal_screen_v2.proto";
 
-// HTTP 历史分段协议（不经 ScreenEnvelope）。
-// GET /api/sessions/{id}/history/segments/{generation}/{segmentNumber}
+// HTTP 历史范围协议（不经 ScreenEnvelope）。
+// GET /api/sessions/{id}/history/range?generation={generation}&from={fromSeq}&to={toSeq}
 
-enum HistorySegmentStatus {
-  HISTORY_SEGMENT_STATUS_UNSPECIFIED = 0;
-  HISTORY_SEGMENT_STATUS_OK = 1;
-  HISTORY_SEGMENT_STATUS_STALE_GENERATION = 2;
-  HISTORY_SEGMENT_STATUS_NOT_SEALED = 3;
-  HISTORY_SEGMENT_STATUS_TRIMMED = 4;
-  HISTORY_SEGMENT_STATUS_NOT_FOUND = 5;
-  HISTORY_SEGMENT_STATUS_SESSION_GONE = 6;
-  HISTORY_SEGMENT_STATUS_RETRYABLE = 7;
+enum HistoryRangeStatus {
+  HISTORY_RANGE_STATUS_UNSPECIFIED = 0;
+  HISTORY_RANGE_STATUS_OK = 1;
+  HISTORY_RANGE_STATUS_STALE_GENERATION = 2;
+  HISTORY_RANGE_STATUS_SESSION_GONE = 3;
+  HISTORY_RANGE_STATUS_RETRYABLE = 4;
 }
 
-// HistorySegment 是封存后的不可变历史段正文。
-message HistorySegment {
-  uint64 history_generation = 1;
-  uint64 segment_number = 2;
-  uint64 first_seq = 3;
-  uint64 last_seq = 4;
-  repeated LineData lines = 5;
-  Dictionary dictionary = 6;
-  reserved 7; // 曾为 checksum；完整性改依赖 HTTPS + protobuf + SegmentKey
-}
-
-// HistorySegmentResponse 是 HTTP 响应体；不含 historyExtent/availableExtent。
-message HistorySegmentResponse {
-  HistorySegmentStatus status = 1;
-  HistorySegment segment = 2;
-  uint64 history_generation = 3;
-  uint32 retry_after_ms = 4;
+message HistoryRangeResponse {
+  HistoryRangeStatus status = 1;
+  uint64 history_generation = 2;
+  HistoryExtent current_extent = 3;
+  repeated LineData lines = 4;
+  Dictionary dictionary = 5;
+  uint32 retry_after_ms = 6;
 }

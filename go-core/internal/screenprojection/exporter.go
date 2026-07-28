@@ -53,7 +53,7 @@ func (exp *exporter) exportSnapshot(engine *terminalengine.Engine, scrollback *t
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
 	if activeBuffer == terminalengine.BufferMain {
-		history = exp.exportHistoryWindow(scrollback)
+		history = historyExtentWindow(scrollback)
 	}
 
 	return terminalengine.ScreenFrame{
@@ -224,49 +224,21 @@ func cellsSameStyle(a, b terminalengine.Cell) bool {
 	return a.StyleID == b.StyleID && a.LinkID == b.LinkID
 }
 
-// snapshotTailLines 是快照附带的历史窗口行数上限，与客户端分页 PAGE_SIZE 对齐
-// （=128）：Baseline 的 history_tail 恰好填满一页，减少部分页状态与紧接着的
-// 补页请求。首屏只需覆盖可见区及少量上下文；更早历史统一走 HistoryRange 按需
-// 分页，避免 attach、resize 与 resync 把不可见的数百行重复塞入每个 Baseline。
-// 单帧历史推进超过该窗口时窗口整体翻转、新旧历史不相交，historyChangeIndex
-// 判定为断链并降级 Baseline（§2.10.3），故 patch 的历史行天然 ≤ snapshotTailLines。
-const snapshotTailLines = 128
-
-// exportHistoryWindow 全量导出尾部历史窗口，用于独立快照与历史缓存重建路径。
-func (exp *exporter) exportHistoryWindow(scrollback *terminalengine.TrackedScrollback) terminalengine.HistoryWindow {
+func historyExtentWindow(scrollback *terminalengine.TrackedScrollback) terminalengine.HistoryWindow {
 	if scrollback == nil {
-		return terminalengine.HistoryWindow{}
-	}
-
-	w := scrollback.Window(snapshotTailLines)
-	sealed := scrollback.SealedThroughSeq()
-	if len(w.Lines) == 0 {
 		return terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: w.FirstSeq,
-			FirstIncludedHistorySeq:  w.FirstSeq,
-			LastIncludedHistorySeq:   w.FirstSeq - 1,
-			HasMoreBefore:            false,
-			SealedThroughSeq:         sealed,
-			Lines:                    nil,
+			FirstAvailableHistorySeq: 1,
+			FirstIncludedHistorySeq:  1,
+			LastIncludedHistorySeq:   0,
 		}
 	}
 
-	lines := exportScrollbackEntries(exp, w.Lines)
-	out := historyWindowFromLines(lines, w.FirstSeq)
-	out.SealedThroughSeq = sealed
-	return out
-}
-
-// exportScrollbackEntries 把不可变 scrollback 位置条目批量映射为统一 Line。
-func exportScrollbackEntries(exp *exporter, lines []terminalengine.ScrollbackEntry) []terminalengine.Line {
-	if len(lines) == 0 {
-		return nil
+	extent := scrollback.Extent()
+	return terminalengine.HistoryWindow{
+		FirstAvailableHistorySeq: extent.FirstSeq,
+		FirstIncludedHistorySeq:  extent.FirstSeq,
+		LastIncludedHistorySeq:   extent.LastSeq,
 	}
-	out := make([]terminalengine.Line, len(lines))
-	for i, hl := range lines {
-		out[i] = exp.exportScrollbackEntry(hl)
-	}
-	return out
 }
 
 func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry) terminalengine.Line {
@@ -277,26 +249,6 @@ func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry) te
 		Row:        -1,
 		Wrapped:    hl.Wrapped,
 		Runs:       exp.exportHistoryCells(hl.Cells),
-	}
-}
-
-// historyWindowFromLines 由连续 ID 的导出窗口行与 firstAvailable 组装窗口边界。
-func historyWindowFromLines(lines []terminalengine.Line, firstAvailable uint64) terminalengine.HistoryWindow {
-	if len(lines) == 0 {
-		return terminalengine.HistoryWindow{
-			FirstAvailableHistorySeq: firstAvailable,
-			FirstIncludedHistorySeq:  firstAvailable,
-			LastIncludedHistorySeq:   firstAvailable - 1,
-			HasMoreBefore:            false,
-			Lines:                    nil,
-		}
-	}
-	return terminalengine.HistoryWindow{
-		FirstAvailableHistorySeq: firstAvailable,
-		FirstIncludedHistorySeq:  lines[0].HistorySeq,
-		LastIncludedHistorySeq:   lines[len(lines)-1].HistorySeq,
-		HasMoreBefore:            lines[0].HistorySeq > firstAvailable,
-		Lines:                    lines,
 	}
 }
 

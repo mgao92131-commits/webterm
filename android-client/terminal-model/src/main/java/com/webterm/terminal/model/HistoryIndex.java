@@ -6,18 +6,23 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/** 已加载历史位置索引：historySeq → LineID。正文始终位于 LineStore。 */
+/** 常驻历史位置目录：HistorySeq → LineID + LineVersion。正文是否驻留与此结构无关。 */
 public final class HistoryIndex {
   private HistoryExtent extent = HistoryExtent.INITIAL_EMPTY;
-  private Map<Long, Long> seqToLineId = Collections.emptyMap();
+  private Map<Long, HistoryLineRef> seqToRef = Collections.emptyMap();
   private Map<Long, Long> lineIdToSeq = Collections.emptyMap();
 
   public HistoryExtent extent() {
     return extent;
   }
 
+  public HistoryLineRef ref(long historySeq) {
+    return seqToRef.get(historySeq);
+  }
+
   public Long lineId(long historySeq) {
-    return seqToLineId.get(historySeq);
+    HistoryLineRef ref = seqToRef.get(historySeq);
+    return ref == null ? null : ref.lineId;
   }
 
   public Long historySeq(long lineId) {
@@ -34,7 +39,7 @@ public final class HistoryIndex {
 
   public final class Editor {
     private HistoryExtent workingExtent = extent;
-    private final Map<Long, Long> workingSeq = new HashMap<>(seqToLineId);
+    private final Map<Long, HistoryLineRef> workingSeq = new HashMap<>(seqToRef);
     private final Map<Long, Long> workingLine = new HashMap<>(lineIdToSeq);
     private boolean committed;
 
@@ -43,27 +48,26 @@ public final class HistoryIndex {
       if (next == null) throw new IllegalArgumentException("history extent missing");
       workingExtent = next;
       workingSeq.entrySet().removeIf(entry -> !next.contains(entry.getKey()));
-      workingLine.clear();
-      for (Map.Entry<Long, Long> entry : workingSeq.entrySet()) {
-        workingLine.put(entry.getValue(), entry.getKey());
-      }
+      rebuildReverse();
       return this;
     }
 
-    public Editor bind(long historySeq, long lineId) throws CommitValidationException {
+    public Editor bind(long historySeq, long lineId, long lineVersion)
+        throws CommitValidationException {
       ensureOpen();
-      if (!workingExtent.contains(historySeq) || lineId <= 0) {
+      if (!workingExtent.contains(historySeq) || lineId <= 0 || lineVersion <= 0) {
         throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
       }
-      Long previousLine = workingSeq.get(historySeq);
-      if (previousLine != null && previousLine != lineId) {
+      HistoryLineRef previous = workingSeq.get(historySeq);
+      if (previous != null
+          && (previous.lineId != lineId || previous.lineVersion != lineVersion)) {
         throw new CommitValidationException(CommitFailure.HISTORY_PROMOTION_CONFLICT);
       }
       Long previousSeq = workingLine.get(lineId);
       if (previousSeq != null && previousSeq != historySeq) {
         throw new CommitValidationException(CommitFailure.HISTORY_LINE_ID_CONFLICT);
       }
-      workingSeq.put(historySeq, lineId);
+      workingSeq.put(historySeq, new HistoryLineRef(lineId, lineVersion));
       workingLine.put(lineId, historySeq);
       return this;
     }
@@ -73,18 +77,24 @@ public final class HistoryIndex {
       return workingLine.get(lineId);
     }
 
-    public void retainLineIds(Set<Long> retainedLineIds) {
+    public HistoryLineRef ref(long historySeq) {
       ensureOpen();
-      workingLine.keySet().retainAll(retainedLineIds);
-      workingSeq.entrySet().removeIf(entry -> !retainedLineIds.contains(entry.getValue()));
+      return workingSeq.get(historySeq);
     }
 
     public void commit() {
       ensureOpen();
       extent = workingExtent;
-      seqToLineId = Collections.unmodifiableMap(new HashMap<>(workingSeq));
+      seqToRef = Collections.unmodifiableMap(new HashMap<>(workingSeq));
       lineIdToSeq = Collections.unmodifiableMap(new HashMap<>(workingLine));
       committed = true;
+    }
+
+    private void rebuildReverse() {
+      workingLine.clear();
+      for (Map.Entry<Long, HistoryLineRef> entry : workingSeq.entrySet()) {
+        workingLine.put(entry.getValue().lineId, entry.getKey());
+      }
     }
 
     private void ensureOpen() {

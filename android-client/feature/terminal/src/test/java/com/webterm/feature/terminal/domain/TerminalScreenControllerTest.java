@@ -215,10 +215,9 @@ public final class TerminalScreenControllerTest {
     TerminalLine screen = new TerminalLine(
         1000, 1, 0, false, new TerminalCell[] {TerminalCell.EMPTY});
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1,
+        "s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1,
         TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
-        Collections.emptyList(),
         Collections.singletonList(screen),
         TerminalCursor.hidden(),
         TerminalModes.defaults(),

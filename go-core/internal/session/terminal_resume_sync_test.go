@@ -20,7 +20,7 @@ func TestInitialResumeSyncComparesActualCommitAndBodylessPreserveBaseline(t *tes
 	small.Screen = []terminalengine.Line{state.Screen[199]}
 	small.Screen[0].Version++
 
-	client := &terminalChannelRuntime{coldHistoryTailLines: 16}
+	client := &terminalChannelRuntime{}
 	payload, kind, err := client.encodeInitialScreenSync(terminalsession.InitialSync{
 		State: state, Projection: small,
 	})
@@ -60,47 +60,33 @@ func TestInitialResumeSyncComparesActualCommitAndBodylessPreserveBaseline(t *tes
 		t.Fatal(err)
 	}
 	baseline := env.GetBaseline()
-	if baseline == nil ||
-		baseline.GetHistoryPolicy() != pb.BaselineHistoryPolicy_BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE {
-		t.Fatalf("large resume candidate did not encode preserve baseline: %+v", baseline)
+	if baseline == nil {
+		t.Fatal("large resume candidate did not encode baseline")
 	}
-	if got := len(baseline.GetHistoryTail().GetLines()); got != 0 {
-		t.Fatalf("preserve baseline repeated %d resident history bodies", got)
+	if baseline.ProtoReflect().Descriptor().Fields().ByName("history_tail") != nil {
+		t.Fatal("baseline schema still carries history_tail")
 	}
 	if baseline.GetHistoryExtent().GetLastSeq() != 128 {
 		t.Fatalf("preserve baseline extent=%+v", baseline.GetHistoryExtent())
 	}
 }
 
-func TestColdBaselineTailRequestIsPerClientAndDoesNotMutateCanonicalState(t *testing.T) {
+func TestBaselineNeverCarriesHistoryBodiesAndDoesNotMutateCanonicalState(t *testing.T) {
 	state := resumeSyncState(2, 20, 100)
-	first := &terminalChannelRuntime{coldHistoryTailLines: 16}
-	second := &terminalChannelRuntime{coldHistoryTailLines: 64}
-	for _, tc := range []struct {
-		name   string
-		client *terminalChannelRuntime
-		want   int
-	}{
-		{"sixteen", first, 16},
-		{"sixty-four", second, 64},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			payload, kind, err := tc.client.encodeInitialScreenSync(
-				terminalsession.InitialSync{Projection: state})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kind != "baseline" {
-				t.Fatalf("kind=%q, want baseline", kind)
-			}
-			var env pb.ScreenEnvelope
-			if err := proto.Unmarshal(payload, &env); err != nil {
-				t.Fatal(err)
-			}
-			if got := len(env.GetBaseline().GetHistoryTail().GetLines()); got != tc.want {
-				t.Fatalf("tail=%d, want %d", got, tc.want)
-			}
-		})
+	client := &terminalChannelRuntime{}
+	payload, kind, err := client.encodeInitialScreenSync(terminalsession.InitialSync{Projection: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "baseline" {
+		t.Fatalf("kind=%q, want baseline", kind)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(payload, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.GetBaseline().GetHistoryExtent().GetLastSeq() != 100 {
+		t.Fatalf("extent=%+v", env.GetBaseline().GetHistoryExtent())
 	}
 	if got := len(state.History.Lines); got != 100 {
 		t.Fatalf("per-client encoding mutated canonical history: %d", got)

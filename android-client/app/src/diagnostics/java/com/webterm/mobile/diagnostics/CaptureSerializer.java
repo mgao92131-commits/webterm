@@ -172,7 +172,6 @@ final class CaptureSerializer {
         o.put("screen", lineList(s.screen));
         o.put("historyExtentFirst", s.historyExtent.firstSeq);
         o.put("historyExtentLast", s.historyExtent.lastSeq);
-        o.put("historyTail", lineList(s.historyTail));
         return o;
     }
 

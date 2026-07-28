@@ -130,7 +130,7 @@ public final class RemoteTerminalView extends View {
   @Nullable private RenderDirtyState lastAppliedDirty;
   private TerminalViewportState viewport = new TerminalViewportState();
   private Host host;
-  /** -1 向更旧历史，+1 向更新输出，0 未知；供 Segment 方向预取。 */
+  /** -1 向更旧历史，+1 向更新输出，0 未知；供 Range 方向预取。 */
   private int historyDemandDirection;
   private float lastFlingY;
   private int flingFramesScheduledForTest;
@@ -745,7 +745,7 @@ public final class RemoteTerminalView extends View {
 
   /**
    * v2 display extent 含尚未驻留的占位行。View 只上报可见 HistorySeq；
-   * SegmentLoader 负责派生 SegmentKey，不再按 firstRequestablePage 发起 Range。
+   * RangeLoader 根据当前可见缺失区间发起非对齐 Range。
    */
   @androidx.annotation.VisibleForTesting
   void reportVisibleHistoryDemand() {

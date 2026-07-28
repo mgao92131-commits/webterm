@@ -26,7 +26,7 @@ public final class UnifiedContentAxisTest {
   }
 
   @Test
-  public void promotionKeepsLineIdentityWhileMovingFromActiveRowsToHistoryIndex()
+  public void pushKeepsLineIdentityWhileMovingFromActiveRowsToHistoryIndex()
       throws Exception {
     RemoteTerminalModel model = model();
     TerminalLine before = model.lineStore().line(10);
@@ -35,9 +35,8 @@ public final class UnifiedContentAxisTest {
         new ScreenMutation(new ScreenScroll(0, 2, 1),
             Collections.singletonList(new ScreenRowWrite(
                 1, V2ModelTestData.line(12, 1, 0, "c")))),
-        HistoryMutation.fromLineData(new HistoryExtent(1, 101), Collections.emptyList(),
-            Collections.singletonList(new HistoryPromotion(10, 1, 101)),
-            100),
+        new HistoryMutation(new HistoryExtent(1, 101),
+            Collections.singletonList(new HistoryPush(101, 10, 1))),
         null, null, null)));
 
     assertEquals(Long.valueOf(10), model.historyIndex().lineId(101));
@@ -49,16 +48,19 @@ public final class UnifiedContentAxisTest {
   private static RemoteTerminalModel model() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false,
+        "s1", "i1", 1, 1, 1, 1,
         DictionaryEntries.EMPTY, 2, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 100),
-        Arrays.asList(
-            V2ModelTestData.line(1, 1, 1, "h1"),
-            V2ModelTestData.line(2, 1, 2, "h2")),
         Arrays.asList(
             V2ModelTestData.line(10, 1, 0, "a"),
             V2ModelTestData.line(11, 1, 0, "b")),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
+    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
+        "r", "i1", 1, 1, HistoryRangeResult.Status.OK,
+        new HistoryExtent(1, 100),
+        Arrays.asList(
+            V2ModelTestData.line(1, 1, 1, "h1"),
+            V2ModelTestData.line(2, 1, 2, "h2")), 0), 1, 1, 2));
     return model;
   }
 }

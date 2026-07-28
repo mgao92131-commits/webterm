@@ -20,19 +20,18 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
         "r1", "i1", 1, HistoryRangeResult.Status.STALE_PROJECTION,
         new HistoryExtent(2, 300), Collections.emptyList(), 0), 1, 1, 128));
     assertFalse(model.staleProjection());
-    assertEquals(173, model.firstCachedHistorySeq());
+    assertEquals(-1, model.firstCachedHistorySeq());
 
     assertFalse(model.applyHistoryRange(new HistoryRangeResult(
         "r2", "i1", 1, HistoryRangeResult.Status.RETRYABLE,
         new HistoryExtent(2, 300), Collections.emptyList(), 200), 1, 1, 128));
-    assertEquals(173, model.firstCachedHistorySeq());
+    assertEquals(-1, model.firstCachedHistorySeq());
   }
 
   @Test
-  public void okLoadsReturnedLinesWithoutChangingAvailableExtent() {
+  public void okLoadsReturnedLinesAndAppliesCurrentTrimmedExtent() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(V2ModelTestData.baseline(1, 1));
-    HistoryExtent availableBefore = model.remoteAvailableExtent();
     assertTrue(model.applyHistoryRange(new HistoryRangeResult(
         "r1", "i1", 1, HistoryRangeResult.Status.OK,
         new HistoryExtent(50, 300),
@@ -41,7 +40,7 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(availableBefore, model.remoteAvailableExtent());
+    assertEquals(new HistoryExtent(50, 300), model.remoteAvailableExtent());
     assertEquals(50, history.lineBySeq(50).id);
   }
 
@@ -69,13 +68,9 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   @Test
   public void linesOutsideWsAvailableExtentAreSkippedNotRejected() {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    List<TerminalLine> tail = new ArrayList<>();
-    for (long seq = 173; seq <= 300; seq++) {
-      tail.add(V2ModelTestData.line(seq, 1, seq, "h"));
-    }
     assertTrue(model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN, new HistoryExtent(57, 300), tail,
+        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(57, 300),
         Collections.singletonList(V2ModelTestData.line(1000, 1, 0, "a")),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     model.consumeRenderUpdate();
@@ -127,9 +122,8 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
   }
 
   @Test
-  public void partialRangeCommitsWithoutShrinkingAvailableExtent() {
+  public void partialRangeCommitsAndAdvancesTrimBoundary() {
     RemoteTerminalModel model = baselineModel();
-    HistoryExtent availableBefore = model.remoteAvailableExtent();
     List<TerminalLine> lines = new ArrayList<>();
     for (long seq = 110; seq <= 120; seq++) {
       lines.add(V2ModelTestData.line(20_000 + seq, 1, seq, "x"));
@@ -140,10 +134,10 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(availableBefore, model.remoteAvailableExtent());
-    assertEquals(SlotState.LOADED, history.slotStateAt(109));
-    assertEquals(SlotState.LOADED, history.slotStateAt(119));
-    assertEquals(SlotState.UNLOADED, history.slotStateAt(120));
+    assertEquals(new HistoryExtent(110, 300), model.remoteAvailableExtent());
+    assertEquals(SlotState.LOADED, history.slotStateAt(0));
+    assertEquals(SlotState.LOADED, history.slotStateAt(10));
+    assertEquals(SlotState.UNLOADED, history.slotStateAt(11));
   }
 
   @Test
@@ -157,8 +151,6 @@ public final class RemoteTerminalModelHistoryRangeStatusHandlingTest {
 
     PagedTerminalHistorySnapshot history =
         (PagedTerminalHistorySnapshot) model.renderSnapshot().history;
-    assertEquals(173, history.lineBySeq(173).id);
-    assertEquals(SlotState.LOADED, history.slotStateAt(172));
     assertEquals(200, history.lineBySeq(200).id);
   }
 

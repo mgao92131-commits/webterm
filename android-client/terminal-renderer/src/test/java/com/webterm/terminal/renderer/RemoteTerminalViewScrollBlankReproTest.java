@@ -79,9 +79,9 @@ public final class RemoteTerminalViewScrollBlankReproTest {
       screen.add(textLine(i + 1, 1, 0, "screen-" + (i + 1)));
     }
     model.applyBaseline(new ScreenBaseline(
-        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, DICTIONARY_GENERATION, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY,
+        "session-1", INSTANCE, LAYOUT_EPOCH, 1L, DICTIONARY_GENERATION, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY,
         ROWS, COLS, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, HISTORY), history, screen,
+        new HistoryExtent(1, HISTORY), screen,
         new TerminalCursor(0, 1, true, TerminalCursor.Shape.BLOCK, false),
         TerminalModes.defaults(), TerminalPalette.defaults()));
 
@@ -194,8 +194,7 @@ public final class RemoteTerminalViewScrollBlankReproTest {
           INSTANCE, LAYOUT_EPOCH, nextRevision, nextRevision + 1,
           1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
           new ScreenMutation(new ScreenScroll(0, ROWS, scrollRows), writes),
-          new HistoryMutation(new HistoryExtent(1, HISTORY + nextRevision), scrolledOff,
-              HISTORY + nextRevision),
+          new HistoryMutation(new HistoryExtent(1, HISTORY + nextRevision), HistoryTestData.pushes( scrolledOff)),
           null, null, null));
     } catch (RemoteTerminalModel.RevisionGapException e) {
       throw new AssertionError(e);

@@ -2,8 +2,6 @@ package terminalengine
 
 import (
 	"testing"
-
-	"webterm/go-core/internal/historysegment"
 )
 
 func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
@@ -19,7 +17,7 @@ func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
 	if sb.Len() == 0 {
 		t.Fatal("expected scrollback before CSI 3 J")
 	}
-	wantSeq := historysegment.AlignToSegmentStart(sb.NextSeq())
+	wantSeq := sb.NextSeq()
 
 	if err := engine.Write([]byte("\x1b[3J")); err != nil {
 		t.Fatal(err)

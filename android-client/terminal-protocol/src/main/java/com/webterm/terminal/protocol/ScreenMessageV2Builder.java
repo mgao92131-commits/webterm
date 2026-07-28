@@ -8,24 +8,19 @@ import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 /** 构造 webterm.screen.v2 出站消息；所有消息都显式携带协议版本 2。 */
 public final class ScreenMessageV2Builder {
-  /** 0 delegates cold/reset baseline tail sizing to the server policy. */
-  public static final int COLD_HISTORY_TAIL_SERVER_DEFAULT = 0;
-
   private ScreenMessageV2Builder() {}
 
   @NonNull
-  public static byte[] hello(int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume,
-                             int coldHistoryTailLines) {
-    return hello(cols, rows, resume, coldHistoryTailLines,
+  public static byte[] hello(
+      int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume) {
+    return hello(cols, rows, resume,
         TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO);
   }
 
   @NonNull
   public static byte[] hello(int cols, int rows, @Nullable TerminalScreenV2Proto.ResumeToken resume,
-                             int coldHistoryTailLines,
                              @NonNull TerminalScreenV2Proto.InitialSyncMode initialSyncMode) {
     TerminalScreenV2Proto.Hello.Builder builder = TerminalScreenV2Proto.Hello.newBuilder()
-        .setColdHistoryTailLines(coldHistoryTailLines)
         .setInitialSyncMode(initialSyncMode)
         .setDesiredGeometry(TerminalScreenV2Proto.Geometry.newBuilder()
             .setCols(cols).setRows(rows));

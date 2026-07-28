@@ -218,21 +218,6 @@ public final class PagedTerminalHistory {
       return added != null ? added : loadedLineIdToSeq.get(lineId);
     }
 
-    /**
-     * 未封存热尾 (sealedThroughSeq, lastSeq] 必须全部 LOADED。
-     * sealedThroughSeq==0 时整段 extent 都视为热尾。
-     */
-    public boolean hotTailFullyLoaded(long sealedThroughSeq) {
-      ensureOpen();
-      if (workingExtent.isEmpty()) return true;
-      long from = sealedThroughSeq > 0 ? sealedThroughSeq + 1 : workingExtent.firstSeq;
-      if (from < workingExtent.firstSeq) from = workingExtent.firstSeq;
-      for (long seq = from; seq <= workingExtent.lastSeq; seq++) {
-        if (!isLoaded(seq)) return false;
-      }
-      return true;
-    }
-
     boolean isLoaded(long historySeq) {
       if (!workingExtent.contains(historySeq)) return false;
       HistoryPageChunk page = workingPages.get(pageNumber(historySeq));

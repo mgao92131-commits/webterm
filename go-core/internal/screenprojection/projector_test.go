@@ -117,7 +117,7 @@ func TestFrameDeriver_LayoutReentryCarriesLineDataAfterHistoryPrune(t *testing.T
 	current := old
 	current.Seq = 2
 	current.Screen = []terminalengine.Line{line(30, 1, 0, "h"), line(20, 1, 1, "y")}
-	patch := frameForBaseline(&old, current, defaultMaxAppendedScrollbackEntrys, defaultMaxAppendedHistoryBytes)
+	patch := frameForBaseline(&old, current)
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("patch kind=%d, want patch", patch.Kind)
 	}
@@ -254,6 +254,12 @@ func TestFrameDeriver_FullScreenCommitCarriesBoundedHistory(t *testing.T) {
 			FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 1, LastIncludedHistorySeq: historySize,
 			Lines: history,
 		},
+		ScrollbackLineage: make([]terminalengine.HistoryPush, historySize),
+	}
+	for index := range baseline.ScrollbackLineage {
+		baseline.ScrollbackLineage[index] = terminalengine.HistoryPush{
+			HistorySeq: uint64(index + 1), LineID: uint64(index + 1), LineVersion: 1,
+		}
 	}
 	currentHistory := append([]terminalengine.Line(nil), history[1:]...)
 	currentHistory = append(currentHistory, makeLine(historySize+1, 1, 0, "history-301"))
@@ -264,6 +270,11 @@ func TestFrameDeriver_FullScreenCommitCarriesBoundedHistory(t *testing.T) {
 		FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 2, LastIncludedHistorySeq: historySize + 1,
 		Lines: currentHistory,
 	}
+	current.ScrollbackLineage = append(
+		append([]terminalengine.HistoryPush(nil), baseline.ScrollbackLineage[1:]...),
+		terminalengine.HistoryPush{
+			HistorySeq: historySize + 1, LineID: historySize + 1, LineVersion: 1,
+		})
 
 	var deriver FrameDeriver
 	deriver.SeedAfterSuccessfulWrite(baseline)
@@ -274,8 +285,11 @@ func TestFrameDeriver_FullScreenCommitCarriesBoundedHistory(t *testing.T) {
 	if len(patch.Screen) != rows {
 		t.Fatalf("screen rows=%d, want all %d changed rows", len(patch.Screen), rows)
 	}
-	if len(patch.History.Lines) != 1 || patch.History.Lines[0].ID != historySize+1 {
-		t.Fatalf("history delta=%+v, want only line %d", patch.History.Lines, historySize+1)
+	if len(patch.History.Lines) != 0 {
+		t.Fatalf("wire history bodies=%+v, want none", patch.History.Lines)
+	}
+	if len(patch.HistoryPushes) != 1 || patch.HistoryPushes[0].LineID != historySize+1 {
+		t.Fatalf("history pushes=%+v, want only line %d", patch.HistoryPushes, historySize+1)
 	}
 }
 

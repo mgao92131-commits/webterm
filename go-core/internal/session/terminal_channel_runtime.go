@@ -20,19 +20,18 @@ import (
 )
 
 type terminalChannelRuntime struct {
-	sink                 ChannelFrameSink
-	session              *TerminalSession
-	send                 chan outboundMessage
-	ready                atomic.Bool
-	done                 chan struct{}
-	doneOnce             chan struct{}
-	logger               *logs.Logger
-	screenClientID       string
-	ownerKey             string
-	coldHistoryTailLines uint32
-	screenAttached       atomic.Bool
-	writerStarted        atomic.Bool
-	screenHandler        *screenprotocolv2.Handler
+	sink           ChannelFrameSink
+	session        *TerminalSession
+	send           chan outboundMessage
+	ready          atomic.Bool
+	done           chan struct{}
+	doneOnce       chan struct{}
+	logger         *logs.Logger
+	screenClientID string
+	ownerKey       string
+	screenAttached atomic.Bool
+	writerStarted  atomic.Bool
+	screenHandler  *screenprotocolv2.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -100,7 +99,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 	}
 	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
 		if frame.Kind == terminalengine.FrameSnapshot {
-			return screenprotocolv2.EncodeBaseline(frame, client.coldHistoryTailLines)
+			return screenprotocolv2.EncodeBaseline(frame, 0)
 		}
 		return screenprotocolv2.EncodeTerminalCommit(frame, 0)
 	}
@@ -372,14 +371,14 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 	// 路径或底层运行信息）。screen_encode_failed 属关键失败事件，已在
 	// RateLimiter 豁免名单中，不参与 5 秒限流。
 	client.logger.Event("error", "session", "screen_encode_failed", map[string]any{
-		"stage":        stage,
-		"reason":       classifyScreenError(err),
-		"revision":     state.Seq,
-		"rows":         state.Rows,
-		"cols":         state.Cols,
-		"styles":       len(state.Styles),
-		"links":        len(state.Links),
-		"historyLines": len(state.History.Lines),
+		"stage":         stage,
+		"reason":        classifyScreenError(err),
+		"revision":      state.Seq,
+		"rows":          state.Rows,
+		"cols":          state.Cols,
+		"styles":        len(state.Styles),
+		"links":         len(state.Links),
+		"historyPushes": len(state.HistoryPushes),
 	})
 }
 
@@ -517,7 +516,6 @@ func (client *terminalChannelRuntime) handleScreenHello(hello *pb.Hello) {
 		client.Close()
 		return
 	}
-	client.coldHistoryTailLines = hello.GetColdHistoryTailLines()
 	client.attachScreenClient(hello)
 	client.ready.Store(true)
 }
@@ -560,9 +558,7 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 		resume = &screenprojection.ResumeToken{InstanceID: token.GetInstanceId(),
 			LayoutEpoch: token.GetLayoutEpoch(), ScreenRevision: token.GetScreenRevision(),
 			DictionaryGeneration: token.GetDictionaryGeneration(), HistoryGeneration: token.GetHistoryGeneration(),
-			ContiguousHistoryTailFirstSeq: token.GetContiguousHistoryTailFirstSeq(),
-			ContiguousHistoryTailLastSeq:  token.GetContiguousHistoryTailLastSeq(),
-			ActiveBuffer:                  buffer, ActiveRows: rows}
+			ActiveBuffer: buffer, ActiveRows: rows}
 	}
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
 		ID:              client.screenClientID,
@@ -600,21 +596,16 @@ func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage termin
 			return nil, "commit", err
 		}
 		// A resume commit is useful only while it is materially smaller than an
-		// authoritative rebuild. The compatible baseline preserves resident
-		// history and viewport anchors, so choosing it here does not redownload
-		// history or reset local navigation.
+		// authoritative rebuild.
 		baseline := syncMessage.State
 		baseline.Kind = terminalengine.FrameSnapshot
-		baseline.PreserveCompatibleHistory = true
-		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(
-			baseline, client.coldHistoryTailLines)
+		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(baseline, 0)
 		if baselineErr == nil && len(commitPayload) >= len(baselinePayload) {
 			return baselinePayload, "baseline", nil
 		}
 		return commitPayload, "commit", nil
 	}
-	payload, err := screenprotocolv2.EncodeBaseline(
-		syncMessage.Projection, client.coldHistoryTailLines)
+	payload, err := screenprotocolv2.EncodeBaseline(syncMessage.Projection, 0)
 	return payload, "baseline", err
 }
 

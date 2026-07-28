@@ -18,7 +18,7 @@ public final class ScreenMessageV2BuilderTest {
         .build();
     TerminalScreenV2Proto.ScreenEnvelope envelope =
         TerminalScreenV2Proto.ScreenEnvelope.parseFrom(ScreenMessageV2Builder.hello(
-            80, 24, resume, 64));
+            80, 24, resume));
 
     assertEquals(2, envelope.getProtocolVersion());
     assertEquals(7, envelope.getHello().getResume().getScreenRevision());
@@ -31,7 +31,7 @@ public final class ScreenMessageV2BuilderTest {
   public void helloCanRequestForceBaseline() throws Exception {
     TerminalScreenV2Proto.ScreenEnvelope envelope =
         TerminalScreenV2Proto.ScreenEnvelope.parseFrom(ScreenMessageV2Builder.hello(
-            80, 24, null, 64,
+            80, 24, null,
             TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE));
     assertEquals(TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE,
         envelope.getHello().getInitialSyncMode());

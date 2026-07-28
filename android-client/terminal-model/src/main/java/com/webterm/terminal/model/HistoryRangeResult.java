@@ -3,7 +3,7 @@ package com.webterm.terminal.model;
 import java.util.List;
 
 public final class HistoryRangeResult {
-  public enum Status { OK, STALE_PROJECTION, TRIMMED, RETRYABLE }
+  public enum Status { OK, STALE_PROJECTION, RETRYABLE }
 
   public final String requestId;
   public final String instanceId;

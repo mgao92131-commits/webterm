@@ -211,8 +211,12 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request) {
 //     而不是把路由错误折叠成 502。
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") || isHistorySegmentRequest(r.Method, path) {
-		result, err := s.router.RouteHTTPv2(r.Method, path, r.Header, r.Body)
+	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") || isHistoryRangeRequest(r.Method, path) {
+		rawPath := path
+		if r.URL.RawQuery != "" {
+			rawPath += "?" + r.URL.RawQuery
+		}
+		result, err := s.router.RouteHTTPv2(r.Method, rawPath, r.Header, r.Body)
 		if err != nil {
 			s.app.Log("warn", "direct", "transfer route failed: "+err.Error())
 			s.writeError(w, http.StatusBadGateway, "会话请求失败")
@@ -252,11 +256,11 @@ func isUploadRequest(method, path string) bool {
 		strings.HasSuffix(path, "/upload")
 }
 
-// isHistorySegmentRequest 判断是否为历史分段查询（与 application 解析一致）。
-func isHistorySegmentRequest(method, path string) bool {
+// isHistoryRangeRequest 判断是否为历史范围查询（与 application 解析一致）。
+func isHistoryRangeRequest(method, path string) bool {
 	return method == http.MethodGet &&
 		strings.HasPrefix(path, "/api/sessions/") &&
-		strings.Contains(path, "/history/segments/")
+		strings.HasSuffix(path, "/history/range")
 }
 
 // handleSessionsWS 处理 GET /ws/sessions：验证 Cookie（requireAuth 已完成）后

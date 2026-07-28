@@ -21,97 +21,87 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type HistorySegmentStatus int32
+type HistoryRangeStatus int32
 
 const (
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_UNSPECIFIED      HistorySegmentStatus = 0
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_OK               HistorySegmentStatus = 1
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_STALE_GENERATION HistorySegmentStatus = 2
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_NOT_SEALED       HistorySegmentStatus = 3
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_TRIMMED          HistorySegmentStatus = 4
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_NOT_FOUND        HistorySegmentStatus = 5
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_SESSION_GONE     HistorySegmentStatus = 6
-	HistorySegmentStatus_HISTORY_SEGMENT_STATUS_RETRYABLE        HistorySegmentStatus = 7
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_UNSPECIFIED      HistoryRangeStatus = 0
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_OK               HistoryRangeStatus = 1
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_STALE_GENERATION HistoryRangeStatus = 2
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_SESSION_GONE     HistoryRangeStatus = 3
+	HistoryRangeStatus_HISTORY_RANGE_STATUS_RETRYABLE        HistoryRangeStatus = 4
 )
 
-// Enum value maps for HistorySegmentStatus.
+// Enum value maps for HistoryRangeStatus.
 var (
-	HistorySegmentStatus_name = map[int32]string{
-		0: "HISTORY_SEGMENT_STATUS_UNSPECIFIED",
-		1: "HISTORY_SEGMENT_STATUS_OK",
-		2: "HISTORY_SEGMENT_STATUS_STALE_GENERATION",
-		3: "HISTORY_SEGMENT_STATUS_NOT_SEALED",
-		4: "HISTORY_SEGMENT_STATUS_TRIMMED",
-		5: "HISTORY_SEGMENT_STATUS_NOT_FOUND",
-		6: "HISTORY_SEGMENT_STATUS_SESSION_GONE",
-		7: "HISTORY_SEGMENT_STATUS_RETRYABLE",
+	HistoryRangeStatus_name = map[int32]string{
+		0: "HISTORY_RANGE_STATUS_UNSPECIFIED",
+		1: "HISTORY_RANGE_STATUS_OK",
+		2: "HISTORY_RANGE_STATUS_STALE_GENERATION",
+		3: "HISTORY_RANGE_STATUS_SESSION_GONE",
+		4: "HISTORY_RANGE_STATUS_RETRYABLE",
 	}
-	HistorySegmentStatus_value = map[string]int32{
-		"HISTORY_SEGMENT_STATUS_UNSPECIFIED":      0,
-		"HISTORY_SEGMENT_STATUS_OK":               1,
-		"HISTORY_SEGMENT_STATUS_STALE_GENERATION": 2,
-		"HISTORY_SEGMENT_STATUS_NOT_SEALED":       3,
-		"HISTORY_SEGMENT_STATUS_TRIMMED":          4,
-		"HISTORY_SEGMENT_STATUS_NOT_FOUND":        5,
-		"HISTORY_SEGMENT_STATUS_SESSION_GONE":     6,
-		"HISTORY_SEGMENT_STATUS_RETRYABLE":        7,
+	HistoryRangeStatus_value = map[string]int32{
+		"HISTORY_RANGE_STATUS_UNSPECIFIED":      0,
+		"HISTORY_RANGE_STATUS_OK":               1,
+		"HISTORY_RANGE_STATUS_STALE_GENERATION": 2,
+		"HISTORY_RANGE_STATUS_SESSION_GONE":     3,
+		"HISTORY_RANGE_STATUS_RETRYABLE":        4,
 	}
 )
 
-func (x HistorySegmentStatus) Enum() *HistorySegmentStatus {
-	p := new(HistorySegmentStatus)
+func (x HistoryRangeStatus) Enum() *HistoryRangeStatus {
+	p := new(HistoryRangeStatus)
 	*p = x
 	return p
 }
 
-func (x HistorySegmentStatus) String() string {
+func (x HistoryRangeStatus) String() string {
 	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
 }
 
-func (HistorySegmentStatus) Descriptor() protoreflect.EnumDescriptor {
+func (HistoryRangeStatus) Descriptor() protoreflect.EnumDescriptor {
 	return file_shared_proto_terminal_history_proto_enumTypes[0].Descriptor()
 }
 
-func (HistorySegmentStatus) Type() protoreflect.EnumType {
+func (HistoryRangeStatus) Type() protoreflect.EnumType {
 	return &file_shared_proto_terminal_history_proto_enumTypes[0]
 }
 
-func (x HistorySegmentStatus) Number() protoreflect.EnumNumber {
+func (x HistoryRangeStatus) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
-// Deprecated: Use HistorySegmentStatus.Descriptor instead.
-func (HistorySegmentStatus) EnumDescriptor() ([]byte, []int) {
+// Deprecated: Use HistoryRangeStatus.Descriptor instead.
+func (HistoryRangeStatus) EnumDescriptor() ([]byte, []int) {
 	return file_shared_proto_terminal_history_proto_rawDescGZIP(), []int{0}
 }
 
-// HistorySegment 是封存后的不可变历史段正文。
-type HistorySegment struct {
+type HistoryRangeResponse struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	HistoryGeneration uint64                 `protobuf:"varint,1,opt,name=history_generation,json=historyGeneration,proto3" json:"history_generation,omitempty"`
-	SegmentNumber     uint64                 `protobuf:"varint,2,opt,name=segment_number,json=segmentNumber,proto3" json:"segment_number,omitempty"`
-	FirstSeq          uint64                 `protobuf:"varint,3,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
-	LastSeq           uint64                 `protobuf:"varint,4,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
-	Lines             []*LineData            `protobuf:"bytes,5,rep,name=lines,proto3" json:"lines,omitempty"`
-	Dictionary        *Dictionary            `protobuf:"bytes,6,opt,name=dictionary,proto3" json:"dictionary,omitempty"`
+	Status            HistoryRangeStatus     `protobuf:"varint,1,opt,name=status,proto3,enum=webterm.terminal.screen.v2.HistoryRangeStatus" json:"status,omitempty"`
+	HistoryGeneration uint64                 `protobuf:"varint,2,opt,name=history_generation,json=historyGeneration,proto3" json:"history_generation,omitempty"`
+	CurrentExtent     *HistoryExtent         `protobuf:"bytes,3,opt,name=current_extent,json=currentExtent,proto3" json:"current_extent,omitempty"`
+	Lines             []*LineData            `protobuf:"bytes,4,rep,name=lines,proto3" json:"lines,omitempty"`
+	Dictionary        *Dictionary            `protobuf:"bytes,5,opt,name=dictionary,proto3" json:"dictionary,omitempty"`
+	RetryAfterMs      uint32                 `protobuf:"varint,6,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
-func (x *HistorySegment) Reset() {
-	*x = HistorySegment{}
+func (x *HistoryRangeResponse) Reset() {
+	*x = HistoryRangeResponse{}
 	mi := &file_shared_proto_terminal_history_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *HistorySegment) String() string {
+func (x *HistoryRangeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*HistorySegment) ProtoMessage() {}
+func (*HistoryRangeResponse) ProtoMessage() {}
 
-func (x *HistorySegment) ProtoReflect() protoreflect.Message {
+func (x *HistoryRangeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_shared_proto_terminal_history_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -123,116 +113,47 @@ func (x *HistorySegment) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use HistorySegment.ProtoReflect.Descriptor instead.
-func (*HistorySegment) Descriptor() ([]byte, []int) {
+// Deprecated: Use HistoryRangeResponse.ProtoReflect.Descriptor instead.
+func (*HistoryRangeResponse) Descriptor() ([]byte, []int) {
 	return file_shared_proto_terminal_history_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *HistorySegment) GetHistoryGeneration() uint64 {
+func (x *HistoryRangeResponse) GetStatus() HistoryRangeStatus {
+	if x != nil {
+		return x.Status
+	}
+	return HistoryRangeStatus_HISTORY_RANGE_STATUS_UNSPECIFIED
+}
+
+func (x *HistoryRangeResponse) GetHistoryGeneration() uint64 {
 	if x != nil {
 		return x.HistoryGeneration
 	}
 	return 0
 }
 
-func (x *HistorySegment) GetSegmentNumber() uint64 {
+func (x *HistoryRangeResponse) GetCurrentExtent() *HistoryExtent {
 	if x != nil {
-		return x.SegmentNumber
+		return x.CurrentExtent
 	}
-	return 0
+	return nil
 }
 
-func (x *HistorySegment) GetFirstSeq() uint64 {
-	if x != nil {
-		return x.FirstSeq
-	}
-	return 0
-}
-
-func (x *HistorySegment) GetLastSeq() uint64 {
-	if x != nil {
-		return x.LastSeq
-	}
-	return 0
-}
-
-func (x *HistorySegment) GetLines() []*LineData {
+func (x *HistoryRangeResponse) GetLines() []*LineData {
 	if x != nil {
 		return x.Lines
 	}
 	return nil
 }
 
-func (x *HistorySegment) GetDictionary() *Dictionary {
+func (x *HistoryRangeResponse) GetDictionary() *Dictionary {
 	if x != nil {
 		return x.Dictionary
 	}
 	return nil
 }
 
-// HistorySegmentResponse 是 HTTP 响应体；不含 historyExtent/availableExtent。
-type HistorySegmentResponse struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Status            HistorySegmentStatus   `protobuf:"varint,1,opt,name=status,proto3,enum=webterm.terminal.screen.v2.HistorySegmentStatus" json:"status,omitempty"`
-	Segment           *HistorySegment        `protobuf:"bytes,2,opt,name=segment,proto3" json:"segment,omitempty"`
-	HistoryGeneration uint64                 `protobuf:"varint,3,opt,name=history_generation,json=historyGeneration,proto3" json:"history_generation,omitempty"`
-	RetryAfterMs      uint32                 `protobuf:"varint,4,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *HistorySegmentResponse) Reset() {
-	*x = HistorySegmentResponse{}
-	mi := &file_shared_proto_terminal_history_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HistorySegmentResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HistorySegmentResponse) ProtoMessage() {}
-
-func (x *HistorySegmentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_shared_proto_terminal_history_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HistorySegmentResponse.ProtoReflect.Descriptor instead.
-func (*HistorySegmentResponse) Descriptor() ([]byte, []int) {
-	return file_shared_proto_terminal_history_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *HistorySegmentResponse) GetStatus() HistorySegmentStatus {
-	if x != nil {
-		return x.Status
-	}
-	return HistorySegmentStatus_HISTORY_SEGMENT_STATUS_UNSPECIFIED
-}
-
-func (x *HistorySegmentResponse) GetSegment() *HistorySegment {
-	if x != nil {
-		return x.Segment
-	}
-	return nil
-}
-
-func (x *HistorySegmentResponse) GetHistoryGeneration() uint64 {
-	if x != nil {
-		return x.HistoryGeneration
-	}
-	return 0
-}
-
-func (x *HistorySegmentResponse) GetRetryAfterMs() uint32 {
+func (x *HistoryRangeResponse) GetRetryAfterMs() uint32 {
 	if x != nil {
 		return x.RetryAfterMs
 	}
@@ -243,30 +164,22 @@ var File_shared_proto_terminal_history_proto protoreflect.FileDescriptor
 
 const file_shared_proto_terminal_history_proto_rawDesc = "" +
 	"\n" +
-	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\xa8\x02\n" +
-	"\x0eHistorySegment\x12-\n" +
-	"\x12history_generation\x18\x01 \x01(\x04R\x11historyGeneration\x12%\n" +
-	"\x0esegment_number\x18\x02 \x01(\x04R\rsegmentNumber\x12\x1b\n" +
-	"\tfirst_seq\x18\x03 \x01(\x04R\bfirstSeq\x12\x19\n" +
-	"\blast_seq\x18\x04 \x01(\x04R\alastSeq\x12:\n" +
-	"\x05lines\x18\x05 \x03(\v2$.webterm.terminal.screen.v2.LineDataR\x05lines\x12F\n" +
+	"#shared/proto/terminal_history.proto\x12\x1awebterm.terminal.screen.v2\x1a%shared/proto/terminal_screen_v2.proto\"\x89\x03\n" +
+	"\x14HistoryRangeResponse\x12F\n" +
+	"\x06status\x18\x01 \x01(\x0e2..webterm.terminal.screen.v2.HistoryRangeStatusR\x06status\x12-\n" +
+	"\x12history_generation\x18\x02 \x01(\x04R\x11historyGeneration\x12P\n" +
+	"\x0ecurrent_extent\x18\x03 \x01(\v2).webterm.terminal.screen.v2.HistoryExtentR\rcurrentExtent\x12:\n" +
+	"\x05lines\x18\x04 \x03(\v2$.webterm.terminal.screen.v2.LineDataR\x05lines\x12F\n" +
 	"\n" +
-	"dictionary\x18\x06 \x01(\v2&.webterm.terminal.screen.v2.DictionaryR\n" +
-	"dictionaryJ\x04\b\a\x10\b\"\xfd\x01\n" +
-	"\x16HistorySegmentResponse\x12H\n" +
-	"\x06status\x18\x01 \x01(\x0e20.webterm.terminal.screen.v2.HistorySegmentStatusR\x06status\x12D\n" +
-	"\asegment\x18\x02 \x01(\v2*.webterm.terminal.screen.v2.HistorySegmentR\asegment\x12-\n" +
-	"\x12history_generation\x18\x03 \x01(\x04R\x11historyGeneration\x12$\n" +
-	"\x0eretry_after_ms\x18\x04 \x01(\rR\fretryAfterMs*\xca\x02\n" +
-	"\x14HistorySegmentStatus\x12&\n" +
-	"\"HISTORY_SEGMENT_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
-	"\x19HISTORY_SEGMENT_STATUS_OK\x10\x01\x12+\n" +
-	"'HISTORY_SEGMENT_STATUS_STALE_GENERATION\x10\x02\x12%\n" +
-	"!HISTORY_SEGMENT_STATUS_NOT_SEALED\x10\x03\x12\"\n" +
-	"\x1eHISTORY_SEGMENT_STATUS_TRIMMED\x10\x04\x12$\n" +
-	" HISTORY_SEGMENT_STATUS_NOT_FOUND\x10\x05\x12'\n" +
-	"#HISTORY_SEGMENT_STATUS_SESSION_GONE\x10\x06\x12$\n" +
-	" HISTORY_SEGMENT_STATUS_RETRYABLE\x10\aBt\n" +
+	"dictionary\x18\x05 \x01(\v2&.webterm.terminal.screen.v2.DictionaryR\n" +
+	"dictionary\x12$\n" +
+	"\x0eretry_after_ms\x18\x06 \x01(\rR\fretryAfterMs*\xcd\x01\n" +
+	"\x12HistoryRangeStatus\x12$\n" +
+	" HISTORY_RANGE_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17HISTORY_RANGE_STATUS_OK\x10\x01\x12)\n" +
+	"%HISTORY_RANGE_STATUS_STALE_GENERATION\x10\x02\x12%\n" +
+	"!HISTORY_RANGE_STATUS_SESSION_GONE\x10\x03\x12\"\n" +
+	"\x1eHISTORY_RANGE_STATUS_RETRYABLE\x10\x04Bt\n" +
 	"'com.webterm.terminal.protocol.generatedB\x14TerminalHistoryProtoZ3webterm/go-core/internal/screenprotocol/generatedv2b\x06proto3"
 
 var (
@@ -282,19 +195,19 @@ func file_shared_proto_terminal_history_proto_rawDescGZIP() []byte {
 }
 
 var file_shared_proto_terminal_history_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_shared_proto_terminal_history_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_shared_proto_terminal_history_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_shared_proto_terminal_history_proto_goTypes = []any{
-	(HistorySegmentStatus)(0),      // 0: webterm.terminal.screen.v2.HistorySegmentStatus
-	(*HistorySegment)(nil),         // 1: webterm.terminal.screen.v2.HistorySegment
-	(*HistorySegmentResponse)(nil), // 2: webterm.terminal.screen.v2.HistorySegmentResponse
-	(*LineData)(nil),               // 3: webterm.terminal.screen.v2.LineData
-	(*Dictionary)(nil),             // 4: webterm.terminal.screen.v2.Dictionary
+	(HistoryRangeStatus)(0),      // 0: webterm.terminal.screen.v2.HistoryRangeStatus
+	(*HistoryRangeResponse)(nil), // 1: webterm.terminal.screen.v2.HistoryRangeResponse
+	(*HistoryExtent)(nil),        // 2: webterm.terminal.screen.v2.HistoryExtent
+	(*LineData)(nil),             // 3: webterm.terminal.screen.v2.LineData
+	(*Dictionary)(nil),           // 4: webterm.terminal.screen.v2.Dictionary
 }
 var file_shared_proto_terminal_history_proto_depIdxs = []int32{
-	3, // 0: webterm.terminal.screen.v2.HistorySegment.lines:type_name -> webterm.terminal.screen.v2.LineData
-	4, // 1: webterm.terminal.screen.v2.HistorySegment.dictionary:type_name -> webterm.terminal.screen.v2.Dictionary
-	0, // 2: webterm.terminal.screen.v2.HistorySegmentResponse.status:type_name -> webterm.terminal.screen.v2.HistorySegmentStatus
-	1, // 3: webterm.terminal.screen.v2.HistorySegmentResponse.segment:type_name -> webterm.terminal.screen.v2.HistorySegment
+	0, // 0: webterm.terminal.screen.v2.HistoryRangeResponse.status:type_name -> webterm.terminal.screen.v2.HistoryRangeStatus
+	2, // 1: webterm.terminal.screen.v2.HistoryRangeResponse.current_extent:type_name -> webterm.terminal.screen.v2.HistoryExtent
+	3, // 2: webterm.terminal.screen.v2.HistoryRangeResponse.lines:type_name -> webterm.terminal.screen.v2.LineData
+	4, // 3: webterm.terminal.screen.v2.HistoryRangeResponse.dictionary:type_name -> webterm.terminal.screen.v2.Dictionary
 	4, // [4:4] is the sub-list for method output_type
 	4, // [4:4] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name
@@ -314,7 +227,7 @@ func file_shared_proto_terminal_history_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_shared_proto_terminal_history_proto_rawDesc), len(file_shared_proto_terminal_history_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -9,7 +9,7 @@ import static org.junit.Assert.assertTrue;
 import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryMutation;
-import com.webterm.terminal.model.HistoryPromotion;
+import com.webterm.terminal.model.HistoryPush;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
@@ -51,7 +51,7 @@ public final class RemoteTerminalSnapshotConsistencyTest {
   }
 
   @Test
-  public void lineAnchorIdentityDoesNotChangeWhenHistoryTailAdvances() throws Exception {
+  public void lineAnchorIdentityDoesNotChangeWhenHistoryExtentAdvances() throws Exception {
     RemoteTerminalModel model = modelWithHistory(50);
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.anchorLine(TerminalBufferKind.MAIN, 10, 7);
@@ -85,9 +85,8 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
         "session", "instance", 1, 1,
-        1, 1, false, DictionaryEntries.EMPTY,
-        2, 1, TerminalBufferKind.MAIN, new HistoryExtent(1, 0),
-        Collections.emptyList(), lines(10, 11, false), TerminalCursor.hidden(),
+        1, 1, DictionaryEntries.EMPTY,
+        2, 1, TerminalBufferKind.MAIN, new HistoryExtent(1, 0), lines(10, 11, false), TerminalCursor.hidden(),
         TerminalModes.defaults(), TerminalPalette.defaults())));
     TerminalViewportState viewport = new TerminalViewportState();
     viewport.anchorLine(TerminalBufferKind.MAIN, 10, 7);
@@ -106,9 +105,9 @@ public final class RemoteTerminalSnapshotConsistencyTest {
         new ScreenMutation(new ScreenScroll(0, 2, 1),
             Collections.singletonList(new ScreenRowWrite(
                 1, lines(12, 12, false).get(0)))),
-        HistoryMutation.fromLineData(
-            new HistoryExtent(1, 1), Collections.emptyList(),
-            Collections.singletonList(new HistoryPromotion(10, 1, 1))),
+        new HistoryMutation(
+            new HistoryExtent(1, 1),
+            Collections.singletonList(new HistoryPush(1, 10, 1))),
         null, null, null)));
 
     ViewportPosition.LineAnchor anchor =
@@ -145,10 +144,11 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     List<TerminalLine> history = lines(1, count, true);
     assertTrue(model.applyBaseline(new ScreenBaseline(
         "session", "instance", 1, 1,
-        1, 1, false, DictionaryEntries.EMPTY,
-        2, 80, TerminalBufferKind.MAIN, new HistoryExtent(1, count),
-        history, lines(1000, 1001, false), TerminalCursor.hidden(),
+        1, 1, DictionaryEntries.EMPTY,
+        2, 80, TerminalBufferKind.MAIN, new HistoryExtent(1, count), lines(1000, 1001, false), TerminalCursor.hidden(),
         TerminalModes.defaults(), TerminalPalette.defaults())));
+    HistoryTestData.loadRange(
+        model, "instance", 1, 1, new HistoryExtent(1, count), history);
     return model;
   }
 
@@ -157,7 +157,8 @@ public final class RemoteTerminalSnapshotConsistencyTest {
     return new TerminalCommit(
         "instance", 1, baseRevision, revision, 1, 1,
         DictionaryEntries.EMPTY, null, null,
-        new HistoryMutation(new HistoryExtent(1, last), lines(first, last, true)),
+        new HistoryMutation(new HistoryExtent(1, last),
+            HistoryTestData.pushes(lines(first, last, true))),
         null, null, null);
   }
 

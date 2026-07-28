@@ -36,9 +36,6 @@ public final class ScreenMessageV2MapperTest {
             .setActiveBuffer(TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN)
             .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
                 .setFirstSeq(1).setLastSeq(0))
-            .setHistoryTail(TerminalScreenV2Proto.HistoryTail.newBuilder()
-                .setExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
-                    .setFirstSeq(1).setLastSeq(0)))
             .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder().addLineIds(9))
             .addScreenLines(line)
             .setCursor(TerminalScreenV2Proto.Cursor.newBuilder())
@@ -64,13 +61,15 @@ public final class ScreenMessageV2MapperTest {
         .setHistory(TerminalScreenV2Proto.HistoryMutation.newBuilder()
             .setFinalExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
                 .setFirstSeq(1).setLastSeq(7))
-            .addAppendedLines(line(7, 7)))
+            .addPushes(TerminalScreenV2Proto.HistoryPush.newBuilder()
+                .setHistorySeq(7).setLineId(7).setLineVersion(1)))
         .build();
 
     TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, 2, 1);
     assertEquals(1, commit.screen.scroll.deltaRows);
     assertEquals(12, commit.screen.writes.get(0).lineData.lineId);
-    assertEquals(7, commit.history.appendedLines.get(0).historySeq);
+    assertEquals(7, commit.history.pushes.get(0).historySeq);
+    assertEquals(7, commit.history.pushes.get(0).lineId);
   }
 
   @Test

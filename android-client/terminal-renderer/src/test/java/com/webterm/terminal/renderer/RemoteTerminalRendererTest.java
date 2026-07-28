@@ -129,9 +129,9 @@ public final class RemoteTerminalRendererTest {
       screen.add(new TerminalLine(1000L + i, 1, 0, false, cells));
     }
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY,
+        "s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY,
         rows, cols, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     model.consumeRenderUpdate();
 
@@ -244,8 +244,8 @@ public final class RemoteTerminalRendererTest {
         300, 1, 300, false, new TerminalCell[] {TerminalCell.EMPTY});
     TerminalLine screen = TerminalLine.empty(1000, 1);
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, 300), Collections.singletonList(historyTail),
+        "s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 300),
         Collections.singletonList(screen), TerminalCursor.hidden(), TerminalModes.defaults(),
         TerminalPalette.defaults()));
     model.consumeRenderUpdate();
@@ -300,8 +300,8 @@ public final class RemoteTerminalRendererTest {
       history.add(new TerminalLine(1000L + i, 1, i + 1L, false, cells));
     }
     model.applyBaseline(new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, cols, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, 5), history,
+        "s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, cols, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, 5),
         Collections.singletonList(TerminalLine.empty(2000, cols)),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     model.consumeRenderUpdate();

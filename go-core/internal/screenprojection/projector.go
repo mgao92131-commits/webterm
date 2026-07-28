@@ -32,13 +32,6 @@ type projectedState struct {
 	cursor       terminalengine.Cursor
 	modes        terminalengine.Modes
 	palette      paletteState
-	// 历史窗口缓存（阶段 2c）：已导出的尾部窗口行（Line 不可变，跨帧零拷贝
-	// 复用）与缓存窗口最后一行的 ID。historyValid=false 表示缓存不反映当前
-	// scrollback（首次导出、epoch/字典轮转、备用屏期间），下次主屏导出经
-	// exportHistoryWindow 全量重建。
-	historyValid   bool
-	historyLines   []terminalengine.Line
-	historyLastSeq uint64 // 缓存窗口最后一行的 ID；窗口为空时为 FirstAvailable-1
 }
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
@@ -172,10 +165,6 @@ type Projector struct {
 	// changeIndexReady 标记首次导出已完成：NewProjector 后的首次导出视为
 	// “projector 整体重建”事件，把 barrier 初始化到首次导出 revision。
 	changeIndexReady bool
-	// scrollbackNextSeq 是上次导出时观察到的 scrollback.NextSeq()。nextSeq 回退
-	// 表示历史 LineID 体系被 Clear/ResetForReflow 重置（§4.2 barrier 事件）；
-	// Pop（resize 放大从 scrollback 回拉行）不回退 nextSeq，不会误触发。
-	scrollbackNextSeq uint64
 }
 
 // SnapshotBarrierRevision 返回当前 epoch 内最近的快照屏障。
@@ -195,19 +184,7 @@ func (p *Projector) SnapshotBarrierRevision() uint64 {
 // canonical revision），DeriveForState 返回 Kind 未设置的零值帧表示"不发送"，
 // 且不推进 baseline：下一个真实 patch 的 base 仍等于最后实际写出的 revision。
 type FrameDeriver struct {
-	baseline                    terminalengine.ScreenFrame
-	maxAppendedScrollbackEntrys int
-	maxAppendedHistoryBytes     int
-}
-
-const (
-	defaultMaxAppendedScrollbackEntrys = 64
-	defaultMaxAppendedHistoryBytes     = 256 << 10
-)
-
-func (d *FrameDeriver) SetHistoryAppendBudget(maxLines, maxBytes int) {
-	d.maxAppendedScrollbackEntrys = maxLines
-	d.maxAppendedHistoryBytes = maxBytes
+	baseline terminalengine.ScreenFrame
 }
 
 func (d *FrameDeriver) Reset() {
@@ -223,14 +200,7 @@ func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame
 // SeedAfterSuccessfulWrite 提交。
 func (d *FrameDeriver) DeriveForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	baseline := d.baseline
-	maxLines, maxBytes := d.maxAppendedScrollbackEntrys, d.maxAppendedHistoryBytes
-	if maxLines <= 0 {
-		maxLines = defaultMaxAppendedScrollbackEntrys
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxAppendedHistoryBytes
-	}
-	return frameForBaseline(&baseline, state, maxLines, maxBytes)
+	return frameForBaseline(&baseline, state)
 }
 
 // NewProjector 创建新的 screen projector。
@@ -265,7 +235,7 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 		Lines:             lines,
 		Styles:            exp.styleTable.Styles(),
 		Links:             exp.linkTable.Links(),
-		HistoryGeneration: p.historyGeneration,
+		HistoryGeneration: result.Generation,
 	}
 }
 
@@ -321,20 +291,9 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		p.observedHistoryGeneration = generation
 		p.historyGeneration = generation
 	}
-	// 历史 LineID 体系重置探测：nextSeq 回退只可能来自 TrackedScrollback
-	// Clear/ResetForReflow（当前无生产调用路径，此处是保守的前置 seam）。
-	// 旧 LineID 与新分配不可比较，断线期间的投影不能再 patch 恢复，推进
-	// barrier。普通清屏（ED 2）、全屏重绘不触碰 LineID，不推进。
-	if p.scrollback != nil {
-		nextSeq := p.scrollback.NextSeq()
-		if nextSeq < p.scrollbackNextSeq {
-			p.changeIndex.advanceBarrier(seq)
-		}
-		p.scrollbackNextSeq = nextSeq
-	}
 	if p.historyChangeIndex.sync(p.scrollback, seq) {
-		// 尾部回退、LineID 跳号或索引遗漏意味着旧投影无法用 append+watermark
-		// 准确修复。推进持久 barrier，并确保在线客户端也收到同 revision snapshot。
+		// LineID 跳号或索引遗漏意味着旧投影无法准确修复。推进持久 barrier，
+		// 并确保在线客户端也收到同 revision snapshot。
 		p.changeIndex.advanceBarrier(seq)
 	}
 	frame := p.mergeAndExport(epoch, seq)
@@ -392,8 +351,8 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 	return frame
 }
 
-// assembleFrame 从全屏缓存组装完整 State。历史窗口走增量缓存（syncHistoryWindow）；
-// 备用屏绝不混入主屏 scrollback。
+// assembleFrame 从全屏缓存组装完整 State。历史只导出 extent 与位置谱系，
+// 正文统一由 HTTP Range 导出；备用屏绝不混入主屏 scrollback。
 func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame {
 	s := &p.projected
 	// State 被所有客户端及其 baseline 共享，必须不可变；缓存切片会在后续
@@ -403,9 +362,9 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	copy(screen, s.screen)
 	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
 	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
-	historyLineage := make([]terminalengine.HistoryPromotion, len(p.historyChangeIndex.Changes))
+	historyLineage := make([]terminalengine.HistoryPush, len(p.historyChangeIndex.Changes))
 	for i, change := range p.historyChangeIndex.Changes {
-		historyLineage[i] = terminalengine.HistoryPromotion{LineID: change.LineID,
+		historyLineage[i] = terminalengine.HistoryPush{LineID: change.LineID,
 			LineVersion: change.LineVersion, HistorySeq: change.HistorySeq}
 	}
 
@@ -413,11 +372,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
 	if s.activeBuffer == terminalengine.BufferMain {
-		history = p.syncHistoryWindow()
-	} else {
-		// 备用屏期间历史缓存失效，切回主屏时全量重建。
-		s.historyValid = false
-		s.historyLines = nil
+		history = historyExtentWindow(p.scrollback)
 	}
 
 	return terminalengine.ScreenFrame{
@@ -446,7 +401,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 		RowChangedRevision:   rowChangedRevision,
 		DictionaryGeneration: p.dictGeneration,
 		HistoryGeneration:    p.historyGeneration,
-		ScrollbackEntryage:   historyLineage,
+		ScrollbackLineage:    historyLineage,
 	}
 }
 
@@ -464,71 +419,7 @@ func projectionColorRGB(c color.Color) uint32 {
 	return uint32(r>>8)<<16 | uint32(g>>8)<<8 | uint32(b>>8)
 }
 
-// syncHistoryWindow 增量维护历史窗口缓存并返回当前完整窗口（持 p.mu 调用）。
-// scrollback 行一旦推出即不可变（Push 时已拷贝），因此缓存的 Line 可跨帧
-// 复用，每帧只导出缓存 lastSeq 之后的新行。产出的窗口与 exportHistoryWindow
-// 全量路径内容完全相等。屏幕全量重建（Full 投影）不影响 LineID 连续性，
-// 历史缓存跨 Full 帧保持有效——否则持续 scroll 场景（每帧 Full）无法受益。
-func (p *Projector) syncHistoryWindow() terminalengine.HistoryWindow {
-	s := &p.projected
-	if !s.historyValid {
-		return p.rebuildHistoryWindow()
-	}
-	delta := p.scrollback.LinesAfter(s.historyLastSeq, snapshotTailLines)
-	if delta.LastSeq < s.historyLastSeq {
-		// Pop（resize 放大从 scrollback 拉回行）/Clear/ResetForReflow 使缓存的
-		// 较新行不再存在，增量无法修复，全量重建。
-		return p.rebuildHistoryWindow()
-	}
-	if delta.FirstSeq > s.historyLastSeq {
-		// Stable IDs may legitimately have gaps after a row was deleted or a
-		// resize discarded it. A gap only means our cached tail was trimmed, so
-		// rebuild from the authoritative bounded window instead of treating it
-		// as a protocol discontinuity.
-		s.historyLines = exportScrollbackEntries(p.exporter, delta.Lines)
-	} else {
-		// 连续：追加新行（新切片，不改动缓存旧切片，历史帧共享不受影响），
-		// 再从旧端裁掉被 scrollback 驱逐的行并裁到窗口上限。
-		lines := s.historyLines
-		if len(delta.Lines) > 0 {
-			merged := make([]terminalengine.Line, 0, len(lines)+len(delta.Lines))
-			merged = append(merged, lines...)
-			merged = append(merged, exportScrollbackEntries(p.exporter, delta.Lines)...)
-			lines = merged
-		}
-		start := 0
-		for start < len(lines) && lines[start].HistorySeq < delta.FirstSeq {
-			start++
-		}
-		if len(lines)-start > snapshotTailLines {
-			start = len(lines) - snapshotTailLines
-		}
-		s.historyLines = lines[start:]
-	}
-	if n := len(s.historyLines); n > 0 {
-		s.historyLastSeq = s.historyLines[n-1].HistorySeq
-	} else {
-		s.historyLastSeq = delta.LastSeq
-	}
-	out := historyWindowFromLines(s.historyLines, delta.FirstSeq)
-	if p.scrollback != nil {
-		out.SealedThroughSeq = p.scrollback.SealedThroughSeq()
-	}
-	return out
-}
-
-// rebuildHistoryWindow 全量重建历史窗口缓存（首次导出、epoch/字典轮转、
-// 备用屏返回、Pop/Clear/reflow 之后）。
-func (p *Projector) rebuildHistoryWindow() terminalengine.HistoryWindow {
-	s := &p.projected
-	w := p.exporter.exportHistoryWindow(p.scrollback)
-	s.historyLines = w.Lines
-	s.historyLastSeq = w.LastIncludedHistorySeq
-	s.historyValid = true
-	return w
-}
-
-func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) terminalengine.ScreenFrame {
+func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	// 输入始终是完整状态，可直接作为 snapshot 发送；统一打上 Kind，避免
 	// 调用方漏设导致编码失败。diffToPatch 的 snapshot 回退路径也借此得到
 	// 正确的 Kind。
@@ -541,13 +432,7 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		return state
 	}
 	// 否则生成 patch（整行替换）。
-	patch, hotIncomplete := diffToPatch(*baseline, state, maxScrollbackEntrys, maxHistoryBytes)
-	// 未封存热尾正文必须完整到达客户端；HTTP 不能补 sealedThroughSeq 之后的洞。
-	// 行数/字节预算裁掉热尾时，退化 Baseline（携带完整最新窗口），不得静默丢正文。
-	if hotIncomplete {
-		*baseline = state
-		return state
-	}
+	patch := diffToPatch(*baseline, state)
 	if patch.Kind != terminalengine.FramePatch {
 		*baseline = state
 		return patch
@@ -579,10 +464,9 @@ func hasScreenChanges(patch terminalengine.ScreenFrame) bool {
 		patch.ActiveBufferChanged
 }
 
-// hasHistoryChanges 判断 Commit 是否携带任何历史 extent/正文变化。
+// hasHistoryChanges 判断 Commit 是否携带任何历史位置或 extent 变化。
 func hasHistoryChanges(patch terminalengine.ScreenFrame) bool {
-	return len(patch.History.Lines) > 0 ||
-		len(patch.HistoryPromotions) > 0 ||
+	return len(patch.HistoryPushes) > 0 ||
 		patch.FirstAvailableHistorySeqChanged
 }
 
@@ -601,73 +485,16 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 // frameForBaseline 的真实同步边界（首帧、epoch/buffer/dictionary 变化或
 // ForceSnapshot）触发。断线恢复的成本判定仍在 resume.go 单独处理。
 //
-// 历史窗口是 epoch 内连续 HistorySeq 的尾部窗口，且历史行推出后不可变，因此
-// history append 不需要逐行 ID 比对：窗口边界即可证明新增连续范围。
-//
-// 第二个返回值 hotIncomplete 表示：未封存热尾（HistorySeq > SealedThroughSeq，
-// 或尚无任何封存）中仍有客户端未知正文因预算被跳过。调用方必须退化 Baseline。
-func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHistoryBytes int) (terminalengine.ScreenFrame, bool) {
-	// Stable screen IDs can leave gaps in scrollback after delete/resize. Select
-	// the newly present IDs instead of relying on historical ID contiguity.
-	oldHistory := make(map[uint64]struct{}, len(old.History.Lines))
-	for _, line := range old.History.Lines {
-		oldHistory[line.HistorySeq] = struct{}{}
-	}
-	oldHistoryFirst := old.History.FirstIncludedHistorySeq
-	oldHistoryLast := old.History.LastIncludedHistorySeq
-	promotedIDs := make(map[uint64]struct{})
-	activeNow := make(map[uint64]struct{}, len(new.Screen))
-	for _, line := range new.Screen {
-		activeNow[line.ID] = struct{}{}
-	}
-	lineage := make(map[uint64]terminalengine.HistoryPromotion, len(new.ScrollbackEntryage))
-	for _, entry := range new.ScrollbackEntryage {
-		lineage[entry.LineID] = entry
-	}
-	var promotions []terminalengine.HistoryPromotion
-	for _, line := range old.Screen {
-		if _, active := activeNow[line.ID]; active {
-			continue
+// Push 按 HistorySeq 新增位置生成，与客户端是否持有正文无关。
+func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	var pushes []terminalengine.HistoryPush
+	oldLast := old.History.LastIncludedHistorySeq
+	for _, entry := range new.ScrollbackLineage {
+		if entry.HistorySeq > oldLast &&
+			entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
+			entry.HistorySeq <= new.History.LastIncludedHistorySeq {
+			pushes = append(pushes, entry)
 		}
-		entry, archived := lineage[line.ID]
-		if !archived || entry.LineVersion != line.Version ||
-			entry.HistorySeq < new.History.FirstAvailableHistorySeq || entry.HistorySeq > new.History.LastIncludedHistorySeq {
-			continue
-		}
-		promotions = append(promotions, entry)
-		promotedIDs[line.ID] = struct{}{}
-	}
-	sealed := new.History.SealedThroughSeq
-	var historyAppend []terminalengine.Line
-	historyBytes := 0
-	coldAppended := 0
-	hotIncomplete := false
-	for _, line := range new.History.Lines {
-		_, explicitlySeen := oldHistory[line.HistorySeq]
-		knownByContiguousRange := oldHistoryFirst > 0 &&
-			line.HistorySeq >= oldHistoryFirst && line.HistorySeq <= oldHistoryLast
-		if explicitlySeen || knownByContiguousRange {
-			continue
-		}
-		if _, promoted := promotedIDs[line.ID]; promoted {
-			continue
-		}
-		estimated := estimateLineWireBytes(line)
-		// 未封存热尾只能走 WS；行数预算不得裁掉。已封存冷历史可裁，HTTP Segment 可补。
-		unsealed := sealed == 0 || line.HistorySeq > sealed
-		if unsealed {
-			if historyBytes+estimated > maxHistoryBytes {
-				hotIncomplete = true
-				break
-			}
-		} else {
-			if coldAppended >= maxScrollbackEntrys || historyBytes+estimated > maxHistoryBytes {
-				continue
-			}
-			coldAppended++
-		}
-		historyAppend = append(historyAppend, line)
-		historyBytes += estimated
 	}
 	activeBufferChanged := old.ActiveBuffer != new.ActiveBuffer
 	var scroll *terminalengine.ScreenScroll
@@ -712,12 +539,10 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 			FirstIncludedHistorySeq:  new.History.FirstIncludedHistorySeq,
 			LastIncludedHistorySeq:   new.History.LastIncludedHistorySeq,
 			HasMoreBefore:            new.History.HasMoreBefore,
-			SealedThroughSeq:         new.History.SealedThroughSeq,
-			Lines:                    historyAppend,
 		},
 		Screen:               screenRows,
 		ScreenScroll:         scroll,
-		HistoryPromotions:    promotions,
+		HistoryPushes:        pushes,
 		DictionaryGeneration: new.DictionaryGeneration,
 		HistoryGeneration:    new.HistoryGeneration,
 		// Snapshot owns a complete dictionary. A patch only needs entries that
@@ -725,23 +550,11 @@ func diffToPatch(old, new terminalengine.ScreenFrame, maxScrollbackEntrys, maxHi
 		// table was pure wire and allocation overhead.
 		Styles: newlyAddedStyles(old.Styles, new.Styles),
 		Links:  newlyAddedLinks(old.Links, new.Links),
-		// Commit 用该 presence 位表达 extent/封存水位变化（包括只 trim 或只封存）。
-		FirstAvailableHistorySeqChanged: activeBufferChanged || len(promotions) > 0 || len(historyAppend) > 0 ||
+		// Commit 用该 presence 位表达位置新增、trim、Clear 或尾部回退。
+		FirstAvailableHistorySeqChanged: activeBufferChanged || len(pushes) > 0 ||
 			old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
-			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq ||
-			old.History.SealedThroughSeq != new.History.SealedThroughSeq,
-	}, hotIncomplete
-}
-
-func estimateLineWireBytes(line terminalengine.Line) int {
-	bytes := 32
-	for _, run := range line.Runs {
-		bytes += 4
-		for _, cell := range run.Cells {
-			bytes += len(cell.Text) + 12
-		}
+			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
 	}
-	return bytes
 }
 
 // deriveFullScreenScroll 只用稳定 LineID 唯一确认全屏连续位移。

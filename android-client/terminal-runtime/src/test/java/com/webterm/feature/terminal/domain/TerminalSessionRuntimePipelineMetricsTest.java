@@ -14,7 +14,6 @@ import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -92,7 +91,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   @Test
   public void historyOnlyPublicationAdvancesVersionWithoutScreenRevision() {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(domainBaseline(/*sealedThrough*/ 256)));
+    assertTrue(model.applyBaseline(domainBaseline()));
     model.consumeRenderUpdate();
 
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("hist-wm", model, Runnable::run);
@@ -104,9 +103,10 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     long revBefore = model.screenRevision;
     long publishedBefore = model.lastPublicationVersion();
 
-    runtime.setHistorySegmentSource(new HistorySegmentSource() {
-      @Override public RequestHandle fetch(@NonNull SegmentKey key, @NonNull Callback callback) {
-        callback.onResult(decodedSegment(key));
+    runtime.setHistoryRangeSource(new HistoryRangeSource() {
+      @Override public RequestHandle fetch(
+          @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback) {
+        callback.onResult(decodedRange(range));
         return () -> {};
       }
       @Override public void close() {}
@@ -138,7 +138,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   @Test
   public void requestFullRenderAdvancesLastPublishedVersion() {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(domainBaseline(/*sealedThrough*/ 256)));
+    assertTrue(model.applyBaseline(domainBaseline()));
     model.consumeRenderUpdate();
 
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("full-wm", model, Runnable::run);
@@ -279,9 +279,6 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
         .setActiveBuffer(TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN)
         .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
             .setFirstSeq(1).setLastSeq(0))
-        .setHistoryTail(TerminalScreenV2Proto.HistoryTail.newBuilder()
-            .setExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
-                .setFirstSeq(1).setLastSeq(0)))
         .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder().addLineIds(1000))
         .addScreenLines(line)
         .setCursor(TerminalScreenV2Proto.Cursor.newBuilder())
@@ -314,17 +311,12 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
         .build();
   }
 
-  private static ScreenBaseline domainBaseline(long sealedThrough) {
-    List<TerminalLine> tail = new ArrayList<>();
-    for (long seq = 173; seq <= 300; seq++) {
-      tail.add(domainLine(seq, seq, "h"));
-    }
+  private static ScreenBaseline domainBaseline() {
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN, new HistoryExtent(1, 300), tail,
+        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 300),
         Collections.singletonList(domainLine(1000, 0, "a")),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        sealedThrough);
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
   private static TerminalLine domainLine(long id, long historySeq, String text) {
@@ -332,13 +324,14 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
         new TerminalCell[] {new TerminalCell(text, (byte) 1, null, null)});
   }
 
-  private static HistorySegmentSource.DecodedHistorySegment decodedSegment(@NonNull SegmentKey key) {
-    List<TerminalLine> lines = new ArrayList<>(SegmentKey.SIZE);
-    for (long seq = key.firstSeq(); seq <= key.lastSeq(); seq++) {
+  private static HistoryRangeSource.Result decodedRange(
+      @NonNull HistoryRangeLoader.Range range) {
+    List<TerminalLine> lines = new ArrayList<>();
+    for (long seq = range.fromSeq; seq <= range.toSeq; seq++) {
       lines.add(domainLine(10_000 + seq, seq, "h"));
     }
-    return new HistorySegmentSource.DecodedHistorySegment(
-        key, key.firstSeq(), key.lastSeq(), lines);
+    return new HistoryRangeSource.Result(
+        range.generation, new HistoryExtent(1, 300), lines);
   }
 
   private static FakeV2Connection connect(TerminalSessionRuntime runtime) {

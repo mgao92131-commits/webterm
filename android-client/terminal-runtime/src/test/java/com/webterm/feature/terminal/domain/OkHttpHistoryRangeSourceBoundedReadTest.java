@@ -6,25 +6,23 @@ import static org.junit.Assert.fail;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-
 import org.junit.Test;
 
-public final class OkHttpHistorySegmentSourceBoundedReadTest {
+public final class OkHttpHistoryRangeSourceBoundedReadTest {
   @Test
   public void readBoundedRejectsOversizedStream() {
-    byte[] payload = new byte[64];
     try {
-      OkHttpHistorySegmentSource.readBounded(new ByteArrayInputStream(payload), 32);
+      OkHttpHistoryRangeSource.readBounded(new ByteArrayInputStream(new byte[64]), 32);
       fail("oversized body must be rejected");
     } catch (IOException expected) {
-      assertTrue(expected.getMessage().contains("exceeds"));
+      assertTrue(expected.getMessage().contains("too large"));
     }
   }
 
   @Test
   public void readBoundedAcceptsExactLimit() throws Exception {
-    byte[] payload = new byte[32];
-    byte[] got = OkHttpHistorySegmentSource.readBounded(new ByteArrayInputStream(payload), 32);
+    byte[] got = OkHttpHistoryRangeSource.readBounded(
+        new ByteArrayInputStream(new byte[32]), 32);
     assertEquals(32, got.length);
   }
 }

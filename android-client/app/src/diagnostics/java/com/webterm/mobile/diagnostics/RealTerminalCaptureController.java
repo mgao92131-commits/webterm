@@ -764,8 +764,6 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     private static long estimateSnapshotBytes(ScreenBaseline s) {
         long n = 64;
         if (s.screen != null) for (com.webterm.terminal.model.TerminalLine l : s.screen) n += lineBytes(l);
-        if (s.historyTail != null)
-            for (com.webterm.terminal.model.TerminalLine l : s.historyTail) n += lineBytes(l);
         return n;
     }
 
@@ -777,9 +775,7 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
             }
         }
         if (p.history != null) {
-            for (com.webterm.terminal.model.LineData line : p.history.appendedLines) {
-                n += lineDataBytes(line);
-            }
+            n += 24L * p.history.pushes.size();
         }
         return n;
     }

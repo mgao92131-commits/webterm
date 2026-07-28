@@ -32,10 +32,9 @@ message ScreenEnvelope {
 }
 
 message Hello {
-  reserved 1, 2, 3, 5, 6;
+  reserved 1, 2, 3, 5, 6, 8;
   ResumeToken resume = 4;
   Geometry desired_geometry = 7;
-  uint32 cold_history_tail_lines = 8;
   InitialSyncMode initial_sync_mode = 9;
 }
 
@@ -55,11 +54,9 @@ message ResumeToken {
   uint64 screen_revision = 3;
   uint64 dictionary_generation = 4;
   uint64 history_generation = 5;
-  uint64 contiguous_history_tail_last_seq = 6;
+  reserved 6, 9;
   BufferKind active_buffer = 7;
   repeated ResumeScreenLine active_rows = 8;
-  // Inclusive start of the recent, locally contiguous history tail.
-  uint64 contiguous_history_tail_first_seq = 9;
 }
 
 message ResumeAccepted {
@@ -93,11 +90,6 @@ message Dictionary {
   repeated Hyperlink links = 2;
 }
 
-message HistoryTail {
-  HistoryExtent extent = 1;
-  repeated LineData lines = 2; // extent 最后至多 128 行
-}
-
 message Baseline {
   string session_id = 1;
   string instance_id = 2;
@@ -107,7 +99,7 @@ message Baseline {
   Geometry geometry = 6;
   BufferKind active_buffer = 7;
   HistoryExtent history_extent = 8;
-  HistoryTail history_tail = 9;
+  reserved 9, 18, 19;
   ScreenLayout screen_layout = 10;
   repeated LineData screen_lines = 11;
   Cursor cursor = 12;
@@ -116,15 +108,6 @@ message Baseline {
   Dictionary dictionary = 15;
   uint64 dictionary_generation = 16;
   uint64 history_generation = 17;
-  BaselineHistoryPolicy history_policy = 18;
-  // sealed_through_seq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
-  // trim/tail 水位仍由 history_extent 表达。
-  uint64 sealed_through_seq = 19;
-}
-
-enum BaselineHistoryPolicy {
-  BASELINE_HISTORY_POLICY_RESET = 0;
-  BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE = 1;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。
@@ -163,16 +146,14 @@ message ScreenRowWrite {
 
 message HistoryMutation {
   HistoryExtent final_extent = 1;
-  repeated LineData appended_lines = 2;
-  repeated HistoryPromotion promotions = 3;
-  // sealed_through_seq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
-  uint64 sealed_through_seq = 4;
+  repeated HistoryPush pushes = 2;
+  reserved 3, 4;
 }
 
-message HistoryPromotion {
-  uint64 line_id = 1;
-  uint64 line_version = 2;
-  uint64 history_seq = 3;
+message HistoryPush {
+  uint64 history_seq = 1;
+  uint64 line_id = 2;
+  uint64 line_version = 3;
 }
 
 message ScreenLayout {

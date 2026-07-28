@@ -96,11 +96,10 @@ public final class TerminalAttachBlankReproTest {
     };
     TerminalLine screenLine = new TerminalLine(1001L, 1L, 0L, false, cells);
     return new ScreenBaseline(
-        "session-1", "inst-1", 1L, 1L, 1L, 1, false,
+        "session-1", "inst-1", 1L, 1L, 1L, 1,
         com.webterm.terminal.model.DictionaryEntries.EMPTY,
         1, 80, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
-        Collections.emptyList(),
         Collections.singletonList(screenLine),
         TerminalCursor.hidden(),
         TerminalModes.defaults(),

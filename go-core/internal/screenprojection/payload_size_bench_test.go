@@ -35,7 +35,7 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 1,
 	}
 	promotion.FirstAvailableHistorySeqChanged = true
-	promotion.HistoryPromotions = []terminalengine.HistoryPromotion{{
+	promotion.HistoryPushes = []terminalengine.HistoryPush{{
 		LineID: 1, LineVersion: 1, HistorySeq: 1,
 	}}
 	fullHistory := promotion
@@ -51,8 +51,6 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 	activeBuffer.Screen = asciiBaseline.Screen
 	coldTail := asciiBaseline
 	coldTail.History = payloadHistory(873, 1000, "cold")
-	preserve := coldTail
-	preserve.PreserveCompatibleHistory = true
 	prompt80 := payloadCommit(24, 80,
 		paddedPayloadLine(300, 2, 23, 80, "user@host:~$ ", false))
 	command120 := payloadCommit(24, 120,
@@ -79,7 +77,7 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		{"05_EmojiCombining_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(emoji, 0) }},
 		{"06_OneLineScroll_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(scrollOne, 0) }},
 		{"07_Scroll100_BudgetedCommit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(scroll100, 0) }},
-		{"08a_HistoryPromotion", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(promotion, 0) }},
+		{"08a_HistoryPush", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(promotion, 0) }},
 		{"08b_FullScrollbackEntry", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(fullHistory, 0) }},
 		{"09_History500_BudgetedCommit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(budget500, 0) }},
 		{"10_NoDictionaryAddition", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(noDictionary, 0) }},
@@ -91,7 +89,6 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		{"15a_MailboxOverflow_ResumeAccepted", func() ([]byte, error) { return screenprotocolv2.EncodeResumeAccepted(asciiBaseline) }},
 		{"15b_MailboxOverflow_Baseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(asciiBaseline, 0) }},
 		{"16_ColdBaselineTail", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(coldTail, 0) }},
-		{"17_PreserveCompatibleBaseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(preserve, 0) }},
 		{"19a_Prompt80_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(prompt80)
 		}},

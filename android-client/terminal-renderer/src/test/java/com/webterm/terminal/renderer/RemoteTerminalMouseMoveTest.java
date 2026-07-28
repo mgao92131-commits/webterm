@@ -75,8 +75,8 @@ public final class RemoteTerminalMouseMoveTest {
     TerminalModes modes = new TerminalModes(false, false, false,
         TerminalModes.MouseTracking.ANY_EVENT, TerminalModes.MouseEncoding.SGR, false);
     RemoteTerminalModel model = new RemoteTerminalModel();
-    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
-        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), modes, TerminalPalette.defaults()));
     return model;
   }

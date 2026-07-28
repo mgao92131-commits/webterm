@@ -83,9 +83,9 @@ public final class TerminalLineRenderNodeCacheTest {
       screen.add(line(100L + row, 1, cols));
     }
     model.applyBaseline(new ScreenBaseline(
-        "session-1", "instance-1", 1L, 1L, 1L, 1, false,
+        "session-1", "instance-1", 1L, 1L, 1L, 1,
         com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
-        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
 
@@ -415,8 +415,8 @@ public final class TerminalLineRenderNodeCacheTest {
       screen.add(textLine(1L + row, 1, columns, "original"));
     }
     return new ScreenBaseline(
-        "session-1", "instance-1", 1L, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
-        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        "session-1", "instance-1", 1L, 1L, 1L, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
@@ -442,8 +442,8 @@ public final class TerminalLineRenderNodeCacheTest {
     for (int row = 0; row < rows; row++) screen.add(line(firstLineId + row, 1, columns));
     RemoteTerminalModel model = new RemoteTerminalModel();
     model.applyBaseline(new ScreenBaseline(
-        "session-1", instanceId, layoutEpoch, 1L, 1L, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
-        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        "session-1", instanceId, layoutEpoch, 1L, 1L, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, columns,
+        TerminalBufferKind.MAIN, HistoryExtent.INITIAL_EMPTY, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     return model.renderSnapshot();
   }

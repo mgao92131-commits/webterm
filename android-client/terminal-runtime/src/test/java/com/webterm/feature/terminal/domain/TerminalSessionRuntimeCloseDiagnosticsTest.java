@@ -10,7 +10,6 @@ import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.SegmentKey;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -66,7 +65,7 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
   @Test
   public void closeWithActiveHistoryRequestFinalizesLoaderClosed() {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(domainBaseline(/*sealedThrough*/ 256)));
+    assertTrue(model.applyBaseline(domainBaseline()));
     model.consumeRenderUpdate();
 
     ArrayDeque<Runnable> modelQueue = new ArrayDeque<>();
@@ -78,10 +77,11 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
     runtime.enterLiveForTest();
     drain(modelQueue);
 
-    AtomicReference<HistorySegmentSource.Callback> pending = new AtomicReference<>();
-    runtime.setHistorySegmentSource(new HistorySegmentSource() {
+    AtomicReference<HistoryRangeSource.Callback> pending = new AtomicReference<>();
+    runtime.setHistoryRangeSource(new HistoryRangeSource() {
       @Override
-      public RequestHandle fetch(@NonNull SegmentKey key, @NonNull Callback callback) {
+      public RequestHandle fetch(
+          @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback) {
         pending.set(callback);
         return () -> {};
       }
@@ -322,17 +322,12 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
     }
   }
 
-  private static ScreenBaseline domainBaseline(long sealedThrough) {
-    List<TerminalLine> tail = new ArrayList<>();
-    for (long seq = 173; seq <= 300; seq++) {
-      tail.add(domainLine(seq, seq, "h"));
-    }
+  private static ScreenBaseline domainBaseline() {
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, false, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN, new HistoryExtent(1, 300), tail,
+        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 300),
         Collections.singletonList(domainLine(1000, 0, "a")),
-        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults(),
-        sealedThrough);
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
   private static TerminalLine domainLine(long id, long historySeq, String text) {

@@ -12,41 +12,16 @@ import (
 
 const ProtocolVersion uint32 = 2
 
-const (
-	DefaultColdHistoryTailLines uint32 = 128
-	MaxColdHistoryTailLines     uint32 = 128
-)
-
-func EncodeBaseline(frame terminalengine.ScreenFrame, requestedColdTailLines uint32) ([]byte, error) {
+func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) {
 	screen := encodeLines(screenLines(frame.Screen))
-	historyLines := historyLines(frame.History.Lines)
-	if frame.PreserveCompatibleHistory {
-		historyLines = nil
-	} else {
-		limit := requestedColdTailLines
-		if limit == 0 {
-			limit = DefaultColdHistoryTailLines
-		}
-		if limit > MaxColdHistoryTailLines {
-			limit = MaxColdHistoryTailLines
-		}
-		if len(historyLines) > int(limit) {
-			historyLines = historyLines[len(historyLines)-int(limit):]
-		}
-	}
-	history := encodeLines(historyLines)
 	baseline := &pb.Baseline{
-		SessionId:      frame.SessionID,
-		InstanceId:     frame.InstanceID,
-		LayoutEpoch:    frame.Epoch,
-		ScreenRevision: frame.Seq,
-		Geometry:       &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
-		ActiveBuffer:   encodeBuffer(frame.ActiveBuffer),
-		HistoryExtent:  encodeHistoryWindowExtent(frame.History),
-		HistoryTail: &pb.HistoryTail{
-			Extent: encodeHistoryWindowExtent(frame.History),
-			Lines:  history,
-		},
+		SessionId:            frame.SessionID,
+		InstanceId:           frame.InstanceID,
+		LayoutEpoch:          frame.Epoch,
+		ScreenRevision:       frame.Seq,
+		Geometry:             &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
+		ActiveBuffer:         encodeBuffer(frame.ActiveBuffer),
+		HistoryExtent:        encodeHistoryWindowExtent(frame.History),
 		ScreenLayout:         &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
 		ScreenLines:          screen,
 		Cursor:               encodeCursor(frame.Cursor),
@@ -55,10 +30,6 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, requestedColdTailLines uin
 		Dictionary:           encodeDictionary(frame.Styles, frame.Links),
 		DictionaryGeneration: frame.DictionaryGeneration,
 		HistoryGeneration:    frame.HistoryGeneration,
-		SealedThroughSeq:     frame.History.SealedThroughSeq,
-	}
-	if frame.PreserveCompatibleHistory {
-		baseline.HistoryPolicy = pb.BaselineHistoryPolicy_BASELINE_HISTORY_POLICY_PRESERVE_COMPATIBLE
 	}
 	return marshalPayload(&pb.ScreenEnvelope_Baseline{Baseline: baseline})
 }
@@ -75,7 +46,6 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 		DictionaryGeneration: frame.DictionaryGeneration,
 		HistoryGeneration:    frame.HistoryGeneration,
 	}
-	lines := make([]terminalengine.Line, 0, len(frame.Screen)+len(frame.History.Lines))
 	if frame.ScreenScroll != nil || len(frame.Screen) > 0 {
 		mutation := &pb.ScreenMutation{}
 		if frame.ScreenScroll != nil {
@@ -92,27 +62,22 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 			mutation.Writes = append(mutation.Writes, &pb.ScreenRowWrite{
 				Row: int32(line.Row), Line: encodeLines([]terminalengine.Line{line})[0],
 			})
-			lines = append(lines, line)
 		}
 		commit.Screen = mutation
 	}
-	if frame.FirstAvailableHistorySeqChanged || len(frame.History.Lines) > 0 || len(frame.HistoryPromotions) > 0 {
-		historyLines := historyLines(frame.History.Lines)
+	if frame.FirstAvailableHistorySeqChanged || len(frame.HistoryPushes) > 0 {
 		commit.History = &pb.HistoryMutation{
 			FinalExtent: &pb.HistoryExtent{
 				FirstSeq: canonicalHistoryFirst(frame.History.FirstAvailableHistorySeq),
 				LastSeq:  frame.History.LastIncludedHistorySeq,
 			},
-			AppendedLines:    encodeLines(historyLines),
-			SealedThroughSeq: frame.History.SealedThroughSeq,
 		}
-		for _, promotion := range frame.HistoryPromotions {
-			commit.History.Promotions = append(commit.History.Promotions, &pb.HistoryPromotion{
-				LineId: promotion.LineID, LineVersion: promotion.LineVersion,
-				HistorySeq: promotion.HistorySeq,
+		for _, push := range frame.HistoryPushes {
+			commit.History.Pushes = append(commit.History.Pushes, &pb.HistoryPush{
+				HistorySeq: push.HistorySeq, LineId: push.LineID,
+				LineVersion: push.LineVersion,
 			})
 		}
-		lines = append(lines, historyLines...)
 	}
 	if frame.CursorChanged {
 		commit.Cursor = encodeCursor(frame.Cursor)
@@ -196,11 +161,6 @@ func encodeHistoryWindowExtent(window terminalengine.HistoryWindow) *pb.HistoryE
 		first = 1
 	}
 	last := window.LastIncludedHistorySeq
-	if len(window.Lines) > 0 {
-		last = window.Lines[len(window.Lines)-1].HistorySeq
-	} else if last >= first {
-		last = first - 1
-	}
 	return &pb.HistoryExtent{FirstSeq: first, LastSeq: last}
 }
 
@@ -212,16 +172,6 @@ func screenLines(lines []terminalengine.Line) []terminalengine.Line {
 	out := make([]terminalengine.Line, 0, len(lines))
 	for _, line := range lines {
 		if line.HistorySeq == 0 {
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
-func historyLines(lines []terminalengine.Line) []terminalengine.Line {
-	out := make([]terminalengine.Line, 0, len(lines))
-	for _, line := range lines {
-		if line.HistorySeq != 0 {
 			out = append(out, line)
 		}
 	}

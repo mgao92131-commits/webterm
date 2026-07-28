@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"webterm/go-core/internal/historysegment"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
@@ -39,7 +38,6 @@ type Runtime struct {
 
 	engine      *terminalengine.Engine
 	scrollback  *terminalengine.TrackedScrollback
-	segments    historysegment.Store
 	projector   *screenprojection.Projector
 	terminalIO  TerminalIO
 	inputWriter *InputWriter
@@ -53,10 +51,10 @@ type Runtime struct {
 	scrollbackMaxLines int
 	scrollbackMaxBytes int
 
-	// segmentFetch* 是 HTTP 分段查询的进程内 token bucket（不经 actor）。
-	segmentFetchMu     sync.Mutex
-	segmentFetchTokens float64
-	segmentFetchLast   time.Time
+	// historyRange* 是 HTTP Range 查询的进程内 token bucket（不经 actor）。
+	historyRangeMu     sync.Mutex
+	historyRangeTokens float64
+	historyRangeLast   time.Time
 
 	events   chan event
 	stopOnce sync.Once
@@ -203,8 +201,6 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 	if r.scrollbackMaxBytes > 0 {
 		r.scrollback.SetMaxBytes(r.scrollbackMaxBytes)
 	}
-	r.segments = historysegment.NewMemoryStore()
-	r.scrollback.AttachSegmentStore(r.segments)
 	r.engine = terminalengine.NewEngine(rows, cols, r.scrollback,
 		terminalengine.WithPTYWriter(terminalIO),
 		terminalengine.WithBellHandler(func() {
@@ -248,99 +244,27 @@ func (r *Runtime) ID() string {
 	return r.id
 }
 
-// SegmentStore 返回封存后的不可变历史段存储（并发只读安全）。
-func (r *Runtime) SegmentStore() historysegment.Store {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.segments
-}
-
-// SegmentFetchStatus 是 HTTP 分段查询的结果状态。
-type SegmentFetchStatus uint8
-
-const (
-	SegmentFetchOK SegmentFetchStatus = iota + 1
-	SegmentFetchStaleGeneration
-	SegmentFetchNotSealed
-	SegmentFetchTrimmed
-	SegmentFetchNotFound
-	SegmentFetchRetryable
-)
-
-// SegmentFetchResult 是不进入 actor 的并发安全分段查询结果。
-type SegmentFetchResult struct {
-	Status           SegmentFetchStatus
-	Segment          *historysegment.Segment
-	Generation       uint64
-	RetryAfterMS     uint32
-	SealedThroughSeq uint64
-	TrimBeforeSeq    uint64
-	StoreHit         bool
-}
-
-// SegmentFetchStatusName 返回诊断用的稳定状态名。
-func SegmentFetchStatusName(status SegmentFetchStatus) string {
-	switch status {
-	case SegmentFetchOK:
-		return "OK"
-	case SegmentFetchStaleGeneration:
-		return "STALE_GENERATION"
-	case SegmentFetchNotSealed:
-		return "NOT_SEALED"
-	case SegmentFetchTrimmed:
-		return "TRIMMED"
-	case SegmentFetchNotFound:
-		return "NOT_FOUND"
-	case SegmentFetchRetryable:
-		return "RETRYABLE"
-	default:
-		return "UNKNOWN"
+// HistoryRange 并发读取权威 Scrollback 的任意闭区间，不进入 actor。
+func (r *Runtime) HistoryRange(generation, fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
+	if r == nil || r.scrollback == nil || r.projector == nil {
+		return terminalengine.HistoryRangeData{HistoryGeneration: generation}
 	}
-}
-
-// FetchSealedSegment 校验 Catalog 后从不可变 Store 读取分段。
-// 不进入 actor，不读取可变 scrollback 正文。
-func (r *Runtime) FetchSealedSegment(generation, segmentNumber uint64) SegmentFetchResult {
-	if r == nil || r.scrollback == nil {
-		return SegmentFetchResult{Status: SegmentFetchNotFound}
+	currentGeneration := r.scrollback.Generation()
+	if generation == 0 || generation != currentGeneration {
+		return terminalengine.HistoryRangeData{
+			HistoryGeneration: currentGeneration,
+			Extent:            r.scrollback.Extent(),
+		}
 	}
-	if !r.allowSegmentFetch() {
-		return SegmentFetchResult{Status: SegmentFetchRetryable, RetryAfterMS: 125, Generation: generation}
+	if !r.allowHistoryRange() {
+		return terminalengine.HistoryRangeData{
+			Status:            terminalengine.HistoryRangeRetryable,
+			HistoryGeneration: currentGeneration,
+			Extent:            r.scrollback.Extent(),
+			RetryAfterMS:      125,
+		}
 	}
-	catalog := r.scrollback.HistoryCatalog()
-	result := SegmentFetchResult{
-		Generation:       catalog.Generation,
-		SealedThroughSeq: catalog.SealedThroughSeq,
-		TrimBeforeSeq:    catalog.TrimBeforeSeq,
-	}
-	if generation == 0 || generation != catalog.Generation {
-		result.Status = SegmentFetchStaleGeneration
-		return result
-	}
-	first, last := historysegment.SeqRange(segmentNumber)
-	if catalog.SealedThroughSeq == 0 || last > catalog.SealedThroughSeq {
-		result.Status = SegmentFetchNotSealed
-		return result
-	}
-	if last < catalog.TrimBeforeSeq {
-		result.Status = SegmentFetchTrimmed
-		return result
-	}
-	_ = first
-	store := r.SegmentStore()
-	if store == nil {
-		result.Status = SegmentFetchNotFound
-		return result
-	}
-	seg, ok := store.Get(historysegment.Key{Generation: generation, Number: segmentNumber})
-	if !ok || seg == nil {
-		result.Status = SegmentFetchNotFound
-		return result
-	}
-	result.Status = SegmentFetchOK
-	result.Segment = seg
-	result.StoreHit = true
-	return result
+	return r.projector.HistoryRange(fromSeq, toSeq)
 }
 
 // Info 返回当前版本信息。
@@ -940,8 +864,8 @@ func (r *Runtime) handleResize(e resizeEvent) {
 	layoutEpoch := r.layoutEpoch
 	r.mu.Unlock()
 	r.engine.Resize(e.rows, e.cols)
-	// layoutEpoch 只界定活动屏几何。普通 resize 不得推进 historyGeneration /
-	// 清空 SegmentStore；Pop 已回收尾部 HistorySeq，后续 Push 保持稠密。
+	// layoutEpoch 只界定活动屏几何。普通 resize 不得推进 historyGeneration；
+	// Pop 已回收尾部 HistorySeq，后续 Push 保持稠密。
 	r.scrollback.SetLayoutEpoch(layoutEpoch)
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
@@ -1010,28 +934,28 @@ func (r *Runtime) handleReleaseLayout(e releaseLayoutEvent) {
 }
 
 const (
-	segmentFetchRequestsPerSecond = 8.0
-	segmentFetchBurst             = 8.0
+	historyRangeRequestsPerSecond = 8.0
+	historyRangeBurst             = 8.0
 )
 
-// allowSegmentFetch 限制 HTTP 分段查询，避免冷历史拉取挤占实时屏幕路径。
-func (r *Runtime) allowSegmentFetch() bool {
+// allowHistoryRange 限制 HTTP 正文查询，避免历史加载挤占实时屏幕路径。
+func (r *Runtime) allowHistoryRange() bool {
 	now := time.Now()
-	r.segmentFetchMu.Lock()
-	defer r.segmentFetchMu.Unlock()
-	if r.segmentFetchLast.IsZero() {
-		r.segmentFetchLast = now
-		r.segmentFetchTokens = segmentFetchBurst
+	r.historyRangeMu.Lock()
+	defer r.historyRangeMu.Unlock()
+	if r.historyRangeLast.IsZero() {
+		r.historyRangeLast = now
+		r.historyRangeTokens = historyRangeBurst
 	}
-	elapsed := now.Sub(r.segmentFetchLast).Seconds()
+	elapsed := now.Sub(r.historyRangeLast).Seconds()
 	if elapsed > 0 {
-		r.segmentFetchTokens = min(
-			segmentFetchBurst,
-			r.segmentFetchTokens+elapsed*segmentFetchRequestsPerSecond)
-		r.segmentFetchLast = now
+		r.historyRangeTokens = min(
+			historyRangeBurst,
+			r.historyRangeTokens+elapsed*historyRangeRequestsPerSecond)
+		r.historyRangeLast = now
 	}
-	if r.segmentFetchTokens >= 1 {
-		r.segmentFetchTokens--
+	if r.historyRangeTokens >= 1 {
+		r.historyRangeTokens--
 		return true
 	}
 	return false

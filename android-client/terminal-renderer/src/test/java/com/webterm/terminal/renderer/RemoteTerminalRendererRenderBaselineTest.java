@@ -186,8 +186,8 @@ public final class RemoteTerminalRendererRenderBaselineTest {
     }
     HistoryExtent extent = historyLines == 0
         ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
-    model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
-        TerminalBufferKind.MAIN, extent, history, screen,
+    model.applyBaseline(new ScreenBaseline("s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols,
+        TerminalBufferKind.MAIN, extent, screen,
         new TerminalCursor(rows - 1, 0, true, TerminalCursor.Shape.BLOCK, false),
         TerminalModes.defaults(), TerminalPalette.defaults()));
     return model;

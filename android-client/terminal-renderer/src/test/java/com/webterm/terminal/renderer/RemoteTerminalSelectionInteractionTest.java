@@ -160,8 +160,8 @@ public final class RemoteTerminalSelectionInteractionTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     HistoryExtent extent = historyLines == 0
         ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(1, historyLines);
-    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, 1, false, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, bufferKind,
-        extent, history, screen, TerminalCursor.hidden(), TerminalModes.defaults(),
+    model.applyBaseline(new ScreenBaseline("s", "i", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, rows, cols, bufferKind,
+        extent, screen, TerminalCursor.hidden(), TerminalModes.defaults(),
         TerminalPalette.defaults()));
     return model;
   }

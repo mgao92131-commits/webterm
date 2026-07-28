@@ -142,9 +142,7 @@ type HistoryWindow struct {
 	FirstIncludedHistorySeq  uint64
 	LastIncludedHistorySeq   uint64
 	HasMoreBefore            bool
-	// SealedThroughSeq 是已封存不可变段的最大 HistorySeq；0 表示尚无封存。
-	SealedThroughSeq uint64
-	Lines            []Line
+	Lines                    []Line
 }
 
 type HistoryRangeData struct {
@@ -226,15 +224,13 @@ type ScreenFrame struct {
 	DictionaryGeneration uint64
 	// HistoryGeneration 标识 historySeq -> LineID lineage；同一 generation 内只追加/trim。
 	HistoryGeneration uint64
-	// HistoryPromotions 把客户端旧 ActiveRows 中已持有的正文绑定到正式 historySeq。
-	HistoryPromotions []HistoryPromotion
-	// ScrollbackEntryage 是仅供派生器证明 promotion 的无正文索引，不编码到 wire。
-	ScrollbackEntryage []HistoryPromotion
-	// PreserveCompatibleHistory 仅用于 Baseline：屏幕重建时保留兼容的本地历史页。
-	PreserveCompatibleHistory bool
+	// HistoryPushes 是 HistorySeq -> LineID + LineVersion 的位置绑定，不含正文。
+	HistoryPushes []HistoryPush
+	// ScrollbackLineage 是完整的权威位置索引，只供派生器计算 Push，不编码到 wire。
+	ScrollbackLineage []HistoryPush
 }
 
-type HistoryPromotion struct {
+type HistoryPush struct {
 	LineID      uint64
 	LineVersion uint64
 	HistorySeq  uint64
