@@ -17,6 +17,28 @@ func TestNumberForSeqAndSeqRange(t *testing.T) {
 	}
 }
 
+func TestAlignToSegmentStart(t *testing.T) {
+	cases := []struct {
+		seq, want uint64
+	}{
+		{0, 1},
+		{1, 1},
+		{2, 129},
+		{69, 129},
+		{128, 129},
+		{129, 129},
+		{130, 257},
+		{404, 513},
+		{512, 513},
+		{513, 513},
+	}
+	for _, tc := range cases {
+		if got := AlignToSegmentStart(tc.seq); got != tc.want {
+			t.Fatalf("AlignToSegmentStart(%d)=%d, want %d", tc.seq, got, tc.want)
+		}
+	}
+}
+
 func TestNewSegmentRequiresFullAlignedRange(t *testing.T) {
 	lines := makeLines(1, 127)
 	if _, ok := NewSegment(1, 0, lines); ok {

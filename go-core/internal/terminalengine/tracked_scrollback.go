@@ -468,15 +468,13 @@ func (t *TrackedScrollback) Clear() {
 	defer t.mu.Unlock()
 	oldGeneration := t.generation
 	t.generation++
-	if len(t.lines) == 0 {
-		t.clearSegmentsLocked(oldGeneration)
-		return
-	}
 	t.lines = t.lines[:0]
 	t.bytes = 0
 	// clear 是同一 layout epoch 内的历史裁剪，不是 LineID 空间重建。
-	// 保持 nextSeq 单调递增，使 HistoryExtent 水位可被客户端接受，也避免后续
-	// 输出复用已经被客户端见过的历史行 ID。
+	// nextSeq 仍单调递增；同时必须对齐到完整 Segment 起点，否则新 generation
+	// 的首段不完整、封存会跳过，但 Catalog 仍声明该区间可加载，客户端请求
+	// 会得到 NOT_FOUND 并永久跳过，形成黑屏历史空洞。
+	t.nextSeq = historysegment.AlignToSegmentStart(t.nextSeq)
 	t.firstSeq = t.nextSeq
 	t.clearSegmentsLocked(oldGeneration)
 	t.fireTrimLocked()
@@ -688,4 +686,3 @@ func (t *TrackedScrollback) trimSegmentsLocked() {
 		t.segments.DeleteBefore(t.generation, t.firstSeq)
 	}
 }
-

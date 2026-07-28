@@ -2,6 +2,8 @@ package terminalengine
 
 import (
 	"testing"
+
+	"webterm/go-core/internal/historysegment"
 )
 
 func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
@@ -17,7 +19,7 @@ func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
 	if sb.Len() == 0 {
 		t.Fatal("expected scrollback before CSI 3 J")
 	}
-	nextSeq := sb.NextSeq()
+	wantSeq := historysegment.AlignToSegmentStart(sb.NextSeq())
 
 	if err := engine.Write([]byte("\x1b[3J")); err != nil {
 		t.Fatal(err)
@@ -26,13 +28,13 @@ func TestEngineCSI3JClearsTrackedScrollbackAndAdvancesWatermark(t *testing.T) {
 	if got := sb.Len(); got != 0 {
 		t.Fatalf("scrollback len after CSI 3 J = %d, want 0", got)
 	}
-	if got := sb.FirstSeq(); got != nextSeq {
-		t.Fatalf("watermark after CSI 3 J = %d, want %d", got, nextSeq)
+	if got := sb.FirstSeq(); got != wantSeq {
+		t.Fatalf("watermark after CSI 3 J = %d, want %d", got, wantSeq)
 	}
-	if sb.NextSeq() != nextSeq {
-		t.Fatalf("next ID changed across CSI 3 J: got %d, want %d", sb.NextSeq(), nextSeq)
+	if sb.NextSeq() != wantSeq {
+		t.Fatalf("next ID changed across CSI 3 J: got %d, want %d", sb.NextSeq(), wantSeq)
 	}
-	if len(trims) == 0 || trims[len(trims)-1].FirstAvailableSeq != nextSeq {
-		t.Fatalf("trim events = %+v, want final watermark %d", trims, nextSeq)
+	if len(trims) == 0 || trims[len(trims)-1].FirstAvailableSeq != wantSeq {
+		t.Fatalf("trim events = %+v, want final watermark %d", trims, wantSeq)
 	}
 }

@@ -35,6 +35,18 @@ func SeqRange(segmentNumber uint64) (firstSeq, lastSeq uint64) {
 	return firstSeq, lastSeq
 }
 
+// AlignToSegmentStart 将 HistorySeq 向上对齐到分段起点。
+// 若 seq 已是某段起点则不变；否则跳到下一段起点。
+// Clear 后新 generation 必须从此对齐位置起编，避免 Catalog 声明
+// trimBefore..sealedThrough 可加载、但首段因不完整从未封存。
+func AlignToSegmentStart(seq uint64) uint64 {
+	if seq <= 1 {
+		return 1
+	}
+	size := uint64(Size)
+	return ((seq-1+size-1)/size)*size + 1
+}
+
 // Catalog 是 WS 发布的权威历史目录（不含正文）。
 type Catalog struct {
 	Generation       uint64

@@ -94,23 +94,25 @@ func TestTrackedScrollback_ClearKeepsLineIDsMonotonicAndFiresTrim(t *testing.T) 
 
 	sb.Clear()
 
+	// Clear 将 nextSeq 对齐到下一段起点（3 行后 nextSeq=4 → 129）。
+	const wantSeq = 129
 	if got := sb.Len(); got != 0 {
 		t.Fatalf("Len after Clear = %d, want 0", got)
 	}
-	if got := sb.FirstSeq(); got != 4 {
-		t.Fatalf("FirstSeq after Clear = %d, want 4", got)
+	if got := sb.FirstSeq(); got != wantSeq {
+		t.Fatalf("FirstSeq after Clear = %d, want %d", got, wantSeq)
 	}
-	if got := sb.NextSeq(); got != 4 {
-		t.Fatalf("NextSeq after Clear = %d, want 4", got)
+	if got := sb.NextSeq(); got != wantSeq {
+		t.Fatalf("NextSeq after Clear = %d, want %d", got, wantSeq)
 	}
-	if len(trims) != 1 || trims[0].FirstAvailableSeq != 4 {
-		t.Fatalf("trim events after Clear = %+v, want watermark 4", trims)
+	if len(trims) != 1 || trims[0].FirstAvailableSeq != wantSeq {
+		t.Fatalf("trim events after Clear = %+v, want watermark %d", trims, wantSeq)
 	}
 
 	sb.Push(headlessterm.ScrollbackLine{Cells: []headlessterm.Cell{headlessterm.NewCell()}})
-	line, ok := sb.LineByID(4)
-	if !ok || line.LineID != 4 {
-		t.Fatalf("first line after Clear = (%+v, %v), want ID 4", line, ok)
+	line, ok := sb.LineByID(wantSeq)
+	if !ok || line.LineID != wantSeq {
+		t.Fatalf("first line after Clear = (%+v, %v), want ID %d", line, ok, wantSeq)
 	}
 	if _, ok := sb.LineByID(1); ok {
 		t.Fatal("cleared LineID 1 must not become available again")
@@ -542,9 +544,10 @@ func TestTrackedScrollback_ExtentPreservesEmptyTrimWatermark(t *testing.T) {
 	pushBlankLines(sb, 3)
 	sb.Clear()
 
+	// 3 行后 Clear → nextSeq 对齐到 129；空窗口 LastSeq+1==FirstSeq。
 	got := sb.Extent()
-	if got.FirstSeq != 4 || got.LastSeq != 3 || !got.Empty() {
-		t.Fatalf("Extent after clear = %+v, want empty 4..3", got)
+	if got.FirstSeq != 129 || got.LastSeq != 128 || !got.Empty() {
+		t.Fatalf("Extent after clear = %+v, want empty 129..128", got)
 	}
 }
 

@@ -104,7 +104,7 @@ func TestTrackedScrollbackTrimDeletesFullyTrimmedSegments(t *testing.T) {
 			Cells: []headlessterm.Cell{headlessterm.NewCell()},
 		})
 	}
-	// capacity 200 → firstSeq should be 57; segment 0 (1-128) fully before? 
+	// capacity 200 → firstSeq should be 57; segment 0 (1-128) fully before?
 	// lastSeq=256, keep 200 lines → firstSeq = 57. Segment 0 last=128 >= 57, keep.
 	// Push more to trim past 128.
 	for i := 0; i < 100; i++ {
@@ -139,6 +139,139 @@ func TestTrackedScrollbackClearInvalidatesSegments(t *testing.T) {
 	}
 	if sb.Generation() != 2 {
 		t.Fatalf("Generation=%d, want 2", sb.Generation())
+	}
+	// 写满整段后 nextSeq=129，已在段起点，Clear 应对齐保持 129。
+	if sb.NextSeq() != 129 || sb.FirstSeq() != 129 {
+		t.Fatalf("after clear at segment boundary NextSeq/FirstSeq=%d/%d, want 129",
+			sb.NextSeq(), sb.FirstSeq())
+	}
+}
+
+func TestTrackedScrollbackClearAlignsToSegmentStart(t *testing.T) {
+	cases := []struct {
+		name       string
+		writeLines int
+		wantNext   uint64
+	}{
+		{name: "mid_first_segment", writeLines: 68, wantNext: 129},
+		{name: "mid_later_segment", writeLines: 403, wantNext: 513},
+		{name: "already_aligned", writeLines: 128, wantNext: 129},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := NewTrackedScrollback(10_000, nil)
+			for i := 0; i < tc.writeLines; i++ {
+				sb.Push(headlessterm.ScrollbackLine{
+					LineID: uint64(i + 1), LineVersion: 1,
+					Cells: []headlessterm.Cell{headlessterm.NewCell()},
+				})
+			}
+			if got := sb.NextSeq(); got != uint64(tc.writeLines)+1 {
+				t.Fatalf("pre-clear NextSeq=%d, want %d", got, tc.writeLines+1)
+			}
+			sb.Clear()
+			if got := sb.NextSeq(); got != tc.wantNext {
+				t.Fatalf("NextSeq after Clear=%d, want %d", got, tc.wantNext)
+			}
+			if got := sb.FirstSeq(); got != tc.wantNext {
+				t.Fatalf("FirstSeq after Clear=%d, want %d", got, tc.wantNext)
+			}
+		})
+	}
+}
+
+func TestTrackedScrollbackClearThenSealFetchable(t *testing.T) {
+	store := historysegment.NewMemoryStore()
+	sb := NewTrackedScrollback(10_000, nil)
+	sb.AttachSegmentStore(store)
+
+	// Clear 前停在段中部，制造旧缺陷场景：nextSeq=69。
+	for i := 0; i < 68; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+	sb.Clear()
+	if sb.NextSeq() != 129 {
+		t.Fatalf("NextSeq=%d, want 129", sb.NextSeq())
+	}
+	gen := sb.Generation()
+
+	for i := 0; i < historysegment.Size; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(1000 + i), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+
+	catalog := sb.HistoryCatalog()
+	if catalog.Generation != gen || catalog.TrimBeforeSeq != 129 || catalog.SealedThroughSeq != 256 {
+		t.Fatalf("catalog=%+v, want gen=%d trim=129 sealed=256", catalog, gen)
+	}
+	segNumber := historysegment.NumberForSeq(129)
+	seg, ok := store.Get(historysegment.Key{Generation: gen, Number: segNumber})
+	if !ok || seg == nil {
+		t.Fatalf("sealed segment %d must exist in store (not NOT_FOUND)", segNumber)
+	}
+	if seg.FirstSeq != 129 || seg.LastSeq != 256 || len(seg.Lines) != historysegment.Size {
+		t.Fatalf("segment content wrong: %+v len=%d", seg, len(seg.Lines))
+	}
+}
+
+func TestTrackedScrollbackCatalogMatchesStoreSegments(t *testing.T) {
+	store := historysegment.NewMemoryStore()
+	sb := NewTrackedScrollback(10_000, nil)
+	sb.AttachSegmentStore(store)
+
+	// 制造 Clear 后跨多段的历史，并断言 Catalog 可加载区间内每个完整段都在 Store。
+	for i := 0; i < 50; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+	sb.Clear()
+	for i := 0; i < 300; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(500 + i), LineVersion: 1,
+			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		})
+	}
+
+	catalog := sb.HistoryCatalog()
+	if catalog.SealedThroughSeq == 0 || catalog.TrimBeforeSeq == 0 {
+		t.Fatalf("expected sealed catalog, got %+v", catalog)
+	}
+	assertCatalogSegmentsExist(t, store, catalog)
+}
+
+func assertCatalogSegmentsExist(t *testing.T, store historysegment.Store, catalog historysegment.Catalog) {
+	t.Helper()
+	if catalog.SealedThroughSeq == 0 {
+		return
+	}
+	firstNumber := historysegment.NumberForSeq(catalog.TrimBeforeSeq)
+	firstStart, _ := historysegment.SeqRange(firstNumber)
+	if catalog.TrimBeforeSeq > firstStart {
+		// 首段与 trim 部分相交时封存会跳过；Clear 对齐后不应再出现。
+		t.Fatalf("TrimBeforeSeq=%d is mid-segment (segment starts at %d); Catalog/Store hole risk",
+			catalog.TrimBeforeSeq, firstStart)
+	}
+	lastNumber := historysegment.NumberForSeq(catalog.SealedThroughSeq)
+	for number := firstNumber; number <= lastNumber; number++ {
+		first, last := historysegment.SeqRange(number)
+		if last < catalog.TrimBeforeSeq || first > catalog.SealedThroughSeq {
+			continue
+		}
+		if last > catalog.SealedThroughSeq {
+			break
+		}
+		seg, ok := store.Get(historysegment.Key{Generation: catalog.Generation, Number: number})
+		if !ok || seg == nil {
+			t.Fatalf("Catalog claims [%d,%d] sealed but store missing segment %d (gen=%d)",
+				catalog.TrimBeforeSeq, catalog.SealedThroughSeq, number, catalog.Generation)
+		}
 	}
 }
 
