@@ -616,6 +616,59 @@ public class DeviceConnectionRecoveryTest {
     }
 
     @Test
+    public void networkAvailableDoesNotReconnectHealthyTransport() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        manager.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+
+        manager.onNetworkAvailable(101L);
+
+        assertEquals(1, transport.startCount);
+        assertEquals(0, transport.closeCount);
+        assertTrue(manager.isConnected());
+    }
+
+    @Test
+    public void networkAvailableReconnectsDisconnectedTransport() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport first = new FakeMuxTransport();
+        FakeMuxTransport replacement = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
+                new RotatingTransportFactory(first, replacement));
+        manager.openScreenChannel("s1", new SimpleListener());
+        first.simulateOpen();
+        first.simulateFailure(0, "offline");
+
+        manager.onNetworkAvailable(102L);
+
+        assertEquals(1, replacement.startCount);
+    }
+
+    @Test
+    public void duplicateNetworkAvailableIsDebouncedWhileDisconnected() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport first = new FakeMuxTransport();
+        FakeMuxTransport replacement = new FakeMuxTransport();
+        FakeMuxTransport unexpected = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "", "device1",
+                new RotatingTransportFactory(first, replacement, unexpected));
+        manager.openScreenChannel("s1", new SimpleListener());
+        first.simulateOpen();
+        first.simulateFailure(0, "offline");
+
+        manager.onNetworkAvailable(103L);
+        manager.onNetworkAvailable(103L);
+
+        assertEquals(1, replacement.startCount);
+        assertEquals(0, unexpected.startCount);
+    }
+
+    @Test
     public void channelOpenTimeoutRetriesInsteadOfRemainingOpeningForever() {
         CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();

@@ -269,7 +269,7 @@ public final class WebTermDeviceService extends Service {
                     new Handler(getMainLooper()).post(() -> {
                         Log.i("WebTermDeviceService", "Network became available, refreshing connections...");
                         for (DeviceConnection manager : managers.values()) {
-                            manager.forceReconnect("network-available");
+                            manager.onNetworkAvailable(network.getNetworkHandle());
                         }
                         refreshConnections();
                     });

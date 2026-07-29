@@ -88,6 +88,8 @@ public final class DeviceConnection {
     private volatile boolean physicalConnected;
     private boolean physicalConnecting;
     private int physicalReconnectAttempts;
+    /** 最近处理的 Android Network handle；仅在 state handler 上访问。 */
+    private long lastHandledNetworkGeneration = Long.MIN_VALUE;
     private volatile boolean stopped;
     private volatile ConnectionCloseReason lastCloseReason;
     private final LogicalChannelRegistry channelRegistry = new LogicalChannelRegistry();
@@ -938,6 +940,36 @@ public final class DeviceConnection {
             ConnectionCloseReason.RECONNECT_RESET,
             true,
             reason));
+    }
+
+    /**
+     * Android 报告网络可用。健康或正在建立的物理 Mux 不因 onAvailable 被主动拆除；
+     * 已断开的连接才用新的 transport generation 立即恢复。
+     */
+    public void onNetworkAvailable(long networkGeneration) {
+        runOnState(() -> {
+            if (stopped) return;
+            if (networkGeneration == lastHandledNetworkGeneration) {
+                Diagnostics.info(
+                    "device_connection", "network_available_reconnect_skipped", physicalFields(
+                        "reason", "duplicate_network_generation",
+                        "networkGeneration", networkGeneration));
+                return;
+            }
+            lastHandledNetworkGeneration = networkGeneration;
+            if (physicalConnected || physicalConnecting) {
+                Diagnostics.info(
+                    "device_connection", "network_available_reconnect_skipped", physicalFields(
+                        "reason", physicalConnected ? "transport_healthy" : "transport_connecting",
+                        "networkGeneration", networkGeneration));
+                return;
+            }
+            reconnectTransport(
+                TransportReconnectTrigger.NETWORK_AVAILABLE,
+                ConnectionCloseReason.RECONNECT_RESET,
+                true,
+                "network-available");
+        });
     }
 
     /**
